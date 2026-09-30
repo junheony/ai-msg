@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseHead, parseTranscript, textOfContent } from './transcript';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { parseHead, parseTranscript, readHead, textOfContent } from './transcript';
 
 const L = (o: unknown) => JSON.stringify(o);
 const CWD = '/Users/max/Documents/개발/agentic-harness';
@@ -60,5 +63,62 @@ describe('parseTranscript', () => {
       { kind: 'tool_result', toolUseId: 'tu1', content: 'a.txt', isError: false, ts: 't3' },
       { kind: 'assistant', text: 'Done.', model: 'claude-opus-5-5', toolCalls: [], ts: 't4' },
     ]);
+  });
+});
+
+describe('readHead — title', () => {
+  const ID = '66666666-6666-4666-8666-666666666666';
+  async function big(extra: string[] = []): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-title-'));
+    const file = path.join(dir, `${ID}.jsonl`);
+    const pad = L({ type: 'assistant', message: { id: 'm', role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(1000) }] } });
+    const lines = [
+      L({ type: 'custom-title', customTitle: 'Early', sessionId: ID }),
+      L({ type: 'user', cwd: CWD, message: { role: 'user', content: 'first prompt' } }),
+      ...Array(400).fill(pad),
+      ...extra,
+      ...Array(3).fill(pad),
+    ];
+    await fs.writeFile(file, lines.join('\n') + '\n');
+    expect((await fs.stat(file)).size).toBeGreaterThan(300 * 1024);
+    return file;
+  }
+
+  it('uses the LAST custom-title even when it is past the first 256 KB', async () => {
+    const file = await big([L({ type: 'custom-title', customTitle: 'Mid', sessionId: ID }), L({ type: 'custom-title', customTitle: 'Late', sessionId: ID })]);
+    expect(await readHead(file)).toEqual({ cwd: CWD, title: 'Late' });
+  });
+
+  it('a custom-title in the tail beats the companion file (the companion can be stale)', async () => {
+    const file = await big([L({ type: 'custom-title', customTitle: 'Late', sessionId: ID })]);
+    await fs.mkdir(file.replace(/\.jsonl$/, ''), { recursive: true });
+    await fs.writeFile(path.join(file.replace(/\.jsonl$/, ''), 'custom-title.json'), '{"customTitle":"Stale companion"}');
+    expect((await readHead(file)).title).toBe('Late');
+  });
+
+  it('without a tail custom-title, the companion <id>/custom-title.json beats the head', async () => {
+    const file = await big();
+    await fs.mkdir(file.replace(/\.jsonl$/, ''), { recursive: true });
+    await fs.writeFile(path.join(file.replace(/\.jsonl$/, ''), 'custom-title.json'), '{"customTitle":"From companion"}');
+    expect((await readHead(file)).title).toBe('From companion');
+  });
+
+  it('in a small file the last custom-title also beats a stale companion', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-title-'));
+    const f = path.join(dir, `${ID}.jsonl`);
+    await fs.writeFile(f, [L({ type: 'user', cwd: CWD, message: { role: 'user', content: 'hi' } }), L({ type: 'custom-title', customTitle: 'Renamed', sessionId: ID })].join('\n') + '\n');
+    await fs.mkdir(path.join(dir, ID));
+    await fs.writeFile(path.join(dir, ID, 'custom-title.json'), '{"customTitle":"Old"}');
+    expect((await readHead(f)).title).toBe('Renamed');
+  });
+
+  it('falls back to a head custom-title, then the first user message', async () => {
+    expect((await readHead(await big())).title).toBe('Early');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-title-'));
+    const f = path.join(dir, `${ID}.jsonl`);
+    await fs.writeFile(f, L({ type: 'user', cwd: CWD, message: { role: 'user', content: 'hello there' } }) + '\n');
+    await fs.mkdir(path.join(dir, ID));
+    await fs.writeFile(path.join(dir, ID, 'custom-title.json'), 'not json');
+    expect(await readHead(f)).toEqual({ cwd: CWD, title: 'hello there' });
   });
 });

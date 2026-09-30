@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { TranscriptMessage } from '../../shared/session-types';
 
 export type HeadInfo = { cwd: string | null; title: string | null };
@@ -48,7 +49,7 @@ function titleFrom(text: string): string | null {
   return first.length > 80 ? first.slice(0, 80) : first;
 }
 
-export function parseHead(text: string): HeadInfo {
+function scan(text: string): { cwd: string | null; custom: string | null; firstUser: string | null } {
   let cwd: string | null = null;
   let custom: string | null = null;
   let firstUser: string | null = null;
@@ -61,18 +62,51 @@ export function parseHead(text: string): HeadInfo {
       if (t) firstUser = t;
     }
   }
+  return { cwd, custom, firstUser };
+}
+
+export function parseHead(text: string): HeadInfo {
+  const { cwd, custom, firstUser } = scan(text);
   return { cwd, title: custom ?? firstUser };
 }
 
+async function companionTitle(file: string): Promise<string | null> {
+  try {
+    const o = JSON.parse(await fs.readFile(path.join(file.replace(/\.jsonl$/, ''), 'custom-title.json'), 'utf8')) as unknown;
+    const t = o && typeof o === 'object' ? (o as Rec).customTitle : null;
+    return typeof t === 'string' && t.trim() ? t.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * cwd from the head; title = the LAST `custom-title` record in the tail window, else the companion
+ * `<id>/custom-title.json` (it can lag behind the jsonl), else the last `custom-title` in the head,
+ * else the first real user message in the head.
+ */
 export async function readHead(file: string, maxBytes = 256 * 1024): Promise<HeadInfo> {
   const fh = await fs.open(file, 'r');
+  let head: ReturnType<typeof scan>;
+  let tailCustom: string | null = null;
   try {
-    const buf = Buffer.alloc(maxBytes);
-    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
-    return parseHead(buf.subarray(0, bytesRead).toString('utf8'));
+    const { size } = await fh.stat();
+    const buf = Buffer.alloc(Math.min(maxBytes, size));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    head = scan(buf.subarray(0, bytesRead).toString('utf8'));
+    if (size <= maxBytes) tailCustom = head.custom; // the head is the whole file
+    else {
+      const start = Math.max(maxBytes, size - maxBytes);
+      const tail = Buffer.alloc(size - start);
+      const r = await fh.read(tail, 0, tail.length, start);
+      // The first tail line is usually cut mid-record; parseLines skips it.
+      tailCustom = scan(tail.subarray(0, r.bytesRead).toString('utf8')).custom;
+    }
   } finally {
     await fh.close();
   }
+  const title = tailCustom ?? (await companionTitle(file)) ?? head.custom ?? head.firstUser;
+  return { cwd: head.cwd, title };
 }
 
 function stringify(v: unknown): string {
