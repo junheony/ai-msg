@@ -20,7 +20,11 @@ export async function loadOrCreateToken(file: string): Promise<string> {
   return token;
 }
 
-/** The browser never holds the login token itself, only this derived value. */
+/**
+ * The browser never holds the login token itself, only this derived value.
+ * Deliberate for now (review M6): the cookie is a fixed function of the token and is not
+ * rotated per login; rotating the token file is what invalidates every session.
+ */
 export function cookieValueFor(token: string): string {
   return createHash('sha256').update(`deck-cookie:${token}`).digest('hex');
 }

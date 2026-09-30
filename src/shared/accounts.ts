@@ -24,9 +24,13 @@ export function projectsDir(account: Account, home: string): string {
 
 const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const;
 
+/** Inherited from a parent Claude Code / proxy setup, these would send the turn elsewhere or mislabel it. */
+const ROUTING_VARS = ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_ENTRYPOINT'] as const;
+
 /**
  * Environment for one SDK turn. Copies `base`, removes every token variable
- * (env tokens override the config dir and would silently bill another account),
+ * (env tokens override the config dir and would silently bill another account) and the
+ * base-URL / Bedrock / Vertex / entrypoint variables,
  * and selects the profile: a = no CLAUDE_CONFIG_DIR (keychain service name has
  * no hash suffix), b/c = ~/.claude-b / ~/.claude-c.
  */
@@ -36,7 +40,7 @@ export function accountEnv(
   home: string,
 ): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...base };
-  for (const v of TOKEN_VARS) delete env[v];
+  for (const v of [...TOKEN_VARS, ...ROUTING_VARS]) delete env[v];
   if (account === 'a') delete env.CLAUDE_CONFIG_DIR;
   else env.CLAUDE_CONFIG_DIR = profileDir(account, home);
   return env;

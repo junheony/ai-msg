@@ -35,6 +35,15 @@ describe('accounts', () => {
     expect(accountEnv('c', base, '/Users/x').CLAUDE_CONFIG_DIR).toBe('/Users/x/.claude-c');
   });
 
+  it('also strips variables that reroute or relabel the child (base URL, Bedrock, Vertex, entrypoint)', () => {
+    const base = { PATH: '/bin', ANTHROPIC_BASE_URL: 'http://proxy', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' };
+    for (const acct of ['a', 'b'] as const) {
+      const env = accountEnv(acct, base, '/Users/x');
+      expect(env.PATH).toBe('/bin');
+      for (const k of ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_ENTRYPOINT']) expect(k in env).toBe(false);
+    }
+  });
+
   it('does not mutate the base env', () => {
     const base = { ANTHROPIC_API_KEY: 'key' };
     accountEnv('a', base, '/Users/x');
