@@ -14,6 +14,8 @@ export type UsageSnapshot = {
   generatedAt: string;
   deckReachable: boolean;
   accounts: Record<Account, AccountUsage>;
+  /** ChatGPT Pro (usage-deck card `codex`); status 'down' = unknown (D5). Optional only for Plan 1 test literals. */
+  gpt?: AccountUsage;
 };
 
 export function remainingPct(w: UsageWindow | null): number | null {
@@ -30,6 +32,7 @@ export function emptySnapshot(now: Date): UsageSnapshot {
     generatedAt: now.toISOString(),
     deckReachable: false,
     accounts: { a: emptyAccountUsage(), b: emptyAccountUsage(), c: emptyAccountUsage() },
+    gpt: emptyAccountUsage(),
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { UsageService, parseDeckState } from './UsageService';
+import { UsageService, parseDeckState, parseDeckCards } from './UsageService';
 import { remainingPct } from '../../shared/usage-types';
 
 const LIVE = {
@@ -139,5 +139,35 @@ describe('UsageService', () => {
     await vi.advanceTimersByTimeAsync(120_000);
     expect(fetchFn).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+});
+
+describe('GPT usage (D5)', () => {
+  const codexOk = { id: 'codex', status: 'ok', fetchedAt: '2026-09-30T12:00:00Z', rows: [{ label: 'Weekly (7d)', used: 40, resetsAt: '2026-10-03T18:10:34.000Z' }] };
+  const codexSetup = { id: 'codex', status: 'setup_needed', fetchedAt: '2026-09-30T06:14:10.724Z', rows: [{ label: 'Weekly (7d)', used: 100, note: 'plan: pro · limit reached' }], error: 'HTTP 401', hint: 'codex login' };
+
+  it('parses the codex card when ok; setup_needed is down with no rows (they are stale and wrong)', () => {
+    expect(parseDeckCards({ cards: [codexOk] }).gpt).toEqual({ status: 'ok', fetchedAt: '2026-09-30T12:00:00Z', fiveHour: null, weekly: { usedPct: 40, resetsAt: '2026-10-03T18:10:34.000Z' }, fable: null });
+    expect(parseDeckCards({ cards: [codexSetup] }).gpt).toEqual({ status: 'down', fetchedAt: '2026-09-30T06:14:10.724Z', fiveHour: null, weekly: null, fable: null });
+    expect(parseDeckCards({ cards: [] }).gpt.status).toBe('down');
+  });
+
+  it('applyTurn("gpt") corrects the snapshot until the deck card is newer', async () => {
+    let state: unknown = { cards: [codexSetup] };
+    const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date('2026-09-30T12:30:00Z') });
+    await u.pollOnce();
+    expect(u.snapshot().gpt?.weekly).toBeNull();
+    expect(u.snapshot().gpt?.status).toBe('down');
+    u.applyTurn('gpt', { weekly: { usedPct: 40, resetsAt: '2026-10-03T18:10:34.000Z' } });
+    expect(u.snapshot().gpt?.weekly?.usedPct).toBe(40);
+    // PF12: fresh rollout rate limits mean the seat is known even though the usage-deck card is setup_needed.
+    expect(u.snapshot().gpt?.status).toBe('ok');
+    await u.pollOnce(); // card still older than the observation → correction kept
+    expect(u.snapshot().gpt?.weekly?.usedPct).toBe(40);
+    expect(u.snapshot().gpt?.status).toBe('ok');
+    state = { cards: [{ ...codexOk, fetchedAt: '2026-09-30T13:00:00Z', rows: [{ label: 'Weekly (7d)', used: 41 }] }] };
+    await u.pollOnce();
+    expect(u.snapshot().gpt?.weekly?.usedPct).toBe(41);
+    expect(u.snapshot().accounts.b.status).toBe('down'); // Claude cards untouched by the gpt card
   });
 });
