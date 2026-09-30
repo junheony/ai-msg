@@ -8,7 +8,7 @@ import { ZERO_USAGE } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
 import { ruleString, sessionUpdates, type Engine, type EngineResult, type PermissionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
-import { displayError } from '../engine/redact';
+import { displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
@@ -125,7 +125,7 @@ export class TurnRunner {
           this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) });
           break;
         case 'compact': out.compacted = true; break;
-        case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: ev.message }); break;
+        case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
         case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
       }
     }

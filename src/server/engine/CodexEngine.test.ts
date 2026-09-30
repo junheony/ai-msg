@@ -163,6 +163,30 @@ describe('CodexEngine', () => {
     expect(spawned).toBe(1);
     expect(ev2).toEqual([expect.objectContaining({ kind: 'result', ok: false, errorText: '중단됨' })]);
   });
+
+  it('review finding 2: a flag-shaped resumeThreadId is rejected before spawning (no argv injection)', async () => {
+    let spawned = 0;
+    const engine = new CodexEngine('/opt/codex', { baseEnv: {}, spawnFn: () => { spawned++; return fakeChild([]).child; } });
+    const ev = await drain(engine.runTurn(req({ resumeThreadId: '--dangerously-bypass-approvals-and-sandbox' })));
+    expect(spawned).toBe(0);
+    expect(ev).toEqual([expect.objectContaining({ kind: 'result', ok: false, errorText: expect.stringContaining('세션 ID') })]);
+  });
+
+  it('review finding 2: a well-formed UUID resumeThreadId still spawns normally', async () => {
+    const fake = fakeChild(RUN2);
+    const engine = new CodexEngine('/opt/codex', { baseEnv: {}, spawnFn: () => fake.child });
+    const ev = await drain(engine.runTurn(req({ resumeThreadId: '01a0f2d3-0000-7c92-aeea-000000000001' })));
+    expect(ev.at(-1)).toMatchObject({ kind: 'result', ok: true, sessionId: '01a0f2d3-0000-7c92-aeea-000000000001' });
+  });
+
+  it('review finding 3: stopping iteration early (consumer break/throw) still kills the still-running child', async () => {
+    const fake = fakeChild(['{"type":"thread.started","thread_id":"t"}', '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"hi"}}']);
+    const engine = new CodexEngine('/opt/codex', { baseEnv: {}, spawnFn: () => fake.child });
+    for await (const _ev of engine.runTurn(req())) {
+      break; // abandon iteration before the child's own exit event fires
+    }
+    expect(fake.killed).toContain('SIGTERM');
+  });
 });
 
 describe('resolveCodexBin (D11 + PF14 version gate)', () => {

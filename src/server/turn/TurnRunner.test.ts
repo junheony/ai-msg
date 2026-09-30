@@ -150,6 +150,16 @@ describe('TurnRunner', () => {
     expect(msgsOf(c2, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'a' } });
   });
 
+  it('an engine notice carrying a token-shaped string arrives redacted (review finding 1)', async () => {
+    const eng = new StubEngine(() => ok('new2', [{ kind: 'notice', message: 'sk-ant-abc123def456ghi789jkl secret leaked' }]));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    const notice = msgsOf(c, 'turn_notice')[0];
+    expect(notice).toMatchObject({ type: 'turn_notice', turnId: 't' });
+    expect((notice as { message: string }).message).not.toContain('sk-ant-abc123def456ghi789jkl');
+    expect((notice as { message: string }).message).toContain('[redacted]');
+  });
+
   it('limit on first account → cooldown, move, retry on next; auth failure likewise; third failure ends', async () => {
     const eng = new StubEngine((req, call) => {
       if (call === 0) return [{ kind: 'init', sessionId: 'n1', model: 'm' }, { kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('limit', { sessionId: 'n1' })];

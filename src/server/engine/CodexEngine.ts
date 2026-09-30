@@ -10,6 +10,9 @@ import { STDERR_MAX } from './redact';
 
 type Rec = Record<string, unknown>;
 
+/** Review finding 2: `resumeThreadId` must be a Codex thread id (UUID), never argv-flag-shaped. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export type CodexTurnRequest = {
   cwd: string;
   /** Codex thread id (= deck session id for Codex sessions); null starts a new thread. */
@@ -184,14 +187,28 @@ export class CodexEngine {
       yield { ...mapper.result(false, ZERO_USAGE, '중단됨'), terminalReason: 'aborted' };
       return;
     }
+    // Review finding 2: `resumeThreadId` lands as a bare positional in `codex exec resume <id>`
+    // (see codexArgs); an id starting with `-` would be parsed as a flag (e.g. the real
+    // `--dangerously-bypass-approvals-and-sandbox`). Verified against codex-cli 0.159.2 that `--`
+    // cannot be inserted before the id here: `resume` only has two positional slots (SESSION_ID,
+    // PROMPT), so putting `--` there makes every later flag (`-c`, `--json`, `-i`, …) an
+    // "unexpected argument" instead of an option. So the UUID shape check below is the sole guard.
+    if (req.resumeThreadId !== null && !UUID_RE.test(req.resumeThreadId)) {
+      yield mapper.result(false, ZERO_USAGE, '잘못된 세션 ID 형식');
+      return;
+    }
     const child = this.spawnFn(this.bin, codexArgs(req), { cwd: req.cwd, env: codexEnv(this.baseEnv) });
     let stderrTail = '';
     child.stderr?.on('data', (chunk: Buffer | string) => { stderrTail = (stderrTail + String(chunk)).slice(-STDERR_MAX); });
     // EPIPE on stdin (child died early) must not crash the server.
     child.stdin?.on('error', () => {});
+    // Review finding 3: whether the child has already exited when we stop watching it — if the
+    // consumer abandons iteration early (e.g. `sink.emit` throws), the generator's `finally` must
+    // still kill the process instead of leaving it running.
+    let exited = false;
     const exit = new Promise<number | null>((resolve) => {
-      child.once('exit', (code: number | null) => resolve(code));
-      child.once('error', () => resolve(null));
+      child.once('exit', (code: number | null) => { exited = true; resolve(code); });
+      child.once('error', () => { exited = true; resolve(null); });
     });
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     const onAbort = () => {
@@ -221,6 +238,9 @@ export class CodexEngine {
     } finally {
       req.signal.removeEventListener('abort', onAbort);
       if (killTimer) clearTimeout(killTimer);
+      // The consumer stopped iterating (break/throw) before the child exited on its own — don't
+      // leave it running.
+      if (!exited) child.kill('SIGTERM');
     }
   }
 }
