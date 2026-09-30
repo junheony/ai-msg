@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import type http from 'node:http';
 import path from 'node:path';
+import type { SessionEntry } from '../shared/session-types';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
 import type { SessionIndex } from './sessions/SessionIndex';
 import type { UsageService } from './usage/UsageService';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
-export type HttpDeps = { token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[] };
+export type HttpDeps = { token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[]; extraSessions?: () => SessionEntry[] };
 
 /**
  * Review I8: sent on every response. Only documents are governed by CSP; in dev the page is
@@ -101,7 +102,7 @@ export function createRequestHandler(deps: HttpDeps) {
       if (url.pathname.startsWith('/api/')) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
-        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects() }); return; }
+        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []) }); return; }
         json(res, 404, { error: 'not found' });
         return;
       }

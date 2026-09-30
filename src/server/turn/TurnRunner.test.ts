@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { Account } from '../../shared/accounts';
 import type { ServerMessage } from '../../shared/protocol';
 import { StubEngine, failResult, okResult } from '../engine/StubEngine';
+import type { CodexEngine, CodexTurnRequest } from '../engine/CodexEngine';
 import type { EngineEvent } from '../engine/Engine';
 import { readCooldownUntilMs } from '../routing/cooldown';
 import { SessionIndex } from '../sessions/SessionIndex';
@@ -48,6 +49,8 @@ async function ctx(engine: StubEngine, over: Partial<TurnRunnerDeps> = {}, usage
     protectedAccount: 'a',
     auditFile: path.join(base, 'audit.log'),
     projectsRoots: roots,
+    codex: null,
+    codexSessionsRoot: path.join(base, 'codex-sessions'),
     move: async (o) => { moves.push(o); return { ok: true, targetDir: path.join(o.targetProjectsRoot, path.basename(o.sourceProjectDir)), targetFile: '', copied: [] }; },
     now: () => NOW,
     maxRetries: 2,
@@ -370,5 +373,91 @@ describe('TurnRunner', () => {
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w', sessionId: 'nope', text: 'hi' }, c.sink);
     expect(eng.calls).toHaveLength(0);
     expect(msgsOf(c, 'error')[0]).toMatchObject({ turnId: 't', message: expect.stringContaining('세션') });
+  });
+});
+
+function fakeCodex(events: EngineEvent[] | ((req: CodexTurnRequest) => EngineEvent[])): { engine: Pick<CodexEngine, 'runTurn'>; calls: CodexTurnRequest[] } {
+  const calls: CodexTurnRequest[] = [];
+  return { calls, engine: { async *runTurn(req) { calls.push(req); for (const e of typeof events === 'function' ? events(req) : events) yield e; } } };
+}
+
+const codexOk = (tid: string, text = 'ok'): EngineEvent[] => [
+  { kind: 'init', sessionId: tid, model: 'gpt-6-sol' },
+  { kind: 'notice', message: '`[features].codex_hooks` is deprecated.' },
+  { kind: 'delta', text },
+  { kind: 'result', sessionId: tid, ok: true, text, usage: { inputTokens: 15447, outputTokens: 5, cacheReadTokens: 11264, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' },
+];
+
+async function usageWithGpt(gptWeekly: number | null) {
+  const cards: unknown[] = [card('claude:main', 13, 70, 0, 154), card('claude:second', 2, 60, 4, 84), card('claude:third', 0, 91, 27, 36)];
+  if (gptWeekly !== null) cards.push({ id: 'codex', status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Weekly (7d)', used: gptWeekly }] });
+  const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) });
+  await u.pollOnce();
+  return u;
+}
+
+describe('TurnRunner: Codex sessions (D2–D5)', () => {
+  it('engine codex: runs the codex engine sandboxed, stores a codex state with the rollout file, corrects GPT usage, badge says gpt', async () => {
+    const codex = fakeCodex(codexOk('tid-1'));
+    const c = await ctx(new StubEngine(async () => []), {
+      codex: codex.engine,
+      findRollout: async (root, tid) => path.join(root, '2026/09/30', `rollout-x-${tid}.jsonl`),
+      readRateLimits: async () => ({ weekly: { usedPct: 40, resetsAt: null } }),
+    }, await usageWithGpt(null));
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'hello codex\nsecond line', engine: 'codex', sandbox: 'workspace-write' }, c.sink);
+    expect(codex.calls[0]).toMatchObject({ cwd: '/w', resumeThreadId: null, model: 'gpt-6-sol', sandbox: 'workspace-write', prompt: 'hello codex\nsecond line' });
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'gpt', engine: 'codex', model: 'gpt-6-sol', reason: 'GPT 지정', sessionId: null });
+    expect(c.msgs.find((m) => m.type === 'turn_notice')).toMatchObject({ sessionId: 'tid-1', message: expect.stringContaining('deprecated') });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: 'tid-1', badge: { account: 'gpt', model: 'gpt-6-sol', usage: { cacheReadTokens: 11264 } } });
+    const st = c.deps.store.get('tid-1');
+    expect(st).toMatchObject({ engine: 'codex', cwd: '/w', sandbox: 'workspace-write', defaultModel: 'gpt-6-sol', title: 'hello codex', rolloutFile: path.join(c.deps.codexSessionsRoot, '2026/09/30', 'rollout-x-tid-1.jsonl'), lastTurnAtMs: NOW });
+    expect(c.deps.usage.snapshot().gpt?.weekly?.usedPct).toBe(40);
+    expect(c.deps.store.codexEntries()[0]).toMatchObject({ sessionId: 'tid-1', account: 'gpt', title: 'hello codex' });
+    expect((c.deps.engine as StubEngine).calls).toHaveLength(0);
+  });
+
+  it('resuming a codex session keeps its engine, model and sandbox; the sent sandbox/model are ignored', async () => {
+    const codex = fakeCodex((req) => codexOk(req.resumeThreadId ?? 'x'));
+    const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
+    await c.deps.store.set({ engine: 'codex', sessionId: 'tid-2', cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gpt-6-astra', sandbox: 'read-only', rolloutFile: null, createdAtMs: 1 });
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/other', sessionId: 'tid-2', text: 'again', sandbox: 'workspace-write', model: 'opus', engine: 'claude' }, c.sink);
+    expect(codex.calls[0]).toMatchObject({ cwd: '/w2', resumeThreadId: 'tid-2', model: 'gpt-6-astra', sandbox: 'read-only' });
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'gpt', reason: 'GPT 세션', sessionId: 'tid-2' });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, sessionId: 'tid-2' });
+  });
+
+  it('a Codex limit failure sets a 1 h in-memory GPT cooldown that auto then honours; no retry, no account cooldown files', async () => {
+    const codex = fakeCodex([{ kind: 'init', sessionId: 'tid-3', model: 'gpt-6-sol' }, failResult('usage limit reached for this week', { sessionId: 'tid-3' })]);
+    const c = await ctx(new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]), { codex: codex.engine, findRollout: async () => null }, await usageWithGpt(10));
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't3', cwd: '/w', sessionId: null, text: 'x', engine: 'codex' }, c.sink);
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, badge: { account: 'gpt' }, errorText: expect.stringContaining('usage limit') });
+    expect(c.msgs.filter((m) => m.type === 'turn_retry')).toHaveLength(0);
+    expect(runner.gptCooldownUntilMs()).toBe(NOW + 60 * 60_000);
+    expect(readCooldownUntilMs(c.deps.cooldownDir, 'b', NOW)).toBeNull();
+    c.msgs.length = 0;
+    await runner.run({ turnId: 't4', cwd: '/w', sessionId: null, text: 'y', engine: 'auto' }, c.sink);
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'b', reason: expect.stringContaining('GPT 쿨다운') });
+  });
+
+  it('auto opens on GPT when it has the headroom; codex requested without a binary falls back to Claude with the reason', async () => {
+    const codex = fakeCodex(codexOk('tid-5'));
+    const c = await ctx(new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]), { codex: codex.engine, findRollout: async () => null }, await usageWithGpt(10));
+    await new TurnRunner(c.deps).run({ turnId: 't5', cwd: '/w', sessionId: null, text: 'x', engine: 'auto' }, c.sink);
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'gpt', reason: expect.stringContaining('→ GPT') });
+    const d = await ctx(new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]), { codex: null });
+    await new TurnRunner(d.deps).run({ turnId: 't6', cwd: '/w', sessionId: null, text: 'x', engine: 'codex', model: 'gpt-6-astra' }, d.sink);
+    expect(d.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'b', engine: 'claude', model: 'opus', reason: expect.stringContaining('codex CLI 없음 → Claude') });
+  });
+});
+
+describe('TurnRunner: Codex session ids', () => {
+  it('persists only a thread id the CLI reported (init), never a result-only id', async () => {
+    const codex = fakeCodex([failResult('잘못된 세션 ID 형식', { sessionId: '--dangerously-bypass-approvals-and-sandbox' })]);
+    const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
+    await new TurnRunner(c.deps).run({ turnId: 't7', cwd: '/w', sessionId: null, text: 'x', engine: 'codex' }, c.sink);
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, sessionId: null });
+    expect(c.deps.store.get('--dangerously-bypass-approvals-and-sandbox')).toBeNull();
+    expect(c.deps.store.codexEntries()).toEqual([]);
   });
 });

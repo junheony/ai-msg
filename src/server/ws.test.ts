@@ -59,9 +59,9 @@ beforeAll(async () => {
     const sid = req.resumeSessionId ?? 'sess-1';
     return [{ kind: 'init', sessionId: sid, model: 'm' }, { kind: 'delta', text: 'o' }, { kind: 'delta', text: 'k' }, okResult(sid, 'ok')];
   });
-  const runner = new TurnRunner({ engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots });
+  const runner = new TurnRunner({ engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -428,5 +428,66 @@ describe('PermissionBroker', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('multi-session viewing and Codex sessions (D4, D6)', () => {
+  it('hello reports codex availability', async () => {
+    const { ws } = await connect({ Cookie: COOKIE, Origin: origin });
+    const [hello] = await collect(ws, (m) => m.type === 'hello');
+    expect(hello).toMatchObject({ type: 'hello', codex: { available: false } });
+    ws.close();
+  });
+
+  it('one socket can view two sessions; close_session stops the events for that session only', async () => {
+    const sidA = '66666666-6666-4666-8666-666666666666';
+    const sidB = '77777777-7777-4777-8777-777777777777';
+    const cwdA = await seed(sidA, 'view-a');
+    const cwdB = await seed(sidB, 'view-b');
+    const viewer = (await connect({ Cookie: COOKIE, Origin: origin })).ws;
+    await collect(viewer, (m) => m.type === 'hello');
+    viewer.send(JSON.stringify({ type: 'open_session', sessionId: sidA }));
+    await collect(viewer, (m) => m.type === 'history');
+    viewer.send(JSON.stringify({ type: 'open_session', sessionId: sidB }));
+    await collect(viewer, (m) => m.type === 'history');
+    const sender = (await connect({ Cookie: COOKIE, Origin: origin })).ws;
+    await collect(sender, (m) => m.type === 'hello');
+    const seenA = collect(viewer, (m) => m.type === 'turn_result' && m.sessionId === sidA);
+    sender.send(JSON.stringify({ type: 'send', sessionId: sidA, cwd: cwdA, text: 'hi' }));
+    expect((await seenA).some((m) => m.type === 'delta')).toBe(true);
+    const seenB = collect(viewer, (m) => m.type === 'turn_result' && m.sessionId === sidB);
+    sender.send(JSON.stringify({ type: 'send', sessionId: sidB, cwd: cwdB, text: 'hi' }));
+    await seenB;
+    viewer.send(JSON.stringify({ type: 'close_session', sessionId: sidB }));
+    await new Promise((r) => setTimeout(r, 50));
+    const q = quiet(viewer, 400);
+    sender.send(JSON.stringify({ type: 'send', sessionId: sidB, cwd: cwdB, text: 'hi' }));
+    expect((await q).filter((m) => 'sessionId' in m && m.sessionId === sidB)).toEqual([]);
+    const stillA = collect(viewer, (m) => m.type === 'turn_result' && m.sessionId === sidA);
+    sender.send(JSON.stringify({ type: 'send', sessionId: sidA, cwd: cwdA, text: 'hi' }));
+    await stillA;
+    viewer.close(); sender.close();
+  });
+
+  it('open_session on a Codex session reads its rollout file and reports engine codex', async () => {
+    const tid = '01a0f2d3-0000-7c92-aeea-000000000009';
+    const rollout = path.join(base, `rollout-2026-09-30T23-59-26-${tid}.jsonl`);
+    await fs.writeFile(rollout, [
+      JSON.stringify({ type: 'session_meta', payload: { id: tid, cwd: work } }),
+      JSON.stringify({ timestamp: '2026-09-30T14:59:28.268Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Reply with exactly: ok' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] } }),
+    ].join('\n') + '\n');
+    await store.set({ engine: 'codex', sessionId: tid, cwd: work, lastTurnAtMs: 5, justCompacted: false, defaultModel: 'gpt-6-sol', sandbox: 'read-only', rolloutFile: rollout, createdAtMs: 1, title: 'Reply with exactly: ok' });
+    const { ws } = await connect({ Cookie: COOKIE, Origin: origin });
+    const [hello] = await collect(ws, (m) => m.type === 'hello');
+    expect(hello?.type === 'hello' && hello.projects.flatMap((p) => p.sessions).find((s) => s.sessionId === tid)).toMatchObject({ account: 'gpt', engine: 'codex' });
+    ws.send(JSON.stringify({ type: 'open_session', sessionId: tid }));
+    const h = (await collect(ws, (m) => m.type === 'history')).at(-1);
+    expect(h).toMatchObject({ type: 'history', sessionId: tid, cwd: work, account: 'gpt', engine: 'codex', sandbox: 'read-only', runningTurnId: null });
+    expect(h && h.type === 'history' ? h.messages : []).toEqual([
+      { kind: 'user', text: 'Reply with exactly: ok', ts: '2026-09-30T14:59:28.268Z' },
+      { kind: 'assistant', text: 'ok', model: null, toolCalls: [], ts: null },
+    ]);
+    ws.close();
   });
 });

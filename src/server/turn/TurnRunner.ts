@@ -1,22 +1,24 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
-import { DEFAULT_MODEL, type ClaudeModel } from '../../shared/models';
+import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type EngineChoice } from '../../shared/models';
 import type { ServerMessage } from '../../shared/protocol';
-import type { PermissionDecision } from '../../shared/turn-types';
-import { ZERO_USAGE } from '../../shared/turn-types';
+import { ZERO_USAGE, type PermissionDecision, type TurnUsage } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
+import type { CodexEngine } from '../engine/CodexEngine';
+import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type Engine, type EngineResult, type PermissionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
+import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
 import { moveSession } from '../sessions/SessionMover';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
-import { isCodexState, type ClaudeSessionState, type SessionStateStore } from './SessionState';
+import { isCodexState, type ClaudeSessionState, type CodexSessionState, type SessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
   emit(msg: ServerMessage): void;
@@ -24,10 +26,24 @@ export type TurnSink = {
   signal: AbortSignal;
 };
 
-export type TurnParams = { turnId: string; cwd: string; sessionId: string | null; text: string; model?: ClaudeModel };
+export type TurnParams = {
+  turnId: string;
+  cwd: string;
+  sessionId: string | null;
+  text: string;
+  /** Claude or GPT model; a model of the other engine is ignored (the session's default applies). */
+  model?: AnyModel;
+  /** New sessions only (D3). */
+  engine?: EngineChoice;
+  /** New Codex sessions only (D2). */
+  sandbox?: CodexSandbox;
+};
 
 export type TurnRunnerDeps = {
   engine: Engine;
+  /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
+  codex: Pick<CodexEngine, 'runTurn'> | null;
+  codexSessionsRoot: string;
   usage: UsageService;
   index: SessionIndex;
   store: SessionStateStore;
@@ -36,6 +52,8 @@ export type TurnRunnerDeps = {
   auditFile: string;
   projectsRoots: Record<Account, string>;
   move?: typeof moveSession;
+  findRollout?: typeof findRolloutFile;
+  readRateLimits?: typeof readRolloutRateLimits;
   now?: () => number;
   maxRetries?: number;
 };
@@ -67,15 +85,31 @@ async function exists(file: string): Promise<boolean> {
   return fs.access(file).then(() => true, () => false);
 }
 
+/** First non-empty line of the prompt, ≤ 80 chars — the sidebar title of a Codex session (D4). */
+function titleOf(text: string): string {
+  const first = text.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
+  return first.length > 80 ? first.slice(0, 80) : first || '(제목 없음)';
+}
+
 export class TurnRunner {
   private readonly move: typeof moveSession;
   private readonly now: () => number;
   private readonly maxRetries: number;
+  private readonly findRollout: typeof findRolloutFile;
+  private readonly readRateLimits: typeof readRolloutRateLimits;
+  private gptCooldownUntil: number | null = null;
 
   constructor(private readonly deps: TurnRunnerDeps) {
     this.move = deps.move ?? moveSession;
     this.now = deps.now ?? (() => Date.now());
     this.maxRetries = deps.maxRetries ?? 2;
+    this.findRollout = deps.findRollout ?? findRolloutFile;
+    this.readRateLimits = deps.readRateLimits ?? readRolloutRateLimits;
+  }
+
+  /** D3: set after a Codex limit failure; consulted by chooseEngine for 'auto'. In memory only. */
+  gptCooldownUntilMs(): number | null {
+    return this.gptCooldownUntil;
   }
 
   private async relocate(state: ClaudeSessionState, to: Account, sink: TurnSink, turnId: string): Promise<ClaudeSessionState | null> {
@@ -149,26 +183,79 @@ export class TurnRunner {
 
   async run(p: TurnParams, sink: TurnSink): Promise<void> {
     const { deps } = this;
-    let state: ClaudeSessionState | null = null;
+    let state: SessionState | null = null;
     if (p.sessionId) {
-      const found = deps.store.get(p.sessionId);
-      if (found && isCodexState(found)) {
-        // The real Codex turn path arrives in a later task; a Codex state must never fall through the Claude-only code below.
-        sink.emit({ type: 'error', turnId: p.turnId, message: `Codex 세션은 아직 지원하지 않습니다: ${p.sessionId}` });
-        return;
-      }
-      if (found) {
-        state = found;
-      } else {
+      state = deps.store.get(p.sessionId);
+      if (!state) {
         const e = deps.index.lookup(p.sessionId);
-        if (!e) { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
-        if (e.account === 'gpt') { sink.emit({ type: 'error', turnId: p.turnId, message: `Codex 세션 상태를 찾을 수 없습니다: ${p.sessionId}` }); return; }
+        // Codex sessions always have a state entry (D4); a 'gpt' index entry without one is a bug, not a resumable session.
+        if (!e || e.account === 'gpt') { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
         state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
       }
     }
+    if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션');
+    if (!state) {
+      const pick = chooseEngine({
+        choice: p.engine ?? 'claude', usage: deps.usage.snapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
+        gptCooldownUntilMs: this.gptCooldownUntil, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount,
+      });
+      if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason);
+      // Only a non-default choice earns a prefix, so Plan 1 badges read exactly as before.
+      return this.runClaude(p, null, sink, p.engine && p.engine !== 'claude' ? pick.reason : null);
+    }
+    return this.runClaude(p, state, sink, null);
+  }
+
+  /** D2/D3: one ChatGPT account — no routing, no session move, no retry; sandbox + approval never. */
+  private async runCodex(p: TurnParams, state: CodexSessionState | null, sink: TurnSink, reason: string): Promise<void> {
+    const { deps } = this;
+    const cwd = state?.cwd ?? p.cwd;
+    const model: CodexModel = state?.defaultModel ?? (isCodexModel(p.model) ? p.model : DEFAULT_CODEX_MODEL);
+    const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? DEFAULT_SANDBOX;
+    // Task 2 follow-up: the id is either the stored one (itself CLI-reported) or what the CLI reports via init
+    // (thread.started) — never the result's sessionId, which echoes a rejected resume id.
+    let sessionId: string | null = state?.sessionId ?? null;
+    const scope = () => ({ turnId: p.turnId, sessionId, cwd });
+    const badge = (usage: TurnUsage) => ({ account: 'gpt' as const, model, reason, usage, modelNote: null });
+    if (!deps.codex) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: 'codex CLI 를 찾을 수 없습니다' }); return; }
+    if (sink.signal.aborted) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: '중단됨' }); return; }
+    sink.emit({ type: 'turn_started', ...scope(), account: 'gpt', model, reason, attempt: 0, engine: 'codex' });
+    let result: EngineResult | null = null;
+    for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, prompt: p.text, signal: sink.signal })) {
+      switch (ev.kind) {
+        case 'init': sessionId = ev.sessionId; break;
+        case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+        case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+        case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
+        case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+        case 'result': result = ev; break;
+        case 'rate_limit': case 'compact': break;
+      }
+    }
+    const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
+    if (sessionId) {
+      const rolloutFile = state?.rolloutFile ?? (await this.findRollout(deps.codexSessionsRoot, sessionId).catch(() => null));
+      const next: CodexSessionState = {
+        engine: 'codex', sessionId, cwd, lastTurnAtMs: res.ok ? this.now() : (state?.lastTurnAtMs ?? null), justCompacted: false,
+        defaultModel: state?.defaultModel ?? model, sandbox, rolloutFile, createdAtMs: state?.createdAtMs ?? this.now(), title: state?.title ?? titleOf(p.text),
+      };
+      await deps.store.set(next);
+      // D5: the rollout's token_count.rate_limits is the only per-turn GPT usage signal.
+      if (rolloutFile) {
+        const w = await this.readRateLimits(rolloutFile).catch(() => null);
+        if (w) deps.usage.applyTurn('gpt', w);
+      }
+    }
+    if (!res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit') this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit;
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : displayError(res.errorText, res.stderr) });
+  }
+
+  private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null): Promise<void> {
+    const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const sessionDefault = state?.defaultModel ?? DEFAULT_MODEL;
-    const wanted = p.model ?? sessionDefault;
+    const wantedClaude = isClaudeModel(p.model) ? p.model : undefined;
+    const wanted = wantedClaude ?? sessionDefault;
     const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable' };
 
     const first = chooseAccount({
@@ -179,7 +266,7 @@ export class TurnRunner {
       cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()),
     });
     let account = first.account;
-    let reason = first.reason;
+    let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
     if (state && account !== state.account) {
       const moved = await this.relocate(state, account, sink, p.turnId);
       if (moved) state = moved;
@@ -191,12 +278,12 @@ export class TurnRunner {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, ok: false, text: '', badge: { account, model: p.model ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null }, errorText: '중단됨' });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null }, errorText: '중단됨' });
         return;
       }
       const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
-      const { model, note } = resolveModel(p.model, sessionDefault, fable);
-      sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt });
+      const { model, note } = resolveModel(wantedClaude, sessionDefault, fable);
+      sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt, engine: 'claude' });
 
       const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants);
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };

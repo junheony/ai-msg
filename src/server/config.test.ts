@@ -48,4 +48,12 @@ describe('config', () => {
     const o = loadConfig({ DECK_CONFIG_DIR: '/cfg', DECK_PORT: '9999', DECK_URL: 'http://x', CLAUDE_PROTECT: 'b', DECK_LOOPBACK_ONLY: '1', DECK_DEV_ORIGIN: 'http://localhost:5173,http://127.0.0.1:5173', DECK_UI_DIR: '/ui' }, home, '/repo');
     expect(o).toMatchObject({ configDir: '/cfg', tokenFile: '/cfg/token', port: 9999, deckUrl: 'http://x', protectedAccount: 'b', loopbackOnly: true, devOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'], uiDir: '/ui' });
   });
+
+  it('codex bin, sessions root and attachments dir (D11)', () => {
+    const cfg = loadConfig({ PATH: '/nonexistent', CODEX_HOME: '/h/.codex-alt' }, '/h', '/repo');
+    expect(cfg.codexBin).toBeNull();
+    expect(cfg.codexSessionsRoot).toBe('/h/.codex-alt/sessions');
+    expect(cfg.attachmentsDir).toBe('/h/.config/deck/attachments');
+    expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').codexSessionsRoot).toBe('/h/.codex/sessions');
+  });
 });

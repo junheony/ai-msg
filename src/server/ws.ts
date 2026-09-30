@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import type http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { isClaudeModel } from '../shared/models';
 import { ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
 import type { PermissionDecision } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
+import { readCodexTranscript } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
 import type { SessionIndex } from './sessions/SessionIndex';
@@ -65,7 +65,7 @@ export class PermissionBroker {
 }
 
 /** Deviation (added per review I5): extraHosts feeds the Host allowlist in checkUpgrade. */
-export type WsDeps = { token: string; devOrigins: string[]; runner: TurnRunner; index: SessionIndex; usage: UsageService; store: SessionStateStore; extraHosts?: string[] };
+export type WsDeps = { token: string; devOrigins: string[]; runner: TurnRunner; index: SessionIndex; usage: UsageService; store: SessionStateStore; extraHosts?: string[]; codexAvailable: boolean; readCodexHistory?: typeof readCodexTranscript };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -86,8 +86,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
    * `new:<turnId>` until the CLI reports its id, then by that id as well.
    */
   const busy = new Map<string, string>();
-  /** Review I3: the session each socket has open (open_session / send), for routing turn events. */
-  const viewing = new Map<WebSocket, string>();
+  /** D6: the sessions each socket has open (one per pane); turn events of a session go to every socket viewing it. */
+  const viewing = new Map<WebSocket, Set<string>>();
+  const view = (ws: WebSocket, sessionId: string) => { let s = viewing.get(ws); if (!s) { s = new Set(); viewing.set(ws, s); } s.add(sessionId); };
+  /** Sidebar listing: profile scan + deck-created Codex sessions (D4). */
+  const projects = () => deps.index.projects(deps.store.codexEntries());
 
   const send = (ws: WebSocket, msg: ServerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
@@ -114,7 +117,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       if (!busy.has(sid)) busy.set(sid, turn.turnId);
     }
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
-    if (turn.sessionId) for (const [c, v] of viewing) if (v === turn.sessionId) to.add(c);
+    if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
     for (const c of to) send(c, msg);
   };
 
@@ -134,8 +137,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
   }
 
   const startTurn = (ws: WebSocket, msg: Extract<ClientMessage, { type: 'send' }>) => {
-    if (msg.sessionId) viewing.set(ws, msg.sessionId);
-    else viewing.delete(ws);
+    if (msg.sessionId) view(ws, msg.sessionId);
     if (msg.sessionId && busy.has(msg.sessionId)) { send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다' }); return; }
     const turnId = randomUUID();
     const ac = new AbortController();
@@ -167,7 +169,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       try {
         // Review M8: the working directory must exist before a CLI is started in it.
         if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}` }); return; }
-        await deps.runner.run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model && isClaudeModel(msg.model) ? { model: msg.model } : {}) }, sink);
+        await deps.runner.run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model ? { model: msg.model } : {}), ...(msg.engine ? { engine: msg.engine } : {}), ...(msg.sandbox ? { sandbox: msg.sandbox } : {}) }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
         console.error('deck: turn failed', err);
@@ -177,7 +179,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       }
       if (msg.sessionId === null) {
         await deps.index.refresh();
-        broadcast({ type: 'index', projects: deps.index.projects() });
+        broadcast({ type: 'index', projects: projects() });
       }
     })().catch((err: unknown) => console.error('deck: post-turn index refresh failed', errMsg(err)));
   };
@@ -186,7 +188,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: deps.index.projects(), running: running(), codex: { available: false } });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), running: running(), codex: { available: deps.codexAvailable } });
     for (const m of broker.pending()) send(ws, m);
 
     ws.on('message', (data) => {
@@ -212,6 +214,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
         case 'open_session': {
           const sessionId = msg.sessionId;
           void (async () => {
+            const st = deps.store.get(sessionId);
+            if (st && isCodexState(st)) {
+              view(ws, sessionId);
+              const messages = st.rolloutFile ? await (deps.readCodexHistory ?? readCodexTranscript)(st.rolloutFile).catch(() => []) : [];
+              send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, messages, runningTurnId: busy.get(sessionId) ?? null });
+              return;
+            }
             let entry = deps.index.lookup(sessionId);
             // Review (flaky ws.test.ts): a session written just after the last scan isn't in
             // the in-memory index yet. Rescan once (single-flight) and re-check before giving up.
@@ -220,21 +229,22 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
               entry = deps.index.lookup(sessionId);
             }
             if (!entry) { send(ws, { type: 'error', turnId: null, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
-            viewing.set(ws, sessionId);
-            const state = deps.store.get(sessionId);
-            // Codex session state has no jsonl project dir (the real Codex history path arrives later): fall back to the index entry.
-            const claudeState = state && !isCodexState(state) ? state : null;
+            view(ws, sessionId);
+            // PF5: `st` is narrowed to a Claude state (or null) by the Codex return above.
             const found = entry;
-            await readTranscript(claudeState ? `${claudeState.projectDir}/${sessionId}.jsonl` : found.file)
+            await readTranscript(st ? `${st.projectDir}/${sessionId}.jsonl` : found.file)
               .catch(() => readTranscript(found.file))
-              .then((messages) => send(ws, { type: 'history', sessionId, cwd: found.cwd, account: claudeState?.account ?? found.account, messages, runningTurnId: busy.get(sessionId) ?? null }))
+              .then((messages) => send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, messages, runningTurnId: busy.get(sessionId) ?? null }))
               .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
           })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
           break;
         }
+        case 'close_session':
+          viewing.get(ws)?.delete(msg.sessionId);
+          break;
         case 'refresh_index':
           void rescanIndex()
-            .then(() => broadcast({ type: 'index', projects: deps.index.projects() }))
+            .then(() => broadcast({ type: 'index', projects: projects() }))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
           break;
       }
