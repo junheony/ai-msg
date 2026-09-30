@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +16,16 @@ async function fixture() {
   await fs.writeFile(path.join(srcDir, ID, 'custom-title.json'), '{"customTitle":"T"}');
   const dstRoot = path.join(base, 'dst', 'projects');
   return { base, srcRoot, srcDir, dstRoot };
+}
+
+async function snapshot(dir: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const e of await fs.readdir(dir, { withFileTypes: true, recursive: true })) {
+    const p = path.join(e.parentPath, e.name);
+    const rel = path.relative(dir, p);
+    out[rel] = e.isDirectory() ? '<dir>' : await sha256File(p);
+  }
+  return out;
 }
 
 describe('moveSession', () => {
@@ -38,15 +48,103 @@ describe('moveSession', () => {
     expect((await fs.stat(path.join(srcDir, `${ID}.jsonl`))).mtimeMs).toBe(beforeStat.mtimeMs);
   });
 
-  it('overwrites an older copy at the target', async () => {
+  it('accepts a target that is a byte-prefix of the source (older deck copy) and keeps target-only companions', async () => {
     const { srcDir, dstRoot } = await fixture();
-    await fs.mkdir(path.join(dstRoot, '-Users-x-proj', ID), { recursive: true });
-    await fs.writeFile(path.join(dstRoot, '-Users-x-proj', `${ID}.jsonl`), 'old\n');
-    await fs.writeFile(path.join(dstRoot, '-Users-x-proj', ID, 'stale.txt'), 'x');
+    const src = await fs.readFile(path.join(srcDir, `${ID}.jsonl`));
+    const tDir = path.join(dstRoot, '-Users-x-proj');
+    await fs.mkdir(path.join(tDir, ID), { recursive: true });
+    await fs.writeFile(path.join(tDir, `${ID}.jsonl`), src.subarray(0, 100));
+    await fs.writeFile(path.join(tDir, ID, 'only-on-target.txt'), 'k');
     const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
-    expect(r.ok).toBe(true);
-    expect(await sha256File(path.join(dstRoot, '-Users-x-proj', `${ID}.jsonl`))).toBe(await sha256File(path.join(srcDir, `${ID}.jsonl`)));
-    await expect(fs.stat(path.join(dstRoot, '-Users-x-proj', ID, 'stale.txt'))).rejects.toThrow();
+    expect(r).toMatchObject({ ok: true });
+    expect(await sha256File(path.join(tDir, `${ID}.jsonl`))).toBe(await sha256File(path.join(srcDir, `${ID}.jsonl`)));
+    expect(await fs.readFile(path.join(tDir, ID, 'only-on-target.txt'), 'utf8')).toBe('k');
+    expect(await fs.readFile(path.join(tDir, ID, 'custom-title.json'), 'utf8')).toBe('{"customTitle":"T"}');
+    expect((await fs.readdir(tDir)).filter((n) => n.includes('deck-tmp'))).toEqual([]);
+  });
+
+  it('refuses a diverged target and leaves it byte-identical', async () => {
+    const { srcDir, dstRoot } = await fixture();
+    const tDir = path.join(dstRoot, '-Users-x-proj');
+    await fs.mkdir(path.join(tDir, ID), { recursive: true });
+    await fs.writeFile(path.join(tDir, `${ID}.jsonl`), 'old\n');
+    await fs.writeFile(path.join(tDir, ID, 'keep.txt'), 'k');
+    const snap = await snapshot(tDir);
+    const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('대상 세션이 따로 진행됨');
+    expect(await snapshot(tDir)).toEqual(snap);
+  });
+
+  it('leaves the target unchanged when the companion copy fails after staging the jsonl', async () => {
+    const { srcDir, dstRoot } = await fixture();
+    const src = await fs.readFile(path.join(srcDir, `${ID}.jsonl`));
+    const tDir = path.join(dstRoot, '-Users-x-proj');
+    await fs.mkdir(path.join(tDir, ID), { recursive: true });
+    await fs.writeFile(path.join(tDir, `${ID}.jsonl`), src.subarray(0, 40));
+    await fs.writeFile(path.join(tDir, ID, 'keep.txt'), 'k');
+    const locked = path.join(srcDir, ID, 'subagents', 'agent-1.jsonl');
+    await fs.chmod(locked, 0o000);
+    const snap = await snapshot(tDir);
+    try {
+      const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
+      expect(r.ok).toBe(false);
+    } finally {
+      await fs.chmod(locked, 0o600);
+    }
+    expect(await snapshot(tDir)).toEqual(snap);
+  });
+
+  it('rolls the companions back when the final jsonl rename (commit point) fails', async () => {
+    const { srcDir, dstRoot } = await fixture();
+    const src = await fs.readFile(path.join(srcDir, `${ID}.jsonl`));
+    const tDir = path.join(dstRoot, '-Users-x-proj');
+    await fs.mkdir(path.join(tDir, ID), { recursive: true });
+    await fs.writeFile(path.join(tDir, `${ID}.jsonl`), src.subarray(0, 40));
+    await fs.writeFile(path.join(tDir, ID, 'keep.txt'), 'k');
+    const snap = await snapshot(tDir);
+    const real = fs.rename.bind(fs);
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (a, b) => {
+      if (String(b) === path.join(tDir, `${ID}.jsonl`)) throw Object.assign(new Error('EACCES: injected'), { code: 'EACCES' });
+      return real(a, b);
+    });
+    try {
+      const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
+      expect(r.ok).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await snapshot(tDir)).toEqual(snap);
+  });
+
+  it('refuses when the source changes mid-copy and leaves the target untouched', async () => {
+    const { srcDir, dstRoot } = await fixture();
+    const srcFile = path.join(srcDir, `${ID}.jsonl`);
+    const real = fs.cp.bind(fs);
+    const spy = vi.spyOn(fs, 'cp').mockImplementation(async (...args: Parameters<typeof fs.cp>) => {
+      await real(...args);
+      await fs.appendFile(srcFile, '{"type":"user","late":true}\n');
+    });
+    try {
+      const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toContain('원본이 복사 중 바뀜');
+    } finally {
+      spy.mockRestore();
+    }
+    const tDir = path.join(dstRoot, '-Users-x-proj');
+    expect(await fs.readdir(tDir).catch(() => [])).toEqual([]);
+  });
+
+  it('refuses when the same session id already exists in another directory of the target profile', async () => {
+    const { srcDir, dstRoot } = await fixture();
+    const other = path.join(dstRoot, '-Users-x-proj-nfd');
+    await fs.mkdir(other, { recursive: true });
+    await fs.writeFile(path.join(other, `${ID}.jsonl`), 'x\n');
+    const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('-Users-x-proj-nfd');
+    await expect(fs.stat(path.join(dstRoot, '-Users-x-proj', `${ID}.jsonl`))).rejects.toThrow();
   });
 
   it('works without a companion dir and is a no-op when source == target', async () => {
