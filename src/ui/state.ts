@@ -91,7 +91,7 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
 }
 
 /** The pane's model if it belongs to `engine`, else that engine's default. */
-function modelFor(engine: EngineKind, model: AnyModel): AnyModel {
+export function modelFor(engine: EngineKind, model: AnyModel): AnyModel {
   if (engine === 'codex') return isCodexModel(model) ? model : DEFAULT_CODEX_MODEL;
   return isClaudeModel(model) ? model : DEFAULT_MODEL;
 }
@@ -207,15 +207,11 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects };
     case 'history': {
-      // Every pane with this session open (`open` records the id before open_session is sent).
-      if (state.panes.some((p) => p.session?.sessionId === msg.sessionId)) {
-        return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? paneOnServer(p, msg, false) : p)) };
-      }
-      // Unclaimed: only an empty active pane (no session at all) adopts it (Plan 1 flow); a pane showing another
-      // session is never overwritten, so a history for a pane closed or switched meanwhile is dropped.
-      const active = state.panes.find((p) => p.id === state.activePaneId);
-      if (!active || active.session) return state;
-      return { ...state, panes: state.panes.map((p) => (p === active ? paneOnServer(p, msg, false) : p)) };
+      // Every pane with this session open (`open` records the id before open_session is sent, so a pane still
+      // waiting for its reply counts). A history no pane views — its pane was closed or switched while the reply
+      // was in flight — is dropped, never adopted by a blank pane (T9 prerequisite b).
+      if (!state.panes.some((p) => p.session?.sessionId === msg.sessionId)) return state;
+      return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? paneOnServer(p, msg, false) : p)) };
     }
     case 'permission_request': {
       // Prompts from every session are shown (any device may answer); replays on reconnect are deduped (review M10).

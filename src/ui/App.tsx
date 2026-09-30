@@ -1,20 +1,20 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import type { ClientMessage } from '../shared/protocol';
-import { Chat } from './components/Chat';
 import { Login } from './components/Login';
+import { Pane } from './components/Pane';
+import { PermissionCard } from './components/PermissionCard';
+import { QuestionCard } from './components/QuestionCard';
 import { Sidebar } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
-import { initialState, reducer } from './state';
+import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action } from './state';
 import { createSocket } from './ws';
 
 export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [state, dispatch] = useReducer(reducer, initialState);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
-  const openSessionId = useRef<string | null>(null);
-  openSessionId.current = state.panes[0]!.session?.sessionId ?? null;
-  const activeTurn = useRef<string | null>(null);
-  activeTurn.current = state.panes[0]!.activeTurnId;
+  const latest = useRef(state);
+  latest.current = state;
 
   useEffect(() => { void fetch('/api/me').then((r) => setAuthed(r.ok)); }, []);
 
@@ -22,11 +22,13 @@ export function App() {
     if (!authed) return;
     sock.current = createSocket((msg) => {
       dispatch({ type: 'server', msg });
-      // Reconnected: re-open the current session so this socket receives its turn events again (review I3).
+      // Reconnected: re-open every pane's session (once each) so this socket receives their turn events again (review I3, D6).
       if (msg.type === 'hello') {
-        if (openSessionId.current) sock.current?.send({ type: 'open_session', sessionId: openSessionId.current });
-        const t = activeTurn.current;
-        if (t && msg.running.some((r) => r.turnId === t)) sock.current?.send({ type: 'watch_turn', turnId: t });
+        const panes = latest.current.panes;
+        for (const id of new Set(panes.map((p) => p.session?.sessionId).filter((x): x is string => !!x))) sock.current?.send({ type: 'open_session', sessionId: id });
+        for (const p of panes) {
+          if (p.activeTurnId && msg.running.some((r) => r.turnId === p.activeTurnId)) sock.current?.send({ type: 'watch_turn', turnId: p.activeTurnId });
+        }
       }
     }, (value) => dispatch({ type: 'connected', value }), () => setAuthed(false));
     return () => sock.current?.close();
@@ -36,40 +38,53 @@ export function App() {
   if (!authed) return <Login onLoggedIn={() => setAuthed(true)} />;
 
   const send = (m: ClientMessage) => sock.current?.send(m);
-  const session = state.panes[0]!.session;
+  /**
+   * Pane-changing actions (open / close): the server's per-socket view set must shrink too, so every session
+   * no pane views after the action gets a close_session (T9 prerequisite b; duplicate-session panes keep it).
+   */
+  const apply = (action: Action) => {
+    const prev = latest.current;
+    const next = reducer(prev, action);
+    latest.current = next;
+    dispatch(action);
+    for (const sessionId of sessionsToClose(prev, next)) send({ type: 'close_session', sessionId });
+  };
+  const active = state.panes.find((p) => p.id === state.activePaneId) ?? state.panes[0]!;
+  const openIn = (paneId: string, sessionId: string | null, cwd: string, title: string) => {
+    apply({ type: 'open', sessionId, cwd, title, paneId });
+    if (sessionId) send({ type: 'open_session', sessionId });
+  };
+  const orphanPerms = orphanCards(state.panes, state.pending);
+  const orphanQs = orphanCards(state.panes, state.questions);
 
   return (
     <div className="app">
       <header>
         <span className="brand">deck</span>
-        <UsagePanel usage={state.usage} current={session?.account ?? null} />
+        <UsagePanel usage={state.usage} current={active.session?.account ?? null} />
+        <button type="button" className="split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title="분할보기 (최대 4)">+ 분할</button>
         <span className={`conn ${state.connected ? 'on' : 'off'}`}>{state.connected ? '연결됨' : '재연결 중…'}</span>
       </header>
       {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}
+      {(orphanPerms.length > 0 || orphanQs.length > 0) && (
+        <div className="global-cards">
+          {orphanPerms.map((p) => <PermissionCard key={p.requestId} req={p} onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })} />)}
+          {orphanQs.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })} />)}
+        </div>
+      )}
       <div className="body">
         <Sidebar
           projects={state.projects}
-          currentSessionId={session?.sessionId ?? null}
-          onOpen={(sessionId, cwd, title) => { dispatch({ type: 'open', sessionId, cwd, title }); send({ type: 'open_session', sessionId }); }}
-          onNew={(cwd, name) => dispatch({ type: 'open', sessionId: null, cwd, title: `${name} · 새 세션` })}
+          currentSessionId={active.session?.sessionId ?? null}
+          onOpen={(sessionId, cwd, title) => openIn(active.id, sessionId, cwd, title)}
+          onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
           onRefresh={() => send({ type: 'refresh_index' })}
         />
-        {session ? (
-          <Chat
-            items={state.panes[0]!.items}
-            pending={state.pending}
-            activeTurnId={state.panes[0]!.activeTurnId}
-            busy={state.panes[0]!.activeTurnId !== null || state.panes[0]!.awaitingStart}
-            model={state.panes[0]!.model}
-            title={`${session.title} — ${session.cwd}`}
-            onSend={(text) => { dispatch({ type: 'sent', text }); send({ type: 'send', sessionId: session.sessionId, cwd: session.cwd, text, model: state.panes[0]!.model }); }}
-            onInterrupt={() => { if (state.panes[0]!.activeTurnId) send({ type: 'interrupt', turnId: state.panes[0]!.activeTurnId }); }}
-            onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
-            onModel={(model) => dispatch({ type: 'set_model', model })}
-          />
-        ) : (
-          <main className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</main>
-        )}
+        <div className="panes" data-count={state.panes.length}>
+          {state.panes.map((p) => (
+            <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => apply({ type: 'close_pane', paneId: p.id })} />
+          ))}
+        </div>
       </div>
     </div>
   );

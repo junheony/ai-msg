@@ -10,6 +10,9 @@ function play(msgs: ServerMessage[], start: AppState = initialState): AppState {
   return msgs.reduce((s, msg) => reducer(s, { type: 'server', msg }), start);
 }
 
+/** The app dispatches `open` (recording the id on the pane) before it sends open_session; history only lands on such a pane. */
+const openedOn = (sessionId: string): AppState => reducer(initialState, { type: 'open', sessionId, cwd: '/w', title: 't' });
+
 describe('reducer', () => {
   it('hello/usage/index update the top-level fields', () => {
     const s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false } }]);
@@ -64,7 +67,7 @@ describe('reducer', () => {
       { kind: 'user', text: 'q', ts: null },
       { kind: 'assistant', text: 'a', model: 'claude-opus-5-5', toolCalls: [{ id: 'tu', name: 'Read', input: {} }], ts: null },
       { kind: 'tool_result', toolUseId: 'tu', content: 'file', isError: false, ts: null },
-    ] }]);
+    ] }], openedOn('s'));
     expect(pane(s).session).toMatchObject({ sessionId: 's', cwd: '/w', account: 'b' });
     expect(pane(s).items).toEqual(fromTranscript([
       { kind: 'user', text: 'q', ts: null },
@@ -112,7 +115,7 @@ describe('reducer', () => {
   const historyOf = (sessionId: string, account: 'a' | 'b' | 'c' = 'b'): ServerMessage => ({ type: 'history', sessionId, cwd: '/w', account, messages: [{ kind: 'user', text: 'q', ts: null }], runningTurnId: null });
 
   it("another session's turn events leave the open session untouched", () => {
-    const s0 = play([historyOf('s')]);
+    const s0 = play([historyOf('s')], openedOn('s'));
     const s = play([
       { type: 'turn_started', turnId: 'tx', sessionId: 'other', cwd: '/x', account: 'c', model: 'opus', reason: 'r', attempt: 0 },
       { type: 'delta', turnId: 'tx', sessionId: 'other', cwd: '/x', text: 'leak' },
@@ -135,7 +138,7 @@ describe('reducer', () => {
   });
 
   it("a turn on the open session started elsewhere streams in but never rewrites sessionId/account", () => {
-    const s0 = play([historyOf('s', 'b')]);
+    const s0 = play([historyOf('s', 'b')], openedOn('s'));
     const s = play([
       { type: 'turn_started', turnId: 'to', sessionId: 's', cwd: '/w', account: 'c', model: 'opus', reason: 'r', attempt: 0 },
       { type: 'delta', turnId: 'to', sessionId: 's', cwd: '/w', text: 'hi' },
@@ -165,7 +168,7 @@ describe('reducer', () => {
   });
 
   it('hello restores 중단 for a turn still running on the open session and clears a finished one', () => {
-    const s0 = play([historyOf('s')]);
+    const s0 = play([historyOf('s')], openedOn('s'));
     const s1 = play([{ type: 'hello', usage, projects: [], running: [{ turnId: 'tr', sessionId: 's', cwd: '/w' }], codex: { available: false } }], s0);
     expect(pane(s1).activeTurnId).toBe('tr');
     const s2 = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false } }], s1);
@@ -173,7 +176,7 @@ describe('reducer', () => {
   });
 
   it('history for a session with a running turn shows it as streaming', () => {
-    const s = play([{ ...historyOf('s'), runningTurnId: 'tr' } as ServerMessage, { type: 'delta', turnId: 'tr', sessionId: 's', cwd: '/w', text: 'more' }]);
+    const s = play([{ ...historyOf('s'), runningTurnId: 'tr' } as ServerMessage, { type: 'delta', turnId: 'tr', sessionId: 's', cwd: '/w', text: 'more' }], openedOn('s'));
     expect(pane(s).activeTurnId).toBe('tr');
     expect(pane(s).items.at(-1)).toMatchObject({ kind: 'assistant', turnId: 'tr', streaming: true, text: 'more' });
   });
@@ -390,6 +393,19 @@ describe('panes (D6)', () => {
       s = play([{ type: 'history', sessionId: 'gone', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [{ kind: 'user', text: 'q', ts: null }] }], s);
       expect(pane(s).session?.sessionId).toBe('s1');
       expect(pane(s).items).toEqual([]);
+    });
+
+    it('T9 (b): a history for a session no pane views or is opening is dropped, even into a blank active pane', () => {
+      // Pane p1 opens s2 and is closed while the open_session reply is in flight; a fresh blank pane is active.
+      let s = reducer(initialState, { type: 'add_pane' });
+      s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 't', paneId: 'p1' });
+      s = reducer(s, { type: 'close_pane', paneId: 'p1' });
+      s = reducer(s, { type: 'add_pane' });
+      expect(s.panes.find((p) => p.id === s.activePaneId)?.session).toBeNull();
+      const before = s;
+      s = play([{ type: 'history', sessionId: 's2', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [{ kind: 'user', text: 'stale', ts: null }] }], s);
+      expect(s).toBe(before);
+      expect(play([{ type: 'history', sessionId: 'x', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [] }]).panes[0]?.session).toBeNull();
     });
 
     it('M2: turn_notice raises the banner only for a turn some pane owns without an item', () => {
