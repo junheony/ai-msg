@@ -33,6 +33,8 @@ export type EngineEvent =
   | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean }
   | { kind: 'rate_limit'; info: RateLimitSignal }
   | { kind: 'compact' }
+  /** Non-fatal engine warning shown as a turn note (Codex `item.type === 'error'` items). */
+  | { kind: 'notice'; message: string }
   | EngineResult;
 
 /**

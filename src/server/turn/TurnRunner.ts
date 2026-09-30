@@ -125,6 +125,7 @@ export class TurnRunner {
           this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) });
           break;
         case 'compact': out.compacted = true; break;
+        case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: ev.message }); break;
         case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
       }
     }

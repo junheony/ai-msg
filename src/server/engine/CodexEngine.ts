@@ -1,0 +1,301 @@
+import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import readline from 'node:readline';
+import { codexEnv } from '../../shared/accounts';
+import type { CodexModel, CodexSandbox } from '../../shared/models';
+import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
+import type { EngineEvent, EngineResult } from './Engine';
+import { STDERR_MAX } from './redact';
+
+type Rec = Record<string, unknown>;
+
+export type CodexTurnRequest = {
+  cwd: string;
+  /** Codex thread id (= deck session id for Codex sessions); null starts a new thread. */
+  resumeThreadId: string | null;
+  model: CodexModel;
+  sandbox: CodexSandbox;
+  prompt: string;
+  /** Absolute paths of image attachments (D7), passed as `-i`. */
+  imagePaths?: string[];
+  signal: AbortSignal;
+};
+
+/**
+ * The slice of ChildProcess the engine uses; tests hand in a fake. `once` is declared as
+ * per-event overloads (PF9) so both a real `ChildProcess` and the test fake satisfy it.
+ */
+export type ChildLike = Pick<ChildProcess, 'stdout' | 'stderr' | 'stdin' | 'kill'> & {
+  once(event: 'exit', cb: (code: number | null) => void): unknown;
+  once(event: 'error', cb: (err: Error) => void): unknown;
+};
+
+export type SpawnFn = (bin: string, args: string[], opts: { cwd: string; env: Record<string, string | undefined> }) => ChildLike;
+
+/**
+ * D2: every turn overrides the user's config.toml (which sets danger-full-access on this Mac) with a
+ * sandbox and `approval_policy="never"` — exec mode cannot relay approvals, so the sandbox is the guard.
+ * The prompt is read from stdin (`-`), never placed in argv. `-i` is multi-valued, so a flag follows
+ * the image list to keep the trailing `-` from being taken as a file. `resume` has no `-s`/`-C`
+ * (verified `codex exec resume --help`), hence `-c sandbox_mode=…` for both forms.
+ */
+export function codexArgs(req: Pick<CodexTurnRequest, 'cwd' | 'resumeThreadId' | 'model' | 'sandbox' | 'imagePaths'>): string[] {
+  const images = (req.imagePaths ?? []).flatMap((p) => ['-i', p]);
+  const common = [
+    '--json', '--skip-git-repo-check', '-m', req.model,
+    '-c', `sandbox_mode="${req.sandbox}"`,
+    '-c', 'approval_policy="never"',
+    '-c', 'sandbox_workspace_write.network_access=false',
+  ];
+  return req.resumeThreadId
+    ? ['exec', 'resume', req.resumeThreadId, ...images, ...common, '-']
+    : ['exec', '-C', req.cwd, ...images, ...common, '-'];
+}
+
+/** Codex `input_tokens` includes `cached_input_tokens` (total = input + output); deck reports them apart like Anthropic usage. */
+function usageOf(u: unknown): TurnUsage {
+  const r = (u ?? {}) as Rec;
+  const n = (k: string) => (typeof r[k] === 'number' ? (r[k] as number) : 0);
+  const cached = n('cached_input_tokens');
+  return { inputTokens: Math.max(0, n('input_tokens') - cached), outputTokens: n('output_tokens'), cacheReadTokens: cached, cacheCreationTokens: n('cache_write_input_tokens') };
+}
+
+/** PF16: recurring codex-cli config noise (`item.type==='error'`) — logged server-side, never shown as a turn notice. */
+const CONFIG_NOISE_RE = /unrecognized configuration setting|is deprecated/;
+
+/**
+ * Stateful translation of `codex exec --json` events (thread.started, turn.*, item.*) into
+ * EngineEvents. Shapes observed 2026-09-30 are in the plan; command/file/mcp item fields follow the
+ * Codex docs and are read leniently.
+ */
+export class CodexEventMapper {
+  threadId: string | null;
+  private messages: string[] = [];
+  private lastError: string | null = null;
+  private started = new Set<string>();
+  private warnedNoise = new Set<string>();
+  private done = false;
+
+  constructor(private readonly model: string, resumeThreadId: string | null) {
+    this.threadId = resumeThreadId;
+  }
+
+  get sawResult(): boolean {
+    return this.done;
+  }
+
+  map(ev: unknown): EngineEvent[] {
+    if (!ev || typeof ev !== 'object') return [];
+    const e = ev as Rec;
+    switch (e.type) {
+      case 'thread.started': {
+        if (typeof e.thread_id !== 'string' || !e.thread_id) return [];
+        this.threadId = e.thread_id;
+        return [{ kind: 'init', sessionId: e.thread_id, model: this.model }];
+      }
+      case 'item.started':
+      case 'item.updated':
+      case 'item.completed':
+        return this.item(e.type === 'item.completed', (e.item && typeof e.item === 'object' ? e.item : {}) as Rec);
+      case 'error':
+        this.lastError = typeof e.message === 'string' ? e.message : JSON.stringify(e);
+        return [];
+      case 'turn.completed':
+        this.done = true;
+        return [this.result(true, usageOf(e.usage), null)];
+      case 'turn.failed': {
+        this.done = true;
+        const err = (e.error && typeof e.error === 'object' ? e.error : {}) as Rec;
+        return [this.result(false, ZERO_USAGE, typeof err.message === 'string' ? err.message : (this.lastError ?? 'turn.failed'))];
+      }
+      default:
+        return [];
+    }
+  }
+
+  private item(done: boolean, item: Rec): EngineEvent[] {
+    const id = String(item.id ?? '');
+    const out: EngineEvent[] = [];
+    switch (item.type) {
+      case 'agent_message': {
+        if (!done || typeof item.text !== 'string' || !item.text) return [];
+        const sep = this.messages.length ? '\n\n' : '';
+        this.messages.push(item.text);
+        return [{ kind: 'delta', text: sep + item.text }];
+      }
+      case 'command_execution': {
+        if (!this.started.has(id)) { this.started.add(id); out.push({ kind: 'tool_call', toolUseId: id, name: 'Bash', input: { command: String(item.command ?? '') } }); }
+        if (done) {
+          const code = typeof item.exit_code === 'number' ? item.exit_code : null;
+          out.push({ kind: 'tool_result', toolUseId: id, content: typeof item.aggregated_output === 'string' ? item.aggregated_output : '', isError: item.status === 'failed' || (code !== null && code !== 0) });
+        }
+        return out;
+      }
+      case 'file_change': {
+        if (!this.started.has(id)) { this.started.add(id); out.push({ kind: 'tool_call', toolUseId: id, name: 'Edit', input: { changes: item.changes ?? [] } }); }
+        if (done) out.push({ kind: 'tool_result', toolUseId: id, content: String(item.status ?? 'completed'), isError: item.status === 'failed' });
+        return out;
+      }
+      case 'mcp_tool_call': {
+        if (!this.started.has(id)) { this.started.add(id); out.push({ kind: 'tool_call', toolUseId: id, name: `mcp:${String(item.server ?? '')}.${String(item.tool ?? '')}`, input: item.arguments ?? {} }); }
+        if (done) out.push({ kind: 'tool_result', toolUseId: id, content: JSON.stringify(item.result ?? item.error ?? null), isError: item.status === 'failed' || (item.error !== undefined && item.error !== null) });
+        return out;
+      }
+      case 'web_search':
+        if (!done) return [];
+        return [{ kind: 'tool_call', toolUseId: id, name: 'WebSearch', input: { query: String(item.query ?? '') } }, { kind: 'tool_result', toolUseId: id, content: '', isError: false }];
+      case 'error': {
+        if (!done || typeof item.message !== 'string' || !item.message) return [];
+        if (CONFIG_NOISE_RE.test(item.message)) {
+          if (!this.warnedNoise.has(item.message)) {
+            this.warnedNoise.add(item.message);
+            console.warn('deck: codex config notice:', item.message);
+          }
+          return [];
+        }
+        return [{ kind: 'notice', message: item.message }];
+      }
+      default:
+        return []; // reasoning, todo_list, unknown
+    }
+  }
+
+  result(ok: boolean, usage: TurnUsage, errorText: string | null): EngineResult {
+    return {
+      kind: 'result', sessionId: this.threadId, ok, text: ok ? this.messages.join('\n\n') : '', usage,
+      errorText: ok ? null : (errorText ?? this.lastError), stderr: null, errorKind: null, terminalReason: ok ? 'completed' : null,
+    };
+  }
+}
+
+export class CodexEngine {
+  private readonly spawnFn: SpawnFn;
+  private readonly baseEnv: NodeJS.ProcessEnv;
+
+  constructor(readonly bin: string, opts: { spawnFn?: SpawnFn; baseEnv?: NodeJS.ProcessEnv } = {}) {
+    this.spawnFn = opts.spawnFn ?? ((b, args, o) => nodeSpawn(b, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'] }));
+    this.baseEnv = opts.baseEnv ?? process.env;
+  }
+
+  async *runTurn(req: CodexTurnRequest): AsyncIterable<EngineEvent> {
+    const mapper = new CodexEventMapper(req.model, req.resumeThreadId);
+    if (req.signal.aborted) {
+      yield { ...mapper.result(false, ZERO_USAGE, '중단됨'), terminalReason: 'aborted' };
+      return;
+    }
+    const child = this.spawnFn(this.bin, codexArgs(req), { cwd: req.cwd, env: codexEnv(this.baseEnv) });
+    let stderrTail = '';
+    child.stderr?.on('data', (chunk: Buffer | string) => { stderrTail = (stderrTail + String(chunk)).slice(-STDERR_MAX); });
+    // EPIPE on stdin (child died early) must not crash the server.
+    child.stdin?.on('error', () => {});
+    const exit = new Promise<number | null>((resolve) => {
+      child.once('exit', (code: number | null) => resolve(code));
+      child.once('error', () => resolve(null));
+    });
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = () => {
+      child.kill('SIGTERM');
+      killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      killTimer.unref?.();
+    };
+    req.signal.addEventListener('abort', onAbort, { once: true });
+    // An abort that landed while spawning (before the listener existed) must still kill the child.
+    if (req.signal.aborted) onAbort();
+    try {
+      child.stdin?.end(req.prompt);
+      if (child.stdout) {
+        const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+        for await (const line of rl) {
+          if (!line.trim()) continue;
+          let parsed: unknown;
+          try { parsed = JSON.parse(line); } catch { continue; }
+          for (const ev of mapper.map(parsed)) yield ev.kind === 'result' && !ev.ok ? { ...ev, stderr: stderrTail || null } : ev;
+        }
+      }
+      const code = await exit;
+      if (!mapper.sawResult) {
+        const aborted = req.signal.aborted;
+        yield { ...mapper.result(false, ZERO_USAGE, aborted ? '중단됨' : `codex 종료 코드 ${code ?? '?'}`), stderr: stderrTail || null, terminalReason: aborted ? 'aborted' : null };
+      }
+    } finally {
+      req.signal.removeEventListener('abort', onAbort);
+      if (killTimer) clearTimeout(killTimer);
+    }
+  }
+}
+
+function isExecutable(p: string): boolean {
+  try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch { return false; }
+}
+
+/** D1/D11: gpt-6-sol needs codex-cli >= 0.159 (0.146.1 was rejected with HTTP 400 on this Mac). */
+export const MIN_CODEX_VERSION = '0.159.0';
+
+function parseVersion(v: string): [number, number, number] {
+  const parts = v.split('.').map((n) => Number(n) || 0);
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+}
+
+function versionAtLeast(v: string, min: string): boolean {
+  const a = parseVersion(v);
+  const b = parseVersion(min);
+  if (a[0] !== b[0]) return a[0] > b[0];
+  if (a[1] !== b[1]) return a[1] > b[1];
+  return a[2] >= b[2];
+}
+
+function defaultVersionFn(bin: string): string | null {
+  try {
+    return execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 5000 });
+  } catch {
+    return null;
+  }
+}
+
+/** Parses `codex-cli X.Y.Z` (and tolerates surrounding text/whitespace); null when unparsable. */
+function parseCodexVersion(raw: string | null): string | null {
+  if (!raw) return null;
+  const m = raw.match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? `${m[1]}.${m[2]}.${m[3]}` : null;
+}
+
+/**
+ * D11: `DECK_CODEX_BIN` (honored as-is when executable — explicit override, no version gate) →
+ * each `PATH` entry → `~/.local/bin/codex` → the newest `~/.nvm/versions/node/<ver>/bin/codex`.
+ * Every candidate after the override is skipped when its `--version` is missing or below
+ * MIN_CODEX_VERSION (gpt-6-sol needs >= 0.159; an older binary may also sit on PATH). Null =
+ * Codex disabled. deck never runs `codex login`.
+ */
+export function resolveCodexBin(
+  env: NodeJS.ProcessEnv,
+  home: string,
+  existsFn: (p: string) => boolean = isExecutable,
+  versionFn: (bin: string) => string | null = defaultVersionFn,
+): string | null {
+  if (env.DECK_CODEX_BIN) return existsFn(env.DECK_CODEX_BIN) ? env.DECK_CODEX_BIN : null;
+
+  const qualifies = (p: string): boolean => {
+    if (!existsFn(p)) return false;
+    const v = parseCodexVersion(versionFn(p));
+    return v !== null && versionAtLeast(v, MIN_CODEX_VERSION);
+  };
+
+  for (const dir of (env.PATH ?? '').split(':')) {
+    if (!dir) continue;
+    const p = path.join(dir, 'codex');
+    if (qualifies(p)) return p;
+  }
+  const local = path.join(home, '.local', 'bin', 'codex');
+  if (qualifies(local)) return local;
+  const nvm = path.join(home, '.nvm', 'versions', 'node');
+  let versions: string[];
+  try { versions = fs.readdirSync(nvm); } catch { return null; }
+  const parts = (v: string) => v.replace(/^v/, '').split('.').map((n) => Number(n) || 0);
+  versions.sort((x, y) => { const a = parts(x), b = parts(y); return (b[0]! - a[0]!) || (b[1]! - a[1]!) || (b[2]! - a[2]!); });
+  for (const v of versions) {
+    const p = path.join(nvm, v, 'bin', 'codex');
+    if (qualifies(p)) return p;
+  }
+  return null;
+}
