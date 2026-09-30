@@ -13,15 +13,30 @@ import type { UsageService } from './usage/UsageService';
 
 type PermissionMsg = Extract<ServerMessage, { type: 'permission_request' }>;
 
-/** Holds unanswered permission prompts so a reconnecting browser sees them again (spec §8). */
+export const PERMISSION_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * Holds unanswered permission prompts so a reconnecting browser sees them again (spec §8).
+ * Review I5: a prompt also closes — as 'deny', with permission_resolved to every client —
+ * when its signal aborts, when its turn ends (cancelTurn), or after a long timeout.
+ */
 export class PermissionBroker {
-  private waiting = new Map<string, { msg: PermissionMsg; resolve: (d: PermissionDecision) => void }>();
+  private waiting = new Map<string, { msg: PermissionMsg; resolve: (d: PermissionDecision) => void; cleanup: () => void }>();
+  private readonly timeoutMs: number;
 
-  constructor(private readonly broadcast: (m: ServerMessage) => void) {}
+  constructor(private readonly broadcast: (m: ServerMessage) => void, opts: { timeoutMs?: number } = {}) {
+    this.timeoutMs = opts.timeoutMs ?? PERMISSION_TIMEOUT_MS;
+  }
 
-  ask(msg: PermissionMsg): Promise<PermissionDecision> {
+  ask(msg: PermissionMsg, signal?: AbortSignal): Promise<PermissionDecision> {
+    if (signal?.aborted) return Promise.resolve('deny');
     return new Promise((resolve) => {
-      this.waiting.set(msg.requestId, { msg, resolve });
+      const onAbort = () => this.resolve(msg.requestId, 'deny');
+      const timer = setTimeout(onAbort, this.timeoutMs);
+      timer.unref?.();
+      signal?.addEventListener('abort', onAbort, { once: true });
+      const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); };
+      this.waiting.set(msg.requestId, { msg, resolve, cleanup });
       this.broadcast(msg);
     });
   }
@@ -30,9 +45,15 @@ export class PermissionBroker {
     const w = this.waiting.get(requestId);
     if (!w) return false;
     this.waiting.delete(requestId);
+    w.cleanup();
     w.resolve(decision);
     this.broadcast({ type: 'permission_resolved', requestId, decision });
     return true;
+  }
+
+  /** Deny every prompt still open for this turn (it finished, failed or was interrupted). */
+  cancelTurn(turnId: string): void {
+    for (const [id, w] of [...this.waiting]) if (w.msg.turnId === turnId) this.resolve(id, 'deny');
   }
 
   pending(): ServerMessage[] {
@@ -90,7 +111,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
           activeTurns.set(turnId, ac);
           const sink: TurnSink = {
             emit: broadcast,
-            askPermission: (req) => broker.ask({ type: 'permission_request', turnId: req.turnId, requestId: randomUUID(), toolName: req.toolName, input: req.input }),
+            askPermission: (req) => broker.ask(
+              { type: 'permission_request', turnId: req.turnId, requestId: randomUUID(), toolName: req.toolName, input: req.input },
+              req.signal ? AbortSignal.any([req.signal, ac.signal]) : ac.signal,
+            ),
             signal: ac.signal,
           };
           void deps.runner
@@ -102,6 +126,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
             })
             .then(async () => {
               activeTurns.delete(turnId);
+              broker.cancelTurn(turnId);
               if (msg.sessionId === null) { await deps.index.refresh(); broadcast({ type: 'index', projects: deps.index.projects() }); }
             });
           break;
@@ -111,6 +136,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
           break;
         case 'interrupt':
           activeTurns.get(msg.turnId)?.abort();
+          broker.cancelTurn(msg.turnId);
           break;
         case 'open_session': {
           const entry = deps.index.lookup(msg.sessionId);

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs/promises';
@@ -13,7 +13,7 @@ import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
-import { attachWebSocket } from './ws';
+import { PermissionBroker, attachWebSocket } from './ws';
 
 const TOKEN = 'f'.repeat(64);
 const COOKIE = `deck_session=${cookieValueFor(TOKEN)}`;
@@ -160,6 +160,23 @@ describe('ws', () => {
     ws.close();
   });
 
+  it('an interrupted turn leaves no pending prompt, and a reconnecting client gets no stale card', async () => {
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p1 = collect(ws, (m) => m.type === 'permission_request');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: '/w/x', text: 'ask' }));
+    const req = (await p1).at(-1) as Extract<ServerMessage, { type: 'permission_request' }>;
+    const p2 = collect(ws, (m) => m.type === 'turn_result');
+    ws.send(JSON.stringify({ type: 'interrupt', turnId: req.turnId }));
+    const msgs = await p2;
+    expect(msgs.find((m) => m.type === 'permission_resolved')).toMatchObject({ requestId: req.requestId, decision: 'deny' });
+    ws.close();
+    const again = await connect({ Origin: origin, Cookie: COOKIE });
+    const seen = await collect(again.ws, () => false, 300).catch((e: Error) => e.message);
+    expect(String(JSON.stringify(seen))).not.toContain('permission_request');
+    again.ws.close();
+  });
+
   it('rejects invalid messages with an error and keeps the socket open', async () => {
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
     await collect(ws, (m) => m.type === 'hello');
@@ -217,5 +234,44 @@ describe('ws', () => {
     const [hello] = await collect(c.ws, (m) => m.type === 'hello');
     expect(hello?.type).toBe('hello');
     c.ws.close();
+  });
+});
+
+describe('PermissionBroker', () => {
+  const req = (requestId: string, turnId = 't1') => ({ type: 'permission_request' as const, turnId, requestId, toolName: 'Bash', input: {} });
+
+  it('an aborted signal resolves deny, drops the prompt and tells every client', async () => {
+    const sent: ServerMessage[] = [];
+    const b = new PermissionBroker((m) => sent.push(m));
+    const ac = new AbortController();
+    const p = b.ask(req('r1'), ac.signal);
+    expect(b.pending()).toHaveLength(1);
+    ac.abort();
+    expect(await p).toBe('deny');
+    expect(b.pending()).toEqual([]);
+    expect(sent.at(-1)).toEqual({ type: 'permission_resolved', requestId: 'r1', decision: 'deny' });
+  });
+
+  it('cancelTurn denies only that turn\'s prompts', async () => {
+    const sent: ServerMessage[] = [];
+    const b = new PermissionBroker((m) => sent.push(m));
+    const p1 = b.ask(req('r1', 't1'));
+    void b.ask(req('r2', 't2'));
+    b.cancelTurn('t1');
+    expect(await p1).toBe('deny');
+    expect(b.pending().map((m) => (m as { requestId: string }).requestId)).toEqual(['r2']);
+  });
+
+  it('an unanswered prompt is auto-denied after the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const b = new PermissionBroker(() => {}, { timeoutMs: 1000 });
+      const p = b.ask(req('r1'));
+      vi.advanceTimersByTime(1001);
+      expect(await p).toBe('deny');
+      expect(b.pending()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
