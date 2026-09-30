@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import type http from 'node:http';
 import path from 'node:path';
 import type { SessionEntry } from '../shared/session-types';
+import { AttachmentTooLarge, MAX_ATTACHMENT_BYTES, type AttachmentStore } from './attachments/AttachmentStore';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
 import type { SessionIndex } from './sessions/SessionIndex';
 import type { UsageService } from './usage/UsageService';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
-export type HttpDeps = { token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[]; extraSessions?: () => SessionEntry[] };
+export type HttpDeps = { token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[]; extraSessions?: () => SessionEntry[]; attachments?: AttachmentStore };
 
 /**
  * Review I8: sent on every response. Only documents are governed by CSP; in dev the page is
@@ -53,6 +54,36 @@ function readBody(req: http.IncomingMessage, limit = 64 * 1024): Promise<string>
       if (data.length > limit) { reject(new Error('body too large')); req.destroy(); }
     });
     req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+class BodyTooLarge extends Error {}
+
+/**
+ * PF6: on overflow we must NOT call req.destroy() before the 413 response is written — the
+ * client then sees "other side closed" and never gets the size message. Instead: stop
+ * buffering (discard further chunks), let/ask the stream drain (req.resume()), and let the
+ * caller write a normal response with `connection: close`.
+ */
+function readRaw(req: http.IncomingMessage, limit: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let overflowed = false;
+    req.on('data', (chunk: Buffer) => {
+      if (overflowed) return;
+      total += chunk.length;
+      if (total > limit) {
+        overflowed = true;
+        chunks.length = 0;
+        req.resume();
+        reject(new BodyTooLarge());
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => { if (!overflowed) resolve(Buffer.concat(chunks)); });
     req.on('error', reject);
   });
 }
@@ -103,6 +134,26 @@ export function createRequestHandler(deps: HttpDeps) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []) }); return; }
+        if (url.pathname === '/api/attachments' && req.method === 'POST') {
+          if (!deps.attachments) { json(res, 404, { error: 'not found' }); return; }
+          let data: Buffer;
+          try {
+            data = await readRaw(req, MAX_ATTACHMENT_BYTES);
+          } catch (err) {
+            if (err instanceof BodyTooLarge) { json(res, 413, { error: new AttachmentTooLarge().message }, { connection: 'close' }); return; }
+            throw err;
+          }
+          let name = 'file';
+          try { name = decodeURIComponent(String(req.headers['x-deck-filename'] ?? '')) || 'file'; } catch { /* keep default */ }
+          try {
+            const a = await deps.attachments.save(name, data);
+            json(res, 201, { id: a.id, name: a.name, mediaType: a.mediaType, size: a.size, isImage: a.isImage });
+          } catch (err) {
+            if (err instanceof AttachmentTooLarge) { json(res, 413, { error: err.message }, { connection: 'close' }); return; }
+            throw err;
+          }
+          return;
+        }
         json(res, 404, { error: 'not found' });
         return;
       }

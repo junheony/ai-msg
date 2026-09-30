@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { cookieValueFor } from './auth';
+import { AttachmentStore } from './attachments/AttachmentStore';
 import { createRequestHandler } from './http';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageService } from './usage/UsageService';
@@ -19,7 +20,9 @@ beforeAll(async () => {
   const index = new SessionIndex({ roots, pinnedFile: path.join(uiDir, 'p.json') });
   await index.refresh();
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
-  server = http.createServer(createRequestHandler({ token: TOKEN, uiDir, usage, index, devOrigins: ['http://dev.local'] }));
+  const attachments = new AttachmentStore(path.join(uiDir, 'att'));
+  await attachments.init();
+  server = http.createServer(createRequestHandler({ token: TOKEN, uiDir, usage, index, devOrigins: ['http://dev.local'], attachments }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const addr = server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
@@ -128,5 +131,25 @@ describe('http', () => {
       console.error = orig;
       s2.close();
     }
+  });
+});
+
+describe('POST /api/attachments (D7)', () => {
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  const headers = (extra: Record<string, string> = {}) => ({ cookie: `deck_session=${cookieValueFor(TOKEN)}`, origin: base, 'content-type': 'application/octet-stream', ...extra });
+
+  it('needs a cookie and a same-origin Origin', async () => {
+    expect((await fetch(`${base}/api/attachments`, { method: 'POST', headers: { origin: base }, body: PNG })).status).toBe(401);
+    expect((await fetch(`${base}/api/attachments`, { method: 'POST', headers: { cookie: `deck_session=${cookieValueFor(TOKEN)}` }, body: PNG })).status).toBe(403);
+  });
+
+  it('stores an upload and returns its id; the name is sanitized; oversize is 413', async () => {
+    const res = await fetch(`${base}/api/attachments`, { method: 'POST', headers: headers({ 'x-deck-filename': encodeURIComponent('../스크린샷.png') }), body: PNG });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; name: string; mediaType: string; size: number; isImage: boolean };
+    expect(body).toMatchObject({ name: '스크린샷.png', mediaType: 'image/png', size: PNG.length, isImage: true });
+    expect(body.id).toMatch(/^[0-9a-f-]{36}$/);
+    const big = await fetch(`${base}/api/attachments`, { method: 'POST', headers: headers({ 'x-deck-filename': 'big.bin' }), body: Buffer.alloc(10 * 1024 * 1024 + 1) });
+    expect(big.status).toBe(413);
   });
 });

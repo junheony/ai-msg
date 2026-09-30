@@ -1,5 +1,6 @@
 import http from 'node:http';
 import os from 'node:os';
+import { AttachmentStore } from './attachments/AttachmentStore';
 import { loadOrCreateToken } from './auth';
 import { bindAddresses, tailscaleIPv4s } from './bind';
 import { loadConfig } from './config';
@@ -20,6 +21,9 @@ async function main(): Promise<void> {
   const store = new SessionStateStore(cfg.stateFile);
   await Promise.all([index.refresh(), store.load()]);
   usage.start();
+  const attachments = new AttachmentStore(cfg.attachmentsDir);
+  await attachments.init();
+  attachments.startPurgeTimer();
   // D11: Codex is optional; without the binary the UI hides the GPT option and 'auto' means Claude.
   const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
 
@@ -40,7 +44,7 @@ async function main(): Promise<void> {
   // Deviation (added per review I5): the addresses deck itself binds to double as the
   // Host allowlist (DNS-rebinding defence), plus any operator-configured extra names.
   const extraHosts = [...addresses, ...cfg.extraHosts];
-  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries() });
+  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
   const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null });
@@ -50,7 +54,7 @@ async function main(): Promise<void> {
   for (const a of addresses) console.log(`deck: http://${a}:${cfg.port}`);
   console.log(`deck: 로그인 토큰은 ${cfg.tokenFile} 에 있습니다 (내용은 출력하지 않음)`);
 
-  const shutdown = () => { ws.close(); usage.stop(); for (const s of servers) s.close(); setTimeout(() => process.exit(0), 200); };
+  const shutdown = () => { ws.close(); usage.stop(); attachments.stop(); for (const s of servers) s.close(); setTimeout(() => process.exit(0), 200); };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
