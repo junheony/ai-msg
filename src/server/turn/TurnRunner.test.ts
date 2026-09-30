@@ -10,7 +10,7 @@ import { readCooldownUntilMs } from '../routing/cooldown';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
-import { SessionStateStore } from './SessionState';
+import { SessionStateStore, type ClaudeSessionState } from './SessionState';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -102,7 +102,7 @@ describe('TurnRunner', () => {
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: linked, sessionId: null, text: 'hi' }, c.sink);
     const expected = path.join(c.roots.b, projectSlug(await fs.realpath(linked)));
     expect(projectSlug(linked)).not.toBe(projectSlug(await fs.realpath(linked)));
-    expect(c.deps.store.get('sym1')?.projectDir).toBe(expected);
+    expect((c.deps.store.get('sym1') as ClaudeSessionState | null)?.projectDir).toBe(expected);
   });
 
   it('new session: when the slugged dir has no jsonl, the account root is searched for it', async () => {
@@ -116,7 +116,7 @@ describe('TurnRunner', () => {
     });
     c = await ctx(eng);
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
-    expect(c.deps.store.get('far1')?.projectDir).toBe(path.join(c.roots.b, '-somewhere-else'));
+    expect((c.deps.store.get('far1') as ClaudeSessionState | null)?.projectDir).toBe(path.join(c.roots.b, '-somewhere-else'));
   });
 
   it('imported session on a (cold) moves to b, then resumes there', async () => {
@@ -275,7 +275,7 @@ describe('TurnRunner', () => {
     c.sink.askPermission = async (r) => { asked.push(String(r.input.command)); return 'session'; };
     const runner = new TurnRunner(c.deps);
     await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'git status' }, c.sink);
-    expect(c.deps.store.get('perm1')?.allowRules).toEqual(['Bash(git status)']);
+    expect((c.deps.store.get('perm1') as ClaudeSessionState | null)?.allowRules).toEqual(['Bash(git status)']);
     await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'perm1', text: 'git status' }, c.sink);
     expect(asked).toEqual(['git status']);
     expect(eng.calls[1]?.allowRules).toEqual(['Bash(git status)']);
@@ -291,7 +291,7 @@ describe('TurnRunner', () => {
     const c = await ctx(eng);
     c.sink.askPermission = async () => 'session';
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'x' }, c.sink);
-    expect(c.deps.store.get('perm2')?.allowRules ?? []).toEqual([]);
+    expect((c.deps.store.get('perm2') as ClaudeSessionState | null)?.allowRules ?? []).toEqual([]);
   });
 
   // Real CLI suggestion shapes (captured on account b with deck's buildOptions).
@@ -348,7 +348,7 @@ describe('TurnRunner', () => {
     c.sink.askPermission = async () => 'session';
     const runner = new TurnRunner(c.deps);
     await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'x' }, c.sink);
-    const st = c.deps.store.get('permX');
+    const st = c.deps.store.get('permX') as ClaudeSessionState | null;
     expect(st?.mode).toBeUndefined();
     expect(st?.allowRules).toBeUndefined();
     expect(st?.allowDirs).toBeUndefined();

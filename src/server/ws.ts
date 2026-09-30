@@ -10,7 +10,7 @@ import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readTranscript } from './sessions/transcript';
-import type { SessionStateStore } from './turn/SessionState';
+import { isCodexState, type SessionStateStore } from './turn/SessionState';
 import type { TurnRunner, TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 
@@ -222,10 +222,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
             if (!entry) { send(ws, { type: 'error', turnId: null, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
             viewing.set(ws, sessionId);
             const state = deps.store.get(sessionId);
+            // Codex session state has no jsonl project dir (the real Codex history path arrives later): fall back to the index entry.
+            const claudeState = state && !isCodexState(state) ? state : null;
             const found = entry;
-            await readTranscript(state ? `${state.projectDir}/${sessionId}.jsonl` : found.file)
+            await readTranscript(claudeState ? `${claudeState.projectDir}/${sessionId}.jsonl` : found.file)
               .catch(() => readTranscript(found.file))
-              .then((messages) => send(ws, { type: 'history', sessionId, cwd: found.cwd, account: state?.account ?? found.account, messages, runningTurnId: busy.get(sessionId) ?? null }))
+              .then((messages) => send(ws, { type: 'history', sessionId, cwd: found.cwd, account: claudeState?.account ?? found.account, messages, runningTurnId: busy.get(sessionId) ?? null }))
               .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
           })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
           break;

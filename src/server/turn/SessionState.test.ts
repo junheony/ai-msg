@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionStateStore } from './SessionState';
+import { SessionStateStore, isCodexState } from './SessionState';
 
 describe('SessionStateStore', () => {
   it('persists and reloads states; missing file is empty', async () => {
@@ -41,5 +41,25 @@ describe('SessionStateStore', () => {
     const bad = (await fs.readdir(dir)).filter((f) => f.startsWith('session-state.json.bad-'));
     expect(bad).toHaveLength(1);
     expect(await fs.readFile(path.join(dir, bad[0]!), 'utf8')).toBe('{"x": {"sessionId": "x", tru');
+  });
+});
+
+describe('Codex session state (D4)', () => {
+  it('round-trips a codex state, lists it for the sidebar as account gpt, and Plan 1 states stay claude', async () => {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-state-codex-'));
+    const file = path.join(base, 'state.json');
+    await fs.writeFile(file, JSON.stringify({ old: { sessionId: 'old', cwd: '/w', account: 'b', projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' } }));
+    const store = new SessionStateStore(file);
+    await store.load();
+    const old = store.get('old');
+    expect(old && isCodexState(old)).toBe(false);
+    await store.set({ engine: 'codex', sessionId: 'tid', cwd: '/w/gpt', lastTurnAtMs: null, justCompacted: false, defaultModel: 'gpt-6-astra', sandbox: 'workspace-write', rolloutFile: '/r/2026/09/30/rollout-x-tid.jsonl', createdAtMs: 1000, title: '첫 질문' });
+    const again = new SessionStateStore(file);
+    await again.load();
+    const s = again.get('tid');
+    expect(s && isCodexState(s) ? s.sandbox : null).toBe('workspace-write');
+    expect(again.list()).toHaveLength(2);
+    expect(again.codexEntries()).toEqual([{ sessionId: 'tid', account: 'gpt', engine: 'codex', sandbox: 'workspace-write', cwd: '/w/gpt', projectDir: '/r/2026/09/30', file: '/r/2026/09/30/rollout-x-tid.jsonl', title: '첫 질문', lastModified: 1000, sizeBytes: 0 }]);
+    await fs.rm(base, { recursive: true, force: true });
   });
 });

@@ -1,16 +1,24 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
-import type { ClaudeModel } from '../../shared/models';
+import type { ClaudeModel, CodexModel, CodexSandbox } from '../../shared/models';
+import type { SessionEntry } from '../../shared/session-types';
 
-export type SessionState = {
+type SessionBase = {
   sessionId: string;
   cwd: string;
+  lastTurnAtMs: number | null;
+  justCompacted: boolean;
+  /** First prompt (≤ 80 chars) for the sidebar; Codex sessions have no jsonl title to read. */
+  title?: string;
+};
+
+export type ClaudeSessionState = SessionBase & {
+  /** Absent = Claude (Plan 1 state files). */
+  engine?: 'claude';
   account: Account;
   /** Directory the jsonl currently lives in (moves update it). */
   projectDir: string;
-  lastTurnAtMs: number | null;
-  justCompacted: boolean;
   defaultModel: ClaudeModel;
   /** Review I4: permission rules accepted with 이 세션 (SDK suggestions), re-applied on later turns. */
   allowRules?: string[];
@@ -19,6 +27,22 @@ export type SessionState = {
   /** 이 세션 accepted "allow all edits" (setMode acceptEdits): later turns run in acceptEdits. */
   mode?: 'acceptEdits';
 };
+
+/** D4: a Codex thread deck created. sessionId = Codex thread id; engine/sandbox never change afterwards (D2, D3). */
+export type CodexSessionState = SessionBase & {
+  engine: 'codex';
+  defaultModel: CodexModel;
+  sandbox: CodexSandbox;
+  /** ~/.codex/sessions/YYYY/MM/DD/rollout-…-<threadId>.jsonl once located (history + rate limits). */
+  rolloutFile: string | null;
+  createdAtMs: number;
+};
+
+export type SessionState = ClaudeSessionState | CodexSessionState;
+
+export function isCodexState(s: SessionState): s is CodexSessionState {
+  return s.engine === 'codex';
+}
 
 let tmpCounter = 0;
 
@@ -51,6 +75,24 @@ export class SessionStateStore {
 
   get(id: string): SessionState | null {
     return this.map.get(id) ?? null;
+  }
+
+  list(): SessionState[] {
+    return [...this.map.values()];
+  }
+
+  /** D4: Codex sessions for the sidebar (Claude ones come from SessionIndex's profile scan). */
+  codexEntries(): SessionEntry[] {
+    const out: SessionEntry[] = [];
+    for (const s of this.map.values()) {
+      if (!isCodexState(s)) continue;
+      out.push({
+        sessionId: s.sessionId, account: 'gpt', engine: 'codex', sandbox: s.sandbox, cwd: s.cwd,
+        projectDir: s.rolloutFile ? path.dirname(s.rolloutFile) : '', file: s.rolloutFile ?? '',
+        title: s.title ?? '(제목 없음)', lastModified: s.lastTurnAtMs ?? s.createdAtMs, sizeBytes: 0,
+      });
+    }
+    return out;
   }
 
   set(s: SessionState): Promise<void> {

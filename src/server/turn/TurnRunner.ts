@@ -16,7 +16,7 @@ import type { SessionIndex } from '../sessions/SessionIndex';
 import { moveSession } from '../sessions/SessionMover';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
-import type { SessionState, SessionStateStore } from './SessionState';
+import { isCodexState, type ClaudeSessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
   emit(msg: ServerMessage): void;
@@ -78,7 +78,7 @@ export class TurnRunner {
     this.maxRetries = deps.maxRetries ?? 2;
   }
 
-  private async relocate(state: SessionState, to: Account, sink: TurnSink, turnId: string): Promise<SessionState | null> {
+  private async relocate(state: ClaudeSessionState, to: Account, sink: TurnSink, turnId: string): Promise<ClaudeSessionState | null> {
     const r = await this.move({ sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] });
     if (!r.ok) {
       sink.emit({ type: 'turn_notice', turnId, sessionId: state.sessionId, cwd: state.cwd, message: `세션 이전 실패(${r.error}) — ${LABEL[state.account]} 계정 유지` });
@@ -149,10 +149,17 @@ export class TurnRunner {
 
   async run(p: TurnParams, sink: TurnSink): Promise<void> {
     const { deps } = this;
-    let state: SessionState | null = null;
+    let state: ClaudeSessionState | null = null;
     if (p.sessionId) {
-      state = deps.store.get(p.sessionId);
-      if (!state) {
+      const found = deps.store.get(p.sessionId);
+      if (found && isCodexState(found)) {
+        // The real Codex turn path arrives in a later task; a Codex state must never fall through the Claude-only code below.
+        sink.emit({ type: 'error', turnId: p.turnId, message: `Codex 세션은 아직 지원하지 않습니다: ${p.sessionId}` });
+        return;
+      }
+      if (found) {
+        state = found;
+      } else {
         const e = deps.index.lookup(p.sessionId);
         if (!e) { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
         if (e.account === 'gpt') { sink.emit({ type: 'error', turnId: p.turnId, message: `Codex 세션 상태를 찾을 수 없습니다: ${p.sessionId}` }); return; }

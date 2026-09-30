@@ -95,6 +95,7 @@ export class SessionIndex {
   private entries: SessionEntry[] = [];
   private grouped: ProjectEntry[] = [];
   private byId = new Map<string, SessionEntry>();
+  private pinned: PinnedProject[] = [];
 
   constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string }) {}
 
@@ -106,15 +107,17 @@ export class SessionIndex {
       const prev = this.byId.get(e.sessionId);
       if (!prev || e.lastModified > prev.lastModified) this.byId.set(e.sessionId, e);
     }
-    this.grouped = groupProjects(all, await readPinned(this.opts.pinnedFile));
+    this.pinned = await readPinned(this.opts.pinnedFile);
+    this.grouped = groupProjects(all, this.pinned);
   }
 
   lookup(sessionId: string): SessionEntry | null {
     return this.byId.get(sessionId) ?? null;
   }
 
-  projects(): ProjectEntry[] {
-    return this.grouped;
+  /** Cached grouping of the profile scan; with `extra` (Codex sessions from the state store, D4) a fresh grouping. */
+  projects(extra: SessionEntry[] = []): ProjectEntry[] {
+    return extra.length ? groupProjects([...this.entries, ...extra], this.pinned) : this.grouped;
   }
 
   sessions(): SessionEntry[] {

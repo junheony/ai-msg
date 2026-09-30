@@ -61,6 +61,17 @@ describe('groupProjects', () => {
     const one = projects[2]!;
     expect(one.sessions.map((s) => [s.sessionId, s.account])).toEqual([[ID1, 'c'], [ID3, 'c']]);
   });
+
+  it('projects(extra) groups extra (Codex) entries under their cwd without touching the cached grouping', async () => {
+    const idx = new SessionIndex({ roots: { a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' }, pinnedFile: '/nonexistent/p.json' });
+    await idx.refresh();
+    expect(idx.projects()).toEqual([]);
+    const gpt: SessionEntry = { ...e(ID1, 'a', '/w/gpt', 5), account: 'gpt', engine: 'codex', sandbox: 'read-only' };
+    const p = idx.projects([gpt]);
+    expect(p).toHaveLength(1);
+    expect(p[0]?.sessions[0]).toMatchObject({ sessionId: ID1, account: 'gpt', engine: 'codex' });
+    expect(idx.projects()).toEqual([]);
+  });
 });
 
 describe('readPinned + SessionIndex', () => {
