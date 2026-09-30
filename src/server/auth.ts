@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { isCgnat } from './bind';
 
 export const COOKIE_NAME = 'deck_session';
 const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
@@ -69,10 +70,42 @@ export function logoutCookieHeader(): string {
   return `${COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
 }
 
+/**
+ * Deviation (added per review I5): `SameSite=Strict` does not separate ports, so
+ * any other local server on 127.0.0.1:<other-port> is still "same-site" and the
+ * browser will attach our cookie to it. Origin comparisons already pin the exact
+ * port (see below), but a Host allowlist adds defence-in-depth against DNS
+ * rebinding, where an attacker's page (e.g. evil.example) resolves to 127.0.0.1
+ * and the browser's same-origin check on the *attacker's own* origin would
+ * otherwise pass. Checks only the hostname — the attacker fully controls the
+ * name, but not which port reaches our listener.
+ */
+function hostnameOf(hostHeader: string): string {
+  const bracketed = /^\[(.+)\]:\d+$/.exec(hostHeader) ?? /^\[(.+)\]$/.exec(hostHeader);
+  if (bracketed) return bracketed[1]!;
+  const i = hostHeader.lastIndexOf(':');
+  return i >= 0 ? hostHeader.slice(0, i) : hostHeader;
+}
+
+export function isAllowedHost(hostHeader: string | undefined, extraHosts: string[] = []): boolean {
+  if (!hostHeader) return false;
+  const hostname = hostnameOf(hostHeader).toLowerCase();
+  if (hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1') return true;
+  if (isCgnat(hostname)) return true;
+  return extraHosts.some((h) => h.toLowerCase() === hostname);
+}
+
+/** Origin === this server's own origin (scheme http, host:port equal to the Host header) or one of `extraOrigins`. */
+export function isAllowedOrigin(origin: string | undefined, host: string | undefined, extraOrigins: string[] = []): boolean {
+  if (!origin) return false;
+  return origin === `http://${host ?? ''}` || extraOrigins.includes(origin);
+}
+
 export type UpgradeCheck = { ok: true } | { ok: false; reason: string };
 
 /**
- * WebSocket upgrade gate (spec §6): the session cookie must validate and the
+ * WebSocket upgrade gate (spec §6): the Host must be one deck itself binds to
+ * (or an allowed extra host), the session cookie must validate, and the
  * Origin must be this server itself (scheme http, host:port equal to the Host
  * header) or one of `extraOrigins` (Vite dev server).
  */
@@ -80,12 +113,10 @@ export function checkUpgrade(
   req: { headers: { cookie?: string; origin?: string; host?: string } },
   token: string,
   extraOrigins: string[] = [],
+  extraHosts: string[] = [],
 ): UpgradeCheck {
+  if (!isAllowedHost(req.headers.host, extraHosts)) return { ok: false, reason: `host ${req.headers.host ?? ''} not allowed` };
   if (!isAuthed(req.headers.cookie, token)) return { ok: false, reason: 'unauthenticated' };
-  const origin = req.headers.origin;
-  if (!origin) return { ok: false, reason: 'missing origin' };
-  const host = req.headers.host ?? '';
-  const self = `http://${host}`;
-  if (origin === self || extraOrigins.includes(origin)) return { ok: true };
-  return { ok: false, reason: `origin ${origin} not allowed` };
+  if (isAllowedOrigin(req.headers.origin, req.headers.host, extraOrigins)) return { ok: true };
+  return { ok: false, reason: `origin ${req.headers.origin ?? '(none)'} not allowed` };
 }

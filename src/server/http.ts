@@ -1,0 +1,101 @@
+import fs from 'node:fs';
+import type http from 'node:http';
+import path from 'node:path';
+import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
+import type { SessionIndex } from './sessions/SessionIndex';
+import type { UsageService } from './usage/UsageService';
+
+/** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
+export type HttpDeps = { token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[] };
+
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+
+/** Deviation (added per review I5): SameSite=Strict doesn't separate ports, so every
+ * state-changing /api/* request must also prove it came from our own origin (or an
+ * explicit dev origin) — a matching Sec-Fetch-Site: same-origin is accepted too. */
+function stateChangingOriginOk(req: http.IncomingMessage, devOrigins: string[]): boolean {
+  if (req.headers['sec-fetch-site'] === 'same-origin') return true;
+  return isAllowedOrigin(req.headers.origin, req.headers.host, devOrigins);
+}
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+};
+
+function json(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req: http.IncomingMessage, limit = 64 * 1024): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk: Buffer) => {
+      data += chunk.toString('utf8');
+      if (data.length > limit) { reject(new Error('body too large')); req.destroy(); }
+    });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+function serveStatic(uiDir: string, urlPath: string, res: http.ServerResponse): void {
+  const root = path.resolve(uiDir);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(urlPath);
+  } catch {
+    json(res, 400, { error: 'bad path' });
+    return;
+  }
+  const normalized = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '');
+  let file = path.resolve(root, '.' + normalized);
+  if (!file.startsWith(root + path.sep) && file !== root) { json(res, 404, { error: 'not found' }); return; }
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(root, 'index.html');
+  if (!fs.existsSync(file)) { json(res, 503, { error: 'UI 빌드가 없습니다. `npm run build` 를 먼저 실행하세요.' }); return; }
+  res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=3600' });
+  fs.createReadStream(file).pipe(res);
+}
+
+export function createRequestHandler(deps: HttpDeps) {
+  const devOrigins = deps.devOrigins ?? [];
+  const extraHosts = deps.extraHosts ?? [];
+  return (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    // Deviation (added per review I5): DNS-rebinding defence — reject any Host deck
+    // doesn't itself bind to, even though an attacker-controlled Host would still
+    // equal its own Origin and pass the check below.
+    if (!isAllowedHost(req.headers.host, extraHosts)) { json(res, 421, { error: `host ${req.headers.host ?? ''} not allowed` }); return; }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const authed = isAuthed(req.headers.cookie, deps.token);
+    if (url.pathname.startsWith('/api/') && MUTATING_METHODS.has(req.method ?? '') && !stateChangingOriginOk(req, devOrigins)) {
+      json(res, 403, { error: '허용되지 않은 출처입니다' });
+      return;
+    }
+    void (async () => {
+      if (url.pathname === '/api/login' && req.method === 'POST') {
+        let token = '';
+        try { token = String((JSON.parse(await readBody(req)) as { token?: unknown }).token ?? ''); } catch { /* fallthrough */ }
+        if (!token || !tokenMatches(token, deps.token)) { json(res, 401, { error: '토큰이 올바르지 않습니다' }); return; }
+        json(res, 200, { ok: true }, { 'set-cookie': loginCookieHeader(deps.token) });
+        return;
+      }
+      if (url.pathname === '/api/logout' && req.method === 'POST') { json(res, 200, { ok: true }, { 'set-cookie': logoutCookieHeader() }); return; }
+      if (url.pathname.startsWith('/api/')) {
+        if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
+        if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
+        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects() }); return; }
+        json(res, 404, { error: 'not found' });
+        return;
+      }
+      if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
+      serveStatic(deps.uiDir, url.pathname, res);
+    })().catch((err: unknown) => json(res, 500, { error: err instanceof Error ? err.message : String(err) }));
+  };
+}
