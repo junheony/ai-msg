@@ -348,6 +348,24 @@ describe('ws', () => {
     ws.close();
   });
 
+  // Regression: a session written after the server's initial index scan (e.g. by Claude
+  // Desktop) is not yet in the in-memory index. open_session must rescan once and still
+  // find it, without the client ever triggering refresh_index itself.
+  it('open_session rescans the index once for a session written after the initial scan', async () => {
+    const dir = path.join(base, 'c', '-w-z');
+    await fs.mkdir(dir, { recursive: true });
+    const SID = '88888888-8888-4888-8888-888888888888';
+    await fs.writeFile(path.join(dir, `${SID}.jsonl`), JSON.stringify({ type: 'user', cwd: '/w/z', message: { role: 'user', content: 'first' } }) + '\n' + JSON.stringify({ type: 'assistant', message: { id: 'm', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'reply' }] } }) + '\n');
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p = collect(ws, (m) => m.type === 'history');
+    ws.send(JSON.stringify({ type: 'open_session', sessionId: SID }));
+    const h = (await p).at(-1) as Extract<ServerMessage, { type: 'history' }>;
+    expect(h).toMatchObject({ sessionId: SID, cwd: '/w/z', account: 'c' });
+    expect(h.messages.map((m) => m.kind)).toEqual(['user', 'assistant']);
+    ws.close();
+  });
+
   it('survives an invalid-UTF-8 frame and an oversized frame, then serves another client', async () => {
     const { port } = server.address() as { port: number };
     const rawFrame = (frame: Buffer) => new Promise<void>((resolve) => {

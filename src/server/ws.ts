@@ -94,6 +94,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
   const unsubscribeUsage = deps.usage.onChange((usage) => broadcast({ type: 'usage', usage }));
   const running = (): RunningTurn[] => [...turns.values()].map(({ turnId, sessionId, cwd }) => ({ turnId, sessionId, cwd }));
 
+  /**
+   * A session created moments ago (e.g. in Claude Desktop) may not be in the in-memory
+   * index yet. Single-flight: concurrent misses await the same rescan instead of each
+   * triggering their own.
+   */
+  let indexRescan: Promise<void> | null = null;
+  const rescanIndex = (): Promise<void> => {
+    if (!indexRescan) indexRescan = deps.index.refresh().finally(() => { indexRescan = null; });
+    return indexRescan;
+  };
+
   /** Turn events reach the socket that started the turn and sockets viewing its session — nobody else. */
   const emitTurn = (turn: Turn, msg: ServerMessage) => {
     const sid = 'sessionId' in msg ? msg.sessionId : null;
@@ -198,18 +209,28 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
           broker.cancelTurn(msg.turnId);
           break;
         case 'open_session': {
-          const entry = deps.index.lookup(msg.sessionId);
-          if (!entry) { send(ws, { type: 'error', turnId: null, message: `세션을 찾을 수 없습니다: ${msg.sessionId}` }); break; }
-          viewing.set(ws, msg.sessionId);
-          const state = deps.store.get(msg.sessionId);
-          void readTranscript(state ? `${state.projectDir}/${msg.sessionId}.jsonl` : entry.file)
-            .catch(() => readTranscript(entry.file))
-            .then((messages) => send(ws, { type: 'history', sessionId: msg.sessionId, cwd: entry.cwd, account: state?.account ?? entry.account, messages, runningTurnId: busy.get(msg.sessionId) ?? null }))
-            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
+          const sessionId = msg.sessionId;
+          void (async () => {
+            let entry = deps.index.lookup(sessionId);
+            // Review (flaky ws.test.ts): a session written just after the last scan isn't in
+            // the in-memory index yet. Rescan once (single-flight) and re-check before giving up.
+            if (!entry) {
+              await rescanIndex();
+              entry = deps.index.lookup(sessionId);
+            }
+            if (!entry) { send(ws, { type: 'error', turnId: null, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
+            viewing.set(ws, sessionId);
+            const state = deps.store.get(sessionId);
+            const found = entry;
+            await readTranscript(state ? `${state.projectDir}/${sessionId}.jsonl` : found.file)
+              .catch(() => readTranscript(found.file))
+              .then((messages) => send(ws, { type: 'history', sessionId, cwd: found.cwd, account: state?.account ?? found.account, messages, runningTurnId: busy.get(sessionId) ?? null }))
+              .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
+          })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
           break;
         }
         case 'refresh_index':
-          void deps.index.refresh()
+          void rescanIndex()
             .then(() => broadcast({ type: 'index', projects: deps.index.projects() }))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
           break;
