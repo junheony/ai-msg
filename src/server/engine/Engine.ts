@@ -15,7 +15,10 @@ export type EngineResult = {
   ok: boolean;
   text: string;
   usage: TurnUsage;
+  /** The SDK's own error text (classifier input, review M4). */
   errorText: string | null;
+  /** Tail of the CLI's stderr (≤ STDERR_MAX), display only — never classified. */
+  stderr: string | null;
   /** SDKAssistantMessageError value when the SDK reported one (e.g. 'rate_limit', 'authentication_failed'). */
   errorKind: string | null;
   terminalReason: string | null;

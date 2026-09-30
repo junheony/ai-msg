@@ -7,6 +7,7 @@ import { ZERO_USAGE } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
 import type { Engine, EngineResult, RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
+import { displayError } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
@@ -134,7 +135,7 @@ export class TurnRunner {
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt });
 
       const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink);
-      const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', errorKind: null, terminalReason: null };
+      const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
       const sessionId = a.sessionId ?? state?.sessionId ?? null;
       if (sessionId) {
         state = {
@@ -152,8 +153,9 @@ export class TurnRunner {
 
       const failure = classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
       const badge = { account, model, reason, usage: res.usage, modelNote: note };
+      const shownError = displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: res.ok, text: res.text, badge, errorText: res.errorText });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
         return;
       }
 
@@ -172,13 +174,13 @@ export class TurnRunner {
       });
       const why = failure === 'limit' ? '한도 도달' : '인증 실패';
       if (next.account === account) {
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: false, text: '', badge, errorText: `${why} · 대안 계정 없음 · ${res.errorText ?? ''}`.trim() });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: false, text: '', badge, errorText: `${why} · 대안 계정 없음 · ${shownError ?? ''}`.trim() });
         return;
       }
       if (state) {
         const moved = await this.relocate(state, next.account, sink, p.turnId);
         if (!moved) {
-          sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: false, text: '', badge, errorText: `${why} · 세션 이전 실패 · ${res.errorText ?? ''}`.trim() });
+          sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: false, text: '', badge, errorText: `${why} · 세션 이전 실패 · ${shownError ?? ''}`.trim() });
           return;
         }
         state = moved;

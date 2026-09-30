@@ -54,7 +54,7 @@ describe('mapSdkMessage', () => {
   it('result: success, API error inside success, and error subtype', () => {
     const usage = { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 10, cache_creation_input_tokens: 20 };
     expect(mapSdkMessage(M({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage, session_id: 's', terminal_reason: 'completed' }))).toEqual([
-      { kind: 'result', sessionId: 's', ok: true, text: 'ok', usage: { inputTokens: 2, outputTokens: 4, cacheReadTokens: 10, cacheCreationTokens: 20 }, errorText: null, errorKind: null, terminalReason: 'completed' },
+      { kind: 'result', sessionId: 's', ok: true, text: 'ok', usage: { inputTokens: 2, outputTokens: 4, cacheReadTokens: 10, cacheCreationTokens: 20 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' },
     ]);
     expect(mapSdkMessage(M({ type: 'result', subtype: 'success', is_error: true, result: 'Failed to authenticate. API Error: 401', usage, session_id: 's' }))).toMatchObject([{ kind: 'result', ok: false, text: '', errorText: 'Failed to authenticate. API Error: 401' }]);
     expect(mapSdkMessage(M({ type: 'result', subtype: 'error_max_turns', is_error: true, errors: ['too many'], usage, session_id: 's' }))).toMatchObject([{ kind: 'result', ok: false, errorText: 'error_max_turns: too many' }]);
@@ -79,6 +79,21 @@ describe('ClaudeEngine.runTurn', () => {
     expect(events[1]).toMatchObject({ kind: 'result', ok: false, errorKind: 'rate_limit', errorText: 'limit hit', usage: { inputTokens: 0 } });
     expect(captured!.prompt).toBe('p');
     expect(captured!.options?.env).toEqual({ PATH: '/bin' });
+  });
+
+  it('keeps CLI stderr out of errorText (classifier input) and caps it at ~2 KB', async () => {
+    const queryFn = (p: { options?: { stderr?: (s: string) => void } }) => (async function* () {
+      p.options?.stderr?.('x'.repeat(5000) + ' API Error: 429 rate limit');
+      yield M({ type: 'system', subtype: 'init', session_id: 's1', model: 'm', cwd: '/w' });
+      throw new Error('Claude Code process exited with code 1');
+    })();
+    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: {} });
+    const events: EngineEvent[] = [];
+    for await (const e of eng.runTurn(req())) events.push(e);
+    const r = events.at(-1) as Extract<EngineEvent, { kind: 'result' }>;
+    expect(r.errorText).toBe('Claude Code process exited with code 1');
+    expect(r.stderr?.length).toBeLessThanOrEqual(2048);
+    expect(r.stderr).toContain('429');
   });
 
   it('turns a thrown error without a result into a failed result', async () => {

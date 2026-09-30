@@ -5,6 +5,7 @@ import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
 import type { Engine, EngineEvent, EngineResult, RateLimitSignal, TurnRequest } from './Engine';
+import { STDERR_MAX } from './redact';
 
 export type QueryFn = (params: { prompt: string; options?: Options }) => AsyncIterable<SDKMessage>;
 
@@ -106,6 +107,7 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
         text: ok ? m.result : '',
         usage: usageOf(m.usage),
         errorText,
+        stderr: null,
         errorKind: null,
         terminalReason: m.terminal_reason ?? null,
       };
@@ -135,7 +137,7 @@ export class ClaudeEngine implements Engine {
     let sessionId: string | null = req.resumeSessionId;
     let errorKind: string | null = null;
     let sawResult = false;
-    const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-2000); } });
+    const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
     try {
       for await (const m of this.queryFn({ prompt: req.prompt, options })) {
         if (m.type === 'assistant' && typeof (m as unknown as Rec).error === 'string') errorKind = (m as unknown as Rec).error as string;
@@ -143,7 +145,7 @@ export class ClaudeEngine implements Engine {
           if (ev.kind === 'init') sessionId = ev.sessionId;
           if (ev.kind === 'result') {
             sawResult = true;
-            yield { ...ev, errorKind: ev.errorKind ?? errorKind };
+            yield { ...ev, errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : stderrTail || null };
           } else {
             yield ev;
           }
@@ -153,7 +155,7 @@ export class ClaudeEngine implements Engine {
       // The SDK throws after yielding an error result; only synthesize one if none was seen.
       if (!sawResult) {
         const msg = err instanceof Error ? err.message : String(err);
-        yield { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: [msg, stderrTail].filter(Boolean).join('\n'), errorKind, terminalReason: null };
+        yield { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: msg, stderr: stderrTail || null, errorKind, terminalReason: null };
       }
     } finally {
       req.signal.removeEventListener('abort', onAbort);

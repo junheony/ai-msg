@@ -19,6 +19,17 @@ describe('classifyFailure', () => {
     expect(classifyFailure({ ok: false, errorText: 'x', errorKind: 'authentication_failed', rateLimitStatus: null })).toBe('auth');
   });
 
+  it('does not match text that merely mentions 429, rate limit or authentication', () => {
+    const other = (errorText: string) => classifyFailure({ ok: false, errorText, errorKind: null, rateLimitStatus: null });
+    expect(other('error_max_turns: I checked the handler — it returns 429 when the rate limit is hit')).toBe('other');
+    expect(other('error_during_execution: refactored the authentication middleware; resets at midnight')).toBe('other');
+    expect(other('Tool failed: curl printed "HTTP 401"')).toBe('other');
+  });
+
+  it('errorKind wins over text', () => {
+    expect(classifyFailure({ ok: false, errorText: 'API Error: 429 rate limit reached', errorKind: 'authentication_failed', rateLimitStatus: null })).toBe('auth');
+  });
+
   it('everything else is other', () => {
     expect(classifyFailure({ ok: false, errorText: 'error_max_turns', errorKind: null, rateLimitStatus: 'allowed' })).toBe('other');
     expect(classifyFailure({ ok: false, errorText: null, errorKind: null, rateLimitStatus: null })).toBe('other');

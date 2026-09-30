@@ -136,6 +136,19 @@ describe('TurnRunner', () => {
     expect(msgsOf(c3, 'turn_result')[0]).toMatchObject({ ok: false, errorText: expect.stringContaining('usage limit') });
   });
 
+  it('errorText shown to the UI is truncated and has token-shaped strings redacted', async () => {
+    const secret = 'sk-ant-oat01-' + 'Ab3'.repeat(20);
+    const eng = new StubEngine(() => [failResult(`boom Authorization: Bearer ${secret}`, { stderr: `token=${'9f'.repeat(30)}\n` + 'y'.repeat(10_000) })]);
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    const r = msgsOf(c, 'turn_result')[0] as Extract<ServerMessage, { type: 'turn_result' }>;
+    expect(r.errorText).toContain('boom');
+    expect(r.errorText).not.toContain(secret);
+    expect(r.errorText).not.toContain('9f'.repeat(30));
+    expect(r.errorText).toContain('[redacted]');
+    expect(r.errorText!.length).toBeLessThan(3000);
+  });
+
   it('other failures do not retry', async () => {
     const eng = new StubEngine(() => [failResult('error_max_turns: too many')]);
     const c = await ctx(eng);
