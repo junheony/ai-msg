@@ -33,7 +33,8 @@ export type EngineEvent =
   | { kind: 'compact' }
   | EngineResult;
 
-export type PermissionRequest = { toolName: string; input: Record<string, unknown>; toolUseId: string };
+/** `signal` is the SDK's per-request abort signal (canUseTool ctx.signal); the prompt must close when it fires. */
+export type PermissionRequest = { toolName: string; input: Record<string, unknown>; toolUseId: string; signal?: AbortSignal };
 
 export type TurnRequest = {
   account: Account;

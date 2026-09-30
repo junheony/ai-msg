@@ -96,6 +96,18 @@ describe('ClaudeEngine.runTurn', () => {
     expect(r.stderr).toContain('429');
   });
 
+  it('does not call query() when the turn was aborted before it started', async () => {
+    let called = false;
+    const queryFn = () => { called = true; return (async function* () { /* nothing */ })(); };
+    const ac = new AbortController();
+    ac.abort();
+    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: {} });
+    const events: EngineEvent[] = [];
+    for await (const e of eng.runTurn(req({ signal: ac.signal }))) events.push(e);
+    expect(called).toBe(false);
+    expect(events).toMatchObject([{ kind: 'result', ok: false, terminalReason: 'aborted' }]);
+  });
+
   it('turns a thrown error without a result into a failed result', async () => {
     const queryFn = () => (async function* () { yield M({ type: 'system', subtype: 'init', session_id: 's1', model: 'm' }); throw new Error('process exited'); })();
     const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: {} });

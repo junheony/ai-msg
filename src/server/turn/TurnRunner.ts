@@ -19,7 +19,7 @@ import type { SessionState, SessionStateStore } from './SessionState';
 
 export type TurnSink = {
   emit(msg: ServerMessage): void;
-  askPermission(req: { turnId: string; toolName: string; input: Record<string, unknown>; toolUseId: string }): Promise<PermissionDecision>;
+  askPermission(req: { turnId: string; toolName: string; input: Record<string, unknown>; toolUseId: string; signal?: AbortSignal }): Promise<PermissionDecision>;
   signal: AbortSignal;
 };
 
@@ -76,7 +76,12 @@ export class TurnRunner {
       signal: sink.signal,
       onPermission: async (pr) => {
         const decision = await sink.askPermission({ turnId: p.turnId, ...pr });
-        await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
+        // Review M6: the audit log is best-effort; losing it must not lose the user's answer.
+        try {
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
+        } catch (err) {
+          console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
+        }
         return decision;
       },
     });
@@ -130,6 +135,11 @@ export class TurnRunner {
 
     const tried: Account[] = [];
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      // Review M2: an interrupt between attempts (or before the first) ends the turn here.
+      if (sink.signal.aborted) {
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? '', ok: false, text: '', badge: { account, model: p.model ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null }, errorText: '중단됨' });
+        return;
+      }
       const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
       const { model, note } = resolveModel(p.model, sessionDefault, fable);
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt });

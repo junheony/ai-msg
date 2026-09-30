@@ -175,6 +175,27 @@ describe('TurnRunner', () => {
     expect(audit).not.toContain('TOKEN=abc');
   });
 
+  it('a failing audit write does not lose the permission decision', async () => {
+    const eng = new StubEngine(async (req) => ok('p2', [{ kind: 'delta', text: await req.onPermission({ toolName: 'Bash', input: { command: 'ls' }, toolUseId: 'tu', signal: new AbortController().signal }) }]));
+    const c = await ctx(eng);
+    await fs.mkdir(c.deps.auditFile, { recursive: true }); // appendFile on a directory → EISDIR
+    c.sink.askPermission = async () => 'once';
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(msgsOf(c, 'delta').map((m) => (m as { text: string }).text)).toEqual(['ok', 'once']);
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: true });
+  });
+
+  it('an already-aborted turn never reaches the engine', async () => {
+    const eng = new StubEngine(() => ok('x'));
+    const c = await ctx(eng);
+    const ac = new AbortController();
+    ac.abort();
+    c.sink.signal = ac.signal;
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls).toHaveLength(0);
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: false, errorText: expect.stringContaining('중단') });
+  });
+
   it('fable with no account having room is downgraded to opus with a note', async () => {
     const eng = new StubEngine(() => ok('f1'));
     const c = await ctx(eng, {}, await usageWith([13, 7, 85], [2, 3, 90], [0, 50, 80]));

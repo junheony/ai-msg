@@ -28,7 +28,7 @@ export function buildOptions(
     abortController: deps.abortController,
     stderr: deps.onStderr,
     canUseTool: async (toolName, input, ctx) => {
-      const decision = await req.onPermission({ toolName, input, toolUseId: ctx.toolUseID });
+      const decision = await req.onPermission({ toolName, input, toolUseId: ctx.toolUseID, signal: ctx.signal });
       if (decision === 'deny') return { behavior: 'deny', message: '사용자가 거부했습니다', interrupt: false };
       if (decision === 'session') {
         return { behavior: 'allow', updatedPermissions: [{ type: 'addRules', rules: [{ toolName }], behavior: 'allow', destination: 'session' }] };
@@ -130,6 +130,11 @@ export class ClaudeEngine implements Engine {
   }
 
   async *runTurn(req: TurnRequest): AsyncIterable<EngineEvent> {
+    // Review M2: an interrupt that landed before the turn started must not spawn the CLI at all.
+    if (req.signal.aborted) {
+      yield { kind: 'result', sessionId: req.resumeSessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '중단됨', stderr: null, errorKind: null, terminalReason: 'aborted' };
+      return;
+    }
     const abortController = new AbortController();
     const onAbort = () => abortController.abort();
     req.signal.addEventListener('abort', onAbort, { once: true });
