@@ -50,7 +50,7 @@ describe('UsageService', () => {
   }
 
   it('polls <deckUrl>/api/state and exposes a snapshot', async () => {
-    const fetchFn = vi.fn(async () => ({ ok: true, json: async () => LIVE }));
+    const fetchFn = vi.fn(async (_url: string) => ({ ok: true, json: async () => LIVE }));
     const s = svc(fetchFn);
     await s.pollOnce();
     expect(fetchFn.mock.calls[0]?.[0]).toBe('http://deck.test:9310/api/state');

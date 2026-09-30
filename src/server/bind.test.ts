@@ -24,7 +24,7 @@ describe('bindAddresses', () => {
       lo0: [v4('127.0.0.1', true)],
       en0: [v4('192.168.0.10')],
       utun4: [v4('100.106.182.94')],
-      utun5: [{ ...v4('fd7a::1'), family: 'IPv6' as const }],
+      utun5: [{ ...v4('fd7a::1'), family: 'IPv6' as const, scopeid: 0 }],
     };
     expect(bindAddresses(ifaces)).toEqual(['127.0.0.1', '100.106.182.94']);
   });
