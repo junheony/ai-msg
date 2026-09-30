@@ -21,6 +21,12 @@ export function Chat({ items, pending, activeTurnId, busy, model, title, onSend,
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [items, pending]);
 
+  // Review M12: a failed last turn can be re-sent as-is.
+  const last = items.at(-1);
+  const retryPrompt = !busy && last?.kind === 'assistant' && last.error !== null && !last.streaming
+    ? ([...items].reverse().find((it) => it.kind === 'user') as Extract<ChatItem, { kind: 'user' }> | undefined)?.text ?? null
+    : null;
+
   const submit = () => {
     const t = text.trim();
     if (!t || busy) return;
@@ -33,6 +39,7 @@ export function Chat({ items, pending, activeTurnId, busy, model, title, onSend,
       <div className="chat-head">{title}</div>
       <div className="chat-body">
         {items.map((it, i) => <MessageView key={i} item={it} />)}
+        {retryPrompt !== null && <button type="button" className="retry" onClick={() => onSend(retryPrompt)}>재시도</button>}
         {pending.map((p) => <PermissionCard key={p.requestId} req={p} onDecide={onDecide} />)}
         <div ref={endRef} />
       </div>

@@ -175,4 +175,17 @@ describe('reducer', () => {
     expect(s.activeTurnId).toBe('tr');
     expect(s.items.at(-1)).toMatchObject({ kind: 'assistant', turnId: 'tr', streaming: true, text: 'more' });
   });
+
+  it('after turn_retry the retry streams into a fresh text segment; the failed attempt is kept apart', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: 's', cwd: '/w', title: 't' });
+    s = reducer(s, { type: 'sent', text: 'hi' });
+    s = play([
+      { type: 'turn_started', turnId: 'tr1', sessionId: 's', cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0 },
+      { type: 'delta', turnId: 'tr1', sessionId: 's', cwd: '/w', text: 'partial' },
+      { type: 'turn_retry', turnId: 'tr1', sessionId: 's', cwd: '/w', fromAccount: 'b', toAccount: 'c', reason: '한도 도달', attempt: 1 },
+      { type: 'turn_started', turnId: 'tr1', sessionId: 's', cwd: '/w', account: 'c', model: 'opus', reason: 'r', attempt: 1 },
+      { type: 'delta', turnId: 'tr1', sessionId: 's', cwd: '/w', text: 'ok' },
+    ], s);
+    expect(s.items[1]).toMatchObject({ text: 'ok', attempts: ['partial'] });
+  });
 });

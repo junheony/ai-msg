@@ -19,6 +19,7 @@ export function MessageView({ item }: { item: ChatItem }) {
   return (
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}`}>
       {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
+      {item.attempts.map((t, i) => <div key={i} className="markdown failed-attempt muted"><ReactMarkdown components={MD_COMPONENTS}>{t}</ReactMarkdown></div>)}
       {item.toolCalls.map((c) => <ToolCallView key={c.toolUseId} call={c} />)}
       <div className="markdown"><ReactMarkdown components={MD_COMPONENTS}>{item.text}</ReactMarkdown></div>
       {item.streaming && <span className="cursor">▍</span>}

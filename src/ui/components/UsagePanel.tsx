@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react';
 import { ACCOUNTS, type Account } from '../../shared/accounts';
-import { remainingPct, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { parseIsoUtc, remainingPct, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 const WINDOWS: { key: 'fiveHour' | 'weekly' | 'fable'; name: string }[] = [
@@ -10,7 +11,7 @@ const WINDOWS: { key: 'fiveHour' | 'weekly' | 'fable'; name: string }[] = [
 
 export function countdown(resetsAt: string | null, now: number): string {
   if (!resetsAt) return '';
-  const ms = Date.parse(resetsAt) - now;
+  const ms = parseIsoUtc(resetsAt) - now; // zone-less stamps are UTC (review M9)
   if (Number.isNaN(ms) || ms <= 0) return '리셋됨';
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
@@ -24,7 +25,19 @@ function levelClass(w: UsageWindow | null): string {
   return 'ok';
 }
 
-export function UsagePanel({ usage, current, now = Date.now() }: { usage: UsageSnapshot | null; current: Account | null; now?: number }) {
+/** Review M9: the countdowns re-render every 30 s instead of freezing at the last snapshot. */
+function useClock(fixed: number | undefined, periodMs = 30_000): number {
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (fixed !== undefined) return;
+    const id = setInterval(() => setTick(Date.now()), periodMs);
+    return () => clearInterval(id);
+  }, [fixed, periodMs]);
+  return fixed ?? tick;
+}
+
+export function UsagePanel({ usage, current, now: fixedNow }: { usage: UsageSnapshot | null; current: Account | null; now?: number }) {
+  const now = useClock(fixedNow);
   if (!usage) return <div className="usage-panel">잔여량 불러오는 중…</div>;
   return (
     <div className="usage-panel">

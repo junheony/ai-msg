@@ -1,6 +1,15 @@
 import type { ClientMessage, ServerMessage } from '../shared/protocol';
 
-export function createSocket(onMessage: (m: ServerMessage) => void, onStatus: (connected: boolean) => void): { send(m: ClientMessage): void; close(): void } {
+/**
+ * Review M10: a browser cannot see the HTTP status of a refused upgrade, so after every close
+ * the session is checked with /api/me; a 401 hands back to the login screen instead of
+ * looping on "재연결 중…".
+ */
+export function createSocket(
+  onMessage: (m: ServerMessage) => void,
+  onStatus: (connected: boolean) => void,
+  onUnauthed: () => void = () => {},
+): { send(m: ClientMessage): void; close(): void } {
   let ws: WebSocket | null = null;
   let closed = false;
   let delay = 1000;
@@ -13,7 +22,15 @@ export function createSocket(onMessage: (m: ServerMessage) => void, onStatus: (c
     ws.onmessage = (ev) => { try { onMessage(JSON.parse(String(ev.data)) as ServerMessage); } catch { /* ignore */ } };
     ws.onclose = () => {
       onStatus(false);
-      if (!closed) { setTimeout(open, delay); delay = Math.min(delay * 2, 10_000); }
+      if (closed) return;
+      void fetch('/api/me', { credentials: 'same-origin' })
+        .then((r) => r.status === 401, () => false)
+        .then((unauthed) => {
+          if (closed) return;
+          if (unauthed) { closed = true; onUnauthed(); return; }
+          setTimeout(open, delay);
+          delay = Math.min(delay * 2, 10_000);
+        });
     };
     ws.onerror = () => ws?.close();
   };

@@ -22,7 +22,7 @@ export function App() {
       dispatch({ type: 'server', msg });
       // Reconnected: re-open the current session so this socket receives its turn events again (review I3).
       if (msg.type === 'hello' && openSessionId.current) sock.current?.send({ type: 'open_session', sessionId: openSessionId.current });
-    }, (value) => dispatch({ type: 'connected', value }));
+    }, (value) => dispatch({ type: 'connected', value }), () => setAuthed(false));
     return () => sock.current?.close();
   }, [authed]);
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { UsagePanel } from './UsagePanel';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { UsagePanel, countdown } from './UsagePanel';
 import type { UsageSnapshot } from '../../shared/usage-types';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -31,5 +31,21 @@ describe('UsagePanel', () => {
   it('renders a placeholder without data', () => {
     render(<UsagePanel usage={null} current={null} />);
     expect(screen.getByText('잔여량 불러오는 중…')).toBeTruthy();
+  });
+
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+  it('countdown reads a zone-less reset time as UTC', () => {
+    expect(countdown('2026-09-30T14:30:00', NOW)).toBe('2시간 0분 후 리셋');
+  });
+
+  it('without a fixed now, the countdown ticks every 30 s', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
+    render(<UsagePanel usage={u} current={null} />);
+    expect(screen.getByTestId('a-fiveHour').textContent).toContain('2시간 0분');
+    act(() => { vi.advanceTimersByTime(60_000); });
+    expect(screen.getByTestId('a-fiveHour').textContent).toContain('1시간 59분');
   });
 });

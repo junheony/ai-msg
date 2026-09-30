@@ -55,3 +55,7 @@ select { background: #141517; color: var(--fg); border: 1px solid var(--line); b
 .center { display: flex; align-items: center; justify-content: center; height: 100%; }
 .login { max-width: 360px; margin: 15vh auto; display: flex; flex-direction: column; gap: 10px; }
 .login input { padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: #141517; color: var(--fg); }
+.permission-title { margin: 6px 0; }
+.permission-scope, .permission-reason, .permission-path { margin: 2px 0; }
+.failed-attempt { opacity: 0.6; border-left: 2px solid var(--muted); padding-left: 8px; margin: 4px 0; }
+button.retry { align-self: flex-start; margin: 4px 0 8px; }

@@ -7,7 +7,7 @@ describe('MessageView', () => {
   afterEach(cleanup);
 
   it('renders markdown images as links, never as <img> (no auto-loading remote URLs)', () => {
-    const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'see ![pixel](https://evil.example/p.png?leak=1) here', toolCalls: [], badge: null, streaming: false, error: null, notes: [] }} />);
+    const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'see ![pixel](https://evil.example/p.png?leak=1) here', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
     expect(container.querySelector('img')).toBeNull();
     const a = container.querySelector('a[href="https://evil.example/p.png?leak=1"]');
     expect(a).not.toBeNull();

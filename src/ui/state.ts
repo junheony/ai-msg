@@ -8,7 +8,7 @@ export type ToolCallItem = { toolUseId: string; name: string; input: unknown; re
 
 export type ChatItem =
   | { kind: 'user'; text: string }
-  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[] };
+  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[] };
 
 export type PendingPermission = Omit<Extract<ServerMessage, { type: 'permission_request' }>, 'type'>;
 
@@ -45,7 +45,7 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
   for (const m of messages) {
     if (m.kind === 'user') items.push({ kind: 'user', text: m.text });
     else if (m.kind === 'assistant') {
-      items.push({ kind: 'assistant', turnId: null, text: m.text, toolCalls: m.toolCalls.map((t) => ({ toolUseId: t.id, name: t.name, input: t.input, result: null, isError: false })), badge: null, streaming: false, error: null, notes: [] });
+      items.push({ kind: 'assistant', turnId: null, text: m.text, toolCalls: m.toolCalls.map((t) => ({ toolUseId: t.id, name: t.name, input: t.input, result: null, isError: false })), badge: null, streaming: false, error: null, notes: [], attempts: [] });
     } else {
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
@@ -78,7 +78,7 @@ function belongs(state: AppState, msg: TurnMsg): boolean {
 }
 
 function streamingItem(turnId: string): AssistantItem {
-  return { kind: 'assistant', turnId, text: '', toolCalls: [], badge: null, streaming: true, error: null, notes: [] };
+  return { kind: 'assistant', turnId, text: '', toolCalls: [], badge: null, streaming: true, error: null, notes: [], attempts: [] };
 }
 
 function onServer(state: AppState, msg: ServerMessage): AppState {
@@ -127,7 +127,8 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'permission_resolved': return { ...state, pending: state.pending.filter((p) => p.requestId !== msg.requestId) };
     case 'turn_retry':
       if (!belongs(state, msg)) return state;
-      return updateTurn(state, msg.turnId, (it) => ({ ...it, notes: [...it.notes, `재시도 ${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
+      // Review M11: the retry streams into a fresh segment; the failed attempt's text is kept apart.
+      return updateTurn(state, msg.turnId, (it) => ({ ...it, text: '', attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
     case 'turn_notice': {
       if (!belongs(state, msg)) return state;
       const next = updateTurn(state, msg.turnId, (it) => ({ ...it, notes: [...it.notes, msg.message] }));
