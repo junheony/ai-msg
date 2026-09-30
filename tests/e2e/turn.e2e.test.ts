@@ -87,7 +87,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  child.kill('SIGTERM');
+  // Review M15: wait for the server to exit before removing the dirs it may still write to.
+  if (child.exitCode === null && child.signalCode === null) {
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill('SIGTERM');
+    await Promise.race([exited, new Promise<void>((resolve) => setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 10_000))]);
+  }
   for (const r of roots) await fs.rm(path.join(r, projectSlug(workDir)), { recursive: true, force: true });
   await fs.rm(cfgDir, { recursive: true, force: true });
   await fs.rm(workDir, { recursive: true, force: true });
