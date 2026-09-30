@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CLAUDE_MODELS, MODEL_LABEL, type ClaudeModel } from '../../shared/models';
+import { CLAUDE_MODELS, MODEL_LABEL, type AnyModel } from '../../shared/models';
 import type { PermissionDecision } from '../../shared/turn-types';
 import type { ChatItem, PendingPermission } from '../state';
 import { MessageView } from './MessageView';
@@ -10,12 +10,12 @@ export function Chat({ items, pending, activeTurnId, busy, model, title, onSend,
   pending: PendingPermission[];
   activeTurnId: string | null;
   busy: boolean;
-  model: ClaudeModel;
+  model: AnyModel;
   title: string;
   onSend: (text: string) => void;
   onInterrupt: () => void;
   onDecide: (requestId: string, decision: PermissionDecision) => void;
-  onModel: (m: ClaudeModel) => void;
+  onModel: (m: AnyModel) => void;
 }) {
   const [text, setText] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
@@ -52,7 +52,7 @@ export function Chat({ items, pending, activeTurnId, busy, model, title, onSend,
           rows={3}
         />
         <div className="composer-actions">
-          <select value={model} onChange={(e) => onModel(e.target.value as ClaudeModel)} title="이 세션의 기본 모델">
+          <select value={model} onChange={(e) => onModel(e.target.value as AnyModel)} title="이 세션의 기본 모델">
             {CLAUDE_MODELS.map((m) => <option key={m} value={m}>{MODEL_LABEL[m]}</option>)}
           </select>
           {activeTurnId ? <button type="button" className="deny" onClick={onInterrupt}>중단</button> : <button type="button" onClick={submit} disabled={!text.trim() || busy}>보내기</button>}

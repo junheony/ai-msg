@@ -13,9 +13,9 @@ export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
   const openSessionId = useRef<string | null>(null);
-  openSessionId.current = state.session?.sessionId ?? null;
+  openSessionId.current = state.panes[0]!.session?.sessionId ?? null;
   const activeTurn = useRef<string | null>(null);
-  activeTurn.current = state.activeTurnId;
+  activeTurn.current = state.panes[0]!.activeTurnId;
 
   useEffect(() => { void fetch('/api/me').then((r) => setAuthed(r.ok)); }, []);
 
@@ -37,7 +37,7 @@ export function App() {
   if (!authed) return <Login onLoggedIn={() => setAuthed(true)} />;
 
   const send = (m: ClientMessage) => sock.current?.send(m);
-  const session = state.session;
+  const session = state.panes[0]!.session;
 
   return (
     <div className="app">
@@ -57,14 +57,14 @@ export function App() {
         />
         {session ? (
           <Chat
-            items={state.items}
+            items={state.panes[0]!.items}
             pending={state.pending}
-            activeTurnId={state.activeTurnId}
-            busy={state.activeTurnId !== null || state.awaitingStart}
-            model={state.model}
+            activeTurnId={state.panes[0]!.activeTurnId}
+            busy={state.panes[0]!.activeTurnId !== null || state.panes[0]!.awaitingStart}
+            model={state.panes[0]!.model}
             title={`${session.title} — ${session.cwd}`}
-            onSend={(text) => { dispatch({ type: 'sent', text }); send({ type: 'send', sessionId: session.sessionId, cwd: session.cwd, text, model: state.model }); }}
-            onInterrupt={() => { if (state.activeTurnId) send({ type: 'interrupt', turnId: state.activeTurnId }); }}
+            onSend={(text) => { dispatch({ type: 'sent', text }); send({ type: 'send', sessionId: session.sessionId, cwd: session.cwd, text, model: state.panes[0]!.model }); }}
+            onInterrupt={() => { if (state.panes[0]!.activeTurnId) send({ type: 'interrupt', turnId: state.panes[0]!.activeTurnId }); }}
             onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
             onModel={(model) => dispatch({ type: 'set_model', model })}
           />
