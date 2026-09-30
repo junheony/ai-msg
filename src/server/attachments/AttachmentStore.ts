@@ -73,7 +73,11 @@ export class AttachmentStore {
       if (!ID_RE.test(id) || name[36] !== '-') continue;
       const file = path.join(this.dir, name);
       try {
-        const st = await fs.stat(file);
+        // Fix round 1 finding 2: lstat (never follow symlinks) — a symlink planted in the
+        // attachments dir (e.g. `<uuid>-x` -> ~/.ssh/id_ed25519) must never be indexed and
+        // handed to the model as an attachment path. lstat().isFile() is false for a symlink
+        // (isSymbolicLink() would be true instead), so this also naturally skips them.
+        const st = await fs.lstat(file);
         if (!st.isFile()) continue;
         const fh = await fs.open(file, 'r');
         let head: Buffer;
@@ -111,15 +115,25 @@ export class AttachmentStore {
     return { found, missing };
   }
 
-  /** Deletes files older than maxAgeMs (by mtime). Returns how many were removed. */
+  /**
+   * Deletes files older than maxAgeMs (by mtime). Returns how many were removed.
+   * Fix round 1 finding 3: a single failed removal (EPERM/EACCES) must not throw out of
+   * purge() — init() awaits this, so an unhandled rejection here would fail deck startup.
+   * Each removal gets its own try/catch: log and continue, leaving that entry indexed so a
+   * later purge can retry it.
+   */
   async purge(): Promise<number> {
     let n = 0;
     const cutoff = this.now() - this.maxAgeMs;
     for (const a of [...this.byId.values()]) {
       if (a.createdAtMs > cutoff) continue;
-      await fs.rm(a.path, { force: true });
-      this.byId.delete(a.id);
-      n++;
+      try {
+        await fs.rm(a.path, { force: true });
+        this.byId.delete(a.id);
+        n++;
+      } catch (err) {
+        console.error('deck attachments: 삭제 실패', a.path, err);
+      }
     }
     return n;
   }

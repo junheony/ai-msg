@@ -152,4 +152,62 @@ describe('POST /api/attachments (D7)', () => {
     const big = await fetch(`${base}/api/attachments`, { method: 'POST', headers: headers({ 'x-deck-filename': 'big.bin' }), body: Buffer.alloc(10 * 1024 * 1024 + 1) });
     expect(big.status).toBe(413);
   });
+
+  /**
+   * Fix round 1 finding 1 regression: a *realistic* oversized upload — tens of MiB, written to
+   * the socket in chunks like a real client, rather than fetch()'s single in-memory Buffer body
+   * — used to get ECONNRESET/EPIPE instead of ever seeing the 413 (a `connection: close`
+   * header made Node auto-destroy the socket on `res` 'finish' while the body was still
+   * arriving, RSTing the still-unread bytes). Drives node:http directly so both a declared
+   * Content-Length and a chunked (no Content-Length) transfer can be exercised, and streams
+   * the body progressively rather than handing it to fetch() as one Buffer.
+   */
+  function uploadRaw(size: number, opts: { declareLength?: boolean } = {}): Promise<{ status: number; text: string }> {
+    return new Promise((resolve, reject) => {
+      const addr = server.address() as { port: number };
+      const reqHeaders: Record<string, string> = {
+        cookie: `deck_session=${cookieValueFor(TOKEN)}`,
+        origin: base,
+        'content-type': 'application/octet-stream',
+        'x-deck-filename': 'big.bin',
+      };
+      if (opts.declareLength !== false) reqHeaders['content-length'] = String(size);
+      const req = http.request({ host: '127.0.0.1', port: addr.port, path: '/api/attachments', method: 'POST', headers: reqHeaders }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      const chunkSize = 1024 * 1024;
+      let remaining = size;
+      const writeNext = () => {
+        if (remaining <= 0) { req.end(); return; }
+        const n = Math.min(chunkSize, remaining);
+        remaining -= n;
+        const ok = req.write(Buffer.alloc(n));
+        if (ok) setImmediate(writeNext);
+        else req.once('drain', writeNext);
+      };
+      writeNext();
+    });
+  }
+
+  const OVERSIZE = 21 * 1024 * 1024; // > MAX_ATTACHMENT_BYTES (10 MiB), well above the brief's 20 MiB floor
+
+  it('a realistic oversized upload with a declared Content-Length gets a clean 413, not ECONNRESET', async () => {
+    for (let i = 0; i < 3; i++) {
+      const res = await uploadRaw(OVERSIZE, { declareLength: true });
+      expect(res.status).toBe(413);
+      expect(JSON.parse(res.text)).toMatchObject({ error: expect.stringContaining('MiB') });
+    }
+  }, 30000);
+
+  it('a realistic oversized upload sent chunked (no Content-Length) also gets a clean 413, not ECONNRESET', async () => {
+    for (let i = 0; i < 3; i++) {
+      const res = await uploadRaw(OVERSIZE, { declareLength: false });
+      expect(res.status).toBe(413);
+      expect(JSON.parse(res.text)).toMatchObject({ error: expect.stringContaining('MiB') });
+    }
+  }, 30000);
 });

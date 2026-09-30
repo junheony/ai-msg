@@ -63,29 +63,79 @@ class BodyTooLarge extends Error {}
 /**
  * PF6: on overflow we must NOT call req.destroy() before the 413 response is written — the
  * client then sees "other side closed" and never gets the size message. Instead: stop
- * buffering (discard further chunks), let/ask the stream drain (req.resume()), and let the
- * caller write a normal response with `connection: close`.
+ * buffering (discard further chunks) and reject so the caller can respond immediately; the
+ * caller is responsible for draining and eventually closing the socket (see drainAndClose).
  */
 function readRaw(req: http.IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
-    let overflowed = false;
-    req.on('data', (chunk: Buffer) => {
-      if (overflowed) return;
+    const cleanup = () => {
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('error', onError);
+    };
+    const onData = (chunk: Buffer) => {
       total += chunk.length;
-      if (total > limit) {
-        overflowed = true;
-        chunks.length = 0;
-        req.resume();
-        reject(new BodyTooLarge());
-        return;
-      }
+      if (total > limit) { cleanup(); reject(new BodyTooLarge()); return; }
       chunks.push(chunk);
-    });
-    req.on('end', () => { if (!overflowed) resolve(Buffer.concat(chunks)); });
-    req.on('error', reject);
+    };
+    const onEnd = () => { cleanup(); resolve(Buffer.concat(chunks)); };
+    const onError = (err: Error) => { cleanup(); reject(err); };
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
   });
+}
+
+/**
+ * Fix round 1 finding 1: a real oversized upload (tens of MiB) got ECONNRESET/EPIPE instead of
+ * seeing the 413 — writing the response with a `connection: close` header makes Node's own
+ * http server auto-destroy the socket on `res` 'finish' (`res._last`/`shouldKeepAlive=false`),
+ * which races the still-arriving request body: whatever is left unread in the kernel receive
+ * buffer at that moment triggers a TCP RST instead of a clean close, and the client sees the
+ * RST before it has necessarily read the 413 body. So the 413 response here never sets
+ * `connection: close` (keeping Node's own auto-close path from firing at all), and this
+ * function alone owns closing the socket: it keeps consuming (discarding) the body — so the
+ * client's still-in-flight upload finishes writing instead of hitting EPIPE — until 'end'
+ * (then a graceful half-close), or until a bound (time or bytes) is hit (then a hard destroy).
+ * Memory stays flat throughout: chunks are counted, never buffered.
+ */
+function drainAndClose(req: http.IncomingMessage, opts: { maxDrainBytes?: number; timeoutMs?: number } = {}): void {
+  const maxDrainBytes = opts.maxDrainBytes ?? 64 * 1024 * 1024;
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  let drained = 0;
+  let done = false;
+  const finish = (force: boolean) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    req.removeListener('data', onData);
+    req.removeListener('end', onEnd);
+    req.removeListener('error', onError);
+    const sock = req.socket;
+    if (!sock || sock.destroyed) return;
+    if (force) sock.destroy();
+    else sock.end();
+  };
+  const onData = (chunk: Buffer) => {
+    drained += chunk.length;
+    if (drained > maxDrainBytes) finish(true);
+  };
+  const onEnd = () => finish(false);
+  const onError = () => finish(true);
+  req.on('data', onData);
+  req.on('end', onEnd);
+  req.on('error', onError);
+  const timer = setTimeout(() => finish(true), timeoutMs);
+  timer.unref?.();
+  req.resume();
+}
+
+/** Writes the 413 (deliberately without `connection: close` — see drainAndClose) then drains. */
+function tooLarge(req: http.IncomingMessage, res: http.ServerResponse, message: string): void {
+  json(res, 413, { error: message });
+  drainAndClose(req);
 }
 
 function serveStatic(uiDir: string, urlPath: string, res: http.ServerResponse): void {
@@ -136,11 +186,18 @@ export function createRequestHandler(deps: HttpDeps) {
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []) }); return; }
         if (url.pathname === '/api/attachments' && req.method === 'POST') {
           if (!deps.attachments) { json(res, 404, { error: 'not found' }); return; }
+          // Fix round 1 finding 1(a): a declared Content-Length over the limit is rejected
+          // before reading any of the body at all.
+          const declaredLength = Number(req.headers['content-length']);
+          if (Number.isFinite(declaredLength) && declaredLength > MAX_ATTACHMENT_BYTES) {
+            tooLarge(req, res, new AttachmentTooLarge().message);
+            return;
+          }
           let data: Buffer;
           try {
             data = await readRaw(req, MAX_ATTACHMENT_BYTES);
           } catch (err) {
-            if (err instanceof BodyTooLarge) { json(res, 413, { error: new AttachmentTooLarge().message }, { connection: 'close' }); return; }
+            if (err instanceof BodyTooLarge) { tooLarge(req, res, new AttachmentTooLarge().message); return; }
             throw err;
           }
           let name = 'file';
@@ -149,7 +206,7 @@ export function createRequestHandler(deps: HttpDeps) {
             const a = await deps.attachments.save(name, data);
             json(res, 201, { id: a.id, name: a.name, mediaType: a.mediaType, size: a.size, isImage: a.isImage });
           } catch (err) {
-            if (err instanceof AttachmentTooLarge) { json(res, 413, { error: err.message }, { connection: 'close' }); return; }
+            if (err instanceof AttachmentTooLarge) { json(res, 413, { error: err.message }); return; }
             throw err;
           }
           return;

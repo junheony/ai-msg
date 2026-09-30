@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -70,5 +70,48 @@ describe('AttachmentStore (D7)', () => {
     now += ATTACHMENT_MAX_AGE_MS + 1;
     expect(await again.purge()).toBe(1);
     expect(again.get(a.id)).toBeNull();
+  });
+
+  // Fix round 1 finding 2: reload() must lstat (never follow symlinks) — a symlinked
+  // attachment entry (e.g. pointing at a secret file outside the store) must never be
+  // indexed, since its path is later handed to the model as a readable attachment.
+  it('never indexes a symlinked entry, even one that resolves to a real file', async () => {
+    const dir = path.join(base, 'att');
+    const store = new AttachmentStore(dir, { now: () => now });
+    await store.init();
+    const secret = path.join(base, 'secret.txt');
+    await fs.writeFile(secret, 'top secret');
+    const fakeId = '11111111-2222-3333-4444-555555555555';
+    await fs.symlink(secret, path.join(dir, `${fakeId}-secret.txt`));
+    const again = new AttachmentStore(dir, { now: () => now });
+    await again.init();
+    expect(again.get(fakeId)).toBeNull();
+    expect(again.resolve([fakeId])).toEqual({ found: [], missing: [fakeId] });
+  });
+
+  // Fix round 1 finding 3: one removal failing (EPERM/EACCES from the filesystem) must not
+  // throw out of purge() — init() awaits purge(), so an unhandled rejection here would take
+  // down deck's startup entirely.
+  it('purge logs and continues when a removal fails, without throwing (init included)', async () => {
+    const dir = path.join(base, 'att');
+    const store = new AttachmentStore(dir, { now: () => now });
+    await store.init();
+    const stale = await store.save('old.txt', Buffer.from('x'));
+    await fs.utimes(stale.path, new Date(now - ATTACHMENT_MAX_AGE_MS - 1000), new Date(now - ATTACHMENT_MAX_AGE_MS - 1000));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const rmSpy = vi.spyOn(fs, 'rm').mockRejectedValue(new Error('EACCES: permission denied'));
+    try {
+      now += ATTACHMENT_MAX_AGE_MS + 1;
+      await expect(store.purge()).resolves.toBe(0);
+      expect(store.get(stale.id)).not.toBeNull();
+      expect(errSpy).toHaveBeenCalled();
+
+      const again = new AttachmentStore(dir, { now: () => now });
+      await expect(again.init()).resolves.toBeUndefined();
+      expect(again.get(stale.id)).not.toBeNull();
+    } finally {
+      rmSpy.mockRestore();
+      errSpy.mockRestore();
+    }
   });
 });
