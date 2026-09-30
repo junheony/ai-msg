@@ -1,7 +1,7 @@
 import http from 'node:http';
 import os from 'node:os';
 import { loadOrCreateToken } from './auth';
-import { bindAddresses } from './bind';
+import { bindAddresses, tailscaleIPv4s } from './bind';
 import { loadConfig } from './config';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { createRequestHandler } from './http';
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     projectsRoots: cfg.projectsRoots,
   });
 
-  const addresses = bindAddresses(os.networkInterfaces(), { loopbackOnly: cfg.loopbackOnly });
+  const addresses = bindAddresses(os.networkInterfaces(), { loopbackOnly: cfg.loopbackOnly, tailscaleIps: tailscaleIPv4s() });
   // Deviation (added per review I5): the addresses deck itself binds to double as the
   // Host allowlist (DNS-rebinding defence), plus any operator-configured extra names.
   const extraHosts = [...addresses, ...cfg.extraHosts];
