@@ -37,6 +37,13 @@ export function App() {
     return () => sock.current?.close();
   }, [authed]);
 
+  useEffect(() => {
+    if (!phone || !drawer) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawer(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [phone, drawer]);
+
   if (authed === null) return <div className="center">확인 중…</div>;
   if (!authed) return <Login onLoggedIn={() => setAuthed(true)} />;
 

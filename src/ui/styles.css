@@ -104,10 +104,12 @@ button.retry { align-self: flex-start; margin: 4px 0 8px; }
   .sidebar { width: 100%; height: 100%; }
   .drawer-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .5); z-index: 10; }
   .panes { grid-template-columns: 1fr !important; grid-template-rows: auto 1fr; min-height: 0; }
+  .panes > .pane { grid-row: 2 / -1; min-height: 0; }
+  .pane-switch { overflow-x: auto; flex-wrap: nowrap; }
   .msg { max-width: 100%; }
   .composer { flex-direction: column; align-items: stretch; }
   .composer-actions { justify-content: flex-end; flex-wrap: wrap; }
   .permission-actions { flex-wrap: wrap; }
-  .permission-actions button, .composer-actions button, .question-options .option, .pane-switch button { min-height: var(--phone-tap); }
+  .permission-actions button, .composer-actions button, .question-options .option, .pane-switch button, .pane-close { min-height: var(--phone-tap); }
   .chat-body { padding: 10px; }
 }

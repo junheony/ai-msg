@@ -142,4 +142,13 @@ describe('App phone layout (D10)', () => {
     expect(screen.getByTestId('pane-p0')).toBeTruthy();
     expect(screen.queryByTestId('pane-p1')).toBeNull();
   });
+
+  it('Escape closes the open phone drawer', async () => {
+    mockMatchMedia(true);
+    await boot();
+    fireEvent.click(screen.getByLabelText('메뉴'));
+    expect(document.querySelector('.sidebar-wrap.drawer.open')).not.toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(document.querySelector('.sidebar-wrap.drawer.open')).toBeNull();
+  });
 });
