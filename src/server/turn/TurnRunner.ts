@@ -62,7 +62,7 @@ export class TurnRunner {
   private async relocate(state: SessionState, to: Account, sink: TurnSink, turnId: string): Promise<SessionState | null> {
     const r = await this.move({ sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] });
     if (!r.ok) {
-      sink.emit({ type: 'error', turnId, message: `세션 이전 실패(${r.error}) — ${LABEL[state.account]} 계정 유지` });
+      sink.emit({ type: 'turn_notice', turnId, sessionId: state.sessionId, cwd: state.cwd, message: `세션 이전 실패(${r.error}) — ${LABEL[state.account]} 계정 유지` });
       return null;
     }
     const next = { ...state, account: to, projectDir: r.targetDir };
@@ -191,28 +191,31 @@ export class TurnRunner {
       // Spec §8: limit/auth → cooldown (shared with claude-pick) → move → retry on the next account.
       writeCooldown(deps.cooldownDir, account, this.now() + COOLDOWN_MS[failure]);
       tried.push(account);
-      const next = chooseAccount({
-        ...routerBase,
-        usage: deps.usage.snapshot(),
-        nowMs: this.now(),
-        current: account,
-        lastTurnAtMs: null,
-        justCompacted: false,
-        cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()),
-        exclude: tried,
-      });
       const why = failure === 'limit' ? '한도 도달' : '인증 실패';
-      if (next.account === account) {
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: false, text: '', badge, errorText: `${why} · 대안 계정 없음 · ${shownError ?? ''}`.trim() });
-        return;
+      // Review M1: a refused move rules that account out for this turn; ask the router again.
+      let next: { account: Account; reason: string } | null = null;
+      let moveRefused = false;
+      for (;;) {
+        const cand = chooseAccount({
+          ...routerBase,
+          usage: deps.usage.snapshot(),
+          nowMs: this.now(),
+          current: account,
+          lastTurnAtMs: null,
+          justCompacted: false,
+          cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()),
+          exclude: tried,
+        });
+        if (cand.account === account || tried.includes(cand.account)) break;
+        if (!state) { next = cand; break; }
+        const moved = await this.relocate(state, cand.account, sink, p.turnId);
+        if (moved) { state = moved; next = cand; break; }
+        moveRefused = true;
+        tried.push(cand.account);
       }
-      if (state) {
-        const moved = await this.relocate(state, next.account, sink, p.turnId);
-        if (!moved) {
-          sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: false, text: '', badge, errorText: `${why} · 세션 이전 실패 · ${shownError ?? ''}`.trim() });
-          return;
-        }
-        state = moved;
+      if (!next) {
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : '대안 계정 없음'} · ${shownError ?? ''}`.trim() });
+        return;
       }
       sink.emit({ type: 'turn_retry', turnId: p.turnId, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
       reason = `재시도(${why}) · ${next.reason}`;

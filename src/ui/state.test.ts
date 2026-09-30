@@ -40,7 +40,7 @@ describe('reducer', () => {
     expect(s.pending).toEqual([]);
     expect(s.items).toHaveLength(2);
     const a = s.items[1];
-    expect(a).toMatchObject({ kind: 'assistant', streaming: false, badge: { account: 'c' }, notes: ['B → C: 한도 도달'], toolCalls: [{ result: 'a.txt' }] });
+    expect(a).toMatchObject({ kind: 'assistant', streaming: false, badge: { account: 'c' }, notes: ['재시도 B → C: 한도 도달'], toolCalls: [{ result: 'a.txt' }] });
     expect(s.session).toMatchObject({ sessionId: 's1', account: 'c' });
     expect(s.activeTurnId).toBeNull();
   });
@@ -93,5 +93,16 @@ describe('reducer', () => {
     expect(s.activeTurnId).toBeNull();
     expect(s.session).toMatchObject({ sessionId: 's', account: null });
     expect(s.items[1]).toMatchObject({ streaming: false, error: 'engine exploded' });
+  });
+
+  it('turn_notice is a note on the running turn and does not end it', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: 's', cwd: '/w', title: 't' });
+    s = reducer(s, { type: 'sent', text: 'hi' });
+    s = play([
+      { type: 'turn_started', turnId: 't5', sessionId: 's', cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0 },
+      { type: 'turn_notice', turnId: 't5', sessionId: 's', cwd: '/w', message: '세션 이전 실패(x) — B 계정 유지' },
+    ], s);
+    expect(s.activeTurnId).toBe('t5');
+    expect(s.items[1]).toMatchObject({ streaming: true, notes: ['세션 이전 실패(x) — B 계정 유지'], error: null });
   });
 });

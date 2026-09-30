@@ -145,7 +145,8 @@ describe('TurnRunner', () => {
     await c2.deps.store.set({ sessionId: SID, cwd: '/w/one', account: 'a', projectDir: src2, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
     await new TurnRunner(c2.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'go' }, c2.sink);
     expect(eng2.calls[0]?.account).toBe('a');
-    expect(msgsOf(c2, 'error')[0]).toMatchObject({ message: expect.stringContaining('세션 이전 실패') });
+    expect(msgsOf(c2, 'turn_notice')[0]).toMatchObject({ turnId: 't', message: expect.stringContaining('세션 이전 실패') });
+    expect(msgsOf(c2, 'error')).toEqual([]);
     expect(msgsOf(c2, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'a' } });
   });
 
@@ -182,6 +183,23 @@ describe('TurnRunner', () => {
     expect(r.errorText).not.toContain('9f'.repeat(30));
     expect(r.errorText).toContain('[redacted]');
     expect(r.errorText!.length).toBeLessThan(3000);
+  });
+
+  it('retry: when the move to the next account is refused, that account is skipped and the one after is used', async () => {
+    const eng = new StubEngine((req) => (req.account === 'a' ? [failResult('API Error: 429 rate limit reached', { sessionId: SID })] : ok(SID)));
+    const c = await ctx(eng, {
+      move: async (o) => {
+        if (o.targetProjectsRoot === c.roots.b) return { ok: false, error: 'target busy' };
+        return { ok: true, targetDir: path.join(o.targetProjectsRoot, path.basename(o.sourceProjectDir)), targetFile: '', copied: [] };
+      },
+    });
+    const srcDir = await seedSession(c, 'a');
+    await c.deps.store.set({ sessionId: SID, cwd: '/w/one', account: 'a', projectDir: srcDir, lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'opus' });
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
+    expect(eng.calls.map((r) => r.account)).toEqual(['a', 'c']);
+    expect(msgsOf(c, 'turn_retry')).toMatchObject([{ fromAccount: 'a', toAccount: 'c', attempt: 1 }]);
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'c' } });
+    expect(c.deps.store.get(SID)).toMatchObject({ account: 'c' });
   });
 
   it('other failures do not retry', async () => {

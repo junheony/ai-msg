@@ -81,7 +81,11 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'tool_result': return updateTurn(state, msg.turnId, (it) => ({ ...it, toolCalls: it.toolCalls.map((t) => (t.toolUseId === msg.toolUseId ? { ...t, result: msg.content, isError: msg.isError } : t)) }));
     case 'permission_request': return { ...state, pending: [...state.pending, { turnId: msg.turnId, requestId: msg.requestId, toolName: msg.toolName, input: msg.input }] };
     case 'permission_resolved': return { ...state, pending: state.pending.filter((p) => p.requestId !== msg.requestId) };
-    case 'turn_retry': return updateTurn(state, msg.turnId, (it) => ({ ...it, notes: [...it.notes, `${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
+    case 'turn_retry': return updateTurn(state, msg.turnId, (it) => ({ ...it, notes: [...it.notes, `재시도 ${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
+    case 'turn_notice': {
+      const next = updateTurn(state, msg.turnId, (it) => ({ ...it, notes: [...it.notes, msg.message] }));
+      return next === state ? { ...state, error: msg.message } : next;
+    }
     case 'turn_result': {
       const next = updateTurn(state, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패') }));
       const session = next.session ? { ...next.session, sessionId: msg.sessionId || next.session.sessionId, account: msg.badge?.account ?? next.session.account } : next.session;

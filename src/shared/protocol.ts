@@ -34,6 +34,8 @@ export type ServerMessage =
   | { type: 'tool_result'; turnId: string; toolUseId: string; content: string; isError: boolean }
   | { type: 'permission_request'; turnId: string; requestId: string; toolName: string; input: unknown }
   | { type: 'permission_resolved'; requestId: string; decision: PermissionDecision }
+  /** Non-terminal note about a running turn (e.g. a refused session move). */
+  | { type: 'turn_notice'; turnId: string; sessionId: string | null; cwd: string; message: string }
   | { type: 'turn_retry'; turnId: string; fromAccount: Account; toAccount: Account; reason: string; attempt: number }
   | { type: 'turn_result'; turnId: string; sessionId: string; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null }
   | { type: 'error'; turnId: string | null; message: string };
