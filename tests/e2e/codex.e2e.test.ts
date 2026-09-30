@@ -38,7 +38,7 @@ describe.skipIf(!codexPresent)('deck e2e: Codex (ChatGPT Pro) sessions', () => {
     ws.close();
   });
 
-  it('history comes from the rollout file; resume keeps the thread, engine and model', async () => {
+  it('history comes from the rollout file; resume keeps the thread and engine and honours a per-turn Codex model', async () => {
     const ws = await deck.connect();
     await collect(ws, (m) => m.type === 'hello');
     const ph = collect(ws, (m) => m.type === 'history');
@@ -48,12 +48,12 @@ describe.skipIf(!codexPresent)('deck e2e: Codex (ChatGPT Pro) sessions', () => {
     expect(history.messages.some((m) => m.kind === 'user' && m.text.includes('Reply with exactly: ok'))).toBe(true);
     expect(history.messages.some((m) => m.kind === 'assistant' && m.text.trim().toLowerCase() === 'ok')).toBe(true);
     const pr = collect(ws, (m) => m.type === 'turn_result');
-    // A Claude engine / other model on the send must not move an existing GPT session.
+    // A Claude engine on the send must not move an existing GPT session; a Codex model picked for the turn is used.
     ws.send(JSON.stringify({ type: 'send', sessionId: threadId, cwd: deck.workDir, text: 'Reply with exactly: ok', model: 'gpt-6-astra', engine: 'claude' }));
     const result = (await pr).at(-1) as Result;
     expect(result.ok).toBe(true);
     expect(result.sessionId).toBe(threadId);
-    expect(result.badge).toMatchObject({ account: 'gpt', model: 'gpt-6-sol', reason: 'GPT 세션' });
+    expect(result.badge).toMatchObject({ account: 'gpt', model: 'gpt-6-astra', reason: 'GPT 세션' });
     console.log(`e2e codex resume: thread ${threadId.slice(0, 8)} · ${result.badge!.model} · ${result.badge!.reason}`);
     ws.close();
   });

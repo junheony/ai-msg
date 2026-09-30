@@ -3,7 +3,6 @@ import { defineConfig } from 'vitest/config';
 const e2e = process.env.DECK_E2E === '1';
 
 export default defineConfig({
-  esbuild: { jsx: 'automatic' },
   test: {
     environment: 'node',
     include: e2e ? ['tests/e2e/**/*.e2e.test.ts'] : ['src/**/*.test.{ts,tsx}'],

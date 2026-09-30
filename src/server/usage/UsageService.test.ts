@@ -170,4 +170,18 @@ describe('GPT usage (D5)', () => {
     expect(u.snapshot().gpt?.weekly?.usedPct).toBe(41);
     expect(u.snapshot().accounts.b.status).toBe('down'); // Claude cards untouched by the gpt card
   });
+
+  it('down card with newer fetchedAt keeps the rollout observation', async () => {
+    let state: unknown = { cards: [codexSetup] };
+    const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date('2026-09-30T12:30:00Z') });
+    await u.pollOnce();
+    u.applyTurn('gpt', { weekly: { usedPct: 40, resetsAt: '2026-10-03T18:10:34.000Z' } });
+    // A setup_needed card re-fetched after the observation carries no usable numbers → the observation stays.
+    state = { cards: [{ ...codexSetup, fetchedAt: '2026-09-30T13:00:00Z' }] };
+    await u.pollOnce();
+    expect(u.snapshot().gpt).toMatchObject({ status: 'ok', weekly: { usedPct: 40 } });
+    state = { cards: [{ ...codexOk, fetchedAt: '2026-09-30T13:05:00Z', rows: [{ label: 'Weekly (7d)', used: 41 }] }] };
+    await u.pollOnce();
+    expect(u.snapshot().gpt?.weekly?.usedPct).toBe(41);
+  });
 });

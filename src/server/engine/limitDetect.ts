@@ -17,6 +17,10 @@ export const LIMIT_PATTERNS: RegExp[] = [
   /\busage limit reached\b/i,
   /\bhit your (usage )?limit\b/i,
   /\bout of (extra )?usage\b/i,
+  // Codex turn.failed / error events carry the API error as a JSON blob.
+  /"status"\s*:\s*429\b/,
+  /\busage_limit_reached\b/,
+  /\brate_limit_exceeded\b/,
 ];
 
 export const AUTH_PATTERNS: RegExp[] = [

@@ -150,6 +150,20 @@ describe('CodexEngine', () => {
     expect(ev.at(-1)).toMatchObject({ kind: 'result', ok: false, sessionId: 't', errorText: 'codex 종료 코드 2', stderr: 'ERROR something broke' });
   });
 
+  it('a spawn error (ENOENT) becomes a failed result carrying the error message, not an unknown exit code', async () => {
+    const em = new EventEmitter();
+    const stdout = Readable.from([]);
+    stdout.on('end', () => setTimeout(() => em.emit('error', Object.assign(new Error('spawn /opt/codex ENOENT'), { code: 'ENOENT' })), 0));
+    const child = {
+      stdout, stderr: Readable.from([]), stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
+      once: (ev: 'exit' | 'error', cb: (...args: unknown[]) => void) => em.once(ev, cb),
+      kill: () => true,
+    } as unknown as ChildLike;
+    const engine = new CodexEngine('/opt/codex', { baseEnv: {}, spawnFn: () => child });
+    const ev = await drain(engine.runTurn(req()));
+    expect(ev.at(-1)).toMatchObject({ kind: 'result', ok: false, errorText: 'codex 실행 실패: spawn /opt/codex ENOENT' });
+  });
+
   it('abort kills the child and ends with 중단됨; an already-aborted signal never spawns', async () => {
     const ac = new AbortController();
     const fake = fakeChild(['{"type":"thread.started","thread_id":"t"}', '{"type":"turn.started"}'], null as unknown as number);

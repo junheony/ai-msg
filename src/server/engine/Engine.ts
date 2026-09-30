@@ -104,7 +104,10 @@ export function sessionAllowLabel(pr: Pick<PermissionRequest, 'suggestions' | 's
 /** D8: an AskUserQuestion call relayed to the UI; null answers = the user did not answer (→ deny). */
 export type QuestionRequest = { toolUseId: string; questions: Question[]; signal?: AbortSignal };
 
-/** AskUserQuestionInput.questions (1–4, each 2–4 options) → Question[]; previews and extras dropped. Null when malformed. */
+/** Answers are keyed by question text, so texts must be unique and bounded. */
+const MAX_QUESTION_CHARS = 2000;
+
+/** AskUserQuestionInput.questions (1–4, each 2–4 options, unique texts ≤ 2000 chars) → Question[]; previews and extras dropped. Null when malformed. */
 export function parseQuestions(input: unknown): Question[] | null {
   const qs = input && typeof input === 'object' ? (input as { questions?: unknown }).questions : undefined;
   if (!Array.isArray(qs) || qs.length < 1 || qs.length > 4) return null;
@@ -113,6 +116,7 @@ export function parseQuestions(input: unknown): Question[] | null {
     if (!q || typeof q !== 'object') return null;
     const r = q as Record<string, unknown>;
     if (typeof r.question !== 'string' || !r.question || !Array.isArray(r.options) || r.options.length < 2 || r.options.length > 4) return null;
+    if (r.question.length > MAX_QUESTION_CHARS || out.some((prev) => prev.question === r.question)) return null;
     const options: Question['options'] = [];
     for (const o of r.options) {
       if (!o || typeof o !== 'object' || typeof (o as Record<string, unknown>).label !== 'string') return null;
@@ -136,6 +140,8 @@ export type TurnRequest = {
   onPermission: (req: PermissionRequest) => Promise<PermissionDecision>;
   /** D8: AskUserQuestion relay; absent or null answers → the tool call is denied. */
   onQuestion?: (q: QuestionRequest) => Promise<QuestionAnswers | null>;
+  /** A malformed AskUserQuestion input (parseQuestions → null): denied without asking, reported here so it is audited. */
+  onQuestionMalformed?: (input: unknown) => Promise<void>;
   /** Rules (e.g. `Bash(git status)`) the user allowed for this deck session on earlier turns. */
   allowRules?: string[];
   /** Directories the user allowed for this deck session on earlier turns. */

@@ -72,7 +72,11 @@ export function buildOptions(
       // (sdk-tools.d.ts AskUserQuestionInput.answers: "User answers collected by the permission component").
       if (toolName === 'AskUserQuestion') {
         const questions = parseQuestions(input);
-        const answers = questions && req.onQuestion ? await req.onQuestion({ toolUseId: ctx.toolUseID, questions, signal: ctx.signal }) : null;
+        if (!questions) {
+          await req.onQuestionMalformed?.(input);
+          return { behavior: 'deny', message: '질문 형식이 올바르지 않습니다', interrupt: false };
+        }
+        const answers = req.onQuestion ? await req.onQuestion({ toolUseId: ctx.toolUseID, questions, signal: ctx.signal }) : null;
         if (!answers) return { behavior: 'deny', message: '사용자가 답하지 않았습니다', interrupt: false };
         return { behavior: 'allow', updatedInput: { ...input, answers } };
       }

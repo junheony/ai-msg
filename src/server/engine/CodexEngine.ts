@@ -206,9 +206,11 @@ export class CodexEngine {
     // consumer abandons iteration early (e.g. `sink.emit` throws), the generator's `finally` must
     // still kill the process instead of leaving it running.
     let exited = false;
+    // A spawn failure (ENOENT/EACCES) emits 'error' instead of 'exit'; its message becomes the failed result's text.
+    let spawnError: string | null = null;
     const exit = new Promise<number | null>((resolve) => {
       child.once('exit', (code: number | null) => { exited = true; resolve(code); });
-      child.once('error', () => { exited = true; resolve(null); });
+      child.once('error', (err: Error) => { exited = true; spawnError = err.message; resolve(null); });
     });
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     const onAbort = () => {
@@ -233,7 +235,7 @@ export class CodexEngine {
       const code = await exit;
       if (!mapper.sawResult) {
         const aborted = req.signal.aborted;
-        yield { ...mapper.result(false, ZERO_USAGE, aborted ? '중단됨' : `codex 종료 코드 ${code ?? '?'}`), stderr: stderrTail || null, terminalReason: aborted ? 'aborted' : null };
+        yield { ...mapper.result(false, ZERO_USAGE, aborted ? '중단됨' : spawnError !== null ? `codex 실행 실패: ${spawnError}` : `codex 종료 코드 ${code ?? '?'}`), stderr: stderrTail || null, terminalReason: aborted ? 'aborted' : null };
       }
     } finally {
       req.signal.removeEventListener('abort', onAbort);
@@ -267,7 +269,7 @@ function versionAtLeast(v: string, min: string): boolean {
 
 function defaultVersionFn(bin: string): string | null {
   try {
-    return execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 5000 });
+    return execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 5000, env: codexEnv(process.env), stdio: ['ignore', 'pipe', 'ignore'] });
   } catch {
     return null;
   }

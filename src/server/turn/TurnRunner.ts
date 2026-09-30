@@ -164,6 +164,14 @@ export class TurnRunner {
         }
         return answers;
       },
+      onQuestionMalformed: async (input) => {
+        try {
+          const questions = input && typeof input === 'object' ? (input as { questions?: unknown }).questions : input;
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: 'deny', inputSha256: hashInput(questions) });
+        } catch (err) {
+          console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
+        }
+      },
     });
     for await (const ev of events) {
       switch (ev.kind) {
@@ -235,7 +243,8 @@ export class TurnRunner {
   private async runCodex(p: TurnParams, state: CodexSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
-    const model: CodexModel = state?.defaultModel ?? (isCodexModel(p.model) ? p.model : DEFAULT_CODEX_MODEL);
+    // A per-turn Codex model wins on resume too (like Claude's per-turn model); the session's stored default is kept.
+    const model: CodexModel = isCodexModel(p.model) ? p.model : (state?.defaultModel ?? DEFAULT_CODEX_MODEL);
     const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? DEFAULT_SANDBOX;
     // Task 2 follow-up: the id is either the stored one (itself CLI-reported) or what the CLI reports via init
     // (thread.started) — never the result's sessionId, which echoes a rejected resume id.

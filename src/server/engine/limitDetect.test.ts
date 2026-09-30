@@ -14,6 +14,16 @@ describe('classifyFailure', () => {
     expect(classifyFailure({ ok: false, errorText: 'Claude usage limit reached', errorKind: null, rateLimitStatus: null })).toBe('limit');
   });
 
+  it('detects Codex turn.failed JSON-blob limits (429 status, usage_limit_reached, rate_limit_exceeded)', () => {
+    const lim = (errorText: string) => classifyFailure({ ok: false, errorText, errorKind: null, rateLimitStatus: null });
+    expect(lim('{"type":"error","status":429,"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"pro","resets_in_seconds":3600}}')).toBe('limit');
+    expect(lim('unexpected status 429 Too Many Requests: {"type":"error","status": 429,"error":{"type":"server_overloaded"}}')).toBe('limit');
+    expect(lim('{"error":{"type":"rate_limit_exceeded","message":"Rate limit reached for gpt-6-sol"}}')).toBe('limit');
+    expect(lim('stream error: {"type":"error","error":{"code":"usage_limit_reached"}}')).toBe('limit');
+    // A JSON blob with a different status is not a limit.
+    expect(lim('{"type":"error","status":500,"error":{"type":"server_error"}}')).toBe('other');
+  });
+
   it('detects auth failures (the real 401 text from account a)', () => {
     expect(classifyFailure({ ok: false, errorText: 'Failed to authenticate. API Error: 401 OAuth access token has been revoked.', errorKind: null, rateLimitStatus: null })).toBe('auth');
     expect(classifyFailure({ ok: false, errorText: 'x', errorKind: 'authentication_failed', rateLimitStatus: null })).toBe('auth');
@@ -24,6 +34,7 @@ describe('classifyFailure', () => {
     expect(other('error_max_turns: I checked the handler — it returns 429 when the rate limit is hit')).toBe('other');
     expect(other('error_during_execution: refactored the authentication middleware; resets at midnight')).toBe('other');
     expect(other('Tool failed: curl printed "HTTP 401"')).toBe('other');
+    expect(other('error_during_execution: the rate_limit_exceeded_handler returned status 4290')).toBe('other');
   });
 
   it('errorKind wins over text', () => {

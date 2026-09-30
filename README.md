@@ -55,6 +55,7 @@ npm run test:e2e    # 실제 계정(Claude B + GPT)으로 짧은 턴 몇 개 (�
 - 세션을 새로 열 때 엔진을 고른다: Claude / GPT / 자동(여유 있는 쪽). 세션이 생기면 엔진은 바뀌지 않는다.
 - GPT 는 공식 `codex` CLI(`codex exec --json`)를 자식 프로세스로 띄운다. deck 은 `~/.codex/auth.json` 이나 키체인을 절대 읽지 않는다 — 로그인은 `codex login` 으로만.
 - 모델: `gpt-6-sol`(기본) · `gpt-6-astra`(어려운 작업). **codex-cli 0.159 이상 필요** — 0.146 은 ChatGPT 계정에서 `gpt-6-sol` 을 거부당한다(`npm i -g @openai/codex`).
+- `DECK_CODEX_BIN` 으로 지정한 바이너리는 0.159 버전 검사를 건너뛴다(명시적 지정이므로 그대로 쓴다).
 - 승인 카드가 없다. 대신 샌드박스: 기본 **읽기 전용**, 세션 생성 시 **작업폴더 쓰기(네트워크 차단)** 선택 가능. `approval_policy=never` 로 실행되므로 샌드박스 밖 작업은 그냥 실패한다.
 - GPT 잔여량은 usage-deck `codex` 카드 + 턴마다 Codex 롤아웃의 rate_limits 로 보정. 카드가 `setup_needed` 면 `—` 로 표시.
 - 히스토리는 `~/.codex/sessions/…/rollout-…-<thread>.jsonl` 에서 읽는다(deck 이 만든 세션만 목록에 뜬다).

@@ -297,6 +297,25 @@ describe('AskUserQuestion (D8)', () => {
     expect(parseQuestions('nope')).toBeNull();
   });
 
+  it('parseQuestions rejects duplicate question texts and texts over 2000 chars (answers are keyed by text)', () => {
+    const q = (question: string) => ({ question, header: 'H', options: [{ label: 'a' }, { label: 'b' }] });
+    expect(parseQuestions({ questions: [q('Same?'), q('Same?')] })).toBeNull();
+    expect(parseQuestions({ questions: [q('x'.repeat(2001))] })).toBeNull();
+    expect(parseQuestions({ questions: [q('x'.repeat(2000)), q('Other?')] })).toHaveLength(2);
+  });
+
+  it('a malformed AskUserQuestion is denied without asking and reported through onQuestionMalformed (for the audit)', async () => {
+    const asked: unknown[] = [];
+    const malformed: unknown[] = [];
+    const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+    const ctx = { signal: new AbortController().signal, toolUseID: 'tu9', requestId: 'r9' } as never;
+    const dup = { questions: [QUESTIONS[0], QUESTIONS[0]] };
+    const o = buildOptions(req({ onQuestion: async (q) => { asked.push(q); return { x: 'y' }; }, onQuestionMalformed: async (input) => { malformed.push(input); } }), deps);
+    expect(await o.canUseTool!('AskUserQuestion', dup, ctx)).toMatchObject({ behavior: 'deny' });
+    expect(asked).toHaveLength(0);
+    expect(malformed).toEqual([dup]);
+  });
+
   it('canUseTool routes AskUserQuestion to onQuestion and returns the answers as updatedInput; no answer → deny', async () => {
     const asked: unknown[] = [];
     const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };

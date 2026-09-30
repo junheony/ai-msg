@@ -418,7 +418,18 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect((c.deps.engine as StubEngine).calls).toHaveLength(0);
   });
 
-  it('resuming a codex session keeps its engine, model and sandbox; the sent sandbox/model are ignored', async () => {
+  it('resuming a codex session honours a per-turn Codex model; the badge shows it; the stored default is unchanged', async () => {
+    const codex = fakeCodex((req) => codexOk(req.resumeThreadId ?? 'x'));
+    const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
+    await c.deps.store.set({ engine: 'codex', sessionId: 'tid-2', cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gpt-6-astra', sandbox: 'read-only', rolloutFile: null, createdAtMs: 1 });
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w2', sessionId: 'tid-2', text: 'again', model: 'gpt-6-sol' }, c.sink);
+    expect(codex.calls[0]).toMatchObject({ resumeThreadId: 'tid-2', model: 'gpt-6-sol', sandbox: 'read-only' });
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ model: 'gpt-6-sol' });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, badge: { account: 'gpt', model: 'gpt-6-sol' } });
+    expect(c.deps.store.get('tid-2')).toMatchObject({ defaultModel: 'gpt-6-astra' });
+  });
+
+  it('resuming a codex session keeps its engine, model and sandbox; the sent sandbox and a non-Codex model are ignored', async () => {
     const codex = fakeCodex((req) => codexOk(req.resumeThreadId ?? 'x'));
     const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
     await c.deps.store.set({ engine: 'codex', sessionId: 'tid-2', cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gpt-6-astra', sandbox: 'read-only', rolloutFile: null, createdAtMs: 1 });
@@ -426,6 +437,15 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect(codex.calls[0]).toMatchObject({ cwd: '/w2', resumeThreadId: 'tid-2', model: 'gpt-6-astra', sandbox: 'read-only' });
     expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'gpt', reason: 'GPT 세션', sessionId: 'tid-2' });
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, sessionId: 'tid-2' });
+  });
+
+  it('a Codex turn.failed JSON blob with status 429 / usage_limit_reached sets the GPT cooldown', async () => {
+    const blob = '{"type":"error","status":429,"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_in_seconds":3600}}';
+    const codex = fakeCodex([{ kind: 'init', sessionId: 'tid-9', model: 'gpt-6-sol' }, failResult(blob, { sessionId: 'tid-9' })]);
+    const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null }, await usageWithGpt(10));
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't9', cwd: '/w', sessionId: null, text: 'x', engine: 'codex' }, c.sink);
+    expect(runner.gptCooldownUntilMs()).toBe(NOW + 60 * 60_000);
   });
 
   it('a Codex limit failure sets a 1 h in-memory GPT cooldown that auto then honours; no retry, no account cooldown files', async () => {
@@ -523,5 +543,19 @@ describe('TurnRunner: questions (D8)', () => {
     c.sink.askQuestion = async () => null;
     await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w', sessionId: null, text: 'ask' }, c.sink);
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', text: 'answer=none' });
+  });
+
+  it('a malformed AskUserQuestion is never shown but still leaves a deny audit line', async () => {
+    const stub = new StubEngine(async (req) => {
+      await req.onQuestionMalformed?.({ questions: [{ question: 'dup' }, { question: 'dup' }] });
+      return [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)];
+    });
+    const c = await ctx(stub);
+    let asked = 0;
+    c.sink.askQuestion = async () => { asked++; return null; };
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'ask' }, c.sink);
+    expect(asked).toBe(0);
+    const audit = (await fs.readFile(c.deps.auditFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { toolName: string; decision: string; turnId: string; inputSha256: string });
+    expect(audit.at(-1)).toMatchObject({ toolName: 'AskUserQuestion', decision: 'deny', turnId: 't1', inputSha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
   });
 });

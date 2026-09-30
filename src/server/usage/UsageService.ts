@@ -109,7 +109,7 @@ export class UsageService {
   }
 
   /**
-   * Keeps a turn observation on top of a fetched card until the card's fetchedAt is newer.
+   * Keeps a turn observation on top of a fetched card until a non-down card's fetchedAt is newer.
    * PF12: for the `gpt` seat, a live rollout observation also means the seat is known —
    * `auto` (D3) must be able to pick GPT even while the usage-deck `codex` card is still
    * `setup_needed` (status 'down'); the observation carries `status: 'ok'` and its own
@@ -119,7 +119,8 @@ export class UsageService {
     const obs = this.turnObs.get(seat);
     if (!obs) return u;
     const fetched = u.fetchedAt ? parseIsoUtc(u.fetchedAt) : Number.NaN;
-    if (Number.isNaN(fetched) || obs.atMs > fetched) {
+    // A 'down' card (e.g. setup_needed) carries no usable numbers, so it never retires an observation.
+    if (u.status === 'down' || Number.isNaN(fetched) || obs.atMs > fetched) {
       const overridden: AccountUsage = { ...u, fiveHour: obs.w.fiveHour ?? u.fiveHour, weekly: obs.w.weekly ?? u.weekly };
       if (seat === 'gpt') return { ...overridden, status: 'ok', fetchedAt: new Date(obs.atMs).toISOString() };
       return overridden;
