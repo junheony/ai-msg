@@ -96,4 +96,37 @@ describe('http', () => {
     expect(await (await fetch(`${base}/assets/../../package.json`)).text()).toBe('<html>deck</html>');
     expect(await (await fetch(`${base}/assets/%2e%2e/%2e%2e/package.json`)).text()).toBe('<html>deck</html>');
   });
+
+  it('every response carries CSP, nosniff and no-referrer — static, API, and error responses', async () => {
+    const CSP = "default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
+    await fs.writeFile(path.join(uiDir, 'index.html'), '<html>deck</html>');
+    const cookie = `deck_session=${cookieValueFor(TOKEN)}`;
+    for (const r of [await fetch(`${base}/`), await fetch(`${base}/api/me`), await fetch(`${base}/api/bootstrap`, { headers: { cookie } }), await fetch(`${base}/api/nope`, { headers: { cookie } })]) {
+      expect(r.headers.get('content-security-policy')).toBe(CSP);
+      expect(r.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(r.headers.get('referrer-policy')).toBe('no-referrer');
+    }
+  });
+
+  it('a 500 returns a generic body and keeps the detail in the server log', async () => {
+    const roots = { a: path.join(uiDir, 'a'), b: path.join(uiDir, 'b'), c: path.join(uiDir, 'c') };
+    const index = new SessionIndex({ roots, pinnedFile: path.join(uiDir, 'p.json') });
+    const usage = { snapshot: () => { throw new Error('SECRET-DETAIL /Users/max/.claude-b'); } } as unknown as UsageService;
+    const s2 = http.createServer(createRequestHandler({ token: TOKEN, uiDir, usage, index }));
+    await new Promise<void>((r) => s2.listen(0, '127.0.0.1', r));
+    const logged: unknown[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { logged.push(a); };
+    try {
+      const r = await fetch(`http://127.0.0.1:${(s2.address() as { port: number }).port}/api/bootstrap`, { headers: { cookie: `deck_session=${cookieValueFor(TOKEN)}` } });
+      expect(r.status).toBe(500);
+      const body = await r.text();
+      expect(body).not.toContain('SECRET-DETAIL');
+      expect(r.headers.get('content-security-policy')).toContain("default-src 'self'");
+      expect(JSON.stringify(logged.map(String))).toContain('SECRET-DETAIL');
+    } finally {
+      console.error = orig;
+      s2.close();
+    }
+  });
 });

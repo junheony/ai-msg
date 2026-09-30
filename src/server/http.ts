@@ -8,6 +8,16 @@ import type { UsageService } from './usage/UsageService';
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
 export type HttpDeps = { token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[] };
 
+/**
+ * Review I8: sent on every response. Only documents are governed by CSP; in dev the page is
+ * served by Vite (its own origin, no CSP from here), so no relaxed dev policy is needed.
+ */
+export const SECURITY_HEADERS: Record<string, string> = {
+  'content-security-policy': "default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+};
+
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
 /** Deviation (added per review I5): SameSite=Strict doesn't separate ports, so every
@@ -68,6 +78,7 @@ export function createRequestHandler(deps: HttpDeps) {
   const devOrigins = deps.devOrigins ?? [];
   const extraHosts = deps.extraHosts ?? [];
   return (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
     // Deviation (added per review I5): DNS-rebinding defence — reject any Host deck
     // doesn't itself bind to, even though an attacker-controlled Host would still
     // equal its own Origin and pass the check below.
@@ -96,6 +107,11 @@ export function createRequestHandler(deps: HttpDeps) {
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
       serveStatic(deps.uiDir, url.pathname, res);
-    })().catch((err: unknown) => json(res, 500, { error: err instanceof Error ? err.message : String(err) }));
+    })().catch((err: unknown) => {
+      // Review M5: details (paths, messages) stay in the server log.
+      console.error('deck http: 500', req.method, url.pathname, err);
+      if (!res.headersSent) json(res, 500, { error: '서버 내부 오류' });
+      else res.destroy();
+    });
   };
 }
