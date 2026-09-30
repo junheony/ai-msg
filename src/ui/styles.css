@@ -70,3 +70,9 @@ button.retry { align-self: flex-start; margin: 4px 0 8px; }
 .question-options .option.picked { border-color: var(--accent); background: #33415a; }
 .option-desc { font-size: 11px; }
 .question-free { width: 100%; margin-top: 6px; padding: 6px; border-radius: 6px; border: 1px solid var(--line); background: #141517; color: var(--fg); }
+
+.attachment-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 16px 0; font-size: 12px; }
+.chip.attachment { display: inline-flex; align-items: center; gap: 4px; }
+.chip-remove { background: transparent; color: var(--muted); padding: 0 2px; min-height: 0; }
+.attach { background: transparent; color: var(--accent); border: 1px solid var(--line); padding: 2px 8px; }
+.composer.dragover textarea { border-color: var(--accent); }

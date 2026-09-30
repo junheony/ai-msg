@@ -8,6 +8,8 @@ import type { UsageSnapshot } from './usage-types';
 /** Attachment ids are the UUIDs POST /api/attachments returned (Task 6); nothing path-like is accepted. */
 export const ATTACHMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const MAX_ATTACHMENTS_PER_TURN = 8;
+/** D7: per-file upload size cap, shared by the server (413) and the UI (pre-flight check before the network call). */
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const CLIENT_REF_MAX = 64;
 
 export const ClientMessageSchema = z.discriminatedUnion('type', [

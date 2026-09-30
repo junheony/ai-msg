@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { MAX_ATTACHMENT_BYTES } from '../../shared/protocol';
 
-/** D7 limits: per file and per turn (the per-turn cap lives in shared/protocol MAX_ATTACHMENTS_PER_TURN). */
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/** D7 limits: per file and per turn (the per-turn cap lives in shared/protocol MAX_ATTACHMENTS_PER_TURN).
+ *  MAX_ATTACHMENT_BYTES now lives in shared/protocol (Task 11) so the UI can pre-flight-check size
+ *  without duplicating the magic number; re-exported here so existing server imports keep working. */
+export { MAX_ATTACHMENT_BYTES };
 export const ATTACHMENT_MAX_AGE_MS = 7 * 24 * 3_600_000;
 export const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
