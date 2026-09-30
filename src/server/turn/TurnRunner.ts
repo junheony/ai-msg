@@ -154,6 +154,7 @@ export class TurnRunner {
       if (!state) {
         const e = deps.index.lookup(p.sessionId);
         if (!e) { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
+        if (e.account === 'gpt') { sink.emit({ type: 'error', turnId: p.turnId, message: `Codex 세션 상태를 찾을 수 없습니다: ${p.sessionId}` }); return; }
         state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
       }
     }

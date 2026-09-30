@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNTS, CARD_ID, accountEnv, profileDir, projectsDir } from './accounts';
+import { ACCOUNTS, CARD_ID, SEAT_LABEL, accountEnv, codexEnv, profileDir, projectsDir } from './accounts';
 
 describe('accounts', () => {
   it('maps accounts to usage-deck card ids', () => {
@@ -48,5 +48,14 @@ describe('accounts', () => {
     const base = { ANTHROPIC_API_KEY: 'key' };
     accountEnv('a', base, '/Users/x');
     expect(base.ANTHROPIC_API_KEY).toBe('key');
+  });
+
+  it('codexEnv strips OpenAI and Anthropic token/routing variables and keeps CODEX_HOME', () => {
+    const env = codexEnv({ PATH: '/bin', OPENAI_API_KEY: 'k', OPENAI_BASE_URL: 'u', ANTHROPIC_API_KEY: 'a', CLAUDE_CODE_OAUTH_TOKEN: 't', CODEX_HOME: '/h/.codex' });
+    expect(env).toEqual({ PATH: '/bin', CODEX_HOME: '/h/.codex' });
+  });
+
+  it('seat labels', () => {
+    expect(SEAT_LABEL).toEqual({ a: 'A', b: 'B', c: 'C', gpt: 'GPT' });
   });
 });

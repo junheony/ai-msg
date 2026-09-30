@@ -34,6 +34,7 @@ export async function scanProfile(account: Account, projectsRoot: string): Promi
         out.push({
           sessionId: m[1]!,
           account,
+          engine: 'claude',
           cwd: head.cwd,
           projectDir,
           file,

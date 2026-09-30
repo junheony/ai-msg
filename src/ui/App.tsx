@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
+import { isAccount } from '../shared/accounts';
 import type { ClientMessage } from '../shared/protocol';
 import { Chat } from './components/Chat';
 import { Login } from './components/Login';
@@ -42,7 +43,7 @@ export function App() {
     <div className="app">
       <header>
         <span className="brand">deck</span>
-        <UsagePanel usage={state.usage} current={session?.account ?? null} />
+        <UsagePanel usage={state.usage} current={session?.account && isAccount(session.account) ? session.account : null} />
         <span className={`conn ${state.connected ? 'on' : 'off'}`}>{state.connected ? '연결됨' : '재연결 중…'}</span>
       </header>
       {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}

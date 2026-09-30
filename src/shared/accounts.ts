@@ -45,3 +45,19 @@ export function accountEnv(
   else env.CLAUDE_CONFIG_DIR = profileDir(account, home);
   return env;
 }
+
+/** Who ran a turn: one of the three Claude accounts or the single ChatGPT Pro account. */
+export type Seat = Account | 'gpt';
+export const SEAT_LABEL: Record<Seat, string> = { a: 'A', b: 'B', c: 'C', gpt: 'GPT' };
+
+const OPENAI_VARS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL'] as const;
+
+/**
+ * Environment for one Codex CLI turn: the base env minus every OpenAI/Anthropic token and routing
+ * variable. CODEX_HOME passes through untouched — the CLI owns its auth store; deck never reads it.
+ */
+export function codexEnv(base: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...base };
+  for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...OPENAI_VARS]) delete env[v];
+  return env;
+}

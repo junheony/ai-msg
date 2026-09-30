@@ -10,7 +10,7 @@ function play(msgs: ServerMessage[], start: AppState = initialState): AppState {
 
 describe('reducer', () => {
   it('hello/usage/index update the top-level fields', () => {
-    const s = play([{ type: 'hello', usage, projects: [], running: [] }]);
+    const s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false } }]);
     expect(s.usage).toEqual(usage);
     expect(s.connected).toBe(true);
     expect(play([{ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] }], s).projects[0]?.name).toBe('w');
@@ -164,9 +164,9 @@ describe('reducer', () => {
 
   it('hello restores 중단 for a turn still running on the open session and clears a finished one', () => {
     const s0 = play([historyOf('s')]);
-    const s1 = play([{ type: 'hello', usage, projects: [], running: [{ turnId: 'tr', sessionId: 's', cwd: '/w' }] }], s0);
+    const s1 = play([{ type: 'hello', usage, projects: [], running: [{ turnId: 'tr', sessionId: 's', cwd: '/w' }], codex: { available: false } }], s0);
     expect(s1.activeTurnId).toBe('tr');
-    const s2 = play([{ type: 'hello', usage, projects: [], running: [] }], s1);
+    const s2 = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false } }], s1);
     expect(s2.activeTurnId).toBeNull();
   });
 

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import type http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
+import { isClaudeModel } from '../shared/models';
 import { ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
 import type { PermissionDecision } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
@@ -166,7 +167,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       try {
         // Review M8: the working directory must exist before a CLI is started in it.
         if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}` }); return; }
-        await deps.runner.run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model ? { model: msg.model } : {}) }, sink);
+        await deps.runner.run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model && isClaudeModel(msg.model) ? { model: msg.model } : {}) }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
         console.error('deck: turn failed', err);
@@ -185,7 +186,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: deps.index.projects(), running: running() });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: deps.index.projects(), running: running(), codex: { available: false } });
     for (const m of broker.pending()) send(ws, m);
 
     ws.on('message', (data) => {

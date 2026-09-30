@@ -1,10 +1,15 @@
-import type { Account } from './accounts';
+import type { Seat } from './accounts';
+import type { CodexSandbox, EngineKind } from './models';
 
 export type SessionEntry = {
   sessionId: string;
-  account: Account;
+  /** Claude profile the jsonl lives in, or 'gpt' for a deck-created Codex thread (D4). */
+  account: Seat;
+  /** Absent = 'claude' (Plan 1 entries). */
+  engine?: EngineKind;
+  sandbox?: CodexSandbox;
   cwd: string;
-  /** Absolute project dir the jsonl currently lives in (never derived from cwd). */
+  /** Claude: absolute project dir the jsonl currently lives in (never derived from cwd). Codex: dir of the rollout file, or '' until known. */
   projectDir: string;
   file: string;
   title: string;

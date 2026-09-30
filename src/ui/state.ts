@@ -1,4 +1,4 @@
-import type { Account } from '../shared/accounts';
+import type { Account, Seat } from '../shared/accounts';
 import { DEFAULT_MODEL, type ClaudeModel } from '../shared/models';
 import type { ServerMessage, TurnBadge } from '../shared/protocol';
 import type { ProjectEntry, TranscriptMessage } from '../shared/session-types';
@@ -16,7 +16,7 @@ export type AppState = {
   connected: boolean;
   usage: UsageSnapshot | null;
   projects: ProjectEntry[];
-  session: { sessionId: string | null; cwd: string; account: Account | null; title: string } | null;
+  session: { sessionId: string | null; cwd: string; account: Seat | null; title: string } | null;
   items: ChatItem[];
   pending: PendingPermission[];
   activeTurnId: string | null;
@@ -152,6 +152,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       const awaitingStart = msg.turnId === null || !state.myTurns.includes(msg.turnId) ? false : withItem.awaitingStart;
       return { ...withItem, activeTurnId, awaitingStart, error: msg.message };
     }
+    default: return state;
   }
 }
 
