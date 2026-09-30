@@ -1,9 +1,9 @@
-import type { ClaudeModel } from '../../shared/models';
+import { FABLE_MAX_PCT, type ClaudeModel } from '../../shared/models';
 
 /** Values for Options.model. Verified 2026-09-30: sonnet→claude-sonnet-5-5, opus→claude-opus-5-5, fable→claude-fable-5-1. */
 export const MODEL_ARG: Record<ClaudeModel, string> = { sonnet: 'sonnet', opus: 'opus', fable: 'fable' };
 
-export const FABLE_MAX_PCT = 80;
+export { FABLE_MAX_PCT };
 
 export function resolveModel(
   requested: ClaudeModel | undefined,

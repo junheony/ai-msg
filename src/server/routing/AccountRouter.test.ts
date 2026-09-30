@@ -97,10 +97,38 @@ describe('chooseAccount — table', () => {
     { name: 'imported session (no last turn) → better account', in: { current: 'a' }, account: 'b', switched: true, reason: /캐시 식음/ },
     { name: 'cold but current is best → stay', in: { current: 'b', lastTurnAtMs: NOW - 2 * H }, account: 'b', switched: false, reason: /현재 계정이 최적/ },
     { name: 'deck down → stay on current', in: { current: 'c', usage: snap({ status: 'down' }, { status: 'down' }, { status: 'down' }, false) }, account: 'c', switched: false, reason: /잔여량 정보 없음/ },
-    { name: 'deck stale >600s everywhere → stay', in: { current: 'c', lastTurnAtMs: NOW - 2 * H, usage: snap({ w: 7, status: 'stale', age: 900_000 }, { w: 3, status: 'stale', age: 900_000 }, { w: 91, status: 'stale', age: 900_000 }) }, account: 'c', switched: false, reason: /대안 없음/ },
+    { name: 'deck stale >600s everywhere → stay', in: { current: 'c', lastTurnAtMs: NOW - 2 * H, usage: snap({ w: 7, status: 'stale', age: 900_000 }, { w: 3, status: 'stale', age: 900_000 }, { w: 10, status: 'stale', age: 900_000 }) }, account: 'c', switched: false, reason: /대안 없음/ },
     { name: 'needFable and current Fable 85 → switch to one with room', in: { current: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: 85 }, { w: 3, f: 10 }, { w: 91, f: 27 }) }, account: 'b', switched: true, reason: /Fable/ },
+    { name: 'needFable and current Fable unknown → switch to one with room', in: { current: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: null }, { w: 3, f: 10 }, { w: 91, f: 27 }) }, account: 'b', switched: true, reason: /Fable/ },
+    { name: 'current card down, cold cache → move to a better account', in: { current: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ status: 'down' }, { w: 3 }, { w: 10 }) }, account: 'b', switched: true, reason: /캐시 식음/ },
+    { name: 'current card down, warm cache → stay', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ status: 'down' }, { w: 3 }, { w: 10 }) }, account: 'a', switched: false, reason: /유지/ },
+    { name: 'over threshold, only alt is also over its 5h threshold → stay', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 90, w: 10 }, { s: 10, w: 96 }) }, account: 'a', switched: false, reason: /대안 없음/ },
+    { name: 'over threshold, alt is over its weekly threshold → stay', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 10, w: 88 }, { s: 10, w: 96 }) }, account: 'a', switched: false, reason: /대안 없음/ },
+    { name: 'current ≥95 on 5h, alt merely over threshold → still switch', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 96, w: 10 }, { s: 90, w: 10 }, { s: 10, w: 96 }) }, account: 'b', switched: true, reason: /전환/ },
+    { name: 'current in cooldown, alt merely over threshold → still switch', in: { current: 'a', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ s: 10, w: 10 }, { s: 90, w: 10 }, { s: 10, w: 96 }) }, account: 'b', switched: true, reason: /쿨다운/ },
+    { name: 'over threshold → prefers an alt under both switch thresholds', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 85, w: 1, resetH: 5 }, { s: 10, w: 50 }) }, account: 'c', switched: true, reason: /전환/ },
+    { name: 'over threshold, only the protected account has room → stay', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 90, w: 10 }, { s: 10, w: 10 }) }, account: 'a', switched: false, reason: /대안 없음/ },
+    { name: 'current ≥95, only the protected account has room → protected', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 96, w: 10 }, { s: 10, w: 96 }, { s: 10, w: 10 }) }, account: 'c', switched: true, reason: /전환/ },
+    { name: 'no eligible, protected has least weekly → skip it (claude-pick loose list)', in: { protectedAccount: 'b', usage: snap({ w: 96 }, { w: 95 }, { w: 99 }) }, account: 'a', switched: false, reason: /자격 있는 계정 없음/ },
+    { name: 'no eligible, excluded has least weekly → skip it', in: { exclude: ['b'], usage: snap({ w: 97 }, { w: 95 }, { w: 96 }) }, account: 'c', switched: false, reason: /자격 있는 계정 없음/ },
+    { name: 'no eligible and nothing in the loose list → b', in: { protectedAccount: 'c', exclude: ['a', 'b'], usage: snap({ w: 97 }, { w: 95 }, { w: 96 }) }, account: 'b', switched: false, reason: /자격 있는 계정 없음/ },
+    { name: 'no eligible, weekly tie → alphabetical first (claude-pick sorts (w, t))', in: { usage: snap({ w: 96 }, { w: 96 }, { w: 99 }) }, account: 'a', switched: false, reason: /자격 있는 계정 없음/ },
     { name: 'needFable, nobody has room → stay (caller downgrades model)', in: { current: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: 85 }, { w: 3, f: 90 }, { w: 91, f: 80 }) }, account: 'a', switched: false, reason: /대안 없음/ },
   ];
+
+  it('I1: no ping-pong when the only alternative is also over its switch threshold', () => {
+    const usage = snap({ s: 81, w: 10, resetH: 50 }, { s: 90, w: 10, resetH: 50 }, { s: 10, w: 96, resetH: 50 });
+    for (const start of ['a', 'b'] as const) {
+      let cur: Account = start;
+      const seen: Account[] = [];
+      for (let i = 0; i < 6; i++) {
+        const d = chooseAccount(input({ current: cur, usage, lastTurnAtMs: NOW - 60_000 }));
+        seen.push(d.account);
+        cur = d.account;
+      }
+      expect(seen).toEqual(Array(6).fill(start));
+    }
+  });
 
   for (const c of cases) {
     it(c.name, () => {

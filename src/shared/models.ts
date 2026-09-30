@@ -10,3 +10,6 @@ export const MODEL_LABEL: Record<ClaudeModel, string> = { sonnet: 'Sonnet', opus
 export function isClaudeModel(x: unknown): x is ClaudeModel {
   return x === 'sonnet' || x === 'opus' || x === 'fable';
 }
+
+/** Fable (7d) usage at or above this is not Fable-eligible (routing) and downgrades to Opus (model policy). */
+export const FABLE_MAX_PCT = 80;

@@ -16,7 +16,10 @@ export function readCooldownUntilMs(dir: string, account: Account, nowMs: number
   } catch {
     return null;
   }
-  const secs = Number.parseFloat(text.trim());
+  // Same acceptance as claude-pick's Python float(): the whole stripped text must be a decimal number.
+  const t = text.trim();
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t)) return null;
+  const secs = Number(t);
   if (!Number.isFinite(secs)) return null;
   const untilMs = Math.round(secs * 1000);
   return untilMs > nowMs ? untilMs : null;
@@ -33,5 +36,14 @@ export function readAllCooldownsMs(dir: string, nowMs: number): Partial<Record<A
 
 export function writeCooldown(dir: string, account: Account, untilMs: number): void {
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, account), `${Math.floor(untilMs / 1000)}\n`);
+  // Atomic for concurrent readers (claude-pick/offload): tmp in the same dir, then rename.
+  // ceil so a short cooldown never lands at or before now.
+  const tmp = path.join(dir, `.${account}.deck-tmp-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(tmp, `${Math.ceil(untilMs / 1000)}\n`);
+  try {
+    fs.renameSync(tmp, path.join(dir, account));
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
 }

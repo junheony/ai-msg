@@ -30,6 +30,14 @@ describe('parseDeckState', () => {
     expect(acc.c.weekly).toBeNull();
   });
 
+  it('first label match wins even when its value is missing (claude-pick rows_of)', () => {
+    const acc = parseDeckState({ cards: [{ id: 'claude:main', status: 'ok', rows: [
+      { label: 'Weekly (7d)', used: null }, { label: 'Weekly (7d) · 2', used: 50 },
+      { label: 'Session (5h)', used: 20 }, { label: 'Session (5h) old', used: 90 } ] }] });
+    expect(acc.a.weekly).toBeNull();
+    expect(acc.a.fiveHour?.usedPct).toBe(20);
+  });
+
   it('tolerates garbage', () => {
     expect(parseDeckState(null).a.status).toBe('down');
     expect(parseDeckState({ cards: [{ id: 'claude:main', status: 'ok', rows: [{ label: 'Weekly (7d)', used: 'x' }] }] }).a.weekly).toBeNull();
@@ -84,6 +92,38 @@ describe('UsageService', () => {
     expect(s.snapshot().accounts.a.weekly?.usedPct).toBe(8);
     expect(s.snapshot().accounts.a.fable?.usedPct).toBe(0);
     expect(seen).toEqual([20]);
+  });
+
+  it('a poll keeps per-turn windows observed after the card was fetched, and drops them once the deck is newer', async () => {
+    let state: unknown = LIVE; // card a fetchedAt 12:27:01
+    const s = svc(async () => ({ ok: true, json: async () => state }));
+    await s.pollOnce();
+    s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null } }); // observed 12:30
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.fiveHour?.usedPct).toBe(20);
+    expect(s.snapshot().accounts.a.weekly?.usedPct).toBe(7);
+    const newer = structuredClone(LIVE);
+    newer.cards[0]!.fetchedAt = '2026-09-30T12:31:00.000Z';
+    newer.cards[0]!.rows[0]!.used = 22;
+    state = newer;
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.fiveHour?.usedPct).toBe(22);
+    state = LIVE; // an older card again must not resurrect the dropped turn values
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.fiveHour?.usedPct).toBe(13);
+  });
+
+  it('a card that recovers (setup_needed → ok) gets fresh status and fetchedAt', async () => {
+    const down = structuredClone(LIVE);
+    down.cards[0] = { id: 'claude:main', status: 'setup_needed', rows: [] } as never;
+    let state: unknown = down;
+    const s = svc(async () => ({ ok: true, json: async () => state }));
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a).toMatchObject({ status: 'down', fetchedAt: null });
+    state = LIVE;
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a).toMatchObject({ status: 'ok', fetchedAt: '2026-09-30T12:27:01.422Z' });
+    expect(s.snapshot().accounts.a.weekly?.usedPct).toBe(7);
   });
 
   it('start() polls on an interval and stop() halts it', async () => {

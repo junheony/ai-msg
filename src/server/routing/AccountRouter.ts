@@ -1,10 +1,12 @@
 import { ACCOUNTS, type Account } from '../../shared/accounts';
-import type { UsageSnapshot } from '../../shared/usage-types';
+import { FABLE_MAX_PCT } from '../../shared/models';
+import { parseIsoUtc, type UsageSnapshot } from '../../shared/usage-types';
+
+export { FABLE_MAX_PCT };
 
 export const FIVE_HOUR_SWITCH_PCT = 80;
 export const WEEKLY_SWITCH_PCT = 85;
 export const EXCLUDE_PCT = 95;
-export const FABLE_MAX_PCT = 80;
 export const STALE_MAX_MS = 600_000;
 export const WARM_MS = 55 * 60_000;
 const DEFAULT_RESET_HOURS = 168;
@@ -41,7 +43,7 @@ export type RouterDecision = {
 
 function hoursUntil(iso: string | null, nowMs: number): number {
   if (!iso) return DEFAULT_RESET_HOURS;
-  const t = Date.parse(iso);
+  const t = parseIsoUtc(iso);
   return Number.isNaN(t) ? DEFAULT_RESET_HOURS : (t - nowMs) / 3_600_000;
 }
 
@@ -60,7 +62,7 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
     const u = input.usage.accounts[account];
     if (u.status === 'down') { excluded[account] = '잔여량 정보 없음'; continue; }
     if (u.status === 'stale') {
-      const age = u.fetchedAt ? input.nowMs - Date.parse(u.fetchedAt) : Number.NaN;
+      const age = u.fetchedAt ? input.nowMs - parseIsoUtc(u.fetchedAt) : Number.NaN;
       if (Number.isNaN(age) || age > STALE_MAX_MS) {
         excluded[account] = `stale 자료 ${Number.isNaN(age) ? '?' : Math.round(age / 1000)}초 경과`;
         continue;
@@ -98,14 +100,16 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
   return { candidates, excluded };
 }
 
-function leastWeekly(input: RouterInput): Account | null {
+/** claude-pick exit 3: least weekly among non-excluded, non-protected accounts with a weekly value, ties a→b→c; else 'b'. */
+function leastWeekly(input: RouterInput): Account {
   let best: { account: Account; w: number } | null = null;
   for (const account of ACCOUNTS) {
+    if (input.exclude?.includes(account) || account === input.protectedAccount) continue;
     const w = input.usage.accounts[account].weekly?.usedPct;
     if (w === undefined || w === null) continue;
     if (!best || w < best.w) best = { account, w };
   }
-  return best?.account ?? null;
+  return best?.account ?? 'b';
 }
 
 export function chooseAccount(input: RouterInput): RouterDecision {
@@ -116,35 +120,52 @@ export function chooseAccount(input: RouterInput): RouterDecision {
 
   if (cur === null) {
     if (best) return { ...base, account: best.account, switched: false, reason: `새 세션 · 점수 최고 ${LABEL[best.account]}(주간 ${best.weeklyPct}%)` };
-    const fb = leastWeekly(input) ?? 'b';
+    const fb = leastWeekly(input);
     return { ...base, account: fb, switched: false, reason: `자격 있는 계정 없음 → 최소 사용 ${LABEL[fb]}` };
   }
 
   const cu = input.usage.accounts[cur];
   const fiveHour = cu.fiveHour?.usedPct ?? 0;
   const weekly = cu.weekly?.usedPct ?? 0;
-  const fable = cu.fable?.usedPct ?? 0;
+  const fable = cu.fable?.usedPct ?? null;
   const cd = input.cooldownUntilMs[cur];
   const inCooldown = cd !== undefined && cd > input.nowMs;
-  const alt = candidates.find((c) => c.account !== cur) ?? null;
 
   let force: string | null = null;
   if (inCooldown) force = `쿨다운(~${hhmm(cd)})`;
   else if (fiveHour >= FIVE_HOUR_SWITCH_PCT || weekly >= WEEKLY_SWITCH_PCT) force = `문턱 초과(5h ${fiveHour}% · 주간 ${weekly}%)`;
-  else if (input.needFable && fable >= FABLE_MAX_PCT) force = `Fable ${fable}% 이상`;
+  // Unknown Fable counts as not Fable-eligible, same as rankCandidates.
+  else if (input.needFable && fable === null) force = 'Fable 값 없음';
+  else if (input.needFable && fable !== null && fable >= FABLE_MAX_PCT) force = `Fable ${fable}% 이상`;
 
   if (force) {
-    if (alt) return { ...base, account: alt.account, switched: true, reason: `${force} → ${LABEL[alt.account]} 전환` };
-    return { ...base, account: cur, switched: false, reason: `${force} · 대안 없음 · ${LABEL[cur]} 유지` };
+    // Only move to an account that would not itself be forced off next turn (no ping-pong, no wasted cache rewrite).
+    // The protected account (spec §4.1: last candidate) is only taken when the current one is unusable.
+    const roomy = candidates.find((c) => {
+      if (c.account === cur || c.protected) return false;
+      const u = input.usage.accounts[c.account];
+      return (u.fiveHour?.usedPct ?? 0) < FIVE_HOUR_SWITCH_PCT && c.weeklyPct < WEEKLY_SWITCH_PCT;
+    });
+    if (roomy) return { ...base, account: roomy.account, switched: true, reason: `${force} → ${LABEL[roomy.account]} 전환` };
+    // Current is unusable (≥95 or cooling down): any eligible alternative beats staying (protected sorts last).
+    const hard = inCooldown || fiveHour >= EXCLUDE_PCT || weekly >= EXCLUDE_PCT;
+    const alt = hard ? candidates.find((c) => c.account !== cur) : undefined;
+    if (alt) return { ...base, account: alt.account, switched: true, reason: `${force} → ${LABEL[alt.account]} 전환(여유 있는 대안 없음)` };
+    return { ...base, account: cur, switched: false, reason: `${force} · 여유 있는 대안 없음 · ${LABEL[cur]} 유지` };
   }
-
-  if (cu.status === 'down') return { ...base, account: cur, switched: false, reason: `잔여량 정보 없음 · ${LABEL[cur]} 유지` };
 
   const sinceLast = input.lastTurnAtMs === null ? null : input.nowMs - input.lastTurnAtMs;
   const coldWhy = input.justCompacted ? '방금 압축' : sinceLast === null ? '첫 턴' : sinceLast >= WARM_MS ? `${Math.round(sinceLast / 60_000)}분 경과` : null;
+  // A `down` current card does not block the cold-cache move: nothing is lost by moving when the cache is cold.
   if (coldWhy && best && best.account !== cur) {
     return { ...base, account: best.account, switched: true, reason: `캐시 식음(${coldWhy}) → 점수 더 좋은 ${LABEL[best.account]}` };
   }
-  if (coldWhy) return { ...base, account: cur, switched: false, reason: `캐시 식음(${coldWhy}) · 현재 계정이 최적 · ${LABEL[cur]} 유지` };
+  if (cu.status === 'down') return { ...base, account: cur, switched: false, reason: `잔여량 정보 없음 · ${LABEL[cur]} 유지` };
+  if (coldWhy) {
+    const why = best ? '현재 계정이 최적' : '자격 있는 대안 없음';
+    return { ...base, account: cur, switched: false, reason: `캐시 식음(${coldWhy}) · ${why} · ${LABEL[cur]} 유지` };
+  }
+  // Deliberate for now (review M1): a warm session stays put even on the protected account; it only
+  // leaves on a forced switch or when the cache goes cold.
   return { ...base, account: cur, switched: false, reason: `${LABEL[cur]} 유지 · 캐시 따뜻함(${Math.round((sinceLast ?? 0) / 60_000)}분 전)` };
 }
