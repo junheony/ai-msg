@@ -25,14 +25,15 @@ npm start            # 127.0.0.1:9320 + Tailscale 주소:9320
 DECK_DEV_ORIGIN=http://localhost:5173 npm run dev:server   # tsx watch
 npm run dev:ui                                             # vite, /api·/ws 프록시
 npm test            # 단위 테스트
-npm run test:e2e    # 실제 계정으로 한 턴 (토큰 약간 소모)
+npm run test:e2e    # 실제 계정(Claude B + GPT)으로 짧은 턴 몇 개 (토큰 약간 소모)
 ```
 
 ## 환경변수
 
 `DECK_PORT`(9320) · `DECK_CONFIG_DIR`(~/.config/deck) · `DECK_URL`(usage-deck) · `CLAUDE_PROTECT`(a|b|c, 기본은 ~/.config/offload/protect) ·
 `CLAUDE_PICK_COOLDOWN_DIR`(claude-pick 과 공유) · `DECK_LOOPBACK_ONLY=1` · `DECK_DEV_ORIGIN` · `DECK_UI_DIR` ·
-`DECK_EXTRA_HOSTS`(콤마 목록, Tailscale MagicDNS 이름 등 — Host 허용 목록에 추가. deck 이 바인드하는 주소는 자동으로 허용 목록에 들어간다)
+`DECK_EXTRA_HOSTS`(콤마 목록, Tailscale MagicDNS 이름 등 — Host 허용 목록에 추가. deck 이 바인드하는 주소는 자동으로 허용 목록에 들어간다) ·
+`DECK_CODEX_BIN`(codex 바이너리 경로; 없으면 PATH → `~/.local/bin/codex` → `~/.nvm/versions/node/*/bin/codex`, 0.159 미만은 건너뜀) · `CODEX_HOME`(Codex 의 홈; 롤아웃 위치 `$CODEX_HOME/sessions`)
 
 ## 보안 메모 (검토 I5, Task 13에서 추가)
 
@@ -45,9 +46,26 @@ npm run test:e2e    # 실제 계정으로 한 턴 (토큰 약간 소모)
 
 ## 알려진 제한
 
-- `AskUserQuestion` 도구에 답하는 UI 가 없다(Phase 2, 검토 M13). 지금은 일반 권한 카드로만 뜬다.
 - 설정 파일(`settings.json`)의 allow 규칙은 CLI 가 그대로 적용하며, deck UI 는 그 목록을 보여주거나 편집하지 않는다(정보용, 검토 M14).
 - 턴 도중 재연결하면 그 뒤의 스트리밍만 이어서 보인다. 끊긴 동안 온 델타는 세션을 다시 열어 기록으로 확인한다.
+- GPT 세션: 승인 카드 없음(샌드박스만) · 답이 토큰 단위로 흐르지 않고 항목 단위로 온다 · Codex Desktop/CLI 에서 따로 만든 스레드는 목록에 뜨지 않는다.
+
+## GPT(ChatGPT Pro) 세션
+
+- 세션을 새로 열 때 엔진을 고른다: Claude / GPT / 자동(여유 있는 쪽). 세션이 생기면 엔진은 바뀌지 않는다.
+- GPT 는 공식 `codex` CLI(`codex exec --json`)를 자식 프로세스로 띄운다. deck 은 `~/.codex/auth.json` 이나 키체인을 절대 읽지 않는다 — 로그인은 `codex login` 으로만.
+- 모델: `gpt-6-sol`(기본) · `gpt-6-astra`(어려운 작업). **codex-cli 0.159 이상 필요** — 0.146 은 ChatGPT 계정에서 `gpt-6-sol` 을 거부당한다(`npm i -g @openai/codex`).
+- 승인 카드가 없다. 대신 샌드박스: 기본 **읽기 전용**, 세션 생성 시 **작업폴더 쓰기(네트워크 차단)** 선택 가능. `approval_policy=never` 로 실행되므로 샌드박스 밖 작업은 그냥 실패한다.
+- GPT 잔여량은 usage-deck `codex` 카드 + 턴마다 Codex 롤아웃의 rate_limits 로 보정. 카드가 `setup_needed` 면 `—` 로 표시.
+- 히스토리는 `~/.codex/sessions/…/rollout-…-<thread>.jsonl` 에서 읽는다(deck 이 만든 세션만 목록에 뜬다).
+
+## 첨부 · 분할보기 · 폰
+
+- 이미지 붙여넣기/끌어놓기 → Claude 에는 image 블록, GPT 에는 `-i` 로 전달. 다른 파일은 절대 경로로 프롬프트에 적힌다.
+- 첨부 파일은 `~/.config/deck/attachments/`(0700) 에 파일당 ≤ 10 MiB, 한 번에 ≤ 8개, 7일 지나면 삭제.
+- `+ 분할` 로 2~4 패널. 패널마다 독립 세션(한 WebSocket).
+- 폭 720px 이하: 사이드바는 ☰ 서랍, 패널 하나(상단 숫자로 전환), 버튼 44px.
+- AskUserQuestion 은 카드로 뜨고 답이 모델로 돌아간다(30분 무응답 시 거부).
 
 ## 파일
 
