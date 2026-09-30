@@ -4,11 +4,11 @@ import type { Account } from '../../shared/accounts';
 import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type EngineChoice } from '../../shared/models';
 import type { ServerMessage } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
-import { ZERO_USAGE, type PermissionDecision, type TurnUsage } from '../../shared/turn-types';
+import { ZERO_USAGE, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
 import type { CodexEngine } from '../engine/CodexEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
-import { ruleString, sessionUpdates, type Engine, type EngineResult, type PermissionRequest, type RateLimitSignal } from '../engine/Engine';
+import { ruleString, sessionUpdates, type Engine, type EngineResult, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
@@ -24,6 +24,8 @@ import { isCodexState, type ClaudeSessionState, type CodexSessionState, type Ses
 export type TurnSink = {
   emit(msg: ServerMessage): void;
   askPermission(req: PermissionRequest & { turnId: string; sessionId: string | null; cwd: string }): Promise<PermissionDecision>;
+  /** D8: an AskUserQuestion card; null = unanswered (timeout, abort, turn end). */
+  askQuestion(req: QuestionRequest & { turnId: string; sessionId: string | null; cwd: string }): Promise<QuestionAnswers | null>;
   signal: AbortSignal;
 };
 
@@ -152,6 +154,15 @@ export class TurnRunner {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
         return decision;
+      },
+      onQuestion: async (q) => {
+        const answers = await sink.askQuestion({ turnId: p.turnId, sessionId: out.sessionId, cwd, ...q });
+        try {
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: answers ? 'answered' : 'deny', inputSha256: hashInput(q.questions) });
+        } catch (err) {
+          console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
+        }
+        return answers;
       },
     });
     for await (const ev of events) {

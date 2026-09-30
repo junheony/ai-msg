@@ -8,7 +8,8 @@ export type AuditEntry = {
   turnId: string;
   sessionId: string | null;
   toolName: string;
-  decision: PermissionDecision;
+  /** 'answered' = an AskUserQuestion the user answered (answers themselves are never logged). */
+  decision: PermissionDecision | 'answered';
   /** sha256 of the JSON input — lets you correlate without storing secrets (spec §6). */
   inputSha256: string;
 };

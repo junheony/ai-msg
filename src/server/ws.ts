@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
-import type { PermissionDecision } from '../shared/turn-types';
+import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { readCodexTranscript } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
@@ -15,57 +15,93 @@ import type { TurnRunner, TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 
 type PermissionMsg = Extract<ServerMessage, { type: 'permission_request' }>;
+type QuestionMsg = Extract<ServerMessage, { type: 'question_request' }>;
 
 export const PERMISSION_TIMEOUT_MS = 30 * 60_000;
 
 /**
- * Holds unanswered permission prompts so a reconnecting browser sees them again (spec §8).
- * Review I5: a prompt also closes — as 'deny', with permission_resolved to every client —
+ * Holds unanswered prompts so a reconnecting browser sees them again (spec §8).
+ * Review I5: a prompt also closes — with `cancelValue`, announced to every client via `onResolved` —
  * when its signal aborts, when its turn ends (cancelTurn), or after a long timeout.
  */
-export class PermissionBroker {
-  private waiting = new Map<string, { msg: PermissionMsg; resolve: (d: PermissionDecision) => void; cleanup: () => void }>();
-  private readonly timeoutMs: number;
+export class AskBroker<M extends { requestId: string; turnId: string }, R> {
+  protected waiting = new Map<string, { msg: M; resolve: (r: R) => void; cleanup: () => void }>();
 
-  constructor(private readonly broadcast: (m: ServerMessage) => void, opts: { timeoutMs?: number } = {}) {
-    this.timeoutMs = opts.timeoutMs ?? PERMISSION_TIMEOUT_MS;
-  }
+  constructor(
+    private readonly send: (m: M) => void,
+    private readonly onResolved: (requestId: string, result: R) => void,
+    private readonly cancelValue: R,
+    private readonly timeoutMs: number,
+  ) {}
 
-  ask(msg: PermissionMsg, signal?: AbortSignal): Promise<PermissionDecision> {
-    if (signal?.aborted) return Promise.resolve('deny');
+  ask(msg: M, signal?: AbortSignal): Promise<R> {
+    if (signal?.aborted) return Promise.resolve(this.cancelValue);
     return new Promise((resolve) => {
-      const onAbort = () => this.resolve(msg.requestId, 'deny');
+      const onAbort = () => this.resolve(msg.requestId, this.cancelValue);
       const timer = setTimeout(onAbort, this.timeoutMs);
       timer.unref?.();
       signal?.addEventListener('abort', onAbort, { once: true });
       const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); };
       this.waiting.set(msg.requestId, { msg, resolve, cleanup });
-      this.broadcast(msg);
+      this.send(msg);
     });
   }
 
-  resolve(requestId: string, decision: PermissionDecision): boolean {
+  resolve(requestId: string, result: R): boolean {
     const w = this.waiting.get(requestId);
     if (!w) return false;
     this.waiting.delete(requestId);
     w.cleanup();
-    w.resolve(decision);
-    this.broadcast({ type: 'permission_resolved', requestId, decision });
+    w.resolve(result);
+    this.onResolved(requestId, result);
     return true;
   }
 
-  /** Deny every prompt still open for this turn (it finished, failed or was interrupted). */
+  /** Cancel every prompt still open for this turn (it finished, failed or was interrupted). */
   cancelTurn(turnId: string): void {
-    for (const [id, w] of [...this.waiting]) if (w.msg.turnId === turnId) this.resolve(id, 'deny');
+    for (const [id, w] of [...this.waiting]) if (w.msg.turnId === turnId) this.resolve(id, this.cancelValue);
   }
 
-  pending(): ServerMessage[] {
+  pending(): M[] {
     return [...this.waiting.values()].map((w) => w.msg);
   }
 }
 
+export class PermissionBroker extends AskBroker<PermissionMsg, PermissionDecision> {
+  constructor(broadcast: (m: ServerMessage) => void, opts: { timeoutMs?: number } = {}) {
+    super(broadcast, (requestId, decision) => broadcast({ type: 'permission_resolved', requestId, decision }), 'deny', opts.timeoutMs ?? PERMISSION_TIMEOUT_MS);
+  }
+}
+
+/** D8: AskUserQuestion cards; null = unanswered (timeout, abort, turn end) → the engine denies the tool call. */
+export class QuestionBroker extends AskBroker<QuestionMsg, QuestionAnswers | null> {
+  constructor(broadcast: (m: ServerMessage) => void, opts: { timeoutMs?: number } = {}) {
+    super(broadcast, (requestId, answers) => broadcast({ type: 'question_resolved', requestId, answers }), null, opts.timeoutMs ?? PERMISSION_TIMEOUT_MS);
+  }
+
+  /** Answers are user text: only keys naming an asked question survive (lengths are capped by the schema); none left → unanswered. */
+  override resolve(requestId: string, answers: QuestionAnswers | null): boolean {
+    const w = this.waiting.get(requestId);
+    if (!w || !answers) return super.resolve(requestId, answers);
+    const asked = new Set(w.msg.questions.map((q) => q.question));
+    const kept = Object.fromEntries(Object.entries(answers).filter(([k]) => asked.has(k)));
+    return super.resolve(requestId, Object.keys(kept).length ? kept : null);
+  }
+}
+
 /** Deviation (added per review I5): extraHosts feeds the Host allowlist in checkUpgrade. */
-export type WsDeps = { token: string; devOrigins: string[]; runner: TurnRunner; index: SessionIndex; usage: UsageService; store: SessionStateStore; extraHosts?: string[]; codexAvailable: boolean; readCodexHistory?: typeof readCodexTranscript };
+export type WsDeps = {
+  token: string;
+  devOrigins: string[];
+  runner: TurnRunner;
+  index: SessionIndex;
+  usage: UsageService;
+  store: SessionStateStore;
+  extraHosts?: string[];
+  /** D11: false hides the GPT engine in the UI and makes 'auto' mean Claude. */
+  codexAvailable: boolean;
+  readCodexHistory?: typeof readCodexTranscript;
+};
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -86,7 +122,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
    * `new:<turnId>` until the CLI reports its id, then by that id as well.
    */
   const busy = new Map<string, string>();
-  /** D6: the sessions each socket has open (one per pane); turn events of a session go to every socket viewing it. */
+  /** D6: the sessions each socket has open (one per pane); a session's turn events go to every socket viewing it. */
   const viewing = new Map<WebSocket, Set<string>>();
   const view = (ws: WebSocket, sessionId: string) => { let s = viewing.get(ws); if (!s) { s = new Set(); viewing.set(ws, s); } s.add(sessionId); };
   /** Sidebar listing: profile scan + deck-created Codex sessions (D4). */
@@ -95,6 +131,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
   const send = (ws: WebSocket, msg: ServerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
   const broker = new PermissionBroker(broadcast);
+  const questions = new QuestionBroker(broadcast);
   const unsubscribeUsage = deps.usage.onChange((usage) => broadcast({ type: 'usage', usage }));
   const running = (): RunningTurn[] => [...turns.values()].map(({ turnId, sessionId, cwd }) => ({ turnId, sessionId, cwd }));
 
@@ -149,6 +186,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       turns.delete(turnId);
       for (const [k, v] of [...busy]) if (v === turnId) busy.delete(k);
       broker.cancelTurn(turnId);
+      questions.cancelTurn(turnId);
     };
     const sink: TurnSink = {
       emit: (m) => emitTurn(turn, m),
@@ -163,13 +201,23 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
           req.signal ? AbortSignal.any([req.signal, ac.signal]) : ac.signal,
         );
       },
+      askQuestion: (req) => questions.ask(
+        { type: 'question_request', turnId, sessionId: req.sessionId, cwd: req.cwd, requestId: randomUUID(), questions: req.questions },
+        req.signal ? AbortSignal.any([req.signal, ac.signal]) : ac.signal,
+      ),
       signal: ac.signal,
     };
     void (async () => {
       try {
         // Review M8: the working directory must exist before a CLI is started in it.
         if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}` }); return; }
-        await deps.runner.run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model ? { model: msg.model } : {}), ...(msg.engine ? { engine: msg.engine } : {}), ...(msg.sandbox ? { sandbox: msg.sandbox } : {}), ...(msg.attachments ? { attachments: msg.attachments } : {}) }, sink);
+        await deps.runner.run({
+          turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text,
+          ...(msg.model ? { model: msg.model } : {}),
+          ...(msg.engine ? { engine: msg.engine } : {}),
+          ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
+          ...(msg.attachments ? { attachments: msg.attachments } : {}),
+        }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
         console.error('deck: turn failed', err);
@@ -190,6 +238,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
     send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), running: running(), codex: { available: deps.codexAvailable } });
     for (const m of broker.pending()) send(ws, m);
+    for (const m of questions.pending()) send(ws, m);
 
     ws.on('message', (data) => {
       let parsed: unknown;
@@ -204,16 +253,21 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
         case 'permission_response':
           if (!broker.resolve(msg.requestId, msg.decision)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다' });
           break;
+        case 'question_response':
+          if (!questions.resolve(msg.requestId, msg.answers)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 질문입니다' });
+          break;
         case 'watch_turn':
           turns.get(msg.turnId)?.watchers.add(ws);
           break;
         case 'interrupt':
           turns.get(msg.turnId)?.ac.abort();
           broker.cancelTurn(msg.turnId);
+          questions.cancelTurn(msg.turnId);
           break;
         case 'open_session': {
           const sessionId = msg.sessionId;
           void (async () => {
+            // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
             const st = deps.store.get(sessionId);
             if (st && isCodexState(st)) {
               view(ws, sessionId);

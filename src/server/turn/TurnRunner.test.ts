@@ -59,7 +59,7 @@ async function ctx(engine: StubEngine, over: Partial<TurnRunnerDeps> = {}, usage
     ...over,
   };
   const msgs: ServerMessage[] = [];
-  const sink: TurnSink = { emit: (m) => msgs.push(m), askPermission: async () => 'once', signal: new AbortController().signal };
+  const sink: TurnSink = { emit: (m) => msgs.push(m), askPermission: async () => 'once', askQuestion: async () => null, signal: new AbortController().signal };
   return { deps, base, msgs, sink, roots, moves };
 }
 
@@ -503,5 +503,25 @@ describe('TurnRunner: attachments (D7)', () => {
     await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w', sessionId: null, text: 'x', attachments: [img.id, img.id] }, c.sink);
     expect(c.msgs).toEqual([{ type: 'error', turnId: 't2', message: `첨부를 찾을 수 없습니다: ${img.id}` }]);
     expect(stub.calls).toHaveLength(1);
+  });
+});
+
+describe('TurnRunner: questions (D8)', () => {
+  it('relays onQuestion to the sink with turn scope and audits it as answered / deny', async () => {
+    const stub = new StubEngine(async (req) => {
+      const a = await req.onQuestion?.({ toolUseId: 'tu1', questions: [{ question: 'Which color?', header: 'Color', options: [{ label: 'red', description: '' }, { label: 'blue', description: '' }], multiSelect: false }] });
+      return [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID, `answer=${a ? a['Which color?'] : 'none'}`)];
+    });
+    const c = await ctx(stub);
+    const seen: unknown[] = [];
+    c.sink.askQuestion = async (q) => { seen.push(q); return { 'Which color?': 'blue' }; };
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'ask' }, c.sink);
+    expect(seen[0]).toMatchObject({ turnId: 't1', cwd: '/w', toolUseId: 'tu1', questions: [{ header: 'Color' }] });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'answer=blue' });
+    const audit = (await fs.readFile(c.deps.auditFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { toolName: string; decision: string });
+    expect(audit.at(-1)).toMatchObject({ toolName: 'AskUserQuestion', decision: 'answered' });
+    c.sink.askQuestion = async () => null;
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w', sessionId: null, text: 'ask' }, c.sink);
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', text: 'answer=none' });
   });
 });

@@ -6,7 +6,7 @@ import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/At
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
-import { sessionUpdates, type Engine, type EngineEvent, type EngineResult, type RateLimitSignal, type TurnRequest } from './Engine';
+import { parseQuestions, sessionUpdates, type Engine, type EngineEvent, type EngineResult, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
 
 export type PromptInput = string | AsyncIterable<SDKUserMessage>;
@@ -68,6 +68,14 @@ export function buildOptions(
     ...(req.allowRules?.length ? { settings: { permissions: { allow: req.allowRules } } } : {}),
     ...(req.allowDirs?.length ? { additionalDirectories: req.allowDirs } : {}),
     canUseTool: async (toolName, input, ctx) => {
+      // D8: AskUserQuestion is not a permission prompt. The answers travel back as updatedInput.answers
+      // (sdk-tools.d.ts AskUserQuestionInput.answers: "User answers collected by the permission component").
+      if (toolName === 'AskUserQuestion') {
+        const questions = parseQuestions(input);
+        const answers = questions && req.onQuestion ? await req.onQuestion({ toolUseId: ctx.toolUseID, questions, signal: ctx.signal }) : null;
+        if (!answers) return { behavior: 'deny', message: '사용자가 답하지 않았습니다', interrupt: false };
+        return { behavior: 'allow', updatedInput: { ...input, answers } };
+      }
       const pr = {
         toolName,
         input,

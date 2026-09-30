@@ -14,7 +14,7 @@ import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
-import { PermissionBroker, attachWebSocket } from './ws';
+import { PermissionBroker, QuestionBroker, attachWebSocket } from './ws';
 
 const TOKEN = 'f'.repeat(64);
 const COOKIE = `deck_session=${cookieValueFor(TOKEN)}`;
@@ -55,6 +55,10 @@ beforeAll(async () => {
     if (req.prompt === 'ask') {
       const d = await req.onPermission({ toolName: 'Write', input: { file_path: '/x' }, toolUseId: 'tu1' });
       return [{ kind: 'init', sessionId: 'sess-ask', model: 'm' }, { kind: 'delta', text: `decision=${d}` }, okResult('sess-ask', `decision=${d}`)];
+    }
+    if (req.prompt === 'question') {
+      const a = await req.onQuestion?.({ toolUseId: 'q1', questions: [{ question: 'Which color?', header: 'Color', options: [{ label: 'red', description: '' }, { label: 'blue', description: '' }], multiSelect: false }] });
+      return [{ kind: 'init', sessionId: 'sess-q', model: 'm' }, okResult('sess-q', `answer=${a ? a['Which color?'] : 'none'}`)];
     }
     if (req.prompt === 'att') return [{ kind: 'init', sessionId: 'sess-att', model: 'm' }, okResult('sess-att', `n=${req.attachments?.length ?? 0}`)];
     if (req.prompt === 'throw') throw new Error('engine exploded');
@@ -504,5 +508,67 @@ describe('multi-session viewing and Codex sessions (D4, D6)', () => {
       { kind: 'assistant', text: 'ok', model: null, toolCalls: [], ts: null },
     ]);
     ws.close();
+  });
+});
+
+describe('AskUserQuestion over the socket (D8)', () => {
+  it('broadcasts question_request, a question_response answers it, question_resolved closes it everywhere', async () => {
+    const asker = (await connect({ Cookie: COOKIE, Origin: origin })).ws;
+    await collect(asker, (m) => m.type === 'hello');
+    const other = (await connect({ Cookie: COOKIE, Origin: origin })).ws;
+    await collect(other, (m) => m.type === 'hello');
+    const q = collect(other, (m) => m.type === 'question_request');
+    asker.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'question' }));
+    const reqMsg = (await q).at(-1);
+    expect(reqMsg).toMatchObject({ type: 'question_request', cwd: work, questions: [{ question: 'Which color?', options: [{ label: 'red' }, { label: 'blue' }] }] });
+    const requestId = reqMsg && reqMsg.type === 'question_request' ? reqMsg.requestId : '';
+    // a late socket sees the pending question replayed
+    const late = (await connect({ Cookie: COOKIE, Origin: origin })).ws;
+    const replay = await collect(late, (m) => m.type === 'question_request');
+    expect(replay.at(-1)).toMatchObject({ requestId });
+    const resolved = collect(asker, (m) => m.type === 'question_resolved');
+    const result = collect(asker, (m) => m.type === 'turn_result');
+    other.send(JSON.stringify({ type: 'question_response', requestId, answers: { 'Which color?': 'blue' } }));
+    expect((await resolved).at(-1)).toMatchObject({ type: 'question_resolved', requestId, answers: { 'Which color?': 'blue' } });
+    expect((await result).at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'answer=blue' });
+    const dup = collect(other, (m) => m.type === 'error');
+    other.send(JSON.stringify({ type: 'question_response', requestId, answers: {} }));
+    expect((await dup).at(-1)).toMatchObject({ type: 'error', message: '이미 처리된 질문입니다' });
+    asker.close(); other.close(); late.close();
+  });
+
+  it('interrupt closes an open question as unanswered', async () => {
+    const ws = (await connect({ Cookie: COOKIE, Origin: origin })).ws;
+    await collect(ws, (m) => m.type === 'hello');
+    const q = collect(ws, (m) => m.type === 'question_request');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'question' }));
+    const reqMsg = (await q).at(-1);
+    const resolved = collect(ws, (m) => m.type === 'question_resolved');
+    ws.send(JSON.stringify({ type: 'interrupt', turnId: reqMsg && reqMsg.type === 'question_request' ? reqMsg.turnId : '' }));
+    expect((await resolved).at(-1)).toMatchObject({ type: 'question_resolved', answers: null });
+    await collect(ws, (m) => m.type === 'turn_result');
+    ws.close();
+  });
+});
+
+describe('QuestionBroker answer validation (D8)', () => {
+  const Q = { type: 'question_request' as const, turnId: 't', sessionId: null, cwd: '/w', requestId: 'r1', questions: [{ question: 'Which color?', header: 'Color', options: [{ label: 'red', description: '' }, { label: 'blue', description: '' }], multiSelect: false }] };
+
+  it('keeps only answers to the questions that were asked', async () => {
+    const sent: ServerMessage[] = [];
+    const b = new QuestionBroker((m) => sent.push(m));
+    const p = b.ask(Q);
+    expect(b.resolve('r1', { 'Which color?': 'blue', injected: 'x' })).toBe(true);
+    expect(await p).toEqual({ 'Which color?': 'blue' });
+    expect(sent.at(-1)).toEqual({ type: 'question_resolved', requestId: 'r1', answers: { 'Which color?': 'blue' } });
+  });
+
+  it('an answer set with no asked question counts as unanswered (null)', async () => {
+    const sent: ServerMessage[] = [];
+    const b = new QuestionBroker((m) => sent.push(m));
+    const p = b.ask(Q);
+    expect(b.resolve('r1', { other: 'x' })).toBe(true);
+    expect(await p).toBeNull();
+    expect(sent.at(-1)).toEqual({ type: 'question_resolved', requestId: 'r1', answers: null });
   });
 });

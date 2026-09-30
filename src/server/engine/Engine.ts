@@ -2,7 +2,7 @@ import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { Account } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
 import type { ClaudeModel } from '../../shared/models';
-import type { PermissionDecision, TurnUsage } from '../../shared/turn-types';
+import type { PermissionDecision, Question, QuestionAnswers, TurnUsage } from '../../shared/turn-types';
 import type { UsageWindow } from '../../shared/usage-types';
 
 export type RateLimitSignal = {
@@ -101,6 +101,29 @@ export function sessionAllowLabel(pr: Pick<PermissionRequest, 'suggestions' | 's
   return parts.length ? `이 세션 동안 ${[...new Set(parts)].join(', ')} 허용` : null;
 }
 
+/** D8: an AskUserQuestion call relayed to the UI; null answers = the user did not answer (→ deny). */
+export type QuestionRequest = { toolUseId: string; questions: Question[]; signal?: AbortSignal };
+
+/** AskUserQuestionInput.questions (1–4, each 2–4 options) → Question[]; previews and extras dropped. Null when malformed. */
+export function parseQuestions(input: unknown): Question[] | null {
+  const qs = input && typeof input === 'object' ? (input as { questions?: unknown }).questions : undefined;
+  if (!Array.isArray(qs) || qs.length < 1 || qs.length > 4) return null;
+  const out: Question[] = [];
+  for (const q of qs) {
+    if (!q || typeof q !== 'object') return null;
+    const r = q as Record<string, unknown>;
+    if (typeof r.question !== 'string' || !r.question || !Array.isArray(r.options) || r.options.length < 2 || r.options.length > 4) return null;
+    const options: Question['options'] = [];
+    for (const o of r.options) {
+      if (!o || typeof o !== 'object' || typeof (o as Record<string, unknown>).label !== 'string') return null;
+      const d = (o as Record<string, unknown>).description;
+      options.push({ label: (o as { label: string }).label, description: typeof d === 'string' ? d : '' });
+    }
+    out.push({ question: r.question, header: typeof r.header === 'string' ? r.header : '', options, multiSelect: r.multiSelect === true });
+  }
+  return out;
+}
+
 export type TurnRequest = {
   account: Account;
   cwd: string;
@@ -111,6 +134,8 @@ export type TurnRequest = {
   attachments?: Attachment[];
   signal: AbortSignal;
   onPermission: (req: PermissionRequest) => Promise<PermissionDecision>;
+  /** D8: AskUserQuestion relay; absent or null answers → the tool call is denied. */
+  onQuestion?: (q: QuestionRequest) => Promise<QuestionAnswers | null>;
   /** Rules (e.g. `Bash(git status)`) the user allowed for this deck session on earlier turns. */
   allowRules?: string[];
   /** Directories the user allowed for this deck session on earlier turns. */

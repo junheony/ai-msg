@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeEngine, buildOptions, buildPrompt, mapSdkMessage } from './ClaudeEngine';
-import { sessionAllowLabel, sessionAllowOffered, type EngineEvent, type TurnRequest } from './Engine';
+import { parseQuestions, sessionAllowLabel, sessionAllowOffered, type EngineEvent, type TurnRequest } from './Engine';
 
 const M = (o: unknown) => o as SDKMessage;
 
@@ -284,5 +284,31 @@ describe('ClaudeEngine with attachments', () => {
     for await (const e of engine.runTurn(req({ attachments: [img] }))) out.push(e);
     expect(called).toBe(false);
     expect(out).toEqual([expect.objectContaining({ kind: 'result', ok: false, errorText: expect.stringContaining('ENOENT') })]);
+  });
+});
+
+const QUESTIONS = [{ question: 'Which color?', header: 'Color', options: [{ label: 'red', description: 'warm' }, { label: 'blue', description: 'cool', preview: 'x' }], multiSelect: false }];
+
+describe('AskUserQuestion (D8)', () => {
+  it('parseQuestions validates the SDK shape and drops previews; garbage → null', () => {
+    expect(parseQuestions({ questions: QUESTIONS })).toEqual([{ question: 'Which color?', header: 'Color', options: [{ label: 'red', description: 'warm' }, { label: 'blue', description: 'cool' }], multiSelect: false }]);
+    expect(parseQuestions({ questions: [] })).toBeNull();
+    expect(parseQuestions({ questions: [{ question: 'q', options: [{ label: 'a' }] }] })).toBeNull();
+    expect(parseQuestions('nope')).toBeNull();
+  });
+
+  it('canUseTool routes AskUserQuestion to onQuestion and returns the answers as updatedInput; no answer → deny', async () => {
+    const asked: unknown[] = [];
+    const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+    const ctx = { signal: new AbortController().signal, toolUseID: 'tu9', requestId: 'r9' } as never;
+    const o = buildOptions(req({ onQuestion: async (q) => { asked.push(q); return { 'Which color?': 'blue' }; } }), deps);
+    expect(await o.canUseTool!('AskUserQuestion', { questions: QUESTIONS }, ctx)).toEqual({ behavior: 'allow', updatedInput: { questions: QUESTIONS, answers: { 'Which color?': 'blue' } } });
+    expect(asked[0]).toMatchObject({ toolUseId: 'tu9', questions: [{ question: 'Which color?' }] });
+    const none = buildOptions(req({ onQuestion: async () => null }), deps);
+    expect(await none.canUseTool!('AskUserQuestion', { questions: QUESTIONS }, ctx)).toMatchObject({ behavior: 'deny' });
+    const noHandler = buildOptions(req({}), deps);
+    expect(await noHandler.canUseTool!('AskUserQuestion', { questions: QUESTIONS }, ctx)).toMatchObject({ behavior: 'deny' });
+    // never confused with a permission prompt
+    expect(await noHandler.canUseTool!('Bash', { command: 'ls' }, ctx)).toEqual({ behavior: 'allow' });
   });
 });
