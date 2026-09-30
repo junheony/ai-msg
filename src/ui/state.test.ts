@@ -188,4 +188,13 @@ describe('reducer', () => {
     ], s);
     expect(s.items[1]).toMatchObject({ text: 'ok', attempts: ['partial'] });
   });
+
+  it('an error for a turn that never started (e.g. unknown session) unlocks the composer', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: 'gone', cwd: '/w', title: 't' });
+    s = reducer(s, { type: 'sent', text: 'hi' });
+    expect(s.awaitingStart).toBe(true);
+    s = play([{ type: 'error', turnId: 'tz', message: '세션을 찾을 수 없습니다: gone' }], s);
+    expect(s.awaitingStart).toBe(false);
+    expect(s.activeTurnId).toBeNull();
+  });
 });

@@ -148,8 +148,8 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       const withItem = msg.turnId ? updateTurn(state, msg.turnId, (it) => ({ ...it, streaming: false, error: it.error ?? msg.message })) : state;
       // Review I6: an error that names the running turn ends it, or the composer stays locked on 중단.
       const activeTurnId = msg.turnId !== null && msg.turnId === state.activeTurnId ? null : withItem.activeTurnId;
-      // A send refused before it started (busy session, bad cwd) is answered with a turn-less error.
-      const awaitingStart = msg.turnId === null ? false : withItem.awaitingStart;
+      // A send refused before its turn started (busy session, bad cwd, unknown session) ends the wait.
+      const awaitingStart = msg.turnId === null || !state.myTurns.includes(msg.turnId) ? false : withItem.awaitingStart;
       return { ...withItem, activeTurnId, awaitingStart, error: msg.message };
     }
   }
