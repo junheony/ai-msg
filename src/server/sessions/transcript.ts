@@ -1,5 +1,7 @@
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 
 export type HeadInfo = { cwd: string | null; title: string | null };
@@ -9,13 +11,8 @@ type Rec = Record<string, unknown>;
 function parseLines(text: string): Rec[] {
   const out: Rec[] = [];
   for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const o = JSON.parse(line) as unknown;
-      if (o && typeof o === 'object') out.push(o as Rec);
-    } catch {
-      // truncated or non-JSON line: skip
-    }
+    const r = parseLine(line);
+    if (r) out.push(r);
   }
   return out;
 }
@@ -115,10 +112,42 @@ function stringify(v: unknown): string {
   return v === undefined ? '' : JSON.stringify(v);
 }
 
-export function parseTranscript(text: string): TranscriptMessage[] {
-  const out: TranscriptMessage[] = [];
-  let lastAssistantId: string | null = null;
-  for (const r of parseLines(text)) {
+export type TranscriptOptions = {
+  /** Keep only the last N messages. */
+  maxMessages?: number;
+  /** Cut each tool result to this many characters, with a marker. */
+  maxToolResultChars?: number;
+};
+
+function parseLine(line: string): Rec | null {
+  if (!line.trim()) return null;
+  try {
+    const o = JSON.parse(line) as unknown;
+    return o && typeof o === 'object' ? (o as Rec) : null;
+  } catch {
+    return null; // truncated or non-JSON line: skip
+  }
+}
+
+/** Incremental jsonl → TranscriptMessage[] (assistant chunks with the same message id merge). */
+class TranscriptBuilder {
+  private out: TranscriptMessage[] = [];
+  private lastAssistantId: string | null = null;
+  private readonly max: number;
+  private readonly maxChars: number;
+
+  constructor(opts: TranscriptOptions) {
+    this.max = opts.maxMessages ?? Infinity;
+    this.maxChars = opts.maxToolResultChars ?? Infinity;
+  }
+
+  private push(m: TranscriptMessage): void {
+    this.out.push(m);
+    // Only the last entry is ever merged into, so dropping from the front is safe.
+    if (this.out.length > this.max * 2 + 64) this.out = this.out.slice(-this.max);
+  }
+
+  add(r: Rec): void {
     const ts = typeof r.timestamp === 'string' ? r.timestamp : null;
     if (isRealUser(r)) {
       const m = message(r);
@@ -127,37 +156,62 @@ export function parseTranscript(text: string): TranscriptMessage[] {
         for (const b of content) {
           const block = b as Rec;
           if (block.type !== 'tool_result') continue;
-          out.push({ kind: 'tool_result', toolUseId: String(block.tool_use_id ?? ''), content: stringify(block.content), isError: block.is_error === true, ts });
+          let text = stringify(block.content);
+          let truncated = false;
+          if (text.length > this.maxChars) {
+            text = `${text.slice(0, this.maxChars)}\n…[잘림: 원래 ${text.length}자]`;
+            truncated = true;
+          }
+          this.push({ kind: 'tool_result', toolUseId: String(block.tool_use_id ?? ''), content: text, isError: block.is_error === true, ts, ...(truncated ? { truncated } : {}) });
         }
-        lastAssistantId = null;
-        continue;
+        this.lastAssistantId = null;
+        return;
       }
       const t = textOfContent(content);
-      if (t) out.push({ kind: 'user', text: t, ts });
-      lastAssistantId = null;
+      if (t) this.push({ kind: 'user', text: t, ts });
+      this.lastAssistantId = null;
     } else if (r.type === 'assistant' && !r.isSidechain) {
       const m = message(r);
-      if (!m) continue;
+      if (!m) return;
       const id = typeof m.id === 'string' ? m.id : null;
       const model = typeof m.model === 'string' ? m.model : null;
       const blocks = Array.isArray(m.content) ? (m.content as Rec[]) : [];
       let entry: Extract<TranscriptMessage, { kind: 'assistant' }>;
-      const last = out[out.length - 1];
-      if (id && id === lastAssistantId && last && last.kind === 'assistant') entry = last;
+      const last = this.out[this.out.length - 1];
+      if (id && id === this.lastAssistantId && last && last.kind === 'assistant') entry = last;
       else {
         entry = { kind: 'assistant', text: '', model, toolCalls: [], ts };
-        out.push(entry);
+        this.push(entry);
       }
       for (const b of blocks) {
         if (b.type === 'text' && typeof b.text === 'string') entry.text += (entry.text ? '\n' : '') + b.text;
         else if (b.type === 'tool_use') entry.toolCalls.push({ id: String(b.id ?? ''), name: String(b.name ?? ''), input: b.input });
       }
-      lastAssistantId = id;
+      this.lastAssistantId = id;
     }
   }
-  return out;
+
+  result(): TranscriptMessage[] {
+    return Number.isFinite(this.max) ? this.out.slice(-this.max) : this.out;
+  }
 }
 
-export async function readTranscript(file: string): Promise<TranscriptMessage[]> {
-  return parseTranscript(await fs.readFile(file, 'utf8'));
+export function parseTranscript(text: string, opts: TranscriptOptions = {}): TranscriptMessage[] {
+  const b = new TranscriptBuilder(opts);
+  for (const line of text.split('\n')) {
+    const r = parseLine(line);
+    if (r) b.add(r);
+  }
+  return b.result();
+}
+
+/** Streams the jsonl line by line (large sessions reach hundreds of MB); defaults: last 200 messages, 8 KB per tool result. */
+export async function readTranscript(file: string, opts: TranscriptOptions = {}): Promise<TranscriptMessage[]> {
+  const b = new TranscriptBuilder({ maxMessages: opts.maxMessages ?? 200, maxToolResultChars: opts.maxToolResultChars ?? 8192 });
+  const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
+  for await (const line of rl) {
+    const r = parseLine(line);
+    if (r) b.add(r);
+  }
+  return b.result();
 }

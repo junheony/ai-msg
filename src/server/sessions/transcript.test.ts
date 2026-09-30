@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { parseHead, parseTranscript, readHead, textOfContent } from './transcript';
+import { parseHead, parseTranscript, readHead, readTranscript, textOfContent } from './transcript';
 
 const L = (o: unknown) => JSON.stringify(o);
 const CWD = '/Users/max/Documents/개발/agentic-harness';
@@ -120,5 +120,47 @@ describe('readHead — title', () => {
     await fs.mkdir(path.join(dir, ID));
     await fs.writeFile(path.join(dir, ID, 'custom-title.json'), 'not json');
     expect(await readHead(f)).toEqual({ cwd: CWD, title: 'hello there' });
+  });
+});
+
+describe('readTranscript — streaming with caps', () => {
+  async function write(lines: string[]): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-tr-'));
+    const f = path.join(dir, 's.jsonl');
+    await fs.writeFile(f, lines.join('\n') + '\n');
+    return f;
+  }
+
+  it('returns only the last maxMessages messages (default 200), same as parsing the whole text', async () => {
+    const lines = Array.from({ length: 300 }, (_, i) => L({ type: 'user', timestamp: `t${i}`, message: { role: 'user', content: `m${i}` } }));
+    const f = await write(lines);
+    const all = await readTranscript(f);
+    expect(all).toHaveLength(200);
+    expect(all[0]).toEqual({ kind: 'user', text: 'm100', ts: 't100' });
+    expect(all[199]).toEqual({ kind: 'user', text: 'm299', ts: 't299' });
+    expect(await readTranscript(f, { maxMessages: 5 })).toEqual(parseTranscript(lines.join('\n')).slice(-5));
+  });
+
+  it('merges streamed assistant chunks across line boundaries like parseTranscript', async () => {
+    const lines = [
+      L({ type: 'user', message: { role: 'user', content: 'go' } }),
+      L({ type: 'assistant', message: { id: 'a1', model: 'm', role: 'assistant', content: [{ type: 'text', text: 'one' }] } }),
+      L({ type: 'assistant', message: { id: 'a1', model: 'm', role: 'assistant', content: [{ type: 'text', text: 'two' }] } }),
+    ];
+    expect(await readTranscript(await write(lines))).toEqual(parseTranscript(lines.join('\n')));
+  });
+
+  it('truncates large tool results (default 8 KB) with a marker', async () => {
+    const big = 'y'.repeat(20_000);
+    const f = await write([L({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu', content: big }] } })]);
+    const [m] = await readTranscript(f);
+    expect(m?.kind).toBe('tool_result');
+    if (m?.kind !== 'tool_result') return;
+    expect(m.content.length).toBeLessThan(8_300);
+    expect(m.content.startsWith('y'.repeat(8192))).toBe(true);
+    expect(m.content).toContain('잘림');
+    expect(m.truncated).toBe(true);
+    const [full] = await readTranscript(f, { maxToolResultChars: Infinity });
+    expect(full?.kind === 'tool_result' && full.content).toBe(big);
   });
 });
