@@ -6,7 +6,7 @@ import type { ServerMessage } from '../../shared/protocol';
 import type { PermissionDecision } from '../../shared/turn-types';
 import { ZERO_USAGE } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
-import type { Engine, EngineResult, PermissionRequest, RateLimitSignal } from '../engine/Engine';
+import { sessionAllowOffered, type Engine, type EngineResult, type PermissionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
@@ -44,6 +44,23 @@ const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
 type Attempt = { result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean; initCwd: string | null };
 
+/** What 이 세션 accepted: the SDK's allow rules as rule strings, plus added directories. */
+type SessionGrants = { rules: string[]; dirs: string[] };
+
+function addGrants(g: SessionGrants, pr: PermissionRequest): void {
+  for (const u of pr.suggestions ?? []) {
+    if (u.type === 'addRules' && u.behavior === 'allow') {
+      for (const r of u.rules) {
+        const rule = r.ruleContent !== undefined ? `${r.toolName}(${r.ruleContent})` : r.toolName;
+        if (!g.rules.includes(rule)) g.rules.push(rule);
+      }
+    } else if (u.type === 'addDirectories') {
+      for (const d of u.directories) if (!g.dirs.includes(d)) g.dirs.push(d);
+    }
+    // setMode and the rest are applied for this turn by the SDK but deliberately not carried over.
+  }
+}
+
 async function exists(file: string): Promise<boolean> {
   return fs.access(file).then(() => true, () => false);
 }
@@ -70,7 +87,7 @@ export class TurnRunner {
     return next;
   }
 
-  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink): Promise<Attempt> {
+  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants): Promise<Attempt> {
     const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null };
     const scope = () => ({ turnId: p.turnId, sessionId: out.sessionId, cwd });
     const events = this.deps.engine.runTurn({
@@ -80,8 +97,11 @@ export class TurnRunner {
       model,
       prompt: p.text,
       signal: sink.signal,
+      allowRules: [...grants.rules],
+      allowDirs: [...grants.dirs],
       onPermission: async (pr) => {
         const decision = await sink.askPermission({ turnId: p.turnId, sessionId: out.sessionId, cwd, ...pr });
+        if (decision === 'session' && sessionAllowOffered(pr)) addGrants(grants, pr);
         // Review M6: the audit log is best-effort; losing it must not lose the user's answer.
         try {
           await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
@@ -155,6 +175,7 @@ export class TurnRunner {
     }
 
     const tried: Account[] = [];
+    const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])] };
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
@@ -165,7 +186,7 @@ export class TurnRunner {
       const { model, note } = resolveModel(p.model, sessionDefault, fable);
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt });
 
-      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink);
+      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants);
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
       const sessionId = a.sessionId ?? state?.sessionId ?? null;
       if (sessionId) {
@@ -177,6 +198,8 @@ export class TurnRunner {
           lastTurnAtMs: res.ok ? this.now() : (state?.lastTurnAtMs ?? null),
           justCompacted: a.compacted,
           defaultModel: sessionDefault,
+          ...(grants.rules.length ? { allowRules: [...grants.rules] } : {}),
+          ...(grants.dirs.length ? { allowDirs: [...grants.dirs] } : {}),
         };
         await deps.store.set(state);
       }

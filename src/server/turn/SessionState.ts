@@ -12,6 +12,10 @@ export type SessionState = {
   lastTurnAtMs: number | null;
   justCompacted: boolean;
   defaultModel: ClaudeModel;
+  /** Review I4: permission rules accepted with 이 세션 (SDK suggestions), re-applied on later turns. */
+  allowRules?: string[];
+  /** Directories accepted with 이 세션 (addDirectories suggestions). */
+  allowDirs?: string[];
 };
 
 let tmpCounter = 0;

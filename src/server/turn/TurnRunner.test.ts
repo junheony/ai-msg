@@ -249,6 +249,41 @@ describe('TurnRunner', () => {
     expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: false, errorText: expect.stringContaining('중단') });
   });
 
+  it('allow-for-session on turn 1 pre-allows the same scoped action on turn 2; a different command still prompts', async () => {
+    const ruleOf = (cmd: string) => `Bash(${cmd})`;
+    // Emulates the CLI: prompt unless a pre-allowed rule matches this exact command.
+    const eng = new StubEngine(async (req) => {
+      const cmd = req.prompt;
+      let d = 'preallowed';
+      if (!(req.allowRules ?? []).includes(ruleOf(cmd))) {
+        d = await req.onPermission({ toolName: 'Bash', input: { command: cmd }, toolUseId: 'tu', suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: cmd }], behavior: 'allow', destination: 'session' }] });
+      }
+      return ok('perm1', [{ kind: 'delta', text: d }]);
+    });
+    const c = await ctx(eng);
+    const asked: string[] = [];
+    c.sink.askPermission = async (r) => { asked.push(String(r.input.command)); return 'session'; };
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'git status' }, c.sink);
+    expect(c.deps.store.get('perm1')?.allowRules).toEqual(['Bash(git status)']);
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'perm1', text: 'git status' }, c.sink);
+    expect(asked).toEqual(['git status']);
+    expect(eng.calls[1]?.allowRules).toEqual(['Bash(git status)']);
+    await runner.run({ turnId: 't3', cwd: '/w/new', sessionId: 'perm1', text: 'rm -rf build' }, c.sink);
+    expect(asked).toEqual(['git status', 'rm -rf build']);
+  });
+
+  it('once, deny, or a suppressed session allow store nothing', async () => {
+    const eng = new StubEngine(async (req) => {
+      await req.onPermission({ toolName: 'Bash', input: { command: 'x' }, toolUseId: 'tu', suppressAlwaysAllowRule: true, suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'session' }] });
+      return ok('perm2');
+    });
+    const c = await ctx(eng);
+    c.sink.askPermission = async () => 'session';
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'x' }, c.sink);
+    expect(c.deps.store.get('perm2')?.allowRules ?? []).toEqual([]);
+  });
+
   it('fable with no account having room is downgraded to opus with a note', async () => {
     const eng = new StubEngine(() => ok('f1'));
     const c = await ctx(eng, {}, await usageWith([13, 7, 85], [2, 3, 90], [0, 50, 80]));

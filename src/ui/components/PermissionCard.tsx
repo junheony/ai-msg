@@ -10,11 +10,16 @@ export function PermissionCard({ req, onDecide }: { req: PendingPermission; onDe
       <div className="permission-scope muted" data-testid="permission-scope">
         {req.sessionId ? `세션 ${req.sessionId.slice(0, 8)}` : '새 세션'} · {req.cwd}
       </div>
+      {req.title && <div className="permission-title">{req.title}</div>}
+      {req.decisionReason && <div className="permission-reason muted">이유: {req.decisionReason}</div>}
+      {req.blockedPath && <div className="permission-path muted">경로: {req.blockedPath}</div>}
       <pre>{input.length > 2000 ? input.slice(0, 2000) + '\n…' : input}</pre>
       <div className="permission-actions">
         <button type="button" onClick={() => onDecide(req.requestId, 'once')}>허용 1회</button>
-        <button type="button" onClick={() => onDecide(req.requestId, 'session')}>이 세션</button>
-        <button type="button" className="deny" onClick={() => onDecide(req.requestId, 'deny')}>거부</button>
+        {/* Review I4: only when the SDK offered a scoped rule and did not suppress it. */}
+        {req.allowSession && <button type="button" onClick={() => onDecide(req.requestId, 'session')}>이 세션</button>}
+        {/* defaultToNo: the card opens on 거부 so a stray Enter cannot approve. */}
+        <button type="button" className="deny" autoFocus={req.defaultToNo} onClick={() => onDecide(req.requestId, 'deny')}>거부</button>
       </div>
     </div>
   );

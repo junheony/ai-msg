@@ -46,6 +46,10 @@ beforeAll(async () => {
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
   stub = new StubEngine(async (req) => {
+    if (req.prompt === 'ask-scoped') {
+      const d = await req.onPermission({ toolName: 'Bash', input: { command: 'ls' }, toolUseId: 'tu2', title: 'Claude wants to run ls', decisionReason: 'r', blockedPath: '/b', defaultToNo: true, suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow', destination: 'session' }] });
+      return [{ kind: 'init', sessionId: 'sess-scoped', model: 'm' }, okResult('sess-scoped', `decision=${d}`)];
+    }
     if (req.prompt === 'ask') {
       const d = await req.onPermission({ toolName: 'Write', input: { file_path: '/x' }, toolUseId: 'tu1' });
       return [{ kind: 'init', sessionId: 'sess-ask', model: 'm' }, { kind: 'delta', text: `decision=${d}` }, okResult('sess-ask', `decision=${d}`)];
@@ -181,12 +185,25 @@ describe('ws', () => {
     const p1 = collect(ws, (m) => m.type === 'permission_request');
     ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'ask' }));
     const req = (await p1).at(-1) as Extract<ServerMessage, { type: 'permission_request' }>;
-    expect(req).toMatchObject({ toolName: 'Write', input: { file_path: '/x' } });
+    expect(req).toMatchObject({ toolName: 'Write', input: { file_path: '/x' }, cwd: work, title: null, allowSession: false });
     const p2 = collect(ws, (m) => m.type === 'turn_result');
     ws.send(JSON.stringify({ type: 'permission_response', requestId: req.requestId, decision: 'session' }));
     const msgs = await p2;
     expect(msgs.find((m) => m.type === 'permission_resolved')).toMatchObject({ requestId: req.requestId, decision: 'session' });
     expect(msgs.at(-1)).toMatchObject({ type: 'turn_result', text: 'decision=session' });
+    ws.close();
+  });
+
+  it('permission_request relays title, reason, blocked path, defaultToNo, and offers 이 세션 when a scoped rule was suggested', async () => {
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p1 = collect(ws, (m) => m.type === 'permission_request');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'ask-scoped' }));
+    const req = (await p1).at(-1) as Extract<ServerMessage, { type: 'permission_request' }>;
+    expect(req).toMatchObject({ title: 'Claude wants to run ls', decisionReason: 'r', blockedPath: '/b', defaultToNo: true, allowSession: true });
+    const p2 = collect(ws, (m) => m.type === 'turn_result');
+    ws.send(JSON.stringify({ type: 'permission_response', requestId: req.requestId, decision: 'deny' }));
+    await p2;
     ws.close();
   });
 

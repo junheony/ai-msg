@@ -29,9 +29,38 @@ describe('buildOptions', () => {
     const mk = (d: 'once' | 'session' | 'deny') => buildOptions(req({ onPermission: async (p) => { seen.push(p.toolName + ':' + p.toolUseId); return d; } }), { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} });
     const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1' } as never;
     expect(await mk('once').canUseTool!('Bash', { command: 'ls' }, ctx)).toEqual({ behavior: 'allow' });
-    expect(await mk('session').canUseTool!('Bash', {}, ctx)).toEqual({ behavior: 'allow', updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'session' }] });
+    // No suggestions from the SDK → nothing scoped to remember: a plain one-time allow.
+    expect(await mk('session').canUseTool!('Bash', {}, ctx)).toEqual({ behavior: 'allow' });
     expect(await mk('deny').canUseTool!('Write', {}, ctx)).toMatchObject({ behavior: 'deny' });
     expect(seen).toEqual(['Bash:tu1', 'Bash:tu1', 'Write:tu1']);
+  });
+});
+
+describe('buildOptions: allow for this session (review I4)', () => {
+  const suggestions = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'git status' }], behavior: 'allow', destination: 'session' }];
+  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+
+  it('returns the SDK suggestions as updatedPermissions and relays the prompt details', async () => {
+    const seen: unknown[] = [];
+    const o = buildOptions(req({ onPermission: async (p) => { seen.push(p); return 'session'; } }), deps);
+    const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1', suggestions, title: 'Claude wants to run git status', decisionReason: 'not allowlisted', blockedPath: '/etc', defaultToNo: true } as never;
+    expect(await o.canUseTool!('Bash', { command: 'git status' }, ctx)).toEqual({ behavior: 'allow', updatedPermissions: suggestions });
+    expect(seen[0]).toMatchObject({ toolName: 'Bash', suggestions, title: 'Claude wants to run git status', decisionReason: 'not allowlisted', blockedPath: '/etc', defaultToNo: true, suppressAlwaysAllowRule: false });
+  });
+
+  it('suppressAlwaysAllowRule turns 이 세션 into a one-time allow', async () => {
+    const o = buildOptions(req({ onPermission: async () => 'session' }), deps);
+    const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1', suggestions, suppressAlwaysAllowRule: true } as never;
+    expect(await o.canUseTool!('Bash', { command: 'git status' }, ctx)).toEqual({ behavior: 'allow' });
+  });
+
+  it('pre-allows the session\'s stored rules and directories through the flag-settings layer', () => {
+    const o = buildOptions(req({ allowRules: ['Bash(git status)'], allowDirs: ['/data'] }), deps);
+    expect(o.settings).toEqual({ permissions: { allow: ['Bash(git status)'] } });
+    expect(o.additionalDirectories).toEqual(['/data']);
+    const none = buildOptions(req(), deps);
+    expect(none.settings).toBeUndefined();
+    expect(none.additionalDirectories).toBeUndefined();
   });
 });
 

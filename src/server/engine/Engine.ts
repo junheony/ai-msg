@@ -1,3 +1,4 @@
+import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { Account } from '../../shared/accounts';
 import type { ClaudeModel } from '../../shared/models';
 import type { PermissionDecision, TurnUsage } from '../../shared/turn-types';
@@ -34,8 +35,29 @@ export type EngineEvent =
   | { kind: 'compact' }
   | EngineResult;
 
-/** `signal` is the SDK's per-request abort signal (canUseTool ctx.signal); the prompt must close when it fires. */
-export type PermissionRequest = { toolName: string; input: Record<string, unknown>; toolUseId: string; signal?: AbortSignal };
+/**
+ * One canUseTool call. `signal` is the SDK's per-request abort signal (the prompt must close
+ * when it fires); the rest is relayed from the SDK context when present (review I4).
+ */
+export type PermissionRequest = {
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId: string;
+  signal?: AbortSignal;
+  /** The scoped rules the SDK proposes for "don't ask again this session". */
+  suggestions?: PermissionUpdate[];
+  /** The rule 이 세션 would write is broader than this ask: offer no persistent choice. */
+  suppressAlwaysAllowRule?: boolean;
+  title?: string;
+  decisionReason?: string;
+  blockedPath?: string;
+  defaultToNo?: boolean;
+};
+
+/** 이 세션 is offered only when the SDK suggested something scoped and did not forbid it. */
+export function sessionAllowOffered(pr: Pick<PermissionRequest, 'suggestions' | 'suppressAlwaysAllowRule'>): boolean {
+  return !pr.suppressAlwaysAllowRule && (pr.suggestions?.length ?? 0) > 0;
+}
 
 export type TurnRequest = {
   account: Account;
@@ -45,6 +67,10 @@ export type TurnRequest = {
   prompt: string;
   signal: AbortSignal;
   onPermission: (req: PermissionRequest) => Promise<PermissionDecision>;
+  /** Rules (e.g. `Bash(git status)`) the user allowed for this deck session on earlier turns. */
+  allowRules?: string[];
+  /** Directories the user allowed for this deck session on earlier turns. */
+  allowDirs?: string[];
 };
 
 export interface Engine {

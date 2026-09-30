@@ -5,6 +5,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
 import type { PermissionDecision } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
+import { sessionAllowOffered } from './engine/Engine';
 import { displayError } from './engine/redact';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readTranscript } from './sessions/transcript';
@@ -140,7 +141,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       askPermission: (req) => broker.ask(
         {
           type: 'permission_request', turnId, sessionId: req.sessionId, cwd: req.cwd, requestId: randomUUID(), toolName: req.toolName, input: req.input,
-          title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true,
+          title: req.title ?? null, decisionReason: req.decisionReason ?? null, blockedPath: req.blockedPath ?? null,
+          defaultToNo: req.defaultToNo === true, allowSession: sessionAllowOffered(req),
         },
         req.signal ? AbortSignal.any([req.signal, ac.signal]) : ac.signal,
       ),

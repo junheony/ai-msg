@@ -4,7 +4,7 @@ import { accountEnv } from '../../shared/accounts';
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
-import type { Engine, EngineEvent, EngineResult, RateLimitSignal, TurnRequest } from './Engine';
+import { sessionAllowOffered, type Engine, type EngineEvent, type EngineResult, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
 
 export type QueryFn = (params: { prompt: string; options?: Options }) => AsyncIterable<SDKMessage>;
@@ -27,12 +27,30 @@ export function buildOptions(
     includePartialMessages: true,
     abortController: deps.abortController,
     stderr: deps.onStderr,
+    // Review I4: "이 세션" on an earlier turn stored the SDK's own scoped suggestions; they are
+    // handed back through the flag-settings layer (`settings`, the --settings equivalent, whose
+    // d.ts documents rule syntax such as 'Bash(*)'), so the CLI's own matcher applies them and
+    // later turns don't prompt. Chosen over `allowedTools` (documented as bare tool names) and
+    // over auto-answering in canUseTool (would mean re-implementing the CLI's rule matching).
+    ...(req.allowRules?.length ? { settings: { permissions: { allow: req.allowRules } } } : {}),
+    ...(req.allowDirs?.length ? { additionalDirectories: req.allowDirs } : {}),
     canUseTool: async (toolName, input, ctx) => {
-      const decision = await req.onPermission({ toolName, input, toolUseId: ctx.toolUseID, signal: ctx.signal });
+      const pr = {
+        toolName,
+        input,
+        toolUseId: ctx.toolUseID,
+        signal: ctx.signal,
+        ...(ctx.suggestions ? { suggestions: ctx.suggestions } : {}),
+        suppressAlwaysAllowRule: ctx.suppressAlwaysAllowRule === true,
+        ...(ctx.title !== undefined ? { title: ctx.title } : {}),
+        ...(ctx.decisionReason !== undefined ? { decisionReason: ctx.decisionReason } : {}),
+        ...(ctx.blockedPath !== undefined ? { blockedPath: ctx.blockedPath } : {}),
+        ...(ctx.defaultToNo !== undefined ? { defaultToNo: ctx.defaultToNo } : {}),
+      };
+      const decision = await req.onPermission(pr);
       if (decision === 'deny') return { behavior: 'deny', message: '사용자가 거부했습니다', interrupt: false };
-      if (decision === 'session') {
-        return { behavior: 'allow', updatedPermissions: [{ type: 'addRules', rules: [{ toolName }], behavior: 'allow', destination: 'session' }] };
-      }
+      // Only the SDK's scoped suggestions are ever written back — never a whole-tool rule of our own.
+      if (decision === 'session' && sessionAllowOffered(pr)) return { behavior: 'allow', updatedPermissions: ctx.suggestions };
       return { behavior: 'allow' };
     },
   };
