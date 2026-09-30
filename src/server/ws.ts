@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
 import type http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { ClientMessageSchema, type ServerMessage } from '../shared/protocol';
+import { ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
 import type { PermissionDecision } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { displayError } from './engine/redact';
@@ -64,17 +65,45 @@ export class PermissionBroker {
 /** Deviation (added per review I5): extraHosts feeds the Host allowlist in checkUpgrade. */
 export type WsDeps = { token: string; devOrigins: string[]; runner: TurnRunner; index: SessionIndex; usage: UsageService; store: SessionStateStore; extraHosts?: string[] };
 
+const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+async function isDirectory(p: string): Promise<boolean> {
+  return fs.stat(p).then((st) => st.isDirectory(), () => false);
+}
+
+type Turn = RunningTurn & { origin: WebSocket; ac: AbortController };
+
 export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadcast(msg: ServerMessage): void; close(): void } {
   // maxPayload: a text frame over 1 MiB is refused (ws emits 'error' on the socket, handled below).
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
   wss.on('error', (err) => console.error('deck ws: server error', err));
   const clients = new Set<WebSocket>();
-  const activeTurns = new Map<string, AbortController>();
+  const turns = new Map<string, Turn>();
+  /**
+   * Review I2: one turn per session. Keyed by sessionId; a new session is keyed by
+   * `new:<turnId>` until the CLI reports its id, then by that id as well.
+   */
+  const busy = new Map<string, string>();
+  /** Review I3: the session each socket has open (open_session / send), for routing turn events. */
+  const viewing = new Map<WebSocket, string>();
 
   const send = (ws: WebSocket, msg: ServerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
   const broker = new PermissionBroker(broadcast);
   const unsubscribeUsage = deps.usage.onChange((usage) => broadcast({ type: 'usage', usage }));
+  const running = (): RunningTurn[] => [...turns.values()].map(({ turnId, sessionId, cwd }) => ({ turnId, sessionId, cwd }));
+
+  /** Turn events reach the socket that started the turn and sockets viewing its session — nobody else. */
+  const emitTurn = (turn: Turn, msg: ServerMessage) => {
+    const sid = 'sessionId' in msg ? msg.sessionId : null;
+    if (sid && turn.sessionId !== sid) {
+      turn.sessionId = sid;
+      if (!busy.has(sid)) busy.set(sid, turn.turnId);
+    }
+    const to = new Set<WebSocket>([turn.origin]);
+    if (turn.sessionId) for (const [c, v] of viewing) if (v === turn.sessionId) to.add(c);
+    for (const c of to) send(c, msg);
+  };
 
   for (const server of servers) {
     server.on('upgrade', (req, socket, head) => {
@@ -91,11 +120,56 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     });
   }
 
+  const startTurn = (ws: WebSocket, msg: Extract<ClientMessage, { type: 'send' }>) => {
+    if (msg.sessionId) viewing.set(ws, msg.sessionId);
+    else viewing.delete(ws);
+    if (msg.sessionId && busy.has(msg.sessionId)) { send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다' }); return; }
+    const turnId = randomUUID();
+    const ac = new AbortController();
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, ac };
+    // Taken synchronously, before any await, so two sends in one tick cannot both pass.
+    busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
+    turns.set(turnId, turn);
+    const release = () => {
+      turns.delete(turnId);
+      for (const [k, v] of [...busy]) if (v === turnId) busy.delete(k);
+      broker.cancelTurn(turnId);
+    };
+    const sink: TurnSink = {
+      emit: (m) => emitTurn(turn, m),
+      askPermission: (req) => broker.ask(
+        {
+          type: 'permission_request', turnId, sessionId: req.sessionId, cwd: req.cwd, requestId: randomUUID(), toolName: req.toolName, input: req.input,
+          title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true,
+        },
+        req.signal ? AbortSignal.any([req.signal, ac.signal]) : ac.signal,
+      ),
+      signal: ac.signal,
+    };
+    void (async () => {
+      try {
+        // Review M8: the working directory must exist before a CLI is started in it.
+        if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}` }); return; }
+        await deps.runner.run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model ? { model: msg.model } : {}) }, sink);
+      } catch (err) {
+        // Review I6: a rejected run still ends the turn for the UI.
+        console.error('deck: turn failed', err);
+        emitTurn(turn, { type: 'turn_result', turnId, sessionId: turn.sessionId, cwd: turn.cwd, ok: false, text: '', badge: null, errorText: displayError(errMsg(err), null) });
+      } finally {
+        release();
+      }
+      if (msg.sessionId === null) {
+        await deps.index.refresh();
+        broadcast({ type: 'index', projects: deps.index.projects() });
+      }
+    })().catch((err: unknown) => console.error('deck: post-turn index refresh failed', errMsg(err)));
+  };
+
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: deps.index.projects() });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: deps.index.projects(), running: running() });
     for (const m of broker.pending()) send(ws, m);
 
     ws.on('message', (data) => {
@@ -105,56 +179,36 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       if (!r.success) { send(ws, { type: 'error', turnId: null, message: `메시지 형식 오류: ${r.error.issues.map((i) => i.path.join('.') + ' ' + i.message).join('; ')}` }); return; }
       const msg = r.data;
       switch (msg.type) {
-        case 'send': {
-          const turnId = randomUUID();
-          const ac = new AbortController();
-          activeTurns.set(turnId, ac);
-          const sink: TurnSink = {
-            emit: broadcast,
-            askPermission: (req) => broker.ask(
-              { type: 'permission_request', turnId: req.turnId, requestId: randomUUID(), toolName: req.toolName, input: req.input },
-              req.signal ? AbortSignal.any([req.signal, ac.signal]) : ac.signal,
-            ),
-            signal: ac.signal,
-          };
-          void deps.runner
-            .run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model ? { model: msg.model } : {}) }, sink)
-            .catch((err: unknown) => {
-              // Review I6: a rejected run still ends the turn for the UI.
-              console.error('deck: turn failed', err);
-              broadcast({ type: 'turn_result', turnId, sessionId: msg.sessionId ?? '', ok: false, text: '', badge: null, errorText: displayError(err instanceof Error ? err.message : String(err), null) });
-            })
-            .then(async () => {
-              activeTurns.delete(turnId);
-              broker.cancelTurn(turnId);
-              if (msg.sessionId === null) { await deps.index.refresh(); broadcast({ type: 'index', projects: deps.index.projects() }); }
-            });
+        case 'send':
+          startTurn(ws, msg);
           break;
-        }
         case 'permission_response':
           if (!broker.resolve(msg.requestId, msg.decision)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다' });
           break;
         case 'interrupt':
-          activeTurns.get(msg.turnId)?.abort();
+          turns.get(msg.turnId)?.ac.abort();
           broker.cancelTurn(msg.turnId);
           break;
         case 'open_session': {
           const entry = deps.index.lookup(msg.sessionId);
           if (!entry) { send(ws, { type: 'error', turnId: null, message: `세션을 찾을 수 없습니다: ${msg.sessionId}` }); break; }
+          viewing.set(ws, msg.sessionId);
           const state = deps.store.get(msg.sessionId);
           void readTranscript(state ? `${state.projectDir}/${msg.sessionId}.jsonl` : entry.file)
             .catch(() => readTranscript(entry.file))
-            .then((messages) => send(ws, { type: 'history', sessionId: msg.sessionId, cwd: entry.cwd, account: state?.account ?? entry.account, messages }))
-            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${err instanceof Error ? err.message : String(err)}` }));
+            .then((messages) => send(ws, { type: 'history', sessionId: msg.sessionId, cwd: entry.cwd, account: state?.account ?? entry.account, messages, runningTurnId: busy.get(msg.sessionId) ?? null }))
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
           break;
         }
         case 'refresh_index':
-          void deps.index.refresh().then(() => broadcast({ type: 'index', projects: deps.index.projects() }));
+          void deps.index.refresh()
+            .then(() => broadcast({ type: 'index', projects: deps.index.projects() }))
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
           break;
       }
     });
 
-    ws.on('close', () => clients.delete(ws));
+    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); });
   });
 
   return {

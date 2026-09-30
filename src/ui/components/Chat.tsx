@@ -5,10 +5,11 @@ import type { ChatItem, PendingPermission } from '../state';
 import { MessageView } from './MessageView';
 import { PermissionCard } from './PermissionCard';
 
-export function Chat({ items, pending, activeTurnId, model, title, onSend, onInterrupt, onDecide, onModel }: {
+export function Chat({ items, pending, activeTurnId, busy, model, title, onSend, onInterrupt, onDecide, onModel }: {
   items: ChatItem[];
   pending: PendingPermission[];
   activeTurnId: string | null;
+  busy: boolean;
   model: ClaudeModel;
   title: string;
   onSend: (text: string) => void;
@@ -22,7 +23,7 @@ export function Chat({ items, pending, activeTurnId, model, title, onSend, onInt
 
   const submit = () => {
     const t = text.trim();
-    if (!t || activeTurnId) return;
+    if (!t || busy) return;
     onSend(t);
     setText('');
   };
@@ -47,7 +48,7 @@ export function Chat({ items, pending, activeTurnId, model, title, onSend, onInt
           <select value={model} onChange={(e) => onModel(e.target.value as ClaudeModel)} title="이 세션의 기본 모델">
             {CLAUDE_MODELS.map((m) => <option key={m} value={m}>{MODEL_LABEL[m]}</option>)}
           </select>
-          {activeTurnId ? <button type="button" className="deny" onClick={onInterrupt}>중단</button> : <button type="button" onClick={submit} disabled={!text.trim()}>보내기</button>}
+          {activeTurnId ? <button type="button" className="deny" onClick={onInterrupt}>중단</button> : <button type="button" onClick={submit} disabled={!text.trim() || busy}>보내기</button>}
         </div>
       </div>
     </main>

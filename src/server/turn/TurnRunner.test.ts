@@ -78,7 +78,7 @@ describe('TurnRunner', () => {
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
     expect(eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: null, model: 'opus', cwd: '/w/new', prompt: 'hi' });
     expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ turnId: 't1', account: 'b', model: 'opus', attempt: 0 });
-    expect(msgsOf(c, 'delta')).toEqual([{ type: 'delta', turnId: 't1', text: 'ok' }]);
+    expect(msgsOf(c, 'delta')).toEqual([{ type: 'delta', turnId: 't1', sessionId: 'new1', cwd: '/w/new', text: 'ok' }]);
     const res = msgsOf(c, 'turn_result')[0];
     expect(res).toMatchObject({ type: 'turn_result', ok: true, sessionId: 'new1', text: 'ok', badge: { account: 'b', model: 'opus', usage: { outputTokens: 4 } } });
     expect(c.deps.store.get('new1')).toMatchObject({ account: 'b', cwd: '/w/new', lastTurnAtMs: NOW, projectDir: path.join(c.roots.b, '-w-new') });
@@ -220,7 +220,7 @@ describe('TurnRunner', () => {
     const asked: unknown[] = [];
     c.sink.askPermission = async (r) => { asked.push(r); return 'deny'; };
     await new TurnRunner(c.deps).run({ turnId: 't9', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
-    expect(asked).toEqual([{ turnId: 't9', toolName: 'Write', input: { file_path: '/secret', content: 'TOKEN=abc' }, toolUseId: 'tu1' }]);
+    expect(asked).toEqual([{ turnId: 't9', sessionId: null, cwd: '/w/new', toolName: 'Write', input: { file_path: '/secret', content: 'TOKEN=abc' }, toolUseId: 'tu1' }]);
     expect(msgsOf(c, 'delta').map((m) => (m as { text: string }).text)).toEqual(['ok', 'deny']);
     const audit = await fs.readFile(c.deps.auditFile, 'utf8');
     expect(audit).toContain('"toolName":"Write"');

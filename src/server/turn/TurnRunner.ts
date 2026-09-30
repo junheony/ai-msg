@@ -6,7 +6,7 @@ import type { ServerMessage } from '../../shared/protocol';
 import type { PermissionDecision } from '../../shared/turn-types';
 import { ZERO_USAGE } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
-import type { Engine, EngineResult, RateLimitSignal } from '../engine/Engine';
+import type { Engine, EngineResult, PermissionRequest, RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
@@ -20,7 +20,7 @@ import type { SessionState, SessionStateStore } from './SessionState';
 
 export type TurnSink = {
   emit(msg: ServerMessage): void;
-  askPermission(req: { turnId: string; toolName: string; input: Record<string, unknown>; toolUseId: string; signal?: AbortSignal }): Promise<PermissionDecision>;
+  askPermission(req: PermissionRequest & { turnId: string; sessionId: string | null; cwd: string }): Promise<PermissionDecision>;
   signal: AbortSignal;
 };
 
@@ -72,6 +72,7 @@ export class TurnRunner {
 
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink): Promise<Attempt> {
     const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null };
+    const scope = () => ({ turnId: p.turnId, sessionId: out.sessionId, cwd });
     const events = this.deps.engine.runTurn({
       account,
       cwd,
@@ -80,7 +81,7 @@ export class TurnRunner {
       prompt: p.text,
       signal: sink.signal,
       onPermission: async (pr) => {
-        const decision = await sink.askPermission({ turnId: p.turnId, ...pr });
+        const decision = await sink.askPermission({ turnId: p.turnId, sessionId: out.sessionId, cwd, ...pr });
         // Review M6: the audit log is best-effort; losing it must not lose the user's answer.
         try {
           await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
@@ -93,9 +94,9 @@ export class TurnRunner {
     for await (const ev of events) {
       switch (ev.kind) {
         case 'init': out.sessionId = ev.sessionId; if (ev.cwd) out.initCwd = ev.cwd; break;
-        case 'delta': sink.emit({ type: 'delta', turnId: p.turnId, text: ev.text }); break;
-        case 'tool_call': sink.emit({ type: 'tool_call', turnId: p.turnId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
-        case 'tool_result': sink.emit({ type: 'tool_result', turnId: p.turnId, toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
+        case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+        case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+        case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
         case 'rate_limit':
           out.rateLimit = ev.info;
           this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) });
@@ -157,7 +158,7 @@ export class TurnRunner {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? '', ok: false, text: '', badge: { account, model: p.model ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null }, errorText: '중단됨' });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, ok: false, text: '', badge: { account, model: p.model ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null }, errorText: '중단됨' });
         return;
       }
       const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
@@ -184,7 +185,7 @@ export class TurnRunner {
       const badge = { account, model, reason, usage: res.usage, modelNote: note };
       const shownError = displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
         return;
       }
 
@@ -214,10 +215,10 @@ export class TurnRunner {
         tried.push(cand.account);
       }
       if (!next) {
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: sessionId ?? '', ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : '대안 계정 없음'} · ${shownError ?? ''}`.trim() });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : '대안 계정 없음'} · ${shownError ?? ''}`.trim() });
         return;
       }
-      sink.emit({ type: 'turn_retry', turnId: p.turnId, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
+      sink.emit({ type: 'turn_retry', turnId: p.turnId, sessionId: state?.sessionId ?? sessionId, cwd, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
       reason = `재시도(${why}) · ${next.reason}`;
       account = next.account;
     }

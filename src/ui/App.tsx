@@ -11,12 +11,18 @@ export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [state, dispatch] = useReducer(reducer, initialState);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
+  const openSessionId = useRef<string | null>(null);
+  openSessionId.current = state.session?.sessionId ?? null;
 
   useEffect(() => { void fetch('/api/me').then((r) => setAuthed(r.ok)); }, []);
 
   useEffect(() => {
     if (!authed) return;
-    sock.current = createSocket((msg) => dispatch({ type: 'server', msg }), (value) => dispatch({ type: 'connected', value }));
+    sock.current = createSocket((msg) => {
+      dispatch({ type: 'server', msg });
+      // Reconnected: re-open the current session so this socket receives its turn events again (review I3).
+      if (msg.type === 'hello' && openSessionId.current) sock.current?.send({ type: 'open_session', sessionId: openSessionId.current });
+    }, (value) => dispatch({ type: 'connected', value }));
     return () => sock.current?.close();
   }, [authed]);
 
@@ -47,6 +53,7 @@ export function App() {
             items={state.items}
             pending={state.pending}
             activeTurnId={state.activeTurnId}
+            busy={state.activeTurnId !== null || state.awaitingStart}
             model={state.model}
             title={`${session.title} — ${session.cwd}`}
             onSend={(text) => { dispatch({ type: 'sent', text }); send({ type: 'send', sessionId: session.sessionId, cwd: session.cwd, text, model: state.model }); }}

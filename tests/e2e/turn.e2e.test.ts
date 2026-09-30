@@ -110,7 +110,7 @@ describe('deck e2e (real accounts)', () => {
     expect(result.badge!.usage.outputTokens).toBeGreaterThan(0);
     expect(result.badge!.reason.length).toBeGreaterThan(0);
     console.log(`e2e turn 1 ran on ${result.badge!.account.toUpperCase()} — ${result.badge!.reason}`);
-    sessionId = result.sessionId;
+    sessionId = result.sessionId ?? '';
     const index = msgs.at(-1) as Extract<ServerMessage, { type: 'index' }>;
     const project = index.projects.find((pj) => pj.cwd === workDir);
     expect(project?.sessions.map((s) => s.sessionId)).toContain(sessionId);

@@ -23,6 +23,12 @@ let wsUrl = '';
 let stub: StubEngine;
 let wsApi: ReturnType<typeof attachWebSocket>;
 let base: string;
+let work: string;
+let store: SessionStateStore;
+let index: SessionIndex;
+let gate: Promise<void> = Promise.resolve();
+let release: () => void = () => {};
+const hold = () => { gate = new Promise<void>((r) => { release = r; }); };
 
 function card(id: string) {
   return { id, status: 'ok', fetchedAt: new Date().toISOString(), rows: [{ label: 'Session (5h)', used: 1 }, { label: 'Weekly (7d)', used: 1, resetsAt: new Date(Date.now() + 36e5).toISOString() }] };
@@ -32,11 +38,12 @@ beforeAll(async () => {
   base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ws-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
-  const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') });
+  work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ws-work-')));
+  index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') });
   await index.refresh();
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
   await usage.pollOnce();
-  const store = new SessionStateStore(path.join(base, 'state.json'));
+  store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
   stub = new StubEngine(async (req) => {
     if (req.prompt === 'ask') {
@@ -44,6 +51,7 @@ beforeAll(async () => {
       return [{ kind: 'init', sessionId: 'sess-ask', model: 'm' }, { kind: 'delta', text: `decision=${d}` }, okResult('sess-ask', `decision=${d}`)];
     }
     if (req.prompt === 'throw') throw new Error('engine exploded');
+    if (req.prompt === 'hold') await gate;
     const sid = req.resumeSessionId ?? 'sess-1';
     return [{ kind: 'init', sessionId: sid, model: 'm' }, { kind: 'delta', text: 'o' }, { kind: 'delta', text: 'k' }, okResult(sid, 'ok')];
   });
@@ -55,7 +63,7 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${port}`;
   wsUrl = `ws://127.0.0.1:${port}/ws`;
 });
-afterAll(() => { wsApi.close(); server.close(); });
+afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
 
 // Deviation (evidence-based fix, not a plan/review item): on this machine the HTTP
 // upgrade response and the server's first WS frame (sent synchronously on 'connection')
@@ -75,6 +83,28 @@ function connect(headers: Record<string, string>): Promise<{ ok: boolean; ws: We
     ws.once('unexpected-response', (_req, res) => resolve({ ok: false, ws, status: res.statusCode }));
     ws.once('error', () => resolve({ ok: false, ws }));
   });
+}
+
+/** Everything that arrives within `ms` (for asserting that something is NOT sent). */
+function quiet(ws: WebSocket, ms: number): Promise<ServerMessage[]> {
+  return new Promise((resolve) => {
+    const out: ServerMessage[] = [];
+    const on = (d: unknown) => out.push(JSON.parse(String(d)) as ServerMessage);
+    ws.on('message', on);
+    setTimeout(() => { ws.off('message', on); resolve(out); }, ms);
+  });
+}
+
+/** A session on account b whose jsonl exists and whose state is warm, so turns stay on b. */
+async function seed(sid: string, name: string): Promise<string> {
+  const cwd = path.join(work, name);
+  await fs.mkdir(cwd, { recursive: true });
+  const dir = path.join(base, 'b', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, `${sid}.jsonl`), JSON.stringify({ type: 'user', cwd, message: { role: 'user', content: 'seed' } }) + '\n');
+  await index.refresh();
+  await store.set({ sessionId: sid, cwd, account: 'b', projectDir: dir, lastTurnAtMs: Date.now(), justCompacted: false, defaultModel: 'opus' });
+  return cwd;
 }
 
 function collect(ws: WebSocket, until: (m: ServerMessage) => boolean, timeoutMs = 5000): Promise<ServerMessage[]> {
@@ -128,7 +158,7 @@ describe('ws', () => {
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
     await collect(ws, (m) => m.type === 'hello');
     const p = collect(ws, (m) => m.type === 'index');
-    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: '/w/x', text: 'hello' }));
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'hello' }));
     const msgs = await p;
     expect(msgs.map((m) => m.type)).toEqual(['turn_started', 'delta', 'delta', 'turn_result', 'index']);
     expect(msgs[3]).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: 'sess-1', badge: { model: 'opus' } });
@@ -139,7 +169,7 @@ describe('ws', () => {
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
     await collect(ws, (m) => m.type === 'hello');
     const p = collect(ws, (m) => m.type === 'turn_result' || m.type === 'error');
-    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: '/w/x', text: 'throw' }));
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'throw' }));
     const last = (await p).at(-1);
     expect(last).toMatchObject({ type: 'turn_result', ok: false, errorText: expect.stringContaining('engine exploded') });
     ws.close();
@@ -149,7 +179,7 @@ describe('ws', () => {
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
     await collect(ws, (m) => m.type === 'hello');
     const p1 = collect(ws, (m) => m.type === 'permission_request');
-    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: '/w/x', text: 'ask' }));
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'ask' }));
     const req = (await p1).at(-1) as Extract<ServerMessage, { type: 'permission_request' }>;
     expect(req).toMatchObject({ toolName: 'Write', input: { file_path: '/x' } });
     const p2 = collect(ws, (m) => m.type === 'turn_result');
@@ -164,7 +194,7 @@ describe('ws', () => {
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
     await collect(ws, (m) => m.type === 'hello');
     const p1 = collect(ws, (m) => m.type === 'permission_request');
-    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: '/w/x', text: 'ask' }));
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'ask' }));
     const req = (await p1).at(-1) as Extract<ServerMessage, { type: 'permission_request' }>;
     const p2 = collect(ws, (m) => m.type === 'turn_result');
     ws.send(JSON.stringify({ type: 'interrupt', turnId: req.turnId }));
@@ -175,6 +205,78 @@ describe('ws', () => {
     const seen = await collect(again.ws, () => false, 300).catch((e: Error) => e.message);
     expect(String(JSON.stringify(seen))).not.toContain('permission_request');
     again.ws.close();
+  });
+
+  it('a second send for a busy session is rejected; hello lists the running turn; the lock is released after', async () => {
+    const SX = '22222222-2222-4222-8222-222222222222';
+    const cwd = await seed(SX, 'lock');
+    hold();
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const started = collect(a.ws, (m) => m.type === 'turn_started');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'hold' }));
+    const ts = (await started).at(-1) as Extract<ServerMessage, { type: 'turn_started' }>;
+
+    const b = await connect({ Origin: origin, Cookie: COOKIE });
+    const [hello] = await collect(b.ws, (m) => m.type === 'hello');
+    expect((hello as Extract<ServerMessage, { type: 'hello' }>).running).toContainEqual({ turnId: ts.turnId, sessionId: SX, cwd });
+    const pe = collect(b.ws, (m) => m.type === 'error');
+    b.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'second' }));
+    expect((await pe).at(-1)).toMatchObject({ type: 'error', message: '이 세션은 이미 실행 중입니다' });
+
+    const done = collect(a.ws, (m) => m.type === 'turn_result');
+    release();
+    await done;
+    const again = collect(b.ws, (m) => m.type === 'turn_result' || m.type === 'error');
+    b.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'third' }));
+    expect((await again).at(-1)).toMatchObject({ type: 'turn_result', ok: true });
+    a.ws.close();
+    b.ws.close();
+  });
+
+  it('turn events go to the originating socket and sockets viewing that session only', async () => {
+    const SX = '33333333-3333-4333-8333-333333333333';
+    const SY = '44444444-4444-4444-8444-444444444444';
+    const cwdX = await seed(SX, 'route-x');
+    await seed(SY, 'route-y');
+    const viewerY = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(viewerY.ws, (m) => m.type === 'hello');
+    const hy = collect(viewerY.ws, (m) => m.type === 'history');
+    viewerY.ws.send(JSON.stringify({ type: 'open_session', sessionId: SY }));
+    await hy;
+    const viewerX = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(viewerX.ws, (m) => m.type === 'hello');
+    const hx = collect(viewerX.ws, (m) => m.type === 'history');
+    viewerX.ws.send(JSON.stringify({ type: 'open_session', sessionId: SX }));
+    await hx;
+
+    const sender = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(sender.ws, (m) => m.type === 'hello');
+    const onY = quiet(viewerY.ws, 400);
+    const onX = collect(viewerX.ws, (m) => m.type === 'turn_result');
+    const own = collect(sender.ws, (m) => m.type === 'turn_result');
+    sender.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd: cwdX, text: 'hello' }));
+    const mine = await own;
+    expect(mine.filter((m) => m.type === 'delta')).toHaveLength(2);
+    expect(mine.find((m) => m.type === 'delta')).toMatchObject({ sessionId: SX, cwd: cwdX });
+    expect((await onX).filter((m) => m.type === 'delta')).toHaveLength(2);
+    expect((await onY).filter((m) => m.type === 'delta' || m.type === 'turn_started' || m.type === 'turn_result')).toEqual([]);
+    for (const c of [viewerX, viewerY, sender]) c.ws.close();
+  });
+
+  it('cwd must be an absolute, existing directory', async () => {
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p1 = collect(ws, (m) => m.type === 'error');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: 'relative/dir', text: 'x' }));
+    expect((await p1).at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('cwd') });
+    const p2 = collect(ws, (m) => m.type === 'error');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: '/' + 'x'.repeat(4100), text: 'x' }));
+    expect((await p2).at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('cwd') });
+    const p3 = collect(ws, (m) => m.type === 'error' || m.type === 'turn_started');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: path.join(work, 'does-not-exist'), text: 'x' }));
+    expect((await p3).at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('작업 폴더') });
+    ws.close();
   });
 
   it('rejects invalid messages with an error and keeps the socket open', async () => {
@@ -238,7 +340,7 @@ describe('ws', () => {
 });
 
 describe('PermissionBroker', () => {
-  const req = (requestId: string, turnId = 't1') => ({ type: 'permission_request' as const, turnId, requestId, toolName: 'Bash', input: {} });
+  const req = (requestId: string, turnId = 't1') => ({ type: 'permission_request' as const, turnId, sessionId: null, cwd: '/w', requestId, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true });
 
   it('an aborted signal resolves deny, drops the prompt and tells every client', async () => {
     const sent: ServerMessage[] = [];

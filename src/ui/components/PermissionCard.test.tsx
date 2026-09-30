@@ -6,9 +6,11 @@ import { PermissionCard } from './PermissionCard';
 describe('PermissionCard', () => {
   it('shows the tool and input and emits the three decisions', () => {
     const onDecide = vi.fn();
-    render(<PermissionCard req={{ turnId: 't', requestId: 'r1', toolName: 'Bash', input: { command: 'rm -rf build' } }} onDecide={onDecide} />);
+    render(<PermissionCard req={{ turnId: 't', sessionId: 's1', cwd: '/w/proj', requestId: 'r1', toolName: 'Bash', input: { command: 'rm -rf build' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true }} onDecide={onDecide} />);
     expect(screen.getByText('Bash')).toBeTruthy();
     expect(screen.getByText(/rm -rf build/)).toBeTruthy();
+    expect(screen.getByTestId('permission-scope').textContent).toContain('/w/proj');
+    expect(screen.getByTestId('permission-scope').textContent).toContain('s1');
     fireEvent.click(screen.getByText('허용 1회'));
     fireEvent.click(screen.getByText('이 세션'));
     fireEvent.click(screen.getByText('거부'));
