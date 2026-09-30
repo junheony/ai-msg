@@ -72,7 +72,7 @@ async function isDirectory(p: string): Promise<boolean> {
   return fs.stat(p).then((st) => st.isDirectory(), () => false);
 }
 
-type Turn = RunningTurn & { origin: WebSocket; ac: AbortController };
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController };
 
 export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadcast(msg: ServerMessage): void; close(): void } {
   // maxPayload: a text frame over 1 MiB is refused (ws emits 'error' on the socket, handled below).
@@ -101,7 +101,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       turn.sessionId = sid;
       if (!busy.has(sid)) busy.set(sid, turn.turnId);
     }
-    const to = new Set<WebSocket>([turn.origin]);
+    const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
     if (turn.sessionId) for (const [c, v] of viewing) if (v === turn.sessionId) to.add(c);
     for (const c of to) send(c, msg);
   };
@@ -127,7 +127,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     if (msg.sessionId && busy.has(msg.sessionId)) { send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다' }); return; }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, ac };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac };
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
     turns.set(turnId, turn);
@@ -187,6 +187,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
         case 'permission_response':
           if (!broker.resolve(msg.requestId, msg.decision)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다' });
           break;
+        case 'watch_turn':
+          turns.get(msg.turnId)?.watchers.add(ws);
+          break;
         case 'interrupt':
           turns.get(msg.turnId)?.ac.abort();
           broker.cancelTurn(msg.turnId);
@@ -210,7 +213,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       }
     });
 
-    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); });
+    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
   });
 
   return {

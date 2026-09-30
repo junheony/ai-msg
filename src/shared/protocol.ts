@@ -17,6 +17,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('permission_response'), requestId: z.string().min(1), decision: z.enum(['once', 'session', 'deny']) }),
   z.object({ type: z.literal('interrupt'), turnId: z.string().min(1) }),
   z.object({ type: z.literal('open_session'), sessionId: z.string().min(1) }),
+  /** After a reconnect: keep receiving a running turn this tab started (e.g. a new session with no id yet). */
+  z.object({ type: z.literal('watch_turn'), turnId: z.string().min(1) }),
   z.object({ type: z.literal('refresh_index') }),
 ]);
 

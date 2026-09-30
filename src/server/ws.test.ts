@@ -281,6 +281,24 @@ describe('ws', () => {
     for (const c of [viewerX, viewerY, sender]) c.ws.close();
   });
 
+  it('a reconnected tab can watch its in-flight new-session turn and gets the result', async () => {
+    hold();
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const started = collect(a.ws, (m) => m.type === 'turn_started');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'hold' }));
+    const ts = (await started).at(-1) as Extract<ServerMessage, { type: 'turn_started' }>;
+    a.ws.close();
+    const b = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(b.ws, (m) => m.type === 'hello');
+    const done = collect(b.ws, (m) => m.type === 'turn_result');
+    b.ws.send(JSON.stringify({ type: 'watch_turn', turnId: ts.turnId }));
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    expect((await done).at(-1)).toMatchObject({ type: 'turn_result', turnId: ts.turnId, ok: true });
+    b.ws.close();
+  });
+
   it('cwd must be an absolute, existing directory', async () => {
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
     await collect(ws, (m) => m.type === 'hello');

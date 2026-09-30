@@ -13,6 +13,8 @@ export function App() {
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
   const openSessionId = useRef<string | null>(null);
   openSessionId.current = state.session?.sessionId ?? null;
+  const activeTurn = useRef<string | null>(null);
+  activeTurn.current = state.activeTurnId;
 
   useEffect(() => { void fetch('/api/me').then((r) => setAuthed(r.ok)); }, []);
 
@@ -21,7 +23,11 @@ export function App() {
     sock.current = createSocket((msg) => {
       dispatch({ type: 'server', msg });
       // Reconnected: re-open the current session so this socket receives its turn events again (review I3).
-      if (msg.type === 'hello' && openSessionId.current) sock.current?.send({ type: 'open_session', sessionId: openSessionId.current });
+      if (msg.type === 'hello') {
+        if (openSessionId.current) sock.current?.send({ type: 'open_session', sessionId: openSessionId.current });
+        const t = activeTurn.current;
+        if (t && msg.running.some((r) => r.turnId === t)) sock.current?.send({ type: 'watch_turn', turnId: t });
+      }
     }, (value) => dispatch({ type: 'connected', value }), () => setAuthed(false));
     return () => sock.current?.close();
   }, [authed]);
