@@ -1,5 +1,5 @@
 import { ACCOUNTS, CARD_ID, type Account } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, type AccountUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, type AccountUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow };
 
@@ -55,6 +55,8 @@ export class UsageService {
   private snap: UsageSnapshot;
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<(s: UsageSnapshot) => void>();
+  /** Per-turn windows and when they were observed; kept until the deck has a newer reading. */
+  private turnObs = new Map<Account, { w: TurnWindows; atMs: number }>();
   private readonly url: string;
   private readonly fetchFn: FetchLike;
   private readonly intervalMs: number;
@@ -91,6 +93,17 @@ export class UsageService {
       const res = await this.fetchFn(this.url, { signal: ac.signal });
       if (!res.ok) throw new Error(`deck HTTP not ok`);
       const accounts = parseDeckState(await res.json());
+      for (const a of ACCOUNTS) {
+        const obs = this.turnObs.get(a);
+        if (!obs) continue;
+        const u = accounts[a];
+        const fetched = u.fetchedAt ? parseIsoUtc(u.fetchedAt) : Number.NaN;
+        if (Number.isNaN(fetched) || obs.atMs > fetched) {
+          accounts[a] = { ...u, fiveHour: obs.w.fiveHour ?? u.fiveHour, weekly: obs.w.weekly ?? u.weekly };
+        } else {
+          this.turnObs.delete(a);
+        }
+      }
       this.publish({ generatedAt: this.now().toISOString(), deckReachable: true, accounts });
     } catch {
       // Spec §8: deck unreachable → keep last values, show them as stale.
@@ -116,8 +129,14 @@ export class UsageService {
     this.timer = null;
   }
 
-  /** Between polls, trust the API's own numbers from the turn's rate_limit_event. */
-  applyTurn(account: Account, w: TurnWindows): void {
+  /**
+   * Between polls, trust the API's own numbers from the turn's rate_limit_event. They survive later
+   * polls until the deck card's fetchedAt is newer than `observedAtMs` (default: now).
+   */
+  applyTurn(account: Account, w: TurnWindows, observedAtMs: number = this.now().getTime()): void {
+    const prev = this.turnObs.get(account);
+    const merged: TurnWindows = { ...prev?.w, ...(w.fiveHour ? { fiveHour: w.fiveHour } : {}), ...(w.weekly ? { weekly: w.weekly } : {}) };
+    this.turnObs.set(account, { w: merged, atMs: Math.max(observedAtMs, prev?.atMs ?? 0) });
     const cur = this.snap.accounts[account];
     const next: AccountUsage = {
       ...cur,

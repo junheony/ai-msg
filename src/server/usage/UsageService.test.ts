@@ -94,6 +94,38 @@ describe('UsageService', () => {
     expect(seen).toEqual([20]);
   });
 
+  it('a poll keeps per-turn windows observed after the card was fetched, and drops them once the deck is newer', async () => {
+    let state: unknown = LIVE; // card a fetchedAt 12:27:01
+    const s = svc(async () => ({ ok: true, json: async () => state }));
+    await s.pollOnce();
+    s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null } }); // observed 12:30
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.fiveHour?.usedPct).toBe(20);
+    expect(s.snapshot().accounts.a.weekly?.usedPct).toBe(7);
+    const newer = structuredClone(LIVE);
+    newer.cards[0]!.fetchedAt = '2026-09-30T12:31:00.000Z';
+    newer.cards[0]!.rows[0]!.used = 22;
+    state = newer;
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.fiveHour?.usedPct).toBe(22);
+    state = LIVE; // an older card again must not resurrect the dropped turn values
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.fiveHour?.usedPct).toBe(13);
+  });
+
+  it('a card that recovers (setup_needed → ok) gets fresh status and fetchedAt', async () => {
+    const down = structuredClone(LIVE);
+    down.cards[0] = { id: 'claude:main', status: 'setup_needed', rows: [] } as never;
+    let state: unknown = down;
+    const s = svc(async () => ({ ok: true, json: async () => state }));
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a).toMatchObject({ status: 'down', fetchedAt: null });
+    state = LIVE;
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a).toMatchObject({ status: 'ok', fetchedAt: '2026-09-30T12:27:01.422Z' });
+    expect(s.snapshot().accounts.a.weekly?.usedPct).toBe(7);
+  });
+
   it('start() polls on an interval and stop() halts it', async () => {
     vi.useFakeTimers();
     const fetchFn = vi.fn(async () => ({ ok: true, json: async () => LIVE }));
