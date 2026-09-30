@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   COOKIE_NAME,
   checkUpgrade,
+  isAllowedHost,
   cookieValueFor,
   isAuthed,
   loadOrCreateToken,
@@ -76,5 +77,22 @@ describe('checkUpgrade', () => {
   it('accepts an explicitly allowed dev origin', () => {
     const r = checkUpgrade({ headers: { cookie, origin: 'http://localhost:5173', host: '127.0.0.1:9320' } }, token, ['http://localhost:5173']);
     expect(r).toEqual({ ok: true });
+  });
+});
+
+describe('isAllowedHost', () => {
+  it('accepts loopback, localhost and the explicitly listed (bound) hosts only', () => {
+    expect(isAllowedHost('127.0.0.1:9320')).toBe(true);
+    expect(isAllowedHost('localhost:9320')).toBe(true);
+    expect(isAllowedHost('[::1]:9320')).toBe(true);
+    expect(isAllowedHost('100.106.182.94:9320', ['100.106.182.94'])).toBe(true);
+    expect(isAllowedHost('deck.tail.ts.net:9320', ['deck.tail.ts.net'])).toBe(true);
+  });
+
+  it('rejects an arbitrary 100.64/10 host that deck does not bind to', () => {
+    expect(isAllowedHost('100.72.1.2:9320')).toBe(false);
+    expect(isAllowedHost('100.72.1.2:9320', ['100.106.182.94'])).toBe(false);
+    expect(isAllowedHost('evil.example:9320')).toBe(false);
+    expect(isAllowedHost(undefined)).toBe(false);
   });
 });

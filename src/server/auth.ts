@@ -1,7 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { isCgnat } from './bind';
 
 export const COOKIE_NAME = 'deck_session';
 const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
@@ -91,11 +90,11 @@ function hostnameOf(hostHeader: string): string {
   return i >= 0 ? hostHeader.slice(0, i) : hostHeader;
 }
 
+/** Accepted: loopback and localhost, plus `extraHosts` (main passes the bound addresses and DECK_EXTRA_HOSTS). */
 export function isAllowedHost(hostHeader: string | undefined, extraHosts: string[] = []): boolean {
   if (!hostHeader) return false;
   const hostname = hostnameOf(hostHeader).toLowerCase();
   if (hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1') return true;
-  if (isCgnat(hostname)) return true;
   return extraHosts.some((h) => h.toLowerCase() === hostname);
 }
 
