@@ -16,8 +16,8 @@ export function PermissionCard({ req, onDecide }: { req: PendingPermission; onDe
       <pre>{input.length > 2000 ? input.slice(0, 2000) + '\n…' : input}</pre>
       <div className="permission-actions">
         <button type="button" onClick={() => onDecide(req.requestId, 'once')}>허용 1회</button>
-        {/* Review I4: only when the SDK offered a scoped rule and did not suppress it. */}
-        {req.allowSession && <button type="button" onClick={() => onDecide(req.requestId, 'session')}>이 세션</button>}
+        {/* Review I4: only when an SDK suggestion can be kept for the session; the label says what. */}
+        {req.allowSession && <button type="button" onClick={() => onDecide(req.requestId, 'session')}>{req.sessionLabel ?? '이 세션'}</button>}
         {/* defaultToNo: the card opens on 거부 so a stray Enter cannot approve. */}
         <button type="button" className="deny" autoFocus={req.defaultToNo} onClick={() => onDecide(req.requestId, 'deny')}>거부</button>
       </div>

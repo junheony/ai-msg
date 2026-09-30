@@ -4,7 +4,7 @@ import { accountEnv } from '../../shared/accounts';
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
-import { sessionAllowOffered, type Engine, type EngineEvent, type EngineResult, type RateLimitSignal, type TurnRequest } from './Engine';
+import { sessionUpdates, type Engine, type EngineEvent, type EngineResult, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
 
 export type QueryFn = (params: { prompt: string; options?: Options }) => AsyncIterable<SDKMessage>;
@@ -20,8 +20,9 @@ export function buildOptions(
     env: accountEnv(req.account, deps.baseEnv, deps.home),
     model: MODEL_ARG[req.model],
     resume: req.resumeSessionId ?? undefined,
-    // ~/.claude/settings.json sets defaultMode "auto"; spec §6 wants ask-every-time.
-    permissionMode: 'default',
+    // ~/.claude/settings.json sets defaultMode "auto"; spec §6 wants ask-every-time — unless
+    // 이 세션 accepted the SDK's own "allow all edits this session" on an earlier turn.
+    permissionMode: req.permissionMode ?? 'default',
     // Spec §4.3: hooks, agents, CLAUDE.md from the profile + project.
     settingSources: ['user', 'project', 'local'],
     includePartialMessages: true,
@@ -30,7 +31,9 @@ export function buildOptions(
     // Review I4: "이 세션" on an earlier turn stored the SDK's own scoped suggestions; they are
     // handed back through the flag-settings layer (`settings`, the --settings equivalent, whose
     // d.ts documents rule syntax such as 'Bash(*)'), so the CLI's own matcher applies them and
-    // later turns don't prompt. Chosen over `allowedTools` (documented as bare tool names) and
+    // later turns don't prompt. The layer is session-only: the SDK serializes an object to the
+    // `--settings <json>` argv and never writes it to a file (d.ts: applyFlagSettings "only touches
+    // the session-scoped flag layer", unlike updateSettings). Chosen over `allowedTools` (documented as bare tool names) and
     // over auto-answering in canUseTool (would mean re-implementing the CLI's rule matching).
     ...(req.allowRules?.length ? { settings: { permissions: { allow: req.allowRules } } } : {}),
     ...(req.allowDirs?.length ? { additionalDirectories: req.allowDirs } : {}),
@@ -49,8 +52,12 @@ export function buildOptions(
       };
       const decision = await req.onPermission(pr);
       if (decision === 'deny') return { behavior: 'deny', message: '사용자가 거부했습니다', interrupt: false };
-      // Only the SDK's scoped suggestions are ever written back — never a whole-tool rule of our own.
-      if (decision === 'session' && sessionAllowOffered(pr)) return { behavior: 'allow', updatedPermissions: ctx.suggestions };
+      // Only the SDK's own suggestions, sanitized to destination 'session' — never ctx.suggestions
+      // verbatim (a localSettings rule would be written to disk) and never a rule of our own.
+      if (decision === 'session') {
+        const updates = sessionUpdates(pr);
+        if (updates.length) return { behavior: 'allow', updatedPermissions: updates };
+      }
       return { behavior: 'allow' };
     },
   };

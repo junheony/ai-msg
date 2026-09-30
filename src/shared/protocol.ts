@@ -52,8 +52,10 @@ export type ServerMessage =
       blockedPath: string | null;
       /** Open on 거부; no one-click approve default. */
       defaultToNo: boolean;
-      /** False when the SDK offered no scoped rule or set suppressAlwaysAllowRule: hide 이 세션. */
+      /** False when no SDK suggestion can be kept for the session, or suppressAlwaysAllowRule: hide 이 세션. */
       allowSession: boolean;
+      /** What 이 세션 will allow, e.g. "이 세션 동안 파일 편집 허용"; null when not offered. */
+      sessionLabel: string | null;
     } & TurnScope)
   | { type: 'permission_resolved'; requestId: string; decision: PermissionDecision }
   /** Non-terminal note about a running turn (e.g. a refused session move). */

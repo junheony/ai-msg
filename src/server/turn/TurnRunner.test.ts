@@ -284,6 +284,68 @@ describe('TurnRunner', () => {
     expect(c.deps.store.get('perm2')?.allowRules ?? []).toEqual([]);
   });
 
+  // Real CLI suggestion shapes (captured on account b with deck's buildOptions).
+  const REAL_WRITE = [{ type: 'setMode' as const, mode: 'acceptEdits' as const, destination: 'session' as const }];
+  const realBash = (cmd: string) => [
+    { type: 'addRules' as const, rules: [{ toolName: 'Bash', ruleContent: cmd }], behavior: 'allow' as const, destination: 'localSettings' as const },
+    { type: 'addDirectories' as const, directories: ['/w/new/sub'], destination: 'session' as const },
+    { type: 'setMode' as const, mode: 'acceptEdits' as const, destination: 'session' as const },
+  ];
+
+  it('Write → 이 세션 (real setMode suggestion): stored as mode acceptEdits, later turns run in acceptEdits and do not prompt', async () => {
+    // Emulates the CLI: Write prompts unless the session runs in acceptEdits.
+    const eng = new StubEngine(async (req) => {
+      if (req.permissionMode !== 'acceptEdits') await req.onPermission({ toolName: 'Write', input: { file_path: '/w/new/p.txt' }, toolUseId: 'tu', suggestions: REAL_WRITE });
+      return ok('permW');
+    });
+    const c = await ctx(eng);
+    let asked = 0;
+    c.sink.askPermission = async () => { asked++; return 'session'; };
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'write' }, c.sink);
+    expect(eng.calls[0]?.permissionMode).toBeUndefined();
+    expect(c.deps.store.get('permW')).toMatchObject({ mode: 'acceptEdits' });
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'permW', text: 'write' }, c.sink);
+    expect(eng.calls[1]?.permissionMode).toBe('acceptEdits');
+    expect(asked).toBe(1);
+  });
+
+  it('Bash → 이 세션 (real addRules localSettings + addDirectories + setMode): rule, directory and mode are kept for later turns', async () => {
+    let n = 0;
+    const eng = new StubEngine(async (req) => {
+      if (n++ === 0) await req.onPermission({ toolName: 'Bash', input: { command: 'touch s3.txt' }, toolUseId: 'tu', suggestions: realBash('touch s3.txt') });
+      return ok('permB');
+    });
+    const c = await ctx(eng);
+    c.sink.askPermission = async () => 'session';
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'x' }, c.sink);
+    expect(c.deps.store.get('permB')).toMatchObject({ allowRules: ['Bash(touch s3.txt)'], allowDirs: ['/w/new/sub'], mode: 'acceptEdits' });
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'permB', text: 'x' }, c.sink);
+    expect(eng.calls[1]).toMatchObject({ allowRules: ['Bash(touch s3.txt)'], allowDirs: ['/w/new/sub'], permissionMode: 'acceptEdits' });
+  });
+
+  it('bypassPermissions and unknown suggestion kinds are never persisted', async () => {
+    const eng = new StubEngine(async (req) => {
+      await req.onPermission({ toolName: 'Bash', input: { command: 'x' }, toolUseId: 'tu', suggestions: [
+        { type: 'setMode', mode: 'bypassPermissions', destination: 'session' },
+        { type: 'removeDirectories', directories: ['/'], destination: 'session' },
+        { type: 'somethingNew', destination: 'userSettings' } as never,
+      ] });
+      return ok('permX');
+    });
+    const c = await ctx(eng);
+    c.sink.askPermission = async () => 'session';
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'x' }, c.sink);
+    const st = c.deps.store.get('permX');
+    expect(st?.mode).toBeUndefined();
+    expect(st?.allowRules).toBeUndefined();
+    expect(st?.allowDirs).toBeUndefined();
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'permX', text: 'x' }, c.sink);
+    expect(eng.calls[1]?.permissionMode).toBeUndefined();
+  });
+
   it('fable with no account having room is downgraded to opus with a note', async () => {
     const eng = new StubEngine(() => ok('f1'));
     const c = await ctx(eng, {}, await usageWith([13, 7, 85], [2, 3, 90], [0, 50, 80]));

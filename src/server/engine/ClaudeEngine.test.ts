@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeEngine, buildOptions, mapSdkMessage } from './ClaudeEngine';
-import type { EngineEvent, TurnRequest } from './Engine';
+import { sessionAllowLabel, sessionAllowOffered, type EngineEvent, type TurnRequest } from './Engine';
 
 const M = (o: unknown) => o as SDKMessage;
 
@@ -61,6 +61,81 @@ describe('buildOptions: allow for this session (review I4)', () => {
     const none = buildOptions(req(), deps);
     expect(none.settings).toBeUndefined();
     expect(none.additionalDirectories).toBeUndefined();
+  });
+});
+
+// Shapes captured from the real CLI (account b, deck's own buildOptions) — not fabricated.
+const REAL_WRITE_SUGGESTIONS = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }];
+const REAL_BASH_SUGGESTIONS = [
+  { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'touch s3.txt' }], behavior: 'allow', destination: 'localSettings' },
+  { type: 'addDirectories', directories: ['/w/sub'], destination: 'session' },
+  { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+];
+
+describe('buildOptions: 이 세션 never persists outside the session', () => {
+  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  const answer = async (suggestions: unknown[], extra: Record<string, unknown> = {}) => {
+    const o = buildOptions(req({ onPermission: async () => 'session' }), deps);
+    const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1', suggestions, ...extra } as never;
+    return (await o.canUseTool!('Bash', { command: 'touch s3.txt' }, ctx)) as { behavior: string; updatedPermissions?: Array<{ destination: string }> };
+  };
+
+  it('real Bash suggestions: every destination is rewritten to session (localSettings is never returned)', async () => {
+    const r = await answer(REAL_BASH_SUGGESTIONS);
+    expect(r.updatedPermissions).toEqual([
+      { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'touch s3.txt' }], behavior: 'allow', destination: 'session' },
+      { type: 'addDirectories', directories: ['/w/sub'], destination: 'session' },
+      { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+    ]);
+    expect(r.updatedPermissions!.every((u) => u.destination === 'session')).toBe(true);
+  });
+
+  it('real Write suggestion: setMode acceptEdits is returned with destination session', async () => {
+    expect(await answer(REAL_WRITE_SUGGESTIONS)).toEqual({ behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] });
+  });
+
+  it('unknown kinds, deny/ask rules, removals and bypassPermissions are dropped', async () => {
+    const r = await answer([
+      { type: 'setMode', mode: 'bypassPermissions', destination: 'session' },
+      { type: 'setMode', mode: 'dontAsk', destination: 'session' },
+      { type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'deny', destination: 'userSettings' },
+      { type: 'replaceRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'session' },
+      { type: 'removeDirectories', directories: ['/x'], destination: 'session' },
+      { type: 'somethingNew', destination: 'projectSettings' },
+      { type: 'addRules', rules: [{ toolName: 'Read', ruleContent: '/w/**' }], behavior: 'allow', destination: 'projectSettings' },
+    ]);
+    expect(r.updatedPermissions).toEqual([{ type: 'addRules', rules: [{ toolName: 'Read', ruleContent: '/w/**' }], behavior: 'allow', destination: 'session' }]);
+  });
+
+  it('nothing persistable: a plain one-time allow, no updatedPermissions', async () => {
+    expect(await answer([{ type: 'setMode', mode: 'bypassPermissions', destination: 'session' }])).toEqual({ behavior: 'allow' });
+    expect(await answer(REAL_BASH_SUGGESTIONS, { suppressAlwaysAllowRule: true })).toEqual({ behavior: 'allow' });
+  });
+
+  it('once never returns updatedPermissions', async () => {
+    const o = buildOptions(req({ onPermission: async () => 'once' }), deps);
+    const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1', suggestions: REAL_BASH_SUGGESTIONS } as never;
+    expect(await o.canUseTool!('Bash', {}, ctx)).toEqual({ behavior: 'allow' });
+  });
+
+  it('a session that accepted edits runs later turns in acceptEdits', () => {
+    expect(buildOptions(req({ permissionMode: 'acceptEdits' }), deps).permissionMode).toBe('acceptEdits');
+    expect(buildOptions(req(), deps).permissionMode).toBe('default');
+  });
+});
+
+describe('sessionAllowOffered / sessionAllowLabel', () => {
+  it('offered only when something is persistable; the label says what', () => {
+    const s = (suggestions: unknown[], suppress = false) => ({ suggestions: suggestions as never, suppressAlwaysAllowRule: suppress });
+    expect(sessionAllowLabel(s(REAL_WRITE_SUGGESTIONS))).toBe('이 세션 동안 파일 편집 허용');
+    expect(sessionAllowLabel(s(REAL_BASH_SUGGESTIONS))).toBe('이 세션 동안 `Bash(touch s3.txt)`, `/w/sub` 폴더 접근, 파일 편집 허용');
+    expect(sessionAllowLabel(s([{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow', destination: 'localSettings' }]))).toBe('이 세션 동안 `Bash(ls)` 허용');
+    expect(sessionAllowOffered(s(REAL_WRITE_SUGGESTIONS))).toBe(true);
+    expect(sessionAllowOffered(s([{ type: 'setMode', mode: 'bypassPermissions', destination: 'session' }, { type: 'somethingNew' }]))).toBe(false);
+    expect(sessionAllowLabel(s([{ type: 'setMode', mode: 'bypassPermissions', destination: 'session' }]))).toBeNull();
+    expect(sessionAllowOffered(s([]))).toBe(false);
+    expect(sessionAllowOffered(s(REAL_BASH_SUGGESTIONS, true))).toBe(false);
+    expect(sessionAllowLabel(s(REAL_BASH_SUGGESTIONS, true))).toBeNull();
   });
 });
 

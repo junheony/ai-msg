@@ -24,7 +24,7 @@ describe('reducer', () => {
       { type: 'delta', turnId: 't1', sessionId: null, cwd: '/w', text: 'o' },
       { type: 'delta', turnId: 't1', sessionId: null, cwd: '/w', text: 'k' },
       { type: 'tool_call', turnId: 't1', sessionId: null, cwd: '/w', toolUseId: 'tu1', name: 'Bash', input: { command: 'ls' } },
-      { type: 'permission_request', turnId: 't1', sessionId: null, cwd: '/w', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true },
+      { type: 'permission_request', turnId: 't1', sessionId: null, cwd: '/w', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' },
     ], s);
     expect(s.items[0]).toEqual({ kind: 'user', text: 'hi' });
     expect(s.items[1]).toMatchObject({ kind: 'assistant', turnId: 't1', text: 'ok', streaming: true, toolCalls: [{ toolUseId: 'tu1', name: 'Bash', result: null }] });
@@ -156,7 +156,7 @@ describe('reducer', () => {
   });
 
   it('permission requests are deduped by requestId (replays on reconnect) and carry session + cwd', () => {
-    const req: ServerMessage = { type: 'permission_request', turnId: 't', sessionId: 's', cwd: '/w', requestId: 'r1', toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true };
+    const req: ServerMessage = { type: 'permission_request', turnId: 't', sessionId: 's', cwd: '/w', requestId: 'r1', toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' };
     const s = play([req, req]);
     expect(s.pending).toHaveLength(1);
     expect(s.pending[0]).toMatchObject({ sessionId: 's', cwd: '/w' });

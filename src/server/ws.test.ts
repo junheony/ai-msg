@@ -185,7 +185,7 @@ describe('ws', () => {
     const p1 = collect(ws, (m) => m.type === 'permission_request');
     ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'ask' }));
     const req = (await p1).at(-1) as Extract<ServerMessage, { type: 'permission_request' }>;
-    expect(req).toMatchObject({ toolName: 'Write', input: { file_path: '/x' }, cwd: work, title: null, allowSession: false });
+    expect(req).toMatchObject({ toolName: 'Write', input: { file_path: '/x' }, cwd: work, title: null, allowSession: false, sessionLabel: null });
     const p2 = collect(ws, (m) => m.type === 'turn_result');
     ws.send(JSON.stringify({ type: 'permission_response', requestId: req.requestId, decision: 'session' }));
     const msgs = await p2;
@@ -200,7 +200,7 @@ describe('ws', () => {
     const p1 = collect(ws, (m) => m.type === 'permission_request');
     ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'ask-scoped' }));
     const req = (await p1).at(-1) as Extract<ServerMessage, { type: 'permission_request' }>;
-    expect(req).toMatchObject({ title: 'Claude wants to run ls', decisionReason: 'r', blockedPath: '/b', defaultToNo: true, allowSession: true });
+    expect(req).toMatchObject({ title: 'Claude wants to run ls', decisionReason: 'r', blockedPath: '/b', defaultToNo: true, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' });
     const p2 = collect(ws, (m) => m.type === 'turn_result');
     ws.send(JSON.stringify({ type: 'permission_response', requestId: req.requestId, decision: 'deny' }));
     await p2;
@@ -375,7 +375,7 @@ describe('ws', () => {
 });
 
 describe('PermissionBroker', () => {
-  const req = (requestId: string, turnId = 't1') => ({ type: 'permission_request' as const, turnId, sessionId: null, cwd: '/w', requestId, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true });
+  const req = (requestId: string, turnId = 't1') => ({ type: 'permission_request' as const, turnId, sessionId: null, cwd: '/w', requestId, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' });
 
   it('an aborted signal resolves deny, drops the prompt and tells every client', async () => {
     const sent: ServerMessage[] = [];

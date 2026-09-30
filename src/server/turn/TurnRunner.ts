@@ -6,7 +6,7 @@ import type { ServerMessage } from '../../shared/protocol';
 import type { PermissionDecision } from '../../shared/turn-types';
 import { ZERO_USAGE } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
-import { sessionAllowOffered, type Engine, type EngineResult, type PermissionRequest, type RateLimitSignal } from '../engine/Engine';
+import { ruleString, sessionUpdates, type Engine, type EngineResult, type PermissionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
@@ -44,20 +44,22 @@ const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
 type Attempt = { result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean; initCwd: string | null };
 
-/** What 이 세션 accepted: the SDK's allow rules as rule strings, plus added directories. */
-type SessionGrants = { rules: string[]; dirs: string[] };
+/** What 이 세션 accepted: allow rules as rule strings, added directories, and acceptEdits. */
+type SessionGrants = { rules: string[]; dirs: string[]; acceptEdits: boolean };
 
 function addGrants(g: SessionGrants, pr: PermissionRequest): void {
-  for (const u of pr.suggestions ?? []) {
-    if (u.type === 'addRules' && u.behavior === 'allow') {
+  // The same sanitized set the engine returned to the SDK: nothing broader is ever remembered.
+  for (const u of sessionUpdates(pr)) {
+    if (u.type === 'addRules') {
       for (const r of u.rules) {
-        const rule = r.ruleContent !== undefined ? `${r.toolName}(${r.ruleContent})` : r.toolName;
+        const rule = ruleString(r);
         if (!g.rules.includes(rule)) g.rules.push(rule);
       }
     } else if (u.type === 'addDirectories') {
       for (const d of u.directories) if (!g.dirs.includes(d)) g.dirs.push(d);
+    } else if (u.type === 'setMode' && u.mode === 'acceptEdits') {
+      g.acceptEdits = true;
     }
-    // setMode and the rest are applied for this turn by the SDK but deliberately not carried over.
   }
 }
 
@@ -99,9 +101,10 @@ export class TurnRunner {
       signal: sink.signal,
       allowRules: [...grants.rules],
       allowDirs: [...grants.dirs],
+      ...(grants.acceptEdits ? { permissionMode: 'acceptEdits' as const } : {}),
       onPermission: async (pr) => {
         const decision = await sink.askPermission({ turnId: p.turnId, sessionId: out.sessionId, cwd, ...pr });
-        if (decision === 'session' && sessionAllowOffered(pr)) addGrants(grants, pr);
+        if (decision === 'session') addGrants(grants, pr);
         // Review M6: the audit log is best-effort; losing it must not lose the user's answer.
         try {
           await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
@@ -175,7 +178,7 @@ export class TurnRunner {
     }
 
     const tried: Account[] = [];
-    const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])] };
+    const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])], acceptEdits: state?.mode === 'acceptEdits' };
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
@@ -200,6 +203,7 @@ export class TurnRunner {
           defaultModel: sessionDefault,
           ...(grants.rules.length ? { allowRules: [...grants.rules] } : {}),
           ...(grants.dirs.length ? { allowDirs: [...grants.dirs] } : {}),
+          ...(grants.acceptEdits ? { mode: 'acceptEdits' as const } : {}),
         };
         await deps.store.set(state);
       }

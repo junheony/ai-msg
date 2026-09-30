@@ -54,9 +54,48 @@ export type PermissionRequest = {
   defaultToNo?: boolean;
 };
 
-/** 이 세션 is offered only when the SDK suggested something scoped and did not forbid it. */
+/**
+ * What 이 세션 returns to the SDK: the SDK's suggestions, filtered to the kinds deck carries
+ * over and rewritten to `destination: 'session'`. The CLI suggests `localSettings` for Bash
+ * rules, which would write `<cwd>/.claude/settings.local.json` — a permanent project rule for
+ * every client. Nothing persistent is ever returned; unknown kinds are dropped, and the only
+ * mode kept is `acceptEdits` (never `bypassPermissions` or anything broader).
+ */
+export function sessionUpdates(pr: Pick<PermissionRequest, 'suggestions' | 'suppressAlwaysAllowRule'>): PermissionUpdate[] {
+  if (pr.suppressAlwaysAllowRule) return [];
+  const out: PermissionUpdate[] = [];
+  for (const u of pr.suggestions ?? []) {
+    if (u.type === 'addRules' && u.behavior === 'allow') {
+      const rules = u.rules.map((r) => (r.ruleContent !== undefined ? { toolName: r.toolName, ruleContent: r.ruleContent } : { toolName: r.toolName }));
+      if (rules.length) out.push({ type: 'addRules', rules, behavior: 'allow', destination: 'session' });
+    } else if (u.type === 'addDirectories') {
+      if (u.directories.length) out.push({ type: 'addDirectories', directories: [...u.directories], destination: 'session' });
+    } else if (u.type === 'setMode' && u.mode === 'acceptEdits') {
+      out.push({ type: 'setMode', mode: 'acceptEdits', destination: 'session' });
+    }
+  }
+  return out;
+}
+
+/** A rule as the settings `permissions.allow` syntax spells it, e.g. `Bash(git status)`. */
+export function ruleString(r: { toolName: string; ruleContent?: string }): string {
+  return r.ruleContent !== undefined ? `${r.toolName}(${r.ruleContent})` : r.toolName;
+}
+
+/** 이 세션 is offered only when at least one suggestion survives `sessionUpdates`. */
 export function sessionAllowOffered(pr: Pick<PermissionRequest, 'suggestions' | 'suppressAlwaysAllowRule'>): boolean {
-  return !pr.suppressAlwaysAllowRule && (pr.suggestions?.length ?? 0) > 0;
+  return sessionUpdates(pr).length > 0;
+}
+
+/** The 이 세션 button text: what the choice will allow, or null when it is not offered. */
+export function sessionAllowLabel(pr: Pick<PermissionRequest, 'suggestions' | 'suppressAlwaysAllowRule'>): string | null {
+  const parts: string[] = [];
+  for (const u of sessionUpdates(pr)) {
+    if (u.type === 'addRules') for (const r of u.rules) parts.push(`\`${ruleString(r)}\``);
+    else if (u.type === 'addDirectories') for (const d of u.directories) parts.push(`\`${d}\` 폴더 접근`);
+    else if (u.type === 'setMode') parts.push('파일 편집');
+  }
+  return parts.length ? `이 세션 동안 ${[...new Set(parts)].join(', ')} 허용` : null;
 }
 
 export type TurnRequest = {
@@ -71,6 +110,8 @@ export type TurnRequest = {
   allowRules?: string[];
   /** Directories the user allowed for this deck session on earlier turns. */
   allowDirs?: string[];
+  /** Set when 이 세션 accepted the SDK's "allow all edits" (setMode acceptEdits) on an earlier turn. */
+  permissionMode?: 'acceptEdits';
 };
 
 export interface Engine {

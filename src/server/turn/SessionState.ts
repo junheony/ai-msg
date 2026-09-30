@@ -16,6 +16,8 @@ export type SessionState = {
   allowRules?: string[];
   /** Directories accepted with 이 세션 (addDirectories suggestions). */
   allowDirs?: string[];
+  /** 이 세션 accepted "allow all edits" (setMode acceptEdits): later turns run in acceptEdits. */
+  mode?: 'acceptEdits';
 };
 
 let tmpCounter = 0;
