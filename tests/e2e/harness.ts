@@ -98,11 +98,28 @@ export async function startDeck(opts: { pinB?: boolean } = {}): Promise<Deck> {
     env: { ...process.env, DECK_CONFIG_DIR: cfgDir, DECK_PORT: String(port), DECK_LOOPBACK_ONLY: '1', DECK_UI_DIR: cfgDir, CLAUDE_PICK_COOLDOWN_DIR: cooldownDir },
     stdio: ['ignore', 'inherit', 'inherit'],
   });
-  await waitFor(async () => (await fetch(`${base}/api/me`)).status === 401, 30_000);
-  const token = (await fs.readFile(path.join(cfgDir, 'token'), 'utf8')).trim();
-  const res = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ token }) });
-  if (res.status !== 200) throw new Error(`login ${res.status}`);
-  const cookie = `deck_session=${cookieValueFor(token)}`;
+  // Review M15: wait for the server to exit before removing the dirs it may still write to.
+  // SIGTERM first: `npx` forwards it to tsx/node, while a SIGKILL on npx would orphan them.
+  const killServer = async (): Promise<void> => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill('SIGTERM');
+    await Promise.race([exited, new Promise<void>((resolve) => setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 10_000))]);
+  };
+  let cookie: string;
+  try {
+    await waitFor(async () => (await fetch(`${base}/api/me`)).status === 401, 30_000);
+    const token = (await fs.readFile(path.join(cfgDir, 'token'), 'utf8')).trim();
+    const res = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ token }) });
+    if (res.status !== 200) throw new Error(`login ${res.status}`);
+    cookie = `deck_session=${cookieValueFor(token)}`;
+  } catch (err) {
+    // Setup failed after spawn: leave no server process or temp dirs behind.
+    await killServer();
+    await fs.rm(cfgDir, { recursive: true, force: true });
+    await fs.rm(workDir, { recursive: true, force: true });
+    throw err;
+  }
   const home = os.homedir();
   const roots = [path.join(home, '.claude/projects'), path.join(home, '.claude-b/projects'), path.join(home, '.claude-c/projects')];
   return {
@@ -115,12 +132,7 @@ export async function startDeck(opts: { pinB?: boolean } = {}): Promise<Deck> {
       ws.once('error', reject);
     }),
     stop: async () => {
-      // Review M15: wait for the server to exit before removing the dirs it may still write to.
-      if (child.exitCode === null && child.signalCode === null) {
-        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
-        child.kill('SIGTERM');
-        await Promise.race([exited, new Promise<void>((resolve) => setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 10_000))]);
-      }
+      await killServer();
       // Only this file's unique temp workDir slug — never other projects' session files.
       for (const r of roots) await fs.rm(path.join(r, projectSlug(workDir)), { recursive: true, force: true });
       await fs.rm(cfgDir, { recursive: true, force: true });

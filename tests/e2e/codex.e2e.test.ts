@@ -9,7 +9,7 @@ const codexPresent = resolveCodexBin(process.env, os.homedir()) !== null;
 let deck: Deck;
 
 beforeAll(async () => { deck = await startDeck(); });
-afterAll(async () => { await deck.stop(); });
+afterAll(async () => { await deck?.stop(); });
 
 // Each case is one short ChatGPT call. The Codex threads stay under ~/.codex/sessions (history; not deleted).
 describe.skipIf(!codexPresent)('deck e2e: Codex (ChatGPT Pro) sessions', () => {

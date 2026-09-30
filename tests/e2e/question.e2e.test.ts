@@ -7,7 +7,7 @@ type Result = Extract<ServerMessage, { type: 'turn_result' }>;
 let deck: Deck;
 
 beforeAll(async () => { deck = await startDeck(); });
-afterAll(async () => { await deck.stop(); });
+afterAll(async () => { await deck?.stop(); });
 
 describe('deck e2e: AskUserQuestion on Claude B (D8)', () => {
   it('the question card is delivered, the answer goes back through canUseTool, the model uses it', async () => {

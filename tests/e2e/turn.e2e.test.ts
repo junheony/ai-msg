@@ -7,7 +7,7 @@ import { collect, startDeck, type Deck } from './harness';
 let deck: Deck;
 
 beforeAll(async () => { deck = await startDeck(); });
-afterAll(async () => { await deck.stop(); });
+afterAll(async () => { await deck?.stop(); });
 
 describe('deck e2e (real accounts)', () => {
   let sessionId = '';

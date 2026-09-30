@@ -7,7 +7,7 @@ type Result = Extract<ServerMessage, { type: 'turn_result' }>;
 let deck: Deck;
 
 beforeAll(async () => { deck = await startDeck(); });
-afterAll(async () => { await deck.stop(); });
+afterAll(async () => { await deck?.stop(); });
 
 describe('deck e2e: attachments on Claude B (D7, D14)', () => {
   it('a pasted image reaches the model as an image block', async () => {
@@ -25,7 +25,7 @@ describe('deck e2e: attachments on Claude B (D7, D14)', () => {
     ws.close();
   });
 
-  it('a large (~6 MB) noise PNG on a Claude B turn: records what the API does with it', async () => {
+  it('a large (~6 MB) noise PNG is accepted and described on Claude B', async () => {
     const data = pngNoise(1400);
     const img = await upload(deck, 'noise.png', data);
     expect(img.isImage).toBe(true);
