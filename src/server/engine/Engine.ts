@@ -25,7 +25,8 @@ export type EngineResult = {
 };
 
 export type EngineEvent =
-  | { kind: 'init'; sessionId: string; model: string }
+  /** `cwd` is the CLI's own (realpath'd) working directory from system/init — the one it slugs. */
+  | { kind: 'init'; sessionId: string; model: string; cwd?: string }
   | { kind: 'delta'; text: string }
   | { kind: 'tool_call'; toolUseId: string; name: string; input: unknown }
   | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean }

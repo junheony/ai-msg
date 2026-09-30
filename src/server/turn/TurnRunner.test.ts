@@ -8,6 +8,7 @@ import { StubEngine, failResult, okResult } from '../engine/StubEngine';
 import type { EngineEvent } from '../engine/Engine';
 import { readCooldownUntilMs } from '../routing/cooldown';
 import { SessionIndex } from '../sessions/SessionIndex';
+import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
@@ -82,6 +83,40 @@ describe('TurnRunner', () => {
     expect(res).toMatchObject({ type: 'turn_result', ok: true, sessionId: 'new1', text: 'ok', badge: { account: 'b', model: 'opus', usage: { outputTokens: 4 } } });
     expect(c.deps.store.get('new1')).toMatchObject({ account: 'b', cwd: '/w/new', lastTurnAtMs: NOW, projectDir: path.join(c.roots.b, '-w-new') });
     expect(c.deps.usage.snapshot().accounts.b.fiveHour?.usedPct).toBe(9);
+  });
+
+  it('new session in a symlinked cwd: projectDir comes from the CLI-reported (real) cwd', async () => {
+    let c!: Ctx;
+    const eng = new StubEngine(async (req) => {
+      const real = await fs.realpath(req.cwd); // what the CLI does before slugging
+      const dir = path.join(c.roots[req.account], projectSlug(real));
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, 'sym1.jsonl'), '{}\n');
+      return [{ kind: 'init', sessionId: 'sym1', model: 'm', cwd: real }, okResult('sym1')];
+    });
+    c = await ctx(eng);
+    const realParent = path.join(c.base, 'real');
+    await fs.mkdir(path.join(realParent, 'proj'), { recursive: true });
+    await fs.symlink(realParent, path.join(c.base, 'link'));
+    const linked = path.join(c.base, 'link', 'proj');
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: linked, sessionId: null, text: 'hi' }, c.sink);
+    const expected = path.join(c.roots.b, projectSlug(await fs.realpath(linked)));
+    expect(projectSlug(linked)).not.toBe(projectSlug(await fs.realpath(linked)));
+    expect(c.deps.store.get('sym1')?.projectDir).toBe(expected);
+  });
+
+  it('new session: when the slugged dir has no jsonl, the account root is searched for it', async () => {
+    let c!: Ctx;
+    const eng = new StubEngine(async (req) => {
+      // e.g. the CLI spelled 개발 in NFD while we hold NFC — simulate with an unrelated dir name
+      const dir = path.join(c.roots[req.account], '-somewhere-else');
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, 'far1.jsonl'), '{}\n');
+      return [{ kind: 'init', sessionId: 'far1', model: 'm' }, okResult('far1')];
+    });
+    c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(c.deps.store.get('far1')?.projectDir).toBe(path.join(c.roots.b, '-somewhere-else'));
   });
 
   it('imported session on a (cold) moves to b, then resumes there', async () => {

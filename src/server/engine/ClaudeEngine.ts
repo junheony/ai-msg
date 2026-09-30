@@ -59,7 +59,7 @@ function usageOf(u: unknown): TurnUsage {
 export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
   switch (m.type) {
     case 'system': {
-      if (m.subtype === 'init') return [{ kind: 'init', sessionId: m.session_id, model: m.model }];
+      if (m.subtype === 'init') return [{ kind: 'init', sessionId: m.session_id, model: m.model, ...(typeof m.cwd === 'string' ? { cwd: m.cwd } : {}) }];
       if (m.subtype === 'compact_boundary') return [{ kind: 'compact' }];
       return [];
     }

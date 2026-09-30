@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
 import { DEFAULT_MODEL, type ClaudeModel } from '../../shared/models';
@@ -41,7 +42,11 @@ export type TurnRunnerDeps = {
 
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
-type Attempt = { result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean };
+type Attempt = { result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean; initCwd: string | null };
+
+async function exists(file: string): Promise<boolean> {
+  return fs.access(file).then(() => true, () => false);
+}
 
 export class TurnRunner {
   private readonly move: typeof moveSession;
@@ -66,7 +71,7 @@ export class TurnRunner {
   }
 
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink): Promise<Attempt> {
-    const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false };
+    const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null };
     const events = this.deps.engine.runTurn({
       account,
       cwd,
@@ -87,7 +92,7 @@ export class TurnRunner {
     });
     for await (const ev of events) {
       switch (ev.kind) {
-        case 'init': out.sessionId = ev.sessionId; break;
+        case 'init': out.sessionId = ev.sessionId; if (ev.cwd) out.initCwd = ev.cwd; break;
         case 'delta': sink.emit({ type: 'delta', turnId: p.turnId, text: ev.text }); break;
         case 'tool_call': sink.emit({ type: 'tool_call', turnId: p.turnId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
         case 'tool_result': sink.emit({ type: 'tool_result', turnId: p.turnId, toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
@@ -100,6 +105,21 @@ export class TurnRunner {
       }
     }
     return out;
+  }
+
+  /**
+   * Review I7: the directory the jsonl really lives in. The CLI slugs its realpath'd cwd
+   * (and NFC/NFD spellings of the same name differ), so a guess from our cwd string is only
+   * a candidate: confirm the file is there, else look for it under the account's root.
+   */
+  private async locateProjectDir(sessionId: string, account: Account, candidate: string): Promise<string> {
+    if (await exists(path.join(candidate, `${sessionId}.jsonl`))) return candidate;
+    const root = this.deps.projectsRoots[account];
+    const dirs = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+    for (const d of dirs) {
+      if (d.isDirectory() && (await exists(path.join(root, d.name, `${sessionId}.jsonl`)))) return path.join(root, d.name);
+    }
+    return candidate;
   }
 
   async run(p: TurnParams, sink: TurnSink): Promise<void> {
@@ -152,8 +172,7 @@ export class TurnRunner {
           sessionId,
           cwd,
           account,
-          // Only place a slug is derived from cwd: the CLI computed it from the same string we passed.
-          projectDir: state?.projectDir ?? path.join(deps.projectsRoots[account], projectSlug(cwd)),
+          projectDir: await this.locateProjectDir(sessionId, account, state?.projectDir ?? path.join(deps.projectsRoots[account], projectSlug(a.initCwd ?? cwd))),
           lastTurnAtMs: res.ok ? this.now() : (state?.lastTurnAtMs ?? null),
           justCompacted: a.compacted,
           defaultModel: sessionDefault,
