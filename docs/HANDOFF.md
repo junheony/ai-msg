@@ -3,6 +3,8 @@
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 비공개 저장소(원격 없음).
 
 ## 1. 지금 무슨 작업 중인가
+
+> **진행 중(2026-10-01): Plan 2** — 브랜치 `plan2`, 계획 `docs/superpowers/plans/2026-09-30-deck-plan2.md`, 진행 원장 `.superpowers/sdd/2026-09-30-deck-plan2/progress.md`(gitignore, 판정 PF1–PF16 포함). `superpowers:subagent-driven-development` 로 원장의 마지막 `Task N: complete` 다음 작업부터 이어간다. 묶음 A(작업 1–5: 공통 타입·CodexEngine·GPT 잔여량·세션 상태·Codex 턴 경로) 완료. Codex CLI 는 `~/.local/bin/codex` 0.159.2(0.159 미만은 gpt-6-sol 거부).
 **deck v1(Plan 1) 완료.** Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 쓰는 로컬 웹 셸. 매 턴 계정을 판단하고 캐시 비용을 따져 이득일 때만 전환(스펙 §4.1), 계정별 잔여량 패널, 턴 뱃지(계정·모델·이유), 기존 Desktop 세션 가져오기, 권한 승인 카드. 다음은 **Plan 2**: 분할보기 · 첨부 · 폰 레이아웃 · CodexEngine(gpt-6-sol/astra) · 역할 분배 표시 · AskUserQuestion 응답 UI.
 
 - 스펙 `docs/superpowers/specs/2026-09-30-deck-design.md` · 계획 `docs/superpowers/plans/2026-09-30-deck-core.md`
