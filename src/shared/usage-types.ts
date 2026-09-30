@@ -32,3 +32,16 @@ export function emptySnapshot(now: Date): UsageSnapshot {
     accounts: { a: emptyAccountUsage(), b: emptyAccountUsage(), c: emptyAccountUsage() },
   };
 }
+
+/**
+ * Epoch ms of an ISO timestamp; a date-time without a zone is UTC (claude-pick / Python
+ * `fromisoformat` + `replace(tzinfo=utc)`), unlike `Date.parse`, which uses local time. NaN if unparsable.
+ */
+export function parseIsoUtc(iso: string): number {
+  let t = iso.trim();
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(t)) {
+    t = t.slice(0, 10) + 'T' + t.slice(11);
+    if (!/(Z|[+-]\d{2}(:?\d{2})?)$/i.test(t)) t += 'Z';
+  }
+  return Date.parse(t);
+}
