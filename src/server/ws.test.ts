@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -180,5 +181,30 @@ describe('ws', () => {
     ws.send(JSON.stringify({ type: 'open_session', sessionId: 'nope' }));
     expect((await pe).at(-1)).toMatchObject({ type: 'error' });
     ws.close();
+  });
+
+  it('survives an invalid-UTF-8 frame and an oversized frame, then serves another client', async () => {
+    const { port } = server.address() as { port: number };
+    const rawFrame = (frame: Buffer) => new Promise<void>((resolve) => {
+      const s = net.connect(port, '127.0.0.1', () => {
+        s.write(`GET /ws HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nOrigin: ${origin}\r\nCookie: ${COOKIE}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+      });
+      let upgraded = false;
+      s.on('data', (d) => { if (!upgraded && String(d).startsWith('HTTP/1.1 101')) { upgraded = true; s.write(frame); } });
+      s.on('error', () => {});
+      s.on('close', () => resolve());
+      setTimeout(() => { s.destroy(); resolve(); }, 1500);
+    });
+    const mask = Buffer.from([1, 2, 3, 4]);
+    // masked FIN text frame whose single payload byte is 0xff (invalid UTF-8)
+    await rawFrame(Buffer.concat([Buffer.from([0x81, 0x80 | 1]), mask, Buffer.from([0xff ^ 1])]));
+    // masked FIN text frame header announcing a 2 MiB payload (over maxPayload)
+    const len = Buffer.alloc(8); len.writeBigUInt64BE(2n * 1024n * 1024n);
+    await rawFrame(Buffer.concat([Buffer.from([0x81, 0x80 | 127]), len, mask, Buffer.alloc(1024)]));
+    const c = await connect({ Origin: origin, Cookie: COOKIE });
+    expect(c.ok).toBe(true);
+    const [hello] = await collect(c.ws, (m) => m.type === 'hello');
+    expect(hello?.type).toBe('hello');
+    c.ws.close();
   });
 });

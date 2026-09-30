@@ -43,7 +43,9 @@ export class PermissionBroker {
 export type WsDeps = { token: string; devOrigins: string[]; runner: TurnRunner; index: SessionIndex; usage: UsageService; store: SessionStateStore; extraHosts?: string[] };
 
 export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadcast(msg: ServerMessage): void; close(): void } {
-  const wss = new WebSocketServer({ noServer: true });
+  // maxPayload: a text frame over 1 MiB is refused (ws emits 'error' on the socket, handled below).
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
+  wss.on('error', (err) => console.error('deck ws: server error', err));
   const clients = new Set<WebSocket>();
   const activeTurns = new Map<string, AbortController>();
 
@@ -69,6 +71,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
 
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws);
+    // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
+    ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
     send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: deps.index.projects() });
     for (const m of broker.pending()) send(ws, m);
 
