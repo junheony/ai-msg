@@ -30,6 +30,14 @@ describe('parseDeckState', () => {
     expect(acc.c.weekly).toBeNull();
   });
 
+  it('first label match wins even when its value is missing (claude-pick rows_of)', () => {
+    const acc = parseDeckState({ cards: [{ id: 'claude:main', status: 'ok', rows: [
+      { label: 'Weekly (7d)', used: null }, { label: 'Weekly (7d) · 2', used: 50 },
+      { label: 'Session (5h)', used: 20 }, { label: 'Session (5h) old', used: 90 } ] }] });
+    expect(acc.a.weekly).toBeNull();
+    expect(acc.a.fiveHour?.usedPct).toBe(20);
+  });
+
   it('tolerates garbage', () => {
     expect(parseDeckState(null).a.status).toBe('down');
     expect(parseDeckState({ cards: [{ id: 'claude:main', status: 'ok', rows: [{ label: 'Weekly (7d)', used: 'x' }] }] }).a.weekly).toBeNull();

@@ -16,16 +16,18 @@ function str(v: unknown): string | null {
   return typeof v === 'string' && v ? v : null;
 }
 
-/** Row labels start with "Session (5h)", "Weekly (7d)", "Fable (7d)"; first match per kind wins (claude-pick rule). */
+/** Row labels start with "Session (5h)", "Weekly (7d)", "Fable (7d)"; the first matching row per kind wins even if its value is unusable (claude-pick rule). */
 function rowsOf(card: Record<string, unknown>): Pick<AccountUsage, 'fiveHour' | 'weekly' | 'fable'> {
   const out: Pick<AccountUsage, 'fiveHour' | 'weekly' | 'fable'> = { fiveHour: null, weekly: null, fable: null };
   const rows = Array.isArray(card.rows) ? card.rows : [];
+  const seen = new Set<keyof typeof out>();
   for (const r of rows) {
     if (!r || typeof r !== 'object') continue;
     const row = r as Record<string, unknown>;
     const label = String(row.label ?? '').toLowerCase();
     const kind = label.includes('fable') ? 'fable' : label.startsWith('session') ? 'fiveHour' : label.startsWith('weekly') ? 'weekly' : null;
-    if (!kind || out[kind]) continue;
+    if (!kind || seen.has(kind)) continue;
+    seen.add(kind);
     const used = num(row.used);
     if (used === null) continue;
     out[kind] = { usedPct: used, resetsAt: str(row.resetsAt) };
