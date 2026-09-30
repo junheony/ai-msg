@@ -84,3 +84,62 @@ describe('App split view (D6)', () => {
     expect(frames().filter((f) => f.type === 'open_session')).toEqual([{ type: 'open_session', sessionId: 's1' }]);
   });
 });
+
+/** A matchMedia mock whose `matches` can flip after mount (simulating a viewport/orientation change) and notifies listeners registered via useIsPhone's addEventListener('change', …). */
+function mockMatchMedia(initialPhone: boolean) {
+  let matches = initialPhone;
+  const listeners = new Set<() => void>();
+  window.matchMedia = ((query: string) => ({
+    get matches() { return matches && query.includes('720'); },
+    media: query,
+    onchange: null,
+    addEventListener: (_: string, cb: () => void) => { listeners.add(cb); },
+    removeEventListener: (_: string, cb: () => void) => { listeners.delete(cb); },
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  return { setPhone: (v: boolean) => act(() => { matches = v; listeners.forEach((cb) => cb()); }) };
+}
+
+describe('App phone layout (D10)', () => {
+  beforeEach(() => {
+    sock.frames = [];
+    sock.onMessage = null;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+  });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); (window as { matchMedia?: unknown }).matchMedia = undefined; });
+
+  it('phone: drawer sidebar, single pane, no split button; opening a session closes the drawer', async () => {
+    mockMatchMedia(true);
+    await boot();
+    expect(screen.queryByText('+ 분할')).toBeNull();
+    const menu = screen.getByLabelText('메뉴');
+    expect(document.querySelector('.sidebar-wrap.drawer.open')).toBeNull();
+    fireEvent.click(menu);
+    expect(document.querySelector('.sidebar-wrap.drawer.open')).not.toBeNull();
+    openSession('one');
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's1' });
+    expect(document.querySelector('.sidebar-wrap.drawer.open')).toBeNull();
+    expect(document.querySelectorAll('.pane')).toHaveLength(1);
+  });
+
+  it('phone with two panes: only the active pane renders, and the pane switcher changes which one renders (PF16)', async () => {
+    const mm = mockMatchMedia(false);
+    await boot();
+    openSession('one'); // p0 -> s1
+    fireEvent.click(screen.getByText('+ 분할')); // adds p1, active
+    openSession('two'); // p1 -> s2
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
+
+    mm.setPhone(true);
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
+    expect(screen.getByTestId('pane-p1')).toBeTruthy(); // active pane (p1) is the one shown
+    expect(screen.queryByTestId('pane-p0')).toBeNull();
+
+    fireEvent.click(screen.getByText(/^1 ·/)); // switcher: select pane 1 (p0)
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
+    expect(screen.getByTestId('pane-p0')).toBeTruthy();
+    expect(screen.queryByTestId('pane-p1')).toBeNull();
+  });
+});

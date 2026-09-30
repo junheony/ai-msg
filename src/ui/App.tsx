@@ -7,6 +7,7 @@ import { QuestionCard } from './components/QuestionCard';
 import { Sidebar } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action } from './state';
+import { useIsPhone } from './useIsPhone';
 import { createSocket } from './ws';
 
 export function App() {
@@ -15,6 +16,8 @@ export function App() {
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
   const latest = useRef(state);
   latest.current = state;
+  const phone = useIsPhone();
+  const [drawer, setDrawer] = useState(false);
 
   useEffect(() => { void fetch('/api/me').then((r) => setAuthed(r.ok)); }, []);
 
@@ -53,6 +56,7 @@ export function App() {
   const openIn = (paneId: string, sessionId: string | null, cwd: string, title: string) => {
     apply({ type: 'open', sessionId, cwd, title, paneId });
     if (sessionId) send({ type: 'open_session', sessionId });
+    setDrawer(false);
   };
   const orphanPerms = orphanCards(state.panes, state.pending);
   const orphanQs = orphanCards(state.panes, state.questions);
@@ -60,9 +64,10 @@ export function App() {
   return (
     <div className="app">
       <header>
+        {phone && <button type="button" className="menu" aria-label="메뉴" onClick={() => setDrawer((d) => !d)}>☰</button>}
         <span className="brand">deck</span>
         <UsagePanel usage={state.usage} current={active.session?.account ?? null} />
-        <button type="button" className="split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title="분할보기 (최대 4)">+ 분할</button>
+        {!phone && <button type="button" className="split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title="분할보기 (최대 4)">+ 분할</button>}
         <span className={`conn ${state.connected ? 'on' : 'off'}`}>{state.connected ? '연결됨' : '재연결 중…'}</span>
       </header>
       {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}
@@ -73,15 +78,23 @@ export function App() {
         </div>
       )}
       <div className="body">
-        <Sidebar
-          projects={state.projects}
-          currentSessionId={active.session?.sessionId ?? null}
-          onOpen={(sessionId, cwd, title) => openIn(active.id, sessionId, cwd, title)}
-          onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
-          onRefresh={() => send({ type: 'refresh_index' })}
-        />
-        <div className="panes" data-count={state.panes.length}>
-          {state.panes.map((p) => (
+        {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
+        <div className={`sidebar-wrap ${phone ? 'drawer' : ''} ${drawer ? 'open' : ''}`}>
+          <Sidebar
+            projects={state.projects}
+            currentSessionId={active.session?.sessionId ?? null}
+            onOpen={(sessionId, cwd, title) => openIn(active.id, sessionId, cwd, title)}
+            onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
+            onRefresh={() => send({ type: 'refresh_index' })}
+          />
+        </div>
+        <div className="panes" data-count={phone ? 1 : state.panes.length}>
+          {phone && state.panes.length > 1 && (
+            <div className="pane-switch">
+              {state.panes.map((p, i) => <button type="button" key={p.id} className={p.id === active.id ? 'on' : ''} onClick={() => dispatch({ type: 'focus_pane', paneId: p.id })}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
+            </div>
+          )}
+          {(phone ? [active] : state.panes).map((p) => (
             <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => apply({ type: 'close_pane', paneId: p.id })} />
           ))}
         </div>
