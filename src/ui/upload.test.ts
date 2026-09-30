@@ -18,6 +18,12 @@ describe('uploadFile', () => {
     const bad = vi.fn(async () => new Response(JSON.stringify({ error: '첨부가 너무 큽니다' }), { status: 413 }));
     await expect(uploadFile(file, bad as unknown as typeof fetch)).rejects.toThrow('첨부가 너무 큽니다');
   });
+
+  it('turns a rejected fetch (offline/DNS/etc.) into a Korean network-error message', async () => {
+    const file = new File(['x'], 'x.png', { type: 'image/png' });
+    const offline = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
+    await expect(uploadFile(file, offline as unknown as typeof fetch)).rejects.toThrow('업로드 실패: 네트워크 오류');
+  });
 });
 
 describe('useUploads', () => {
@@ -46,6 +52,22 @@ describe('useUploads', () => {
     expect(uploadFn).not.toHaveBeenCalled();
     expect(onUploaded).not.toHaveBeenCalled();
     expect(result.current.error).toContain('MiB');
+  });
+
+  it('caps combined uploads across two concurrent addFiles calls sharing the same turn budget', async () => {
+    const uploadFn = vi.fn(async (f: File) => ({ id: `id-${f.name}`, name: f.name, size: f.size, isImage: false }));
+    const onUploaded = vi.fn();
+    // current=6, MAX=8 → 2 slots of room total; two calls each offering 2 files race for it.
+    const { result } = renderHook(() => useUploads({ uploadFn, current: 6, onUploaded }));
+    const filesA = [new File(['a'], 'a1.txt'), new File(['a'], 'a2.txt')];
+    const filesB = [new File(['b'], 'b1.txt'), new File(['b'], 'b2.txt')];
+    await act(async () => {
+      await Promise.all([result.current.addFiles(filesA), result.current.addFiles(filesB)]);
+    });
+    expect(onUploaded).toHaveBeenCalledTimes(2);
+    expect(uploadFn).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toContain('최대 8개');
+    expect(result.current.uploading).toBe(0);
   });
 });
 
