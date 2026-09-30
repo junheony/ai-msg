@@ -15,4 +15,16 @@ describe('MessageView', () => {
     expect(a?.getAttribute('target')).toBe('_blank');
     expect(a?.textContent).toContain('pixel');
   });
+
+  it('shows the role-distribution badge for subagent/offload calls and attachment chips on user messages', () => {
+    const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'done', toolCalls: [
+      { toolUseId: '1', name: 'Agent', input: { subagent_type: 'explore', model: 'sonnet', description: 'find' }, result: 'ok', isError: false },
+      { toolUseId: '2', name: 'Bash', input: { command: 'offload cross "x"' }, result: 'ok', isError: false },
+    ], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    expect(container.querySelector('.role-badge')?.textContent).toContain('explore');
+    expect(container.querySelector('.role-badge')?.textContent).toContain('offload cross');
+    cleanup();
+    const u = render(<MessageView item={{ kind: 'user', text: 'look', attachments: ['shot.png'] }} />);
+    expect(u.container.querySelector('.chip')?.textContent).toBe('shot.png');
+  });
 });

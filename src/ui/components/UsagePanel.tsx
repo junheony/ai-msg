@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ACCOUNTS, type Account } from '../../shared/accounts';
-import { parseIsoUtc, remainingPct, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { ACCOUNTS, SEAT_LABEL, type Seat } from '../../shared/accounts';
+import { emptyAccountUsage, parseIsoUtc, remainingPct, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
-const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 const WINDOWS: { key: 'fiveHour' | 'weekly' | 'fable'; name: string }[] = [
   { key: 'fiveHour', name: '5h' },
   { key: 'weekly', name: '주간' },
@@ -36,16 +35,17 @@ function useClock(fixed: number | undefined, periodMs = 30_000): number {
   return fixed ?? tick;
 }
 
-export function UsagePanel({ usage, current, now: fixedNow }: { usage: UsageSnapshot | null; current: Account | null; now?: number }) {
+export function UsagePanel({ usage, current, now: fixedNow }: { usage: UsageSnapshot | null; current: Seat | null; now?: number }) {
   const now = useClock(fixedNow);
   if (!usage) return <div className="usage-panel">잔여량 불러오는 중…</div>;
+  const gpt = usage.gpt ?? emptyAccountUsage();
   return (
     <div className="usage-panel">
       {ACCOUNTS.map((a) => {
         const u = usage.accounts[a];
         return (
           <div key={a} data-testid={`account-${a}`} className={`usage-account ${a === current ? 'current' : ''} ${u.status}`}>
-            <div className="usage-name">{LABEL[a]}{a === current && <span className="tag">현재</span>}</div>
+            <div className="usage-name">{SEAT_LABEL[a]}{a === current && <span className="tag">현재</span>}</div>
             {WINDOWS.map(({ key, name }) => {
               const w = u[key];
               const rem = remainingPct(w);
@@ -60,6 +60,25 @@ export function UsagePanel({ usage, current, now: fixedNow }: { usage: UsageSnap
           </div>
         );
       })}
+      {(() => {
+        const unknown = gpt.status === 'down';
+        return (
+          <div data-testid="account-gpt" className={`usage-account ${current === 'gpt' ? 'current' : ''} ${gpt.status}`} title={unknown ? 'GPT 잔여량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' : ''}>
+            <div className="usage-name">{SEAT_LABEL.gpt}{current === 'gpt' && <span className="tag">현재</span>}</div>
+            {([{ key: 'weekly', name: '주간' }, { key: 'fiveHour', name: '5h' }] as const).map(({ key, name }) => {
+              const w = gpt[key];
+              const rem = remainingPct(w);
+              return (
+                <div key={key} data-testid={`gpt-${key}`} className={`usage-window ${levelClass(w)}`} title={w ? countdown(w.resetsAt, now) : ''}>
+                  <span className="usage-label">{name}</span>
+                  <span className="usage-value">{rem === null ? '—' : `${rem}% 남음`}</span>
+                  {w && <span className="usage-reset">{countdown(w.resetsAt, now)}</span>}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
       {!usage.deckReachable && <span className="tag stale">오래된 값</span>}
     </div>
   );

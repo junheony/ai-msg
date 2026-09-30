@@ -59,3 +59,14 @@ select { background: #141517; color: var(--fg); border: 1px solid var(--line); b
 .permission-scope, .permission-reason, .permission-path { margin: 2px 0; }
 .failed-attempt { opacity: 0.6; border-left: 2px solid var(--muted); padding-left: 8px; margin: 4px 0; }
 button.retry { align-self: flex-start; margin: 4px 0 8px; }
+.chip { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #33353b; color: var(--fg); margin: 2px 4px 0 0; }
+.chip.agent { background: #2b3a55; } .chip.offload { background: #3a2b55; } .chip.header { background: var(--accent); color: #101010; }
+.role-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.question-card { border: 1px solid var(--accent); border-radius: 10px; padding: 12px; background: #1f2a3d; }
+.question { margin: 10px 0; }
+.question-text { margin: 4px 0 6px; font-weight: 600; }
+.question-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.question-options .option { display: flex; flex-direction: column; align-items: flex-start; background: #2a2d33; color: var(--fg); border: 1px solid var(--line); min-height: 44px; }
+.question-options .option.picked { border-color: var(--accent); background: #33415a; }
+.option-desc { font-size: 11px; }
+.question-free { width: 100%; margin-top: 6px; padding: 6px; border-radius: 6px; border: 1px solid var(--line); background: #141517; color: var(--fg); }

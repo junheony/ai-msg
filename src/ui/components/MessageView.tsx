@@ -1,5 +1,7 @@
 import ReactMarkdown, { type Components } from 'react-markdown';
+import { roleSummary } from '../roles';
 import type { ChatItem } from '../state';
+import { RoleBadge } from './RoleBadge';
 import { ToolCallView } from './ToolCallView';
 import { TurnBadge } from './TurnBadge';
 
@@ -15,7 +17,12 @@ const MD_COMPONENTS: Components = {
 };
 
 export function MessageView({ item }: { item: ChatItem }) {
-  if (item.kind === 'user') return <div className="msg user"><pre>{item.text}</pre></div>;
+  if (item.kind === 'user') return (
+    <div className="msg user">
+      <pre>{item.text}</pre>
+      {item.attachments?.map((n, i) => <span key={i} className="chip">{n}</span>)}
+    </div>
+  );
   return (
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}`}>
       {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
@@ -25,6 +32,7 @@ export function MessageView({ item }: { item: ChatItem }) {
       {item.streaming && <span className="cursor">▍</span>}
       {item.error && <div className="error">오류: {item.error}</div>}
       {item.badge && <TurnBadge badge={item.badge} />}
+      <RoleBadge roles={roleSummary(item.toolCalls)} />
     </div>
   );
 }

@@ -48,4 +48,15 @@ describe('UsagePanel', () => {
     act(() => { vi.advanceTimersByTime(60_000); });
     expect(screen.getByTestId('a-fiveHour').textContent).toContain('1시간 59분');
   });
+
+  it('GPT column: weekly remaining when the card is ok, — with a hint when unknown, highlighted when current', () => {
+    const withGpt: UsageSnapshot = { ...usage, gpt: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 40, resetsAt: null }, fable: null } };
+    render(<UsagePanel usage={withGpt} current="gpt" now={NOW} />);
+    expect(screen.getByTestId('gpt-weekly').textContent).toContain('60% 남음');
+    expect(screen.getByTestId('account-gpt').className).toContain('current');
+    cleanup();
+    render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    expect(screen.getByTestId('gpt-weekly').textContent).toContain('—');
+    expect(screen.getByTestId('account-gpt').title).toContain('usage-deck');
+  });
 });
