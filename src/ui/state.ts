@@ -200,12 +200,25 @@ function mapPanes(state: AppState, msg: ServerMessage): PaneState[] {
   return state.panes.map((p) => paneOnServer(p, msg, false));
 }
 
+/**
+ * Once the server knows a session's real title (derived server-side, e.g. from the first prompt line),
+ * it appears in the project index; adopt it into any pane still showing the placeholder `... 새 세션` title.
+ */
+function applyTitles(panes: PaneState[], projects: ProjectEntry[]): PaneState[] {
+  return panes.map((p) => {
+    const sessionId = p.session?.sessionId;
+    if (!sessionId) return p;
+    const found = projects.flatMap((pr) => pr.sessions).find((s) => s.sessionId === sessionId);
+    return found && found.title !== p.session!.title ? { ...p, session: { ...p.session!, title: found.title } } : p;
+  });
+}
+
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
     case 'hello':
-      return { ...state, connected: true, usage: msg.usage, projects: msg.projects, codexAvailable: msg.codex.available, panes: mapPanes(state, msg) };
+      return { ...state, connected: true, usage: msg.usage, projects: msg.projects, codexAvailable: msg.codex.available, panes: applyTitles(mapPanes(state, msg), msg.projects) };
     case 'usage': return { ...state, usage: msg.usage };
-    case 'index': return { ...state, projects: msg.projects };
+    case 'index': return { ...state, projects: msg.projects, panes: applyTitles(state.panes, msg.projects) };
     case 'history': {
       // Every pane with this session open (`open` records the id before open_session is sent, so a pane still
       // waiting for its reply counts). A history no pane views — its pane was closed or switched while the reply

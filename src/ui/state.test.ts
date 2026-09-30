@@ -21,6 +21,13 @@ describe('reducer', () => {
     expect(play([{ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] }], s).projects[0]?.name).toBe('w');
   });
 
+  it('adopts the server-known title into a pane once the index reports it (finding 3)', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 'w · 새 세션' });
+    const sessionEntry = { sessionId: 's1', account: 'b', cwd: '/w', projectDir: '/w', file: 'f', title: 'Reply with exactly: ok', lastModified: 0, sizeBytes: 0 } as const;
+    s = play([{ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [sessionEntry] }] }], s);
+    expect(pane(s).session?.title).toBe('Reply with exactly: ok');
+  });
+
   it('streams a turn into one assistant item and finishes with a badge', () => {
     let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: '새 세션' });
     s = reducer(s, { type: 'sent', text: 'hi' });
