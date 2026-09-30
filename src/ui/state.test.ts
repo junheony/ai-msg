@@ -71,4 +71,27 @@ describe('reducer', () => {
     ]));
     expect(s.items[1]).toMatchObject({ kind: 'assistant', text: 'a', toolCalls: [{ toolUseId: 'tu', result: 'file' }] });
   });
+
+  it('an error for the active turn clears activeTurnId and streaming so the tab can send again', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: 's', cwd: '/w', title: 't' });
+    s = reducer(s, { type: 'sent', text: 'hi' });
+    s = play([
+      { type: 'turn_started', turnId: 't3', sessionId: 's', cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0 },
+      { type: 'error', turnId: 't3', message: 'boom' },
+    ], s);
+    expect(s.activeTurnId).toBeNull();
+    expect(s.items[1]).toMatchObject({ kind: 'assistant', streaming: false, error: 'boom' });
+  });
+
+  it('a turn_result without a badge (rejected run) still ends the turn', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: 's', cwd: '/w', title: 't' });
+    s = reducer(s, { type: 'sent', text: 'hi' });
+    s = play([
+      { type: 'turn_started', turnId: 't4', sessionId: 's', cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0 },
+      { type: 'turn_result', turnId: 't4', sessionId: 's', ok: false, text: '', badge: null, errorText: 'engine exploded' },
+    ], s);
+    expect(s.activeTurnId).toBeNull();
+    expect(s.session).toMatchObject({ sessionId: 's', account: null });
+    expect(s.items[1]).toMatchObject({ streaming: false, error: 'engine exploded' });
+  });
 });

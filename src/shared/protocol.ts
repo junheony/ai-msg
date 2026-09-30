@@ -35,5 +35,5 @@ export type ServerMessage =
   | { type: 'permission_request'; turnId: string; requestId: string; toolName: string; input: unknown }
   | { type: 'permission_resolved'; requestId: string; decision: PermissionDecision }
   | { type: 'turn_retry'; turnId: string; fromAccount: Account; toAccount: Account; reason: string; attempt: number }
-  | { type: 'turn_result'; turnId: string; sessionId: string; ok: boolean; text: string; badge: TurnBadge; errorText: string | null }
+  | { type: 'turn_result'; turnId: string; sessionId: string; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null }
   | { type: 'error'; turnId: string | null; message: string };

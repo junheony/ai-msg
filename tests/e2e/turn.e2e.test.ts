@@ -105,11 +105,11 @@ describe('deck e2e (real accounts)', () => {
     const result = msgs.find((m) => m.type === 'turn_result') as Extract<ServerMessage, { type: 'turn_result' }>;
     expect(result.ok).toBe(true);
     expect(result.text.trim().toLowerCase()).toBe('ok');
-    expect(['a', 'b', 'c']).toContain(result.badge.account);
-    expect(result.badge.model).toBe('sonnet');
-    expect(result.badge.usage.outputTokens).toBeGreaterThan(0);
-    expect(result.badge.reason.length).toBeGreaterThan(0);
-    console.log(`e2e turn 1 ran on ${result.badge.account.toUpperCase()} — ${result.badge.reason}`);
+    expect(['a', 'b', 'c']).toContain(result.badge!.account);
+    expect(result.badge!.model).toBe('sonnet');
+    expect(result.badge!.usage.outputTokens).toBeGreaterThan(0);
+    expect(result.badge!.reason.length).toBeGreaterThan(0);
+    console.log(`e2e turn 1 ran on ${result.badge!.account.toUpperCase()} — ${result.badge!.reason}`);
     sessionId = result.sessionId;
     const index = msgs.at(-1) as Extract<ServerMessage, { type: 'index' }>;
     const project = index.projects.find((pj) => pj.cwd === workDir);
@@ -131,7 +131,7 @@ describe('deck e2e (real accounts)', () => {
     expect(result.ok).toBe(true);
     expect(result.text.trim().toLowerCase()).toBe('ok');
     expect(result.sessionId).toBe(sessionId);
-    console.log(`e2e turn 2 ran on ${result.badge.account.toUpperCase()} — ${result.badge.reason}`);
+    console.log(`e2e turn 2 ran on ${result.badge!.account.toUpperCase()} — ${result.badge!.reason}`);
     ws.close();
   });
 });

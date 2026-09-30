@@ -43,6 +43,7 @@ beforeAll(async () => {
       const d = await req.onPermission({ toolName: 'Write', input: { file_path: '/x' }, toolUseId: 'tu1' });
       return [{ kind: 'init', sessionId: 'sess-ask', model: 'm' }, { kind: 'delta', text: `decision=${d}` }, okResult('sess-ask', `decision=${d}`)];
     }
+    if (req.prompt === 'throw') throw new Error('engine exploded');
     const sid = req.resumeSessionId ?? 'sess-1';
     return [{ kind: 'init', sessionId: sid, model: 'm' }, { kind: 'delta', text: 'o' }, { kind: 'delta', text: 'k' }, okResult(sid, 'ok')];
   });
@@ -131,6 +132,16 @@ describe('ws', () => {
     const msgs = await p;
     expect(msgs.map((m) => m.type)).toEqual(['turn_started', 'delta', 'delta', 'turn_result', 'index']);
     expect(msgs[3]).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: 'sess-1', badge: { model: 'opus' } });
+    ws.close();
+  });
+
+  it('a rejected run ends with a terminal turn_result, not a bare error', async () => {
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p = collect(ws, (m) => m.type === 'turn_result' || m.type === 'error');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: '/w/x', text: 'throw' }));
+    const last = (await p).at(-1);
+    expect(last).toMatchObject({ type: 'turn_result', ok: false, errorText: expect.stringContaining('engine exploded') });
     ws.close();
   });
 

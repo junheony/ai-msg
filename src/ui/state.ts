@@ -83,13 +83,15 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'permission_resolved': return { ...state, pending: state.pending.filter((p) => p.requestId !== msg.requestId) };
     case 'turn_retry': return updateTurn(state, msg.turnId, (it) => ({ ...it, notes: [...it.notes, `${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
     case 'turn_result': {
-      const next = updateTurn(state, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패') }));
-      const session = next.session ? { ...next.session, sessionId: msg.sessionId || next.session.sessionId, account: msg.badge.account } : next.session;
+      const next = updateTurn(state, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패') }));
+      const session = next.session ? { ...next.session, sessionId: msg.sessionId || next.session.sessionId, account: msg.badge?.account ?? next.session.account } : next.session;
       return { ...next, session, activeTurnId: null, pending: next.pending.filter((p) => p.turnId !== msg.turnId) };
     }
     case 'error': {
-      const withItem = msg.turnId ? updateTurn(state, msg.turnId, (it) => ({ ...it, error: it.error ?? msg.message })) : state;
-      return { ...withItem, error: msg.message };
+      const withItem = msg.turnId ? updateTurn(state, msg.turnId, (it) => ({ ...it, streaming: false, error: it.error ?? msg.message })) : state;
+      // Review I6: an error that names the running turn ends it, or the composer stays locked on 중단.
+      const activeTurnId = msg.turnId !== null && msg.turnId === state.activeTurnId ? null : withItem.activeTurnId;
+      return { ...withItem, activeTurnId, error: msg.message };
     }
   }
 }

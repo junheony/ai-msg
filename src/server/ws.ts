@@ -4,6 +4,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { ClientMessageSchema, type ServerMessage } from '../shared/protocol';
 import type { PermissionDecision } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
+import { displayError } from './engine/redact';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readTranscript } from './sessions/transcript';
 import type { SessionStateStore } from './turn/SessionState';
@@ -94,7 +95,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
           };
           void deps.runner
             .run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model ? { model: msg.model } : {}) }, sink)
-            .catch((err: unknown) => broadcast({ type: 'error', turnId, message: err instanceof Error ? err.message : String(err) }))
+            .catch((err: unknown) => {
+              // Review I6: a rejected run still ends the turn for the UI.
+              console.error('deck: turn failed', err);
+              broadcast({ type: 'turn_result', turnId, sessionId: msg.sessionId ?? '', ok: false, text: '', badge: null, errorText: displayError(err instanceof Error ? err.message : String(err), null) });
+            })
             .then(async () => {
               activeTurns.delete(turnId);
               if (msg.sessionId === null) { await deps.index.refresh(); broadcast({ type: 'index', projects: deps.index.projects() }); }
