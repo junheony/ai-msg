@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
+import { AttachmentStore } from './attachments/AttachmentStore';
 import { cookieValueFor } from './auth';
 import { StubEngine, okResult } from './engine/StubEngine';
 import { createRequestHandler } from './http';
@@ -26,6 +27,7 @@ let base: string;
 let work: string;
 let store: SessionStateStore;
 let index: SessionIndex;
+let store2: AttachmentStore;
 let gate: Promise<void> = Promise.resolve();
 let release: () => void = () => {};
 const hold = () => { gate = new Promise<void>((r) => { release = r; }); };
@@ -54,12 +56,15 @@ beforeAll(async () => {
       const d = await req.onPermission({ toolName: 'Write', input: { file_path: '/x' }, toolUseId: 'tu1' });
       return [{ kind: 'init', sessionId: 'sess-ask', model: 'm' }, { kind: 'delta', text: `decision=${d}` }, okResult('sess-ask', `decision=${d}`)];
     }
+    if (req.prompt === 'att') return [{ kind: 'init', sessionId: 'sess-att', model: 'm' }, okResult('sess-att', `n=${req.attachments?.length ?? 0}`)];
     if (req.prompt === 'throw') throw new Error('engine exploded');
     if (req.prompt === 'hold') await gate;
     const sid = req.resumeSessionId ?? 'sess-1';
     return [{ kind: 'init', sessionId: sid, model: 'm' }, { kind: 'delta', text: 'o' }, { kind: 'delta', text: 'k' }, okResult(sid, 'ok')];
   });
-  const runner = new TurnRunner({ engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
+  store2 = new AttachmentStore(path.join(base, 'att'));
+  await store2.init();
+  const runner = new TurnRunner({ attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
   wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -389,6 +394,16 @@ describe('ws', () => {
     const [hello] = await collect(c.ws, (m) => m.type === 'hello');
     expect(hello?.type).toBe('hello');
     c.ws.close();
+  });
+
+  it('send.attachments ids reach the engine as Attachment objects', async () => {
+    const a = await store2.save('p.png', Buffer.from('89504e470d0a1a0a00', 'hex'));
+    const { ws } = await connect({ Cookie: COOKIE, Origin: origin });
+    await collect(ws, (m) => m.type === 'hello');
+    const r = collect(ws, (m) => m.type === 'turn_result');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'att', attachments: [a.id] }));
+    expect((await r).at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'n=1' });
+    ws.close();
   });
 });
 

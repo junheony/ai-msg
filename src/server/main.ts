@@ -30,6 +30,7 @@ async function main(): Promise<void> {
   const runner = new TurnRunner({
     engine: new ClaudeEngine(),
     codex,
+    attachments,
     codexSessionsRoot: cfg.codexSessionsRoot,
     usage,
     index,

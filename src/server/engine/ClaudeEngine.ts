@@ -1,13 +1,43 @@
+import fs from 'node:fs/promises';
 import os from 'node:os';
-import { query, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { accountEnv } from '../../shared/accounts';
+import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
 import { sessionUpdates, type Engine, type EngineEvent, type EngineResult, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
 
-export type QueryFn = (params: { prompt: string; options?: Options }) => AsyncIterable<SDKMessage>;
+export type PromptInput = string | AsyncIterable<SDKUserMessage>;
+export type QueryFn = (params: { prompt: PromptInput; options?: Options }) => AsyncIterable<SDKMessage>;
+export type ReadFile = (p: string) => Promise<Buffer>;
+
+type UserBlock = Exclude<SDKUserMessage['message']['content'], string>[number];
+type Base64Source = Extract<Extract<UserBlock, { type: 'image' }>['source'], { type: 'base64' }>;
+
+function imageMediaType(t: string): Base64Source['media_type'] | null {
+  return IMAGE_TYPES.has(t) ? (t as Base64Source['media_type']) : null;
+}
+
+/**
+ * D7/D14: non-image attachments become path lines in the text; with at least one image the prompt is a
+ * one-message stream (`SDKUserMessage` with a content array — the only way to pass image blocks,
+ * sdk.d.ts:3233/6158). `session_id: ''` mirrors what the SDK writes for a string prompt.
+ */
+export async function buildPrompt(text: string, attachments: Attachment[], readFile: ReadFile = (p) => fs.readFile(p)): Promise<PromptInput> {
+  const body = promptWithFiles(text, attachments);
+  const images = attachments.filter((a) => a.isImage);
+  if (!images.length) return body;
+  const content: UserBlock[] = [{ type: 'text', text: body }];
+  for (const img of images) {
+    const media_type = imageMediaType(img.mediaType);
+    if (!media_type) continue;
+    content.push({ type: 'image', source: { type: 'base64', media_type, data: (await readFile(img.path)).toString('base64') } });
+  }
+  const message: SDKUserMessage = { type: 'user', session_id: '', parent_tool_use_id: null, message: { role: 'user', content } };
+  return (async function* () { yield message; })();
+}
 
 type Rec = Record<string, unknown>;
 
@@ -147,11 +177,13 @@ export class ClaudeEngine implements Engine {
   private readonly queryFn: QueryFn;
   private readonly home: string;
   private readonly baseEnv: NodeJS.ProcessEnv;
+  private readonly readFile: ReadFile;
 
-  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv } = {}) {
+  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile } = {}) {
     this.queryFn = opts.queryFn ?? ((p) => query(p));
     this.home = opts.home ?? os.homedir();
     this.baseEnv = opts.baseEnv ?? process.env;
+    this.readFile = opts.readFile ?? ((p) => fs.readFile(p));
   }
 
   async *runTurn(req: TurnRequest): AsyncIterable<EngineEvent> {
@@ -169,7 +201,8 @@ export class ClaudeEngine implements Engine {
     let sawResult = false;
     const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
     try {
-      for await (const m of this.queryFn({ prompt: req.prompt, options })) {
+      const prompt = await buildPrompt(req.prompt, req.attachments ?? [], this.readFile);
+      for await (const m of this.queryFn({ prompt, options })) {
         if (m.type === 'assistant' && typeof (m as unknown as Rec).error === 'string') errorKind = (m as unknown as Rec).error as string;
         for (const ev of mapSdkMessage(m)) {
           if (ev.kind === 'init') sessionId = ev.sessionId;
@@ -180,6 +213,9 @@ export class ClaudeEngine implements Engine {
             yield ev;
           }
         }
+        // D14: with a streamed prompt the CLI would wait for more input, so the result ends the turn.
+        // String prompts keep the Plan 1 behavior (read to the end) so an unmeasured change stays isolated to image turns.
+        if (sawResult && typeof prompt !== 'string') break;
       }
     } catch (err) {
       // The SDK throws after yielding an error result; only synthesize one if none was seen.

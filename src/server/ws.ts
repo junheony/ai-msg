@@ -169,7 +169,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       try {
         // Review M8: the working directory must exist before a CLI is started in it.
         if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}` }); return; }
-        await deps.runner.run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model ? { model: msg.model } : {}), ...(msg.engine ? { engine: msg.engine } : {}), ...(msg.sandbox ? { sandbox: msg.sandbox } : {}) }, sink);
+        await deps.runner.run({ turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text, ...(msg.model ? { model: msg.model } : {}), ...(msg.engine ? { engine: msg.engine } : {}), ...(msg.sandbox ? { sandbox: msg.sandbox } : {}), ...(msg.attachments ? { attachments: msg.attachments } : {}) }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
         console.error('deck: turn failed', err);

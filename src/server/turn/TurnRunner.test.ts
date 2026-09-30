@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
+import { AttachmentStore } from '../attachments/AttachmentStore';
 import type { ServerMessage } from '../../shared/protocol';
 import { StubEngine, failResult, okResult } from '../engine/StubEngine';
 import type { CodexEngine, CodexTurnRequest } from '../engine/CodexEngine';
@@ -50,6 +51,7 @@ async function ctx(engine: StubEngine, over: Partial<TurnRunnerDeps> = {}, usage
     auditFile: path.join(base, 'audit.log'),
     projectsRoots: roots,
     codex: null,
+    attachments: null,
     codexSessionsRoot: path.join(base, 'codex-sessions'),
     move: async (o) => { moves.push(o); return { ok: true, targetDir: path.join(o.targetProjectsRoot, path.basename(o.sourceProjectDir)), targetFile: '', copied: [] }; },
     now: () => NOW,
@@ -459,5 +461,47 @@ describe('TurnRunner: Codex session ids', () => {
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, sessionId: null });
     expect(c.deps.store.get('--dangerously-bypass-approvals-and-sandbox')).toBeNull();
     expect(c.deps.store.codexEntries()).toEqual([]);
+  });
+});
+
+describe('TurnRunner: attachments (D7)', () => {
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+
+  it('resolves ids to Attachment objects for Claude, and to imagePaths + path lines for Codex; unknown ids fail the turn before any engine runs', async () => {
+    const stub = new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]);
+    const c = await ctx(stub);
+    const store = new AttachmentStore(path.join(c.base, 'att'));
+    await store.init();
+    const img = await store.save('a.png', PNG);
+    const doc = await store.save('notes.md', Buffer.from('# n'));
+    c.deps.attachments = store;
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'look', attachments: [img.id, doc.id] }, c.sink);
+    expect(stub.calls[0]?.attachments?.map((a) => a.id)).toEqual([img.id, doc.id]);
+    expect(stub.calls[0]?.prompt).toBe('look');
+    const codex = fakeCodex(codexOk('tid-a'));
+    c.deps.codex = codex.engine; c.deps.findRollout = async () => null;
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w', sessionId: null, text: 'look', engine: 'codex', attachments: [img.id, doc.id] }, c.sink);
+    expect(codex.calls[0]).toMatchObject({ imagePaths: [img.path], prompt: `look\n\n첨부 파일: ${doc.path}` });
+    c.msgs.length = 0;
+    await new TurnRunner(c.deps).run({ turnId: 't3', cwd: '/w', sessionId: null, text: 'x', attachments: ['11111111-1111-4111-8111-111111111111'] }, c.sink);
+    expect(c.msgs).toEqual([{ type: 'error', turnId: 't3', message: expect.stringContaining('첨부를 찾을 수 없습니다') }]);
+    expect(stub.calls).toHaveLength(1);
+  });
+
+  it('duplicate ids reach the engine once; with no store every id is missing (no crash)', async () => {
+    const stub = new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]);
+    const c = await ctx(stub);
+    const store = new AttachmentStore(path.join(c.base, 'att'));
+    await store.init();
+    const img = await store.save('a.png', PNG);
+    const doc = await store.save('notes.md', Buffer.from('# n'));
+    c.deps.attachments = store;
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'look', attachments: [img.id, doc.id, img.id, doc.id] }, c.sink);
+    expect(stub.calls[0]?.attachments?.map((a) => a.id)).toEqual([img.id, doc.id]);
+    c.deps.attachments = null;
+    c.msgs.length = 0;
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w', sessionId: null, text: 'x', attachments: [img.id, img.id] }, c.sink);
+    expect(c.msgs).toEqual([{ type: 'error', turnId: 't2', message: `첨부를 찾을 수 없습니다: ${img.id}` }]);
+    expect(stub.calls).toHaveLength(1);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { ClaudeEngine, buildOptions, mapSdkMessage } from './ClaudeEngine';
+import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { ClaudeEngine, buildOptions, buildPrompt, mapSdkMessage } from './ClaudeEngine';
 import { sessionAllowLabel, sessionAllowOffered, type EngineEvent, type TurnRequest } from './Engine';
 
 const M = (o: unknown) => o as SDKMessage;
@@ -218,5 +218,71 @@ describe('ClaudeEngine.runTurn', () => {
     const events: EngineEvent[] = [];
     for await (const e of eng.runTurn(req())) events.push(e);
     expect(events.at(-1)).toMatchObject({ kind: 'result', ok: false, sessionId: 's1', errorText: expect.stringContaining('process exited') });
+  });
+});
+
+const img = { id: 'i1', name: 'a.png', mediaType: 'image/png', size: 3, path: '/att/i1-a.png', isImage: true, createdAtMs: 0 };
+const doc = { id: 'd1', name: 'n.md', mediaType: 'application/octet-stream', size: 1, path: '/att/d1-n.md', isImage: false, createdAtMs: 0 };
+
+async function first(p: string | AsyncIterable<SDKUserMessage>): Promise<SDKUserMessage | string> {
+  if (typeof p === 'string') return p;
+  for await (const m of p) return m;
+  throw new Error('empty');
+}
+
+describe('buildPrompt (D7, D14)', () => {
+  it('text only / files only stay a string with path lines; images become one user message with base64 blocks', async () => {
+    const readFile = async (p: string) => Buffer.from(`bytes-of-${p}`);
+    expect(await buildPrompt('hi', [], readFile)).toBe('hi');
+    expect(await buildPrompt('hi', [doc], readFile)).toBe('hi\n\n첨부 파일: /att/d1-n.md');
+    const m = await first(await buildPrompt('what is this?', [img, doc], readFile));
+    expect(m).toEqual({
+      type: 'user', session_id: '', parent_tool_use_id: null,
+      message: { role: 'user', content: [
+        { type: 'text', text: 'what is this?\n\n첨부 파일: /att/d1-n.md' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: Buffer.from('bytes-of-/att/i1-a.png').toString('base64') } },
+      ] },
+    });
+  });
+});
+
+describe('ClaudeEngine with attachments', () => {
+  it('passes the streamed prompt to query and stops reading after the result', async () => {
+    const seen: unknown[] = [];
+    let pulled = 0;
+    const queryFn = async function* (p: { prompt: string | AsyncIterable<SDKUserMessage> }) {
+      seen.push(await first(p.prompt));
+      yield M({ type: 'system', subtype: 'init', session_id: 's', model: 'm' });
+      yield M({ type: 'result', subtype: 'success', is_error: false, result: 'a red pixel', session_id: 's', usage: {} });
+      pulled++; // reached only if the engine keeps pulling after the result
+      yield M({ type: 'system', subtype: 'init', session_id: 's', model: 'm' });
+    };
+    const engine = new ClaudeEngine({ queryFn, home: '/h', baseEnv: {}, readFile: async () => Buffer.from('png') });
+    const out: EngineEvent[] = [];
+    for await (const e of engine.runTurn(req({ prompt: 'what?', attachments: [img] }))) out.push(e);
+    expect((seen[0] as SDKUserMessage).message.content).toHaveLength(2);
+    expect(out.at(-1)).toMatchObject({ kind: 'result', ok: true, text: 'a red pixel' });
+    expect(pulled).toBe(0);
+  });
+
+  it('without images the prompt stays the plain string (D14 isolation)', async () => {
+    const seen: unknown[] = [];
+    const queryFn = async function* (p: { prompt: string | AsyncIterable<SDKUserMessage> }) {
+      seen.push(p.prompt);
+      yield M({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's', usage: {} });
+    };
+    const engine = new ClaudeEngine({ queryFn, home: '/h', baseEnv: {}, readFile: async () => { throw new Error('must not read'); } });
+    for await (const _ of engine.runTurn(req({ prompt: 'x', attachments: [doc] }))) void _;
+    expect(seen).toEqual(['x\n\n첨부 파일: /att/d1-n.md']);
+  });
+
+  it('a failed image read ends the turn as a failed result, not a throw', async () => {
+    let called = false;
+    const queryFn = async function* () { called = true; yield M({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's', usage: {} }); };
+    const engine = new ClaudeEngine({ queryFn, home: '/h', baseEnv: {}, readFile: async () => { throw new Error('ENOENT: gone'); } });
+    const out: EngineEvent[] = [];
+    for await (const e of engine.runTurn(req({ attachments: [img] }))) out.push(e);
+    expect(called).toBe(false);
+    expect(out).toEqual([expect.objectContaining({ kind: 'result', ok: false, errorText: expect.stringContaining('ENOENT') })]);
   });
 });

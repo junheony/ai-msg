@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Account } from '../../shared/accounts';
 import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type EngineChoice } from '../../shared/models';
 import type { ServerMessage } from '../../shared/protocol';
+import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type PermissionDecision, type TurnUsage } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
 import type { CodexEngine } from '../engine/CodexEngine';
@@ -37,12 +38,16 @@ export type TurnParams = {
   engine?: EngineChoice;
   /** New Codex sessions only (D2). */
   sandbox?: CodexSandbox;
+  /** Ids from POST /api/attachments (D7). */
+  attachments?: string[];
 };
 
 export type TurnRunnerDeps = {
   engine: Engine;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
   codex: Pick<CodexEngine, 'runTurn'> | null;
+  /** Null = no attachment store; any attachment id then fails the turn as missing. */
+  attachments: AttachmentStore | null;
   codexSessionsRoot: string;
   usage: UsageService;
   index: SessionIndex;
@@ -123,7 +128,7 @@ export class TurnRunner {
     return next;
   }
 
-  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants): Promise<Attempt> {
+  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[]): Promise<Attempt> {
     const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null };
     const scope = () => ({ turnId: p.turnId, sessionId: out.sessionId, cwd });
     const events = this.deps.engine.runTurn({
@@ -132,6 +137,7 @@ export class TurnRunner {
       resumeSessionId,
       model,
       prompt: p.text,
+      attachments,
       signal: sink.signal,
       allowRules: [...grants.rules],
       allowDirs: [...grants.dirs],
@@ -183,6 +189,14 @@ export class TurnRunner {
 
   async run(p: TurnParams, sink: TurnSink): Promise<void> {
     const { deps } = this;
+    // D7: only store-resolved attachments (server-side paths in the private dir) ever reach an engine.
+    let attachments: Attachment[] = [];
+    if (p.attachments?.length) {
+      const ids = [...new Set(p.attachments)];
+      const r = deps.attachments?.resolve(ids) ?? { found: [], missing: ids };
+      if (r.missing.length) { sink.emit({ type: 'error', turnId: p.turnId, message: `첨부를 찾을 수 없습니다: ${r.missing.join(', ')}` }); return; }
+      attachments = r.found;
+    }
     let state: SessionState | null = null;
     if (p.sessionId) {
       state = deps.store.get(p.sessionId);
@@ -193,21 +207,21 @@ export class TurnRunner {
         state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
       }
     }
-    if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션');
+    if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments);
     if (!state) {
       const pick = chooseEngine({
         choice: p.engine ?? 'claude', usage: deps.usage.snapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
         gptCooldownUntilMs: this.gptCooldownUntil, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount,
       });
-      if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason);
+      if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason, attachments);
       // Only a non-default choice earns a prefix, so Plan 1 badges read exactly as before.
-      return this.runClaude(p, null, sink, p.engine && p.engine !== 'claude' ? pick.reason : null);
+      return this.runClaude(p, null, sink, p.engine && p.engine !== 'claude' ? pick.reason : null, attachments);
     }
-    return this.runClaude(p, state, sink, null);
+    return this.runClaude(p, state, sink, null, attachments);
   }
 
   /** D2/D3: one ChatGPT account — no routing, no session move, no retry; sandbox + approval never. */
-  private async runCodex(p: TurnParams, state: CodexSessionState | null, sink: TurnSink, reason: string): Promise<void> {
+  private async runCodex(p: TurnParams, state: CodexSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const model: CodexModel = state?.defaultModel ?? (isCodexModel(p.model) ? p.model : DEFAULT_CODEX_MODEL);
@@ -221,7 +235,7 @@ export class TurnRunner {
     if (sink.signal.aborted) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: '중단됨' }); return; }
     sink.emit({ type: 'turn_started', ...scope(), account: 'gpt', model, reason, attempt: 0, engine: 'codex' });
     let result: EngineResult | null = null;
-    for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, prompt: p.text, signal: sink.signal })) {
+    for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, prompt: promptWithFiles(p.text, attachments), imagePaths: attachments.filter((a) => a.isImage).map((a) => a.path), signal: sink.signal })) {
       switch (ev.kind) {
         case 'init': sessionId = ev.sessionId; break;
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
@@ -250,7 +264,7 @@ export class TurnRunner {
     sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : displayError(res.errorText, res.stderr) });
   }
 
-  private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null): Promise<void> {
+  private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[]): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const sessionDefault = state?.defaultModel ?? DEFAULT_MODEL;
@@ -285,7 +299,7 @@ export class TurnRunner {
       const { model, note } = resolveModel(wantedClaude, sessionDefault, fable);
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt, engine: 'claude' });
 
-      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants);
+      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants, attachments);
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
       const sessionId = a.sessionId ?? state?.sessionId ?? null;
       if (sessionId) {
