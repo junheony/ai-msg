@@ -57,4 +57,35 @@ describe('QuestionCard (D8)', () => {
     expect(onAnswer).toHaveBeenCalledWith('q2', { 'Which DB?  ': 'pg' });
     expect(Object.keys(onAnswer.mock.calls[0]![1] as object)).toEqual(['Which DB?  ']);
   });
+
+  it('typing free text then clicking an option submits the option, and unpicks the free text visually', () => {
+    const onAnswer = vi.fn();
+    render(<QuestionCard req={{ ...req, questions: [req.questions[0]!] }} onAnswer={onAnswer} />);
+    const free = screen.getByPlaceholderText('기타 (직접 입력)') as HTMLInputElement;
+    fireEvent.change(free, { target: { value: 'green' } });
+    fireEvent.click(screen.getByText('blue'));
+    expect(free.value).toBe('');
+    expect((screen.getByText('blue').closest('button') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByText('답변 보내기'));
+    expect(onAnswer).toHaveBeenCalledWith('q1', { 'Which color?': 'blue' });
+  });
+
+  it('clicking an option then typing free text submits the text, and unpicks the option visually', () => {
+    const onAnswer = vi.fn();
+    render(<QuestionCard req={{ ...req, questions: [req.questions[0]!] }} onAnswer={onAnswer} />);
+    const blueBtn = screen.getByText('blue').closest('button') as HTMLButtonElement;
+    fireEvent.click(blueBtn);
+    expect(blueBtn.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.change(screen.getByPlaceholderText('기타 (직접 입력)'), { target: { value: 'green' } });
+    expect(blueBtn.className).not.toContain('picked');
+    expect(blueBtn.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(screen.getByText('답변 보내기'));
+    expect(onAnswer).toHaveBeenCalledWith('q1', { 'Which color?': 'green' });
+  });
+
+  it('sets aria-pressed on option buttons and an aria-label on the free-text input', () => {
+    render(<QuestionCard req={{ ...req, questions: [req.questions[0]!] }} onAnswer={vi.fn()} />);
+    expect((screen.getByText('red').closest('button') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByLabelText('Color 직접 입력')).toBeTruthy();
+  });
 });
