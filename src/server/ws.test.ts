@@ -260,6 +260,36 @@ describe('ws', () => {
     b.ws.close();
   });
 
+  it('clientRef is echoed on the send\'s turn_started and on errors refusing a send (busy, missing attachment, schema)', async () => {
+    const SX = '55555555-5555-4555-8555-555555555555';
+    const cwd = await seed(SX, 'ref');
+    hold();
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const started = collect(a.ws, (m) => m.type === 'turn_started');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'hold', clientRef: 'p0-1' }));
+    expect((await started).at(-1)).toMatchObject({ type: 'turn_started', sessionId: SX, clientRef: 'p0-1' });
+
+    const busyErr = collect(a.ws, (m) => m.type === 'error');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'second', clientRef: 'p1-1' }));
+    expect((await busyErr).at(-1)).toMatchObject({ type: 'error', message: '이 세션은 이미 실행 중입니다', clientRef: 'p1-1' });
+
+    const schemaErr = collect(a.ws, (m) => m.type === 'error');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: 'relative', text: 'x', clientRef: 'p2-1' }));
+    expect((await schemaErr).at(-1)).toMatchObject({ type: 'error', clientRef: 'p2-1' });
+    const tooLong = collect(a.ws, (m) => m.type === 'error');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: 'relative', text: 'x', clientRef: 'r'.repeat(65) }));
+    expect((await tooLong).at(-1)).not.toHaveProperty('clientRef');
+
+    const done = collect(a.ws, (m) => m.type === 'turn_result');
+    release();
+    await done;
+    const attErr = collect(a.ws, (m) => m.type === 'error' || m.type === 'turn_started');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'x', attachments: ['99999999-9999-4999-8999-999999999999'], clientRef: 'p3-1' }));
+    expect((await attErr).at(-1)).toMatchObject({ type: 'error', clientRef: 'p3-1' });
+    a.ws.close();
+  });
+
   it('turn events go to the originating socket and sockets viewing that session only', async () => {
     const SX = '33333333-3333-4333-8333-333333333333';
     const SY = '44444444-4444-4444-8444-444444444444';

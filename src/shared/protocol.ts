@@ -8,6 +8,7 @@ import type { UsageSnapshot } from './usage-types';
 /** Attachment ids are the UUIDs POST /api/attachments returned (Task 6); nothing path-like is accepted. */
 export const ATTACHMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const MAX_ATTACHMENTS_PER_TURN = 8;
+export const CLIENT_REF_MAX = 64;
 
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
@@ -22,6 +23,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     /** New Codex sessions only (D2). */
     sandbox: z.enum(['read-only', 'workspace-write']).optional(),
     attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
+    /** Client correlation id: echoed on this send's turn_started and on any error refusing it (which pane sent it). */
+    clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional(),
   }),
   z.object({ type: z.literal('permission_response'), requestId: z.string().min(1), decision: z.enum(['once', 'session', 'deny']) }),
   /** D8: answers keyed by the question text, values are option labels (comma-joined for multiSelect) or free text. */
@@ -50,7 +53,7 @@ export type ServerMessage =
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[] }
   | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null }
-  | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind } & TurnScope)
+  | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)
   | ({ type: 'tool_call'; toolUseId: string; name: string; input: unknown } & TurnScope)
   | ({ type: 'tool_result'; toolUseId: string; content: string; isError: boolean } & TurnScope)
@@ -78,4 +81,4 @@ export type ServerMessage =
   | ({ type: 'turn_notice'; message: string } & TurnScope)
   | ({ type: 'turn_retry'; fromAccount: Account; toAccount: Account; reason: string; attempt: number } & TurnScope)
   | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null } & TurnScope)
-  | { type: 'error'; turnId: string | null; message: string };
+  | { type: 'error'; turnId: string | null; message: string; clientRef?: string };

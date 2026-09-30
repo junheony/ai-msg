@@ -11,6 +11,15 @@ describe('ClientMessageSchema', () => {
     expect(ClientMessageSchema.safeParse({ type: 'refresh_index' }).success).toBe(true);
   });
 
+  it('send.clientRef is optional, 1..64 chars', () => {
+    const base = { type: 'send', sessionId: null, cwd: '/w', text: 'hi' };
+    expect(ClientMessageSchema.safeParse({ ...base, clientRef: 'p0-1' }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...base, clientRef: 'r'.repeat(64) }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...base, clientRef: 'r'.repeat(65) }).success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ ...base, clientRef: '' }).success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ ...base, clientRef: 7 }).success).toBe(false);
+  });
+
   it('rejects unknown types, haiku, empty text, and non-objects', () => {
     expect(ClientMessageSchema.safeParse({ type: 'exec', cmd: 'rm' }).success).toBe(false);
     expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', model: 'haiku' }).success).toBe(false);

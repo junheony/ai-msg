@@ -25,6 +25,8 @@ export type PaneState = {
   myTurns: string[];
   /** A `sent` whose turn_started (or error) has not arrived yet. */
   awaitingStart: boolean;
+  /** The `send.clientRef` of that pending send; null for a send made without one (legacy matching). */
+  awaitingRef: string | null;
   model: AnyModel;
   /** New-session choices (D2, D3); the server ignores them once the session exists. */
   engine: EngineChoice;
@@ -48,7 +50,7 @@ export type AppState = {
 export const MAX_PANES = 4;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, model: DEFAULT_MODEL, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
 }
 
 export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false };
@@ -57,7 +59,7 @@ export type Action =
   | { type: 'server'; msg: ServerMessage }
   | { type: 'connected'; value: boolean }
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
-  | { type: 'sent'; text: string; paneId?: string; attachments?: string[] }
+  | { type: 'sent'; text: string; paneId?: string; attachments?: string[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string }
   | { type: 'set_model'; model: AnyModel; paneId?: string }
   | { type: 'set_engine'; engine: EngineChoice; paneId?: string }
   | { type: 'set_sandbox'; sandbox: CodexSandbox; paneId?: string }
@@ -126,7 +128,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const live = msg.running.find((r) => r.turnId === pane.activeTurnId) ?? (sid ? msg.running.find((r) => r.sessionId === sid) : undefined);
       const activeTurnId = live?.turnId ?? null;
       const items = activeTurnId === pane.activeTurnId ? pane.items : pane.items.map((it) => (it.kind === 'assistant' && it.streaming && it.turnId === pane.activeTurnId ? { ...it, streaming: false } : it));
-      return { ...pane, activeTurnId, items, awaitingStart: false };
+      return { ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null };
     }
     case 'history': {
       const items = fromTranscript(msg.messages);
@@ -140,8 +142,13 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
     case 'turn_started': {
       let p = pane;
       const sess = pane.session;
-      if (claim && pane.awaitingStart && sess && !pane.myTurns.includes(msg.turnId) && (msg.sessionId === sess.sessionId || (msg.sessionId === null && sess.sessionId === null && msg.cwd === sess.cwd))) {
-        p = { ...pane, awaitingStart: false, myTurns: [...pane.myTurns, msg.turnId], session: { ...sess, engine: msg.engine ?? 'claude' } };
+      // A send made with a clientRef is claimed only by the turn_started echoing it (send order, not pane order);
+      // a ref-less send falls back to the first waiting pane with a matching session.
+      const claims = pane.awaitingRef !== null
+        ? msg.clientRef === pane.awaitingRef
+        : claim && msg.clientRef === undefined && !!sess && (msg.sessionId === sess.sessionId || (msg.sessionId === null && sess.sessionId === null && msg.cwd === sess.cwd));
+      if (pane.awaitingStart && sess && !pane.myTurns.includes(msg.turnId) && claims) {
+        p = { ...pane, awaitingStart: false, awaitingRef: null, myTurns: [...pane.myTurns, msg.turnId], session: { ...sess, engine: msg.engine ?? 'claude' } };
       }
       if (!belongs(p, msg)) return p;
       const exists = p.items.some((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
@@ -178,8 +185,11 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // Review I6: an error that names the running turn ends it, or the composer stays locked on 중단.
       const activeTurnId = msg.turnId !== null && msg.turnId === pane.activeTurnId ? null : withItem.activeTurnId;
       // A send refused before its turn started (busy session, bad cwd, unknown session) ends the wait.
-      const awaitingStart = msg.turnId === null || !pane.myTurns.includes(msg.turnId) ? false : withItem.awaitingStart;
-      return { ...withItem, activeTurnId, awaitingStart };
+      // With a clientRef only the error echoing it ends the wait, so another pane's error never unlocks this one.
+      const ends = pane.awaitingRef !== null
+        ? msg.clientRef === pane.awaitingRef
+        : msg.clientRef === undefined && (msg.turnId === null || !pane.myTurns.includes(msg.turnId));
+      return ends ? { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null } : { ...withItem, activeTurnId };
     }
     default:
       return pane;
@@ -197,12 +207,15 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects };
     case 'history': {
-      // The pane that has this session open; else the active pane (a history for a just-opened session).
-      const found = state.panes.findIndex((p) => p.session?.sessionId === msg.sessionId);
-      const idx = found >= 0 ? found : Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId));
-      const panes = state.panes.slice();
-      panes[idx] = paneOnServer(panes[idx]!, msg, false);
-      return { ...state, panes };
+      // Every pane with this session open (`open` records the id before open_session is sent).
+      if (state.panes.some((p) => p.session?.sessionId === msg.sessionId)) {
+        return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? paneOnServer(p, msg, false) : p)) };
+      }
+      // Unclaimed: only an empty active pane (no session at all) adopts it (Plan 1 flow); a pane showing another
+      // session is never overwritten, so a history for a pane closed or switched meanwhile is dropped.
+      const active = state.panes.find((p) => p.id === state.activePaneId);
+      if (!active || active.session) return state;
+      return { ...state, panes: state.panes.map((p) => (p === active ? paneOnServer(p, msg, false) : p)) };
     }
     case 'permission_request': {
       // Prompts from every session are shown (any device may answer); replays on reconnect are deduped (review M10).
@@ -231,8 +244,9 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       return { ...state, panes: mapPanes(state, msg) };
     case 'turn_notice': {
       const panes = mapPanes(state, msg);
-      const changed = panes.some((p, i) => p !== state.panes[i]);
-      return changed ? { ...state, panes } : { ...state, error: msg.message };
+      if (panes.some((p, i) => p !== state.panes[i])) return { ...state, panes };
+      // A pane owns this turn but has no item for it: surface the notice globally. Other sessions' notices are ignored.
+      return state.panes.some((p) => belongs(p, msg)) ? { ...state, error: msg.message } : state;
     }
     case 'turn_result':
       return { ...state, panes: mapPanes(state, msg), pending: state.pending.filter((p) => p.turnId !== msg.turnId), questions: state.questions.filter((q) => q.turnId !== msg.turnId) };
@@ -254,12 +268,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'open': return updatePane(state, action.paneId, (p) => ({
       ...p,
       session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
-      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, attachments: [],
+      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [],
     }));
     case 'sent': return updatePane(state, action.paneId, (p) => ({
       ...p,
       items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }],
-      awaitingStart: true, attachments: [],
+      awaitingStart: true, awaitingRef: action.clientRef ?? null, attachments: [],
     }));
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model }));
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? p.model : modelFor(action.engine, p.model) }));
@@ -306,14 +320,15 @@ export function sessionsToClose(prev: AppState, next: AppState): string[] {
 
 /**
  * The `question_response.answers` map: keyed by each asked question's exact text (the server drops
- * other keys); multi-select picks are comma-joined; unanswered questions are omitted.
+ * other keys); multi-select picks are comma-joined; unanswered questions are omitted; clipped to the protocol limits.
  */
 export function answersFor(q: PendingQuestion, values: (string | string[])[]): Record<string, string> {
   const out: Record<string, string> = {};
   q.questions.forEach((question, i) => {
     const v = values[i];
-    const text = Array.isArray(v) ? v.join(', ') : (v ?? '');
-    if (text) out[question.question] = text;
+    const text = (Array.isArray(v) ? v.join(', ') : (v ?? '')).slice(0, 4000);
+    // protocol.ts question_response limits: keys 2000, values 4000.
+    if (text) out[question.question.slice(0, 2000)] = text;
   });
   return out;
 }

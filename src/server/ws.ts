@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import type http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { readCodexTranscript } from './engine/codexRollout';
@@ -175,7 +175,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
 
   const startTurn = (ws: WebSocket, msg: Extract<ClientMessage, { type: 'send' }>) => {
     if (msg.sessionId) view(ws, msg.sessionId);
-    if (msg.sessionId && busy.has(msg.sessionId)) { send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다' }); return; }
+    // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
+    const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
+    if (msg.sessionId && busy.has(msg.sessionId)) { send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref }); return; }
     const turnId = randomUUID();
     const ac = new AbortController();
     const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac };
@@ -188,8 +190,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       broker.cancelTurn(turnId);
       questions.cancelTurn(turnId);
     };
+    let started = false;
     const sink: TurnSink = {
-      emit: (m) => emitTurn(turn, m),
+      emit: (m) => {
+        if (m.type === 'turn_started') { started = true; emitTurn(turn, { ...m, ...ref }); }
+        else if (m.type === 'error' && !started) emitTurn(turn, { ...m, ...ref });
+        else emitTurn(turn, m);
+      },
       askPermission: (req) => {
         const sessionLabel = sessionAllowLabel(req);
         return broker.ask(
@@ -210,7 +217,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     void (async () => {
       try {
         // Review M8: the working directory must exist before a CLI is started in it.
-        if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}` }); return; }
+        if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
         await deps.runner.run({
           turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text,
           ...(msg.model ? { model: msg.model } : {}),
@@ -221,6 +228,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
         console.error('deck: turn failed', err);
+        // Failed before its turn_started: the sending pane is still waiting and only its clientRef can release it.
+        if (!started && msg.clientRef) send(ws, { type: 'error', turnId, message: displayError(errMsg(err), null) ?? '실행 실패', ...ref });
         emitTurn(turn, { type: 'turn_result', turnId, sessionId: turn.sessionId, cwd: turn.cwd, ok: false, text: '', badge: null, errorText: displayError(errMsg(err), null) });
       } finally {
         release();
@@ -244,7 +253,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       let parsed: unknown;
       try { parsed = JSON.parse(String(data)); } catch { send(ws, { type: 'error', turnId: null, message: '메시지를 해석할 수 없습니다(JSON 아님)' }); return; }
       const r = ClientMessageSchema.safeParse(parsed);
-      if (!r.success) { send(ws, { type: 'error', turnId: null, message: `메시지 형식 오류: ${r.error.issues.map((i) => i.path.join('.') + ' ' + i.message).join('; ')}` }); return; }
+      if (!r.success) {
+        // A malformed send still names its pane when the frame carries a usable clientRef.
+        const raw = parsed !== null && typeof parsed === 'object' ? (parsed as { clientRef?: unknown }).clientRef : undefined;
+        const ref = typeof raw === 'string' && raw.length > 0 && raw.length <= CLIENT_REF_MAX ? { clientRef: raw } : {};
+        send(ws, { type: 'error', turnId: null, message: `메시지 형식 오류: ${r.error.issues.map((i) => i.path.join('.') + ' ' + i.message).join('; ')}`, ...ref });
+        return;
+      }
       const msg = r.data;
       switch (msg.type) {
         case 'send':

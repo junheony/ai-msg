@@ -332,4 +332,82 @@ describe('panes (D6)', () => {
     // Unanswered questions are omitted rather than sent as empty strings.
     expect(answersFor(q, ['', []])).toEqual({});
   });
+
+  describe('fix round 1', () => {
+    const newPanes = () => {
+      let s = reducer(initialState, { type: 'add_pane' });
+      s = reducer(s, { type: 'open', sessionId: null, cwd: '/w', title: 'n', paneId: 'p0' });
+      return reducer(s, { type: 'open', sessionId: null, cwd: '/w', title: 'n', paneId: 'p1' });
+    };
+    const startedRef = (turnId: string, clientRef: string): ServerMessage => ({ ...started(turnId, null, '/w'), clientRef } as ServerMessage);
+
+    it('I1: an error without this pane\'s clientRef (stale permission, other pane) does not unlock its wait', () => {
+      let s = reducer(newPanes(), { type: 'sent', text: 'a', paneId: 'p0', clientRef: 'r0' });
+      s = play([{ type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다' }], s);
+      expect(s.panes[0]?.awaitingStart).toBe(true);
+      s = play([{ type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', clientRef: 'other' }], s);
+      expect(s.panes[0]?.awaitingStart).toBe(true);
+      s = play([startedRef('ta', 'r0')], s);
+      expect(s.panes[0]).toMatchObject({ awaitingStart: false, awaitingRef: null, myTurns: ['ta'], activeTurnId: 'ta' });
+      expect(s.panes[0]?.items).toHaveLength(2);
+    });
+
+    it('I1: the refusal echoing the clientRef ends only that pane\'s wait', () => {
+      let s = reducer(newPanes(), { type: 'sent', text: 'a', paneId: 'p0', clientRef: 'r0' });
+      s = reducer(s, { type: 'sent', text: 'b', paneId: 'p1', clientRef: 'r1' });
+      s = play([{ type: 'error', turnId: 'tx', message: '첨부를 찾을 수 없습니다: x', clientRef: 'r1' }], s);
+      expect(s.panes[0]?.awaitingStart).toBe(true);
+      expect(s.panes[1]).toMatchObject({ awaitingStart: false, awaitingRef: null });
+      expect(s.error).toBe('첨부를 찾을 수 없습니다: x');
+    });
+
+    it('I2: turn_started is claimed by clientRef, not pane order (p1 sent first)', () => {
+      let s = reducer(newPanes(), { type: 'sent', text: 'b', paneId: 'p1', clientRef: 'r1' });
+      s = reducer(s, { type: 'sent', text: 'a', paneId: 'p0', clientRef: 'r0' });
+      s = play([startedRef('tb', 'r1')], s);
+      expect(s.panes[0]).toMatchObject({ myTurns: [], awaitingStart: true });
+      expect(s.panes[1]).toMatchObject({ myTurns: ['tb'], awaitingStart: false });
+      s = play([startedRef('ta', 'r0')], s);
+      expect(s.panes[0]?.myTurns).toEqual(['ta']);
+      expect(s.panes[1]?.myTurns).toEqual(['tb']);
+      // A ref-less turn_started (another device) is claimed by neither ref-waiting pane.
+      let t = reducer(newPanes(), { type: 'sent', text: 'a', paneId: 'p0', clientRef: 'r0' });
+      t = play([started('tz', null, '/w')], t);
+      expect(t.panes[0]).toMatchObject({ myTurns: [], awaitingStart: true });
+    });
+
+    it('I3: history fills every pane viewing the session', () => {
+      let s = reducer(initialState, { type: 'add_pane' });
+      s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 't', paneId: 'p0' });
+      s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 't', paneId: 'p1' });
+      s = play([{ type: 'history', sessionId: 's2', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [{ kind: 'user', text: 'q', ts: null }] }], s);
+      expect(s.panes[0]?.items).toEqual([{ kind: 'user', text: 'q' }]);
+      expect(s.panes[1]?.items).toEqual([{ kind: 'user', text: 'q' }]);
+    });
+
+    it('M1: a history no pane claims never overwrites a pane showing another session', () => {
+      let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 'one' });
+      s = play([{ type: 'history', sessionId: 'gone', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [{ kind: 'user', text: 'q', ts: null }] }], s);
+      expect(pane(s).session?.sessionId).toBe('s1');
+      expect(pane(s).items).toEqual([]);
+    });
+
+    it('M2: turn_notice raises the banner only for a turn some pane owns without an item', () => {
+      const notice = (turnId: string, sessionId: string | null): ServerMessage => ({ type: 'turn_notice', turnId, sessionId, cwd: '/w', message: '세션 이동 거부' });
+      let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 'one' });
+      expect(play([notice('tq', 'elsewhere')], s).error).toBeNull();
+      expect(play([notice('tq', 's1')], s).error).toBe('세션 이동 거부');
+      s = play([started('t1', 's1', '/w'), notice('t1', 's1')], s);
+      expect(s.error).toBeNull();
+      expect(pane(s).items[0]).toMatchObject({ notes: ['세션 이동 거부'] });
+    });
+
+    it('M3: answersFor clips keys to 2000 and values to 4000 chars', () => {
+      const long = 'q'.repeat(2500);
+      const q: PendingQuestion = { turnId: 't', sessionId: 's', cwd: '/w', requestId: 'q', questions: [{ question: long, header: 'H', options: [], multiSelect: false }] };
+      const out = answersFor(q, ['v'.repeat(5000)]);
+      expect(Object.keys(out)[0]).toHaveLength(2000);
+      expect(Object.values(out)[0]).toHaveLength(4000);
+    });
+  });
 });
