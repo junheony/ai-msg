@@ -6,6 +6,7 @@ import { bindAddresses, tailscaleIPv4s } from './bind';
 import { loadConfig } from './config';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { CodexEngine } from './engine/CodexEngine';
+import { GeminiEngine, geminiLoggedIn } from './engine/GeminiEngine';
 import { createRequestHandler } from './http';
 import { PinStore } from './sessions/PinStore';
 import { SettingsStore } from './settings';
@@ -15,6 +16,7 @@ import { TurnRunner } from './turn/TurnRunner';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
+import { GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -34,10 +36,15 @@ async function main(): Promise<void> {
   attachments.startPurgeTimer();
   // D11: Codex is optional; without the binary the UI hides the GPT option and 'auto' means Claude.
   const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
+  // Gemini: explicit engine only; an account counts as logged in once its OAuth file exists (never read).
+  const geminiLogin = (a: GeminiAccount) => geminiLoggedIn(a, cfg.home);
+  const gemini = cfg.geminiBin ? { engine: new GeminiEngine(cfg.geminiBin, cfg.home), loggedIn: geminiLogin } : null;
+  const geminiStatus = () => ({ available: gemini !== null, loggedIn: Object.fromEntries(GEMINI_ACCOUNTS.map((a) => [a, gemini !== null && geminiLogin(a)])) as Record<GeminiAccount, boolean> });
 
   const runner = new TurnRunner({
     engine: new ClaudeEngine(),
     codex,
+    gemini,
     attachments,
     codexSessionsRoot: cfg.codexSessionsRoot,
     usage,
@@ -59,11 +66,11 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, cwdRoots: cfg.cwdRoots, pins, settings });
+  const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings });
   notifyIndex = () => ws.broadcastIndex();
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 
-  console.log(`deck: 세션 ${index.sessions().length}개 · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · codex ${cfg.codexBin ?? '없음'}`);
+  console.log(`deck: 세션 ${index.sessions().length}개 · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · codex ${cfg.codexBin ?? '없음'} · gemini ${cfg.geminiBin ?? '없음'}`);
   if (cfg.cwdRoots.length > 1) console.log(`deck: 새 세션 추가 허용 경로(DECK_EXTRA_CWD_ROOTS): ${cfg.cwdRoots.slice(1).join(', ')}`);
   for (const a of addresses) console.log(`deck: http://${a}:${cfg.port}`);
   console.log(`deck: 로그인 토큰은 ${cfg.tokenFile} 에 있습니다 (내용은 출력하지 않음)`);

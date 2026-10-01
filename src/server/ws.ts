@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
-import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RunningTurn, type ServerMessage } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { DirError, resolveUnderRoots } from './dirs';
@@ -14,7 +14,7 @@ import type { PinStore } from './sessions/PinStore';
 import type { SettingsStore } from './settings';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readTranscript } from './sessions/transcript';
-import { isCodexState, type SessionStateStore } from './turn/SessionState';
+import { isCodexState, isGeminiState, type SessionStateStore } from './turn/SessionState';
 import type { TurnRunner, TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 
@@ -104,6 +104,8 @@ export type WsDeps = {
   extraHosts?: string[];
   /** D11: false hides the GPT engine in the UI and makes 'auto' mean Claude. */
   codexAvailable: boolean;
+  /** Read on every hello, so a login done while deck runs shows up on the next connect. Absent = no Gemini. */
+  geminiStatus?: () => GeminiStatus;
   readCodexHistory?: typeof readCodexTranscript;
   /** F1: a new session's cwd must (after realpath) lie inside one of these (default: the OS home dir). */
   cwdRoots?: string[];
@@ -272,7 +274,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), codex: { available: deps.codexAvailable } });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), codex: { available: deps.codexAvailable }, ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}) });
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
 
@@ -315,6 +317,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
               view(ws, sessionId);
               const messages = st.rolloutFile ? await (deps.readCodexHistory ?? readCodexTranscript)(st.rolloutFile).catch(() => []) : [];
               send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, messages, runningTurnId: busy.get(sessionId) ?? null });
+              return;
+            }
+            // Gemini sessions: no transcript reader yet (the CLI's chat files are not read) — the pane starts empty.
+            if (st && isGeminiState(st)) {
+              view(ws, sessionId);
+              send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, messages: [], runningTurnId: busy.get(sessionId) ?? null });
               return;
             }
             let entry = deps.index.lookup(sessionId);

@@ -13,7 +13,7 @@ const nextClientRef = () => `${TAB}-${++seq}`;
 /** One split-view pane: its own session, items and composer; user actions become `send`/`dispatch` here (D6). */
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, uploadFn }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini'>>;
   active: boolean;
   closable: boolean;
   dispatch: (a: Action) => void;
@@ -49,6 +49,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           sessionSandbox={s.sandbox}
           isNew={isNew}
           codexAvailable={app.codexAvailable}
+          gemini={app.gemini ?? null}
           attachments={pane.attachments}
           uploadFn={uploadFn}
           onSend={(text) => {

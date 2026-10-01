@@ -449,6 +449,19 @@ describe('ws', () => {
     ws.close();
   });
 
+  it('open_session on a Gemini session: engine, pinned account and sandbox, empty history (no transcript reader)', async () => {
+    const GID = '4f1c2b9e-1111-4222-8333-944455556666';
+    await store.set({ engine: 'gemini', account: 'g2', sessionId: GID, cwd: '/w/g', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gemini-pro', sandbox: 'read-only', createdAtMs: 1 });
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    const [hello] = await collect(ws, (m) => m.type === 'hello');
+    // No geminiStatus dep → hello carries no gemini field (the UI hides the option).
+    expect(hello).not.toHaveProperty('gemini');
+    const p = collect(ws, (m) => m.type === 'history');
+    ws.send(JSON.stringify({ type: 'open_session', sessionId: GID }));
+    expect((await p).at(-1)).toMatchObject({ sessionId: GID, cwd: '/w/g', account: 'g2', engine: 'gemini', sandbox: 'read-only', messages: [] });
+    ws.close();
+  });
+
   // Regression: a session written after the server's initial index scan (e.g. by Claude
   // Desktop) is not yet in the in-memory index. open_session must rescan once and still
   // find it, without the client ever triggering refresh_index itself.

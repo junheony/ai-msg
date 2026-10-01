@@ -628,3 +628,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .mp-item { min-height: var(--phone-tap); }
   .mp-effort button { height: 36px; }
 }
+
+/* === automodel === */
+/* Gemini seats (G1/G2) in the turn badge: two letters, Google blue. */
+.turn-badge .acct.acct-g1, .turn-badge .acct.acct-g2 { width: auto; min-width: 20px; padding: 0 4px; background: rgba(66, 133, 244, 0.14); color: #4285f4; }
+/* The engine select's disabled "Gemini · 로그인 필요" option reads as unavailable. */
+.pick select option:disabled { color: var(--muted); }

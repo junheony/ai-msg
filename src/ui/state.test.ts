@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ServerMessage } from '../shared/protocol';
-import { MAX_PANES, answersFor, fromTranscript, initialState, reducer, sessionsToClose, type AppState, type PendingQuestion } from './state';
+import { MAX_PANES, answersFor, engineOf, fromTranscript, modelFor, initialState, reducer, sessionsToClose, type AppState, type PendingQuestion } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 
@@ -19,6 +19,19 @@ describe('reducer', () => {
     expect(s.usage).toEqual(usage);
     expect(s.connected).toBe(true);
     expect(play([{ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] }], s).projects[0]?.name).toBe('w');
+    expect(s.gemini).toBeNull();
+    const g = { available: true, loggedIn: { g1: true, g2: false } };
+    expect(play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false }, gemini: g }]).gemini).toEqual(g);
+  });
+
+  it('engineOf / modelFor know Gemini; the 자동 engine never keeps a Gemini model', () => {
+    expect(engineOf('gemini-flash')).toBe('gemini');
+    expect(modelFor('gemini', 'opus')).toBe('gemini-pro');
+    expect(modelFor('gemini', 'gemini-flash')).toBe('gemini-flash');
+    expect(modelFor('claude', 'gemini-pro')).toBe('opus');
+    let s = reducer(initialState, { type: 'set_model', model: 'gemini-flash' });
+    s = reducer(s, { type: 'set_engine', engine: 'auto' });
+    expect(s.panes[0]?.model).toBe('opus');
   });
 
   it('pins come from hello/index and set_pins; an index without pins keeps them (F2)', () => {

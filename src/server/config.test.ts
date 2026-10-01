@@ -52,6 +52,7 @@ describe('config', () => {
   it('codex bin, sessions root and attachments dir (D11)', () => {
     const cfg = loadConfig({ PATH: '/nonexistent', CODEX_HOME: '/h/.codex-alt' }, '/h', '/repo');
     expect(cfg.codexBin).toBeNull();
+    expect(cfg.geminiBin).toBeNull();
     expect(cfg.codexSessionsRoot).toBe('/h/.codex-alt/sessions');
     expect(cfg.attachmentsDir).toBe('/h/.config/deck/attachments');
     expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').codexSessionsRoot).toBe('/h/.codex/sessions');

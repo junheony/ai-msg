@@ -7,6 +7,8 @@ import { AttachmentStore } from '../attachments/AttachmentStore';
 import type { ServerMessage } from '../../shared/protocol';
 import { StubEngine, failResult, okResult } from '../engine/StubEngine';
 import type { CodexEngine, CodexTurnRequest } from '../engine/CodexEngine';
+import type { GeminiTurnRequest } from '../engine/GeminiEngine';
+import type { GeminiAccount } from '../../shared/accounts';
 import type { EngineEvent } from '../engine/Engine';
 import { readCooldownUntilMs } from '../routing/cooldown';
 import { SessionIndex } from '../sessions/SessionIndex';
@@ -636,5 +638,94 @@ describe('TurnRunner: 자동 승인', () => {
       await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'codex', ...(sent ? { sandbox: sent } : {}) }, c.sink);
       expect(codex.calls[0]?.sandbox).toBe(want);
     }
+  });
+});
+
+const GSID = '4f1c2b9e-1111-4222-8333-944455556666';
+const GSID2 = '4f1c2b9e-1111-4222-8333-944455550002';
+
+function fakeGemini(loggedIn: GeminiAccount[], events: (req: GeminiTurnRequest) => EngineEvent[]) {
+  const calls: GeminiTurnRequest[] = [];
+  return { calls, dep: { loggedIn: (a: GeminiAccount) => loggedIn.includes(a), engine: { async *runTurn(req: GeminiTurnRequest) { calls.push(req); for (const e of events(req)) yield e; } } } };
+}
+
+const geminiOk = (sid: string, text = 'ok'): EngineEvent[] => [
+  { kind: 'init', sessionId: sid, model: 'gemini-2.5-pro' },
+  { kind: 'delta', text },
+  { kind: 'result', sessionId: sid, ok: true, text, usage: { inputTokens: 60, outputTokens: 30, cacheReadTokens: 40, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' },
+];
+const geminiQuota = (sid: string): EngineEvent[] => [
+  { kind: 'init', sessionId: sid, model: 'gemini-2.5-pro' },
+  { kind: 'result', sessionId: sid, ok: false, text: '', usage: ZERO, errorText: 'You have exhausted your daily quota on this model.', stderr: null, errorKind: null, terminalReason: null },
+];
+const ZERO = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+
+describe('TurnRunner: Gemini sessions (explicit only)', () => {
+  it('engine gemini: first logged-in account, read-only by default, stores a pinned gemini state and a sidebar entry', async () => {
+    const g = fakeGemini(['g1', 'g2'], () => geminiOk(GSID));
+    const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'hello gemini\nmore', engine: 'gemini', model: 'gemini-flash', effort: 'high' }, c.sink);
+    expect(g.calls[0]).toMatchObject({ account: 'g1', cwd: '/w', resumeSessionId: null, model: 'gemini-flash', sandbox: 'read-only', prompt: 'hello gemini\nmore' });
+    expect(g.calls[0]).not.toHaveProperty('effort');
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'g1', engine: 'gemini', model: 'gemini-flash', reason: 'Gemini 지정 · G1' });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: GSID, badge: { account: 'g1', model: 'gemini-flash', usage: { cacheReadTokens: 40 } } });
+    expect(c.deps.store.get(GSID)).toMatchObject({ engine: 'gemini', account: 'g1', cwd: '/w', sandbox: 'read-only', defaultModel: 'gemini-flash', title: 'hello gemini', lastTurnAtMs: NOW });
+    expect(c.deps.store.codexEntries()).toEqual([expect.objectContaining({ sessionId: GSID, account: 'g1', engine: 'gemini', title: 'hello gemini' })]);
+    expect((c.deps.engine as StubEngine).calls).toHaveLength(0);
+  });
+
+  it('g1 not logged in → g2; none logged in → 로그인 필요 without running; no CLI → error', async () => {
+    const g = fakeGemini(['g2'], () => geminiOk(GSID));
+    const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'gemini' }, c.sink);
+    expect(g.calls[0]).toMatchObject({ account: 'g2', model: 'gemini-pro' });
+
+    const none = fakeGemini([], () => geminiOk(GSID));
+    const c2 = await ctx(new StubEngine(async () => []), { gemini: none.dep });
+    await new TurnRunner(c2.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'gemini' }, c2.sink);
+    expect(none.calls).toHaveLength(0);
+    expect(c2.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, errorText: expect.stringContaining('로그인 필요') });
+
+    const c3 = await ctx(new StubEngine(async () => []), { gemini: null });
+    await new TurnRunner(c3.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'gemini' }, c3.sink);
+    expect(c3.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, errorText: 'gemini CLI 를 찾을 수 없습니다' });
+  });
+
+  it('resume stays on the pinned account, cwd and sandbox; a Claude model is ignored', async () => {
+    const g = fakeGemini(['g1', 'g2'], (req) => geminiOk(req.resumeSessionId ?? GSID));
+    const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
+    await c.deps.store.set({ engine: 'gemini', account: 'g2', sessionId: GSID, cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gemini-flash', sandbox: 'workspace-write', createdAtMs: 1, title: 't' });
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/elsewhere', sessionId: GSID, text: 'again', model: 'opus', sandbox: 'read-only' }, c.sink);
+    expect(g.calls[0]).toMatchObject({ account: 'g2', cwd: '/w2', resumeSessionId: GSID, model: 'gemini-flash', sandbox: 'workspace-write' });
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'g2', reason: 'Gemini 세션 · G2' });
+    expect(c.deps.store.get(GSID)).toMatchObject({ account: 'g2', title: 't', createdAtMs: 1, lastTurnAtMs: NOW });
+  });
+
+  it('a pinned account that lost its login fails the turn instead of switching accounts', async () => {
+    const g = fakeGemini(['g1'], () => geminiOk(GSID));
+    const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
+    await c.deps.store.set({ engine: 'gemini', account: 'g2', sessionId: GSID, cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gemini-pro', sandbox: 'read-only', createdAtMs: 1 });
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w2', sessionId: GSID, text: 'x' }, c.sink);
+    expect(g.calls).toHaveLength(0);
+    expect(c.msgs.at(-1)).toMatchObject({ ok: false, errorText: 'Gemini G2 로그인 필요' });
+  });
+
+  it('a quota failure cools that account down: the next new Gemini session opens on the other one', async () => {
+    const g = fakeGemini(['g1', 'g2'], (req) => (req.account === 'g1' ? geminiQuota(GSID) : geminiOk(GSID2)));
+    const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'gemini' }, c.sink);
+    expect(c.msgs.at(-1)).toMatchObject({ ok: false, errorText: expect.stringContaining('quota') });
+    await runner.run({ turnId: 't2', cwd: '/w', sessionId: null, text: 'x', engine: 'gemini' }, c.sink);
+    expect(g.calls.map((r) => r.account)).toEqual(['g1', 'g2']);
+  });
+
+  it('자동 (engine and model) never opens on Gemini', async () => {
+    const g = fakeGemini(['g1', 'g2'], () => geminiOk(GSID));
+    const eng = new StubEngine(() => ok('c1'));
+    const c = await ctx(eng, { gemini: g.dep });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: '보안 취약점 검토해줘', engine: 'auto', model: 'auto' }, c.sink);
+    expect(g.calls).toHaveLength(0);
+    expect(eng.calls).toHaveLength(1);
   });
 });

@@ -1,6 +1,6 @@
 import type { Account, Seat } from '../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import type { DeckSettings, ServerMessage, TurnBadge } from '../shared/protocol';
+import { DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
+import type { DeckSettings, GeminiStatus, ServerMessage, TurnBadge } from '../shared/protocol';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
 
@@ -49,6 +49,8 @@ export type AppState = {
   activePaneId: string;
   error: string | null;
   codexAvailable: boolean;
+  /** gemini-cli status from hello; null = not installed (or an older server). */
+  gemini: GeminiStatus | null;
   /** F2: pinned session ids, pin order (server-side pins.json). */
   pins: string[];
   /** Recent Claude Desktop sessions (server-side, newest first). */
@@ -63,7 +65,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, pins: [], desktop: [], autoApprove: null };
+export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage }
@@ -106,12 +108,13 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
 
 /** Which engine a model runs on (자동 picks among Claude models). */
 export function engineOf(model: ModelChoice): EngineKind {
-  return isCodexModel(model) ? 'codex' : 'claude';
+  return isCodexModel(model) ? 'codex' : isGeminiModel(model) ? 'gemini' : 'claude';
 }
 
 /** The pane's model if it belongs to `engine`, else that engine's default. 자동 stays 자동 on Claude (the session keeps its model). */
 export function modelFor(engine: EngineKind, model: ModelChoice): ModelChoice {
   if (engine === 'codex') return isCodexModel(model) ? model : DEFAULT_CODEX_MODEL;
+  if (engine === 'gemini') return isGeminiModel(model) ? model : DEFAULT_GEMINI_MODEL;
   return isClaudeModel(model) || model === 'auto' ? model : DEFAULT_MODEL;
 }
 
@@ -243,7 +246,7 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
     case 'hello':
-      return applySettings({ ...state, connected: true, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
+      return applySettings({ ...state, connected: true, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
     case 'settings': return applySettings(state, msg.settings);
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
@@ -315,7 +318,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
     case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
-    case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? p.model : modelFor(action.engine, p.model) }));
+    case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model) }));
     case 'set_sandbox': return updatePane(state, action.paneId, (p) => ({ ...p, sandbox: action.sandbox }));
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
