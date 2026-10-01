@@ -11,6 +11,7 @@ import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
+import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
 
@@ -23,6 +24,9 @@ async function main(): Promise<void> {
   const pins = new PinStore(cfg.pinsFile);
   await Promise.all([index.refresh(), store.load(), pins.load()]);
   usage.start();
+  // F3: GPT usage from the newest Codex rollouts (Desktop/CLI too), at start and every 60 s.
+  const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
+  codexUsage.start();
   const attachments = new AttachmentStore(cfg.attachmentsDir);
   await attachments.init();
   attachments.startPurgeTimer();
@@ -60,7 +64,7 @@ async function main(): Promise<void> {
   for (const a of addresses) console.log(`deck: http://${a}:${cfg.port}`);
   console.log(`deck: 로그인 토큰은 ${cfg.tokenFile} 에 있습니다 (내용은 출력하지 않음)`);
 
-  const shutdown = () => { ws.close(); usage.stop(); attachments.stop(); for (const s of servers) s.close(); setTimeout(() => process.exit(0), 200); };
+  const shutdown = () => { ws.close(); usage.stop(); codexUsage.stop(); attachments.stop(); for (const s of servers) s.close(); setTimeout(() => process.exit(0), 200); };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }

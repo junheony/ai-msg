@@ -122,11 +122,19 @@ export class UsageService {
     // A 'down' card (e.g. setup_needed) carries no usable numbers, so it never retires an observation.
     if (u.status === 'down' || Number.isNaN(fetched) || obs.atMs > fetched) {
       const overridden: AccountUsage = { ...u, fiveHour: obs.w.fiveHour ?? u.fiveHour, weekly: obs.w.weekly ?? u.weekly };
-      if (seat === 'gpt') return { ...overridden, status: 'ok', fetchedAt: new Date(obs.atMs).toISOString() };
+      if (seat === 'gpt') return { ...overridden, status: this.obsStatus(obs.w), fetchedAt: new Date(obs.atMs).toISOString() };
       return overridden;
     }
     this.turnObs.delete(seat);
     return u;
+  }
+
+  /** F3: an observation is stale once every window it carries has reset since (its numbers no longer apply). */
+  private obsStatus(w: TurnWindows): 'ok' | 'stale' {
+    const wins = [w.fiveHour, w.weekly].filter((x): x is UsageWindow => !!x);
+    const nowMs = this.now().getTime();
+    const reset = (x: UsageWindow) => x.resetsAt !== null && parseIsoUtc(x.resetsAt) <= nowMs;
+    return wins.length > 0 && wins.every(reset) ? 'stale' : 'ok';
   }
 
   async pollOnce(): Promise<void> {
@@ -170,12 +178,14 @@ export class UsageService {
    */
   applyTurn(seat: Seat, w: TurnWindows, observedAtMs: number = this.now().getTime()): void {
     const prev = this.turnObs.get(seat);
+    // F3: the rollout poller may report a reading older than one a turn already gave; never go back in time.
+    if (prev && observedAtMs < prev.atMs) return;
     const merged: TurnWindows = { ...prev?.w, ...(w.fiveHour ? { fiveHour: w.fiveHour } : {}), ...(w.weekly ? { weekly: w.weekly } : {}) };
     const atMs = Math.max(observedAtMs, prev?.atMs ?? 0);
     this.turnObs.set(seat, { w: merged, atMs });
     const cur = this.seatOf(this.snap, seat);
     let next: AccountUsage = { ...cur, fiveHour: w.fiveHour ?? cur.fiveHour, weekly: w.weekly ?? cur.weekly };
-    if (seat === 'gpt') next = { ...next, status: 'ok', fetchedAt: new Date(atMs).toISOString() };
+    if (seat === 'gpt') next = { ...next, status: this.obsStatus(merged), fetchedAt: new Date(atMs).toISOString() };
     const generatedAt = this.now().toISOString();
     if (seat === 'gpt') this.publish({ ...this.snap, generatedAt, gpt: next });
     else this.publish({ ...this.snap, generatedAt, accounts: { ...this.snap.accounts, [seat]: next } });

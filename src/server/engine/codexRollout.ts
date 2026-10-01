@@ -36,8 +36,10 @@ function windowOf(w: unknown): { usedPct: number; resetsAt: string | null } | nu
   return { usedPct: Math.round(r.used_percent), resetsAt };
 }
 
-/** The last `event_msg`/`token_count` with `rate_limits`: window 10080 min = weekly, 300 min = 5 h (D5). */
-export function rolloutRateLimits(lines: unknown[]): TurnWindows | null {
+export type RateLimitObservation = { windows: TurnWindows; /** the event's own timestamp; null when the line has none */ atMs: number | null };
+
+/** F3: like `rolloutRateLimits`, plus when that `token_count` was written. */
+export function rolloutRateLimitsAt(lines: unknown[]): RateLimitObservation | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const r = rec(lines[i]);
     const p = r ? rec(r.payload) : null;
@@ -52,9 +54,16 @@ export function rolloutRateLimits(lines: unknown[]): TurnWindows | null {
       if (w.window_minutes === 10080) out.weekly = win;
       else if (w.window_minutes === 300) out.fiveHour = win;
     }
-    return out.weekly || out.fiveHour ? out : null;
+    if (!out.weekly && !out.fiveHour) return null;
+    const ts = typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : Number.NaN;
+    return { windows: out, atMs: Number.isNaN(ts) ? null : ts };
   }
   return null;
+}
+
+/** The last `event_msg`/`token_count` with `rate_limits`: window 10080 min = weekly, 300 min = 5 h (D5). */
+export function rolloutRateLimits(lines: unknown[]): TurnWindows | null {
+  return rolloutRateLimitsAt(lines)?.windows ?? null;
 }
 
 function parseLines(text: string): unknown[] {
@@ -66,18 +75,67 @@ function parseLines(text: string): unknown[] {
   return out;
 }
 
-/** Reads only the tail (rate limits are re-emitted every turn). */
-export async function readRolloutRateLimits(file: string, maxBytes = 256 * 1024): Promise<TurnWindows | null> {
+async function readTailLines(file: string, maxBytes: number): Promise<unknown[]> {
   const fh = await fs.open(file, 'r');
   try {
     const { size } = await fh.stat();
     const start = Math.max(0, size - maxBytes);
     const buf = Buffer.alloc(size - start);
     const { bytesRead } = await fh.read(buf, 0, buf.length, start);
-    return rolloutRateLimits(parseLines(buf.subarray(0, bytesRead).toString('utf8')));
+    return parseLines(buf.subarray(0, bytesRead).toString('utf8'));
   } finally {
     await fh.close();
   }
+}
+
+/** Reads only the tail (rate limits are re-emitted every turn). */
+export async function readRolloutRateLimits(file: string, maxBytes = 256 * 1024): Promise<TurnWindows | null> {
+  return rolloutRateLimits(await readTailLines(file, maxBytes));
+}
+
+export async function readRolloutRateLimitsAt(file: string, maxBytes = 256 * 1024): Promise<RateLimitObservation | null> {
+  return rolloutRateLimitsAt(await readTailLines(file, maxBytes));
+}
+
+/**
+ * F3: the `n` most recently modified `rollout-*.jsonl` under `sessionsRoot/YYYY/MM/DD`, any originator.
+ * Every date dir is looked at: a long-running thread started weeks ago keeps appending to its old file.
+ */
+export async function newestRolloutFiles(sessionsRoot: string, n = 5): Promise<string[]> {
+  const subdirs = async (p: string): Promise<string[]> => {
+    try { return (await fs.readdir(p, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => path.join(p, d.name)); } catch { return []; }
+  };
+  const found: { file: string; mtimeMs: number }[] = [];
+  for (const y of await subdirs(sessionsRoot)) {
+    for (const m of await subdirs(y)) {
+      for (const d of await subdirs(m)) {
+        let names: string[];
+        try { names = await fs.readdir(d); } catch { continue; }
+        for (const name of names) {
+          if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
+          const file = path.join(d, name);
+          try { found.push({ file, mtimeMs: (await fs.stat(file)).mtimeMs }); } catch { /* vanished */ }
+        }
+      }
+    }
+  }
+  return found.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, n).map((f) => f.file);
+}
+
+/** F3: the newest rate-limit observation among the newest rollout files (tail-read); a line without a timestamp counts at its file's mtime. */
+export async function latestRolloutRateLimits(sessionsRoot: string, n = 5, maxBytes = 256 * 1024): Promise<{ windows: TurnWindows; atMs: number } | null> {
+  let best: { windows: TurnWindows; atMs: number } | null = null;
+  for (const file of await newestRolloutFiles(sessionsRoot, n)) {
+    try {
+      const obs = await readRolloutRateLimitsAt(file, maxBytes);
+      if (!obs) continue;
+      const atMs = obs.atMs ?? (await fs.stat(file)).mtimeMs;
+      if (!best || atMs > best.atMs) best = { windows: obs.windows, atMs };
+    } catch {
+      // unreadable file: skip
+    }
+  }
+  return best;
 }
 
 /** Injected context the CLI prepends to the user's turn (environment, AGENTS.md, plugins, permissions). */
