@@ -1,4 +1,4 @@
-import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, type AnyModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind } from '../shared/models';
+import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { MAX_PANES, newPane, type AppState, type ChatItem, type PaneState, type SentFile, type SentRecord } from './state';
 
 /**
@@ -10,7 +10,8 @@ export const UI_KEY = 'deck.ui.v1';
 export const SENT_KEY = 'deck.sent.v1';
 
 export type PersistedSession = { sessionId: string | null; cwd: string; title: string; engine: EngineKind | null };
-export type PersistedPane = { session: PersistedSession | null; model: AnyModel; efforts: Record<EngineKind, Effort>; engine: EngineChoice; sandbox: CodexSandbox };
+/** `autoEffort`: the effort picked while the model is 자동 (null = 자동 too). */
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -21,7 +22,8 @@ function storage(): Store | null {
 
 const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 const shortStr = (x: unknown, max: number): x is string => typeof x === 'string' && x.length <= max;
-const ENGINES: readonly EngineChoice[] = ['claude', 'codex', 'auto'];
+const ENGINES: readonly EngineChoice[] = ['claude', 'codex', 'gemini', 'auto'];
+const isModelChoice = (x: unknown): x is ModelChoice => x === 'auto' || isClaudeModel(x) || isCodexModel(x) || isGeminiModel(x);
 
 function readJson(key: string, store: Store | null): unknown {
   try {
@@ -41,18 +43,19 @@ function session(x: unknown): PersistedSession | null {
   const sessionId = x.sessionId === null ? null : shortStr(x.sessionId, 200) && x.sessionId ? x.sessionId : undefined;
   if (sessionId === undefined) return null;
   const title = shortStr(x.title, 500) ? x.title : (sessionId?.slice(0, 8) ?? '새 세션');
-  const engine = x.engine === 'claude' || x.engine === 'codex' ? x.engine : null;
+  const engine = x.engine === 'claude' || x.engine === 'codex' || x.engine === 'gemini' ? x.engine : null;
   return { sessionId, cwd: x.cwd, title, engine };
 }
 
 function pane(x: unknown): PersistedPane {
   const d = newPane('');
-  if (!isObj(x)) return { session: null, model: d.model, efforts: { ...DEFAULT_EFFORT }, engine: d.engine, sandbox: d.sandbox };
+  if (!isObj(x)) return { session: null, model: d.model, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: d.engine, sandbox: d.sandbox };
   const e = isObj(x.efforts) ? x.efforts : {};
   return {
     session: session(x.session),
-    model: isClaudeModel(x.model) || isCodexModel(x.model) ? x.model : d.model,
-    efforts: { claude: isEffort(e.claude) ? e.claude : DEFAULT_EFFORT.claude, codex: isEffort(e.codex) ? e.codex : DEFAULT_EFFORT.codex },
+    model: isModelChoice(x.model) ? x.model : d.model,
+    efforts: { claude: isEffort(e.claude) ? e.claude : DEFAULT_EFFORT.claude, codex: isEffort(e.codex) ? e.codex : DEFAULT_EFFORT.codex, gemini: isEffort(e.gemini) ? e.gemini : DEFAULT_EFFORT.gemini },
+    autoEffort: isEffort(x.autoEffort) ? x.autoEffort : null,
     engine: ENGINES.includes(x.engine as EngineChoice) ? (x.engine as EngineChoice) : d.engine,
     sandbox: CODEX_SANDBOXES.includes(x.sandbox as CodexSandbox) ? (x.sandbox as CodexSandbox) : d.sandbox,
   };
@@ -79,7 +82,7 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
     v: 1,
     panes: state.panes.map((p) => ({
       session: p.session ? { sessionId: p.session.sessionId, cwd: p.session.cwd, title: p.session.title, engine: p.session.engine } : null,
-      model: p.model, efforts: p.efforts, engine: p.engine, sandbox: p.sandbox,
+      model: p.model, efforts: p.efforts, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
@@ -100,7 +103,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null): AppState {
   const panes: PaneState[] = ui.panes.map((p, i) => ({
     ...newPane(`p${i}`),
     session: p.session ? { ...p.session, account: null, sandbox: null } : null,
-    model: p.model, efforts: { ...p.efforts }, engine: p.engine, sandbox: p.sandbox,
+    model: p.model, efforts: { ...p.efforts }, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
   }));
   return { ...base, panes, activePaneId: panes[ui.active]?.id ?? panes[0]!.id };
 }

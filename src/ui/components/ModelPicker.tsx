@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { EFFORT_LABEL, MODEL_EFFORTS, MODEL_INFO, isCodexModel, type AnyModel, type Effort } from '../../shared/models';
+import { AUTO_MODEL_INFO, EFFORTS, EFFORT_LABEL, MODEL_EFFORTS, MODEL_INFO, isCodexModel, isGeminiModel, type Effort, type ModelChoice } from '../../shared/models';
 
 const MARGIN = 8;
+
+const infoOf = (m: ModelChoice) => (m === 'auto' ? AUTO_MODEL_INFO : MODEL_INFO[m]);
 const GAP = 6;
 
 /**
@@ -10,17 +12,19 @@ const GAP = 6;
  * The popover is `position: fixed` and clamped to the viewport, so narrow split panes and phones never clip it.
  */
 export function ModelPicker({ models, model, effort, onModel, onEffort }: {
-  models: readonly AnyModel[];
-  model: AnyModel;
-  effort: Effort;
-  onModel: (m: AnyModel) => void;
-  onEffort: (e: Effort) => void;
+  models: readonly ModelChoice[];
+  model: ModelChoice;
+  /** null = 자동 (only offered while the model is 자동). */
+  effort: Effort | null;
+  onModel: (m: ModelChoice) => void;
+  onEffort: (e: Effort | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<CSSProperties>({});
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
-  const efforts = MODEL_EFFORTS[model];
+  const auto = model === 'auto';
+  const efforts = auto ? EFFORTS : MODEL_EFFORTS[model];
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -57,11 +61,12 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: {
     return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  const claude = models.filter((m) => !isCodexModel(m));
+  const claude = models.filter((m) => !isCodexModel(m) && !isGeminiModel(m));
   const gpt = models.filter((m) => isCodexModel(m));
-  const groups = [{ title: 'Claude', items: claude }, { title: 'GPT', items: gpt }].filter((g) => g.items.length);
-  const effortShown = efforts.includes(effort);
-  const label = effortShown ? `${MODEL_INFO[model].name} · ${EFFORT_LABEL[effort]}` : MODEL_INFO[model].name;
+  const gemini = models.filter((m) => isGeminiModel(m));
+  const groups = [{ title: 'Claude', items: claude }, { title: 'GPT', items: gpt }, { title: 'Gemini', items: gemini }].filter((g) => g.items.length);
+  const effortShown = effort !== null && efforts.includes(effort);
+  const label = effortShown ? `${infoOf(model).name} · ${EFFORT_LABEL[effort]}` : infoOf(model).name;
 
   return (
     <span className="model-picker">
@@ -94,8 +99,8 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: {
                   onClick={() => onModel(m)}
                 >
                   <span className="mp-text">
-                    <span className="mp-name">{MODEL_INFO[m].name}</span>
-                    <span className="mp-desc">{MODEL_INFO[m].description}</span>
+                    <span className="mp-name">{infoOf(m).name}</span>
+                    <span className="mp-desc">{infoOf(m).description}</span>
                   </span>
                   <span className="mp-check" aria-hidden="true">{m === model ? '✓' : ''}</span>
                 </button>
@@ -106,6 +111,11 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: {
             <div className="mp-section" role="group" aria-label="추론 수준">
               <div className="mp-head">추론 수준</div>
               <div className="mp-effort">
+                {auto && (
+                  <button type="button" role="menuitemradio" aria-checked={effort === null} className={effort === null ? 'on' : ''} title="Sonnet 중간 · Opus/Fable 높음" onClick={() => onEffort(null)}>
+                    자동
+                  </button>
+                )}
                 {efforts.map((e) => (
                   <button
                     key={e}

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isAccount, projectsDir, type Account } from '../shared/accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
+import { resolveGeminiBin } from './engine/GeminiEngine';
 import { defaultCooldownDir } from './routing/cooldown';
 
 export type DeckConfig = {
@@ -25,6 +26,8 @@ export type DeckConfig = {
   extraHosts: string[];
   /** D11: null = Codex disabled (no `codex` binary found). */
   codexBin: string | null;
+  /** null = Gemini disabled (no `gemini` binary found). Accounts live under ~/.config/deck/gemini/<g1|g2>. */
+  geminiBin: string | null;
   /** `$CODEX_HOME/sessions` (rollout files; read-only for deck). */
   codexSessionsRoot: string;
   /** D7: private attachment dir (0700) under the config dir. */
@@ -110,6 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     uiDir: env.DECK_UI_DIR || path.join(repoRoot, 'dist', 'ui'),
     extraHosts: (env.DECK_EXTRA_HOSTS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     codexBin: resolveCodexBin(env, home),
+    geminiBin: resolveGeminiBin(env, home),
     codexSessionsRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),
     attachmentsDir: path.join(configDir, 'attachments'),
     recentFoldersFile: path.join(configDir, 'recent-folders.json'),

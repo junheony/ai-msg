@@ -14,9 +14,19 @@ export type CodexModel = 'gpt-6-sol' | 'gpt-6-astra';
 export const CODEX_MODELS: readonly CodexModel[] = ['gpt-6-sol', 'gpt-6-astra'];
 export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6-sol';
 
-export type AnyModel = ClaudeModel | CodexModel;
+/**
+ * Gemini (explicit engine only, never chosen by 자동). gemini-cli 0.62 has no Gemini 4.0 id; deck sends the CLI's
+ * aliases (`-m pro` / `-m flash`) so the server-side model config picks the current one (docs/gemini-spike.md).
+ */
+export type GeminiModel = 'gemini-pro' | 'gemini-flash';
+export const GEMINI_MODELS: readonly GeminiModel[] = ['gemini-pro', 'gemini-flash'];
+export const DEFAULT_GEMINI_MODEL: GeminiModel = 'gemini-pro';
+/** The `-m` value gemini-cli gets for each deck id. */
+export const GEMINI_CLI_ALIAS: Record<GeminiModel, string> = { 'gemini-pro': 'pro', 'gemini-flash': 'flash' };
 
-export const MODEL_LABEL: Record<AnyModel, string> = { sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable', 'gpt-6-sol': 'GPT Sol', 'gpt-6-astra': 'GPT Astra' };
+export type AnyModel = ClaudeModel | CodexModel | GeminiModel;
+
+export const MODEL_LABEL: Record<AnyModel, string> = { sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable', 'gpt-6-sol': 'GPT Sol', 'gpt-6-astra': 'GPT Astra', 'gemini-pro': 'Gemini Pro', 'gemini-flash': 'Gemini Flash' };
 
 /**
  * Picker rows: exact versions. Claude names/ids from the SDK's `supportedModels()` (agent-sdk 0.3.285, account B,
@@ -29,6 +39,8 @@ export const MODEL_INFO: Record<AnyModel, { name: string; description: string }>
   fable: { name: 'Fable 5.1', description: '가장 어려운 문제용 · 주간 80% 넘으면 Opus 로' },
   'gpt-6-sol': { name: 'GPT-6-Sol', description: '코딩과 일상 작업의 주력 모델' },
   'gpt-6-astra': { name: 'GPT-6-Astra', description: '가장 까다로운 작업용 최상위 모델' },
+  'gemini-pro': { name: 'Gemini Pro', description: 'gemini-cli 의 pro 별칭 · 서버가 현재 Pro 모델로 연결' },
+  'gemini-flash': { name: 'Gemini Flash', description: 'gemini-cli 의 flash 별칭 · 빠르고 가벼운 작업용' },
 };
 
 /**
@@ -40,9 +52,19 @@ export const MODEL_INFO: Record<AnyModel, { name: string; description: string }>
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh'];
 export const EFFORT_LABEL: Record<Effort, string> = { low: '낮음', medium: '중간', high: '높음', xhigh: '엑스트라' };
-/** Per model: every model in the lineup reports all four (supportedEffortLevels / supported_reasoning_levels). */
-export const MODEL_EFFORTS: Record<AnyModel, readonly Effort[]> = { opus: EFFORTS, sonnet: EFFORTS, fable: EFFORTS, 'gpt-6-sol': EFFORTS, 'gpt-6-astra': EFFORTS };
-export const DEFAULT_EFFORT: Record<'claude' | 'codex', Effort> = { claude: 'high', codex: 'medium' };
+/** Per model: every Claude/GPT model reports all four (supportedEffortLevels / supported_reasoning_levels); gemini-cli has no effort flag. */
+export const MODEL_EFFORTS: Record<AnyModel, readonly Effort[]> = { opus: EFFORTS, sonnet: EFFORTS, fable: EFFORTS, 'gpt-6-sol': EFFORTS, 'gpt-6-astra': EFFORTS, 'gemini-pro': [], 'gemini-flash': [] };
+/** gemini: never sent (no CLI flag); present so per-engine effort maps stay total. */
+export const DEFAULT_EFFORT: Record<EngineKind, Effort> = { claude: 'high', codex: 'medium', gemini: 'medium' };
+
+/**
+ * 자동 (picker value 'auto'): the server picks the Claude model for the first turn of a new session from the prompt
+ * (routing/AutoModel); later turns keep that model. Never a mid-session switch (prompt cache).
+ */
+export type ModelChoice = AnyModel | 'auto';
+export const AUTO_MODEL_INFO = { name: '자동', description: '첫 턴 내용으로 Sonnet · Opus · Fable 중 선택' } as const;
+/** Effort 자동 uses when the user did not set one explicitly. */
+export const AUTO_EFFORT: Record<ClaudeModel, Effort> = { sonnet: 'medium', opus: 'high', fable: 'high' };
 
 export function isEffort(x: unknown): x is Effort {
   return x === 'low' || x === 'medium' || x === 'high' || x === 'xhigh';
@@ -61,11 +83,15 @@ export function isCodexModel(x: unknown): x is CodexModel {
   return x === 'gpt-6-sol' || x === 'gpt-6-astra';
 }
 
+export function isGeminiModel(x: unknown): x is GeminiModel {
+  return x === 'gemini-pro' || x === 'gemini-flash';
+}
+
 /** Fable (7d) usage at or above this is not Fable-eligible (routing) and downgrades to Opus (model policy). */
 export const FABLE_MAX_PCT = 80;
 
-/** Spec §4.3: the engine is fixed per session; 'auto' is resolved once when the session is created. */
-export type EngineKind = 'claude' | 'codex';
+/** Spec §4.3: the engine is fixed per session; 'auto' is resolved once when the session is created (Claude or GPT, never Gemini). */
+export type EngineKind = 'claude' | 'codex' | 'gemini';
 export type EngineChoice = EngineKind | 'auto';
 
 /** D2: codex exec cannot relay approvals, so the sandbox is the guard. Never danger-full-access. */
@@ -77,3 +103,5 @@ export function defaultSandbox(autoApprove: boolean): CodexSandbox {
   return autoApprove ? 'workspace-write' : DEFAULT_SANDBOX;
 }
 export const SANDBOX_LABEL: Record<CodexSandbox, string> = { 'read-only': '읽기 전용', 'workspace-write': '작업폴더 쓰기(네트워크 차단)' };
+/** Gemini: read-only = `--approval-mode plan`; workspace-write = `auto_edit` (edits run, shell is denied headless). Network stays open. */
+export const GEMINI_SANDBOX_LABEL: Record<CodexSandbox, string> = { 'read-only': '읽기 전용', 'workspace-write': '파일 편집 허용(셸 거부)' };

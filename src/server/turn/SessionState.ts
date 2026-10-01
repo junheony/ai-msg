@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { Account } from '../../shared/accounts';
-import type { ClaudeModel, CodexModel, CodexSandbox } from '../../shared/models';
+import type { Account, GeminiAccount } from '../../shared/accounts';
+import type { ClaudeModel, CodexModel, CodexSandbox, GeminiModel } from '../../shared/models';
 import type { SessionEntry } from '../../shared/session-types';
 
 type SessionBase = {
@@ -38,10 +38,26 @@ export type CodexSessionState = SessionBase & {
   createdAtMs: number;
 };
 
-export type SessionState = ClaudeSessionState | CodexSessionState;
+/**
+ * A gemini-cli session deck created. sessionId = the CLI's session id (init.session_id). Pinned to its account and cwd:
+ * the CLI keeps chats under `$GEMINI_CLI_HOME/.gemini/tmp/<project>/chats`, so a resume needs both unchanged.
+ */
+export type GeminiSessionState = SessionBase & {
+  engine: 'gemini';
+  account: GeminiAccount;
+  defaultModel: GeminiModel;
+  sandbox: CodexSandbox;
+  createdAtMs: number;
+};
+
+export type SessionState = ClaudeSessionState | CodexSessionState | GeminiSessionState;
 
 export function isCodexState(s: SessionState): s is CodexSessionState {
   return s.engine === 'codex';
+}
+
+export function isGeminiState(s: SessionState): s is GeminiSessionState {
+  return s.engine === 'gemini';
 }
 
 let tmpCounter = 0;
@@ -81,10 +97,17 @@ export class SessionStateStore {
     return [...this.map.values()];
   }
 
-  /** D4: Codex sessions for the sidebar (Claude ones come from SessionIndex's profile scan). */
+  /** D4: Codex and Gemini sessions for the sidebar (Claude ones come from SessionIndex's profile scan). */
   codexEntries(): SessionEntry[] {
     const out: SessionEntry[] = [];
     for (const s of this.map.values()) {
+      if (isGeminiState(s)) {
+        out.push({
+          sessionId: s.sessionId, account: s.account, engine: 'gemini', sandbox: s.sandbox, cwd: s.cwd, projectDir: '', file: '',
+          title: s.title ?? '(제목 없음)', lastModified: s.lastTurnAtMs ?? s.createdAtMs, sizeBytes: 0,
+        });
+        continue;
+      }
       if (!isCodexState(s)) continue;
       out.push({
         sessionId: s.sessionId, account: 'gpt', engine: 'codex', sandbox: s.sandbox, cwd: s.cwd,

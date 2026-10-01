@@ -1,4 +1,4 @@
-import { ACCOUNTS, CARD_ID, type Account, type Seat } from '../../shared/accounts';
+import { ACCOUNTS, CARD_ID, type Account, type UsageSeat } from '../../shared/accounts';
 import { emptyAccountUsage, emptySnapshot, parseIsoUtc, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits };
@@ -74,7 +74,7 @@ export class UsageService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<(s: UsageSnapshot) => void>();
   /** Per-turn windows and when they were observed; kept until the deck has a newer reading. */
-  private turnObs = new Map<Seat, { w: TurnWindows; atMs: number }>();
+  private turnObs = new Map<UsageSeat, { w: TurnWindows; atMs: number }>();
   /** Newest GPT credits reading; the usage-deck card has none, so it outlives the window overlay. */
   private gptCredits: { c: GptCredits; atMs: number } | null = null;
   private readonly url: string;
@@ -106,7 +106,7 @@ export class UsageService {
     for (const cb of this.listeners) cb(next);
   }
 
-  private seatOf(s: UsageSnapshot, seat: Seat): AccountUsage {
+  private seatOf(s: UsageSnapshot, seat: UsageSeat): AccountUsage {
     return seat === 'gpt' ? (s.gpt ?? emptyAccountUsage()) : s.accounts[seat];
   }
 
@@ -117,7 +117,7 @@ export class UsageService {
    * `setup_needed` (status 'down'); the observation carries `status: 'ok'` and its own
    * `fetchedAt` until a newer deck card wins.
    */
-  private overlay(seat: Seat, u: AccountUsage): AccountUsage {
+  private overlay(seat: UsageSeat, u: AccountUsage): AccountUsage {
     const obs = this.turnObs.get(seat);
     if (!obs) return u;
     const fetched = u.fetchedAt ? parseIsoUtc(u.fetchedAt) : Number.NaN;
@@ -182,7 +182,7 @@ export class UsageService {
    * `status: 'ok'` with `fetchedAt` = the observed time, even if the usage-deck `codex` card is
    * currently `setup_needed` — a newer deck card still wins afterwards (see `overlay`).
    */
-  applyTurn(seat: Seat, w: TurnWindows, observedAtMs: number = this.now().getTime()): void {
+  applyTurn(seat: UsageSeat, w: TurnWindows, observedAtMs: number = this.now().getTime()): void {
     const prev = this.turnObs.get(seat);
     // F3: the rollout poller may report a reading older than one a turn already gave; never go back in time.
     if (prev && observedAtMs < prev.atMs) return;

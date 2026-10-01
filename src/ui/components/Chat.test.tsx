@@ -50,6 +50,29 @@ describe('Chat', () => {
     expect(screen.queryByTestId('engine-select')).toBeNull();
   });
 
+  it('Gemini: option only with gemini-cli; disabled with 로그인 필요 until an account has credentials; Gemini models without effort', () => {
+    const out = { available: true, loggedIn: { g1: false, g2: false } };
+    renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false, gemini: out });
+    const opt = () => within(screen.getByTestId('engine-select')).getByRole('option', { name: /Gemini/ }) as HTMLOptionElement;
+    expect(opt().disabled).toBe(true);
+    expect(opt().textContent).toBe('Gemini · 로그인 필요');
+    // Without Codex there is no GPT or 자동 engine.
+    expect(within(screen.getByTestId('engine-select')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude', 'Gemini · 로그인 필요']);
+    cleanup();
+    renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, gemini: { available: false, loggedIn: { g1: false, g2: false } } });
+    expect(within(screen.getByTestId('engine-select')).queryByRole('option', { name: /Gemini/ })).toBeNull();
+    cleanup();
+    renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, engine: 'gemini', model: 'gemini-pro', effort: 'medium', gemini: { available: true, loggedIn: { g1: false, g2: true } } });
+    expect(opt().disabled).toBe(false);
+    expect(opt().textContent).toBe('Gemini');
+    expect(within(screen.getByTestId('sandbox-select')).getAllByRole('option').map((o) => o.textContent)).toEqual(['읽기 전용', '파일 편집 허용(셸 거부)']);
+    fireEvent.click(screen.getByTestId('model-picker'));
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent)).toEqual(['Gemini Pro', 'Gemini Flash']);
+    cleanup();
+    renderChat([], false, vi.fn(), { sessionEngine: 'gemini', sessionSandbox: 'read-only', model: 'gemini-pro' });
+    expect(screen.getByText('Gemini · 읽기 전용')).toBeTruthy();
+  });
+
   it('PF11: a new session follows the engine picker even when the session engine frozen at open says claude', () => {
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, engine: 'codex', sessionEngine: 'claude', model: 'gpt-6-sol' });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();

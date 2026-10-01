@@ -43,6 +43,7 @@ describe('ClientMessageSchema', () => {
     expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', model: 'gpt-5.6-sol' }).success).toBe(false);
     expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', attachments: ['../etc/passwd'] }).success).toBe(false);
     expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', attachments: Array(9).fill('11111111-1111-4111-8111-111111111111') }).success).toBe(false);
-    expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', engine: 'gemini' }).success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', engine: 'mistral' }).success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', engine: 'gemini', model: 'gemini-flash' }).success).toBe(true);
   });
 });

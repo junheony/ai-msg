@@ -67,10 +67,26 @@ describe('persist (ux-state)', () => {
     expect(ui.collapsed).toEqual(['/ok']);
     expect(ui.drawer).toBe(false);
     const d = newPane('');
-    expect(ui.panes[0]).toEqual({ session: { sessionId: 's1', cwd: '/w', title: 's1', engine: null }, model: d.model, efforts: { claude: 'high', codex: 'low' }, engine: 'claude', sandbox: 'read-only' });
+    expect(ui.panes[0]).toEqual({ session: { sessionId: 's1', cwd: '/w', title: 's1', engine: null }, model: d.model, efforts: { claude: 'high', codex: 'low', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'read-only' });
     expect(ui.panes[1]).toMatchObject({ session: null, model: 'sonnet' });
     expect(ui.panes[2]!.session).toBeNull();
-    expect(ui.panes[3]).toEqual({ session: null, model: d.model, efforts: d.efforts, engine: d.engine, sandbox: d.sandbox });
+    expect(ui.panes[3]).toEqual({ session: null, model: d.model, efforts: d.efforts, autoEffort: null, engine: d.engine, sandbox: d.sandbox });
+  });
+
+  it('keeps 자동 (model and its effort) and Gemini panes across a reload', () => {
+    const store = memStore();
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'w · 새 세션' });
+    s = reducer(s, { type: 'set_model', model: 'auto' });
+    s = reducer(s, { type: 'set_auto_effort', effort: 'low' });
+    s = reducer(s, { type: 'add_pane' });
+    s = reducer(s, { type: 'set_engine', engine: 'gemini' });
+    s = reducer(s, { type: 'open', sessionId: 'g-1', cwd: '/x', title: 'gem' });
+    s = { ...s, panes: s.panes.map((p, i) => (i === 1 && p.session ? { ...p, session: { ...p.session, engine: 'gemini' as const } } : p)) };
+    saveUi(snapshotUi(s, { collapsed: [], drawer: false }), null, store);
+    const h = hydrate(initialState, loadUi(store));
+    expect(h.panes[0]).toMatchObject({ model: 'auto', autoEffort: 'low' });
+    expect(h.panes[1]).toMatchObject({ engine: 'gemini', model: 'gemini-pro', session: { sessionId: 'g-1', engine: 'gemini' } });
+    expect(parseUi({ v: 1, panes: [{ model: 'auto', autoEffort: 'max' }] })!.panes[0]).toMatchObject({ model: 'auto', autoEffort: null });
   });
 
   it('saveUi writes only on change and survives a throwing storage', () => {

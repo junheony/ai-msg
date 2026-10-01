@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
-import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, SANDBOX_LABEL, type AnyModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind } from '../../shared/models';
+import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
+import type { GeminiStatus } from '../../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-types';
 import type { ChatItem, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
 import { latestTodos } from '../todos';
@@ -27,9 +28,9 @@ export type ChatProps = {
   sessionId?: string | null;
   /** Right-aligned header buttons (the pane's close button). */
   headActions?: ReactNode;
-  model: AnyModel;
-  /** Reasoning effort for `model`'s engine. */
-  effort: Effort;
+  model: ModelChoice;
+  /** Reasoning effort for `model`'s engine; null = 자동 (model 자동 only). */
+  effort: Effort | null;
   /** New-session choices (D2, D3). */
   engine: EngineChoice;
   sandbox: CodexSandbox;
@@ -38,6 +39,8 @@ export type ChatProps = {
   sessionSandbox: CodexSandbox | null;
   isNew: boolean;
   codexAvailable: boolean;
+  /** null = no gemini-cli: no Gemini option. Not logged in: the option is shown disabled with 로그인 필요. */
+  gemini?: GeminiStatus | null;
   attachments: UploadedAttachment[];
   uploadFn?: UploadFn;
   onSend: (text: string) => void;
@@ -46,8 +49,8 @@ export type ChatProps = {
   onStopBackground?: (turnId: string) => void;
   onDecide: (requestId: string, decision: PermissionDecision) => void;
   onAnswer: (requestId: string, answers: QuestionAnswers) => void;
-  onModel: (m: AnyModel) => void;
-  onEffort: (e: Effort) => void;
+  onModel: (m: ModelChoice) => void;
+  onEffort: (e: Effort | null) => void;
   onEngine: (e: EngineChoice) => void;
   onSandbox: (s: CodexSandbox) => void;
   onAttach: (a: UploadedAttachment) => void;
@@ -105,7 +108,12 @@ export function Chat(p: ChatProps) {
   // D3 / PF11: a new session follows the picker (the engine recorded at open time is ignored while it is new);
   // once the session exists its engine is fixed.
   const effectiveEngine: EngineChoice = p.isNew ? p.engine : (p.sessionEngine ?? 'claude');
-  const models: readonly AnyModel[] = effectiveEngine === 'codex' ? CODEX_MODELS : effectiveEngine === 'claude' ? CLAUDE_MODELS : [...CLAUDE_MODELS, ...CODEX_MODELS];
+  // 자동 is offered for Claude (and the engine 자동, which may open on Claude); on an existing session it keeps the session's model.
+  // Gemini is explicit only: its models appear only when the Gemini engine is picked (never under 자동).
+  const models: readonly ModelChoice[] = effectiveEngine === 'gemini' ? GEMINI_MODELS : effectiveEngine === 'codex' ? CODEX_MODELS : effectiveEngine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
+  const geminiReady = !!p.gemini && (p.gemini.loggedIn.g1 || p.gemini.loggedIn.g2);
+  const engineSelect = p.isNew && (p.codexAvailable || !!p.gemini?.available);
+  const sandboxLabel = effectiveEngine === 'gemini' ? GEMINI_SANDBOX_LABEL : SANDBOX_LABEL;
   const hasDraft = (text.trim().length > 0 || p.attachments.length > 0) && uploading === 0;
   const queueing = p.busy && !!p.onQueue;
   const canSend = hasDraft && (!p.busy || queueing);
@@ -140,6 +148,7 @@ export function Chat(p: ChatProps) {
         <span className="chat-title" title={p.title}><span>{p.title}</span><span className="caret" aria-hidden="true">⌄</span></span>
         {folder && <span className="folder-chip" title={p.cwd}>{folder}</span>}
         {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
+        {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
         <span className="spacer" />
         {p.headActions}
       </div>
@@ -186,19 +195,20 @@ export function Chat(p: ChatProps) {
           <div className="composer-row">
             <AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onFiles={(f) => void addFiles(f)} onRemove={p.onUnattach} />
             <div className="composer-actions">
-              {p.isNew && p.codexAvailable && (
+              {engineSelect && (
                 <span className="pick">
                   <select value={p.engine} onChange={(e) => p.onEngine(e.target.value as EngineChoice)} title="이 세션의 엔진 (세션 생성 후 변경 불가)" aria-label="엔진" data-testid="engine-select">
                     <option value="claude">Claude</option>
-                    <option value="codex">GPT</option>
-                    <option value="auto">자동</option>
+                    {p.codexAvailable && <option value="codex">GPT</option>}
+                    {p.gemini?.available && <option value="gemini" disabled={!geminiReady} title={geminiReady ? undefined : 'docs/gemini-spike.md 의 로그인 명령을 먼저 실행하세요'}>{geminiReady ? 'Gemini' : 'Gemini · 로그인 필요'}</option>}
+                    {p.codexAvailable && <option value="auto">자동</option>}
                   </select>
                 </span>
               )}
-              {p.isNew && p.codexAvailable && effectiveEngine !== 'claude' && (
+              {engineSelect && effectiveEngine !== 'claude' && (
                 <span className="pick sandbox">
-                  <select value={p.sandbox} onChange={(e) => p.onSandbox(e.target.value as CodexSandbox)} title="GPT 샌드박스 (승인 없음 · 세션 생성 후 변경 불가)" aria-label="샌드박스" data-testid="sandbox-select">
-                    {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{SANDBOX_LABEL[s]}</option>)}
+                  <select value={p.sandbox} onChange={(e) => p.onSandbox(e.target.value as CodexSandbox)} title={effectiveEngine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 없음 · 세션 생성 후 변경 불가)'} aria-label="샌드박스" data-testid="sandbox-select">
+                    {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{sandboxLabel[s]}</option>)}
                   </select>
                 </span>
               )}

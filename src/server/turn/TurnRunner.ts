@@ -1,17 +1,19 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { Account } from '../../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice } from '../../shared/models';
+import { GEMINI_ACCOUNTS, SEAT_LABEL, isGeminiAccount, type Account, type GeminiAccount } from '../../shared/accounts';
+import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import type { ServerMessage } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
 import type { CodexEngine } from '../engine/CodexEngine';
+import type { GeminiEngine } from '../engine/GeminiEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
+import { chooseAutoModel } from '../routing/AutoModel';
 import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
@@ -19,7 +21,7 @@ import type { SessionIndex } from '../sessions/SessionIndex';
 import { moveSession } from '../sessions/SessionMover';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
-import { isCodexState, type ClaudeSessionState, type CodexSessionState, type SessionState, type SessionStateStore } from './SessionState';
+import { isCodexState, isGeminiState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type SessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
   emit(msg: ServerMessage): void;
@@ -34,8 +36,8 @@ export type TurnParams = {
   cwd: string;
   sessionId: string | null;
   text: string;
-  /** Claude or GPT model; a model of the other engine is ignored (the session's default applies). */
-  model?: AnyModel;
+  /** Claude or GPT model; a model of the other engine is ignored (the session's default applies). 'auto' = 자동 (new Claude sessions). */
+  model?: ModelChoice;
   /** Reasoning effort for this turn; dropped if the resolved model does not support it. */
   effort?: Effort;
   /** New sessions only (D3). */
@@ -50,6 +52,8 @@ export type TurnRunnerDeps = {
   engine: Engine;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
   codex: Pick<CodexEngine, 'runTurn'> | null;
+  /** Null = gemini-cli not installed. `loggedIn` checks only that the account's OAuth file exists (read per turn). */
+  gemini?: { engine: Pick<GeminiEngine, 'runTurn'>; loggedIn: (account: GeminiAccount) => boolean } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
   attachments: AttachmentStore | null;
   codexSessionsRoot: string;
@@ -71,6 +75,9 @@ export type TurnRunnerDeps = {
 
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
+/** gemini-cli's quota / 429 errors (TerminalQuotaError, RESOURCE_EXHAUSTED); matched on the CLI's result error only. */
+const GEMINI_LIMIT_RE = /\bRESOURCE_EXHAUSTED\b|exhausted your (daily )?quota|\bQuota exceeded\b|"code"\s*:\s*429\b/i;
+
 /** `rest`: the engine stream after the first result (background continuations); `live`: its input handle. */
 type Attempt = {
   result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean; initCwd: string | null;
@@ -78,7 +85,7 @@ type Attempt = {
 };
 
 /** A user message for a session whose process is still open for background work (see `followUp`). */
-export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: AnyModel; clientRef?: string };
+export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string };
 
 /** The mutable "which deck turn is the process working for now" — permission cards and events follow it. */
 type Cursor = { turnId: string };
@@ -123,6 +130,8 @@ export class TurnRunner {
   private gptCooldownUntil: number | null = null;
   /** Claude sessions whose process stays open for background work, by session id. */
   private readonly live = new Map<string, LiveSession>();
+  /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
+  private geminiCooldownUntil: Partial<Record<GeminiAccount, number>> = {};
 
   constructor(private readonly deps: TurnRunnerDeps) {
     this.move = deps.move ?? moveSession;
@@ -294,7 +303,7 @@ export class TurnRunner {
     };
     const saveState = async (ok: boolean) => {
       const st = this.deps.store.get(sessionId);
-      if (!st || isCodexState(st)) return;
+      if (!st || isCodexState(st) || isGeminiState(st)) return;
       await this.deps.store.set({
         ...st,
         ...(ok ? { lastTurnAtMs: this.now() } : {}),
@@ -385,11 +394,14 @@ export class TurnRunner {
       if (!state) {
         const e = deps.index.lookup(p.sessionId);
         // Codex sessions always have a state entry (D4); a 'gpt' index entry without one is a bug, not a resumable session.
-        if (!e || e.account === 'gpt') { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
+        if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
         state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
       }
     }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments);
+    if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${SEAT_LABEL[state.account]}`, attachments);
+    // Gemini is explicit only: chooseEngine (자동) never sees it.
+    if (!state && p.engine === 'gemini') return this.runGemini(p, null, sink, 'Gemini 지정', attachments);
     if (!state) {
       const pick = chooseEngine({
         choice: p.engine ?? 'claude', usage: deps.usage.snapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
@@ -397,7 +409,13 @@ export class TurnRunner {
       });
       if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason, attachments);
       // Only a non-default choice earns a prefix, so Plan 1 badges read exactly as before.
-      return this.runClaude(p, null, sink, p.engine && p.engine !== 'claude' ? pick.reason : null, attachments);
+      const enginePrefix = p.engine && p.engine !== 'claude' ? pick.reason : null;
+      if (p.model === 'auto') {
+        // 자동: decided once, here, for the new session; later turns keep it as the session default (prompt cache).
+        const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.snapshot(), nowMs: this.now(), cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount });
+        return this.runClaude({ ...p, model: auto.model, effort: p.effort ?? auto.effort }, null, sink, enginePrefix ? `${enginePrefix} · ${auto.reason}` : auto.reason, attachments, auto.model);
+      }
+      return this.runClaude(p, null, sink, enginePrefix, attachments);
     }
     return this.runClaude(p, state, sink, null, attachments);
   }
@@ -448,10 +466,62 @@ export class TurnRunner {
     sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : displayError(res.errorText, res.stderr) });
   }
 
-  private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[]): Promise<void> {
+  /** Explicit Gemini: a new session takes the first logged-in, non-cooled account (g1, then g2) and stays on it. */
+  private async runGemini(p: TurnParams, state: GeminiSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
-    const sessionDefault = state?.defaultModel ?? DEFAULT_MODEL;
+    const model: GeminiModel = isGeminiModel(p.model) ? p.model : (state?.defaultModel ?? DEFAULT_GEMINI_MODEL);
+    const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? defaultSandbox(deps.autoApprove?.() ?? false);
+    let sessionId: string | null = state?.sessionId ?? null;
+    const scope = () => ({ turnId: p.turnId, sessionId, cwd });
+    const fail = (account: GeminiAccount, errorText: string) =>
+      sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: { account, model, reason, usage: ZERO_USAGE, modelNote: null }, errorText });
+    const gem = deps.gemini;
+    if (!gem) { fail(state?.account ?? 'g1', 'gemini CLI 를 찾을 수 없습니다'); return; }
+    let account: GeminiAccount;
+    if (state) {
+      account = state.account;
+      if (!gem.loggedIn(account)) { fail(account, `Gemini ${SEAT_LABEL[account]} 로그인 필요`); return; }
+    } else {
+      const loggedIn = GEMINI_ACCOUNTS.filter((a) => gem.loggedIn(a));
+      if (!loggedIn.length) { fail('g1', 'Gemini 로그인 필요 (docs/gemini-spike.md)'); return; }
+      const free = loggedIn.find((a) => (this.geminiCooldownUntil[a] ?? 0) <= this.now());
+      account = free ?? loggedIn[0]!;
+      reason = `${reason} · ${SEAT_LABEL[account]}${free ? '' : ' (모두 쿨다운)'}`;
+    }
+    const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
+    if (sink.signal.aborted) { fail(account, '중단됨'); return; }
+    sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini' });
+    let result: EngineResult | null = null;
+    for await (const ev of gem.engine.runTurn({ account, cwd, resumeSessionId: state?.sessionId ?? null, model, sandbox, prompt: promptWithFiles(p.text, attachments), signal: sink.signal })) {
+      switch (ev.kind) {
+        case 'init': sessionId = ev.sessionId; break;
+        case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+        case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+        case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
+        case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+        case 'result': result = ev; break;
+        case 'rate_limit': case 'compact': break;
+      }
+    }
+    const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
+    // Only an id the CLI reported (init) is stored, never a rejected resume id echoed back.
+    if (sessionId) {
+      await deps.store.set({
+        engine: 'gemini', account, sessionId, cwd, lastTurnAtMs: res.ok ? this.now() : (state?.lastTurnAtMs ?? null), justCompacted: false,
+        defaultModel: state?.defaultModel ?? model, sandbox, createdAtMs: state?.createdAtMs ?? this.now(), title: state?.title ?? titleOf(p.text),
+      });
+    }
+    if (!res.ok && GEMINI_LIMIT_RE.test(res.errorText ?? '')) this.geminiCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : displayError(res.errorText, res.stderr) });
+  }
+
+  private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
+    const { deps } = this;
+    const cwd = state?.cwd ?? p.cwd;
+    const sessionDefault = state?.defaultModel ?? newSessionModel ?? DEFAULT_MODEL;
+    // 자동 on a later turn: the session keeps its model, and its auto effort unless the user picked one.
+    if (p.model === 'auto' && p.effort === undefined) p = { ...p, effort: AUTO_EFFORT[sessionDefault] };
     const wantedClaude = isClaudeModel(p.model) ? p.model : undefined;
     const wanted = wantedClaude ?? sessionDefault;
     const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable' };

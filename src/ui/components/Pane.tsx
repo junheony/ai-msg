@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { Effort, ModelChoice } from '../../shared/models';
 import type { ClientMessage } from '../../shared/protocol';
 import { cardsForPane, engineOf, modelFor, nextQueued, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
@@ -17,16 +18,23 @@ function paneModel(pane: PaneState) {
   return s && s.sessionId !== null && s.engine ? modelFor(s.engine, pane.model) : pane.model;
 }
 
+/** 자동: effort is 자동 too unless the user picked one (null → omitted; the server picks per model). */
+function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
+  return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
+}
+
 /** Sends `text` (+ attachments) as the pane's next turn: `sent` for the reducer, `send` for the server. */
 export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: (m: ClientMessage) => void): void {
   const s = pane.session;
   if (!s) return;
   const model = paneModel(pane);
+  const effort = paneEffort(pane, model);
   const ids = attachments.map((a) => a.id);
   const clientRef = nextClientRef();
   dispatch({ type: 'sent', text, paneId: pane.id, attachments: attachments.map((a) => ({ id: a.id, name: a.name, isImage: a.isImage })), clientRef });
   send({
-    type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, model, effort: pane.efforts[engineOf(model)],
+    type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, model,
+    ...(effort ? { effort } : {}),
     ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox } : {}),
     ...(ids.length ? { attachments: ids } : {}),
     clientRef,
@@ -54,7 +62,7 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
 /** One split-view pane: its own session, items and composer; user actions become `send`/`dispatch` here (D6). */
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, uploadFn }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini'>>;
   active: boolean;
   closable: boolean;
   dispatch: (a: Action) => void;
@@ -66,7 +74,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
   const focus = () => { if (!active) dispatch({ type: 'focus_pane', paneId: pane.id }); };
   const isNew = s?.sessionId === null;
   const model = paneModel(pane);
-  const effort = pane.efforts[engineOf(model)];
+  const effort = paneEffort(pane, model);
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   return (
     <section className={`pane ${active ? 'active' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
@@ -89,6 +97,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           sessionSandbox={s.sandbox}
           isNew={isNew}
           codexAvailable={app.codexAvailable}
+          gemini={app.gemini ?? null}
           attachments={pane.attachments}
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send)}
@@ -109,7 +118,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
           onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
           onModel={(m) => dispatch({ type: 'set_model', model: m, paneId: pane.id })}
-          onEffort={(e) => dispatch({ type: 'set_effort', engine: engineOf(model), effort: e, paneId: pane.id })}
+          onEffort={(e) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id })}
           onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })}
           onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })}
           onAttach={(attachment) => dispatch({ type: 'attach', attachment, paneId: pane.id })}

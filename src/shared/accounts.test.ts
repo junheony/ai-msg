@@ -56,6 +56,6 @@ describe('accounts', () => {
   });
 
   it('seat labels', () => {
-    expect(SEAT_LABEL).toEqual({ a: 'A', b: 'B', c: 'C', gpt: 'GPT' });
+    expect(SEAT_LABEL).toEqual({ a: 'A', b: 'B', c: 'C', gpt: 'GPT', g1: 'G1', g2: 'G2' });
   });
 });
