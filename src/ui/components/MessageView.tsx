@@ -1,4 +1,4 @@
-import { isValidElement, useEffect, useState, type ReactNode } from 'react';
+import { isValidElement, memo, useEffect, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserText, type InjectedNotice } from '../injected';
@@ -82,9 +82,10 @@ const MD_COMPONENTS: Components = {
 };
 const MD_PLUGINS = [remarkGfm];
 
-function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {
+/** Memoized on its text: parsing is the expensive part, and a streaming turn re-creates its item on every delta. */
+const Markdown = memo(function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {
   return <div className={className}><ReactMarkdown components={MD_COMPONENTS} remarkPlugins={MD_PLUGINS}>{text}</ReactMarkdown></div>;
-}
+});
 
 const NOTICE_ICON: Record<InjectedNotice['kind'], string> = { task: '⚙', command: '›_', output: '›_', hook: '↪' };
 
@@ -149,8 +150,12 @@ function AttachmentTiles({ files }: { files: SentFile[] }) {
   );
 }
 
-/** Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines. */
-export function MessageView({ item, cwd }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string }) {
+/**
+ * Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines.
+ * Memoized: the composer's draft lives in Chat, so without this every keystroke re-rendered (and re-parsed the
+ * markdown of) the whole transcript. Items are immutable (the reducer replaces what changes), so identity is enough.
+ */
+export const MessageView = memo(function MessageView({ item, cwd }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string }) {
   if (item.kind === 'user') {
     const { text, notices } = parseUserText(item.text);
     const files = item.attachments ?? [];
@@ -183,4 +188,4 @@ export function MessageView({ item, cwd }: { item: ChatItem; /** Session folder:
       )}
     </div>
   );
-}
+});
