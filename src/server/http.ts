@@ -26,7 +26,7 @@ export type HttpDeps = {
  * served by Vite (its own origin, no CSP from here), so no relaxed dev policy is needed.
  */
 export const SECURITY_HEADERS: Record<string, string> = {
-  'content-security-policy': "default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+  'content-security-policy': "default-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
 };
