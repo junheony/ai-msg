@@ -39,6 +39,11 @@ export type DeckConfig = {
   cwdRoots: string[];
   /** Claude Desktop's Code-tab session records (read-only; titles/recency of Desktop sessions). */
   desktopSessionsRoot: string;
+  /** Web Push: VAPID keypair (0600, generated once) and browser subscriptions (0600). */
+  vapidFile: string;
+  pushSubscriptionsFile: string;
+  /** VAPID `sub` claim override (`DECK_VAPID_SUBJECT`, https: or mailto:); default derived from the MagicDNS name. */
+  vapidSubject: string | null;
 };
 
 /** ~/.config/offload/protect: comment lines start with '#'; first non-blank token must be a|b|c. */
@@ -102,5 +107,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     settingsFile: path.join(configDir, 'settings.json'),
     cwdRoots: [home, ...extraCwdRoots(env)],
     desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
+    vapidFile: path.join(configDir, 'vapid.json'),
+    pushSubscriptionsFile: path.join(configDir, 'push-subscriptions.json'),
+    vapidSubject: /^(https:|mailto:)/.test(env.DECK_VAPID_SUBJECT ?? '') ? env.DECK_VAPID_SUBJECT! : null,
   };
 }

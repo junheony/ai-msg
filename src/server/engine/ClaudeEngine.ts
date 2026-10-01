@@ -134,6 +134,7 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
     case 'system': {
       if (m.subtype === 'init') return [{ kind: 'init', sessionId: m.session_id, model: m.model, ...(typeof m.cwd === 'string' ? { cwd: m.cwd } : {}) }];
       if (m.subtype === 'compact_boundary') return [{ kind: 'compact' }];
+      if (m.subtype === 'task_notification') return [{ kind: 'task_done', status: m.status, summary: typeof m.summary === 'string' ? m.summary : '' }];
       return [];
     }
     case 'stream_event': {

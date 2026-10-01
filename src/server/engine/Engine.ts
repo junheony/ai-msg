@@ -36,6 +36,8 @@ export type EngineEvent =
   | { kind: 'compact' }
   /** Non-fatal engine warning shown as a turn note (Codex `item.type === 'error'` items). */
   | { kind: 'notice'; message: string }
+  /** Claude `system/task_notification`: a background task settled. */
+  | { kind: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string }
   | EngineResult;
 
 /**

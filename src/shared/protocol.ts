@@ -91,6 +91,8 @@ export type ServerMessage =
   | { type: 'question_resolved'; requestId: string; answers: QuestionAnswers | null }
   /** Non-terminal note about a running turn (e.g. a refused session move). */
   | ({ type: 'turn_notice'; message: string } & TurnScope)
+  /** A background task (run_in_background Bash, backgrounded agent) settled during the turn; drives a push, the UI ignores it. */
+  | ({ type: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string } & TurnScope)
   | ({ type: 'turn_retry'; fromAccount: Account; toAccount: Account; reason: string; attempt: number } & TurnScope)
   | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null } & TurnScope)
   | { type: 'error'; turnId: string | null; message: string; clientRef?: string };

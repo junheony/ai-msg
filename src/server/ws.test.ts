@@ -40,6 +40,9 @@ function card(id: string) {
   return { id, status: 'ok', fetchedAt: new Date().toISOString(), rows: [{ label: 'Session (5h)', used: 1 }, { label: 'Weekly (7d)', used: 1, resetsAt: new Date(Date.now() + 36e5).toISOString() }] };
 }
 
+/** Web Push hook: every event the ws layer hands to the notifier. */
+const notified: ServerMessage[] = [];
+
 beforeAll(async () => {
   base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ws-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
@@ -80,7 +83,7 @@ beforeAll(async () => {
   settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m) });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -210,6 +213,9 @@ describe('ws', () => {
     const msgs = await p2;
     expect(msgs.find((m) => m.type === 'permission_resolved')).toMatchObject({ requestId: req.requestId, decision: 'session' });
     expect(msgs.at(-1)).toMatchObject({ type: 'turn_result', text: 'decision=session' });
+    // Web Push hook saw the card and the finished turn.
+    expect(notified.some((m) => m.type === 'permission_request' && m.requestId === req.requestId)).toBe(true);
+    expect(notified.some((m) => m.type === 'turn_result' && m.text === 'decision=session')).toBe(true);
     ws.close();
   });
 

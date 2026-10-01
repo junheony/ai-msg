@@ -111,6 +111,8 @@ export type WsDeps = {
   pins?: PinStore;
   /** 자동 승인 etc.; rides hello, changed with set_settings. */
   settings?: SettingsStore;
+  /** Web Push hook: sees every turn event and every permission/question card (PushNotifier picks what to send). */
+  notify?: (msg: ServerMessage) => void;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -143,8 +145,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
 
   const send = (ws: WebSocket, msg: ServerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
-  const broker = new PermissionBroker(broadcast);
-  const questions = new QuestionBroker(broadcast);
+  const notify = (msg: ServerMessage) => { try { deps.notify?.(msg); } catch (err) { console.error('deck: push hook failed', errMsg(err)); } };
+  const broadcastAndNotify = (msg: ServerMessage) => { broadcast(msg); notify(msg); };
+  const broker = new PermissionBroker(broadcastAndNotify);
+  const questions = new QuestionBroker(broadcastAndNotify);
   const unsubscribeUsage = deps.usage.onChange((usage) => broadcast({ type: 'usage', usage }));
   const running = (): RunningTurn[] => [...turns.values()].map(({ turnId, sessionId, cwd }) => ({ turnId, sessionId, cwd }));
 
@@ -169,6 +173,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
     if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
     for (const c of to) send(c, msg);
+    notify(msg);
   };
 
   for (const server of servers) {

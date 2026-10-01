@@ -1,12 +1,14 @@
 import { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
 import type { ClientMessage } from '../shared/protocol';
 import { Login } from './components/Login';
+import { NotifyMenu } from './components/NotifyMenu';
 import { postPin } from './pins';
 import { Pane } from './components/Pane';
 import { PermissionCard } from './components/PermissionCard';
 import { QuestionCard } from './components/QuestionCard';
 import { Sidebar } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
+import { findSession } from './push';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action } from './state';
 import { useIsPhone } from './useIsPhone';
 import { createSocket } from './ws';
@@ -38,6 +40,24 @@ export function App() {
     return () => sock.current?.close();
   }, [authed]);
 
+  // PWA: a notification click opens deck at /?session=<id> or, with deck already open, posts the id here.
+  const [openReq, setOpenReq] = useState<string | null>(() => new URLSearchParams(window.location.search).get('session'));
+  const openById = useRef<(sessionId: string) => boolean>(() => false);
+  useEffect(() => {
+    const sw = navigator.serviceWorker;
+    if (!sw) return;
+    const onMsg = (e: MessageEvent) => { const d = e.data as { type?: unknown; sessionId?: unknown } | null; if (d?.type === 'deck-open-session' && typeof d.sessionId === 'string') setOpenReq(d.sessionId); };
+    sw.addEventListener('message', onMsg);
+    return () => sw.removeEventListener('message', onMsg);
+  }, []);
+  useEffect(() => {
+    if (!openReq || !state.connected) return;
+    if (openById.current(openReq) || state.projects.length > 0) {
+      setOpenReq(null);
+      if (window.location.search) window.history.replaceState(null, '', '/');
+    }
+  }, [openReq, state.connected, state.projects]);
+
   useEffect(() => {
     if (!phone || !drawer) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawer(false); };
@@ -66,6 +86,14 @@ export function App() {
     if (sessionId) send({ type: 'open_session', sessionId });
     setDrawer(false);
   };
+  openById.current = (sessionId) => {
+    const pane = state.panes.find((p) => p.session?.sessionId === sessionId);
+    if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); return true; }
+    const hit = findSession(state.projects, state.desktop, sessionId);
+    if (!hit) return false;
+    openIn(active.id, sessionId, hit.cwd, hit.title);
+    return true;
+  };
   const orphanPerms = orphanCards(state.panes, state.pending);
   const orphanQs = orphanCards(state.panes, state.questions);
 
@@ -77,6 +105,7 @@ export function App() {
         <UsagePanel usage={state.usage} current={active.session?.account ?? null} />
         <div className="topbar-end">
           {!phone && <button type="button" className="text-btn split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>+ 분할</button>}
+          <NotifyMenu />
           <span className={`conn ${state.connected ? 'on' : 'off'}`} title={state.connected ? '연결됨' : '재연결 중…'}>{state.connected ? '연결됨' : '재연결 중…'}</span>
         </div>
       </header>

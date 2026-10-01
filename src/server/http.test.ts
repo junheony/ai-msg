@@ -6,6 +6,8 @@ import path from 'node:path';
 import { cookieValueFor } from './auth';
 import { AttachmentStore } from './attachments/AttachmentStore';
 import { createRequestHandler } from './http';
+import { PushNotifier, type PushSender } from './push/PushNotifier';
+import { SubscriptionStore } from './push/SubscriptionStore';
 import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageService } from './usage/UsageService';
@@ -102,7 +104,7 @@ describe('http', () => {
   });
 
   it('every response carries CSP, nosniff and no-referrer — static, API, and error responses', async () => {
-    const CSP = "default-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
+    const CSP = "default-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
     await fs.writeFile(path.join(uiDir, 'index.html'), '<html>deck</html>');
     const cookie = `deck_session=${cookieValueFor(TOKEN)}`;
     for (const r of [await fetch(`${base}/`), await fetch(`${base}/api/me`), await fetch(`${base}/api/bootstrap`, { headers: { cookie } }), await fetch(`${base}/api/nope`, { headers: { cookie } })]) {
@@ -328,5 +330,95 @@ describe('POST /api/pins (F2)', () => {
     expect(boot.pins).toEqual([ID]);
     const off = await fetch(`${b3}/api/pins`, { method: 'POST', headers: { cookie: cookie(), origin: b3 }, body: JSON.stringify({ sessionId: ID, pinned: false }) });
     expect(await off.json()).toEqual({ pins: [] });
+  });
+});
+
+describe('PWA + Web Push over http', () => {
+  const HOST = 'max-macbookpro.tail88e649.ts.net';
+  const cookie = `deck_session=${cookieValueFor(TOKEN)}`;
+  const SUB = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc123', keys: { p256dh: 'BPk3x_-y', auth: 'AuTh_-0' } };
+  let s3: http.Server;
+  let port = 0;
+  let dir = '';
+  const sent: { endpoint: string; payload: string }[] = [];
+  const send: PushSender = async (sub, payload) => { sent.push({ endpoint: sub.endpoint, payload }); };
+
+  /** node:http directly: fetch() can't set Host (needed for the MagicDNS name behind tailscale serve). */
+  const raw = (method: string, p: string, headers: Record<string, string>, body?: string) => new Promise<{ status: number; headers: http.IncomingHttpHeaders; text: string }>((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, setHost: false, headers }, (res) => {
+      let text = '';
+      res.on('data', (c: Buffer) => { text += c.toString('utf8'); });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text }));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-pwa-'));
+    await fs.writeFile(path.join(dir, 'index.html'), '<html>deck</html>');
+    await fs.writeFile(path.join(dir, 'sw.js'), 'self.addEventListener("push", () => {});');
+    await fs.writeFile(path.join(dir, 'manifest.webmanifest'), '{"name":"deck"}');
+    const roots = { a: path.join(dir, 'a'), b: path.join(dir, 'b'), c: path.join(dir, 'c') };
+    const index = new SessionIndex({ roots, pinnedFile: path.join(dir, 'p.json') });
+    await index.refresh();
+    const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    const store = new SubscriptionStore(path.join(dir, 'subs.json'));
+    const notifier = new PushNotifier({ store, vapid: { publicKey: 'PUBKEY_b64url', privateKey: 'never-sent' }, subject: `https://${HOST}`, titleOf: () => 't', send });
+    s3 = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index, extraHosts: [HOST], push: { notifier, store } }));
+    await new Promise<void>((r) => s3.listen(0, '127.0.0.1', r));
+    port = (s3.address() as { port: number }).port;
+  });
+  afterAll(() => s3.close());
+
+  it('serves sw.js revalidated with a root scope and the manifest as application/manifest+json', async () => {
+    const sw = await raw('GET', '/sw.js', { host: `127.0.0.1:${port}` });
+    expect(sw.status).toBe(200);
+    expect(sw.headers['content-type']).toContain('text/javascript');
+    expect(sw.headers['cache-control']).toBe('no-cache');
+    expect(sw.headers['service-worker-allowed']).toBe('/');
+    expect(sw.headers['content-security-policy']).toContain("worker-src 'self'");
+    const mf = await raw('GET', '/manifest.webmanifest', { host: `127.0.0.1:${port}` });
+    expect(mf.headers['content-type']).toContain('application/manifest+json');
+    expect(mf.headers['cache-control']).toBe('no-cache');
+    expect(mf.text).toBe('{"name":"deck"}');
+  });
+
+  it('accepts the https MagicDNS origin (no port) behind tailscale serve and marks the cookie Secure', async () => {
+    const login = await raw('POST', '/api/login', { host: HOST, origin: `https://${HOST}`, 'x-forwarded-proto': 'https', 'content-type': 'application/json' }, JSON.stringify({ token: TOKEN }));
+    expect(login.status).toBe(200);
+    expect(String(login.headers['set-cookie'])).toMatch(/; Secure$/);
+    const plain = await raw('POST', '/api/login', { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, JSON.stringify({ token: TOKEN }));
+    expect(plain.status).toBe(200);
+    expect(String(plain.headers['set-cookie'])).not.toContain('Secure');
+    // Foreign https origin with the same Host, or the name with a port, is still refused.
+    expect((await raw('POST', '/api/login', { host: HOST, origin: 'https://evil.example', 'content-type': 'application/json' }, JSON.stringify({ token: TOKEN }))).status).toBe(403);
+    expect((await raw('POST', '/api/login', { host: HOST, origin: `https://${HOST}:444`, 'content-type': 'application/json' }, JSON.stringify({ token: TOKEN }))).status).toBe(403);
+  });
+
+  it('push endpoints need the cookie and a same-origin request', async () => {
+    const h = { host: HOST, origin: `https://${HOST}`, 'content-type': 'application/json' };
+    expect((await raw('GET', '/api/push/key', { host: HOST })).status).toBe(401);
+    expect((await raw('POST', '/api/push/subscribe', h, JSON.stringify({ subscription: SUB }))).status).toBe(401);
+    expect((await raw('POST', '/api/push/subscribe', { ...h, cookie, origin: 'https://evil.example' }, JSON.stringify({ subscription: SUB }))).status).toBe(403);
+  });
+
+  it('key → subscribe → status → test (only this device) → unsubscribe', async () => {
+    const h = { host: HOST, origin: `https://${HOST}`, 'content-type': 'application/json', cookie };
+    const key = await raw('GET', '/api/push/key', { host: HOST, cookie });
+    expect(JSON.parse(key.text)).toEqual({ publicKey: 'PUBKEY_b64url' });
+    expect(key.text).not.toContain('never-sent');
+    expect((await raw('POST', '/api/push/subscribe', h, JSON.stringify({ subscription: { ...SUB, endpoint: 'https://evil.example/x' } }))).status).toBe(400);
+    expect((await raw('POST', '/api/push/subscribe', h, JSON.stringify({ subscription: SUB }))).status).toBe(200);
+    const other = { ...SUB, endpoint: 'https://web.push.apple.com/QOther' };
+    expect((await raw('POST', '/api/push/subscribe', h, JSON.stringify({ subscription: other }))).status).toBe(200);
+    expect(JSON.parse((await raw('POST', '/api/push/status', h, JSON.stringify({ endpoint: SUB.endpoint }))).text)).toEqual({ subscribed: true });
+    sent.length = 0;
+    expect((await raw('POST', '/api/push/test', h, JSON.stringify({ endpoint: SUB.endpoint }))).status).toBe(200);
+    expect(sent.map((s) => s.endpoint)).toEqual([SUB.endpoint]);
+    expect(JSON.parse(sent[0]!.payload)).toMatchObject({ kind: 'test', title: 'deck' });
+    expect((await raw('POST', '/api/push/unsubscribe', h, JSON.stringify({ endpoint: SUB.endpoint }))).status).toBe(200);
+    expect(JSON.parse((await raw('POST', '/api/push/status', h, JSON.stringify({ endpoint: SUB.endpoint }))).text)).toEqual({ subscribed: false });
+    expect((await raw('POST', '/api/push/test', h, JSON.stringify({ endpoint: SUB.endpoint }))).status).toBe(502);
   });
 });

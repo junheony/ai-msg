@@ -65,12 +65,13 @@ export function tokenMatches(candidate: string, token: string): boolean {
   return safeEqual(candidate.trim(), token);
 }
 
-export function loginCookieHeader(token: string): string {
-  return `${COOKIE_NAME}=${cookieValueFor(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}`;
+/** PWA: `secure` when the request came through the HTTPS front (tailscale serve) — the cookie then never rides plain http. */
+export function loginCookieHeader(token: string, secure = false): string {
+  return `${COOKIE_NAME}=${cookieValueFor(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
 }
 
-export function logoutCookieHeader(): string {
-  return `${COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
+export function logoutCookieHeader(secure = false): string {
+  return `${COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure ? '; Secure' : ''}`;
 }
 
 /**
@@ -98,10 +99,15 @@ export function isAllowedHost(hostHeader: string | undefined, extraHosts: string
   return extraHosts.some((h) => h.toLowerCase() === hostname);
 }
 
-/** Origin === this server's own origin (scheme http, host:port equal to the Host header) or one of `extraOrigins`. */
+/**
+ * Origin === this server's own origin (host:port equal to the Host header) or one of `extraOrigins`.
+ * PWA: scheme https is accepted too — `tailscale serve` terminates TLS for the MagicDNS name and
+ * proxies to 127.0.0.1 with the same Host (no port). The Host itself is still allowlisted separately.
+ */
 export function isAllowedOrigin(origin: string | undefined, host: string | undefined, extraOrigins: string[] = []): boolean {
   if (!origin) return false;
-  return origin === `http://${host ?? ''}` || extraOrigins.includes(origin);
+  if (extraOrigins.includes(origin)) return true;
+  return !!host && (origin === `http://${host}` || origin === `https://${host}`);
 }
 
 export type UpgradeCheck = { ok: true } | { ok: false; reason: string };
@@ -109,7 +115,7 @@ export type UpgradeCheck = { ok: true } | { ok: false; reason: string };
 /**
  * WebSocket upgrade gate (spec §6): the Host must be one deck itself binds to
  * (or an allowed extra host), the session cookie must validate, and the
- * Origin must be this server itself (scheme http, host:port equal to the Host
+ * Origin must be this server itself (scheme http or https, host:port equal to the Host
  * header) or one of `extraOrigins` (Vite dev server).
  */
 export function checkUpgrade(
