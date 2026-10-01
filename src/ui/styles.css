@@ -377,3 +377,161 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 @media (hover: none) { .pin-btn { opacity: .5; } .pin-btn.on { opacity: 1; } .project-head .icon-btn { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* === chat polish === */
+/* Claude-Desktop reading column: warm dark, one ~760px measure for messages and composer,
+   muted pills for everything that is metadata (tool runs, turn badge, system notices). */
+:root {
+  --read-width: 768px;
+  --md-fg: color-mix(in srgb, var(--fg) 94%, var(--muted));
+  --inline-code-bg: color-mix(in srgb, var(--fg) 7%, transparent);
+  --table-head: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  --table-zebra: color-mix(in srgb, var(--fg) 2.2%, transparent);
+  --link: color-mix(in srgb, var(--accent) 82%, var(--fg));
+  --pill-bg: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+/* Column */
+.chat-body { flex: 1; overflow-y: auto; padding: 14px 20px 24px; display: flex; flex-direction: column; gap: 18px; scroll-padding-bottom: 24px; }
+.chat-body > *, .composer-wrap > * { width: 100%; max-width: var(--read-width); margin-left: auto; margin-right: auto; }
+/* Retry: a small pill at the column's left edge, not a full-width bar */
+.chat-body > .retry { width: auto; align-self: flex-start; margin-left: max(0px, calc((100% - var(--read-width)) / 2)); padding: 0 14px; border-radius: 999px; font-size: 13px; }
+.cursor { color: var(--accent); animation: blink 1s steps(2) infinite; } @keyframes blink { to { opacity: 0; } }
+.msg { min-width: 0; }
+.chat-body > .msg { animation: msg-in .22s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
+
+/* User bubble — right, soft, rounded; attachments as tiles above it */
+.msg.user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.msg.user pre { max-width: min(82%, 620px); padding: 10px 16px; border-radius: 18px 18px 6px 18px; background: var(--bubble); font-family: var(--font); font-size: 15px; line-height: 1.6; color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--line); }
+.msg-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 85%; }
+.chip.attach-tile { height: auto; gap: 9px; padding: 5px 12px 5px 5px; border-radius: 12px; background: var(--bubble); color: var(--fg); font-size: 13px; max-width: 240px; box-shadow: inset 0 0 0 1px var(--line); }
+.attach-glyph { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: 8px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: .4px; }
+.attach-tile.image .attach-glyph { font-size: 18px; background: color-mix(in srgb, var(--accent) 12%, var(--code-bg)); }
+.attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* System notices (task notifications, slash commands) — a quiet left-aligned pill */
+.msg.system { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.sys-notice { max-width: 100%; font-size: 13px; color: var(--muted); }
+.sys-notice > summary { list-style: none; display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 28px; padding: 3px 12px 3px 10px; border-radius: 999px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; user-select: none; transition: background .15s ease, color .15s ease; }
+.sys-notice > summary::-webkit-details-marker { display: none; }
+.sys-notice > summary:hover { background: var(--hover); color: var(--fg); }
+.sys-icon { flex-shrink: 0; color: var(--faint); font-family: var(--mono); font-size: 12px; }
+.sys-notice.completed .sys-icon { color: var(--ok); }
+.sys-notice.failed .sys-icon, .sys-notice.killed .sys-icon, .sys-notice.stopped .sys-icon { color: var(--danger); }
+.sys-label { flex-shrink: 0; font-weight: 550; color: color-mix(in srgb, var(--fg) 70%, var(--muted)); }
+.sys-sep { color: var(--faint); }
+.sys-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sys-detail { margin: 8px 0 2px 14px; padding: 2px 0 2px 14px; border-left: 2px solid var(--line-strong); display: flex; flex-direction: column; gap: 8px; }
+.sys-detail .markdown { font-size: 15px; color: var(--fg); }
+.sys-body { max-height: 260px; overflow: auto; color: var(--fg); }
+.sys-raw > summary { list-style: none; display: inline-block; font-size: 12px; color: var(--faint); cursor: pointer; }
+.sys-raw > summary::-webkit-details-marker { display: none; }
+.sys-raw > summary::before { content: "› "; display: inline-block; transition: transform .15s ease; }
+.sys-raw[open] > summary::before { transform: rotate(90deg); }
+.sys-raw > summary:hover { color: var(--fg); }
+.sys-raw pre { margin-top: 6px; padding: 10px 12px; max-height: 280px; overflow: auto; border-radius: 8px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-size: 12px; }
+
+/* Assistant — plain text on the page, Desktop measure and rhythm */
+.msg.assistant { display: flex; flex-direction: column; gap: 10px; }
+.note { color: var(--warn); font-size: 13px; }
+.failed-attempt { opacity: .6; border-left: 2px solid var(--line-strong); padding-left: 12px; }
+.markdown { font-size: 15.5px; line-height: 1.7; color: var(--md-fg); overflow-wrap: anywhere; }
+.markdown > :first-child { margin-top: 0; } .markdown > :last-child { margin-bottom: 0; }
+.markdown:empty { display: none; }
+.markdown p { margin: 0 0 12px; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 26px 0 10px; line-height: 1.35; font-weight: 650; letter-spacing: -.005em; color: var(--fg-strong); }
+.markdown h1 { font-size: 21px; } .markdown h2 { font-size: 18.5px; } .markdown h3 { font-size: 16.5px; } .markdown h4, .markdown h5, .markdown h6 { font-size: 15.5px; }
+.markdown ul, .markdown ol { margin: 4px 0 14px; padding-left: 24px; }
+.markdown li { margin: 5px 0; padding-left: 3px; }
+.markdown li::marker { color: var(--faint); }
+.markdown ol > li::marker { font-variant-numeric: tabular-nums; color: var(--muted); }
+.markdown li > p { margin: 0 0 6px; }
+.markdown li > ul, .markdown li > ol { margin: 4px 0 6px; }
+.markdown strong { color: var(--fg-strong); font-weight: 650; }
+.markdown a { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--link) 35%, transparent); text-underline-offset: 3px; text-decoration-thickness: 1px; transition: text-decoration-color .15s ease; }
+.markdown a:hover { text-decoration-color: currentColor; }
+.markdown code { font-family: var(--mono); font-size: 13px; padding: 2px 6px; border-radius: 6px; background: var(--inline-code-bg); color: var(--code-fg); box-shadow: inset 0 0 0 1px var(--line); overflow-wrap: anywhere; }
+.markdown blockquote { margin: 10px 0 14px; padding: 8px 16px; border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 0 10px 10px 0; background: var(--pill-bg); color: color-mix(in srgb, var(--fg) 78%, var(--muted)); }
+.markdown blockquote > :last-child { margin-bottom: 0; }
+.markdown del { color: var(--muted); }
+.markdown li:has(> input[type="checkbox"]) { list-style: none; margin-left: -20px; }
+.markdown li > input[type="checkbox"] { margin: 0 8px 0 0; vertical-align: -1px; accent-color: var(--accent); }
+.markdown hr { border: 0; border-top: 1px solid var(--line-strong); margin: 22px 0; }
+
+/* Code blocks — header strip with language + copy, body scrolls sideways */
+.code-block { margin: 8px 0 16px; border-radius: 12px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.code-head { display: flex; align-items: center; justify-content: space-between; height: 34px; padding: 0 6px 0 14px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--fg) 2.5%, transparent); }
+.code-lang { font-family: var(--mono); font-size: 12px; color: var(--faint); text-transform: lowercase; letter-spacing: .2px; }
+.code-copy { height: 24px; padding: 0 9px; border-radius: 6px; font-size: 12px; color: var(--muted); transition: background .15s ease, color .15s ease; }
+.code-copy:hover { background: var(--hover); color: var(--fg); }
+.code-block pre { margin: 0; padding: 12px 16px 14px; overflow-x: auto; white-space: pre; word-break: normal; overflow-wrap: normal; font-size: 13px; line-height: 1.6; }
+.code-block pre code { padding: 0; background: none; box-shadow: none; color: var(--fg); font-size: 13px; overflow-wrap: normal; }
+
+/* Tables — rounded frame, tinted head, zebra + hover, scroll sideways when narrow */
+.markdown .md-table { margin: 8px 0 16px; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.markdown table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: 15px; line-height: 1.5; }
+.markdown th, .markdown td { padding: 8px 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.markdown th + th, .markdown td + td { border-left: 1px solid var(--line); }
+.markdown tbody tr:last-child td { border-bottom: 0; }
+.markdown th { background: var(--table-head); color: var(--fg-strong); font-weight: 600; white-space: nowrap; border-bottom-color: var(--line-strong); }
+.markdown td { overflow-wrap: normal; word-break: keep-all; max-width: 420px; }
+.markdown tbody tr:nth-child(even) td { background: var(--table-zebra); }
+.markdown tbody tr:hover td { background: var(--hover); }
+.markdown th[align="right"], .markdown td[align="right"] { text-align: right; font-variant-numeric: tabular-nums; }
+.markdown th[align="center"], .markdown td[align="center"] { text-align: center; }
+
+/* Tool calls — top-level line is a small muted pill; expanded list is a quiet rail */
+.tool-group, .tool-call { font-size: 13.5px; color: var(--muted); min-width: 0; }
+.tool-group > summary, .tool-call > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 1px 0; cursor: pointer; user-select: none; border-radius: 6px; transition: color .15s ease, background .15s ease; }
+.tool-group > summary::-webkit-details-marker, .tool-call > summary::-webkit-details-marker { display: none; }
+.tool-group > summary:hover, .tool-call > summary:hover { color: var(--fg); }
+.msg.assistant > .tool-group > summary, .msg.assistant > .tool-call > summary { min-height: 28px; padding: 3px 10px 3px 12px; border-radius: 999px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); }
+.msg.assistant > .tool-group > summary:hover, .msg.assistant > .tool-call > summary:hover { background: var(--hover); }
+.msg.assistant > .tool-group, .msg.assistant > .tool-call { align-self: flex-start; max-width: 100%; }
+.msg.assistant > details[open] { align-self: stretch; }
+.tool-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tool-label code { font-family: var(--mono); font-size: 13px; color: color-mix(in srgb, var(--fg) 75%, var(--muted)); }
+.tool-caret { flex-shrink: 0; font-size: 13px; color: var(--faint); transition: transform .15s ease; }
+details[open] > summary > .tool-caret { transform: rotate(90deg); }
+.tool-state { flex-shrink: 0; font-size: 12px; color: var(--faint); }
+.tool-state.error, .tool-call.error > summary, .tool-call.error .tool-state { color: var(--danger); }
+.tool-call.running .tool-state, .tool-group.running .tool-state { color: var(--accent); }
+.tool-group-list { margin: 6px 0 2px 16px; padding-left: 12px; border-left: 1px solid var(--line-strong); display: flex; flex-direction: column; gap: 2px; }
+.tool-detail { margin: 6px 0 8px; border-radius: 10px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.tool-input, .tool-output { padding: 10px 12px; max-height: 260px; overflow: auto; color: var(--fg); }
+.tool-output { border-top: 1px solid var(--line); color: var(--muted); }
+
+/* Turn footer — account tile, model pill, token counts, reason; all one muted line */
+.turn-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.turn-foot:empty { display: none; }
+.turn-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--faint); min-width: 0; }
+.turn-badge .acct { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; }
+.tb-model { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-weight: 500; }
+.tb-tokens { display: inline-flex; flex-wrap: wrap; gap: 0 10px; font-variant-numeric: tabular-nums; }
+.tb-tokens b { font-weight: 550; color: var(--muted); }
+.turn-badge .reason { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-badge .note { font-size: 12px; }
+.role-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; color: var(--faint); }
+.role-badge .chip { border-radius: 999px; padding: 0 8px; }
+.role-summary { margin-right: 2px; }
+
+/* Stopped turn (interrupted / no tokens) — the token counts give way to one amber pill */
+.tb-stopped { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 9px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 30%, transparent); color: color-mix(in srgb, var(--warn) 85%, var(--fg)); font-weight: 550; }
+.tb-stopped::before { content: ""; width: 6px; height: 6px; border-radius: 1.5px; background: currentColor; }
+
+/* Single view: the shared reading measure (overrides the older 860px column) */
+.panes[data-count="1"] .chat-body > *, .panes[data-count="1"] .composer-wrap > * { max-width: var(--read-width); }
+
+/* Narrow split columns: tighten the gutters */
+.panes:not([data-count="1"]) .chat-body { padding: 12px 14px 20px; }
+
+@media (max-width: 720px) {
+  .chat-body, .panes:not([data-count="1"]) .chat-body { padding: 8px 12px 16px; gap: 16px; }
+  .msg.user pre { max-width: 90%; }
+  .code-copy { min-height: var(--phone-tap); }
+  .tool-group > summary, .tool-call > summary, .sys-notice > summary { min-height: 34px; }
+  .code-block pre { padding: 10px 12px 12px; }
+  .markdown th, .markdown td { padding: 7px 11px; }
+}
+@media (prefers-reduced-motion: reduce) { .chat-body > .msg { animation: none; } }

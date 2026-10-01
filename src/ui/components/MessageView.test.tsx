@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { MessageView } from './MessageView';
 
 describe('MessageView', () => {
@@ -37,7 +37,8 @@ describe('MessageView', () => {
     expect(container.querySelector('.role-badge')?.textContent).toContain('offload cross');
     cleanup();
     const u = render(<MessageView item={{ kind: 'user', text: 'look', attachments: ['shot.png'] }} />);
-    expect(u.container.querySelector('.chip')?.textContent).toBe('shot.png');
+    expect(u.container.querySelector('.attach-tile .attach-name')?.textContent).toBe('shot.png');
+    expect(u.container.querySelector('.attach-tile')?.classList.contains('image')).toBe(true);
   });
 });
 
@@ -68,5 +69,63 @@ describe('MessageView tool lines (Desktop style)', () => {
     cleanup();
     const done = render(<MessageView item={{ ...item, streaming: false }} />);
     expect(done.container.querySelector('.tool-call')?.textContent).not.toContain('실행 중');
+  });
+});
+
+describe('MessageView injected user turns', () => {
+  afterEach(cleanup);
+  const notif = '<task-notification>\n<task-id>t1</task-id>\n<status>completed</status>\n<summary>Agent "research" finished</summary>\n<result>**done** here</result>\n</task-notification>';
+
+  it('renders a task-notification turn as a compact system line, not a raw user bubble', () => {
+    const { container } = render(<MessageView item={{ kind: 'user', text: notif }} />);
+    expect(container.querySelector('.msg.user')).toBeNull();
+    const line = container.querySelector('[data-testid="sys-notice"]') as HTMLDetailsElement;
+    expect(line.open).toBe(false);
+    expect(line.querySelector('summary')?.textContent).toContain('백그라운드 작업 완료');
+    expect(line.querySelector('summary')?.textContent).toContain('Agent "research" finished');
+    expect(line.querySelector('summary')?.textContent).not.toContain('<task-id>');
+    // expanded: the result as markdown plus the verbatim block
+    expect(line.querySelector('.sys-detail strong')?.textContent).toBe('done');
+    expect(line.querySelector('.sys-raw pre')?.textContent).toBe(notif);
+  });
+
+  it('strips system-reminder from a user bubble; a reminder-only turn renders nothing', () => {
+    const a = render(<MessageView item={{ kind: 'user', text: 'hi\n<system-reminder>secret ctx</system-reminder>' }} />);
+    expect(a.container.querySelector('.msg.user pre')?.textContent).toBe('hi');
+    expect(a.container.textContent).not.toContain('secret ctx');
+    cleanup();
+    const b = render(<MessageView item={{ kind: 'user', text: '<system-reminder>only</system-reminder>' }} />);
+    expect(b.container.innerHTML).toBe('');
+  });
+});
+
+describe('MessageView code blocks and turn footer', () => {
+  afterEach(cleanup);
+
+  it('fenced code gets a language label and a copy button; inline code stays a chip', () => {
+    const text = 'run `npm test` then:\n\n```ts\nconst a = 1;\n```\n\n```\nplain\n```';
+    const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    const blocks = container.querySelectorAll('.code-block');
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]!.querySelector('.code-lang')?.textContent).toBe('ts');
+    expect(blocks[0]!.querySelector('pre code')?.textContent).toContain('const a = 1;');
+    expect(blocks[1]!.querySelector('.code-lang')?.textContent).toBe('text');
+    expect(container.querySelector('p > code')?.textContent).toBe('npm test');
+  });
+
+  it('copy button copies the code text and confirms', async () => {
+    const exec = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { value: exec, configurable: true });
+    const { container, findByText } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: '```sh\necho hi\n```', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    fireEvent.click(container.querySelector('.code-copy')!);
+    expect(await findByText('복사됨')).toBeTruthy();
+    expect(exec).toHaveBeenCalledWith('copy');
+  });
+
+  it('turn badge keeps account, model, all four token counts and the reason', () => {
+    const badge = { account: 'b', model: 'opus', reason: '가장 여유', usage: { inputTokens: 1200, outputTokens: 340, cacheReadTokens: 56000, cacheCreationTokens: 0 } } as never;
+    const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'ok', toolCalls: [], badge, streaming: false, error: null, notes: [], attempts: [] }} />);
+    const t = container.querySelector('.turn-foot .turn-badge')?.textContent ?? '';
+    for (const s of ['B', '입력 1.2k', '출력 340', '캐시 읽기 56.0k', '캐시 쓰기 0', '가장 여유']) expect(t).toContain(s);
   });
 });
