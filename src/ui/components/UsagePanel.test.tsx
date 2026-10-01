@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UsagePanel, countdown, creditsText, resetStamp } from './UsagePanel';
@@ -114,5 +116,25 @@ describe('UsagePanel chips', () => {
     expect(screen.getByTestId('account-a').querySelector('.usage-dot')).toBeNull();
     fireEvent.click(screen.getByTestId('account-a'));
     expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+});
+
+describe('UsagePanel header layout (styles.css)', () => {
+  // Layout itself is checked in a real browser (.superpowers/sdd/ui-round/pw/header-check.mjs, 320–1600px);
+  // these guard the rules that keep all four cards on screen without sideways scrolling.
+  const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+  const usage = css.slice(css.indexOf('/* === usage header === */'), css.indexOf('/* === chat polish === */'));
+  it('never scrolls the cards sideways; below 1280px the cards drop to their own row in four equal columns', () => {
+    expect(usage).not.toMatch(/overflow-x:\s*auto/);
+    expect(usage).toMatch(/\.usage-panel \{[^}]*grid-template-columns: repeat\(4, minmax\(0,/);
+    const two = usage.slice(usage.indexOf('@media (max-width: 1279.98px)'));
+    expect(two).toMatch(/\.topbar \{[^}]*flex-wrap: wrap/);
+    expect(two).toMatch(/\.usage-card \{[^}]*flex: 1 1 0/);
+    expect(usage).toMatch(/container: usage-card \/ inline-size/);
+  });
+  it('every @media block in styles.css is closed (an unclosed one swallowed the rules after it)', () => {
+    let depth = 0;
+    for (const ch of css.replace(/\/\*[\s\S]*?\*\//g, '')) { if (ch === '{') depth++; if (ch === '}') depth--; expect(depth).toBeGreaterThanOrEqual(0); }
+    expect(depth).toBe(0);
   });
 });

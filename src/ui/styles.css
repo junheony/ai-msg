@@ -98,6 +98,8 @@ input, textarea, select { font: inherit; color: var(--fg); }
 
 /* ───────── App shell ───────── */
 .app { display: flex; flex-direction: column; height: 100%; }
+/* Dynamic viewport: the shell follows Android/iOS toolbars (and the keyboard, see interactive-widget) so the composer stays on screen. */
+@supports (height: 100dvh) { .app { height: 100dvh; } }
 .topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 14px; border-bottom: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; }
 .brand { display: inline-flex; align-items: center; gap: 7px; width: 240px; font-weight: 600; font-size: 14px; letter-spacing: .2px; color: var(--fg-strong); flex-shrink: 0; }
 .brand .spark { font-size: 16px; }
@@ -375,14 +377,19 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (max-width: 720px) { .auto-approve-toggle { min-height: var(--phone-tap); } }
 /* === usage header === */
 /* Each seat is a small card: mark + letter, then aligned rows (label · rounded bar · remaining %).
-   Colour follows what is left (green → amber ≤20% → red ≤5%); the current account gets a quiet accent ring + dot. */
+   Colour follows what is left (green → amber ≤20% → red ≤5%); the current account gets a quiet accent ring + dot.
+   Never scrolls sideways: ≥1280px one row; below, a second row where the four cards share the width equally
+   (bars drop out when a card gets narrow); on a phone the cards stack into mini cards (letter on top, numbers below). */
 .topbar { height: 70px; }
-.usage-panel { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; height: 100%; overflow-x: auto; scrollbar-width: none; }
-.usage-panel::-webkit-scrollbar { display: none; }
-.usage-loading { color: var(--muted); font-size: 13.5px; }
+.usage-panel {
+  display: grid; grid-auto-flow: column; grid-template-columns: repeat(4, minmax(0, 240px)); grid-auto-columns: auto;
+  align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; height: 100%;
+}
+.usage-loading { color: var(--muted); font-size: 13.5px; white-space: nowrap; }
 .usage-card {
-  position: relative; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
-  padding: 5px 12px 5px 9px; border-radius: 11px; cursor: default; user-select: none;
+  container: usage-card / inline-size;
+  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 5px 12px 5px 9px; border-radius: 11px; cursor: default; user-select: none; -webkit-tap-highlight-color: transparent;
   background: color-mix(in srgb, var(--fg) 2.5%, transparent);
   box-shadow: inset 0 0 0 1px var(--line);
   transition: background-color .15s ease, box-shadow .15s ease;
@@ -391,19 +398,19 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .usage-card.current { background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
 .usage-dot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar), 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); }
-.usage-id { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 24px; line-height: 1; }
+.usage-id { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 24px; line-height: 1; flex-shrink: 0; }
 .usage-mark.claude { color: var(--accent); font-size: 13px; font-weight: 700; }
-.usage-mark.gpt { width: 14px; height: 14px; color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
+.usage-mark.gpt { width: 14px; height: 14px; flex-shrink: 0; color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
 .usage-letter { font-size: 15px; font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
 .usage-card.gpt .usage-letter { font-size: 11.5px; letter-spacing: .5px; color: var(--fg); }
 .usage-card.current .usage-letter { color: var(--accent); }
-.usage-rows { display: flex; flex-direction: column; gap: 1px; }
+.usage-rows { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
 .usage-card.stale .usage-rows, .usage-card.down .usage-rows { opacity: .55; }
-.usage-row { display: grid; grid-template-columns: 36px 50px minmax(38px, 1fr); align-items: center; column-gap: 8px; height: 16px; white-space: nowrap; }
+.usage-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) minmax(38px, auto); align-items: center; column-gap: 8px; height: 16px; min-width: 0; white-space: nowrap; }
 .usage-row.spent, .usage-row.credits { display: flex; gap: 8px; }
 .usage-row.spent .usage-label, .usage-row.credits .usage-label { flex: 0 0 36px; }
-.usage-label { font-size: 12.5px; font-weight: 500; color: var(--muted); }
-.usage-bar { height: 5px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.usage-label { font-size: 12.5px; font-weight: 500; color: var(--muted); overflow: hidden; }
+.usage-bar { height: 5px; min-width: 0; border-radius: 3px; background: var(--track); overflow: hidden; }
 .usage-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ok); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
 .usage-row.warn .usage-bar > i { background: var(--warn); }
 .usage-row.danger .usage-bar > i { background: var(--danger); }
@@ -414,38 +421,67 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-row.none .usage-value { color: var(--faint); font-weight: 500; }
 .usage-pill {
   grid-column: 2 / -1; justify-self: start; display: inline-block; height: 16px; line-height: 16px; padding: 0 8px; border-radius: 9px;
-  font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums;
+  font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis;
   color: color-mix(in srgb, var(--danger) 45%, var(--muted)); background: color-mix(in srgb, var(--danger) 9%, transparent);
 }
 .usage-pill-at { color: var(--muted); }
 .usage-credits { grid-column: 2 / -1; justify-self: start; font-size: 14.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
 .usage-reset { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.usage-stale { flex-shrink: 0; padding: 2px 8px; border-radius: 9px; font-size: 12px; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+.usage-stale { flex-shrink: 0; padding: 2px 8px; border-radius: 9px; font-size: 12px; white-space: nowrap; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
 .usage-pop { position: fixed; z-index: 40; min-width: 220px; padding: 9px 11px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: 13.5px; cursor: default; }
 .usage-pop-title { margin-bottom: 4px; font-weight: 600; color: var(--fg-strong); }
 .usage-pop-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.75; color: var(--muted); }
 .usage-pop-row.hint { display: block; max-width: 260px; line-height: 1.45; margin-bottom: 4px; white-space: normal; }
 .usage-pop-row b { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--fg); }
+/* A narrow card keeps its colored numbers and drops the bars; the exhausted pill keeps only "소진". */
+@container usage-card (max-width: 210px) { .usage-pill-at { display: none; } }
+@container usage-card (max-width: 156px) {
+  .usage-bar { display: none; }
+  .usage-row { grid-template-columns: 36px minmax(0, 1fr); }
+}
+
+/* Two rows (< 1280px): logo + actions on top, the four cards in equal columns underneath.
+   The panel dissolves (display: contents) so the stale tag can sit in the top row and the cards on their own line. */
+@media (max-width: 1279.98px) {
+  .topbar { flex-wrap: wrap; height: auto; column-gap: 6px; row-gap: 0; padding: 0 12px 8px 14px; }
+  .topbar::after { content: ""; order: 5; flex: 0 0 100%; }
+  .topbar > .menu { order: 0; }
+  .topbar > .brand { order: 1; width: auto; height: 46px; margin-right: 6px; }
+  .topbar > .topbar-end { order: 3; }
+  .usage-panel { display: contents; }
+  .usage-stale { order: 2; }
+  .usage-card { order: 10; flex: 1 1 0; }
+  .usage-loading { order: 10; flex: 1 0 100%; padding: 4px 0 6px; }
+}
+
+/* Phone: mini cards — mark + letter on top, then "label · number" rows; a tap opens the detail popover. */
 @media (max-width: 720px) {
-  .topbar { height: 54px; }
-  .usage-panel { gap: 4px; padding-right: 2px; }
-  .usage-card { gap: 6px; padding: 2px 9px 2px 6px; min-height: var(--phone-tap); border-radius: 10px; cursor: pointer; }
-  .usage-dot { top: 3px; right: 3px; width: 5px; height: 5px; }
-  .usage-id { min-width: 18px; gap: 2px; }
+  .topbar { column-gap: 5px; padding: 0 6px 6px; }
+  .topbar > .menu { margin-left: -4px; }
+  .topbar > .brand { display: inline-flex; height: 46px; margin-right: 2px; }
+  .topbar-end { margin-left: auto; }
+  .usage-card { flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 7px 5px; border-radius: 10px; cursor: pointer; }
+  .usage-dot { top: 6px; right: 6px; width: 5px; height: 5px; }
+  .usage-id { flex-direction: row; justify-content: flex-start; gap: 4px; min-width: 0; height: 15px; }
   .usage-mark.claude { font-size: 11px; }
   .usage-mark.gpt { width: 12px; height: 12px; }
   .usage-letter { font-size: 14px; }
-  .usage-card.gpt .usage-letter { font-size: 10px; }
+  .usage-card.gpt .usage-letter { font-size: 11px; }
   .usage-rows { gap: 0; }
-  .usage-row { grid-template-columns: 34px minmax(24px, 1fr); column-gap: 4px; height: 15px; }
+  .usage-row, .usage-row.spent, .usage-row.credits { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 4px; height: 17px; }
   .usage-bar { display: none; }
-  .usage-row.spent, .usage-row.credits { gap: 4px; }
-  .usage-row.spent .usage-label, .usage-row.credits .usage-label { flex-basis: 34px; }
-  .usage-value { line-height: 15px; }
   .usage-label { font-size: 11.5px; }
+  .usage-value { line-height: 17px; font-size: 13.5px; }
   .usage-value small { display: none; }
-  .usage-pill { padding: 0 6px; font-size: 12px; }
+  .usage-pill { grid-column: 2; justify-self: end; height: 15px; line-height: 15px; padding: 0 6px; font-size: 12px; }
   .usage-pill-at { display: none; }
+  .usage-credits { grid-column: 2; justify-self: end; font-size: 13.5px; }
+  .usage-stale { padding: 2px 7px; font-size: 11.5px; }
+}
+/* The narrowest phones (≤ ~360px): the credit balance needs the whole row, so its label steps aside (the popover names it). */
+@container usage-card (max-width: 84px) {
+  .usage-row.credits .usage-label { display: none; }
+  .usage-row.credits .usage-credits { grid-column: 1 / -1; }
 }
 /* === chat polish === */
 /* Claude-Desktop reading column: warm dark, one ~760px measure for messages and composer,
@@ -675,6 +711,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .todo-head, .queue-chip { min-height: var(--phone-tap); }
   .attach-thumb img { max-width: 120px; max-height: 96px; }
   .lightbox { padding: 8px; }
+}
 
 /* === diff & sessions === */
 :root { --diff-add-bg: rgba(87, 171, 90, .16); --diff-add-fg: #8fd18b; --diff-del-bg: rgba(226, 103, 91, .15); --diff-del-fg: #f0948a; }
@@ -735,6 +772,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .row-more-btn { width: 32px; height: 32px; }
   .session-menu button { min-height: var(--phone-tap); }
   .suggest li { min-height: 36px; align-items: center; }
+}
 
 /* === pwa === */
 /* Home-screen app (black-translucent status bar, viewport-fit=cover): keep content out of the notch / home indicator. */
@@ -751,7 +789,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .notify-test { align-self: flex-start; }
 @media (max-width: 720px) {
   .notify-btn, .notify-toggle, .notify-test { min-height: var(--phone-tap); }
-  .notify-pop { position: fixed; right: 8px; top: calc(env(safe-area-inset-top, 0) + 72px); }
+  .notify-pop { position: fixed; right: 8px; top: calc(env(safe-area-inset-top, 0) + 50px); }
 }
 
 /* === automodel === */
