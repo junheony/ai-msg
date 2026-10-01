@@ -33,6 +33,11 @@ describe('ClientMessageSchema', () => {
     expect(ClientMessageSchema.safeParse({ type: 'close_session', sessionId: 's' }).success).toBe(true);
   });
 
+  it('effort: accepts the four allowlisted levels, rejects anything else', () => {
+    const send = (effort: unknown) => ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', model: 'opus', effort }).success;
+    for (const e of ['low', 'medium', 'high', 'xhigh']) expect(send(e)).toBe(true);
+    for (const e of ['max', 'ultra', 'HIGH', '', 3, 'high" -c x="y']) expect(send(e)).toBe(false);
+  });
   it('rejects luna, gpt-5.6-sol, bad attachment ids, more than 8 attachments, unknown engines', () => {
     expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', model: 'gpt-5.6-luna' }).success).toBe(false);
     expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', model: 'gpt-5.6-sol' }).success).toBe(false);

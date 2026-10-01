@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
-import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, MODEL_LABEL, SANDBOX_LABEL, type AnyModel, type CodexSandbox, type EngineChoice, type EngineKind } from '../../shared/models';
+import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, SANDBOX_LABEL, type AnyModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind } from '../../shared/models';
 import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-types';
 import type { ChatItem, PendingPermission, PendingQuestion, UploadedAttachment } from '../state';
 import { mergeToolRuns } from '../toolRuns';
 import { filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AttachmentBar } from './AttachmentBar';
 import { MessageView } from './MessageView';
+import { ModelPicker } from './ModelPicker';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
 
@@ -21,6 +22,8 @@ export type ChatProps = {
   /** Right-aligned header buttons (the pane's close button). */
   headActions?: ReactNode;
   model: AnyModel;
+  /** Reasoning effort for `model`'s engine. */
+  effort: Effort;
   /** New-session choices (D2, D3). */
   engine: EngineChoice;
   sandbox: CodexSandbox;
@@ -36,6 +39,7 @@ export type ChatProps = {
   onDecide: (requestId: string, decision: PermissionDecision) => void;
   onAnswer: (requestId: string, answers: QuestionAnswers) => void;
   onModel: (m: AnyModel) => void;
+  onEffort: (e: Effort) => void;
   onEngine: (e: EngineChoice) => void;
   onSandbox: (s: CodexSandbox) => void;
   onAttach: (a: UploadedAttachment) => void;
@@ -159,11 +163,7 @@ export function Chat(p: ChatProps) {
                   </select>
                 </span>
               )}
-              <span className="pick">
-                <select value={p.model} onChange={(e) => p.onModel(e.target.value as AnyModel)} title="이 세션의 기본 모델" aria-label="모델" data-testid="model-select">
-                  {models.map((m) => <option key={m} value={m}>{MODEL_LABEL[m]}</option>)}
-                </select>
-              </span>
+              <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
               {p.activeTurnId
                 ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
                 : <button type="button" className="send" onClick={submit} disabled={!canSend} title="보내기 (⌘/Ctrl+Enter)"><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}

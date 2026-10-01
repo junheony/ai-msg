@@ -8,7 +8,7 @@ describe('models', () => {
     expect(DEFAULT_MODEL).toBe('opus');
     expect(isClaudeModel('haiku')).toBe(false);
     expect(isClaudeModel('fable')).toBe(true);
-    expect(MODEL_ARG).toEqual({ sonnet: 'sonnet', opus: 'opus', fable: 'fable' });
+    expect(MODEL_ARG).toEqual({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', fable: 'claude-fable-5-1' });
   });
 });
 

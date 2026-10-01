@@ -20,6 +20,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }),
     text: z.string().min(1).max(200_000),
     model: z.enum(['sonnet', 'opus', 'fable', 'gpt-6-sol', 'gpt-6-astra']).optional(),
+    /** Reasoning effort for this turn (allowlist = shared/models EFFORTS); absent = the engine's own default. */
+    effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     /** New sessions only (D3): which engine opens the session. Ignored on resume — the stored engine wins. */
     engine: z.enum(['claude', 'codex', 'auto']).optional(),
     /** New Codex sessions only (D2). */

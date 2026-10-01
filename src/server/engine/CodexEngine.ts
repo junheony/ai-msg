@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { codexEnv } from '../../shared/accounts';
-import type { CodexModel, CodexSandbox } from '../../shared/models';
+import type { CodexModel, CodexSandbox, Effort } from '../../shared/models';
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import type { EngineEvent, EngineResult } from './Engine';
 import { STDERR_MAX } from './redact';
@@ -19,6 +19,8 @@ export type CodexTurnRequest = {
   resumeThreadId: string | null;
   model: CodexModel;
   sandbox: CodexSandbox;
+  /** `-c model_reasoning_effort=…`; absent = config.toml's value. */
+  effort?: Effort;
   prompt: string;
   /** Absolute paths of image attachments (D7), passed as `-i`. */
   imagePaths?: string[];
@@ -43,13 +45,15 @@ export type SpawnFn = (bin: string, args: string[], opts: { cwd: string; env: Re
  * the image list to keep the trailing `-` from being taken as a file. `resume` has no `-s`/`-C`
  * (verified `codex exec resume --help`), hence `-c sandbox_mode=…` for both forms.
  */
-export function codexArgs(req: Pick<CodexTurnRequest, 'cwd' | 'resumeThreadId' | 'model' | 'sandbox' | 'imagePaths'>): string[] {
+export function codexArgs(req: Pick<CodexTurnRequest, 'cwd' | 'resumeThreadId' | 'model' | 'sandbox' | 'imagePaths' | 'effort'>): string[] {
   const images = (req.imagePaths ?? []).flatMap((p) => ['-i', p]);
   const common = [
     '--json', '--skip-git-repo-check', '-m', req.model,
     '-c', `sandbox_mode="${req.sandbox}"`,
     '-c', 'approval_policy="never"',
     '-c', 'sandbox_workspace_write.network_access=false',
+    // Overrides config.toml's model_reasoning_effort; values from ~/.codex/models_cache.json supported_reasoning_levels.
+    ...(req.effort ? ['-c', `model_reasoning_effort="${req.effort}"`] : []),
   ];
   return req.resumeThreadId
     ? ['exec', 'resume', req.resumeThreadId, ...images, ...common, '-']

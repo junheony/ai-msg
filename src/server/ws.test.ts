@@ -63,6 +63,7 @@ beforeAll(async () => {
       return [{ kind: 'init', sessionId: 'sess-q', model: 'm' }, okResult('sess-q', `answer=${a ? a['Which color?'] : 'none'}`)];
     }
     if (req.prompt === 'att') return [{ kind: 'init', sessionId: 'sess-att', model: 'm' }, okResult('sess-att', `n=${req.attachments?.length ?? 0}`)];
+    if (req.prompt === 'effort') return [{ kind: 'init', sessionId: 'sess-eff', model: 'm' }, okResult('sess-eff', `effort=${req.effort ?? 'none'}`)];
     if (req.prompt === 'whereami') return [{ kind: 'init', sessionId: 'sess-cwd', model: 'm' }, okResult('sess-cwd', `cwd=${req.cwd}`)];
     if (req.prompt === 'throw') throw new Error('engine exploded');
     if (req.prompt === 'hold') await gate;
@@ -477,6 +478,15 @@ describe('ws', () => {
     const r = collect(ws, (m) => m.type === 'turn_result');
     ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'att', attachments: [a.id] }));
     expect((await r).at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'n=1' });
+    ws.close();
+  });
+
+  it('send.effort reaches the engine', async () => {
+    const { ws } = await connect({ Cookie: COOKIE, Origin: origin });
+    await collect(ws, (m) => m.type === 'hello');
+    const r = collect(ws, (m) => m.type === 'turn_result');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'effort', model: 'opus', effort: 'xhigh' }));
+    expect((await r).at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'effort=xhigh' });
     ws.close();
   });
 });

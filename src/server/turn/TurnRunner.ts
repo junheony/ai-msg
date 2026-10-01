@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type EngineChoice } from '../../shared/models';
+import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, effortFor, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice } from '../../shared/models';
 import type { ServerMessage } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -36,6 +36,8 @@ export type TurnParams = {
   text: string;
   /** Claude or GPT model; a model of the other engine is ignored (the session's default applies). */
   model?: AnyModel;
+  /** Reasoning effort for this turn; dropped if the resolved model does not support it. */
+  effort?: Effort;
   /** New sessions only (D3). */
   engine?: EngineChoice;
   /** New Codex sessions only (D2). */
@@ -133,11 +135,14 @@ export class TurnRunner {
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[]): Promise<Attempt> {
     const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null };
     const scope = () => ({ turnId: p.turnId, sessionId: out.sessionId, cwd });
+    // The effort applies to the resolved model (a Fable → Opus downgrade keeps it when Opus supports it).
+    const effort = effortFor(model, p.effort);
     const events = this.deps.engine.runTurn({
       account,
       cwd,
       resumeSessionId,
       model,
+      ...(effort ? { effort } : {}),
       prompt: p.text,
       attachments,
       signal: sink.signal,
@@ -255,7 +260,8 @@ export class TurnRunner {
     if (sink.signal.aborted) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: '중단됨' }); return; }
     sink.emit({ type: 'turn_started', ...scope(), account: 'gpt', model, reason, attempt: 0, engine: 'codex' });
     let result: EngineResult | null = null;
-    for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, prompt: promptWithFiles(p.text, attachments), imagePaths: attachments.filter((a) => a.isImage).map((a) => a.path), signal: sink.signal })) {
+    const effort = effortFor(model, p.effort);
+    for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, ...(effort ? { effort } : {}), prompt: promptWithFiles(p.text, attachments), imagePaths: attachments.filter((a) => a.isImage).map((a) => a.path), signal: sink.signal })) {
       switch (ev.kind) {
         case 'init': sessionId = ev.sessionId; break;
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;

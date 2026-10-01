@@ -1,7 +1,11 @@
 import { FABLE_MAX_PCT, type ClaudeModel } from '../../shared/models';
 
-/** Values for Options.model. Verified 2026-09-30: sonnet→claude-sonnet-5-5, opus→claude-opus-5-5, fable→claude-fable-5-1. */
-export const MODEL_ARG: Record<ClaudeModel, string> = { sonnet: 'sonnet', opus: 'opus', fable: 'fable' };
+/**
+ * Values for Options.model: exact versions, so the picker's "Opus 5.5" is what runs. Verified 2026-10-01 with the SDK's
+ * supportedModels() (agent-sdk 0.3.285): alias opus → resolvedModel claude-opus-5-5, sonnet → claude-sonnet-5-5,
+ * and the Fable row's value is claude-fable-5-1.
+ */
+export const MODEL_ARG: Record<ClaudeModel, string> = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', fable: 'claude-fable-5-1' };
 
 export { FABLE_MAX_PCT };
 

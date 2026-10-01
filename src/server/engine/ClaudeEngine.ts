@@ -49,6 +49,8 @@ export function buildOptions(
     cwd: req.cwd,
     env: accountEnv(req.account, deps.baseEnv, deps.home),
     model: MODEL_ARG[req.model],
+    // sdk.d.ts Options.effort?: EffortLevel ('low' | 'medium' | 'high' | 'xhigh' | 'max'), "works with adaptive thinking".
+    ...(req.effort ? { effort: req.effort } : {}),
     resume: req.resumeSessionId ?? undefined,
     // ~/.claude/settings.json sets defaultMode "auto"; spec §6 wants ask-every-time — unless
     // 이 세션 accepted the SDK's own "allow all edits this session" on an earlier turn.

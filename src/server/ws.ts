@@ -244,6 +244,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
         await deps.runner.run({
           turnId, cwd: runCwd, sessionId: msg.sessionId, text: msg.text,
           ...(msg.model ? { model: msg.model } : {}),
+          ...(msg.effort ? { effort: msg.effort } : {}),
           ...(msg.engine ? { engine: msg.engine } : {}),
           ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
           ...(msg.attachments ? { attachments: msg.attachments } : {}),

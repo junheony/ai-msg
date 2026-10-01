@@ -14,7 +14,8 @@ describe('buildOptions', () => {
     const o = buildOptions(req({ account: 'b', model: 'fable', resumeSessionId: 'sid' }), { home: '/h', baseEnv: { PATH: '/bin', ANTHROPIC_API_KEY: 'k' }, abortController: new AbortController(), onStderr: () => {} });
     expect(o.cwd).toBe('/w');
     expect(o.env).toEqual({ PATH: '/bin', CLAUDE_CONFIG_DIR: '/h/.claude-b' });
-    expect(o.model).toBe('fable');
+    expect(o.model).toBe('claude-fable-5-1');
+    expect(o).not.toHaveProperty('effort');
     expect(o.resume).toBe('sid');
     expect(o.permissionMode).toBe('default');
     expect(o.settingSources).toEqual(['user', 'project', 'local']);
@@ -33,6 +34,16 @@ describe('buildOptions', () => {
     expect(await mk('session').canUseTool!('Bash', {}, ctx)).toEqual({ behavior: 'allow' });
     expect(await mk('deny').canUseTool!('Write', {}, ctx)).toMatchObject({ behavior: 'deny' });
     expect(seen).toEqual(['Bash:tu1', 'Bash:tu1', 'Write:tu1']);
+  });
+});
+
+describe('buildOptions: model version and effort', () => {
+  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  it('passes the exact model id and the per-turn effort as Options.effort', () => {
+    const o = buildOptions(req({ model: 'opus', effort: 'xhigh' }), deps);
+    expect(o.model).toBe('claude-opus-5-5');
+    expect(o.effort).toBe('xhigh');
+    expect(buildOptions(req({ model: 'sonnet', effort: 'low' }), deps)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low' });
   });
 });
 
