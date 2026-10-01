@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ACCOUNTS, type Account } from '../../shared/accounts';
 import type { PinnedProject, ProjectEntry, SessionEntry } from '../../shared/session-types';
+import { pathKey } from './slug';
 import { readHead } from './transcript';
 
 const UUID_JSONL = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
@@ -57,23 +58,28 @@ export function groupProjects(sessions: SessionEntry[], pinned: PinnedProject[],
     const prev = newest.get(s.sessionId);
     if (!prev || s.lastModified > prev.lastModified) newest.set(s.sessionId, s);
   }
+  // Keyed by the NFC spelling: NFC and NFD transcripts of one folder form a single project.
   const byCwd = new Map<string, SessionEntry[]>();
   for (const s of newest.values()) {
-    const list = byCwd.get(s.cwd) ?? [];
+    const key = pathKey(s.cwd);
+    const list = byCwd.get(key) ?? [];
     list.push(s);
-    byCwd.set(s.cwd, list);
+    byCwd.set(key, list);
   }
   const projects: ProjectEntry[] = [];
   const seen = new Set<string>();
   for (const p of pinned) {
-    seen.add(p.cwd);
-    const list = (byCwd.get(p.cwd) ?? []).sort((x, y) => y.lastModified - x.lastModified);
-    projects.push({ cwd: p.cwd, name: p.name ?? path.basename(p.cwd), pinned: true, sessions: list });
+    const key = pathKey(p.cwd);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const list = (byCwd.get(key) ?? []).sort((x, y) => y.lastModified - x.lastModified);
+    projects.push({ cwd: key, name: p.name ?? path.basename(key), pinned: true, sessions: list });
   }
   for (const cwd of recent) {
-    if (seen.has(cwd) || byCwd.has(cwd)) continue;
-    seen.add(cwd);
-    projects.push({ cwd, name: path.basename(cwd), pinned: false, sessions: [] });
+    const key = pathKey(cwd);
+    if (seen.has(key) || byCwd.has(key)) continue;
+    seen.add(key);
+    projects.push({ cwd: key, name: path.basename(key), pinned: false, sessions: [] });
   }
   const rest = [...byCwd.entries()].filter(([cwd]) => !seen.has(cwd)).map(([cwd, list]) => ({
     cwd,
@@ -104,7 +110,11 @@ export async function readRecent(file: string): Promise<string[]> {
   try {
     const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((p): p is string => typeof p === 'string' && p.startsWith('/')).slice(0, MAX_RECENT_FOLDERS);
+    const seen = new Set<string>();
+    return parsed
+      .filter((p): p is string => typeof p === 'string' && p.startsWith('/'))
+      .filter((p) => !seen.has(pathKey(p)) && !!seen.add(pathKey(p)))
+      .slice(0, MAX_RECENT_FOLDERS);
   } catch {
     return [];
   }
@@ -139,7 +149,7 @@ export class SessionIndex {
 
   /** F1: records an (already validated, real) folder as most recent and persists the list (0600). */
   async addRecent(cwd: string): Promise<string[]> {
-    this.recentFolders = [cwd, ...this.recentFolders.filter((c) => c !== cwd)].slice(0, MAX_RECENT_FOLDERS);
+    this.recentFolders = [cwd, ...this.recentFolders.filter((c) => pathKey(c) !== pathKey(cwd))].slice(0, MAX_RECENT_FOLDERS);
     this.grouped = groupProjects(this.entries, this.pinned, this.recentFolders);
     const file = this.opts.recentFile;
     const snapshot = this.recentFolders;

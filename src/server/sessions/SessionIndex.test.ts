@@ -135,3 +135,41 @@ describe('recent folders (F1)', () => {
     expect(await readRecent(f)).toEqual([]);
   });
 });
+
+describe('NFC/NFD paths (개발)', () => {
+  const NFC = '/Users/max/Documents/개발/deck'.normalize('NFC');
+  const NFD = NFC.normalize('NFD');
+  const s = (sessionId: string, cwd: string, lastModified: number): SessionEntry => ({
+    sessionId, account: 'a', cwd, projectDir: '/p', file: '/p/' + sessionId + '.jsonl', title: 't', lastModified, sizeBytes: 1,
+  });
+
+  it('the two spellings really differ', () => {
+    expect(NFC).not.toBe(NFD);
+  });
+
+  it('groupProjects puts NFC and NFD transcripts of one folder in a single project, keeping each session cwd', () => {
+    const p = groupProjects([s(ID1, NFC, 10), s(ID2, NFD, 20)], []);
+    expect(p).toHaveLength(1);
+    expect(p[0]?.cwd).toBe(NFC);
+    expect(p[0]?.name).toBe('deck');
+    expect(p[0]?.sessions.map((x) => x.cwd)).toEqual([NFD, NFC]);
+  });
+
+  it('a recent (폴더 열기) or pinned folder in the other spelling does not create a duplicate project', () => {
+    const p = groupProjects([s(ID1, NFD, 10)], [], [NFC]);
+    expect(p.map((x) => [x.cwd, x.sessions.length])).toEqual([[NFC, 1]]);
+    const q = groupProjects([s(ID1, NFC, 10)], [{ cwd: NFD }], [NFC, NFD]);
+    expect(q.map((x) => [x.cwd, x.pinned, x.sessions.length])).toEqual([[NFC, true, 1]]);
+  });
+
+  it('addRecent and readRecent dedupe across spellings', async () => {
+    const dir = await mkRoot();
+    const recentFile = path.join(dir, 'r.json');
+    const idx = new SessionIndex({ roots: { a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' }, pinnedFile: '/nonexistent/p.json', recentFile });
+    await idx.refresh();
+    await idx.addRecent(NFD);
+    expect(await idx.addRecent(NFC)).toEqual([NFC]);
+    await fs.writeFile(recentFile, JSON.stringify([NFD, NFC, '/w/x']));
+    expect(await readRecent(recentFile)).toEqual([NFD, '/w/x']);
+  });
+});
