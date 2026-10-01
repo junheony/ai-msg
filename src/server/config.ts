@@ -39,6 +39,10 @@ export type DeckConfig = {
   cwdRoots: string[];
   /** Claude Desktop's Code-tab session records (read-only; titles/recency of Desktop sessions). */
   desktopSessionsRoot: string;
+  /** Graceful restart (SIGTERM/SIGUSR2): how long running turns and background work may finish (`DECK_DRAIN_MAX_MIN`, default 15). */
+  drainMaxMs: number;
+  /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`, default 120). */
+  bgMaxMs: number;
 };
 
 /** ~/.config/offload/protect: comment lines start with '#'; first non-blank token must be a|b|c. */
@@ -69,6 +73,12 @@ export function readDeckUrl(file: string, fallback = 'http://127.0.0.1:9310'): s
 function extraCwdRoots(env: NodeJS.ProcessEnv): string[] {
   if (env.DECK_LOOPBACK_ONLY !== '1') return [];
   return (env.DECK_EXTRA_CWD_ROOTS ?? '').split(',').map((s) => s.trim()).filter((s) => s.startsWith('/') && path.resolve(s) !== '/');
+}
+
+/** Positive minutes from env as ms, else the default. */
+function minutes(v: string | undefined, fallbackMin: number): number {
+  const n = Number(v);
+  return (Number.isFinite(n) && n > 0 ? n : fallbackMin) * 60_000;
 }
 
 function repoRootDefault(): string {
@@ -102,5 +112,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     settingsFile: path.join(configDir, 'settings.json'),
     cwdRoots: [home, ...extraCwdRoots(env)],
     desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
+    drainMaxMs: minutes(env.DECK_DRAIN_MAX_MIN, 15),
+    bgMaxMs: minutes(env.DECK_BG_MAX_MIN, 120),
   };
 }
