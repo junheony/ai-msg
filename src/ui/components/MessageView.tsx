@@ -1,4 +1,5 @@
 import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { roleSummary } from '../roles';
 import type { ChatItem } from '../state';
 import { RoleBadge } from './RoleBadge';
@@ -14,7 +15,10 @@ const MD_COMPONENTS: Components = {
     <a href={typeof src === 'string' ? src : undefined} rel="noreferrer noopener" target="_blank">🖼 {alt || (typeof src === 'string' ? src : '이미지')}</a>
   ),
   a: ({ href, children }) => <a href={href} rel="noreferrer noopener" target="_blank">{children}</a>,
+  // GFM tables scroll sideways inside the message instead of widening the chat (phone).
+  table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
 };
+const MD_PLUGINS = [remarkGfm];
 
 /** Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines. */
 export function MessageView({ item }: { item: ChatItem }) {
@@ -27,9 +31,9 @@ export function MessageView({ item }: { item: ChatItem }) {
   return (
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}`}>
       {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
-      {item.attempts.map((t, i) => <div key={i} className="markdown failed-attempt muted"><ReactMarkdown components={MD_COMPONENTS}>{t}</ReactMarkdown></div>)}
+      {item.attempts.map((t, i) => <div key={i} className="markdown failed-attempt muted"><ReactMarkdown components={MD_COMPONENTS} remarkPlugins={MD_PLUGINS}>{t}</ReactMarkdown></div>)}
       <ToolCalls calls={item.toolCalls} live={item.streaming} />
-      {item.text && <div className="markdown"><ReactMarkdown components={MD_COMPONENTS}>{item.text}</ReactMarkdown></div>}
+      {item.text && <div className="markdown"><ReactMarkdown components={MD_COMPONENTS} remarkPlugins={MD_PLUGINS}>{item.text}</ReactMarkdown></div>}
       {item.streaming && <span className="cursor">▍</span>}
       {item.error && <div className="error">오류: {item.error}</div>}
       {item.badge && <TurnBadge badge={item.badge} />}

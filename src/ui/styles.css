@@ -229,9 +229,16 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .markdown pre { margin: 6px 0 10px; padding: 10px 12px; border-radius: 8px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); overflow-x: auto; }
 .markdown pre code { padding: 0; background: none; color: var(--fg); }
 .markdown blockquote { margin: 6px 0; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
-.markdown table { border-collapse: collapse; margin: 6px 0 10px; font-size: 12.5px; display: block; overflow-x: auto; max-width: 100%; }
-.markdown th, .markdown td { border-bottom: 1px solid var(--line); padding: 6px 14px 6px 0; text-align: left; vertical-align: top; }
-.markdown th { color: var(--muted); font-weight: 500; }
+.markdown .md-table { margin: 6px 0 10px; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 8px; }
+.markdown table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12.5px; line-height: 1.45; }
+.markdown th, .markdown td { padding: 5px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+.markdown th:last-child, .markdown td:last-child { border-right: 0; }
+.markdown tbody tr:last-child td { border-bottom: 0; }
+.markdown th { color: var(--fg-strong); font-weight: 600; background: var(--code-bg); white-space: nowrap; }
+.markdown td { overflow-wrap: normal; word-break: keep-all; max-width: 420px; }
+.markdown del { color: var(--muted); }
+.markdown li:has(> input[type="checkbox"]) { list-style: none; margin-left: -18px; }
+.markdown li > input[type="checkbox"] { margin: 0 6px 0 0; vertical-align: -1px; accent-color: var(--accent); }
 .markdown hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
 .cursor { color: var(--accent); animation: blink 1s steps(2) infinite; } @keyframes blink { to { opacity: 0; } }
 .failed-attempt { opacity: .6; border-left: 2px solid var(--line-strong); padding-left: 10px; }

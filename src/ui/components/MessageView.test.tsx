@@ -16,6 +16,18 @@ describe('MessageView', () => {
     expect(a?.textContent).toContain('pixel');
   });
 
+  it('renders GFM: a pipe table becomes a scrollable <table>, plus strikethrough and task lists', () => {
+    const text = '| 계정 | 남음 |\n|---|---|\n| A | 42% |\n| B | 7% |\n\n~~old~~\n\n- [x] done\n- [ ] todo';
+    const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    const table = container.querySelector('.md-table > table');
+    expect(table).not.toBeNull();
+    expect([...table!.querySelectorAll('th')].map((th) => th.textContent)).toEqual(['계정', '남음']);
+    expect(table!.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(container.querySelector('del')?.textContent).toBe('old');
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
+    expect(container.textContent).not.toContain('|---|');
+  });
+
   it('shows the role-distribution badge for subagent/offload calls and attachment chips on user messages', () => {
     const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'done', toolCalls: [
       { toolUseId: '1', name: 'Agent', input: { subagent_type: 'explore', model: 'sonnet', description: 'find' }, result: 'ok', isError: false },
