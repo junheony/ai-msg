@@ -6,6 +6,7 @@ import type { SessionEntry } from '../shared/session-types';
 import { AttachmentTooLarge, MAX_ATTACHMENT_BYTES, type AttachmentStore } from './attachments/AttachmentStore';
 import { DirError, listDirs, resolveUnderHome } from './dirs';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
+import { isPinnableId, type PinStore } from './sessions/PinStore';
 import type { SessionIndex } from './sessions/SessionIndex';
 import type { UsageService } from './usage/UsageService';
 
@@ -16,6 +17,8 @@ export type HttpDeps = {
   home?: string;
   /** F1/F2: the project list or pins changed; main broadcasts a fresh `index` to every socket. */
   onIndexChanged?: () => void;
+  /** F2: pinned sessions; absent = no /api/pins. */
+  pins?: PinStore;
 };
 
 /**
@@ -192,7 +195,17 @@ export function createRequestHandler(deps: HttpDeps) {
       if (url.pathname.startsWith('/api/')) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
-        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []) }); return; }
+        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [] }); return; }
+        if (url.pathname === '/api/pins' && req.method === 'POST') {
+          if (!deps.pins) { json(res, 404, { error: 'not found' }); return; }
+          let body: { sessionId?: unknown; pinned?: unknown } = {};
+          try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
+          if (!body || !isPinnableId(body.sessionId) || typeof body.pinned !== 'boolean') { json(res, 400, { error: '잘못된 고정 요청입니다' }); return; }
+          const pins = await deps.pins.set(body.sessionId, body.pinned);
+          deps.onIndexChanged?.();
+          json(res, 200, { pins });
+          return;
+        }
         if (url.pathname === '/api/dirs' && req.method === 'GET') {
           try {
             json(res, 200, await listDirs(url.searchParams.get('path') || '~', home));

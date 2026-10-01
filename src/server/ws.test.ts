@@ -10,6 +10,7 @@ import { AttachmentStore } from './attachments/AttachmentStore';
 import { cookieValueFor } from './auth';
 import { StubEngine, okResult } from './engine/StubEngine';
 import { createRequestHandler } from './http';
+import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
@@ -23,6 +24,7 @@ let origin = '';
 let wsUrl = '';
 let stub: StubEngine;
 let wsApi: ReturnType<typeof attachWebSocket>;
+let pins: PinStore;
 let base: string;
 let work: string;
 let store: SessionStateStore;
@@ -69,8 +71,10 @@ beforeAll(async () => {
   store2 = new AttachmentStore(path.join(base, 'att'));
   await store2.init();
   const runner = new TurnRunner({ attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
+  pins = new PinStore(path.join(base, 'pins.json'));
+  await pins.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)] });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -366,12 +370,14 @@ describe('ws', () => {
     ws.close();
   });
 
-  it('broadcastIndex sends the project index to every client', async () => {
+  it('broadcastIndex sends the project index and the pins to every client; hello carries the pins (F2)', async () => {
+    await pins.set('pinned-1', true);
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
-    await collect(ws, (m) => m.type === 'hello');
+    expect((await collect(ws, (m) => m.type === 'hello')).at(-1)).toMatchObject({ type: 'hello', pins: ['pinned-1'] });
+    await pins.set('pinned-1', false);
     const p = collect(ws, (m) => m.type === 'index');
     wsApi.broadcastIndex();
-    expect((await p).at(-1)).toMatchObject({ type: 'index', projects: expect.any(Array) });
+    expect((await p).at(-1)).toMatchObject({ type: 'index', projects: expect.any(Array), pins: [] });
     ws.close();
   });
 

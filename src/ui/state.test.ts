@@ -21,6 +21,18 @@ describe('reducer', () => {
     expect(play([{ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] }], s).projects[0]?.name).toBe('w');
   });
 
+  it('pins come from hello/index and set_pins; an index without pins keeps them (F2)', () => {
+    expect(initialState.pins).toEqual([]);
+    let s = play([{ type: 'hello', usage, projects: [], pins: ['a', 'b'], running: [], codex: { available: false } }]);
+    expect(s.pins).toEqual(['a', 'b']);
+    s = play([{ type: 'index', projects: [] }], s);
+    expect(s.pins).toEqual(['a', 'b']);
+    s = play([{ type: 'index', projects: [], pins: ['b'] }], s);
+    expect(s.pins).toEqual(['b']);
+    expect(reducer(s, { type: 'set_pins', pins: ['c'] }).pins).toEqual(['c']);
+    expect(reducer(s, { type: 'show_error', message: '고정 실패' }).error).toBe('고정 실패');
+  });
+
   it('adopts the server-known title into a pane once the index reports it (finding 3)', () => {
     let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 'w · 새 세션' });
     const sessionEntry = { sessionId: 's1', account: 'b', cwd: '/w', projectDir: '/w', file: 'f', title: 'Reply with exactly: ok', lastModified: 0, sizeBytes: 0 } as const;

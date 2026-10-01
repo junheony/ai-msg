@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import type { ClientMessage } from '../shared/protocol';
 import { Login } from './components/Login';
+import { postPin } from './pins';
 import { Pane } from './components/Pane';
 import { PermissionCard } from './components/PermissionCard';
 import { QuestionCard } from './components/QuestionCard';
@@ -93,6 +94,8 @@ export function App() {
             onOpen={(sessionId, cwd, title) => openIn(active.id, sessionId, cwd, title)}
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
+            pins={state.pins}
+            onTogglePin={(sessionId, pinned) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 실패' })); }}
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
           />
         </div>

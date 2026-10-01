@@ -45,6 +45,8 @@ export type AppState = {
   activePaneId: string;
   error: string | null;
   codexAvailable: boolean;
+  /** F2: pinned session ids, pin order (server-side pins.json). */
+  pins: string[];
 };
 
 export const MAX_PANES = 4;
@@ -53,7 +55,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false };
+export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, pins: [] };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage }
@@ -68,7 +70,9 @@ export type Action =
   | { type: 'add_pane' }
   | { type: 'close_pane'; paneId: string }
   | { type: 'focus_pane'; paneId: string }
-  | { type: 'dismiss_error' };
+  | { type: 'dismiss_error' }
+  | { type: 'set_pins'; pins: string[] }
+  | { type: 'show_error'; message: string };
 
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
@@ -216,9 +220,9 @@ function applyTitles(panes: PaneState[], projects: ProjectEntry[]): PaneState[] 
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
     case 'hello':
-      return { ...state, connected: true, usage: msg.usage, projects: msg.projects, codexAvailable: msg.codex.available, panes: applyTitles(mapPanes(state, msg), msg.projects) };
+      return { ...state, connected: true, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, codexAvailable: msg.codex.available, panes: applyTitles(mapPanes(state, msg), msg.projects) };
     case 'usage': return { ...state, usage: msg.usage };
-    case 'index': return { ...state, projects: msg.projects, panes: applyTitles(state.panes, msg.projects) };
+    case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, panes: applyTitles(state.panes, msg.projects) };
     case 'history': {
       // Every pane with this session open (`open` records the id before open_session is sent, so a pane still
       // waiting for its reply counts). A history no pane views — its pane was closed or switched while the reply
@@ -302,6 +306,8 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'focus_pane': return state.panes.some((p) => p.id === action.paneId) ? { ...state, activePaneId: action.paneId } : state;
     case 'dismiss_error': return { ...state, error: null };
+    case 'set_pins': return { ...state, pins: action.pins };
+    case 'show_error': return { ...state, error: action.message };
   }
 }
 

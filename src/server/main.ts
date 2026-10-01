@@ -7,6 +7,7 @@ import { loadConfig } from './config';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { CodexEngine } from './engine/CodexEngine';
 import { createRequestHandler } from './http';
+import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
@@ -19,7 +20,8 @@ async function main(): Promise<void> {
   const usage = new UsageService({ deckUrl: cfg.deckUrl });
   const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile });
   const store = new SessionStateStore(cfg.stateFile);
-  await Promise.all([index.refresh(), store.load()]);
+  const pins = new PinStore(cfg.pinsFile);
+  await Promise.all([index.refresh(), store.load(), pins.load()]);
   usage.start();
   const attachments = new AttachmentStore(cfg.attachmentsDir);
   await attachments.init();
@@ -47,10 +49,10 @@ async function main(): Promise<void> {
   const extraHosts = [...addresses, ...cfg.extraHosts];
   // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) reach it through this.
   let notifyIndex = () => {};
-  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex() });
+  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, cwdRoots: cfg.cwdRoots });
+  const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, cwdRoots: cfg.cwdRoots, pins });
   notifyIndex = () => ws.broadcastIndex();
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 

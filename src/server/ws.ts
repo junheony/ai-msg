@@ -10,6 +10,7 @@ import { DirError, resolveUnderRoots } from './dirs';
 import { readCodexTranscript } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
+import type { PinStore } from './sessions/PinStore';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readTranscript } from './sessions/transcript';
 import { isCodexState, type SessionStateStore } from './turn/SessionState';
@@ -105,6 +106,8 @@ export type WsDeps = {
   readCodexHistory?: typeof readCodexTranscript;
   /** F1: a new session's cwd must (after realpath) lie inside one of these (default: the OS home dir). */
   cwdRoots?: string[];
+  /** F2: pinned session ids ride hello and every index message. */
+  pins?: PinStore;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -132,6 +135,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
   const view = (ws: WebSocket, sessionId: string) => { let s = viewing.get(ws); if (!s) { s = new Set(); viewing.set(ws, s); } s.add(sessionId); };
   /** Sidebar listing: profile scan + deck-created Codex sessions (D4). */
   const projects = () => deps.index.projects(deps.store.codexEntries());
+  const pinList = () => deps.pins?.list() ?? [];
+  const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList() });
 
   const send = (ws: WebSocket, msg: ServerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
@@ -251,7 +256,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       }
       if (msg.sessionId === null) {
         await deps.index.refresh();
-        broadcast({ type: 'index', projects: projects() });
+        broadcast(indexMsg());
       }
     })().catch((err: unknown) => console.error('deck: post-turn index refresh failed', errMsg(err)));
   };
@@ -260,7 +265,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), running: running(), codex: { available: deps.codexAvailable } });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), running: running(), codex: { available: deps.codexAvailable } });
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
 
@@ -328,7 +333,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
           break;
         case 'refresh_index':
           void rescanIndex()
-            .then(() => broadcast({ type: 'index', projects: projects() }))
+            .then(() => broadcast(indexMsg()))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
           break;
       }
@@ -339,7 +344,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
 
   return {
     broadcast,
-    broadcastIndex: () => broadcast({ type: 'index', projects: projects() }),
+    broadcastIndex: () => broadcast(indexMsg()),
     close() {
       unsubscribeUsage();
       for (const c of clients) c.close();

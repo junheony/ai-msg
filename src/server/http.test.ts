@@ -6,6 +6,7 @@ import path from 'node:path';
 import { cookieValueFor } from './auth';
 import { AttachmentStore } from './attachments/AttachmentStore';
 import { createRequestHandler } from './http';
+import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageService } from './usage/UsageService';
 
@@ -277,5 +278,55 @@ describe('folder picker routes (F1)', () => {
     const list = await fetch(`${b2}/api/recent-folders`, { headers: { cookie: cookie() } });
     expect(await list.json()).toEqual({ recent: [real] });
     expect(JSON.parse(await fs.readFile(path.join(home, 'cfg', 'recent-folders.json'), 'utf8'))).toEqual([real]);
+  });
+});
+
+describe('POST /api/pins (F2)', () => {
+  let b3 = '';
+  let s4: http.Server;
+  let pins: PinStore;
+  let dir: string;
+  let changed = 0;
+  const ID = '11111111-1111-4111-8111-111111111111';
+  const cookie = () => `deck_session=${cookieValueFor(TOKEN)}`;
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-pinhttp-'));
+    const roots = { a: path.join(dir, 'a'), b: path.join(dir, 'b'), c: path.join(dir, 'c') };
+    const idx = new SessionIndex({ roots, pinnedFile: path.join(dir, 'p.json') });
+    await idx.refresh();
+    pins = new PinStore(path.join(dir, 'pins.json'));
+    await pins.load();
+    const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    s4 = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index: idx, pins, onIndexChanged: () => { changed++; } }));
+    await new Promise<void>((r) => s4.listen(0, '127.0.0.1', r));
+    b3 = `http://127.0.0.1:${(s4.address() as { port: number }).port}`;
+  });
+  afterAll(async () => { s4.close(); await fs.rm(dir, { recursive: true, force: true }); });
+
+  it('needs auth and a same-origin Origin', async () => {
+    const body = JSON.stringify({ sessionId: ID, pinned: true });
+    expect((await fetch(`${b3}/api/pins`, { method: 'POST', headers: { origin: b3 }, body })).status).toBe(401);
+    expect((await fetch(`${b3}/api/pins`, { method: 'POST', headers: { cookie: cookie() }, body })).status).toBe(403);
+    expect(pins.list()).toEqual([]);
+  });
+
+  it('validates the body', async () => {
+    for (const body of ['{bad', JSON.stringify({ sessionId: '../x', pinned: true }), JSON.stringify({ sessionId: ID, pinned: 'yes' })]) {
+      expect((await fetch(`${b3}/api/pins`, { method: 'POST', headers: { cookie: cookie(), origin: b3 }, body })).status).toBe(400);
+    }
+  });
+
+  it('pins and unpins, persists, notifies, and bootstrap carries the pins', async () => {
+    const before = changed;
+    const r = await fetch(`${b3}/api/pins`, { method: 'POST', headers: { cookie: cookie(), origin: b3 }, body: JSON.stringify({ sessionId: ID, pinned: true }) });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ pins: [ID] });
+    expect(changed).toBe(before + 1);
+    expect(JSON.parse(await fs.readFile(path.join(dir, 'pins.json'), 'utf8'))).toEqual([ID]);
+    const boot = (await (await fetch(`${b3}/api/bootstrap`, { headers: { cookie: cookie() } })).json()) as { pins: string[] };
+    expect(boot.pins).toEqual([ID]);
+    const off = await fetch(`${b3}/api/pins`, { method: 'POST', headers: { cookie: cookie(), origin: b3 }, body: JSON.stringify({ sessionId: ID, pinned: false }) });
+    expect(await off.json()).toEqual({ pins: [] });
   });
 });

@@ -51,9 +51,10 @@ export type RunningTurn = { turnId: string; sessionId: string | null; cwd: strin
 type TurnScope = { turnId: string; sessionId: string | null; cwd: string };
 
 export type ServerMessage =
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; running: RunningTurn[]; codex: { available: boolean } }
+  /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; running: RunningTurn[]; codex: { available: boolean } }
   | { type: 'usage'; usage: UsageSnapshot }
-  | { type: 'index'; projects: ProjectEntry[] }
+  | { type: 'index'; projects: ProjectEntry[]; pins?: string[] }
   | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null }
   | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)
