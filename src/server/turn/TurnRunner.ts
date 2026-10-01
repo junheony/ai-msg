@@ -327,6 +327,8 @@ export class TurnRunner {
           case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
           case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          // A background task settled while the process waits: the push (PushNotifier) fires here, not only inside the turn.
+          case 'task_done': sink.emit({ type: 'task_done', ...scope(), status: ev.status, summary: redactSecrets(ev.summary) }); break;
           case 'rate_limit': this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) }); break;
           case 'result': {
             const s = seg as Seg | null;

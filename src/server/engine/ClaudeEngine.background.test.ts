@@ -136,6 +136,6 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     await r.until('result');
     f.push(sdk.taskDone('t1'), sdk.notifyUser(), sdk.delta('d'), sdk.result('d'));
     const rest = await r.rest();
-    expect(rest.map((e) => e.kind)).toEqual(['background', 'continue', 'delta', 'result']);
+    expect(rest.map((e) => e.kind)).toEqual(['background', 'task_done', 'continue', 'delta', 'result']);
   });
 });

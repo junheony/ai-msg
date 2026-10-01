@@ -76,6 +76,17 @@ describe('TurnRunner: background work after the turn result', () => {
     expect(f.state.calls).toBe(1);
   });
 
+  it('a background task settling after the turn result emits task_done (drives the push)', async () => {
+    const { f, msgs, sink, runner } = await setup();
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    f.push(sdk.taskDone('x'), sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('built'), sdk.result('built', 's1'));
+    await done;
+    expect(of(msgs, 'task_done')).toEqual([{ type: 'task_done', turnId: 't1', sessionId: 's1', cwd: '/w/new', status: 'completed', summary: 'done' }]);
+    expect(of(msgs, 'turn_result').map((m) => m.turnId)).toEqual(['t1', 't1:bg1']);
+  });
+
   it('a follow-up while waiting goes into the same process at once; one during a continuation waits for its result', async () => {
     const { f, msgs, sink, runner } = await setup();
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
