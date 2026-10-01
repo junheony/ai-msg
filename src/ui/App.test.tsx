@@ -38,6 +38,23 @@ describe('App split view (D6)', () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+  it('splits into up to 5 equal columns; "+ 분할" disables at 5 and closing re-flows', async () => {
+    await boot();
+    const split = screen.getByText('+ 분할') as HTMLButtonElement;
+    for (let i = 0; i < 4; i++) fireEvent.click(split);
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(5);
+    const panes = document.querySelector('.panes') as HTMLElement;
+    expect(panes.dataset.count).toBe('5');
+    expect(panes.style.getPropertyValue('--cols')).toBe('5');
+    expect(split.disabled).toBe(true);
+    fireEvent.click(split);
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(5);
+    fireEvent.click(within(lastPane()).getByLabelText('패널 닫기'));
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(4);
+    expect(panes.style.getPropertyValue('--cols')).toBe('4');
+    expect(split.disabled).toBe(false);
+  });
+
   it('T9 (b): switching a pane to another session or closing it sends close_session only for sessions no pane still views', async () => {
     await boot();
     openSession('one');

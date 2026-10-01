@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ServerMessage } from '../shared/protocol';
-import { answersFor, fromTranscript, initialState, reducer, sessionsToClose, type AppState, type PendingQuestion } from './state';
+import { MAX_PANES, answersFor, fromTranscript, initialState, reducer, sessionsToClose, type AppState, type PendingQuestion } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 
@@ -226,12 +226,15 @@ describe('reducer', () => {
 describe('panes (D6)', () => {
   const started = (turnId: string, sessionId: string | null, cwd: string): ServerMessage => ({ type: 'turn_started', turnId, sessionId, cwd, account: 'b', model: 'opus', reason: 'r', attempt: 0 });
 
-  it('add/close/focus panes within 1..4', () => {
+  it('add/close/focus panes within 1..5', () => {
     let s = reducer(initialState, { type: 'add_pane' });
     s = reducer(s, { type: 'add_pane' });
     s = reducer(s, { type: 'add_pane' });
-    expect(s.panes.map((p) => p.id)).toEqual(['p0', 'p1', 'p2', 'p3']);
-    expect(reducer(s, { type: 'add_pane' }).panes).toHaveLength(4);
+    s = reducer(s, { type: 'add_pane' });
+    expect(MAX_PANES).toBe(5);
+    expect(s.panes.map((p) => p.id)).toEqual(['p0', 'p1', 'p2', 'p3', 'p4']);
+    expect(reducer(s, { type: 'add_pane' }).panes).toHaveLength(5);
+    s = reducer(s, { type: 'close_pane', paneId: 'p4' });
     s = reducer(s, { type: 'focus_pane', paneId: 'p2' });
     expect(s.activePaneId).toBe('p2');
     s = reducer(s, { type: 'close_pane', paneId: 'p2' });

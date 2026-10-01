@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
 import type { ClientMessage } from '../shared/protocol';
 import { Login } from './components/Login';
 import { postPin } from './pins';
@@ -76,7 +76,7 @@ export function App() {
         <span className="brand"><span className="spark" aria-hidden="true">✳</span>deck</span>
         <UsagePanel usage={state.usage} current={active.session?.account ?? null} />
         <div className="topbar-end">
-          {!phone && <button type="button" className="text-btn split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title="분할보기 (최대 4)">+ 분할</button>}
+          {!phone && <button type="button" className="text-btn split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>+ 분할</button>}
           <span className={`conn ${state.connected ? 'on' : 'off'}`} title={state.connected ? '연결됨' : '재연결 중…'}>{state.connected ? '연결됨' : '재연결 중…'}</span>
         </div>
       </header>
@@ -101,7 +101,7 @@ export function App() {
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
           />
         </div>
-        <div className="panes" data-count={phone ? 1 : state.panes.length}>
+        <div className="panes" data-count={phone ? 1 : state.panes.length} style={{ '--cols': phone ? 1 : state.panes.length } as CSSProperties}>
           {phone && state.panes.length > 1 && (
             <div className="pane-switch">
               {state.panes.map((p, i) => <button type="button" key={p.id} className={p.id === active.id ? 'on' : ''} onClick={() => dispatch({ type: 'focus_pane', paneId: p.id })}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}

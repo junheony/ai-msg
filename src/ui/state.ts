@@ -49,7 +49,7 @@ export type AppState = {
   pins: string[];
 };
 
-export const MAX_PANES = 4;
+export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
