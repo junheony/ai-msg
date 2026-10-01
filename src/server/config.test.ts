@@ -62,6 +62,11 @@ describe('config', () => {
     expect(cfg.recentFoldersFile).toBe('/h/.config/deck/recent-folders.json');
     expect(cfg.pinsFile).toBe('/h/.config/deck/pins.json');
     expect(cfg.cwdRoots).toEqual(['/h']);
-    expect(loadConfig({ PATH: '/nonexistent', DECK_EXTRA_CWD_ROOTS: '/tmp/x, /private/var/y' }, '/h', '/repo').cwdRoots).toEqual(['/h', '/tmp/x', '/private/var/y']);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_LOOPBACK_ONLY: '1', DECK_EXTRA_CWD_ROOTS: '/tmp/x, /private/var/y' }, '/h', '/repo').cwdRoots).toEqual(['/h', '/tmp/x', '/private/var/y']);
+  });
+
+  it('DECK_EXTRA_CWD_ROOTS only counts with DECK_LOOPBACK_ONLY=1, and never / (review fix 2)', () => {
+    expect(loadConfig({ PATH: '/nonexistent', DECK_EXTRA_CWD_ROOTS: '/tmp/x' }, '/h', '/repo').cwdRoots).toEqual(['/h']);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_LOOPBACK_ONLY: '1', DECK_EXTRA_CWD_ROOTS: '/, //, /./, /tmp/x, rel' }, '/h', '/repo').cwdRoots).toEqual(['/h', '/tmp/x']);
   });
 });

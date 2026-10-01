@@ -229,9 +229,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
         // Review M8: the working directory must exist before a CLI is started in it.
         if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
         // F1: a new session may only start inside the home dir (realpath, so a symlink cannot escape it).
+        // The checked real path is the one used (review fix 3): a symlink swapped after the check cannot redirect the run.
+        let runCwd = msg.cwd;
         if (msg.sessionId === null) {
           try {
-            await resolveUnderRoots(msg.cwd, cwdRoots[0] ?? os.homedir(), cwdRoots);
+            runCwd = await resolveUnderRoots(msg.cwd, cwdRoots[0] ?? os.homedir(), cwdRoots);
+            turn.cwd = runCwd;
           } catch (err) {
             if (!(err instanceof DirError)) throw err;
             send(ws, { type: 'error', turnId: null, message: `${err.message}: ${msg.cwd}`, ...ref });
@@ -239,7 +242,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
           }
         }
         await deps.runner.run({
-          turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text,
+          turnId, cwd: runCwd, sessionId: msg.sessionId, text: msg.text,
           ...(msg.model ? { model: msg.model } : {}),
           ...(msg.engine ? { engine: msg.engine } : {}),
           ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),

@@ -79,6 +79,19 @@ describe('latest rate limits across rollout files (F3)', () => {
     expect(rolloutRateLimitsAt([{ type: 'event_msg', payload: { type: 'agent_message' } }])).toBeNull();
   });
 
+  it('skips entries of another limit_id and entries without a known window instead of giving up (review fix 1)', () => {
+    const other = { timestamp: '2026-10-01T03:00:00Z', type: 'event_msg', payload: { type: 'token_count', rate_limits: { limit_id: 'codex_other', primary: { used_percent: 5, window_minutes: 10080, resets_at: 1791353807 } } } };
+    const odd = { timestamp: '2026-10-01T04:00:00Z', type: 'event_msg', payload: { type: 'token_count', rate_limits: { limit_id: 'codex', primary: { used_percent: 1, window_minutes: 1440, resets_at: 1791353807 } } } };
+    const r = rolloutRateLimitsAt([tc('2026-10-01T02:00:00Z', 60, 6), other, odd]);
+    expect(r?.windows.weekly?.usedPct).toBe(60);
+    expect(r?.atMs).toBe(Date.parse('2026-10-01T02:00:00Z'));
+    expect(rolloutRateLimits([tc('2026-10-01T02:00:00Z', 60), odd])?.weekly?.usedPct).toBe(60);
+    // No limit_id at all (older CLI) still counts.
+    const legacy = { type: 'event_msg', payload: { type: 'token_count', rate_limits: { primary: { used_percent: 33, window_minutes: 10080, resets_at: 1791353807 } } } };
+    expect(rolloutRateLimits([legacy])?.weekly?.usedPct).toBe(33);
+    expect(rolloutRateLimitsAt([other, odd])).toBeNull();
+  });
+
   it('newestRolloutFiles orders by mtime across all date dirs (an old thread still being written wins)', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-rl-'));
     const old = await write(root, '2026/07/04/rollout-2026-07-04T22-58-42-a.jsonl', [tc('2026-10-01T02:00:00Z', 90)], 3000);

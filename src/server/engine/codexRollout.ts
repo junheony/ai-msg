@@ -46,6 +46,8 @@ export function rolloutRateLimitsAt(lines: unknown[]): RateLimitObservation | nu
     if (!r || !p || r.type !== 'event_msg' || p.type !== 'token_count') continue;
     const rl = rec(p.rate_limits);
     if (!rl) continue;
+    // Review fix 1: only the ChatGPT plan's own limit (or an older CLI that names none) is the GPT seat's usage.
+    if (typeof rl.limit_id === 'string' && rl.limit_id !== 'codex') continue;
     const out: TurnWindows = {};
     for (const key of ['primary', 'secondary'] as const) {
       const w = rec(rl[key]);
@@ -54,7 +56,8 @@ export function rolloutRateLimitsAt(lines: unknown[]): RateLimitObservation | nu
       if (w.window_minutes === 10080) out.weekly = win;
       else if (w.window_minutes === 300) out.fiveHour = win;
     }
-    if (!out.weekly && !out.fiveHour) return null;
+    // An entry with no 10080/300-minute window does not hide an earlier usable one.
+    if (!out.weekly && !out.fiveHour) continue;
     const ts = typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : Number.NaN;
     return { windows: out, atMs: Number.isNaN(ts) ? null : ts };
   }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +27,7 @@ describe('PinStore (F2)', () => {
     expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
   });
 
-  it('ignores a corrupt or junk file', async () => {
+  it('drops junk entries; a corrupt file is kept aside as pins.json.bad, not overwritten later (review fix 4)', async () => {
     const file = await tmpFile();
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, JSON.stringify([ID1, 5, '../x', ID1, ID2]));
@@ -35,7 +35,26 @@ describe('PinStore (F2)', () => {
     await s.load();
     expect(s.list()).toEqual([ID1, ID2]);
     await fs.writeFile(file, '{nope');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await s.load();
+    } finally {
+      err.mockRestore();
+    }
+    expect(s.list()).toEqual([]);
+    expect(await fs.readFile(`${file}.bad`, 'utf8')).toBe('{nope');
+    await s.set(ID2, true);
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual([ID2]);
+    expect(await fs.readFile(`${file}.bad`, 'utf8')).toBe('{nope');
+  });
+
+  it('a failed write rolls the in-memory change back (review fix 4)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-pins-'));
+    const blocker = path.join(dir, 'not-a-dir');
+    await fs.writeFile(blocker, 'x');
+    const s = new PinStore(path.join(blocker, 'pins.json'));
     await s.load();
+    await expect(s.set(ID1, true)).rejects.toThrow();
     expect(s.list()).toEqual([]);
   });
 

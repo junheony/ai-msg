@@ -33,7 +33,7 @@ export type DeckConfig = {
   recentFoldersFile: string;
   /** F2: pinned session ids. */
   pinsFile: string;
-  /** F1: a new session's cwd must lie inside one of these: home, plus `DECK_EXTRA_CWD_ROOTS` (E2E temp dirs). */
+  /** F1: a new session's cwd must lie inside one of these: home, plus `DECK_EXTRA_CWD_ROOTS` (E2E temp dirs; loopback-only servers, never `/`). */
   cwdRoots: string[];
 };
 
@@ -59,6 +59,12 @@ export function readDeckUrl(file: string, fallback = 'http://127.0.0.1:9310'): s
   } catch {
     return fallback;
   }
+}
+
+/** Review fix 2: extra new-session roots exist for the E2E harnesses only — honoured on a loopback-only server, and `/` is never a root. */
+function extraCwdRoots(env: NodeJS.ProcessEnv): string[] {
+  if (env.DECK_LOOPBACK_ONLY !== '1') return [];
+  return (env.DECK_EXTRA_CWD_ROOTS ?? '').split(',').map((s) => s.trim()).filter((s) => s.startsWith('/') && path.resolve(s) !== '/');
 }
 
 function repoRootDefault(): string {
@@ -89,6 +95,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     attachmentsDir: path.join(configDir, 'attachments'),
     recentFoldersFile: path.join(configDir, 'recent-folders.json'),
     pinsFile: path.join(configDir, 'pins.json'),
-    cwdRoots: [home, ...(env.DECK_EXTRA_CWD_ROOTS ?? '').split(',').map((s) => s.trim()).filter((s) => s.startsWith('/'))],
+    cwdRoots: [home, ...extraCwdRoots(env)],
   };
 }

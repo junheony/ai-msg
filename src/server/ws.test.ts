@@ -63,6 +63,7 @@ beforeAll(async () => {
       return [{ kind: 'init', sessionId: 'sess-q', model: 'm' }, okResult('sess-q', `answer=${a ? a['Which color?'] : 'none'}`)];
     }
     if (req.prompt === 'att') return [{ kind: 'init', sessionId: 'sess-att', model: 'm' }, okResult('sess-att', `n=${req.attachments?.length ?? 0}`)];
+    if (req.prompt === 'whereami') return [{ kind: 'init', sessionId: 'sess-cwd', model: 'm' }, okResult('sess-cwd', `cwd=${req.cwd}`)];
     if (req.prompt === 'throw') throw new Error('engine exploded');
     if (req.prompt === 'hold') await gate;
     const sid = req.resumeSessionId ?? 'sess-1';
@@ -367,6 +368,17 @@ describe('ws', () => {
     const p2 = collect(ws, (m) => m.type === 'error' || m.type === 'turn_started');
     ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: path.join(work, 'usr-link'), text: 'x' }));
     expect((await p2).at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('홈 폴더') });
+    ws.close();
+  });
+
+  it('a new session runs in the validated real path, not the raw (symlinked) cwd it was sent (review fix 3)', async () => {
+    await fs.mkdir(path.join(work, 'real-dir'), { recursive: true });
+    await fs.symlink(path.join(work, 'real-dir'), path.join(work, 'alias-dir')).catch(() => {});
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p = collect(ws, (m) => m.type === 'turn_result');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: path.join(work, 'alias-dir'), text: 'whereami' }));
+    expect((await p).at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: `cwd=${path.join(work, 'real-dir')}` });
     ws.close();
   });
 
