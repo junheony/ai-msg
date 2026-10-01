@@ -6,7 +6,11 @@ import type { SessionEntry } from '../shared/session-types';
 import { AttachmentTooLarge, MAX_ATTACHMENT_BYTES, type AttachmentStore } from './attachments/AttachmentStore';
 import { DirError, listDirs, resolveUnderHome } from './dirs';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
+import type { SlashCommandCache } from './engine/slashCommands';
+import type { FileLister } from './files';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
+import { MAX_TITLE_CHARS, type SessionMetaStore } from './sessions/SessionMetaStore';
+import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
 import type { SessionIndex } from './sessions/SessionIndex';
 import type { UsageService } from './usage/UsageService';
 
@@ -19,6 +23,14 @@ export type HttpDeps = {
   onIndexChanged?: () => void;
   /** F2: pinned sessions; absent = no /api/pins. */
   pins?: PinStore;
+  /** Session rename / 보관 (session-meta.json); absent = no /api/session-meta. */
+  meta?: SessionMetaStore;
+  /** Full-text transcript search; absent = no /api/search. */
+  search?: TranscriptSearch;
+  /** Composer @ file picker; absent = no /api/files. */
+  files?: FileLister;
+  /** Composer / command menu; absent = no /api/commands. */
+  commands?: SlashCommandCache;
 };
 
 /**
@@ -204,6 +216,41 @@ export function createRequestHandler(deps: HttpDeps) {
           const pins = await deps.pins.set(body.sessionId, body.pinned);
           deps.onIndexChanged?.();
           json(res, 200, { pins });
+          return;
+        }
+        if (url.pathname === '/api/session-meta' && req.method === 'POST') {
+          if (!deps.meta) { json(res, 404, { error: 'not found' }); return; }
+          let body: { sessionId?: unknown; title?: unknown; archived?: unknown } = {};
+          try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
+          const titleOk = body?.title === undefined || body.title === null || (typeof body.title === 'string' && body.title.length <= MAX_TITLE_CHARS);
+          const archivedOk = body?.archived === undefined || typeof body.archived === 'boolean';
+          if (!body || !isPinnableId(body.sessionId) || !titleOk || !archivedOk || (body.title === undefined && body.archived === undefined)) { json(res, 400, { error: '잘못된 세션 정보 요청입니다' }); return; }
+          const meta = await deps.meta.update(body.sessionId, { ...(body.title !== undefined ? { title: body.title as string | null } : {}), ...(body.archived !== undefined ? { archived: body.archived as boolean } : {}) });
+          deps.index.regroup();
+          deps.onIndexChanged?.();
+          json(res, 200, { meta });
+          return;
+        }
+        if (url.pathname === '/api/search' && req.method === 'GET') {
+          if (!deps.search) { json(res, 404, { error: 'not found' }); return; }
+          const q = url.searchParams.get('q') ?? '';
+          if (q.length > MAX_QUERY_CHARS) { json(res, 400, { error: '검색어가 너무 깁니다' }); return; }
+          json(res, 200, await deps.search.search(q));
+          return;
+        }
+        if (url.pathname === '/api/files' && req.method === 'GET') {
+          if (!deps.files) { json(res, 404, { error: 'not found' }); return; }
+          try {
+            json(res, 200, await deps.files.list(url.searchParams.get('cwd') ?? ''));
+          } catch (err) {
+            if (err instanceof DirError) { json(res, 400, { error: err.message }); return; }
+            throw err;
+          }
+          return;
+        }
+        if (url.pathname === '/api/commands' && req.method === 'GET') {
+          if (!deps.commands) { json(res, 404, { error: 'not found' }); return; }
+          json(res, 200, { commands: deps.commands.get(url.searchParams.get('sessionId'), url.searchParams.get('cwd')) });
           return;
         }
         if (url.pathname === '/api/dirs' && req.method === 'GET') {

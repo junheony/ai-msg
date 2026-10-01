@@ -15,6 +15,8 @@ export type SessionEntry = {
   title: string;
   lastModified: number;
   sizeBytes: number;
+  /** deck-side 보관됨 (session-meta.json); hidden from the lists unless the 보관됨 filter is on. */
+  archived?: boolean;
 };
 
 /** A recent Claude Desktop (Code tab) session; opened like any other session by `sessionId`. */
@@ -27,6 +29,7 @@ export type DesktopSession = {
   /** basename of cwd */
   project: string;
   lastModified: number;
+  archived?: boolean;
 };
 
 export type PinnedProject = { cwd: string; name?: string };
