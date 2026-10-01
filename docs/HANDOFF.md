@@ -1,4 +1,4 @@
-# HANDOFF — deck (갱신 2026-10-01)
+# HANDOFF — deck (갱신 2026-10-01, 병합 5건 반영)
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 비공개 저장소(원격 없음).
 
@@ -16,7 +16,7 @@ deck v1(Plan 1): Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 �
 ## 2. 살아있는 것 / 세션 한정
 - **2026-10-01 UI 라운드 반영**(폴더 열기·고정됨·GPT 사용량 폴러·Desktop 풍 재디자인·GFM 표·NFC 경로 그룹·CSP script-src): 단위 405. 실계정 E2E 는 이번 라운드에 재실행 안 함(GPT 한도 소진). 산출 보고서는 `.superpowers/sdd/ui-round/`(gitignore).
 - 지금 nohup 으로 떠 있음: `DECK_EXTRA_HOSTS=max-macbookpro.tail88e649.ts.net npm start`(로그 `~/.config/deck/deck.log`) — Tailnet `http://max-macbookpro.tail88e649.ts.net:9320`. 재부팅하면 내려감(launchd 미등록).
-- **PWA·웹 푸시(2026-10-01, `feat/pwa-push`)**: `tailscale serve --bg --https=443 http://127.0.0.1:9320` 설정됨(tailnet 전용, funnel 아님, 재부팅 후에도 유지 · 끄기 `/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --https=443 off`). 폰은 **https://max-macbookpro.tail88e649.ts.net/** 로 열고 홈 화면에 추가(iOS 16.4+) → 상단 `알림` 에서 켬. deck 은 MagicDNS 이름을 자동으로 Host 허용목록에 넣고 https Origin 을 받으며, `X-Forwarded-Proto: https` 면 쿠키에 Secure. VAPID 키 `~/.config/deck/vapid.json`, 구독 `push-subscriptions.json`(둘 다 0600). 아이콘은 `node scripts/gen-icons.mjs` 로 다시 만든다. 푸시는 턴 완료·권한/질문 카드·백그라운드 작업 완료(턴 도중 settled 된 것만) — deck 창에 포커스가 있으면 SW 가 띄우지 않음(iOS 는 항상 띄움).
+- `tailscale serve --bg --https=443 http://127.0.0.1:9320` 설정됨(PWA 용, tailnet 전용 — §6).
 - 리눅스 옛 Fleet(`fleet-control.service`)은 2026-10-01 정지·비활성화(되살리기 `systemctl --user enable --now fleet-control`).
 - 상시 서비스 없음. 사용자가 `npm start` 로 실행(127.0.0.1:9320 + Tailscale 주소만). 로그인 토큰 `~/.config/deck/token`(첫 실행 시 생성, 0600).
 - 보호 계정 `~/.config/offload/protect` = `a`(Claude Desktop 이 A). 쿨다운은 claude-pick/offload 와 공유(`~/.cache/offload/cooldown`).
@@ -38,13 +38,27 @@ deck v1(Plan 1): Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 �
 - **실한도 도달 시 SDK 반환은 아직 미실측**(리눅스 `claude-limit-probe` 포착 대기). `limitDetect.ts` 패턴은 errorKind → SDK 오류문만 본다(stderr·모델 답변 제외).
 - 알려진 한계: 프로필 settings 의 allow 규칙(`Bash(ssh linux *)` 등)은 "매번 묻기"를 우회 · 재시도 턴은 같은 프롬프트가 기록에 두 번 · 1회 스트림 중 재접속은 `watch_turn` 으로 이어받음.
 - **모델 선택은 턴마다**: 패널의 모델 선택기가 곧 그 턴의 모델(Claude·GPT 공통). 저장된 세션을 새 패널로 열면 선택기 기본값(Claude `opus`, GPT `gpt-6-sol`)으로 돈다 — astra/fable 로 이어가려면 다시 고른다.
-- **모델 선택기(2026-10-01, `feat/model-picker`)**: Desktop 풍 팝오버 — 정확한 버전(Opus 5.5 = `claude-opus-5-5`, Sonnet 5.5 = `claude-sonnet-5-5`, Fable 5.1 = `claude-fable-5-1`; SDK `supportedModels()` 실측, `MODEL_ARG` 가 이제 별칭 대신 이 id 를 보냄) + 추론 수준 낮음/중간/높음/엑스트라 = `low|medium|high|xhigh`. 턴마다 `send.effort`(zod 허용목록) → Claude `Options.effort`(CLI `--effort`) / Codex `-c model_reasoning_effort="…"`(config.toml 의 `low` 를 덮음). 기본: Claude 높음, GPT 중간, 패널·엔진별로 따로 기억(새로고침 시 초기화). `max`/`ultra` 는 일부러 뺌. Codex effort 는 단위 테스트만(GPT 한도 소진으로 실측 못 함).
+- **모델 선택기(2026-10-01, `feat/model-picker`)**: Desktop 풍 팝오버 — 정확한 버전(Opus 5.5 = `claude-opus-5-5`, Sonnet 5.5 = `claude-sonnet-5-5`, Fable 5.1 = `claude-fable-5-1`; SDK `supportedModels()` 실측, `MODEL_ARG` 가 이제 별칭 대신 이 id 를 보냄) + 추론 수준 낮음/중간/높음/엑스트라 = `low|medium|high|xhigh`. 턴마다 `send.effort`(zod 허용목록) → Claude `Options.effort`(CLI `--effort`) / Codex `-c model_reasoning_effort="…"`(config.toml 의 `low` 를 덮음). 기본: Claude 높음, GPT 중간, 패널·엔진별로 따로 기억(새로고침 후에도 유지 — §6 ux-state). `max`/`ultra` 는 일부러 뺌. Codex effort 는 단위 테스트만(GPT 한도 소진으로 실측 못 함).
 - **GPT 한계**: Codex Desktop/CLI 에서 따로 만든 스레드는 가져오지 않음(deck 이 만든 것만 목록) · Codex 승인 카드 없음 — 샌드박스만(`approval_policy=never`) · Codex 답은 토큰 스트리밍이 아니라 항목 단위 · **codex-cli ≥ 0.159 필요**(0.146 은 ChatGPT 계정에서 `gpt-6-sol` 거부; nvm 쪽 옛 바이너리는 자동으로 건너뜀) · GPT 잔여량은 서버 시작 시·60초마다 `~/.codex/sessions` 최신 롤아웃의 rate_limits(limit_id codex)에서 읽는다(usage-deck 카드 고장과 무관). 2026-10-01 기준 ChatGPT Pro 주간 100% 소진, 10/7 15:16 KST 리셋.
 - **E2E 부산물**: GPT E2E 는 `~/.codex/sessions` 아래에 스레드(롤아웃)를 남긴다 — 기록으로 두고 지우지 않는다. 사용자 `~/.codex/config.toml` 의 oh-my-codex 알림 훅이 Codex 턴이 끝나고 몇 초 뒤(하네스가 폴더를 지운 뒤) cwd 에 `.omx/` 를 다시 만들어, GPT E2E 한 번마다 `$TMPDIR/deck-e2e-work-*/.omx/` 가 하나 남는다(무해, 수동 삭제). Claude 쪽은 E2E 임시 폴더 slug 의 프로젝트 폴더만 지운다.
 - deck 은 `~/.codex/auth.json`·키체인을 읽지도 쓰지도 않는다(토큰 갱신은 CLI 만 — OpenAI 는 refresh token 재사용을 감지해 로그인을 끊는다).
 - 환경: Node v26, `npm install` 은 optional deps 유지(Agent SDK 네이티브 claude 바이너리). Bash 도구는 zsh(따옴표 없는 변수 분리 안 됨), `timeout` 없음(perl alarm).
 
-## 6. 서버 수명주기 (2026-10-01, `feat/lifecycle`)
+## 6. 2026-10-01 병합 5건 (`feat/lifecycle` → `ux-state` → `diff-sessions` → `pwa-push` → `automodel-gemini`)
+단위 656 통과 · `npm run build` 통과. 기능 간 맞물림:
+- 클라이언트 대기열은 패널이 idle(진행 턴 없음)일 때 보낸다. 백그라운드 대기 중에도 idle 이므로 대기열이 보내고, 서버는 그 send 를 열린 프로세스 입력에 써 넣으며 `clientRef` 를 turn_started 로 돌려줘 리듀서가 claim — 'sent' 가 awaitingStart 를 세우고 fired 집합이 재전송을 막아 이중 전송 없음.
+- 푸시의 백그라운드 작업 완료는 턴 결과 뒤(대기 중) 끝난 작업도 포함 — TurnRunner 가 대기 중에도 `task_done` 을 내보낸다. 원래 턴·'백그라운드 계속' 턴의 결과 푸시는 각각 따로(태그 `turn-`/`task-`).
+- 엔진 종류를 나열하는 곳(저장 UI 상태·효과 수준 맵·세션 엔진)에 `gemini` 포함. Gemini 세션은 기록 파일이 없어 검색에서 빠진다.
+
+**UX 상태(`feat/ux-state`)**: localStorage `deck.ui.v1` 에 패널(세션·모델 — '자동' 포함·엔진별 effort·자동 모드 effort `autoEffort`·엔진·샌드박스)·접힌 그룹·서랍을 저장, 필드별 검증(깨진 값만 기본값). 할 일 패널(TodoWrite), 메시지 대기열(실행 중 ⌘/Ctrl+Enter 로 추가, 중지·실패 시 일시정지), 보낸 첨부 썸네일(`GET /api/attachments/:id`, `deck.sent.v1`)·라이트박스.
+
+**Diff·세션(`feat/diff-sessions`)**: 편집 도구 호출을 diff 카드로 · 세션 이름 바꾸기/보관(`~/.config/deck/session-meta.json`) · `/api/search`(기록 전문 검색) · `/api/files`·`/api/commands` 로 입력창 `@` 파일·`/` 명령 자동완성.
+
+**PWA·웹 푸시(`feat/pwa-push`)**: 끄기 `/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --https=443 off`(재부팅 후에도 유지, funnel 아님). 폰은 **https://max-macbookpro.tail88e649.ts.net/** 로 열고 홈 화면에 추가(iOS 16.4+) → 상단 `알림` 에서 켬. deck 은 MagicDNS 이름을 자동으로 Host 허용목록에 넣고 https Origin 을 받으며, `X-Forwarded-Proto: https` 면 쿠키에 Secure. VAPID 키 `~/.config/deck/vapid.json`, 구독 `push-subscriptions.json`(둘 다 0600). 아이콘은 `node scripts/gen-icons.mjs`. 푸시는 턴 완료·권한/질문 카드·백그라운드 작업 완료 — deck 창에 포커스가 있으면 SW 가 띄우지 않음(iOS 는 항상 띄움).
+
+**자동 모델·Gemini(`feat/automodel-gemini`)**: 모델 선택기의 '자동' = 새 Claude 세션 첫 턴에 분류기가 모델·effort 를 고름(`AutoModel.ts`, `AUTO_EFFORT`); 자동일 때 고른 effort 는 `autoEffort` 로 따로 기억. Gemini 엔진은 명시 선택만(자동 라우팅 대상 아님), 계정 g1/g2, 로그인 절차 `docs/gemini-spike.md`, 바이너리 `DECK_GEMINI_BIN`. 상태는 hello 의 geminiStatus.
+
+**서버 수명주기(`feat/lifecycle`)**:
 - **백그라운드 서브에이전트가 턴 뒤에도 산다.** 턴은 이제 전부 SDK streaming-input(입력 `AsyncIterable`)으로 돈다. 단발 문자열 prompt 는 결과 직후 프로세스가 끝나 백그라운드 작업이 함께 죽었다(sdk.d.ts `SDKResultMessage`). 결과 뒤에 `system/background_tasks_changed`(없으면 `task_started`/`task_notification`)로 본 작업이 남아 있으면 입력을 열어 둔다. 작업이 끝나 CLI 가 스스로 이어 가는 턴은 같은 패널에 **'백그라운드 계속'** 세그먼트(turnId `<원래>:bgN`, 자체 뱃지)로 뜬다. 대기 중에는 "백그라운드 작업 N개 진행 중" + 중지(= interrupt, 프로세스와 작업 전부 종료).
 - 대기 중 같은 세션으로 보낸 메시지는 **같은 프로세스 입력에 다음 사용자 턴으로 써 넣는다**(SDK 의 multi-turn streaming input; 계정·모델은 그 프로세스 그대로, 다르면 뱃지에 표시). '백그라운드 계속'이 흐르는 중이면 그 결과 뒤로 줄 세운다. 본 턴이 아직 스트리밍 중이면 예전처럼 "이미 실행 중".
 - 상한: 턴 뒤 대기 최대 `DECK_BG_MAX_MIN`(기본 120분), 작업 집합이 빈 뒤 60초 동안 이어지는 턴이 없으면 정리.
