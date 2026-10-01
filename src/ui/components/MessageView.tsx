@@ -3,7 +3,8 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
-import type { ChatItem } from '../state';
+import type { ChatItem, SentFile } from '../state';
+import { Lightbox, attachmentUrl } from './Lightbox';
 import { RoleBadge } from './RoleBadge';
 import { ToolCalls } from './ToolCallView';
 import { TurnBadge, isStoppedTurn } from './TurnBadge';
@@ -114,20 +115,36 @@ function extOf(name: string): string {
 }
 const IMAGE_EXT = /^(PNG|JPE?G|GIF|WEBP|HEIC|BMP|SVG|AVIF)$/;
 
-/** Sent attachments as small file tiles (the browser never re-fetches uploads for display). */
-function AttachmentTiles({ names }: { names: string[] }) {
+/** One sent image: a thumbnail from the server (falls back to a tile once the upload is purged); click = lightbox. */
+function ImageThumb({ file }: { file: SentFile }) {
+  const [broken, setBroken] = useState(false);
+  const [open, setOpen] = useState(false);
+  if (broken) return <FileTile name={file.name} image />;
+  return (
+    <>
+      <button type="button" className="attach-thumb" title={file.name} aria-label={`${file.name} 크게 보기`} onClick={() => setOpen(true)}>
+        <img src={attachmentUrl(file.id)} alt={file.name} loading="lazy" onError={() => setBroken(true)} />
+      </button>
+      {open && <Lightbox src={attachmentUrl(file.id)} alt={file.name} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function FileTile({ name, image }: { name: string; image: boolean }) {
+  const ext = extOf(name);
+  return (
+    <span className={`chip attach-tile ${image ? 'image' : 'file'}`} title={name}>
+      <span className="attach-glyph" aria-hidden="true">{image ? '🖼' : ext || '📄'}</span>
+      <span className="attach-name">{name}</span>
+    </span>
+  );
+}
+
+/** Sent attachments: images as thumbnails (GET /api/attachments/:id), other files as small tiles. */
+function AttachmentTiles({ files }: { files: SentFile[] }) {
   return (
     <div className="msg-attachments">
-      {names.map((n, i) => {
-        const ext = extOf(n);
-        const image = IMAGE_EXT.test(ext);
-        return (
-          <span key={i} className={`chip attach-tile ${image ? 'image' : 'file'}`} title={n}>
-            <span className="attach-glyph" aria-hidden="true">{image ? '🖼' : ext || '📄'}</span>
-            <span className="attach-name">{n}</span>
-          </span>
-        );
-      })}
+      {files.map((f, i) => (f.isImage ? <ImageThumb key={f.id || i} file={f} /> : <FileTile key={f.id || i} name={f.name} image={IMAGE_EXT.test(extOf(f.name))} />))}
     </div>
   );
 }
@@ -143,7 +160,7 @@ export function MessageView({ item }: { item: ChatItem }) {
       <>
         {system}
         <div className="msg user">
-          {files.length > 0 && <AttachmentTiles names={files} />}
+          {files.length > 0 && <AttachmentTiles files={files} />}
           {text && <pre>{text}</pre>}
         </div>
       </>

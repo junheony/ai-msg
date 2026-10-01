@@ -19,7 +19,7 @@ describe('Pane (D6)', () => {
     render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: true }} active closable dispatch={dispatch} send={send} onClose={onClose} />);
     fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: 'hello' } });
     fireEvent.click(screen.getByText('보내기'));
-    expect(dispatch).toHaveBeenCalledWith({ type: 'sent', text: 'hello', paneId: 'p1', attachments: ['shot.png'], clientRef: expect.any(String) });
+    expect(dispatch).toHaveBeenCalledWith({ type: 'sent', text: 'hello', paneId: 'p1', attachments: [{ id: 'a1', name: 'shot.png', isImage: true }], clientRef: expect.any(String) });
     expect(send).toHaveBeenCalledWith({ type: 'send', sessionId: null, cwd: '/w', text: 'hello', model: 'gpt-6-astra', effort: 'medium', engine: 'codex', sandbox: 'workspace-write', attachments: ['a1'], clientRef: expect.any(String) });
     // T9 prerequisite (a): the frame carries the same clientRef the reducer waits for.
     const ref1 = (dispatch.mock.calls.find((c) => (c[0] as Action).type === 'sent')![0] as { clientRef: string }).clientRef;

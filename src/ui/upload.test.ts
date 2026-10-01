@@ -12,7 +12,7 @@ describe('uploadFile', () => {
       return new Response(JSON.stringify({ id: 'id-1', name: '스샷.png', mediaType: 'image/png', size: 3, isImage: true }), { status: 201 });
     });
     const file = new File([new Uint8Array([1, 2, 3])], '스샷.png', { type: 'image/png' });
-    expect(await uploadFile(file, fetchFn as unknown as typeof fetch)).toEqual({ id: 'id-1', name: '스샷.png', size: 3, isImage: true });
+    expect(await uploadFile(file, fetchFn as unknown as typeof fetch)).toEqual({ id: 'id-1', name: '스샷.png', size: 3, isImage: true, previewUrl: expect.stringMatching(/^blob:/) });
     expect(calls[0]?.url).toBe('/api/attachments');
     expect((calls[0]?.init.headers as Record<string, string>)['x-deck-filename']).toBe(encodeURIComponent('스샷.png'));
     const bad = vi.fn(async () => new Response(JSON.stringify({ error: '첨부가 너무 큽니다' }), { status: 413 }));

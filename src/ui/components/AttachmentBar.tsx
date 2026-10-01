@@ -18,8 +18,8 @@ export function AttachmentBar({ attachments, uploading, error, onFiles, onRemove
     <div className="attachment-bar">
       <button type="button" className="attach" aria-label="첨부" onClick={() => input.current?.click()} title="이미지·파일 첨부 (붙여넣기·끌어놓기도 됩니다)">+</button>
       {attachments.map((a) => (
-        <span key={a.id} className="chip attachment" title={a.name}>
-          {a.isImage ? '🖼 ' : '📄 '}{a.name} <span className="muted">{kb(a.size)}</span>
+        <span key={a.id} className={`chip attachment ${a.previewUrl ? 'has-thumb' : ''}`} title={a.name}>
+          {a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{a.name} <span className="muted">{kb(a.size)}</span>
           <button type="button" className="chip-remove" aria-label="첨부 제거" onClick={() => onRemove(a.id)}>✕</button>
         </span>
       ))}

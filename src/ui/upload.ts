@@ -23,7 +23,9 @@ export async function uploadFile(file: File, fetchFn: typeof fetch = fetch): Pro
     throw new Error(body.error ?? `업로드 실패 (${res.status})`);
   }
   const j = (await res.json()) as { id: string; name: string; size: number; isImage: boolean };
-  return { id: j.id, name: j.name, size: j.size, isImage: j.isImage };
+  // ux-state: the composer previews the local file (blob: is allowed by the CSP img-src); the server's sniff decides.
+  const previewUrl = j.isImage && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : undefined;
+  return { id: j.id, name: j.name, size: j.size, isImage: j.isImage, ...(previewUrl ? { previewUrl } : {}) };
 }
 
 /** Files of a paste/drop; null-safe. */

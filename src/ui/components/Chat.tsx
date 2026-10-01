@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
 import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, SANDBOX_LABEL, type AnyModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind } from '../../shared/models';
 import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-types';
-import type { ChatItem, PendingPermission, PendingQuestion, UploadedAttachment } from '../state';
+import type { ChatItem, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
+import { latestTodos } from '../todos';
 import { mergeToolRuns } from '../toolRuns';
 import { filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AttachmentBar } from './AttachmentBar';
@@ -9,6 +10,8 @@ import { MessageView } from './MessageView';
 import { ModelPicker } from './ModelPicker';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
+import { QueueChips } from './QueueChips';
+import { TodoPanel } from './TodoPanel';
 
 export type ChatProps = {
   items: ChatItem[];
@@ -44,6 +47,14 @@ export type ChatProps = {
   onSandbox: (s: CodexSandbox) => void;
   onAttach: (a: UploadedAttachment) => void;
   onUnattach: (id: string) => void;
+  /** ux-state: while busy, a submit queues the message (absent = the composer can't send while busy). */
+  queue?: QueueItem[];
+  queuePaused?: boolean;
+  onQueue?: (text: string) => void;
+  onQueueEdit?: (id: string, text: string) => void;
+  onQueueRemove?: (id: string) => void;
+  onQueueClear?: () => void;
+  onQueueResume?: () => void;
 };
 
 const ATTACHMENT_ONLY_TEXT = '첨부 파일을 확인해 주세요.';
@@ -77,6 +88,7 @@ export function Chat(p: ChatProps) {
   const { addFiles, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
   const runMs = useElapsed(p.busy);
   const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
+  const todos = useMemo(() => latestTodos(p.items), [p.items]);
 
   // Review M12: a failed last turn can be re-sent as-is.
   const last = p.items.at(-1);
@@ -88,14 +100,18 @@ export function Chat(p: ChatProps) {
   // once the session exists its engine is fixed.
   const effectiveEngine: EngineChoice = p.isNew ? p.engine : (p.sessionEngine ?? 'claude');
   const models: readonly AnyModel[] = effectiveEngine === 'codex' ? CODEX_MODELS : effectiveEngine === 'claude' ? CLAUDE_MODELS : [...CLAUDE_MODELS, ...CODEX_MODELS];
-  const canSend = (text.trim().length > 0 || p.attachments.length > 0) && !p.busy && uploading === 0;
+  const hasDraft = (text.trim().length > 0 || p.attachments.length > 0) && uploading === 0;
+  const queueing = p.busy && !!p.onQueue;
+  const canSend = hasDraft && (!p.busy || queueing);
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
   const liveTools = live ? live.toolCalls.length : 0;
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
   const submit = () => {
     if (!canSend) return;
-    p.onSend(text.trim() || ATTACHMENT_ONLY_TEXT);
+    const msg = text.trim() || ATTACHMENT_ONLY_TEXT;
+    if (p.busy) p.onQueue?.(msg);
+    else p.onSend(msg);
     setText('');
   };
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -126,6 +142,10 @@ export function Chat(p: ChatProps) {
         <div ref={endRef} />
       </div>
       <div className="composer-wrap">
+        {todos && todos.length > 0 && <TodoPanel todos={todos} />}
+        {p.queue && p.queue.length > 0 && (
+          <QueueChips queue={p.queue} paused={!!p.queuePaused} onEdit={(id, t) => p.onQueueEdit?.(id, t)} onRemove={(id) => p.onQueueRemove?.(id)} onClear={() => p.onQueueClear?.()} onResume={() => p.onQueueResume?.()} />
+        )}
         {p.busy && (
           <div className="turn-status" role="status" data-testid="turn-status">
             <span className="spark spin" aria-hidden="true">✳</span>
@@ -140,7 +160,7 @@ export function Chat(p: ChatProps) {
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
             onPaste={onPaste}
-            placeholder="메시지 입력 · ⌘/Ctrl+Enter 보내기 · 이미지 붙여넣기"
+            placeholder={queueing ? '실행 중 · ⌘/Ctrl+Enter 로 대기열에 추가' : '메시지 입력 · ⌘/Ctrl+Enter 보내기 · 이미지 붙여넣기'}
             aria-label="메시지"
             rows={1}
           />
@@ -164,6 +184,7 @@ export function Chat(p: ChatProps) {
                 </span>
               )}
               <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
+              {p.activeTurnId && queueing && hasDraft && <button type="button" className="send queue-add" onClick={submit} title="대기열에 추가 (⌘/Ctrl+Enter)"><span aria-hidden="true">+</span><span className="sr-only">대기열에 추가</span></button>}
               {p.activeTurnId
                 ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
                 : <button type="button" className="send" onClick={submit} disabled={!canSend} title="보내기 (⌘/Ctrl+Enter)"><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}

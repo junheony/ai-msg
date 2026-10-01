@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ServerMessage } from '../shared/protocol';
-import { MAX_PANES, answersFor, fromTranscript, initialState, reducer, sessionsToClose, type AppState, type PendingQuestion } from './state';
+import { MAX_PANES, answersFor, fromTranscript, initialState, nextQueued, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 
@@ -285,8 +285,9 @@ describe('panes (D6)', () => {
   it('questions are global, deduped, closed by question_resolved or the turn result; attachments ride the sent item', () => {
     let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
     s = reducer(s, { type: 'attach', attachment: { id: 'a1', name: 'shot.png', size: 3, isImage: true } });
-    s = reducer(s, { type: 'sent', text: 'look', attachments: ['shot.png'] });
-    expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'look', attachments: ['shot.png'] });
+    const shot = { id: 'a1', name: 'shot.png', isImage: true };
+    s = reducer(s, { type: 'sent', text: 'look', attachments: [shot] });
+    expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'look', attachments: [shot] });
     expect(pane(s).attachments).toEqual([]);
     const q: ServerMessage = { type: 'question_request', turnId: 't1', sessionId: null, cwd: '/w', requestId: 'q1', questions: [{ question: 'Which?', header: 'H', options: [{ label: 'a', description: '' }, { label: 'b', description: '' }], multiSelect: false }] };
     s = play([q, q], s);
@@ -465,5 +466,88 @@ describe('reducer: 자동 승인 and Desktop sessions', () => {
     s = reducer(s, { type: 'set_sandbox', sandbox: 'workspace-write', paneId: s.panes[1]!.id });
     s = play([{ type: 'settings', settings: { autoApprove: true } }], s);
     expect(s.panes.map((p) => p.sandbox)).toEqual(['workspace-write', 'workspace-write']);
+  });
+});
+
+describe('message queue (ux-state)', () => {
+  const started = (s: AppState, turnId: string, clientRef: string) => play([{ type: 'turn_started', turnId, sessionId: 's1', cwd: '/w', clientRef } as ServerMessage], s);
+  const result = (s: AppState, turnId: string, ok: boolean) => play([{ type: 'turn_result', turnId, sessionId: 's1', cwd: '/w', ok, text: '', badge: null, errorText: ok ? null : '중단됨' }], s);
+  const running = (): AppState => started(reducer(openedOn('s1'), { type: 'sent', text: 'first', clientRef: 'r1' }), 't1', 'r1');
+
+  it('queue_add takes the composer attachments; edit / remove / clear; empty text without files is ignored', () => {
+    let s = reducer(running(), { type: 'attach', attachment: { id: 'a1', name: 'x.png', size: 1, isImage: true } });
+    s = reducer(s, { type: 'queue_add', text: '  second ' });
+    s = reducer(s, { type: 'queue_add', text: 'third' });
+    s = reducer(s, { type: 'queue_add', text: '   ' });
+    expect(pane(s).queue.map((q) => [q.text, q.attachments.length])).toEqual([['second', 1], ['third', 0]]);
+    expect(pane(s).attachments).toEqual([]);
+    const [a, b] = pane(s).queue;
+    s = reducer(s, { type: 'queue_edit', id: b!.id, text: 'third!' });
+    expect(pane(s).queue[1]!.text).toBe('third!');
+    s = reducer(s, { type: 'queue_remove', id: a!.id });
+    expect(pane(s).queue.map((q) => q.text)).toEqual(['third!']);
+    s = reducer(s, { type: 'queue_clear' });
+    expect(pane(s).queue).toEqual([]);
+  });
+
+  it('nextQueued: nothing while the turn runs or a send awaits its start; the head once the turn ends', () => {
+    let s = reducer(running(), { type: 'queue_add', text: 'second' });
+    expect(nextQueued(pane(s))).toBeNull();
+    s = result(s, 't1', true);
+    expect(nextQueued(pane(s))?.text).toBe('second');
+    s = reducer(s, { type: 'sent', text: 'second', clientRef: 'r2' });
+    expect(nextQueued(pane(s))).toBeNull(); // awaiting start
+    expect(nextQueued({ ...pane(s), session: null, awaitingStart: false })).toBeNull();
+  });
+
+  it('stop / a failed turn pause the queue (kept); resume or a manual send unpause; open drops it', () => {
+    let s = reducer(running(), { type: 'queue_add', text: 'second' });
+    s = reducer(s, { type: 'queue_pause' });
+    s = result(s, 't1', false);
+    expect(pane(s).queuePaused).toBe(true);
+    expect(pane(s).queue).toHaveLength(1);
+    expect(nextQueued(pane(s))).toBeNull();
+    s = reducer(s, { type: 'queue_resume' });
+    expect(nextQueued(pane(s))?.text).toBe('second');
+    // a failed turn without an explicit stop pauses too
+    let f = reducer(running(), { type: 'queue_add', text: 'q' });
+    f = result(f, 't1', false);
+    expect(pane(f).queuePaused).toBe(true);
+    f = reducer(f, { type: 'sent', text: 'manual', clientRef: 'r9' });
+    expect(pane(f).queuePaused).toBe(false);
+    // a refused send pauses a non-empty queue
+    let r = reducer(openedOn('s1'), { type: 'sent', text: 'x', clientRef: 'rx' });
+    r = reducer(r, { type: 'queue_add', text: 'later' });
+    r = play([{ type: 'error', turnId: null, message: 'busy', clientRef: 'rx' }], r);
+    expect(pane(r).queuePaused).toBe(true);
+    expect(pane(reducer(f, { type: 'open', sessionId: 's2', cwd: '/w', title: 't' })).queue).toEqual([]);
+  });
+
+  it('a successful turn leaves the queue running', () => {
+    let s = reducer(running(), { type: 'queue_add', text: 'second' });
+    s = result(s, 't1', true);
+    expect(pane(s).queuePaused).toBe(false);
+  });
+});
+
+describe('restoreSentFiles (ux-state)', () => {
+  const img = { id: '11111111-2222-3333-4444-555555555555', name: 'a.png', isImage: true };
+  const doc = { id: '66666666-2222-3333-4444-555555555555', name: 'b.md', isImage: false };
+  it('matches records in order by typed text (exact, or followed by the server-added lines)', () => {
+    const items: ChatItem[] = [
+      { kind: 'user', text: 'hello' },
+      { kind: 'user', text: 'look\n[이미지]' },
+      { kind: 'user', text: 'lookalike' },
+      { kind: 'user', text: 'read this\n\n첨부 파일: /x/b.md' },
+    ];
+    const out = restoreSentFiles(items, [{ text: 'look', files: [img] }, { text: 'read this', files: [doc] }]);
+    expect(out.map((i) => (i.kind === 'user' ? i.attachments ?? null : null))).toEqual([null, [img], null, [doc]]);
+    expect(restoreSentFiles(items, [])).toEqual(items);
+  });
+
+  it('a history action carrying sentFiles restores them onto the pane', () => {
+    const s0 = openedOn('s1');
+    const s = reducer(s0, { type: 'server', msg: { type: 'history', sessionId: 's1', cwd: '/w', account: 'b', messages: [{ kind: 'user', text: 'look\n[이미지]', ts: null }], runningTurnId: null } as ServerMessage, sentFiles: [{ text: 'look', files: [img] }] });
+    expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'look\n[이미지]', attachments: [img] });
   });
 });

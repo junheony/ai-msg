@@ -14,7 +14,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove, collapsed: collapsedProp, onCollapsedChange }: {
   projects: ProjectEntry[];
   currentSessionId: string | null;
   onOpen: (sessionId: string, cwd: string, title: string) => void;
@@ -31,10 +31,19 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** 자동 승인 (null = not known yet); the footer toggle calls onAutoApprove with the new value. */
   autoApprove?: boolean | null;
   onAutoApprove?: (on: boolean) => void;
+  /** ux-state: folded project groups (cwd), owned by the app so they survive a reload; absent = local state. */
+  collapsed?: string[];
+  onCollapsedChange?: (cwds: string[]) => void;
 }) {
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState('');
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [localCollapsed, setLocalCollapsed] = useState<Set<string>>(() => new Set(collapsedProp ?? []));
+  const collapsed = collapsedProp ? new Set(collapsedProp) : localCollapsed;
+  const setCollapsed = (fn: (c: Set<string>) => Set<string>) => {
+    const n = fn(collapsed);
+    if (onCollapsedChange) onCollapsedChange([...n]);
+    else setLocalCollapsed(n);
+  };
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const toggle = (set: Set<string>, key: string) => { const n = new Set(set); if (n.has(key)) n.delete(key); else n.add(key); return n; };
 
