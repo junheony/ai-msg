@@ -564,3 +564,54 @@ describe('restoreSentFiles (ux-state)', () => {
     expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'look\n[이미지]', attachments: [img] });
   });
 });
+
+describe('cross-device prompt sync', () => {
+  const S = 'sess-x';
+  const ts = (turnId: string, extra: Partial<Extract<ServerMessage, { type: 'turn_started' }>> = {}): ServerMessage => ({ type: 'turn_started', turnId, sessionId: S, cwd: '/w', account: 'b', model: 'sonnet', reason: 'r', attempt: 0, engine: 'claude', ...extra });
+  const viewing = (): AppState => play([{ type: 'history', sessionId: S, cwd: '/w', account: 'b', messages: [{ kind: 'user', text: 'old', ts: null }], runningTurnId: null }], openedOn(S));
+
+  it('a pane viewing the session shows another device\'s prompt (with attachments) before the turn\'s answer', () => {
+    const s = play([
+      ts('t1', { clientRef: 'other-tab-1', prompt: { text: '1+1만 답해', attachments: [{ id: 'a1', name: 'shot.png', isImage: true }] } }),
+      { type: 'delta', turnId: 't1', sessionId: S, cwd: '/w', text: '2' },
+    ], viewing());
+    expect(pane(s).items.map((it) => it.kind)).toEqual(['user', 'user', 'assistant']);
+    expect(pane(s).items[1]).toEqual({ kind: 'user', text: '1+1만 답해', attachments: [{ id: 'a1', name: 'shot.png', isImage: true }] });
+    expect(pane(s).items[2]).toMatchObject({ kind: 'assistant', turnId: 't1', text: '2', streaming: true });
+    expect(pane(s).activeTurnId).toBe('t1');
+  });
+
+  it('the sending pane does not duplicate its own bubble', () => {
+    let s = reducer(viewing(), { type: 'sent', text: 'hi', paneId: 'p0', clientRef: 'r0' });
+    s = play([ts('t1', { clientRef: 'r0', prompt: { text: 'hi', attachments: [] } })], s);
+    expect(pane(s).items.map((it) => (it.kind === 'user' ? it.text : 'A'))).toEqual(['old', 'hi', 'A']);
+  });
+
+  it('a second pane on the same session in the sending tab shows the bubble once; a retry start adds nothing', () => {
+    let s = reducer(viewing(), { type: 'add_pane' });
+    s = reducer(s, { type: 'open', sessionId: S, cwd: '/w', title: 't', paneId: 'p1' });
+    s = play([{ type: 'history', sessionId: S, cwd: '/w', account: 'b', messages: [{ kind: 'user', text: 'old', ts: null }], runningTurnId: null }], s);
+    s = reducer(s, { type: 'sent', text: 'hi', paneId: 'p0', clientRef: 'r0' });
+    const start = ts('t1', { clientRef: 'r0', prompt: { text: 'hi', attachments: [] } });
+    s = play([start, { ...start, attempt: 1 } as ServerMessage], s);
+    const texts = (i: number) => s.panes[i]!.items.map((it) => (it.kind === 'user' ? it.text : 'A'));
+    expect(texts(0)).toEqual(['old', 'hi', 'A']);
+    expect(texts(1)).toEqual(['old', 'hi', 'A']);
+  });
+
+  it('a background continuation (no prompt) adds only the assistant segment', () => {
+    const s = play([ts('t1:bg1', { reason: '백그라운드 계속' })], viewing());
+    expect(pane(s).items.map((it) => it.kind)).toEqual(['user', 'assistant']);
+  });
+
+  it('opening mid-turn shows the running prompt unless the transcript already has it', () => {
+    const base = { type: 'history', sessionId: S, cwd: '/w', account: 'b', runningTurnId: 't9' } as const;
+    const fresh = play([{ ...base, messages: [{ kind: 'user', text: 'old', ts: null }, { kind: 'assistant', text: 'a', model: null, toolCalls: [], ts: null }], runningPrompt: { text: 'new q', attachments: [{ id: 'a1', name: 'f.txt', isImage: false }] } }], openedOn(S));
+    expect(pane(fresh).items.map((it) => (it.kind === 'user' ? it.text : 'A'))).toEqual(['old', 'A', 'new q', 'A']);
+    expect(pane(fresh).items[2]).toMatchObject({ attachments: [{ id: 'a1', name: 'f.txt', isImage: false }] });
+    expect(pane(fresh).items[3]).toMatchObject({ turnId: 't9', streaming: true });
+    const written = play([{ ...base, messages: [{ kind: 'user', text: 'new q\n\n첨부 파일: /x/f.txt', ts: null }], runningPrompt: { text: 'new q', attachments: [{ id: 'a1', name: 'f.txt', isImage: false }] } }], openedOn(S));
+    expect(pane(written).items.map((it) => it.kind)).toEqual(['user', 'assistant']);
+    expect(pane(written).items[0]).toMatchObject({ attachments: [{ id: 'a1', name: 'f.txt', isImage: false }] });
+  });
+});

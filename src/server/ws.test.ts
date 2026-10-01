@@ -78,6 +78,9 @@ beforeAll(async () => {
       const sid = req.resumeSessionId ?? 'sess-linger';
       return (async function* () { yield { kind: 'init' as const, sessionId: sid, model: 'm' }; yield okResult(sid, 'first'); await lingerGate; })();
     }
+    if (req.prompt === 'announce') {
+      return (async function* () { yield { kind: 'init' as const, sessionId: '14141414-1414-4141-8141-141414141414', model: 'm' }; yield { kind: 'delta' as const, text: 'thinking' }; await gate; yield okResult('14141414-1414-4141-8141-141414141414', 'done'); })();
+    }
     if (req.prompt === 'throw') throw new Error('engine exploded');
     if (req.prompt === 'hold') await gate;
     const sid = req.resumeSessionId ?? 'sess-1';
@@ -91,7 +94,7 @@ beforeAll(async () => {
   settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m) });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2 });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -362,6 +365,72 @@ describe('ws', () => {
     expect((await onX).filter((m) => m.type === 'delta')).toHaveLength(2);
     expect((await onY).filter((m) => m.type === 'delta' || m.type === 'turn_started' || m.type === 'turn_result')).toEqual([]);
     for (const c of [viewerX, viewerY, sender]) c.ws.close();
+  });
+
+  it('cross-device: a second client viewing the session gets the prompt (text, attachment metadata, clientRef) and the whole turn', async () => {
+    const SZ = '12121212-1212-4121-8121-121212121212';
+    const cwd = await seed(SZ, 'sync-two');
+    const img = await store2.save('shot.png', Buffer.from('89504e470d0a1a0a00', 'hex'));
+    const phone = await connect({ Origin: origin, Cookie: COOKIE });
+    const desk = await connect({ Origin: origin, Cookie: COOKIE });
+    for (const c of [phone, desk]) {
+      await collect(c.ws, (m) => m.type === 'hello');
+      const h = collect(c.ws, (m) => m.type === 'history');
+      c.ws.send(JSON.stringify({ type: 'open_session', sessionId: SZ }));
+      await h;
+    }
+    const onDesk = collect(desk.ws, (m) => m.type === 'turn_result');
+    const onPhone = collect(phone.ws, (m) => m.type === 'turn_result');
+    phone.ws.send(JSON.stringify({ type: 'send', sessionId: SZ, cwd, text: '1+1만 답해', attachments: [img.id], clientRef: 'tabP-1' }));
+    const d = await onDesk;
+    expect(d.find((m) => m.type === 'turn_started')).toMatchObject({ sessionId: SZ, clientRef: 'tabP-1', prompt: { text: '1+1만 답해', attachments: [{ id: img.id, name: 'shot.png', isImage: true }] } });
+    expect(d.filter((m) => m.type === 'delta').map((m) => (m as { text: string }).text).join('')).toBe('ok');
+    expect(d.at(-1)).toMatchObject({ type: 'turn_result', ok: true, sessionId: SZ });
+    expect((await onPhone).find((m) => m.type === 'turn_started')).toMatchObject({ clientRef: 'tabP-1', prompt: { text: '1+1만 답해' } });
+    for (const c of [phone, desk]) c.ws.close();
+  });
+
+  it('cross-device: a client opening the session mid-turn gets the running prompt with its history', async () => {
+    const SZ = '13131313-1313-4131-8131-131313131313';
+    const cwd = await seed(SZ, 'sync-mid');
+    hold();
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const started = collect(a.ws, (m) => m.type === 'turn_started');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SZ, cwd, text: 'hold' }));
+    const ts = (await started).at(-1) as Extract<ServerMessage, { type: 'turn_started' }>;
+    const b = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(b.ws, (m) => m.type === 'hello');
+    const h = collect(b.ws, (m) => m.type === 'history');
+    b.ws.send(JSON.stringify({ type: 'open_session', sessionId: SZ }));
+    expect((await h).at(-1)).toMatchObject({ type: 'history', runningTurnId: ts.turnId, runningPrompt: { text: 'hold', attachments: [] } });
+    const done = collect(b.ws, (m) => m.type === 'turn_result');
+    release();
+    expect((await done).at(-1)).toMatchObject({ type: 'turn_result', turnId: ts.turnId, ok: true });
+    const h2 = collect(b.ws, (m) => m.type === 'history');
+    b.ws.send(JSON.stringify({ type: 'open_session', sessionId: SZ }));
+    expect((await h2).at(-1)).toMatchObject({ runningTurnId: null, runningPrompt: null });
+    for (const c of [a, b]) c.ws.close();
+  });
+
+  it('cross-device: a new session appears in every client\'s sidebar as soon as its id is known, before the turn ends', async () => {
+    const cwd = path.join(work, 'announce');
+    await fs.mkdir(cwd, { recursive: true });
+    const dir = path.join(base, 'b', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, '14141414-1414-4141-8141-141414141414.jsonl'), JSON.stringify({ type: 'user', cwd, message: { role: 'user', content: 'announce' } }) + '\n');
+    hold();
+    const phone = await connect({ Origin: origin, Cookie: COOKIE });
+    const desk = await connect({ Origin: origin, Cookie: COOKIE });
+    for (const c of [phone, desk]) await collect(c.ws, (m) => m.type === 'hello');
+    const listed = collect(desk.ws, (m) => m.type === 'index' && m.projects.some((p) => p.sessions.some((s) => s.sessionId === '14141414-1414-4141-8141-141414141414')));
+    phone.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'announce' }));
+    const got = await listed;
+    expect(got.some((m) => m.type === 'turn_result')).toBe(false);
+    const done = collect(phone.ws, (m) => m.type === 'turn_result');
+    release();
+    expect((await done).at(-1)).toMatchObject({ ok: true, sessionId: '14141414-1414-4141-8141-141414141414' });
+    for (const c of [phone, desk]) c.ws.close();
   });
 
   it('a reconnected tab can watch its in-flight new-session turn and gets the result', async () => {

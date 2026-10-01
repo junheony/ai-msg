@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
-import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RunningTurn, type ServerMessage } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RunningTurn, type ServerMessage, type TurnPrompt } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { DirError, resolveUnderRoots } from './dirs';
@@ -115,6 +115,8 @@ export type WsDeps = {
   settings?: SettingsStore;
   /** Web Push hook: sees every turn event and every permission/question card (PushNotifier picks what to send). */
   notify?: (msg: ServerMessage) => void;
+  /** Attachment metadata (name, image or not) for the prompt every viewing device is shown. */
+  attachments?: { resolve(ids: string[]): { found: { id: string; name: string; isImage: boolean }[] } };
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -128,7 +130,7 @@ async function isDirectory(p: string): Promise<boolean> {
  * the deck turn now streaming — that turn, a background continuation or a follow-up — and null
  * while the process only waits for background work; `bg` is the last turn_background.
  */
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; bg: { turnId: string; tasks: string[] } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; bg: { turnId: string; tasks: string[] } | null; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -154,6 +156,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** Turn ids a running turn's process produced after its own (background continuations, follow-ups) → that turn's id. */
   const aliases = new Map<string, string>();
   const baseOf = (turnId: string) => aliases.get(turnId) ?? turnId;
+  /** The user message of each deck turn started by a send (its own turn or a follow-up), until the turn's process ends. */
+  const prompts = new Map<string, TurnPrompt>();
+  const promptOf = (msg: Extract<ClientMessage, { type: 'send' }>): TurnPrompt => ({
+    text: msg.text,
+    attachments: msg.attachments?.length ? (deps.attachments?.resolve([...new Set(msg.attachments)]).found ?? []).map(({ id, name, isImage }) => ({ id, name, isImage })) : [],
+  });
   let draining = false;
   /**
    * Review I2: one turn per session. Keyed by sessionId; a new session is keyed by
@@ -183,9 +191,25 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    * triggering their own.
    */
   let indexRescan: Promise<void> | null = null;
+  /** A request made while a scan runs gets one (shared) scan started after it, so it sees files written before the request. */
+  let queuedRescan: Promise<void> | null = null;
   const rescanIndex = (): Promise<void> => {
-    if (!indexRescan) indexRescan = deps.index.refresh().finally(() => { indexRescan = null; });
-    return indexRescan;
+    if (!indexRescan) { indexRescan = deps.index.refresh().finally(() => { indexRescan = null; }); return indexRescan; }
+    queuedRescan ??= indexRescan.catch(() => {}).then(() => { queuedRescan = null; return rescanIndex(); });
+    return queuedRescan;
+  };
+
+  /**
+   * A new session got its id: other devices list it in their sidebar now, not when the turn ends. The CLI may
+   * write its transcript a moment after reporting the id, so rescan a few times until the index has it.
+   */
+  const announceSession = (sid: string, tries = 4) => {
+    void rescanIndex()
+      .then(() => {
+        if (deps.index.lookup(sid) || deps.store.codexEntries().some((e) => e.sessionId === sid)) broadcast(indexMsg());
+        else if (tries > 1) setTimeout(() => announceSession(sid, tries - 1), 750).unref?.();
+      })
+      .catch((err: unknown) => console.error('deck: index refresh for a new session failed', errMsg(err)));
   };
 
   /** Turn events reach the socket that started the turn and sockets viewing its session — nobody else. */
@@ -194,6 +218,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (sid && turn.sessionId !== sid) {
       turn.sessionId = sid;
       if (!busy.has(sid)) busy.set(sid, turn.turnId);
+      if (turn.fresh) { turn.fresh = false; announceSession(sid); }
     }
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
     if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
@@ -226,6 +251,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       const base = turns.get(busy.get(msg.sessionId)!);
       const followId = randomUUID();
       if (base) aliases.set(followId, base.turnId);
+      prompts.set(followId, promptOf(msg));
       const joined = base !== undefined && deps.runner.followUp(msg.sessionId, {
         turnId: followId, text: msg.text,
         ...(msg.attachments ? { attachments: msg.attachments } : {}),
@@ -234,6 +260,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       });
       if (joined) return;
       aliases.delete(followId);
+      prompts.delete(followId);
       // The turn already sent its result and the process is only closing (no background work to join):
       // the UI's queue fires on that result, so run the send as soon as the lock is released instead of refusing it.
       if (base && base.current === null) { base.afterRelease.push({ ws, msg }); return; }
@@ -242,16 +269,18 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, bg: null, afterRelease: [] };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, bg: null, fresh: msg.sessionId === null, afterRelease: [] };
+    prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
     turns.set(turnId, turn);
     const release = () => {
       turns.delete(turnId);
+      prompts.delete(turnId);
       for (const [k, v] of [...busy]) if (v === turnId) busy.delete(k);
       broker.cancelTurn(turnId);
       questions.cancelTurn(turnId);
-      for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
+      for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); prompts.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
       // Sends that arrived while the process was closing after its result (a closed socket's send is dropped).
       for (const d of turn.afterRelease.splice(0)) if (clients.has(d.ws)) startTurn(d.ws, d.msg);
     };
@@ -260,9 +289,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       emit: (m) => {
         if (m.type === 'turn_started') {
           turn.current = m.turnId;
-          if (m.turnId !== turnId) { aliases.set(m.turnId, turnId); emitTurn(turn, m); return; }
+          // Every device viewing the session gets the prompt with each start (retries included); the sending pane skips it.
+          const prompt = prompts.get(m.turnId);
+          const withPrompt = prompt ? { ...m, prompt } : m;
+          if (m.turnId !== turnId) { aliases.set(m.turnId, turnId); emitTurn(turn, withPrompt); return; }
           started = true;
-          emitTurn(turn, { ...m, ...ref });
+          emitTurn(turn, { ...withPrompt, ...ref });
           return;
         }
         if (m.type === 'turn_result' && m.turnId === turn.current) turn.current = null;
@@ -370,19 +402,24 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         }
         case 'open_session': {
           const sessionId = msg.sessionId;
+          /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
+          const runningOf = (sid: string) => {
+            const current = turns.get(busy.get(sid) ?? '')?.current ?? null;
+            return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null };
+          };
           void (async () => {
             // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
             const st = deps.store.get(sessionId);
             if (st && isCodexState(st)) {
               view(ws, sessionId);
               const messages = st.rolloutFile ? await (deps.readCodexHistory ?? readCodexTranscript)(st.rolloutFile).catch(() => []) : [];
-              send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, messages, runningTurnId: busy.get(sessionId) ?? null });
+              send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, messages, ...runningOf(sessionId) });
               return;
             }
             // Gemini sessions: no transcript reader yet (the CLI's chat files are not read) — the pane starts empty.
             if (st && isGeminiState(st)) {
               view(ws, sessionId);
-              send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, messages: [], runningTurnId: busy.get(sessionId) ?? null });
+              send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, messages: [], ...runningOf(sessionId) });
               return;
             }
             let entry = deps.index.lookup(sessionId);
@@ -400,7 +437,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               .catch(() => readTranscript(found.file))
               .then((messages) => {
                 const t = turns.get(busy.get(sessionId) ?? '');
-                send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, messages, runningTurnId: t ? t.current : null });
+                send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, messages, ...runningOf(sessionId) });
                 if (t?.bg) send(ws, { type: 'turn_background', turnId: t.bg.turnId, sessionId, cwd: t.cwd, tasks: t.bg.tasks });
               })
               .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));

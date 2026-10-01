@@ -1,6 +1,6 @@
 import type { Account, Seat } from '../shared/accounts';
 import { DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import type { DeckSettings, GeminiStatus, ServerMessage, TurnBadge } from '../shared/protocol';
+import type { DeckSettings, GeminiStatus, ServerMessage, TurnBadge, TurnPrompt } from '../shared/protocol';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
 
@@ -158,6 +158,26 @@ function streamingItem(turnId: string): AssistantItem {
   return { kind: 'assistant', turnId, text: '', toolCalls: [], badge: null, streaming: true, error: null, notes: [], attempts: [] };
 }
 
+function promptItem(prompt: TurnPrompt): ChatItem {
+  return { kind: 'user', text: prompt.text, ...(prompt.attachments.length ? { attachments: prompt.attachments } : {}) };
+}
+
+/**
+ * A pane opened mid-turn: the running turn's prompt goes before its streaming item unless the transcript already
+ * ends its user messages with it (the CLI writes the prompt early; the server appends path lines after attachments).
+ */
+function withRunningPrompt(items: ChatItem[], prompt: TurnPrompt): ChatItem[] {
+  const idx = items.findLastIndex((it) => it.kind === 'user');
+  const lastUser = idx >= 0 ? (items[idx] as Extract<ChatItem, { kind: 'user' }>) : null;
+  if (lastUser && (lastUser.text === prompt.text || lastUser.text.startsWith(`${prompt.text}\n`))) {
+    if (lastUser.attachments?.length || !prompt.attachments.length) return items;
+    const out = items.slice();
+    out[idx] = { ...lastUser, attachments: prompt.attachments };
+    return out;
+  }
+  return [...items, promptItem(prompt)];
+}
+
 /** One pane's view of a server message. `claim`: this pane may claim an unclaimed turn_started (only the first waiting pane does). */
 function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): PaneState {
   switch (msg.type) {
@@ -170,7 +190,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       return { ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null };
     }
     case 'history': {
-      const items = fromTranscript(msg.messages);
+      let items = fromTranscript(msg.messages);
+      if (msg.runningTurnId && msg.runningPrompt) items = withRunningPrompt(items, msg.runningPrompt);
       if (msg.runningTurnId) items.push(streamingItem(msg.runningTurnId));
       const title = pane.session?.sessionId === msg.sessionId ? pane.session.title : msg.sessionId.slice(0, 8);
       const engine: EngineKind = msg.engine ?? 'claude';
@@ -191,7 +212,9 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       }
       if (!belongs(p, msg)) return p;
       const exists = p.items.some((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
-      const items = exists ? p.items.map((it) => (it.kind === 'assistant' && it.turnId === msg.turnId ? { ...it, streaming: true } : it)) : [...p.items, streamingItem(msg.turnId)];
+      // Another device's (or pane's) message: its bubble goes before the turn's answer. The sending pane shows it already ('sent').
+      const echo = msg.prompt && !p.myTurns.includes(msg.turnId) ? [promptItem(msg.prompt)] : [];
+      const items = exists ? p.items.map((it) => (it.kind === 'assistant' && it.turnId === msg.turnId ? { ...it, streaming: true } : it)) : [...p.items, ...echo, streamingItem(msg.turnId)];
       return { ...p, items, activeTurnId: msg.turnId };
     }
     case 'delta':

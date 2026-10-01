@@ -55,6 +55,11 @@ export type GeminiStatus = { available: boolean; loggedIn: Record<GeminiAccount,
 
 export type TurnBadge = { account: Seat; model: AnyModel; reason: string; usage: TurnUsage; modelNote: string | null };
 
+/** An attachment as shown in a sent bubble (images load from GET /api/attachments/:id). */
+export type PromptFile = { id: string; name: string; isImage: boolean };
+/** What the user typed for a turn, as sent (attachment metadata only) — lets every device viewing the session show the bubble. */
+export type TurnPrompt = { text: string; attachments: PromptFile[] };
+
 /** A turn in flight; sessionId is null for a new session until the CLI reports one. */
 export type RunningTurn = { turnId: string; sessionId: string | null; cwd: string };
 
@@ -68,8 +73,8 @@ export type ServerMessage =
   | { type: 'settings'; settings: DeckSettings }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[] }
-  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null }
-  | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string } & TurnScope)
+  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null }
+  | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string; /** The user message that started this turn (absent for a background continuation); the sending pane already shows it. */ prompt?: TurnPrompt } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)
   | ({ type: 'tool_call'; toolUseId: string; name: string; input: unknown } & TurnScope)
   | ({ type: 'tool_result'; toolUseId: string; content: string; isError: boolean } & TurnScope)
