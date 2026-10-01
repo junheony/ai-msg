@@ -112,34 +112,8 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .menu { display: none; }
 
 /* ───────── Usage chips (header) ───────── */
-.usage-panel { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; height: 100%; }
-.usage-panel::-webkit-scrollbar { display: none; }
-.usage-loading { color: var(--muted); font-size: 13.5px; }
-.usage-account { position: relative; display: flex; align-items: center; gap: 9px; padding: 4px 10px 4px 8px; border-radius: 9px; flex-shrink: 0; cursor: default; user-select: none; }
-.usage-account:hover, .usage-account.open { background: var(--hover); }
-.usage-account.current { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
-.usage-account.stale .usage-windows, .usage-account.down .usage-windows { opacity: .6; }
-.usage-name { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 28px; font-weight: 700; font-size: 17px; color: var(--fg-strong); line-height: 1.1; }
-.usage-account.current .usage-name { color: var(--accent); }
 .tag { font-size: 9.5px; font-weight: 600; letter-spacing: .3px; padding: 1px 4px; border-radius: 4px; background: var(--accent); color: #fff; line-height: 1.3; }
 .tag.stale { background: transparent; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 55%, transparent); font-size: 11px; padding: 2px 6px; flex-shrink: 0; }
-.usage-windows { display: flex; flex-direction: column; gap: 1px; }
-.usage-window { display: grid; grid-template-columns: 38px 44px auto; align-items: center; column-gap: 8px; font-size: 14px; line-height: 18px; white-space: nowrap; }
-.usage-label { color: color-mix(in srgb, var(--fg) 72%, var(--muted)); font-size: 13px; font-weight: 500; }
-.usage-bar { height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
-.usage-bar > i { display: block; height: 100%; border-radius: 2px; background: var(--ok); }
-.usage-value { color: var(--fg-strong); font-variant-numeric: tabular-nums; font-size: 14.5px; font-weight: 600; }
-.usage-value small { color: var(--muted); font-size: 12.5px; font-weight: 500; }
-.usage-exhausted small { color: color-mix(in srgb, var(--danger) 75%, var(--fg)); }
-.usage-window.warn .usage-bar > i { background: var(--warn); } .usage-window.warn .usage-value { color: var(--warn); }
-.usage-window.danger .usage-bar > i { background: var(--danger); } .usage-window.danger .usage-value { color: var(--danger); }
-.usage-window.none .usage-value { color: var(--faint); }
-.usage-reset { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.usage-pop { display: none; position: fixed; z-index: 40; min-width: 200px; padding: 8px 10px; border-radius: 9px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: 13.5px; }
-.usage-account.open .usage-pop { display: block; }
-.usage-pop-title { font-weight: 600; margin-bottom: 4px; color: var(--fg-strong); }
-.usage-pop-row { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); line-height: 1.7; }
-.usage-pop-row b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* ───────── Sidebar ───────── */
 .sidebar-wrap { display: flex; }
@@ -341,14 +315,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .menu { display: inline-flex; align-items: center; justify-content: center; width: var(--phone-tap); height: var(--phone-tap); font-size: 17px; color: var(--fg); flex-shrink: 0; }
   .topbar-end { margin-left: 0; }
   .topbar-end .conn { padding: 0 8px; font-size: 0; gap: 0; }
-  .usage-panel { gap: 2px; }
-  .usage-account { padding: 3px 7px 3px 5px; gap: 6px; min-height: var(--phone-tap); cursor: pointer; }
-  .usage-window { grid-template-columns: 32px 26px auto; column-gap: 5px; font-size: 14px; line-height: 16px; }
-  .usage-label { font-size: 12.5px; }
-  .usage-value { font-size: 14px; }
-  .usage-value > small { display: none; }
-  .usage-exhausted-word { display: none; }
-  .usage-name { min-width: 20px; font-size: 15px; }
   .sidebar-wrap.drawer { position: fixed; top: 0; left: 0; bottom: 0; width: 85vw; max-width: 320px; z-index: 30; transform: translateX(-100%); transition: transform .22s cubic-bezier(.2, .8, .2, 1); }
   .sidebar-wrap.drawer.open { transform: none; box-shadow: var(--shadow); }
   .sidebar { width: 100%; height: 100%; padding-top: 12px; }
@@ -377,3 +343,78 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 @media (hover: none) { .pin-btn { opacity: .5; } .pin-btn.on { opacity: 1; } .project-head .icon-btn { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* === usage header === */
+/* Each seat is a small card: mark + letter, then aligned rows (label · rounded bar · remaining %).
+   Colour follows what is left (green → amber ≤20% → red ≤5%); the current account gets a quiet accent ring + dot. */
+.topbar { height: 70px; }
+.usage-panel { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; height: 100%; overflow-x: auto; scrollbar-width: none; }
+.usage-panel::-webkit-scrollbar { display: none; }
+.usage-loading { color: var(--muted); font-size: 13.5px; }
+.usage-card {
+  position: relative; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  padding: 5px 12px 5px 9px; border-radius: 11px; cursor: default; user-select: none;
+  background: color-mix(in srgb, var(--fg) 2.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+.usage-card:hover, .usage-card.open { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.usage-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.usage-card.current { background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
+.usage-dot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar), 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); }
+.usage-id { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 24px; line-height: 1; }
+.usage-mark.claude { color: var(--accent); font-size: 13px; font-weight: 700; }
+.usage-mark.gpt { width: 14px; height: 14px; color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
+.usage-letter { font-size: 15px; font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
+.usage-card.gpt .usage-letter { font-size: 11.5px; letter-spacing: .5px; color: var(--fg); }
+.usage-card.current .usage-letter { color: var(--accent); }
+.usage-rows { display: flex; flex-direction: column; gap: 1px; }
+.usage-card.stale .usage-rows, .usage-card.down .usage-rows { opacity: .55; }
+.usage-row { display: grid; grid-template-columns: 36px 50px minmax(38px, 1fr); align-items: center; column-gap: 8px; height: 16px; white-space: nowrap; }
+.usage-row.spent, .usage-row.credits { display: flex; gap: 8px; }
+.usage-row.spent .usage-label, .usage-row.credits .usage-label { flex: 0 0 36px; }
+.usage-label { font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.usage-bar { height: 5px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.usage-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ok); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
+.usage-row.warn .usage-bar > i { background: var(--warn); }
+.usage-row.danger .usage-bar > i { background: var(--danger); }
+.usage-value { justify-self: end; font-size: 14.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
+.usage-value small { margin-left: 1px; font-size: 11px; font-weight: 500; color: var(--muted); }
+.usage-row.warn .usage-value { color: var(--warn); }
+.usage-row.danger .usage-value { color: var(--danger); }
+.usage-row.none .usage-value { color: var(--faint); font-weight: 500; }
+.usage-pill {
+  grid-column: 2 / -1; justify-self: start; display: inline-block; height: 16px; line-height: 16px; padding: 0 8px; border-radius: 9px;
+  font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--danger) 45%, var(--muted)); background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+.usage-pill-at { color: var(--muted); }
+.usage-credits { grid-column: 2 / -1; justify-self: start; font-size: 14.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
+.usage-reset { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.usage-stale { flex-shrink: 0; padding: 2px 8px; border-radius: 9px; font-size: 12px; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+.usage-pop { position: fixed; z-index: 40; min-width: 220px; padding: 9px 11px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: 13.5px; cursor: default; }
+.usage-pop-title { margin-bottom: 4px; font-weight: 600; color: var(--fg-strong); }
+.usage-pop-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.75; color: var(--muted); }
+.usage-pop-row.hint { display: block; max-width: 260px; line-height: 1.45; margin-bottom: 4px; white-space: normal; }
+.usage-pop-row b { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--fg); }
+@media (max-width: 720px) {
+  .topbar { height: 54px; }
+  .usage-panel { gap: 4px; padding-right: 2px; }
+  .usage-card { gap: 6px; padding: 2px 9px 2px 6px; min-height: var(--phone-tap); border-radius: 10px; cursor: pointer; }
+  .usage-dot { top: 3px; right: 3px; width: 5px; height: 5px; }
+  .usage-id { min-width: 18px; gap: 2px; }
+  .usage-mark.claude { font-size: 11px; }
+  .usage-mark.gpt { width: 12px; height: 12px; }
+  .usage-letter { font-size: 14px; }
+  .usage-card.gpt .usage-letter { font-size: 10px; }
+  .usage-rows { gap: 0; }
+  .usage-row { grid-template-columns: 34px minmax(24px, 1fr); column-gap: 4px; height: 15px; }
+  .usage-bar { display: none; }
+  .usage-row.spent, .usage-row.credits { gap: 4px; }
+  .usage-row.spent .usage-label, .usage-row.credits .usage-label { flex-basis: 34px; }
+  .usage-value { line-height: 15px; }
+  .usage-label { font-size: 11.5px; }
+  .usage-value small { display: none; }
+  .usage-pill { padding: 0 6px; font-size: 12px; }
+  .usage-pill-at { display: none; }
+}
