@@ -126,3 +126,31 @@ describe('latest rate limits across rollout files (F3)', () => {
     expect(await readRolloutRateLimitsAt(g)).toBeNull();
   });
 });
+
+describe('GPT credits in rate_limits', () => {
+  const snap = (credits: unknown, weekly = 100, ts = '2026-10-01T06:00:00.000Z', limitId = 'codex') => ({
+    timestamp: ts, type: 'event_msg',
+    payload: { type: 'token_count', rate_limits: { limit_id: limitId, primary: { used_percent: weekly, window_minutes: 10080, resets_at: 1791353807 }, secondary: null, credits } },
+  });
+
+  it('parses has_credits / unlimited / decimal-string balance from the codex snapshot', () => {
+    const w = rolloutRateLimits([snap({ has_credits: true, unlimited: false, balance: '49563.3205070000' })]);
+    expect(w).toEqual({ weekly: { usedPct: 100, resetsAt: new Date(1791353807 * 1000).toISOString() }, credits: { hasCredits: true, unlimited: false, balance: 49563.320507 } });
+  });
+
+  it('absent or malformed credits leave no credits key; an unparsable balance is null', () => {
+    expect(rolloutRateLimits([snap(undefined, 40)])).not.toHaveProperty('credits');
+    expect(rolloutRateLimits([snap({ balance: '5' }, 40)])).not.toHaveProperty('credits');
+    expect(rolloutRateLimits([snap({ has_credits: false, unlimited: false, balance: 'n/a' })])?.credits).toEqual({ hasCredits: false, unlimited: false, balance: null });
+  });
+
+  it('latestRolloutRateLimits carries the credits of the newest codex snapshot (temp rollout dir)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-credits-'));
+    const lines = [snap({ has_credits: true, unlimited: false, balance: '12.5' }), snap({ has_credits: false, unlimited: false, balance: '0' }, 1, '2026-10-01T06:01:00.000Z', 'other-plan')];
+    const f = path.join(root, '2026', '10', '01', `rollout-2026-10-01T06-00-00-${TID}.jsonl`);
+    await fs.mkdir(path.dirname(f), { recursive: true });
+    await fs.writeFile(f, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    const r = await latestRolloutRateLimits(root);
+    expect(r?.windows.credits).toEqual({ hasCredits: true, unlimited: false, balance: 12.5 });
+  });
+});

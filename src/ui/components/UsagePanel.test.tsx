@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { UsagePanel, countdown, resetStamp } from './UsagePanel';
+import { UsagePanel, countdown, creditsText, resetStamp } from './UsagePanel';
 import type { UsageSnapshot } from '../../shared/usage-types';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -52,8 +52,13 @@ describe('UsagePanel', () => {
   it('GPT column: weekly remaining when the card is ok, — with a hint when unknown, highlighted when current', () => {
     const withGpt: UsageSnapshot = { ...usage, gpt: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 40, resetsAt: null }, fable: null } };
     render(<UsagePanel usage={withGpt} current="gpt" now={NOW} />);
-    expect(screen.getByTestId('gpt-weekly').textContent).toContain('60% 남음');
+    expect(screen.getByTestId('gpt-weekly').textContent).toContain('60%');
+    expect(screen.getByTestId('gpt-weekly').title).toContain('60% 남음');
     expect(screen.getByTestId('account-gpt').className).toContain('current');
+    expect(screen.getByTestId('account-gpt').querySelector('svg.usage-mark.gpt')).toBeTruthy();
+    expect(screen.getByTestId('account-gpt').querySelector('.usage-dot')).toBeTruthy();
+    expect(screen.getByTestId('gpt-fiveHour').textContent).toContain('—');
+    expect(screen.queryByTestId('gpt-credits')).toBeNull();
     cleanup();
     render(<UsagePanel usage={usage} current={null} now={NOW} />);
     expect(screen.getByTestId('gpt-weekly').textContent).toContain('—');
@@ -63,17 +68,33 @@ describe('UsagePanel', () => {
 
 describe('UsagePanel exhausted window', () => {
   afterEach(cleanup);
-  it('a window at 0% reads 한도 소진 with the absolute reset time instead of 0% 남음', () => {
+  it('a window at 0% collapses into a muted 소진 pill with the absolute reset time instead of 0%', () => {
     const resetsAt = new Date(NOW + 3 * 86_400_000).toISOString();
     const withGpt: UsageSnapshot = { ...usage, gpt: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 100, resetsAt }, fable: null } };
     render(<UsagePanel usage={withGpt} current={null} now={NOW} />);
     const w = screen.getByTestId('gpt-weekly');
     expect(w.className).toContain('danger');
-    expect(w.textContent).not.toContain('0% 남음');
-    expect(w.textContent).toContain(`한도 소진 · ${resetStamp(resetsAt)} 리셋`);
+    expect(w.textContent).not.toContain('0%');
+    expect(w.querySelector('.usage-bar')).toBeNull();
+    expect(w.querySelector('.usage-pill')!.textContent).toBe(`소진 · ${resetStamp(resetsAt)}`);
+    expect(w.textContent).toContain('주간');
     expect(resetStamp(resetsAt)).toMatch(/^\d{1,2}\/\d{1,2} \d{2}:\d{2}$/);
     fireEvent.click(screen.getByTestId('account-gpt'));
     expect(screen.getByRole('tooltip').textContent).toContain('주간 한도 소진');
+    expect(screen.getByRole('tooltip').textContent).toContain(`${resetStamp(resetsAt)} 리셋`);
+  });
+
+  it('spent weekly with credits shows a 크레딧 line with the whole balance; unlimited and no-credits cases', () => {
+    const resetsAt = new Date(NOW + 3 * 86_400_000).toISOString();
+    const withCredits: UsageSnapshot = { ...usage, gpt: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 100, resetsAt }, fable: null, credits: { hasCredits: true, unlimited: false, balance: 49563.32 } } };
+    render(<UsagePanel usage={withCredits} current={null} now={NOW} />);
+    expect(screen.getByTestId('gpt-credits').textContent).toBe('크레딧49,563');
+    expect(screen.getByTestId('gpt-weekly').querySelector('.usage-pill')).toBeTruthy();
+    expect(screen.getByTestId('gpt-fiveHour').textContent).toContain('—');
+    expect(creditsText({ hasCredits: true, unlimited: true, balance: null })).toBe('무제한');
+    expect(creditsText({ hasCredits: false, unlimited: false, balance: 12 })).toBeNull();
+    expect(creditsText({ hasCredits: true, unlimited: false, balance: null })).toBeNull();
+    expect(creditsText(undefined)).toBeNull();
   });
 });
 
@@ -88,6 +109,9 @@ describe('UsagePanel chips', () => {
     const pop = screen.getByRole('tooltip');
     expect(pop.textContent).toContain('2시간 30분 후 리셋');
     expect(pop.textContent).toContain('리셋 시각 없음');
+    expect(screen.getByTestId('account-a').querySelector('.usage-mark.claude')!.textContent).toBe('✳');
+    expect(screen.getByTestId('account-b').querySelector('.usage-dot')).toBeTruthy();
+    expect(screen.getByTestId('account-a').querySelector('.usage-dot')).toBeNull();
     fireEvent.click(screen.getByTestId('account-a'));
     expect(screen.queryByRole('tooltip')).toBeNull();
   });

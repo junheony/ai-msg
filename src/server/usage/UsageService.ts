@@ -1,7 +1,7 @@
 import { ACCOUNTS, CARD_ID, type Account, type Seat } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, parseIsoUtc, type AccountUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
-export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow };
+export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits };
 
 export type FetchLike = (
   url: string,
@@ -75,6 +75,8 @@ export class UsageService {
   private listeners = new Set<(s: UsageSnapshot) => void>();
   /** Per-turn windows and when they were observed; kept until the deck has a newer reading. */
   private turnObs = new Map<Seat, { w: TurnWindows; atMs: number }>();
+  /** Newest GPT credits reading; the usage-deck card has none, so it outlives the window overlay. */
+  private gptCredits: { c: GptCredits; atMs: number } | null = null;
   private readonly url: string;
   private readonly fetchFn: FetchLike;
   private readonly intervalMs: number;
@@ -129,6 +131,10 @@ export class UsageService {
     return u;
   }
 
+  private withCredits(u: AccountUsage): AccountUsage {
+    return this.gptCredits ? { ...u, credits: this.gptCredits.c } : u;
+  }
+
   /** F3: an observation is stale once every window it carries has reset since (its numbers no longer apply). */
   private obsStatus(w: TurnWindows): 'ok' | 'stale' {
     const wins = [w.fiveHour, w.weekly].filter((x): x is UsageWindow => !!x);
@@ -146,7 +152,7 @@ export class UsageService {
       const parsed = parseDeckCards(await res.json());
       const accounts = { ...parsed.accounts };
       for (const a of ACCOUNTS) accounts[a] = this.overlay(a, accounts[a]);
-      this.publish({ generatedAt: this.now().toISOString(), deckReachable: true, accounts, gpt: this.overlay('gpt', parsed.gpt) });
+      this.publish({ generatedAt: this.now().toISOString(), deckReachable: true, accounts, gpt: this.withCredits(this.overlay('gpt', parsed.gpt)) });
     } catch {
       // Spec §8: deck unreachable → keep last values, show them as stale.
       const stale = (u: AccountUsage): AccountUsage => ({ ...u, status: u.status === 'ok' ? 'stale' : u.status });
@@ -180,12 +186,13 @@ export class UsageService {
     const prev = this.turnObs.get(seat);
     // F3: the rollout poller may report a reading older than one a turn already gave; never go back in time.
     if (prev && observedAtMs < prev.atMs) return;
+    if (seat === 'gpt' && w.credits && (!this.gptCredits || observedAtMs >= this.gptCredits.atMs)) this.gptCredits = { c: w.credits, atMs: observedAtMs };
     const merged: TurnWindows = { ...prev?.w, ...(w.fiveHour ? { fiveHour: w.fiveHour } : {}), ...(w.weekly ? { weekly: w.weekly } : {}) };
     const atMs = Math.max(observedAtMs, prev?.atMs ?? 0);
     this.turnObs.set(seat, { w: merged, atMs });
     const cur = this.seatOf(this.snap, seat);
     let next: AccountUsage = { ...cur, fiveHour: w.fiveHour ?? cur.fiveHour, weekly: w.weekly ?? cur.weekly };
-    if (seat === 'gpt') next = { ...next, status: this.obsStatus(merged), fetchedAt: new Date(atMs).toISOString() };
+    if (seat === 'gpt') next = this.withCredits({ ...next, status: this.obsStatus(merged), fetchedAt: new Date(atMs).toISOString() });
     const generatedAt = this.now().toISOString();
     if (seat === 'gpt') this.publish({ ...this.snap, generatedAt, gpt: next });
     else this.publish({ ...this.snap, generatedAt, accounts: { ...this.snap.accounts, [seat]: next } });

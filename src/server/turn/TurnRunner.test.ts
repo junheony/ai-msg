@@ -439,6 +439,25 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, sessionId: 'tid-2' });
   });
 
+  it('weekly 100% with credits: an explicit GPT turn still runs and sets no cooldown; auto stays on Claude', async () => {
+    const codex = fakeCodex(codexOk('tid-cr'));
+    const u = await usageWithGpt(100);
+    u.applyTurn('gpt', { weekly: { usedPct: 100, resetsAt: null }, credits: { hasCredits: true, unlimited: false, balance: 49563.32 } });
+    const c = await ctx(new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]), {
+      codex: codex.engine, findRollout: async () => null,
+    }, u);
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 'tc1', cwd: '/w', sessionId: null, text: 'x', engine: 'codex' }, c.sink);
+    expect(codex.calls).toHaveLength(1);
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'gpt', reason: 'GPT 지정' });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true });
+    expect(runner.gptCooldownUntilMs()).toBeNull();
+    c.msgs.length = 0;
+    await runner.run({ turnId: 'tc2', cwd: '/w', sessionId: null, text: 'y', engine: 'auto' }, c.sink);
+    expect(codex.calls).toHaveLength(1);
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ reason: expect.stringContaining('GPT 주간 100%') });
+  });
+
   it('a Codex turn.failed JSON blob with status 429 / usage_limit_reached sets the GPT cooldown', async () => {
     const blob = '{"type":"error","status":429,"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_in_seconds":3600}}';
     const codex = fakeCodex([{ kind: 'init', sessionId: 'tid-9', model: 'gpt-6-sol' }, failResult(blob, { sessionId: 'tid-9' })]);
