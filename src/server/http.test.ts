@@ -330,3 +330,56 @@ describe('POST /api/pins (F2)', () => {
     expect(await off.json()).toEqual({ pins: [] });
   });
 });
+
+describe('GET /api/attachments/:id (ux-state thumbnails)', () => {
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  const cookie = () => ({ cookie: `deck_session=${cookieValueFor(TOKEN)}` });
+  const upload = async (name: string, body: Buffer) => {
+    const res = await fetch(`${base}/api/attachments`, { method: 'POST', headers: { ...cookie(), origin: base, 'x-deck-filename': name }, body });
+    return ((await res.json()) as { id: string }).id;
+  };
+
+  it('needs the login cookie', async () => {
+    const id = await upload('a.png', PNG);
+    const res = await fetch(`${base}/api/attachments/${id}`);
+    expect(res.status).toBe(401);
+    expect(res.headers.get('content-type')).not.toMatch(/^image\//);
+  });
+
+  it('serves an uploaded image with its sniffed type, nosniff and a private cache', async () => {
+    const id = await upload('shot.png', PNG);
+    const res = await fetch(`${base}/api/attachments/${id}`, { headers: cookie() });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('cache-control')).toMatch(/^private/);
+    expect(Buffer.from(await res.arrayBuffer()).equals(PNG)).toBe(true);
+    const head = await fetch(`${base}/api/attachments/${id}`, { method: 'HEAD', headers: cookie() });
+    expect(head.status).toBe(200);
+    expect(head.headers.get('content-length')).toBe(String(PNG.length));
+  });
+
+  it('refuses non-images, unknown ids and anything that is not a bare UUID', async () => {
+    const txt = await upload('notes.png', Buffer.from('<script>alert(1)</script>'));
+    expect((await fetch(`${base}/api/attachments/${txt}`, { headers: cookie() })).status).toBe(404);
+    for (const bad of ['11111111-2222-3333-4444-555555555555', 'not-a-uuid', '..%2F..%2Fetc%2Fpasswd', `${txt}-notes.png`, `${txt.toUpperCase()}`, '%2e%2e', '']) {
+      const res = await fetch(`${base}/api/attachments/${bad}`, { headers: cookie() });
+      expect(res.status, bad).toBe(404);
+    }
+  });
+
+  it('refuses an indexed file that was swapped for a symlink (O_NOFOLLOW)', async () => {
+    const id = await upload('swap.png', PNG);
+    const file = path.join(uiDir, 'att', `${id}-swap.png`);
+    const secret = path.join(uiDir, 'secret.png');
+    await fs.writeFile(secret, PNG);
+    await fs.rm(file);
+    await fs.symlink(secret, file);
+    expect((await fetch(`${base}/api/attachments/${id}`, { headers: cookie() })).status).toBe(404);
+  });
+
+  it('POST to an id path is not an upload', async () => {
+    const id = await upload('x.png', PNG);
+    expect((await fetch(`${base}/api/attachments/${id}`, { method: 'POST', headers: { ...cookie(), origin: base }, body: PNG })).status).toBe(404);
+  });
+});
