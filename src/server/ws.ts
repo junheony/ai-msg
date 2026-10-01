@@ -119,15 +119,38 @@ async function isDirectory(p: string): Promise<boolean> {
   return fs.stat(p).then((st) => st.isDirectory(), () => false);
 }
 
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController };
+/**
+ * `turnId` is the turn the send started (its AbortController ends the whole process). `current` is
+ * the deck turn now streaming — that turn, a background continuation or a follow-up — and null
+ * while the process only waits for background work; `bg` is the last turn_background.
+ */
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; bg: { turnId: string; tasks: string[] } | null };
 
-export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadcast(msg: ServerMessage): void; broadcastIndex(): void; close(): void } {
+export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
+
+export type WsHandle = {
+  broadcast(msg: ServerMessage): void;
+  broadcastIndex(): void;
+  close(): void;
+  /** Graceful restart: refuse new sends from now on (running turns and their background work go on). */
+  drain(): void;
+  /** Turns still running, including processes held open for background work. */
+  activeTurns(): number;
+  /** Ends every running turn (drain deadline). */
+  abortAll(): void;
+};
+
+export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle {
   const cwdRoots = deps.cwdRoots ?? [os.homedir()];
   // maxPayload: a text frame over 1 MiB is refused (ws emits 'error' on the socket, handled below).
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
   wss.on('error', (err) => console.error('deck ws: server error', err));
   const clients = new Set<WebSocket>();
   const turns = new Map<string, Turn>();
+  /** Turn ids a running turn's process produced after its own (background continuations, follow-ups) → that turn's id. */
+  const aliases = new Map<string, string>();
+  const baseOf = (turnId: string) => aliases.get(turnId) ?? turnId;
+  let draining = false;
   /**
    * Review I2: one turn per session. Keyed by sessionId; a new session is keyed by
    * `new:<turnId>` until the CLI reports its id, then by that id as well.
@@ -146,7 +169,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
   const broker = new PermissionBroker(broadcast);
   const questions = new QuestionBroker(broadcast);
   const unsubscribeUsage = deps.usage.onChange((usage) => broadcast({ type: 'usage', usage }));
-  const running = (): RunningTurn[] => [...turns.values()].map(({ turnId, sessionId, cwd }) => ({ turnId, sessionId, cwd }));
+  const running = (): RunningTurn[] => [...turns.values()].filter((t) => t.current !== null).map(({ current, sessionId, cwd }) => ({ turnId: current!, sessionId, cwd }));
 
   /**
    * A session created moments ago (e.g. in Claude Desktop) may not be in the in-memory
@@ -190,10 +213,24 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     if (msg.sessionId) view(ws, msg.sessionId);
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
-    if (msg.sessionId && busy.has(msg.sessionId)) { send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref }); return; }
+    if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, ...ref }); return; }
+    if (msg.sessionId && busy.has(msg.sessionId)) {
+      // The session's process may only be waiting for background work: then the message joins it (TurnRunner.followUp).
+      const base = turns.get(busy.get(msg.sessionId)!);
+      const followId = randomUUID();
+      if (base) aliases.set(followId, base.turnId);
+      const joined = base !== undefined && deps.runner.followUp(msg.sessionId, {
+        turnId: followId, text: msg.text,
+        ...(msg.attachments ? { attachments: msg.attachments } : {}),
+        ...(msg.model ? { model: msg.model } : {}),
+        ...(msg.clientRef ? { clientRef: msg.clientRef } : {}),
+      });
+      if (!joined) { aliases.delete(followId); send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref }); }
+      return;
+    }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, bg: null };
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
     turns.set(turnId, turn);
@@ -202,19 +239,28 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       for (const [k, v] of [...busy]) if (v === turnId) busy.delete(k);
       broker.cancelTurn(turnId);
       questions.cancelTurn(turnId);
+      for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
     };
     let started = false;
     const sink: TurnSink = {
       emit: (m) => {
-        if (m.type === 'turn_started') { started = true; emitTurn(turn, { ...m, ...ref }); }
-        else if (m.type === 'error' && !started) emitTurn(turn, { ...m, ...ref });
+        if (m.type === 'turn_started') {
+          turn.current = m.turnId;
+          if (m.turnId !== turnId) { aliases.set(m.turnId, turnId); emitTurn(turn, m); return; }
+          started = true;
+          emitTurn(turn, { ...m, ...ref });
+          return;
+        }
+        if (m.type === 'turn_result' && m.turnId === turn.current) turn.current = null;
+        if (m.type === 'turn_background') turn.bg = m.tasks.length ? { turnId: m.turnId, tasks: m.tasks } : null;
+        if (m.type === 'error' && !started && (m.turnId === null || m.turnId === turnId)) emitTurn(turn, { ...m, ...ref });
         else emitTurn(turn, m);
       },
       askPermission: (req) => {
         const sessionLabel = sessionAllowLabel(req);
         return broker.ask(
           {
-            type: 'permission_request', turnId, sessionId: req.sessionId, cwd: req.cwd, requestId: randomUUID(), toolName: req.toolName, input: req.input,
+            type: 'permission_request', turnId: req.turnId, sessionId: req.sessionId, cwd: req.cwd, requestId: randomUUID(), toolName: req.toolName, input: req.input,
             title: req.title ?? null, decisionReason: req.decisionReason ?? null, blockedPath: req.blockedPath ?? null,
             defaultToNo: req.defaultToNo === true, allowSession: sessionLabel !== null, sessionLabel,
           },
@@ -222,7 +268,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
         );
       },
       askQuestion: (req) => questions.ask(
-        { type: 'question_request', turnId, sessionId: req.sessionId, cwd: req.cwd, requestId: randomUUID(), questions: req.questions },
+        { type: 'question_request', turnId: req.turnId, sessionId: req.sessionId, cwd: req.cwd, requestId: randomUUID(), questions: req.questions },
         req.signal ? AbortSignal.any([req.signal, ac.signal]) : ac.signal,
       ),
       signal: ac.signal,
@@ -301,11 +347,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
         case 'watch_turn':
           turns.get(msg.turnId)?.watchers.add(ws);
           break;
-        case 'interrupt':
-          turns.get(msg.turnId)?.ac.abort();
-          broker.cancelTurn(msg.turnId);
-          questions.cancelTurn(msg.turnId);
+        case 'interrupt': {
+          // A continuation's or follow-up's id stops the process it runs in (and its background work).
+          const base = baseOf(msg.turnId);
+          turns.get(base)?.ac.abort();
+          for (const id of new Set([msg.turnId, base])) { broker.cancelTurn(id); questions.cancelTurn(id); }
           break;
+        }
         case 'open_session': {
           const sessionId = msg.sessionId;
           void (async () => {
@@ -330,7 +378,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
             const found = entry;
             await readTranscript(st ? `${st.projectDir}/${sessionId}.jsonl` : found.file)
               .catch(() => readTranscript(found.file))
-              .then((messages) => send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, messages, runningTurnId: busy.get(sessionId) ?? null }))
+              .then((messages) => {
+                const t = turns.get(busy.get(sessionId) ?? '');
+                send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, messages, runningTurnId: t ? t.current : null });
+                if (t?.bg) send(ws, { type: 'turn_background', turnId: t.bg.turnId, sessionId, cwd: t.cwd, tasks: t.bg.tasks });
+              })
               .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
           })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
           break;
@@ -364,6 +416,15 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
   return {
     broadcast,
     broadcastIndex: () => broadcast(indexMsg()),
+    drain() {
+      if (draining) return;
+      draining = true;
+      broadcast({ type: 'error', turnId: null, message: DRAINING_MESSAGE });
+    },
+    activeTurns: () => turns.size,
+    abortAll() {
+      for (const t of turns.values()) t.ac.abort();
+    },
     close() {
       unsubscribeUsage();
       for (const c of clients) c.close();

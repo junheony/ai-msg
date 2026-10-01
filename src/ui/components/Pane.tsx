@@ -62,6 +62,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
             });
           }}
           onInterrupt={() => { if (pane.activeTurnId) send({ type: 'interrupt', turnId: pane.activeTurnId }); }}
+          onStopBackground={(turnId) => send({ type: 'interrupt', turnId })}
           onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
           onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
           onModel={(m) => dispatch({ type: 'set_model', model: m, paneId: pane.id })}

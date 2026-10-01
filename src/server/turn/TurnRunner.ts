@@ -8,7 +8,7 @@ import { ZERO_USAGE, type PermissionDecision, type QuestionAnswers, type TurnUsa
 import { appendAudit, hashInput } from '../audit';
 import type { CodexEngine } from '../engine/CodexEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
-import { ruleString, sessionUpdates, type Engine, type EngineResult, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
+import { ruleString, sessionUpdates, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
@@ -71,7 +71,19 @@ export type TurnRunnerDeps = {
 
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
-type Attempt = { result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean; initCwd: string | null };
+/** `rest`: the engine stream after the first result (background continuations); `live`: its input handle. */
+type Attempt = {
+  result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean; initCwd: string | null;
+  rest: AsyncIterator<EngineEvent>; live: LiveInput | null; bgTasks: string[];
+};
+
+/** A user message for a session whose process is still open for background work (see `followUp`). */
+export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: AnyModel; clientRef?: string };
+
+/** The mutable "which deck turn is the process working for now" — permission cards and events follow it. */
+type Cursor = { turnId: string };
+
+type LiveSession = { submit(f: FollowUpParams, attachments: Attachment[]): boolean };
 
 /** What 이 세션 accepted: allow rules as rule strings, added directories, and acceptEdits. */
 type SessionGrants = { rules: string[]; dirs: string[]; acceptEdits: boolean };
@@ -109,6 +121,8 @@ export class TurnRunner {
   private readonly findRollout: typeof findRolloutFile;
   private readonly readRateLimits: typeof readRolloutRateLimits;
   private gptCooldownUntil: number | null = null;
+  /** Claude sessions whose process stays open for background work, by session id. */
+  private readonly live = new Map<string, LiveSession>();
 
   constructor(private readonly deps: TurnRunnerDeps) {
     this.move = deps.move ?? moveSession;
@@ -116,6 +130,31 @@ export class TurnRunner {
     this.maxRetries = deps.maxRetries ?? 2;
     this.findRollout = deps.findRollout ?? findRolloutFile;
     this.readRateLimits = deps.readRateLimits ?? readRolloutRateLimits;
+  }
+
+  /**
+   * A message for a session that is busy only because its process waits for background work:
+   * it is written into that process's input (streaming-input mode — the CLI takes it as the next
+   * user turn; the background tasks keep running). While a background continuation is streaming
+   * the message waits in deck and goes in right after that continuation's result. Same process,
+   * so the account and model stay those of the running process. False = no such process
+   * (the caller refuses the send as busy).
+   */
+  followUp(sessionId: string, f: FollowUpParams): boolean {
+    const entry = this.live.get(sessionId);
+    if (!entry) return false;
+    let attachments: Attachment[] = [];
+    if (f.attachments?.length) {
+      const r = this.deps.attachments?.resolve([...new Set(f.attachments)]) ?? { found: [], missing: f.attachments };
+      if (r.missing.length) return false;
+      attachments = r.found;
+    }
+    return entry.submit(f, attachments);
+  }
+
+  /** Session ids whose process is held open for background work. */
+  backgroundSessions(): string[] {
+    return [...this.live.keys()];
   }
 
   /** D3: set after a Codex limit failure; consulted by chooseEngine for 'auto'. In memory only. */
@@ -134,9 +173,8 @@ export class TurnRunner {
     return next;
   }
 
-  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[]): Promise<Attempt> {
-    const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null };
-    const scope = () => ({ turnId: p.turnId, sessionId: out.sessionId, cwd });
+  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
+    const scope = () => ({ turnId: cur.turnId, sessionId: out.sessionId, cwd });
     // The effort applies to the resolved model (a Fable → Opus downgrade keeps it when Opus supports it).
     const effort = effortFor(model, p.effort);
     const events = this.deps.engine.runTurn({
@@ -152,11 +190,11 @@ export class TurnRunner {
       allowDirs: [...grants.dirs],
       ...(grants.acceptEdits ? { permissionMode: 'acceptEdits' as const } : {}),
       onPermission: async (pr) => {
-        const decision = await sink.askPermission({ turnId: p.turnId, sessionId: out.sessionId, cwd, ...pr });
+        const decision = await sink.askPermission({ turnId: cur.turnId, sessionId: out.sessionId, cwd, ...pr });
         if (decision === 'session') addGrants(grants, pr);
         // Review M6: the audit log is best-effort; losing it must not lose the user's answer.
         try {
-          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
         } catch (err) {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
@@ -165,15 +203,15 @@ export class TurnRunner {
       ...(this.deps.autoApprove ? { autoApprove: this.deps.autoApprove } : {}),
       onAutoApproved: async (pr) => {
         try {
-          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision: 'auto', inputSha256: hashInput(pr.input) });
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision: 'auto', inputSha256: hashInput(pr.input) });
         } catch (err) {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
       },
       onQuestion: async (q) => {
-        const answers = await sink.askQuestion({ turnId: p.turnId, sessionId: out.sessionId, cwd, ...q });
+        const answers = await sink.askQuestion({ turnId: cur.turnId, sessionId: out.sessionId, cwd, ...q });
         try {
-          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: answers ? 'answered' : 'deny', inputSha256: hashInput(q.questions) });
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: answers ? 'answered' : 'deny', inputSha256: hashInput(q.questions) });
         } catch (err) {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
@@ -182,15 +220,24 @@ export class TurnRunner {
       onQuestionMalformed: async (input) => {
         try {
           const questions = input && typeof input === 'object' ? (input as { questions?: unknown }).questions : input;
-          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: 'deny', inputSha256: hashInput(questions) });
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: 'deny', inputSha256: hashInput(questions) });
         } catch (err) {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
       },
+      onLive: (l) => { out.live = l; },
     });
-    for await (const ev of events) {
+    const rest = events[Symbol.asyncIterator]();
+    const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null, rest, live: null, bgTasks: [] };
+    // The first result ends the attempt; whatever follows (background continuations) is `rest`.
+    while (!out.result) {
+      const n = await rest.next();
+      if (n.done) break;
+      const ev = n.value;
       switch (ev.kind) {
         case 'init': out.sessionId = ev.sessionId; if (ev.cwd) out.initCwd = ev.cwd; break;
+        case 'background': out.bgTasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks: ev.tasks }); break;
+        case 'continue': break;
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
         case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
         case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
@@ -204,6 +251,104 @@ export class TurnRunner {
       }
     }
     return out;
+  }
+
+  /**
+   * After the turn's own result: while the process stays open for background work, stream what
+   * it does next into the same pane. Each later result closes a segment — a background
+   * continuation (new turn id `<turnId>:bg<n>`, reason 백그라운드 계속) or a follow-up the user
+   * sent meanwhile (its own turn id). Ends when the engine stream ends (no live task left, cap,
+   * grace, abort).
+   */
+  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants }): Promise<void> {
+    const { p, a, cur, sink, account, model, cwd, sessionId, grants } = c;
+    const scope = () => ({ turnId: cur.turnId, sessionId, cwd });
+    type Seg = { turnId: string; reason: string; modelNote: string | null };
+    let seg: Seg | null = null;
+    let n = 0;
+    let tasks = a.bgTasks;
+    const queue: { f: FollowUpParams; attachments: Attachment[] }[] = [];
+    const open = (turnId: string, reason: string, modelNote: string | null, clientRef?: string) => {
+      seg = { turnId, reason, modelNote };
+      cur.turnId = turnId;
+      sink.emit({ type: 'turn_started', turnId, sessionId, cwd, account, model, reason, attempt: 0, engine: 'claude', ...(clientRef ? { clientRef } : {}) });
+    };
+    const openBackground = () => {
+      open(`${p.turnId}:bg${++n}`, '백그라운드 계속', null);
+      sink.emit({ type: 'turn_notice', ...scope(), message: '백그라운드 계속 — 백그라운드 작업이 끝나 이어서 진행합니다' });
+    };
+    const sendFollowUp = (f: FollowUpParams, attachments: Attachment[]) => {
+      const note = isClaudeModel(f.model) && f.model !== model ? '백그라운드 대기 중인 프로세스의 모델 유지' : null;
+      open(f.turnId, '백그라운드 대기 중 이어 보냄', note, f.clientRef);
+      const turnId = f.turnId;
+      void (a.live?.send({ text: f.text, attachments }) ?? Promise.resolve(false)).then((ok) => {
+        if (ok || seg?.turnId !== turnId) return;
+        seg = null;
+        sink.emit({ type: 'turn_result', turnId, sessionId, cwd, ok: false, text: '', badge: null, errorText: '세션 프로세스가 방금 끝나 보내지 못했습니다 — 다시 보내 주세요' });
+      }, () => {
+        if (seg?.turnId !== turnId) return;
+        seg = null;
+        sink.emit({ type: 'turn_result', turnId, sessionId, cwd, ok: false, text: '', badge: null, errorText: '메시지를 보내지 못했습니다' });
+      });
+    };
+    const saveState = async (ok: boolean) => {
+      const st = this.deps.store.get(sessionId);
+      if (!st || isCodexState(st)) return;
+      await this.deps.store.set({
+        ...st,
+        ...(ok ? { lastTurnAtMs: this.now() } : {}),
+        ...(grants.rules.length ? { allowRules: [...grants.rules] } : {}),
+        ...(grants.dirs.length ? { allowDirs: [...grants.dirs] } : {}),
+        ...(grants.acceptEdits ? { mode: 'acceptEdits' as const } : {}),
+      });
+    };
+    // Follow-ups are taken only while background work holds the process open (else it closes right after this result).
+    if (a.live && a.bgTasks.length) {
+      this.live.set(sessionId, {
+        submit: (f, attachments) => {
+          if (seg) queue.push({ f, attachments });
+          else sendFollowUp(f, attachments);
+          return true;
+        },
+      });
+    }
+    try {
+      for (;;) {
+        const next = await a.rest.next();
+        if (next.done) break;
+        const ev = next.value;
+        // Output with no segment open (e.g. a continuation racing a follow-up) still gets a turn of its own.
+        const needSeg = ev.kind === 'delta' || ev.kind === 'tool_call' || ev.kind === 'tool_result' || ev.kind === 'result';
+        if ((ev.kind === 'continue' && !seg) || (needSeg && !seg)) openBackground();
+        switch (ev.kind) {
+          case 'background': tasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks }); break;
+          case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+          case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+          case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
+          case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          case 'rate_limit': this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) }); break;
+          case 'result': {
+            const s = seg as Seg | null;
+            seg = null;
+            if (s) {
+              sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : displayError(ev.errorText, ev.stderr) });
+            }
+            await saveState(ev.ok);
+            // Sent before the engine resumes, so it sees the message outstanding and keeps the input open.
+            const q = queue.shift();
+            if (q) sendFollowUp(q.f, q.attachments);
+            break;
+          }
+          case 'init': case 'compact': case 'continue': break;
+        }
+      }
+    } finally {
+      this.live.delete(sessionId);
+      const s = seg as Seg | null;
+      if (s) sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: s.reason, usage: ZERO_USAGE, modelNote: s.modelNote }, errorText: sink.signal.aborted ? '중단됨' : '결과 없이 끝났습니다' });
+      for (const q of queue) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
+      if (tasks.length) sink.emit({ type: 'turn_background', ...scope(), tasks: [] });
+    }
   }
 
   /**
@@ -335,7 +480,8 @@ export class TurnRunner {
       const { model, note } = resolveModel(wantedClaude, sessionDefault, fable);
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt, engine: 'claude' });
 
-      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants, attachments);
+      const cur: Cursor = { turnId: p.turnId };
+      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants, attachments, cur);
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
       const sessionId = a.sessionId ?? state?.sessionId ?? null;
       if (sessionId) {
@@ -359,8 +505,11 @@ export class TurnRunner {
       const shownError = displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
+        if (sessionId) await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants });
+        else await a.rest.return?.();
         return;
       }
+      await a.rest.return?.();
 
       // Spec §8: limit/auth → cooldown (shared with claude-pick) → move → retry on the next account.
       writeCooldown(deps.cooldownDir, account, this.now() + COOLDOWN_MS[failure]);
