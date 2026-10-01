@@ -1,7 +1,8 @@
 import { ZERO_USAGE } from '../../shared/turn-types';
 import type { Engine, EngineEvent, EngineResult, TurnRequest } from './Engine';
 
-export type StubHandler = (req: TurnRequest, call: number) => Promise<EngineEvent[]> | EngineEvent[];
+/** An async iterable lets a test hold the stream open after its result (the CLI process still closing). */
+export type StubHandler = (req: TurnRequest, call: number) => Promise<EngineEvent[] | AsyncIterable<EngineEvent>> | EngineEvent[] | AsyncIterable<EngineEvent>;
 
 export function okResult(sessionId: string, text = 'ok'): EngineResult {
   return { kind: 'result', sessionId, ok: true, text, usage: { inputTokens: 2, outputTokens: 4, cacheReadTokens: 0, cacheCreationTokens: 100 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' };
@@ -19,6 +20,8 @@ export class StubEngine implements Engine {
   async *runTurn(req: TurnRequest): AsyncIterable<EngineEvent> {
     const call = this.calls.length;
     this.calls.push(req);
-    for (const e of await this.handler(req, call)) yield e;
+    const r = await this.handler(req, call);
+    if (Symbol.asyncIterator in r) yield* r;
+    else for (const e of r) yield e;
   }
 }

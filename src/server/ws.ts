@@ -128,7 +128,7 @@ async function isDirectory(p: string): Promise<boolean> {
  * the deck turn now streaming — that turn, a background continuation or a follow-up — and null
  * while the process only waits for background work; `bg` is the last turn_background.
  */
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; bg: { turnId: string; tasks: string[] } | null };
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; bg: { turnId: string; tasks: string[] } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -232,12 +232,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         ...(msg.model ? { model: msg.model } : {}),
         ...(msg.clientRef ? { clientRef: msg.clientRef } : {}),
       });
-      if (!joined) { aliases.delete(followId); send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref }); }
+      if (joined) return;
+      aliases.delete(followId);
+      // The turn already sent its result and the process is only closing (no background work to join):
+      // the UI's queue fires on that result, so run the send as soon as the lock is released instead of refusing it.
+      if (base && base.current === null) { base.afterRelease.push({ ws, msg }); return; }
+      send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref });
       return;
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, bg: null };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, bg: null, afterRelease: [] };
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
     turns.set(turnId, turn);
@@ -247,6 +252,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       broker.cancelTurn(turnId);
       questions.cancelTurn(turnId);
       for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
+      // Sends that arrived while the process was closing after its result (a closed socket's send is dropped).
+      for (const d of turn.afterRelease.splice(0)) if (clients.has(d.ws)) startTurn(d.ws, d.msg);
     };
     let started = false;
     const sink: TurnSink = {

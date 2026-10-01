@@ -35,6 +35,9 @@ let store2: AttachmentStore;
 let gate: Promise<void> = Promise.resolve();
 let release: () => void = () => {};
 const hold = () => { gate = new Promise<void>((r) => { release = r; }); };
+/** 'linger': the stream stays open after its result until lingerEnd() (the CLI process still shutting down). */
+let lingerGate: Promise<void> = Promise.resolve();
+let lingerEnd: () => void = () => {};
 
 function card(id: string) {
   return { id, status: 'ok', fetchedAt: new Date().toISOString(), rows: [{ label: 'Session (5h)', used: 1 }, { label: 'Weekly (7d)', used: 1, resetsAt: new Date(Date.now() + 36e5).toISOString() }] };
@@ -70,6 +73,11 @@ beforeAll(async () => {
     if (req.prompt === 'att') return [{ kind: 'init', sessionId: 'sess-att', model: 'm' }, okResult('sess-att', `n=${req.attachments?.length ?? 0}`)];
     if (req.prompt === 'effort') return [{ kind: 'init', sessionId: 'sess-eff', model: 'm' }, okResult('sess-eff', `effort=${req.effort ?? 'none'}`)];
     if (req.prompt === 'whereami') return [{ kind: 'init', sessionId: 'sess-cwd', model: 'm' }, okResult('sess-cwd', `cwd=${req.cwd}`)];
+    if (req.prompt === 'linger') {
+      lingerGate = new Promise<void>((r) => { lingerEnd = r; });
+      const sid = req.resumeSessionId ?? 'sess-linger';
+      return (async function* () { yield { kind: 'init' as const, sessionId: sid, model: 'm' }; yield okResult(sid, 'first'); await lingerGate; })();
+    }
     if (req.prompt === 'throw') throw new Error('engine exploded');
     if (req.prompt === 'hold') await gate;
     const sid = req.resumeSessionId ?? 'sess-1';
@@ -274,6 +282,26 @@ describe('ws', () => {
     expect((await again).at(-1)).toMatchObject({ type: 'turn_result', ok: true });
     a.ws.close();
     b.ws.close();
+  });
+
+  it('a send right after a turn_result, while the process is still closing, runs once the lock is released (queued message not lost)', async () => {
+    const SX = '66666666-6666-4666-8666-666666666666';
+    const cwd = await seed(SX, 'linger');
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const first = collect(a.ws, (m) => m.type === 'turn_result');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'linger' }));
+    expect((await first).at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'first' });
+    // The UI's queue fires on turn_result: the server still holds the session lock here.
+    const next = collect(a.ws, (m) => m.type === 'turn_result' || m.type === 'error');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'second', clientRef: 'p0-2' }));
+    await new Promise((r) => setTimeout(r, 50));
+    lingerEnd();
+    const msgs = await next;
+    expect(msgs.find((m) => m.type === 'error')).toBeUndefined();
+    expect(msgs.find((m) => m.type === 'turn_started')).toMatchObject({ sessionId: SX, clientRef: 'p0-2' });
+    expect(msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok' });
+    a.ws.close();
   });
 
   it('clientRef is echoed on the send\'s turn_started and on errors refusing a send (busy, missing attachment, schema)', async () => {
