@@ -22,6 +22,15 @@ export function countdown(resetsAt: string | null, now: number): string {
   return h >= 24 ? `${Math.floor(h / 24)}일 ${h % 24}시간 후 리셋` : `${h}시간 ${m}분 후 리셋`;
 }
 
+/** Absolute local reset time, e.g. "10/3 09:00" (an exhausted window needs a when, not a countdown). */
+export function resetStamp(resetsAt: string | null): string {
+  if (!resetsAt) return '';
+  const t = parseIsoUtc(resetsAt);
+  if (Number.isNaN(t)) return '';
+  const d = new Date(t);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 function levelClass(w: UsageWindow | null): string {
   if (!w) return 'none';
   if (w.usedPct >= 95) return 'danger';
@@ -38,6 +47,12 @@ function useClock(fixed: number | undefined, periodMs = 30_000): number {
     return () => clearInterval(id);
   }, [fixed, periodMs]);
   return fixed ?? tick;
+}
+
+/** 0% left reads as "한도 소진 · 10/3 09:00 리셋", not "0% 남음". */
+function ExhaustedValue({ w }: { w: UsageWindow | null }) {
+  const at = resetStamp(w?.resetsAt ?? null);
+  return <span className="usage-exhausted"><span className="usage-exhausted-word">한도 </span>소진{at && <small>{` · ${at} 리셋`}</small>}</span>;
 }
 
 type Pop = { seat: Seat; x: number; y: number; pinned: boolean };
@@ -76,7 +91,7 @@ function SeatChip({ seat, u, windows, current, now, pop, onPop, hint }: {
             <div key={key} data-testid={`${seat}-${key}`} className={`usage-window ${levelClass(w)}`} title={reset}>
               <span className="usage-label">{name}</span>
               <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
-              <span className="usage-value">{rem === null ? '—' : <>{`${rem}% `}<small>남음</small></>}</span>
+              <span className="usage-value">{rem === null ? '—' : rem === 0 ? <ExhaustedValue w={w} /> : <>{`${rem}% `}<small>남음</small></>}</span>
               {reset && <span className="usage-reset">{reset}</span>}
             </div>
           );
@@ -91,7 +106,7 @@ function SeatChip({ seat, u, windows, current, now, pop, onPop, hint }: {
             const rem = remainingPct(w);
             return (
               <div key={key} className="usage-pop-row">
-                <span>{name} {rem === null ? '—' : `${rem}% 남음`}</span>
+                <span>{name} {rem === null ? '—' : rem === 0 ? '한도 소진' : `${rem}% 남음`}</span>
                 <b>{w?.resetsAt ? countdown(w.resetsAt, now) : '리셋 시각 없음'}</b>
               </div>
             );
