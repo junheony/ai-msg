@@ -119,7 +119,7 @@ export function Chat(p: ChatProps) {
         {p.headActions}
       </div>
       <div className="chat-body">
-        {shown.map((it, i) => <MessageView key={i} item={it} />)}
+        {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} />)}
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => p.onSend(retryPrompt)}>재시도</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
