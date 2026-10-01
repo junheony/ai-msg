@@ -36,7 +36,7 @@ describe('MessageView', () => {
     expect(container.querySelector('.role-badge')?.textContent).toContain('explore');
     expect(container.querySelector('.role-badge')?.textContent).toContain('offload cross');
     cleanup();
-    const u = render(<MessageView item={{ kind: 'user', text: 'look', attachments: ['shot.png'] }} />);
+    const u = render(<MessageView item={{ kind: 'user', text: 'look', attachments: [{ id: '11111111-2222-3333-4444-555555555555', name: 'shot.png', isImage: false }] }} />);
     expect(u.container.querySelector('.attach-tile .attach-name')?.textContent).toBe('shot.png');
     expect(u.container.querySelector('.attach-tile')?.classList.contains('image')).toBe(true);
   });

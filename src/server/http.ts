@@ -3,7 +3,7 @@ import type http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import type { SessionEntry } from '../shared/session-types';
-import { AttachmentTooLarge, MAX_ATTACHMENT_BYTES, type AttachmentStore } from './attachments/AttachmentStore';
+import { AttachmentTooLarge, IMAGE_TYPES, MAX_ATTACHMENT_BYTES, isAttachmentId, type AttachmentStore } from './attachments/AttachmentStore';
 import { DirError, listDirs, resolveUnderHome } from './dirs';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
@@ -167,6 +167,39 @@ function serveStatic(uiDir: string, urlPath: string, res: http.ServerResponse): 
   fs.createReadStream(file).pipe(res);
 }
 
+/**
+ * ux-state: an uploaded IMAGE, for thumbnails in the composer/history. Only ids the store indexed
+ * (strict UUID, never a path), only sniffed image types (content-type from the magic bytes, never the
+ * client), opened O_NOFOLLOW so a symlink swapped in after indexing is refused. Private cache: the
+ * bytes never change for an id.
+ */
+async function serveAttachment(store: AttachmentStore | undefined, id: string, head: boolean, res: http.ServerResponse): Promise<void> {
+  const a = store && isAttachmentId(id) ? store.get(id) : null;
+  if (!a || !a.isImage || !IMAGE_TYPES.has(a.mediaType)) { json(res, 404, { error: 'not found' }); return; }
+  let fh: fs.promises.FileHandle;
+  try {
+    fh = await fs.promises.open(a.path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
+    json(res, 404, { error: 'not found' });
+    return;
+  }
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) { json(res, 404, { error: 'not found' }); return; }
+    res.writeHead(200, {
+      'content-type': a.mediaType,
+      'content-length': String(st.size),
+      'cache-control': 'private, max-age=604800, immutable',
+      'content-disposition': 'inline',
+      'x-content-type-options': 'nosniff',
+    });
+    if (head) { res.end(); return; }
+    res.end(await fh.readFile());
+  } finally {
+    await fh.close();
+  }
+}
+
 export function createRequestHandler(deps: HttpDeps) {
   const devOrigins = deps.devOrigins ?? [];
   const extraHosts = deps.extraHosts ?? [];
@@ -256,6 +289,10 @@ export function createRequestHandler(deps: HttpDeps) {
             if (err instanceof AttachmentTooLarge) { json(res, 413, { error: err.message }); return; }
             throw err;
           }
+          return;
+        }
+        if (url.pathname.startsWith('/api/attachments/') && (req.method === 'GET' || req.method === 'HEAD')) {
+          await serveAttachment(deps.attachments, url.pathname.slice('/api/attachments/'.length), req.method === 'HEAD', res);
           return;
         }
         json(res, 404, { error: 'not found' });

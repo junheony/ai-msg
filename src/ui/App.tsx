@@ -1,31 +1,40 @@
-import { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import type { ClientMessage } from '../shared/protocol';
 import { Login } from './components/Login';
 import { postPin } from './pins';
-import { Pane } from './components/Pane';
+import { Pane, useQueueRunner } from './components/Pane';
 import { PermissionCard } from './components/PermissionCard';
 import { QuestionCard } from './components/QuestionCard';
 import { Sidebar } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
+import { hydrate, loadSent, loadUi, saveSent, saveUi, snapshotUi } from './persist';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action } from './state';
 import { useIsPhone } from './useIsPhone';
 import { createSocket } from './ws';
 
 export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
-  const [state, dispatch] = useReducer(reducer, initialState);
+  // ux-state: panes, pickers, folded sidebar groups and the drawer come back after a reload (persist.ts).
+  const saved = useMemo(() => loadUi(), []);
+  const [state, dispatch] = useReducer(reducer, saved, (ui) => hydrate(initialState, ui));
+  const [collapsed, setCollapsed] = useState<string[]>(() => saved?.collapsed ?? []);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
   const latest = useRef(state);
   latest.current = state;
   const phone = useIsPhone();
-  const [drawer, setDrawer] = useState(false);
+  const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
+  const lastSaved = useRef<string | null>(null);
+  useEffect(() => { lastSaved.current = saveUi(snapshotUi(state, { collapsed, drawer }), lastSaved.current); }, [state.panes, state.activePaneId, collapsed, drawer]);
+  // Sent files per session (thumbnails after a transcript reload): re-saved only when some pane's sent files change.
+  const sentSig = state.panes.map((p) => `${p.session?.sessionId ?? ''}:${p.items.filter((it) => it.kind === 'user' && it.attachments?.length).length}`).join('|');
+  useEffect(() => { saveSent(latest.current.panes); }, [sentSig]);
 
   useEffect(() => { void fetch('/api/me').then((r) => setAuthed(r.ok)); }, []);
 
   useEffect(() => {
     if (!authed) return;
     sock.current = createSocket((msg) => {
-      dispatch({ type: 'server', msg });
+      dispatch(msg.type === 'history' ? { type: 'server', msg, sentFiles: loadSent(msg.sessionId) } : { type: 'server', msg });
       // Reconnected: re-open every pane's session (once each) so this socket receives their turn events again (review I3, D6).
       if (msg.type === 'hello') {
         const panes = latest.current.panes;
@@ -37,6 +46,8 @@ export function App() {
     }, (value) => dispatch({ type: 'connected', value }), () => setAuthed(false));
     return () => sock.current?.close();
   }, [authed]);
+
+  useQueueRunner(state.panes, state.connected, dispatch, (m) => sock.current?.send(m));
 
   useEffect(() => {
     if (!phone || !drawer) return;
@@ -101,6 +112,8 @@ export function App() {
             autoApprove={state.autoApprove}
             onAutoApprove={(autoApprove) => send({ type: 'set_settings', autoApprove })}
             onTogglePin={(sessionId, pinned) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 실패' })); }}
+            collapsed={collapsed}
+            onCollapsedChange={setCollapsed}
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
           />
         </div>

@@ -12,6 +12,11 @@ export const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'ima
 
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** A store id is exactly a lowercase UUID — never a path or anything path-like. */
+export function isAttachmentId(x: unknown): x is string {
+  return typeof x === 'string' && ID_RE.test(x);
+}
+
 export type Attachment = {
   id: string;
   /** Sanitized original name (display + file suffix). */

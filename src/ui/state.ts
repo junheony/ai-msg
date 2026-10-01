@@ -7,12 +7,16 @@ import type { UsageSnapshot } from '../shared/usage-types';
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
 
 export type ChatItem =
-  | { kind: 'user'; text: string; /** attachment names, display only */ attachments?: string[] }
+  | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[] }
   | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Live background tasks of this turn's process (turn_background); absent/empty = none. */ background?: string[] };
 
 export type PendingPermission = Omit<Extract<ServerMessage, { type: 'permission_request' }>, 'type'>;
 export type PendingQuestion = Omit<Extract<ServerMessage, { type: 'question_request' }>, 'type'>;
-export type UploadedAttachment = { id: string; name: string; size: number; isImage: boolean };
+export type UploadedAttachment = { id: string; name: string; size: number; isImage: boolean; /** ux-state: object URL of the local file, composer thumbnail only (never persisted). */ previewUrl?: string };
+/** An attachment as shown in a sent bubble; images load from GET /api/attachments/:id. */
+export type SentFile = { id: string; name: string; isImage: boolean };
+/** ux-state: a message typed while the pane's turn runs; sent when the turn ends. */
+export type QueueItem = { id: string; text: string; attachments: UploadedAttachment[] };
 
 export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null };
 
@@ -34,6 +38,10 @@ export type PaneState = {
   engine: EngineChoice;
   sandbox: CodexSandbox;
   attachments: UploadedAttachment[];
+  /** ux-state: messages waiting for the running turn to end (FIFO). */
+  queue: QueueItem[];
+  /** Stop / a failed turn pauses the queue; a manual send or 이어서 resumes it. */
+  queuePaused: boolean;
 };
 
 export type AppState = {
@@ -58,16 +66,16 @@ export type AppState = {
 export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false };
 }
 
 export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, pins: [], desktop: [], autoApprove: null };
 
 export type Action =
-  | { type: 'server'; msg: ServerMessage }
+  | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
   | { type: 'connected'; value: boolean }
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
-  | { type: 'sent'; text: string; paneId?: string; attachments?: string[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string }
+  | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string }
   | { type: 'set_model'; model: AnyModel; paneId?: string }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_engine'; engine: EngineChoice; paneId?: string }
@@ -79,7 +87,16 @@ export type Action =
   | { type: 'focus_pane'; paneId: string }
   | { type: 'dismiss_error' }
   | { type: 'set_pins'; pins: string[] }
-  | { type: 'show_error'; message: string };
+  | { type: 'show_error'; message: string }
+  | { type: 'queue_add'; text: string; paneId?: string }
+  | { type: 'queue_edit'; id: string; text: string; paneId?: string }
+  | { type: 'queue_remove'; id: string; paneId?: string }
+  | { type: 'queue_clear'; paneId?: string }
+  | { type: 'queue_pause'; paneId?: string }
+  | { type: 'queue_resume'; paneId?: string };
+
+/** A sent message's text and files, kept per session so a reloaded transcript can show thumbnails again. */
+export type SentRecord = { text: string; files: SentFile[] };
 
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
@@ -207,7 +224,9 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const next = updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패') }));
       // Only a turn this pane started may re-point the pane's session (id / account).
       const session = mine && next.session ? { ...next.session, sessionId: msg.sessionId || next.session.sessionId, account: msg.badge?.account ?? next.session.account } : next.session;
-      return { ...next, session, myTurns, activeTurnId: pane.activeTurnId === msg.turnId ? null : pane.activeTurnId };
+      // ux-state: a failed (or stopped) turn of this pane pauses its queue instead of firing the next message into it.
+      const queuePaused = next.queuePaused || ((mine || pane.activeTurnId === msg.turnId) && !msg.ok);
+      return { ...next, session, myTurns, queuePaused, activeTurnId: pane.activeTurnId === msg.turnId ? null : pane.activeTurnId };
     }
     case 'error': {
       const withItem = msg.turnId ? updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, error: it.error ?? msg.message })) : pane;
@@ -218,7 +237,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const ends = pane.awaitingRef !== null
         ? msg.clientRef === pane.awaitingRef
         : msg.clientRef === undefined && (msg.turnId === null || !pane.myTurns.includes(msg.turnId));
-      return ends ? { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null } : { ...withItem, activeTurnId };
+      // ux-state: a refused send pauses the queue too (it would only be refused again).
+      return ends ? { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0 } : { ...withItem, activeTurnId };
     }
     default:
       return pane;
@@ -309,18 +329,24 @@ function updatePane(state: AppState, paneId: string | undefined, fn: (p: PaneSta
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
-    case 'server': return onServer(state, action.msg);
+    case 'server': {
+      const next = onServer(state, action.msg);
+      const msg = action.msg;
+      if (msg.type !== 'history' || !action.sentFiles?.length) return next;
+      const records = action.sentFiles;
+      return { ...next, panes: next.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, items: restoreSentFiles(p.items, records) } : p)) };
+    }
     case 'connected': return { ...state, connected: action.value };
     // Prompts stay: they belong to their own session and the card says which (review I3).
     case 'open': return updatePane(state, action.paneId, (p) => ({
       ...p,
       session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
-      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [],
+      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false,
     }));
     case 'sent': return updatePane(state, action.paneId, (p) => ({
       ...p,
       items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }],
-      awaitingStart: true, awaitingRef: action.clientRef ?? null, attachments: [],
+      awaitingStart: true, awaitingRef: action.clientRef ?? null, attachments: [], queuePaused: false,
     }));
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
@@ -343,6 +369,15 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'dismiss_error': return { ...state, error: null };
     case 'set_pins': return { ...state, pins: action.pins };
     case 'show_error': return { ...state, error: action.message };
+    case 'queue_add': {
+      const text = action.text.trim();
+      return updatePane(state, action.paneId, (p) => (!text && !p.attachments.length ? p : { ...p, queue: [...p.queue, { id: nextQueueId(), text, attachments: p.attachments }], attachments: [] }));
+    }
+    case 'queue_edit': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.map((q) => (q.id === action.id ? { ...q, text: action.text } : q)) }));
+    case 'queue_remove': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.filter((q) => q.id !== action.id) }));
+    case 'queue_clear': return updatePane(state, action.paneId, (p) => ({ ...p, queue: [], queuePaused: false }));
+    case 'queue_pause': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: true }));
+    case 'queue_resume': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: false }));
   }
 }
 
@@ -381,4 +416,30 @@ export function answersFor(q: PendingQuestion, values: (string | string[])[]): R
     if (text) out[question.question.slice(0, 2000)] = text;
   });
   return out;
+}
+
+let queueSeq = 0;
+const nextQueueId = () => `q${++queueSeq}`;
+
+/** ux-state: the queued message a pane should send now — its turn is over, nothing is pending, the queue isn't paused. */
+export function nextQueued(pane: PaneState): QueueItem | null {
+  if (pane.queuePaused || !pane.session || pane.activeTurnId !== null || pane.awaitingStart) return null;
+  return pane.queue[0] ?? null;
+}
+
+/**
+ * Transcripts carry no attachment ids (images are inline blocks, files are path lines), so the files of
+ * messages sent from this browser are matched back by text, in order: the transcript's user text starts
+ * with what was typed, then a line break (the server appends path lines / an image marker after it).
+ */
+export function restoreSentFiles(items: ChatItem[], records: SentRecord[]): ChatItem[] {
+  let r = 0;
+  return items.map((it) => {
+    if (it.kind !== 'user' || it.attachments?.length || r >= records.length) return it;
+    for (let j = r; j < records.length; j++) {
+      const rec = records[j]!;
+      if (rec.text && (it.text === rec.text || it.text.startsWith(`${rec.text}\n`))) { r = j + 1; return { ...it, attachments: rec.files }; }
+    }
+    return it;
+  });
 }
