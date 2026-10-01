@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   const token = await loadOrCreateToken(cfg.tokenFile);
   const usage = new UsageService({ deckUrl: cfg.deckUrl });
-  const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile });
+  const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile });
   const store = new SessionStateStore(cfg.stateFile);
   await Promise.all([index.refresh(), store.load()]);
   usage.start();
@@ -45,10 +45,13 @@ async function main(): Promise<void> {
   // Deviation (added per review I5): the addresses deck itself binds to double as the
   // Host allowlist (DNS-rebinding defence), plus any operator-configured extra names.
   const extraHosts = [...addresses, ...cfg.extraHosts];
-  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments });
+  // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) reach it through this.
+  let notifyIndex = () => {};
+  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex() });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null });
+  const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, cwdRoots: cfg.cwdRoots });
+  notifyIndex = () => ws.broadcastIndex();
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 
   console.log(`deck: 세션 ${index.sessions().length}개 · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · codex ${cfg.codexBin ?? '없음'}`);

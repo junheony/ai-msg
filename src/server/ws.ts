@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import type http from 'node:http';
+import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type RunningTurn, type ServerMessage } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
+import { DirError, resolveUnderRoots } from './dirs';
 import { readCodexTranscript } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
@@ -101,6 +103,8 @@ export type WsDeps = {
   /** D11: false hides the GPT engine in the UI and makes 'auto' mean Claude. */
   codexAvailable: boolean;
   readCodexHistory?: typeof readCodexTranscript;
+  /** F1: a new session's cwd must (after realpath) lie inside one of these (default: the OS home dir). */
+  cwdRoots?: string[];
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -111,7 +115,8 @@ async function isDirectory(p: string): Promise<boolean> {
 
 type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController };
 
-export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadcast(msg: ServerMessage): void; close(): void } {
+export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadcast(msg: ServerMessage): void; broadcastIndex(): void; close(): void } {
+  const cwdRoots = deps.cwdRoots ?? [os.homedir()];
   // maxPayload: a text frame over 1 MiB is refused (ws emits 'error' on the socket, handled below).
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
   wss.on('error', (err) => console.error('deck ws: server error', err));
@@ -218,6 +223,16 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
       try {
         // Review M8: the working directory must exist before a CLI is started in it.
         if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
+        // F1: a new session may only start inside the home dir (realpath, so a symlink cannot escape it).
+        if (msg.sessionId === null) {
+          try {
+            await resolveUnderRoots(msg.cwd, cwdRoots[0] ?? os.homedir(), cwdRoots);
+          } catch (err) {
+            if (!(err instanceof DirError)) throw err;
+            send(ws, { type: 'error', turnId: null, message: `${err.message}: ${msg.cwd}`, ...ref });
+            return;
+          }
+        }
         await deps.runner.run({
           turnId, cwd: msg.cwd, sessionId: msg.sessionId, text: msg.text,
           ...(msg.model ? { model: msg.model } : {}),
@@ -324,6 +339,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
 
   return {
     broadcast,
+    broadcastIndex: () => broadcast({ type: 'index', projects: projects() }),
     close() {
       unsubscribeUsage();
       for (const c of clients) c.close();

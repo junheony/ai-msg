@@ -93,6 +93,7 @@ export function App() {
             onOpen={(sessionId, cwd, title) => openIn(active.id, sessionId, cwd, title)}
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
+            onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
           />
         </div>
         <div className="panes" data-count={phone ? 1 : state.panes.length}>

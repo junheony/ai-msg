@@ -117,3 +117,7 @@ button.retry { align-self: flex-start; margin: 4px 0 8px; }
   .menu, .attach, .composer-actions select, .sidebar-head button, .project-head button { min-height: var(--phone-tap); min-width: var(--phone-tap); }
   .chat-body { padding: 10px; }
 }
+.folder-picker { display: flex; flex-direction: column; gap: 6px; padding: 6px 4px 10px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.folder-picker-row { display: flex; gap: 4px; }
+.folder-picker input { flex: 1; min-width: 0; padding: 6px; border-radius: 6px; border: 1px solid var(--line); background: #141517; color: var(--fg); font: inherit; }
+.sidebar .folder-list li { padding: 4px 8px; font-size: 13px; word-break: break-all; }

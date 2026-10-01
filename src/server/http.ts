@@ -1,14 +1,22 @@
 import fs from 'node:fs';
 import type http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import type { SessionEntry } from '../shared/session-types';
 import { AttachmentTooLarge, MAX_ATTACHMENT_BYTES, type AttachmentStore } from './attachments/AttachmentStore';
+import { DirError, listDirs, resolveUnderHome } from './dirs';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
 import type { SessionIndex } from './sessions/SessionIndex';
 import type { UsageService } from './usage/UsageService';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
-export type HttpDeps = { token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[]; extraSessions?: () => SessionEntry[]; attachments?: AttachmentStore };
+export type HttpDeps = {
+  token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[]; extraSessions?: () => SessionEntry[]; attachments?: AttachmentStore;
+  /** F1: the folder picker only reaches inside this dir (default: the OS home dir). */
+  home?: string;
+  /** F1/F2: the project list or pins changed; main broadcasts a fresh `index` to every socket. */
+  onIndexChanged?: () => void;
+};
 
 /**
  * Review I8: sent on every response. Only documents are governed by CSP; in dev the page is
@@ -159,6 +167,7 @@ function serveStatic(uiDir: string, urlPath: string, res: http.ServerResponse): 
 export function createRequestHandler(deps: HttpDeps) {
   const devOrigins = deps.devOrigins ?? [];
   const extraHosts = deps.extraHosts ?? [];
+  const home = deps.home ?? os.homedir();
   return (req: http.IncomingMessage, res: http.ServerResponse): void => {
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
     // Deviation (added per review I5): DNS-rebinding defence — reject any Host deck
@@ -184,6 +193,31 @@ export function createRequestHandler(deps: HttpDeps) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []) }); return; }
+        if (url.pathname === '/api/dirs' && req.method === 'GET') {
+          try {
+            json(res, 200, await listDirs(url.searchParams.get('path') || '~', home));
+          } catch (err) {
+            if (err instanceof DirError) { json(res, 400, { error: err.message }); return; }
+            throw err;
+          }
+          return;
+        }
+        if (url.pathname === '/api/recent-folders' && req.method === 'GET') { json(res, 200, { recent: deps.index.recent() }); return; }
+        if (url.pathname === '/api/recent-folders' && req.method === 'POST') {
+          let input = '';
+          try { input = String((JSON.parse(await readBody(req)) as { path?: unknown }).path ?? ''); } catch { /* fallthrough */ }
+          let real: string;
+          try {
+            real = await resolveUnderHome(input, home);
+          } catch (err) {
+            if (err instanceof DirError) { json(res, 400, { error: err.message }); return; }
+            throw err;
+          }
+          const recent = await deps.index.addRecent(real);
+          deps.onIndexChanged?.();
+          json(res, 200, { path: real, recent });
+          return;
+        }
         if (url.pathname === '/api/attachments' && req.method === 'POST') {
           if (!deps.attachments) { json(res, 404, { error: 'not found' }); return; }
           // Fix round 1 finding 1(a): a declared Content-Length over the limit is rejected

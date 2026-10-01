@@ -70,7 +70,7 @@ beforeAll(async () => {
   await store2.init();
   const runner = new TurnRunner({ attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)] });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -350,6 +350,28 @@ describe('ws', () => {
     const p3 = collect(ws, (m) => m.type === 'error' || m.type === 'turn_started');
     ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: path.join(work, 'does-not-exist'), text: 'x' }));
     expect((await p3).at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('작업 폴더') });
+    ws.close();
+  });
+
+  it('a new session\'s cwd must lie under the allowed roots (home), symlink escapes included (F1)', async () => {
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p1 = collect(ws, (m) => m.type === 'error' || m.type === 'turn_started');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: '/usr', text: 'x', clientRef: 'out-1' }));
+    expect((await p1).at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('홈 폴더'), clientRef: 'out-1' });
+    await fs.symlink('/usr', path.join(work, 'usr-link')).catch(() => {});
+    const p2 = collect(ws, (m) => m.type === 'error' || m.type === 'turn_started');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: path.join(work, 'usr-link'), text: 'x' }));
+    expect((await p2).at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('홈 폴더') });
+    ws.close();
+  });
+
+  it('broadcastIndex sends the project index to every client', async () => {
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p = collect(ws, (m) => m.type === 'index');
+    wsApi.broadcastIndex();
+    expect((await p).at(-1)).toMatchObject({ type: 'index', projects: expect.any(Array) });
     ws.close();
   });
 

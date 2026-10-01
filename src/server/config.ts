@@ -29,6 +29,10 @@ export type DeckConfig = {
   codexSessionsRoot: string;
   /** D7: private attachment dir (0700) under the config dir. */
   attachmentsDir: string;
+  /** F1: folders opened with 폴더 열기 (newest first, max 20). */
+  recentFoldersFile: string;
+  /** F1: a new session's cwd must lie inside one of these: home, plus `DECK_EXTRA_CWD_ROOTS` (E2E temp dirs). */
+  cwdRoots: string[];
 };
 
 /** ~/.config/offload/protect: comment lines start with '#'; first non-blank token must be a|b|c. */
@@ -81,5 +85,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     codexBin: resolveCodexBin(env, home),
     codexSessionsRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),
     attachmentsDir: path.join(configDir, 'attachments'),
+    recentFoldersFile: path.join(configDir, 'recent-folders.json'),
+    cwdRoots: [home, ...(env.DECK_EXTRA_CWD_ROOTS ?? '').split(',').map((s) => s.trim()).filter((s) => s.startsWith('/'))],
   };
 }

@@ -56,4 +56,11 @@ describe('config', () => {
     expect(cfg.attachmentsDir).toBe('/h/.config/deck/attachments');
     expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').codexSessionsRoot).toBe('/h/.codex/sessions');
   });
+
+  it('recent folders file and new-session cwd roots (F1)', () => {
+    const cfg = loadConfig({ PATH: '/nonexistent' }, '/h', '/repo');
+    expect(cfg.recentFoldersFile).toBe('/h/.config/deck/recent-folders.json');
+    expect(cfg.cwdRoots).toEqual(['/h']);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_EXTRA_CWD_ROOTS: '/tmp/x, /private/var/y' }, '/h', '/repo').cwdRoots).toEqual(['/h', '/tmp/x', '/private/var/y']);
+  });
 });

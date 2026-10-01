@@ -76,7 +76,7 @@ beforeAll(async () => {
   await fs.writeFile(path.join(cooldownDir, 'c'), String(Date.now() / 1000 + 86_400));
   child = spawn('npx', ['tsx', 'src/server/main.ts'], {
     cwd: process.cwd(),
-    env: { ...process.env, DECK_CONFIG_DIR: cfgDir, DECK_PORT: String(PORT), DECK_LOOPBACK_ONLY: '1', DECK_UI_DIR: cfgDir, CLAUDE_PICK_COOLDOWN_DIR: cooldownDir, CLAUDE_PROTECT: 'a' },
+    env: { ...process.env, DECK_CONFIG_DIR: cfgDir, DECK_PORT: String(PORT), DECK_LOOPBACK_ONLY: '1', DECK_UI_DIR: cfgDir, DECK_EXTRA_CWD_ROOTS: path.dirname(workDir), CLAUDE_PICK_COOLDOWN_DIR: cooldownDir, CLAUDE_PROTECT: 'a' },
     stdio: ['ignore', 'inherit', 'inherit'],
   });
   await waitFor(async () => (await fetch(`${BASE}/api/me`)).status === 401, 30_000);

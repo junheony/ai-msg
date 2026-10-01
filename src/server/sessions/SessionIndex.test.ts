@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionIndex, groupProjects, readPinned, scanProfile } from './SessionIndex';
+import { MAX_RECENT_FOLDERS, SessionIndex, groupProjects, readPinned, readRecent, scanProfile } from './SessionIndex';
 import type { SessionEntry } from '../../shared/session-types';
 
 const L = (o: unknown) => JSON.stringify(o) + '\n';
@@ -90,5 +90,48 @@ describe('readPinned + SessionIndex', () => {
     expect(idx.lookup('nope')).toBeNull();
     expect(idx.projects()[0]).toMatchObject({ cwd: '/w/one', name: 'One', pinned: true });
     expect(idx.projects()[0]?.sessions).toHaveLength(1);
+  });
+});
+
+describe('recent folders (F1)', () => {
+  it('groupProjects lists recent folders without sessions right after pinned ones, in recent order', () => {
+    const s1: SessionEntry = { sessionId: ID1, account: 'a', cwd: '/w/old', projectDir: '/p', file: '/p/1.jsonl', title: 't', lastModified: 10, sizeBytes: 1 };
+    const p = groupProjects([s1], [{ cwd: '/w/pin' }], ['/w/new2', '/w/old', '/w/pin', '/w/new1']);
+    expect(p.map((x) => [x.cwd, x.pinned, x.sessions.length])).toEqual([
+      ['/w/pin', true, 0],
+      ['/w/new2', false, 0],
+      ['/w/new1', false, 0],
+      ['/w/old', false, 1],
+    ]);
+    expect(p[1]?.name).toBe('new2');
+  });
+
+  it('addRecent persists newest first, dedupes, caps, and survives a new index', async () => {
+    const dir = await mkRoot();
+    const recentFile = path.join(dir, 'cfg', 'recent-folders.json');
+    expect(await readRecent(recentFile)).toEqual([]);
+    const roots = { a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' };
+    const idx = new SessionIndex({ roots, pinnedFile: '/nonexistent/p.json', recentFile });
+    await idx.refresh();
+    await idx.addRecent('/w/one');
+    await idx.addRecent('/w/two');
+    expect(await idx.addRecent('/w/one')).toEqual(['/w/one', '/w/two']);
+    expect(idx.projects().map((p) => p.cwd)).toEqual(['/w/one', '/w/two']);
+    for (let i = 0; i < MAX_RECENT_FOLDERS + 5; i++) await idx.addRecent(`/w/n${i}`);
+    expect(idx.recent()).toHaveLength(MAX_RECENT_FOLDERS);
+    expect(idx.recent()[0]).toBe(`/w/n${MAX_RECENT_FOLDERS + 4}`);
+    const again = new SessionIndex({ roots, pinnedFile: '/nonexistent/p.json', recentFile });
+    await again.refresh();
+    expect(again.recent()).toEqual(idx.recent());
+    expect((await fs.stat(recentFile)).mode & 0o777).toBe(0o600);
+  });
+
+  it('readRecent ignores junk', async () => {
+    const dir = await mkRoot();
+    const f = path.join(dir, 'r.json');
+    await fs.writeFile(f, JSON.stringify(['/ok', 3, 'relative', null, '/ok2']));
+    expect(await readRecent(f)).toEqual(['/ok', '/ok2']);
+    await fs.writeFile(f, '{bad');
+    expect(await readRecent(f)).toEqual([]);
   });
 });

@@ -95,7 +95,7 @@ export async function startDeck(opts: { pinB?: boolean } = {}): Promise<Deck> {
   if (opts.pinB !== false) for (const a of ['a', 'c'] as const) writeCooldown(cooldownDir, a, Date.now() + 6 * 3_600_000);
   const child: ChildProcess = spawn('npx', ['tsx', 'src/server/main.ts'], {
     cwd: process.cwd(), // npm run test:e2e runs from the repo root
-    env: { ...process.env, DECK_CONFIG_DIR: cfgDir, DECK_PORT: String(port), DECK_LOOPBACK_ONLY: '1', DECK_UI_DIR: cfgDir, CLAUDE_PICK_COOLDOWN_DIR: cooldownDir },
+    env: { ...process.env, DECK_CONFIG_DIR: cfgDir, DECK_PORT: String(port), DECK_LOOPBACK_ONLY: '1', DECK_UI_DIR: cfgDir, DECK_EXTRA_CWD_ROOTS: path.dirname(workDir), CLAUDE_PICK_COOLDOWN_DIR: cooldownDir },
     stdio: ['ignore', 'inherit', 'inherit'],
   });
   // Review M15: wait for the server to exit before removing the dirs it may still write to.
