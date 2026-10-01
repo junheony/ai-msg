@@ -41,4 +41,13 @@ describe('chooseEngine (D3)', () => {
     // the protected account still counts as a candidate for the comparison
     expect(chooseEngine(input({ usage: usage([10, 90, 90], 30), protectedAccount: 'a' })).engine).toBe('claude');
   });
+
+  it('credits: an exhausted weekly with credits still runs an explicit GPT choice; auto stays on the weekly rule', () => {
+    const withCredits = (u: UsageSnapshot): UsageSnapshot => ({ ...u, gpt: { ...u.gpt!, credits: { hasCredits: true, unlimited: false, balance: 49563.32 } } });
+    const u = withCredits(usage([40, 50, 60], 100));
+    expect(chooseEngine(input({ choice: 'codex', usage: u }))).toEqual({ engine: 'codex', reason: 'GPT 지정' });
+    // credits cost money: auto never opens on GPT because of them, even with every Claude account spent
+    expect(chooseEngine(input({ usage: u }))).toEqual({ engine: 'claude', reason: '자동 · GPT 주간 100% → Claude' });
+    expect(chooseEngine(input({ usage: withCredits(usage([96, 97, 98], 100)) })).engine).toBe('claude');
+  });
 });

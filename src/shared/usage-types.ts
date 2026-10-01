@@ -2,12 +2,17 @@ import type { Account } from './accounts';
 
 export type UsageWindow = { usedPct: number; resetsAt: string | null };
 
+/** ChatGPT pay-as-you-go credits from the Codex rollout's `rate_limits.credits`: usable after the plan's weekly is spent (they cost money). */
+export type GptCredits = { hasCredits: boolean; unlimited: boolean; balance: number | null };
+
 export type AccountUsage = {
   status: 'ok' | 'stale' | 'down';
   fetchedAt: string | null;
   fiveHour: UsageWindow | null;
   weekly: UsageWindow | null;
   fable: UsageWindow | null;
+  /** GPT seat only: credits, when the rollout reported them. */
+  credits?: GptCredits | null;
 };
 
 export type UsageSnapshot = {

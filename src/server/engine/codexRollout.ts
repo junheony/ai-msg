@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
+import type { GptCredits } from '../../shared/usage-types';
 import type { TurnWindows } from '../usage/UsageService';
 
 type Rec = Record<string, unknown>;
@@ -36,6 +37,14 @@ function windowOf(w: unknown): { usedPct: number; resetsAt: string | null } | nu
   return { usedPct: Math.round(r.used_percent), resetsAt };
 }
 
+/** `rate_limits.credits` = `{ has_credits, unlimited, balance: "49563.32…" }` (balance is a decimal string). Null when absent/unusable. */
+export function creditsOf(c: unknown): GptCredits | null {
+  const r = rec(c);
+  if (!r || typeof r.has_credits !== 'boolean') return null;
+  const raw = typeof r.balance === 'string' ? Number.parseFloat(r.balance) : typeof r.balance === 'number' ? r.balance : Number.NaN;
+  return { hasCredits: r.has_credits, unlimited: r.unlimited === true, balance: Number.isFinite(raw) ? raw : null };
+}
+
 export type RateLimitObservation = { windows: TurnWindows; /** the event's own timestamp; null when the line has none */ atMs: number | null };
 
 /** F3: like `rolloutRateLimits`, plus when that `token_count` was written. */
@@ -58,6 +67,8 @@ export function rolloutRateLimitsAt(lines: unknown[]): RateLimitObservation | nu
     }
     // An entry with no 10080/300-minute window does not hide an earlier usable one.
     if (!out.weekly && !out.fiveHour) continue;
+    const credits = creditsOf(rl.credits);
+    if (credits) out.credits = credits;
     const ts = typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : Number.NaN;
     return { windows: out, atMs: Number.isNaN(ts) ? null : ts };
   }
