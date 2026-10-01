@@ -8,6 +8,7 @@ import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
 import { parseQuestions, sessionUpdates, type Engine, type EngineEvent, type EngineResult, type LiveInput, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
+import type { SlashCommandInfo } from './slashCommands';
 
 export type PromptInput = string | AsyncIterable<SDKUserMessage>;
 export type QueryFn = (params: { prompt: PromptInput; options?: Options }) => AsyncIterable<SDKMessage>;
@@ -297,6 +298,23 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
   }
 }
 
+/** The composer's `/` menu source: what system/init (`slash_commands`) or `commands_changed` reported. */
+export type CommandsListener = (sessionId: string | null, cwd: string, commands: (string | SlashCommandInfo)[], terminal: string[]) => void;
+
+/** system/init or system/commands_changed → onCommands; anything else is ignored. */
+export function noteCommands(m: SDKMessage, fallbackCwd: string, onCommands: CommandsListener): void {
+  if (m.type !== 'system') return;
+  const r = m as unknown as Rec;
+  const sessionId = typeof r.session_id === 'string' ? r.session_id : null;
+  const cwd = typeof r.cwd === 'string' && r.cwd ? r.cwd : fallbackCwd;
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  if (r.subtype === 'init' && Array.isArray(r.slash_commands)) onCommands(sessionId, cwd, strings(r.slash_commands), strings(r.terminal_slash_commands));
+  else if (r.subtype === 'commands_changed' && Array.isArray(r.commands)) {
+    const list = (r.commands as unknown[]).filter((c): c is SlashCommandInfo => !!c && typeof c === 'object' && typeof (c as Rec).name === 'string');
+    onCommands(sessionId, cwd, list, []);
+  }
+}
+
 export class ClaudeEngine implements Engine {
   private readonly queryFn: QueryFn;
   private readonly home: string;
@@ -304,14 +322,16 @@ export class ClaudeEngine implements Engine {
   private readonly readFile: ReadFile;
   private readonly bgMaxMs: number;
   private readonly bgGraceMs: number;
+  private readonly onCommands: CommandsListener | null;
 
-  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number } = {}) {
+  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number; onCommands?: CommandsListener } = {}) {
     this.queryFn = opts.queryFn ?? ((p) => query(p));
     this.home = opts.home ?? os.homedir();
     this.baseEnv = opts.baseEnv ?? process.env;
     this.readFile = opts.readFile ?? ((p) => fs.readFile(p));
     this.bgMaxMs = opts.bgMaxMs ?? BG_MAX_MS;
     this.bgGraceMs = opts.bgGraceMs ?? BG_GRACE_MS;
+    this.onCommands = opts.onCommands ?? null;
   }
 
   /**
@@ -385,6 +405,7 @@ export class ClaudeEngine implements Engine {
         }
         if (idle && isActivity(m)) { idle = false; clearGrace(); yield { kind: 'continue', cause: 'background' }; }
         if (m.type === 'assistant' && typeof (m as unknown as Rec).error === 'string') errorKind = (m as unknown as Rec).error as string;
+        if (this.onCommands) noteCommands(m, req.cwd, this.onCommands);
         let gotResult = false;
         for (const ev of mapSdkMessage(m)) {
           if (ev.kind === 'init') sessionId = ev.sessionId;

@@ -121,6 +121,9 @@ export async function readRecent(file: string): Promise<string[]> {
   }
 }
 
+/** deck-side titles / archive flags (SessionMetaStore) laid over the scanned entries. */
+export type SessionMetaView = { title(sessionId: string): string | null; isArchived(sessionId: string): boolean };
+
 export class SessionIndex {
   private entries: SessionEntry[] = [];
   private grouped: ProjectEntry[] = [];
@@ -131,7 +134,30 @@ export class SessionIndex {
   private desktopList: DesktopSession[] = [];
 
   /** `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list. */
-  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string }) {}
+  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; meta?: SessionMetaView }) {}
+
+  /** A deck rename wins over the transcript's title; archived entries carry the flag. Unchanged entries are returned as is. */
+  private decorate<T extends { sessionId: string; title: string; archived?: boolean }>(e: T): T {
+    const meta = this.opts.meta;
+    if (!meta) return e;
+    const title = meta.title(e.sessionId);
+    const archived = meta.isArchived(e.sessionId);
+    if (!title && !archived && !e.archived) return e;
+    const out: T = { ...e, title: title ?? e.title };
+    if (archived) out.archived = true;
+    else delete out.archived;
+    return out;
+  }
+
+  private group(sessions: SessionEntry[]): ProjectEntry[] {
+    return groupProjects(sessions.map((s) => this.decorate(s)), this.pinned, this.recentFolders);
+  }
+
+  /** Re-applies titles / archive flags after a SessionMetaStore change (no rescan). */
+  regroup(): void {
+    this.grouped = this.group(this.entries);
+    this.desktopList = this.desktopList.map((d) => this.decorate(d));
+  }
 
   async refresh(): Promise<void> {
     const all = (await Promise.all(ACCOUNTS.map((a) => scanProfile(a, this.opts.roots[a])))).flat();
@@ -143,8 +169,8 @@ export class SessionIndex {
     }
     this.pinned = await readPinned(this.opts.pinnedFile);
     if (this.opts.recentFile) this.recentFolders = await readRecent(this.opts.recentFile);
-    this.grouped = groupProjects(all, this.pinned, this.recentFolders);
-    this.desktopList = this.opts.desktopRoot ? await recentDesktopSessions(this.opts.desktopRoot, (id) => this.lookup(id)).catch(() => []) : [];
+    this.grouped = this.group(all);
+    this.desktopList = this.opts.desktopRoot ? (await recentDesktopSessions(this.opts.desktopRoot, (id) => this.lookup(id)).catch(() => [])).map((d) => this.decorate(d)) : [];
   }
 
   /** The most recently active Claude Desktop sessions deck can open (as of the last refresh). */
@@ -159,7 +185,7 @@ export class SessionIndex {
   /** F1: records an (already validated, real) folder as most recent and persists the list (0600). */
   async addRecent(cwd: string): Promise<string[]> {
     this.recentFolders = [cwd, ...this.recentFolders.filter((c) => pathKey(c) !== pathKey(cwd))].slice(0, MAX_RECENT_FOLDERS);
-    this.grouped = groupProjects(this.entries, this.pinned, this.recentFolders);
+    this.grouped = this.group(this.entries);
     const file = this.opts.recentFile;
     const snapshot = this.recentFolders;
     if (file) {
@@ -181,7 +207,7 @@ export class SessionIndex {
 
   /** Cached grouping of the profile scan; with `extra` (Codex sessions from the state store, D4) a fresh grouping. */
   projects(extra: SessionEntry[] = []): ProjectEntry[] {
-    return extra.length ? groupProjects([...this.entries, ...extra], this.pinned, this.recentFolders) : this.grouped;
+    return extra.length ? this.group([...this.entries, ...extra]) : this.grouped;
   }
 
   sessions(): SessionEntry[] {

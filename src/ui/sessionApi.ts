@@ -1,0 +1,63 @@
+/** Mirrors server/sessions/search.ts SearchHit (the UI bundle does not import server code). */
+export interface SearchHit {
+  sessionId: string;
+  title: string;
+  cwd: string;
+  account: string;
+  engine: string;
+  lastModified: number;
+  role: 'user' | 'assistant';
+  snippet: string;
+  matchStart: number;
+  matchLength: number;
+}
+
+/** Mirrors server/engine/slashCommands.ts SlashCommandInfo. */
+export interface SlashCommandInfo {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
+async function getJson<T>(url: string, fetchFn: typeof fetch, what: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetchFn(url, { credentials: 'same-origin' });
+  } catch {
+    throw new Error(`${what} 실패: 네트워크 오류`);
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `${what} 실패 (${res.status})`);
+  }
+  return (await res.json()) as T;
+}
+
+/** Rename (title: string, or null = back to the transcript's own title) and/or 보관; the server broadcasts the new index. */
+export async function postSessionMeta(sessionId: string, change: { title?: string | null; archived?: boolean }, fetchFn: typeof fetch = fetch): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetchFn('/api/session-meta', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId, ...change }) });
+  } catch {
+    throw new Error('세션 정보 저장 실패: 네트워크 오류');
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `세션 정보 저장 실패 (${res.status})`);
+  }
+}
+
+export function searchTranscripts(q: string, fetchFn: typeof fetch = fetch): Promise<{ hits: SearchHit[]; truncated: boolean }> {
+  return getJson(`/api/search?q=${encodeURIComponent(q)}`, fetchFn, '검색');
+}
+
+export function listFiles(cwd: string, fetchFn: typeof fetch = fetch): Promise<{ files: string[]; truncated: boolean }> {
+  return getJson(`/api/files?cwd=${encodeURIComponent(cwd)}`, fetchFn, '파일 목록');
+}
+
+export function listCommands(sessionId: string | null, cwd: string | null, fetchFn: typeof fetch = fetch): Promise<{ commands: SlashCommandInfo[] }> {
+  const qs = new URLSearchParams();
+  if (sessionId) qs.set('sessionId', sessionId);
+  if (cwd) qs.set('cwd', cwd);
+  return getJson(`/api/commands?${qs.toString()}`, fetchFn, '명령 목록');
+}

@@ -1,7 +1,9 @@
+import { fileDiffsFor } from '../diff';
 import type { ToolCallItem } from '../state';
 import { groupLabel, toolLabel } from '../toolLabel';
 import { applyTodoCall, todoCounts } from '../todos';
 import { TodoList } from './TodoPanel';
+import { DiffList } from './DiffView';
 
 function pretty(v: unknown, max = 4000): string {
   const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
@@ -14,9 +16,25 @@ function stateOf(call: ToolCallItem, live: boolean): { cls: string; text: string
   return { cls: '', text: '' };
 }
 
-/** One tool call = one muted line; click to see its input and output. */
-export function ToolCallView({ call, live = false }: { call: ToolCallItem; live?: boolean }) {
+/** A file-editing call (Edit / MultiEdit / Write / NotebookEdit, Codex file change) as diff cards; null for any other call. */
+function DiffToolCall({ call, live, cwd }: { call: ToolCallItem; live: boolean; cwd?: string | null }) {
+  const diffs = fileDiffsFor(call.name, call.input, call.result);
+  if (!diffs) return null;
   const st = stateOf(call, live);
+  return (
+    <div className={`tool-call diff-call ${st.cls}`} data-testid="tool-call">
+      <DiffList diffs={diffs} cwd={cwd} {...(st.text ? { state: st.text } : {})} />
+      {call.isError && call.result && <pre className="tool-output">{pretty(call.result)}</pre>}
+    </div>
+  );
+}
+
+const isDiffCall = (c: ToolCallItem) => fileDiffsFor(c.name, c.input, c.result) !== null;
+
+/** One tool call = one muted line; click to see its input and output. File edits render as diff cards. */
+export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; live?: boolean; cwd?: string | null }) {
+  const st = stateOf(call, live);
+  if (isDiffCall(call)) return <DiffToolCall call={call} live={live} cwd={cwd} />;
   // ux-state: a TodoWrite shows its checklist, not raw JSON.
   const todos = call.name === 'TodoWrite' ? applyTodoCall(null, call) : null;
   return (
@@ -39,9 +57,21 @@ export function ToolCallView({ call, live = false }: { call: ToolCallItem; live?
   );
 }
 
-/** A turn's tool calls: one line alone, or one collapsed group line ("실행된 명령 5개 ›") for several. */
-export function ToolCalls({ calls, live = false }: { calls: ToolCallItem[]; live?: boolean }) {
+/**
+ * A turn's tool calls in order: file edits as their own diff cards (Desktop style); each run of other calls
+ * as one line alone, or one collapsed group line ("실행된 명령 5개 ›") for several.
+ */
+export function ToolCalls({ calls, live = false, cwd }: { calls: ToolCallItem[]; live?: boolean; cwd?: string | null }) {
   if (calls.length === 0) return null;
+  const segments: { diff: boolean; calls: ToolCallItem[] }[] = [];
+  for (const c of calls) {
+    const diff = isDiffCall(c);
+    const last = segments.at(-1);
+    if (last && !diff && !last.diff) last.calls.push(c);
+    else segments.push({ diff, calls: [c] });
+  }
+  if (segments.length > 1) return <>{segments.map((s) => <ToolCalls key={s.calls[0]!.toolUseId} calls={s.calls} live={live} cwd={cwd} />)}</>;
+  if (segments[0]!.diff) return <ToolCallView call={calls[0]!} live={live} cwd={cwd} />;
   if (calls.length === 1) return <ToolCallView call={calls[0]!} live={live} />;
   const running = live && calls.some((c) => c.result === null);
   const errors = calls.filter((c) => c.isError).length;

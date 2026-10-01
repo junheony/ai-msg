@@ -79,6 +79,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           busy={pane.activeTurnId !== null || pane.awaitingStart}
           title={s.title}
           cwd={s.cwd}
+          sessionId={s.sessionId}
           headActions={close}
           model={model}
           effort={effort}

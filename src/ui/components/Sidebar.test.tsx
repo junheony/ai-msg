@@ -131,3 +131,88 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
     expect(onAuto).toHaveBeenLastCalledWith(true);
   });
 });
+
+describe('Sidebar rename / archive / 대화 내용 검색', () => {
+  afterEach(cleanup);
+  const s = (id: string, title: string, archived = false) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: Date.now(), sizeBytes: 1, ...(archived ? { archived } : {}) });
+  const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'Alpha'), s('s2', 'Beta'), s('s3', 'Old', true)] }];
+
+  it('double-click renames inline: Enter saves, Esc cancels, empty resets to the transcript title; the 2nd click does not re-open', () => {
+    const onRename = vi.fn();
+    const onOpen = vi.fn();
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} onRename={onRename} onArchive={noop} />);
+    const title = screen.getByText('Alpha');
+    fireEvent.click(title, { detail: 1 });
+    fireEvent.click(title, { detail: 2 });
+    fireEvent.doubleClick(title);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    const input = screen.getByLabelText('세션 이름') as HTMLInputElement;
+    expect(input.value).toBe('Alpha');
+    fireEvent.change(input, { target: { value: '  Release   notes ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onRename).toHaveBeenCalledWith('s1', 'Release notes');
+    expect(screen.queryByLabelText('세션 이름')).toBeNull();
+
+    fireEvent.doubleClick(screen.getByText('Beta'));
+    fireEvent.change(screen.getByLabelText('세션 이름'), { target: { value: 'nope' } });
+    fireEvent.keyDown(screen.getByLabelText('세션 이름'), { key: 'Escape' });
+    fireEvent.doubleClick(screen.getByText('Beta'));
+    fireEvent.change(screen.getByLabelText('세션 이름'), { target: { value: '   ' } });
+    fireEvent.blur(screen.getByLabelText('세션 이름'));
+    expect(onRename.mock.calls).toEqual([['s1', 'Release notes'], ['s2', null]]);
+  });
+
+  it('context menu archives; archived sessions only show under 보관됨, where they can be unarchived or renamed', () => {
+    const onArchive = vi.fn();
+    const onRename = vi.fn();
+    const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onRename={onRename} onArchive={onArchive} pins={['s3']} onTogglePin={noop} />);
+    const titles = () => [...container.querySelectorAll('.session-title')].map((e) => e.textContent);
+    expect(titles()).toEqual(['Alpha', 'Beta']);
+    expect(screen.queryByTestId('pinned-group')).toBeNull(); // a pinned but archived session hides too
+    fireEvent.contextMenu(screen.getByText('Beta'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '보관' }));
+    expect(onArchive).toHaveBeenCalledWith('s2', true);
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.click(screen.getByText('보관됨'));
+    expect(titles()).toEqual(['Old', 'Old']);
+    fireEvent.click(screen.getAllByLabelText('세션 메뉴')[1]!);
+    fireEvent.click(screen.getByRole('menuitem', { name: '보관 해제' }));
+    expect(onArchive).toHaveBeenLastCalledWith('s3', false);
+    fireEvent.click(screen.getAllByLabelText('세션 메뉴')[1]!);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('보관됨 with nothing archived says so; no menu without handlers', () => {
+    render(<Sidebar projects={[{ ...projects[0]!, sessions: [s('s1', 'Alpha')] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onArchive={noop} />);
+    fireEvent.click(screen.getByText('보관됨'));
+    expect(screen.getByText('보관된 세션이 없습니다.')).toBeTruthy();
+    cleanup();
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(screen.queryByLabelText('세션 메뉴')).toBeNull();
+    expect(screen.queryByText('보관됨')).toBeNull();
+  });
+
+  it('full-text search: debounced, highlighted snippet, archived-session hits hidden, click opens the hit', async () => {
+    const hit = (sessionId: string, snippet: string, matchStart: number) => ({ sessionId, title: `T ${sessionId}`, cwd: '/w', account: 'b', engine: 'claude', lastModified: Date.now(), role: 'assistant' as const, snippet, matchStart, matchLength: 5 });
+    const searchFn = vi.fn(async (q: string) => ({ hits: [hit('s1', '…fix the flaky test…', 9), hit('s3', 'flaky old', 0), hit('zz', 'other flaky', 6)], truncated: q === 'flaky' }));
+    const onOpenHit = vi.fn();
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenHit={onOpenHit} searchFn={searchFn} onArchive={noop} />);
+    const box = screen.getByLabelText('세션 검색');
+    fireEvent.change(box, { target: { value: 'f' } });
+    fireEvent.change(box, { target: { value: 'fl' } });
+    fireEvent.change(box, { target: { value: 'flaky' } });
+    const group = await screen.findByTestId('search-group');
+    await waitFor(() => expect(group.querySelectorAll('.search-hit')).toHaveLength(2));
+    expect(searchFn).toHaveBeenCalledTimes(1);
+    expect(searchFn).toHaveBeenCalledWith('flaky');
+    expect([...group.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['flaky', 'flaky']);
+    expect(group.querySelector('.search-snippet')!.textContent).toBe('…fix the flaky test…');
+    expect(screen.getByText('결과 일부만 표시됩니다.')).toBeTruthy();
+    fireEvent.click(group.querySelector('.search-hit')!);
+    expect(onOpenHit).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1' }));
+    fireEvent.change(box, { target: { value: 'f' } });
+    expect(screen.queryByTestId('search-group')).toBeNull();
+  });
+});

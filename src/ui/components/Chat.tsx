@@ -6,6 +6,7 @@ import { latestTodos } from '../todos';
 import { mergeToolRuns } from '../toolRuns';
 import { filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AttachmentBar } from './AttachmentBar';
+import { useComposerSuggest } from './ComposerSuggest';
 import { MessageView } from './MessageView';
 import { ModelPicker } from './ModelPicker';
 import { PermissionCard } from './PermissionCard';
@@ -22,6 +23,8 @@ export type ChatProps = {
   title: string;
   /** Session folder: the header shows its last segment as a chip, the full path on hover. */
   cwd?: string;
+  /** For `/` command suggestions (null while the session is new). */
+  sessionId?: string | null;
   /** Right-aligned header buttons (the pane's close button). */
   headActions?: ReactNode;
   model: AnyModel;
@@ -85,6 +88,7 @@ function useElapsed(busy: boolean): number | null {
 export function Chat(p: ChatProps) {
   const [text, setText] = useState('');
   const [drag, setDrag] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [p.items, p.pending, p.questions]);
   const { addFiles, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
@@ -107,6 +111,7 @@ export function Chat(p: ChatProps) {
   const canSend = hasDraft && (!p.busy || queueing);
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
   const liveTools = live ? live.toolCalls.length : 0;
+  const suggest = useComposerSuggest({ text, setText, textareaRef: taRef, cwd: p.cwd, sessionId: p.sessionId ?? null, commands: effectiveEngine !== 'codex' });
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
   const submit = () => {
@@ -139,7 +144,7 @@ export function Chat(p: ChatProps) {
         {p.headActions}
       </div>
       <div className="chat-body">
-        {shown.map((it, i) => <MessageView key={i} item={it} />)}
+        {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} />)}
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => p.onSend(retryPrompt)}>재시도</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
@@ -166,12 +171,15 @@ export function Chat(p: ChatProps) {
           </div>
         )}
         <div className={`composer ${drag ? 'dragover' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop}>
+          {suggest.popup}
           <textarea
+            ref={taRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
+            onChange={(e) => { setText(e.target.value); suggest.track(e); }}
+            onSelect={suggest.track}
+            onKeyDown={(e) => { if (suggest.onKeyDown(e)) return; if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
             onPaste={onPaste}
-            placeholder={queueing ? '실행 중 · ⌘/Ctrl+Enter 로 대기열에 추가' : '메시지 입력 · ⌘/Ctrl+Enter 보내기 · 이미지 붙여넣기'}
+            placeholder={queueing ? '실행 중 · ⌘/Ctrl+Enter 로 대기열에 추가' : '메시지 입력 · ⌘/Ctrl+Enter 보내기 · @ 파일 · / 명령'}
             aria-label="메시지"
             rows={1}
           />

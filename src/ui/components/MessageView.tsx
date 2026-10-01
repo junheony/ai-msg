@@ -150,7 +150,7 @@ function AttachmentTiles({ files }: { files: SentFile[] }) {
 }
 
 /** Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines. */
-export function MessageView({ item }: { item: ChatItem }) {
+export function MessageView({ item, cwd }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string }) {
   if (item.kind === 'user') {
     const { text, notices } = parseUserText(item.text);
     const files = item.attachments ?? [];
@@ -171,7 +171,7 @@ export function MessageView({ item }: { item: ChatItem }) {
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}`}>
       {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
       {item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
-      <ToolCalls calls={item.toolCalls} live={item.streaming} />
+      <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} />
       {item.text && <Markdown text={item.text} />}
       {item.streaming && <span className="cursor">▍</span>}
       {item.error && !(stopped && item.error === '중단됨') && <div className="error">오류: {item.error}</div>}

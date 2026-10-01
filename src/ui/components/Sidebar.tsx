@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
+import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 
 /** Sessions shown per project before "더 보기". */
 export const FOLD_AT = 5;
 const MAX_SESSIONS = 30;
+/** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
+export const SEARCH_MIN_CHARS = 2;
+const SEARCH_DEBOUNCE_MS = 300;
 
 function ago(ms: number, now = Date.now()): string {
   const d = now - ms;
@@ -14,7 +18,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove, collapsed: collapsedProp, onCollapsedChange }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove, collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn }: {
   projects: ProjectEntry[];
   currentSessionId: string | null;
   onOpen: (sessionId: string, cwd: string, title: string) => void;
@@ -34,6 +38,13 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** ux-state: folded project groups (cwd), owned by the app so they survive a reload; absent = local state. */
   collapsed?: string[];
   onCollapsedChange?: (cwds: string[]) => void;
+  /** Custom title (null = back to the transcript's own title); stored by deck, the jsonl is untouched. */
+  onRename?: (sessionId: string, title: string | null) => void;
+  /** 보관 / 보관 해제: archived sessions only show under the 보관됨 filter. */
+  onArchive?: (sessionId: string, archived: boolean) => void;
+  /** Enables 대화 내용 검색 (full-text over all transcripts); a clicked hit lands here. */
+  onOpenHit?: (hit: SearchHit) => void;
+  searchFn?: (q: string) => Promise<{ hits: SearchHit[]; truncated: boolean }>;
 }) {
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState('');
@@ -45,34 +56,102 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     else setLocalCollapsed(n);
   };
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [showArchived, setShowArchived] = useState(false);
+  const [menu, setMenu] = useState<string | null>(null);
+  // Keyed `${group}:${sessionId}`: a pinned session is listed twice and only the clicked copy opens its menu / editor.
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [found, setFound] = useState<{ q: string; hits: SearchHit[]; truncated: boolean; error: string | null } | null>(null);
   const toggle = (set: Set<string>, key: string) => { const n = new Set(set); if (n.has(key)) n.delete(key); else n.add(key); return n; };
 
   const q = query.trim().toLowerCase();
   const match = (s: SessionEntry) => !q || s.title.toLowerCase().includes(q);
+  const inView = (s: { archived?: boolean }) => (showArchived ? !!s.archived : !s.archived);
+  const canEdit = !!(onRename || onArchive);
+
+  // 대화 내용 검색: debounced; a stale answer (query changed meanwhile) is dropped.
+  const fullQ = query.trim();
+  const fullOn = !!onOpenHit && fullQ.length >= SEARCH_MIN_CHARS;
+  useEffect(() => {
+    if (!fullOn) { setFound(null); return; }
+    let live = true;
+    const run = searchFn ?? ((x: string) => searchTranscripts(x, fetchFn));
+    const t = setTimeout(() => {
+      run(fullQ).then(
+        (r) => { if (live) setFound({ q: fullQ, hits: r.hits, truncated: r.truncated, error: null }); },
+        (err: unknown) => { if (live) setFound({ q: fullQ, hits: [], truncated: false, error: err instanceof Error ? err.message : '검색 실패' }); },
+      );
+    }, SEARCH_DEBOUNCE_MS);
+    return () => { live = false; clearTimeout(t); };
+  }, [fullOn, fullQ, searchFn, fetchFn]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: Event) => { if (!(e.target instanceof Element && e.target.closest('.session-menu'))) setMenu(null); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null); };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('keydown', onKey); };
+  }, [menu]);
+
+  const startEdit = (s: SessionEntry, key: string) => { if (!onRename) return; setMenu(null); setEditing({ id: key, text: s.title }); };
+  const commitEdit = (s: SessionEntry, key: string) => {
+    if (!editing || editing.id !== key) return;
+    const v = editing.text.replace(/\s+/g, ' ').trim();
+    setEditing(null);
+    if (v !== s.title) onRename?.(s.sessionId, v || null);
+  };
   const pinSet = new Set(pins);
   const byId = new Map<string, SessionEntry>();
   for (const p of projects) for (const s of p.sessions) byId.set(s.sessionId, s);
-  const pinned = pins.map((id) => byId.get(id)).filter((s): s is SessionEntry => !!s && match(s));
-  const desktopShown = desktop.filter((d) => !q || d.title.toLowerCase().includes(q) || d.project.toLowerCase().includes(q));
+  const pinned = pins.map((id) => byId.get(id)).filter((s): s is SessionEntry => !!s && inView(s) && match(s));
+  const desktopShown = desktop.filter((d) => inView(d)).filter((d) => !q || d.title.toLowerCase().includes(q) || d.project.toLowerCase().includes(q));
 
-  const row = (s: SessionEntry) => {
+  const row = (s: SessionEntry, group: string) => {
     const on = pinSet.has(s.sessionId);
+    const key = `${group}:${s.sessionId}`;
+    const edit = editing?.id === key ? editing : null;
     return (
-      <li key={s.sessionId} className={s.sessionId === currentSessionId ? 'active' : ''} title={s.title} onClick={() => onOpen(s.sessionId, s.cwd, s.title)}>
+      <li key={s.sessionId} className={s.sessionId === currentSessionId ? 'active' : ''} title={s.title}
+        // The second click of a double-click (rename) must not re-open the session.
+        onClick={(e) => { if (e.detail > 1 || edit) return; onOpen(s.sessionId, s.cwd, s.title); }}
+        onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
         <span className="session-row">
-          <span className="session-title">{s.title}</span>
+          {edit ? (
+            <input className="session-rename" aria-label="세션 이름" value={edit.text} autoFocus maxLength={200}
+              onChange={(e) => setEditing({ id: key, text: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return;
+                if (e.key === 'Enter') { e.preventDefault(); commitEdit(s, key); }
+                if (e.key === 'Escape') { e.preventDefault(); setEditing(null); }
+              }}
+              onBlur={() => commitEdit(s, key)} onClick={(e) => e.stopPropagation()} />
+          ) : (
+            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(s, key); } : undefined}>{s.title}</span>
+          )}
           <span className="session-meta">{s.account.toUpperCase()} · {ago(s.lastModified)}</span>
+          {canEdit && !edit && (
+            <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="이름 바꾸기 · 보관" aria-haspopup="menu" aria-expanded={menu === key}
+              onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
+          )}
           {onTogglePin && (
             <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(s.sessionId, !on); }}>
               <PinIcon filled={on} />
             </button>
           )}
         </span>
+        {menu === key && (
+          <div className="session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+            {onRename && <button type="button" role="menuitem" onClick={() => startEdit(s, key)}>이름 바꾸기</button>}
+            {onArchive && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(s.sessionId, !s.archived); }}>{s.archived ? '보관 해제' : '보관'}</button>}
+          </div>
+        )}
       </li>
     );
   };
 
-  const visible = projects.map((p) => ({ p, sessions: p.sessions.slice(0, MAX_SESSIONS).filter(match) })).filter(({ sessions }) => !q || sessions.length > 0);
+  const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || inView(s); });
+  const searching = fullOn && found?.q !== fullQ;
+  const visible = projects.map((p) => ({ p, sessions: p.sessions.filter(inView).slice(0, MAX_SESSIONS).filter(match) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
@@ -82,6 +161,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           </button>
         )}
         <span className="grow" />
+        {onArchive && (
+          <button type="button" className={`text-btn archived-filter ${showArchived ? 'on' : ''}`} aria-pressed={showArchived} onClick={() => setShowArchived((v) => !v)} title={showArchived ? '보관된 세션 보는 중 · 클릭하면 전체' : '보관된 세션만 보기'}>보관됨</button>
+        )}
         <button type="button" className="icon-btn" onClick={onRefresh} title="세션 목록 다시 읽기" aria-label="세션 목록 다시 읽기">↻</button>
       </div>
       {picking && onOpenFolder && <FolderPicker onOpen={(cwd) => { setPicking(false); onOpenFolder(cwd); }} onClose={() => setPicking(false)} {...(fetchFn ? { fetchFn } : {})} />}
@@ -92,7 +174,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       {pinned.length > 0 && (
         <section className="project pinned-group" data-testid="pinned-group">
           <div className="project-head"><span className="project-name">고정됨</span></div>
-          <ul>{pinned.map(row)}</ul>
+          <ul>{pinned.map((s) => row(s, 'pinned'))}</ul>
         </section>
       )}
       {desktopShown.length > 0 && (
@@ -111,7 +193,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         </section>
       )}
       {projects.length === 0 && <div className="muted sidebar-empty">세션이 없습니다. ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</div>}
-      {q && visible.length === 0 && pinned.length === 0 && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
+      {showArchived && !q && visible.length === 0 && pinned.length === 0 && desktopShown.length === 0 && <div className="muted sidebar-empty">보관된 세션이 없습니다.</div>}
+      {q && visible.length === 0 && pinned.length === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
       {visible.map(({ p, sessions }) => {
         const isCollapsed = !q && collapsed.has(p.cwd);
         const showAll = !!q || expanded.has(p.cwd);
@@ -128,7 +211,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             </div>
             {!isCollapsed && (
               <>
-                <ul>{shown.map(row)}</ul>
+                <ul>{shown.map((s) => row(s, p.cwd))}</ul>
                 {hidden > 0 && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>더 보기 ({hidden})</button>}
                 {!q && expanded.has(p.cwd) && sessions.length > FOLD_AT && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>접기</button>}
               </>
@@ -136,6 +219,27 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           </section>
         );
       })}
+      {fullOn && (searching || hitsShown.length > 0 || found?.error) && (
+        <section className="project search-group" data-testid="search-group">
+          <div className="project-head"><span className="project-name">대화 내용</span></div>
+          {searching && hitsShown.length === 0 && <div className="muted sidebar-empty">검색 중…</div>}
+          {found?.error && <div className="error sidebar-empty">{found.error}</div>}
+          <ul>
+            {hitsShown.map((h, i) => (
+              <li key={`${h.sessionId}-${i}`} className="search-hit" title={`${h.title}\n${h.cwd}`} onClick={() => onOpenHit?.(h)}>
+                <span className="session-row">
+                  <span className="session-title">{h.title}</span>
+                  <span className="session-meta">{h.role === 'user' ? '나' : h.engine === 'codex' ? 'GPT' : 'Claude'} · {ago(h.lastModified)}</span>
+                </span>
+                <span className="search-snippet">
+                  {h.snippet.slice(0, h.matchStart)}<mark>{h.snippet.slice(h.matchStart, h.matchStart + h.matchLength)}</mark>{h.snippet.slice(h.matchStart + h.matchLength)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {found?.q === fullQ && found.truncated && <div className="muted sidebar-empty">결과 일부만 표시됩니다.</div>}
+        </section>
+      )}
       {onAutoApprove && autoApprove !== null && (
         <div className="sidebar-foot">
           <button type="button" className={`auto-approve-toggle ${autoApprove ? 'on' : ''}`} role="switch" aria-checked={autoApprove} onClick={() => onAutoApprove(!autoApprove)}
