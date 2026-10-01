@@ -151,6 +151,10 @@ describe('sessionAllowOffered / sessionAllowLabel', () => {
 });
 
 describe('mapSdkMessage', () => {
+  it('a background task notification → task_done (drives a push)', () => {
+    expect(mapSdkMessage(M({ type: 'system', subtype: 'task_notification', task_id: 'k', status: 'completed', output_file: '/tmp/o', summary: 'npm test 끝' }))).toEqual([{ kind: 'task_done', status: 'completed', summary: 'npm test 끝' }]);
+  });
+
   it('init, text deltas (top-level only), tool calls, tool results, rate limit, compact, result', () => {
     expect(mapSdkMessage(M({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-opus-5-5', cwd: '/private/var/w' }))).toEqual([{ kind: 'init', sessionId: 's', model: 'claude-opus-5-5', cwd: '/private/var/w' }]);
     expect(mapSdkMessage(M({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } } }))).toEqual([{ kind: 'delta', text: 'ok' }]);

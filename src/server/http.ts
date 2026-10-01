@@ -8,6 +8,8 @@ import { DirError, listDirs, resolveUnderHome } from './dirs';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
 import type { SlashCommandCache } from './engine/slashCommands';
 import type { FileLister } from './files';
+import type { PushNotifier } from './push/PushNotifier';
+import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
 import { MAX_TITLE_CHARS, type SessionMetaStore } from './sessions/SessionMetaStore';
 import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
@@ -31,6 +33,8 @@ export type HttpDeps = {
   files?: FileLister;
   /** Composer / command menu; absent = no /api/commands. */
   commands?: SlashCommandCache;
+  /** Web Push (알림); absent = no /api/push/*. */
+  push?: { notifier: PushNotifier; store: SubscriptionStore };
 };
 
 /**
@@ -38,7 +42,7 @@ export type HttpDeps = {
  * served by Vite (its own origin, no CSP from here), so no relaxed dev policy is needed.
  */
 export const SECURITY_HEADERS: Record<string, string> = {
-  'content-security-policy': "default-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+  'content-security-policy': "default-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
 };
@@ -58,6 +62,7 @@ const MIME: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
@@ -175,7 +180,10 @@ function serveStatic(uiDir: string, urlPath: string, res: http.ServerResponse): 
   if (!file.startsWith(root + path.sep) && file !== root) { json(res, 404, { error: 'not found' }); return; }
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(root, 'index.html');
   if (!fs.existsSync(file)) { json(res, 503, { error: 'UI 빌드가 없습니다. `npm run build` 를 먼저 실행하세요.' }); return; }
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=3600' });
+  const rel = path.relative(root, file);
+  // PWA: the service worker and manifest are revalidated every time so a new build takes over promptly.
+  const cache = rel === 'index.html' ? 'no-store' : rel === 'sw.js' || rel === 'manifest.webmanifest' ? 'no-cache' : 'public, max-age=3600';
+  res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': cache, ...(rel === 'sw.js' ? { 'service-worker-allowed': '/' } : {}) });
   fs.createReadStream(file).pipe(res);
 }
 
@@ -224,6 +232,8 @@ export function createRequestHandler(deps: HttpDeps) {
     if (!isAllowedHost(req.headers.host, extraHosts)) { json(res, 421, { error: `host ${req.headers.host ?? ''} not allowed` }); return; }
     const url = new URL(req.url ?? '/', 'http://localhost');
     const authed = isAuthed(req.headers.cookie, deps.token);
+    // PWA: behind `tailscale serve` (TLS terminated by tailscaled, proxied to 127.0.0.1) the cookie is marked Secure.
+    const secure = req.headers['x-forwarded-proto'] === 'https';
     if (url.pathname.startsWith('/api/') && MUTATING_METHODS.has(req.method ?? '') && !stateChangingOriginOk(req, devOrigins)) {
       json(res, 403, { error: '허용되지 않은 출처입니다' });
       return;
@@ -233,10 +243,10 @@ export function createRequestHandler(deps: HttpDeps) {
         let token = '';
         try { token = String((JSON.parse(await readBody(req)) as { token?: unknown }).token ?? ''); } catch { /* fallthrough */ }
         if (!token || !tokenMatches(token, deps.token)) { json(res, 401, { error: '토큰이 올바르지 않습니다' }); return; }
-        json(res, 200, { ok: true }, { 'set-cookie': loginCookieHeader(deps.token) });
+        json(res, 200, { ok: true }, { 'set-cookie': loginCookieHeader(deps.token, secure) });
         return;
       }
-      if (url.pathname === '/api/logout' && req.method === 'POST') { json(res, 200, { ok: true }, { 'set-cookie': logoutCookieHeader() }); return; }
+      if (url.pathname === '/api/logout' && req.method === 'POST') { json(res, 200, { ok: true }, { 'set-cookie': logoutCookieHeader(secure) }); return; }
       if (url.pathname.startsWith('/api/')) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
@@ -284,6 +294,32 @@ export function createRequestHandler(deps: HttpDeps) {
         if (url.pathname === '/api/commands' && req.method === 'GET') {
           if (!deps.commands) { json(res, 404, { error: 'not found' }); return; }
           json(res, 200, { commands: deps.commands.get(url.searchParams.get('sessionId'), url.searchParams.get('cwd')) });
+          return;
+        }
+        if (url.pathname.startsWith('/api/push/')) {
+          const push = deps.push;
+          if (!push) { json(res, 404, { error: 'not found' }); return; }
+          if (url.pathname === '/api/push/key' && req.method === 'GET') { json(res, 200, { publicKey: push.notifier.publicKey }); return; }
+          if (req.method !== 'POST') { json(res, 405, { error: 'method not allowed' }); return; }
+          let body: { subscription?: unknown; endpoint?: unknown } = {};
+          try { body = (JSON.parse(await readBody(req)) as typeof body) ?? {}; } catch { /* invalid below */ }
+          if (url.pathname === '/api/push/subscribe') {
+            const sub = parseSubscription(body.subscription);
+            if (!sub) { json(res, 400, { error: '지원하지 않는 알림 구독입니다' }); return; }
+            await push.store.add(sub);
+            json(res, 200, { ok: true });
+            return;
+          }
+          if (!isPushEndpoint(body.endpoint)) { json(res, 400, { error: '잘못된 알림 구독입니다' }); return; }
+          const endpoint = body.endpoint;
+          if (url.pathname === '/api/push/unsubscribe') { await push.store.remove(endpoint); json(res, 200, { ok: true }); return; }
+          if (url.pathname === '/api/push/status') { json(res, 200, { subscribed: push.store.has(endpoint) }); return; }
+          if (url.pathname === '/api/push/test') {
+            const ok = await push.notifier.sendTo(endpoint, { kind: 'test', title: 'deck', body: '테스트 알림입니다', sessionId: null, tag: 'test' });
+            json(res, ok ? 200 : 502, ok ? { ok: true } : { error: '알림을 보내지 못했습니다 (구독이 없거나 전송 실패)' });
+            return;
+          }
+          json(res, 404, { error: 'not found' });
           return;
         }
         if (url.pathname === '/api/dirs' && req.method === 'GET') {

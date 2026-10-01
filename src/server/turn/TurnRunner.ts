@@ -247,6 +247,7 @@ export class TurnRunner {
           break;
         case 'compact': out.compacted = true; break;
         case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+        case 'task_done': sink.emit({ type: 'task_done', ...scope(), status: ev.status, summary: redactSecrets(ev.summary) }); break;
         case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
       }
     }
@@ -424,7 +425,7 @@ export class TurnRunner {
         case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
         case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
         case 'result': result = ev; break;
-        case 'rate_limit': case 'compact': break;
+        case 'rate_limit': case 'compact': case 'task_done': break;
       }
     }
     const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };

@@ -43,6 +43,8 @@ export type EngineEvent =
    * notification woke the model. Everything up to the next result belongs to that continuation.
    */
   | { kind: 'continue'; cause: 'background' }
+  /** Claude `system/task_notification`: a background task settled. */
+  | { kind: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string }
   | EngineResult;
 
 /** A user message sent into a still-open Claude process (background work pending). */

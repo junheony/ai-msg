@@ -319,6 +319,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       return { ...state, panes: mapPanes(state, msg), pending: state.pending.filter((p) => p.turnId !== msg.turnId), questions: state.questions.filter((q) => q.turnId !== msg.turnId) };
     case 'error':
       return { ...state, panes: mapPanes(state, msg), error: msg.message };
+    case 'task_done': return state; // push only (the transcript shows the task notice)
   }
 }
 

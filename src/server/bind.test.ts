@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type os from 'node:os';
-import { bindAddresses, isCgnat, isTailscaleInterface, tailscaleIPv4s } from './bind';
+import { bindAddresses, isCgnat, isTailscaleInterface, tailscaleDnsName, tailscaleIPv4s } from './bind';
 
 function v4(address: string, internal = false): os.NetworkInterfaceInfo {
   return { address, netmask: '255.255.255.255', family: 'IPv4', mac: '00:00:00:00:00:00', internal, cidr: `${address}/32` };
@@ -60,5 +60,19 @@ describe('bindAddresses — carrier NAT is not Tailscale', () => {
     expect(tailscaleIPv4s(() => { throw new Error('ENOENT'); })).toBeNull();
     expect(tailscaleIPv4s(() => '100.106.182.94\n')).toEqual(['100.106.182.94']);
     expect(tailscaleIPv4s(() => 'garbage\n')).toBeNull();
+  });
+});
+
+describe('tailscaleDnsName', () => {
+  it('reads Self.DNSName without the trailing dot', () => {
+    expect(tailscaleDnsName(() => JSON.stringify({ Self: { DNSName: 'Max-MacbookPro.tail88e649.ts.net.' } }))).toBe('max-macbookpro.tail88e649.ts.net');
+  });
+
+  it('fails soft on missing CLI, bad JSON or a missing/odd name', () => {
+    expect(tailscaleDnsName(() => { throw new Error('ENOENT'); })).toBeNull();
+    expect(tailscaleDnsName(() => 'not json')).toBeNull();
+    expect(tailscaleDnsName(() => JSON.stringify({ Self: {} }))).toBeNull();
+    expect(tailscaleDnsName(() => JSON.stringify({ Self: { DNSName: '' } }))).toBeNull();
+    expect(tailscaleDnsName(() => JSON.stringify({ Self: { DNSName: 'evil host/x' } }))).toBeNull();
   });
 });

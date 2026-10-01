@@ -16,6 +16,7 @@ deck v1(Plan 1): Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 �
 ## 2. 살아있는 것 / 세션 한정
 - **2026-10-01 UI 라운드 반영**(폴더 열기·고정됨·GPT 사용량 폴러·Desktop 풍 재디자인·GFM 표·NFC 경로 그룹·CSP script-src): 단위 405. 실계정 E2E 는 이번 라운드에 재실행 안 함(GPT 한도 소진). 산출 보고서는 `.superpowers/sdd/ui-round/`(gitignore).
 - 지금 nohup 으로 떠 있음: `DECK_EXTRA_HOSTS=max-macbookpro.tail88e649.ts.net npm start`(로그 `~/.config/deck/deck.log`) — Tailnet `http://max-macbookpro.tail88e649.ts.net:9320`. 재부팅하면 내려감(launchd 미등록).
+- **PWA·웹 푸시(2026-10-01, `feat/pwa-push`)**: `tailscale serve --bg --https=443 http://127.0.0.1:9320` 설정됨(tailnet 전용, funnel 아님, 재부팅 후에도 유지 · 끄기 `/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --https=443 off`). 폰은 **https://max-macbookpro.tail88e649.ts.net/** 로 열고 홈 화면에 추가(iOS 16.4+) → 상단 `알림` 에서 켬. deck 은 MagicDNS 이름을 자동으로 Host 허용목록에 넣고 https Origin 을 받으며, `X-Forwarded-Proto: https` 면 쿠키에 Secure. VAPID 키 `~/.config/deck/vapid.json`, 구독 `push-subscriptions.json`(둘 다 0600). 아이콘은 `node scripts/gen-icons.mjs` 로 다시 만든다. 푸시는 턴 완료·권한/질문 카드·백그라운드 작업 완료(턴 도중 settled 된 것만) — deck 창에 포커스가 있으면 SW 가 띄우지 않음(iOS 는 항상 띄움).
 - 리눅스 옛 Fleet(`fleet-control.service`)은 2026-10-01 정지·비활성화(되살리기 `systemctl --user enable --now fleet-control`).
 - 상시 서비스 없음. 사용자가 `npm start` 로 실행(127.0.0.1:9320 + Tailscale 주소만). 로그인 토큰 `~/.config/deck/token`(첫 실행 시 생성, 0600).
 - 보호 계정 `~/.config/offload/protect` = `a`(Claude Desktop 이 A). 쿨다운은 claude-pick/offload 와 공유(`~/.cache/offload/cooldown`).

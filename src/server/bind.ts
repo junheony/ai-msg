@@ -19,21 +19,38 @@ const TAILSCALE_BINS = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS
 
 /** IPv4s from `tailscale ip -4`, or null when the CLI is missing/fails/prints nothing usable (fail soft). */
 export function tailscaleIPv4s(
-  run: () => string = () => {
-    let last: unknown;
-    for (const bin of TAILSCALE_BINS) {
-      try {
-        return execFileSync(bin, ['ip', '-4'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
-      } catch (err) {
-        last = err;
-      }
-    }
-    throw last;
-  },
+  run: () => string = () => runTailscale(['ip', '-4']),
 ): string[] | null {
   try {
     const ips = run().split(/\s+/).filter(isCgnat);
     return ips.length ? ips : null;
+  } catch {
+    return null;
+  }
+}
+
+function runTailscale(args: string[]): string {
+  let last: unknown;
+  for (const bin of TAILSCALE_BINS) {
+    try {
+      return execFileSync(bin, args, { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last;
+}
+
+/**
+ * PWA: this node's MagicDNS name (`Self.DNSName` from `tailscale status --json`, trailing dot dropped),
+ * or null (fail soft). Allowlisted as a Host so `tailscale serve` (https://<name>/ → 127.0.0.1) reaches deck.
+ */
+export function tailscaleDnsName(run: () => string = () => runTailscale(['status', '--json'])): string | null {
+  try {
+    const name = (JSON.parse(run()) as { Self?: { DNSName?: unknown } }).Self?.DNSName;
+    if (typeof name !== 'string') return null;
+    const host = name.replace(/\.$/, '').toLowerCase();
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) ? host : null;
   } catch {
     return null;
   }

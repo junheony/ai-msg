@@ -52,6 +52,12 @@ describe('cookies', () => {
     expect(h).toContain('SameSite=Strict');
     expect(h).toContain('Path=/');
     expect(logoutCookieHeader()).toContain('Max-Age=0');
+    expect(h).not.toContain('Secure');
+  });
+
+  it('adds Secure only when served over https', () => {
+    expect(loginCookieHeader('f'.repeat(64), true)).toMatch(/; Secure$/);
+    expect(logoutCookieHeader(true)).toMatch(/; Secure$/);
   });
 });
 
@@ -72,6 +78,15 @@ describe('checkUpgrade', () => {
     expect(checkUpgrade({ headers: { cookie, host: '127.0.0.1:9320' } }, token).ok).toBe(false);
     expect(checkUpgrade({ headers: { cookie, origin: 'http://evil.example', host: '127.0.0.1:9320' } }, token).ok).toBe(false);
     expect(checkUpgrade({ headers: { cookie, origin: 'http://127.0.0.1:9999', host: '127.0.0.1:9320' } }, token).ok).toBe(false);
+  });
+
+  // PWA: tailscale serve fronts deck at https://<magicdns> (no port) and forwards that Host unchanged.
+  it('accepts the https MagicDNS origin (no port) when its Host is allowlisted', () => {
+    const host = 'max-macbookpro.tail88e649.ts.net';
+    expect(checkUpgrade({ headers: { cookie, origin: `https://${host}`, host } }, token, [], [host])).toEqual({ ok: true });
+    expect(checkUpgrade({ headers: { cookie, origin: `https://${host}`, host } }, token).ok).toBe(false);
+    expect(checkUpgrade({ headers: { cookie, origin: 'https://evil.example', host } }, token, [], [host]).ok).toBe(false);
+    expect(checkUpgrade({ headers: { cookie, origin: `https://${host}:8443`, host } }, token, [], [host]).ok).toBe(false);
   });
 
   it('accepts an explicitly allowed dev origin', () => {
