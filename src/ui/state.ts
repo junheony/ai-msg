@@ -1,5 +1,5 @@
 import type { Account, Seat } from '../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, type AnyModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind } from '../shared/models';
+import { DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import type { DeckSettings, ServerMessage, TurnBadge } from '../shared/protocol';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -27,9 +27,11 @@ export type PaneState = {
   awaitingStart: boolean;
   /** The `send.clientRef` of that pending send; null for a send made without one (legacy matching). */
   awaitingRef: string | null;
-  model: AnyModel;
+  model: ModelChoice;
   /** Reasoning effort per engine, so switching Claude ↔ GPT keeps each side's pick. */
   efforts: Record<EngineKind, Effort>;
+  /** Effort while the model is 자동: null = 자동 too (the server picks per model). */
+  autoEffort: Effort | null;
   /** New-session choices (D2, D3); the server ignores them once the session exists. */
   engine: EngineChoice;
   sandbox: CodexSandbox;
@@ -58,7 +60,7 @@ export type AppState = {
 export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
 }
 
 export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, pins: [], desktop: [], autoApprove: null };
@@ -68,8 +70,9 @@ export type Action =
   | { type: 'connected'; value: boolean }
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
   | { type: 'sent'; text: string; paneId?: string; attachments?: string[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string }
-  | { type: 'set_model'; model: AnyModel; paneId?: string }
+  | { type: 'set_model'; model: ModelChoice; paneId?: string }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
+  | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
   | { type: 'set_engine'; engine: EngineChoice; paneId?: string }
   | { type: 'set_sandbox'; sandbox: CodexSandbox; paneId?: string }
   | { type: 'attach'; attachment: UploadedAttachment; paneId?: string }
@@ -101,15 +104,15 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
   return items;
 }
 
-/** Which engine a model runs on. */
-export function engineOf(model: AnyModel): EngineKind {
+/** Which engine a model runs on (자동 picks among Claude models). */
+export function engineOf(model: ModelChoice): EngineKind {
   return isCodexModel(model) ? 'codex' : 'claude';
 }
 
-/** The pane's model if it belongs to `engine`, else that engine's default. */
-export function modelFor(engine: EngineKind, model: AnyModel): AnyModel {
+/** The pane's model if it belongs to `engine`, else that engine's default. 자동 stays 자동 on Claude (the session keeps its model). */
+export function modelFor(engine: EngineKind, model: ModelChoice): ModelChoice {
   if (engine === 'codex') return isCodexModel(model) ? model : DEFAULT_CODEX_MODEL;
-  return isClaudeModel(model) ? model : DEFAULT_MODEL;
+  return isClaudeModel(model) || model === 'auto' ? model : DEFAULT_MODEL;
 }
 
 type AssistantItem = Extract<ChatItem, { kind: 'assistant' }>;
@@ -311,6 +314,7 @@ export function reducer(state: AppState, action: Action): AppState {
     }));
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
+    case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? p.model : modelFor(action.engine, p.model) }));
     case 'set_sandbox': return updatePane(state, action.paneId, (p) => ({ ...p, sandbox: action.sandbox }));
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));

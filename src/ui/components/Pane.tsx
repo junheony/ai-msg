@@ -26,7 +26,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
   const isNew = s?.sessionId === null;
   // PF13: an existing session is never sent (or shown) a model of the other engine.
   const model = s && !isNew && s.engine ? modelFor(s.engine, pane.model) : pane.model;
-  const effort = pane.efforts[engineOf(model)];
+  // 자동: effort is 자동 too unless the user picked one (null → omitted; the server picks per model).
+  const effort = model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   return (
     <section className={`pane ${active ? 'active' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
@@ -55,7 +56,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
             const clientRef = nextClientRef();
             dispatch({ type: 'sent', text, paneId: pane.id, attachments: pane.attachments.map((a) => a.name), clientRef });
             send({
-              type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, model, effort,
+              type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, model,
+              ...(effort ? { effort } : {}),
               ...(isNew ? { engine: pane.engine, sandbox: pane.sandbox } : {}),
               ...(ids.length ? { attachments: ids } : {}),
               clientRef,
@@ -65,7 +67,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
           onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
           onModel={(m) => dispatch({ type: 'set_model', model: m, paneId: pane.id })}
-          onEffort={(e) => dispatch({ type: 'set_effort', engine: engineOf(model), effort: e, paneId: pane.id })}
+          onEffort={(e) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id })}
           onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })}
           onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })}
           onAttach={(attachment) => dispatch({ type: 'attach', attachment, paneId: pane.id })}

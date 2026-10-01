@@ -19,7 +19,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     // Review M8: absolute path, bounded; the server also checks it is an existing directory.
     cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }),
     text: z.string().min(1).max(200_000),
-    model: z.enum(['sonnet', 'opus', 'fable', 'gpt-6-sol', 'gpt-6-astra']).optional(),
+    /** 'auto' = 자동: new Claude sessions get a model from the first prompt; later turns keep the session's model. */
+    model: z.enum(['sonnet', 'opus', 'fable', 'gpt-6-sol', 'gpt-6-astra', 'auto']).optional(),
     /** Reasoning effort for this turn (allowlist = shared/models EFFORTS); absent = the engine's own default. */
     effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     /** New sessions only (D3): which engine opens the session. Ignored on resume — the stored engine wins. */

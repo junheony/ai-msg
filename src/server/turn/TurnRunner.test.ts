@@ -379,6 +379,22 @@ describe('TurnRunner', () => {
     expect(eng.calls[1]).not.toHaveProperty('effort');
   });
 
+  it('자동: the first turn picks the model and effort from the prompt; later 자동 turns keep the session model', async () => {
+    const eng = new StubEngine(() => ok('auto1'));
+    const c = await ctx(eng);
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: '이 함수 이름 뭐야?', model: 'auto' }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ model: 'sonnet', effort: 'medium' });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ model: 'sonnet', reason: expect.stringMatching(/^자동 → Sonnet 5\.5 · 짧은 조회/) });
+    expect(c.deps.store.get('auto1')).toMatchObject({ defaultModel: 'sonnet' });
+    // A later 자동 turn with a "hard" prompt does not switch models mid-session.
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'auto1', text: '보안 취약점 검토해줘', model: 'auto' }, c.sink);
+    expect(eng.calls[1]).toMatchObject({ model: 'sonnet', effort: 'medium' });
+    // An explicit effort wins over the automatic one.
+    await runner.run({ turnId: 't3', cwd: '/w/new', sessionId: null, text: '버그 고쳐줘', model: 'auto', effort: 'low' }, c.sink);
+    expect(eng.calls[2]).toMatchObject({ model: 'opus', effort: 'low' });
+  });
+
   it('unknown session id → error, no engine call', async () => {
     const eng = new StubEngine(() => ok('x'));
     const c = await ctx(eng);

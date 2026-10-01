@@ -44,6 +44,15 @@ export const EFFORT_LABEL: Record<Effort, string> = { low: '낮음', medium: '�
 export const MODEL_EFFORTS: Record<AnyModel, readonly Effort[]> = { opus: EFFORTS, sonnet: EFFORTS, fable: EFFORTS, 'gpt-6-sol': EFFORTS, 'gpt-6-astra': EFFORTS };
 export const DEFAULT_EFFORT: Record<'claude' | 'codex', Effort> = { claude: 'high', codex: 'medium' };
 
+/**
+ * 자동 (picker value 'auto'): the server picks the Claude model for the first turn of a new session from the prompt
+ * (routing/AutoModel); later turns keep that model. Never a mid-session switch (prompt cache).
+ */
+export type ModelChoice = AnyModel | 'auto';
+export const AUTO_MODEL_INFO = { name: '자동', description: '첫 턴 내용으로 Sonnet · Opus · Fable 중 선택' } as const;
+/** Effort 자동 uses when the user did not set one explicitly. */
+export const AUTO_EFFORT: Record<ClaudeModel, Effort> = { sonnet: 'medium', opus: 'high', fable: 'high' };
+
 export function isEffort(x: unknown): x is Effort {
   return x === 'low' || x === 'medium' || x === 'high' || x === 'xhigh';
 }

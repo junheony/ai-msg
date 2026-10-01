@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice } from '../../shared/models';
+import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type ModelChoice } from '../../shared/models';
 import type { ServerMessage } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -12,6 +12,7 @@ import { ruleString, sessionUpdates, type Engine, type EngineResult, type Permis
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
+import { chooseAutoModel } from '../routing/AutoModel';
 import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
@@ -34,8 +35,8 @@ export type TurnParams = {
   cwd: string;
   sessionId: string | null;
   text: string;
-  /** Claude or GPT model; a model of the other engine is ignored (the session's default applies). */
-  model?: AnyModel;
+  /** Claude or GPT model; a model of the other engine is ignored (the session's default applies). 'auto' = 자동 (new Claude sessions). */
+  model?: ModelChoice;
   /** Reasoning effort for this turn; dropped if the resolved model does not support it. */
   effort?: Effort;
   /** New sessions only (D3). */
@@ -249,7 +250,13 @@ export class TurnRunner {
       });
       if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason, attachments);
       // Only a non-default choice earns a prefix, so Plan 1 badges read exactly as before.
-      return this.runClaude(p, null, sink, p.engine && p.engine !== 'claude' ? pick.reason : null, attachments);
+      const enginePrefix = p.engine && p.engine !== 'claude' ? pick.reason : null;
+      if (p.model === 'auto') {
+        // 자동: decided once, here, for the new session; later turns keep it as the session default (prompt cache).
+        const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.snapshot(), nowMs: this.now(), cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount });
+        return this.runClaude({ ...p, model: auto.model, effort: p.effort ?? auto.effort }, null, sink, enginePrefix ? `${enginePrefix} · ${auto.reason}` : auto.reason, attachments, auto.model);
+      }
+      return this.runClaude(p, null, sink, enginePrefix, attachments);
     }
     return this.runClaude(p, state, sink, null, attachments);
   }
@@ -300,10 +307,12 @@ export class TurnRunner {
     sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : displayError(res.errorText, res.stderr) });
   }
 
-  private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[]): Promise<void> {
+  private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
-    const sessionDefault = state?.defaultModel ?? DEFAULT_MODEL;
+    const sessionDefault = state?.defaultModel ?? newSessionModel ?? DEFAULT_MODEL;
+    // 자동 on a later turn: the session keeps its model, and its auto effort unless the user picked one.
+    if (p.model === 'auto' && p.effort === undefined) p = { ...p, effort: AUTO_EFFORT[sessionDefault] };
     const wantedClaude = isClaudeModel(p.model) ? p.model : undefined;
     const wanted = wantedClaude ?? sessionDefault;
     const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable' };

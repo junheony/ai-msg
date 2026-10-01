@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
-import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, SANDBOX_LABEL, type AnyModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind } from '../../shared/models';
+import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-types';
 import type { ChatItem, PendingPermission, PendingQuestion, UploadedAttachment } from '../state';
 import { mergeToolRuns } from '../toolRuns';
@@ -21,9 +21,9 @@ export type ChatProps = {
   cwd?: string;
   /** Right-aligned header buttons (the pane's close button). */
   headActions?: ReactNode;
-  model: AnyModel;
-  /** Reasoning effort for `model`'s engine. */
-  effort: Effort;
+  model: ModelChoice;
+  /** Reasoning effort for `model`'s engine; null = 자동 (model 자동 only). */
+  effort: Effort | null;
   /** New-session choices (D2, D3). */
   engine: EngineChoice;
   sandbox: CodexSandbox;
@@ -38,8 +38,8 @@ export type ChatProps = {
   onInterrupt: () => void;
   onDecide: (requestId: string, decision: PermissionDecision) => void;
   onAnswer: (requestId: string, answers: QuestionAnswers) => void;
-  onModel: (m: AnyModel) => void;
-  onEffort: (e: Effort) => void;
+  onModel: (m: ModelChoice) => void;
+  onEffort: (e: Effort | null) => void;
   onEngine: (e: EngineChoice) => void;
   onSandbox: (s: CodexSandbox) => void;
   onAttach: (a: UploadedAttachment) => void;
@@ -87,7 +87,8 @@ export function Chat(p: ChatProps) {
   // D3 / PF11: a new session follows the picker (the engine recorded at open time is ignored while it is new);
   // once the session exists its engine is fixed.
   const effectiveEngine: EngineChoice = p.isNew ? p.engine : (p.sessionEngine ?? 'claude');
-  const models: readonly AnyModel[] = effectiveEngine === 'codex' ? CODEX_MODELS : effectiveEngine === 'claude' ? CLAUDE_MODELS : [...CLAUDE_MODELS, ...CODEX_MODELS];
+  // 자동 is offered for Claude (and the engine 자동, which may open on Claude); on an existing session it keeps the session's model.
+  const models: readonly ModelChoice[] = effectiveEngine === 'codex' ? CODEX_MODELS : effectiveEngine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
   const canSend = (text.trim().length > 0 || p.attachments.length > 0) && !p.busy && uploading === 0;
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
   const liveTools = live ? live.toolCalls.length : 0;
