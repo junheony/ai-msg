@@ -63,8 +63,8 @@ export function FolderPicker({ onOpen, onClose, fetchFn = fetch }: { onOpen: (pa
             else if (e.key === 'Escape') onClose();
           }}
         />
-        <button type="button" onClick={() => void open(input)}>열기</button>
-        <button type="button" aria-label="닫기" onClick={onClose}>✕</button>
+        <button type="button" className="btn primary" onClick={() => void open(input)}>열기</button>
+        <button type="button" className="icon-btn" aria-label="닫기" onClick={onClose}>✕</button>
       </div>
       {error && <div className="error">{error}</div>}
       {shown.length > 0 && (

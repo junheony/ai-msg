@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UsagePanel, countdown } from './UsagePanel';
 import type { UsageSnapshot } from '../../shared/usage-types';
 
@@ -58,5 +58,21 @@ describe('UsagePanel', () => {
     render(<UsagePanel usage={usage} current={null} now={NOW} />);
     expect(screen.getByTestId('gpt-weekly').textContent).toContain('—');
     expect(screen.getByTestId('account-gpt').title).toContain('usage-deck');
+  });
+});
+
+describe('UsagePanel chips', () => {
+  afterEach(cleanup);
+  it('each window has a bar sized to the remaining %, and a tap opens a popover with the reset times', () => {
+    render(<UsagePanel usage={usage} current="b" now={NOW} />);
+    const bar = screen.getByTestId('a-fiveHour').querySelector('.usage-bar > i') as HTMLElement;
+    expect(bar.style.width).toBe('87%');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.click(screen.getByTestId('account-a'));
+    const pop = screen.getByRole('tooltip');
+    expect(pop.textContent).toContain('2시간 30분 후 리셋');
+    expect(pop.textContent).toContain('리셋 시각 없음');
+    fireEvent.click(screen.getByTestId('account-a'));
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });

@@ -71,12 +71,14 @@ export function App() {
 
   return (
     <div className="app">
-      <header>
-        {phone && <button type="button" className="menu" aria-label="메뉴" onClick={() => setDrawer((d) => !d)}>☰</button>}
-        <span className="brand">deck</span>
+      <header className="topbar">
+        {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
+        <span className="brand"><span className="spark" aria-hidden="true">✳</span>deck</span>
         <UsagePanel usage={state.usage} current={active.session?.account ?? null} />
-        {!phone && <button type="button" className="split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title="분할보기 (최대 4)">+ 분할</button>}
-        <span className={`conn ${state.connected ? 'on' : 'off'}`}>{state.connected ? '연결됨' : '재연결 중…'}</span>
+        <div className="topbar-end">
+          {!phone && <button type="button" className="text-btn split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title="분할보기 (최대 4)">+ 분할</button>}
+          <span className={`conn ${state.connected ? 'on' : 'off'}`} title={state.connected ? '연결됨' : '재연결 중…'}>{state.connected ? '연결됨' : '재연결 중…'}</span>
+        </div>
       </header>
       {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}
       {(orphanPerms.length > 0 || orphanQs.length > 0) && (

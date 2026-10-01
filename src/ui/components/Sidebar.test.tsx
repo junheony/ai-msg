@@ -61,3 +61,34 @@ describe('Sidebar pins (F2)', () => {
     expect(onOpen).toHaveBeenCalledWith('s3', '/w/two', 'third');
   });
 });
+
+describe('Sidebar folding and search', () => {
+  afterEach(cleanup);
+  const s = (i: number) => ({ sessionId: `s${i}`, account: 'a' as const, cwd: '/w', projectDir: '/p', file: '/f', title: `session ${i}`, lastModified: Date.now() - 3 * 3_600_000, sizeBytes: 1 });
+  const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: Array.from({ length: 8 }, (_, i) => s(i)) }];
+
+  it('shows 5 sessions then 더 보기; the project header collapses its list; rows carry "A · 3시간 전"', () => {
+    const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(container.querySelectorAll('li')).toHaveLength(5);
+    expect(container.querySelector('.session-meta')?.textContent).toBe('A · 3시간 전');
+    fireEvent.click(screen.getByText('더 보기 (3)'));
+    expect(container.querySelectorAll('li')).toHaveLength(8);
+    fireEvent.click(screen.getByText('접기'));
+    expect(container.querySelectorAll('li')).toHaveLength(5);
+    fireEvent.click(screen.getByText('w'));
+    expect(container.querySelectorAll('li')).toHaveLength(0);
+  });
+
+  it('the search box filters sessions by title across the fold', () => {
+    const onNew = vi.fn();
+    const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={onNew} onRefresh={noop} />);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'session 7' } });
+    expect([...container.querySelectorAll('.session-title')].map((e) => e.textContent)).toEqual(['session 7']);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'nothing' } });
+    expect(screen.getByText(/맞는 세션이 없습니다/)).toBeTruthy();
+    expect(screen.queryByLabelText('w 새 세션')).toBeNull(); // the project hides while nothing in it matches
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: '' } });
+    fireEvent.click(screen.getByLabelText('w 새 세션'));
+    expect(onNew).toHaveBeenCalledWith('/w', 'w');
+  });
+});

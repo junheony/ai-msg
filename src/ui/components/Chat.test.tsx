@@ -75,3 +75,21 @@ describe('Chat', () => {
     expect(onAnswer).toHaveBeenCalledWith('q1', { 'Which?': 'b' });
   });
 });
+
+describe('Chat composer and header (Desktop style)', () => {
+  afterEach(cleanup);
+  it('header shows the title and the folder chip (full path on hover); a running turn shows the status line and a stop button', () => {
+    const onInterrupt = vi.fn();
+    renderChat([{ kind: 'user', text: 'x' }, { kind: 'assistant', turnId: 't1', text: '', toolCalls: [{ toolUseId: '1', name: 'Bash', input: { command: 'ls' }, result: null, isError: false }], badge: null, streaming: true, error: null, notes: [], attempts: [] }], true, vi.fn(), { activeTurnId: 't1', cwd: '/Users/u/Documents/proj', onInterrupt });
+    const chip = screen.getByText('proj');
+    expect(chip.getAttribute('title')).toBe('/Users/u/Documents/proj');
+    const status = screen.getByTestId('turn-status');
+    expect(status.textContent).toContain('실행 중인 작업 1개');
+    expect(status.textContent).toContain('도구 1회');
+    fireEvent.click(screen.getByText('중단'));
+    expect(onInterrupt).toHaveBeenCalled();
+    cleanup();
+    renderChat([]);
+    expect(screen.queryByTestId('turn-status')).toBeNull();
+  });
+});

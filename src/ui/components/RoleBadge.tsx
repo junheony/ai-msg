@@ -1,5 +1,6 @@
 import type { RoleEntry } from '../roles';
 
+/** D9 role distribution as a small muted inline line, not a box. */
 export function RoleBadge({ roles }: { roles: RoleEntry[] }) {
   if (!roles.length) return null;
   const agents = roles.filter((r) => r.kind === 'agent').length;

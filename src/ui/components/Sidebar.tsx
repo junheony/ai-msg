@@ -2,6 +2,10 @@ import { useState } from 'react';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { FolderPicker } from './FolderPicker';
 
+/** Sessions shown per project before "더 보기". */
+export const FOLD_AT = 5;
+const MAX_SESSIONS = 30;
+
 function ago(ms: number, now = Date.now()): string {
   const d = now - ms;
   if (d < 60_000) return '방금';
@@ -24,52 +28,101 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onTogglePin?: (sessionId: string, pinned: boolean) => void;
 }) {
   const [picking, setPicking] = useState(false);
+  const [query, setQuery] = useState('');
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggle = (set: Set<string>, key: string) => { const n = new Set(set); if (n.has(key)) n.delete(key); else n.add(key); return n; };
+
+  const q = query.trim().toLowerCase();
+  const match = (s: SessionEntry) => !q || s.title.toLowerCase().includes(q);
   const pinSet = new Set(pins);
   const byId = new Map<string, SessionEntry>();
   for (const p of projects) for (const s of p.sessions) byId.set(s.sessionId, s);
-  const pinned = pins.map((id) => byId.get(id)).filter((s): s is SessionEntry => !!s);
+  const pinned = pins.map((id) => byId.get(id)).filter((s): s is SessionEntry => !!s && match(s));
+
   const row = (s: SessionEntry) => {
     const on = pinSet.has(s.sessionId);
     return (
-      <li key={s.sessionId} className={s.sessionId === currentSessionId ? 'active' : ''} onClick={() => onOpen(s.sessionId, s.cwd, s.title)}>
+      <li key={s.sessionId} className={s.sessionId === currentSessionId ? 'active' : ''} title={s.title} onClick={() => onOpen(s.sessionId, s.cwd, s.title)}>
         <span className="session-row">
           <span className="session-title">{s.title}</span>
+          <span className="session-meta">{s.account.toUpperCase()} · {ago(s.lastModified)}</span>
           {onTogglePin && (
-            <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(s.sessionId, !on); }}>📌</button>
+            <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(s.sessionId, !on); }}>
+              <PinIcon filled={on} />
+            </button>
           )}
         </span>
-        <span className="session-meta">{s.account.toUpperCase()} · {ago(s.lastModified)}</span>
       </li>
     );
   };
+
+  const visible = projects.map((p) => ({ p, sessions: p.sessions.slice(0, MAX_SESSIONS).filter(match) })).filter(({ sessions }) => !q || sessions.length > 0);
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
-        <span>프로젝트</span>
-        <span>
-          {onOpenFolder && <button type="button" onClick={() => setPicking((v) => !v)} title="아무 폴더에서 새 세션">폴더 열기</button>}
-          <button type="button" onClick={onRefresh} title="세션 목록 다시 읽기">↻</button>
-        </span>
+        {onOpenFolder && (
+          <button type="button" className="text-btn" onClick={() => setPicking((v) => !v)} title="아무 폴더에서 새 세션" aria-expanded={picking}>
+            <FolderIcon /><span>폴더 열기</span>
+          </button>
+        )}
+        <span className="grow" />
+        <button type="button" className="icon-btn" onClick={onRefresh} title="세션 목록 다시 읽기" aria-label="세션 목록 다시 읽기">↻</button>
       </div>
       {picking && onOpenFolder && <FolderPicker onOpen={(cwd) => { setPicking(false); onOpenFolder(cwd); }} onClose={() => setPicking(false)} {...(fetchFn ? { fetchFn } : {})} />}
+      <label className="sidebar-search">
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="4.75" /><path d="m10.5 10.5 3.25 3.25" /></svg>
+        <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="세션 검색" aria-label="세션 검색" />
+      </label>
       {pinned.length > 0 && (
         <section className="project pinned-group" data-testid="pinned-group">
           <div className="project-head"><span className="project-name">고정됨</span></div>
           <ul>{pinned.map(row)}</ul>
         </section>
       )}
-      {projects.length === 0 && <div className="muted">세션이 없습니다. ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</div>}
-      {projects.map((p) => (
-        <section key={p.cwd} className="project">
-          <div className="project-head">
-            <span className="project-name">{p.pinned ? '★ ' : ''}{p.name}</span>
-            <button type="button" onClick={() => onNew(p.cwd, p.name)}>+ 새 세션</button>
-          </div>
-          <ul>
-            {p.sessions.slice(0, 30).map(row)}
-          </ul>
-        </section>
-      ))}
+      {projects.length === 0 && <div className="muted sidebar-empty">세션이 없습니다. ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</div>}
+      {q && visible.length === 0 && pinned.length === 0 && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
+      {visible.map(({ p, sessions }) => {
+        const isCollapsed = !q && collapsed.has(p.cwd);
+        const showAll = !!q || expanded.has(p.cwd);
+        const shown = showAll ? sessions : sessions.slice(0, FOLD_AT);
+        const hidden = sessions.length - shown.length;
+        return (
+          <section key={p.cwd} className={`project ${isCollapsed ? 'collapsed' : ''}`}>
+            <div className="project-head">
+              <button type="button" className="project-toggle" aria-expanded={!isCollapsed} title={p.cwd} onClick={() => setCollapsed((c) => toggle(c, p.cwd))}>
+                <svg className="chev" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 3.75 5 6.25l2.5-2.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                <span className="project-name">{p.pinned ? '★ ' : ''}{p.name}</span>
+              </button>
+              <button type="button" className="icon-btn" aria-label={`${p.name} 새 세션`} title="+ 새 세션" onClick={() => onNew(p.cwd, p.name)}>+</button>
+            </div>
+            {!isCollapsed && (
+              <>
+                <ul>{shown.map(row)}</ul>
+                {hidden > 0 && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>더 보기 ({hidden})</button>}
+                {!q && expanded.has(p.cwd) && sessions.length > FOLD_AT && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>접기</button>}
+              </>
+            )}
+          </section>
+        );
+      })}
     </aside>
+  );
+}
+
+function PinIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+      <path d="M6 1.75h4l-.5 4.5 2.5 2.5v1H4v-1l2.5-2.5z" />
+      <path d="M8 9.75v4.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
+      <path d="M1.75 4.25a1 1 0 0 1 1-1h3.1l1.5 1.5h5.9a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" />
+    </svg>
   );
 }

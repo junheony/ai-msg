@@ -28,9 +28,9 @@ export function QuestionCard({ req, onAnswer }: { req: PendingQuestion; onAnswer
   const submit = () => onAnswer(req.requestId, answersFor(req, req.questions.map((q) => answerOf(q))));
 
   return (
-    <div className="question-card">
-      <div className="question-head">질문</div>
-      <div className="question-scope muted" data-testid="question-scope">{req.sessionId ? `세션 ${req.sessionId.slice(0, 8)}` : '새 세션'} · {req.cwd}</div>
+    <div className="question-card" role="group" aria-label="질문">
+      <div className="question-head"><span className="dot" aria-hidden="true" />질문</div>
+      <div className="question-scope muted" data-testid="question-scope" title={req.cwd}>{req.sessionId ? `세션 ${req.sessionId.slice(0, 8)}` : '새 세션'} · {req.cwd}</div>
       {req.questions.map((q) => (
         <div key={q.question} className="question">
           {q.header && <span className="chip header">{q.header}</span>}
@@ -50,7 +50,7 @@ export function QuestionCard({ req, onAnswer }: { req: PendingQuestion; onAnswer
         </div>
       ))}
       <div className="permission-actions">
-        <button type="button" disabled={!complete} onClick={submit}>답변 보내기</button>
+        <button type="button" className="btn primary" disabled={!complete} onClick={submit}>답변 보내기</button>
       </div>
     </div>
   );

@@ -26,12 +26,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
   const isNew = s?.sessionId === null;
   // PF13: an existing session is never sent (or shown) a model of the other engine.
   const model = s && !isNew && s.engine ? modelFor(s.engine, pane.model) : pane.model;
+  const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   return (
     <section className={`pane ${active ? 'active' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
-      <div className="pane-head">
-        <span className="pane-engine muted">{s?.engine === 'codex' ? 'GPT' : s?.engine === 'claude' ? 'Claude' : ''}</span>
-        {closable && <button type="button" className="pane-close" aria-label="패널 닫기" onClick={onClose}>✕</button>}
-      </div>
       {s ? (
         <Chat
           items={pane.items}
@@ -39,7 +36,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           questions={cardsForPane(pane, app.questions)}
           activeTurnId={pane.activeTurnId}
           busy={pane.activeTurnId !== null || pane.awaitingStart}
-          title={`${s.title} — ${s.cwd}`}
+          title={s.title}
+          cwd={s.cwd}
+          headActions={close}
           model={model}
           engine={pane.engine}
           sandbox={pane.sandbox}
@@ -70,7 +69,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           onUnattach={(id) => dispatch({ type: 'unattach', id, paneId: pane.id })}
         />
       ) : (
-        <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>
+        <>
+          {close && <div className="chat-head"><span className="spacer" />{close}</div>}
+          <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>
+        </>
       )}
     </section>
   );

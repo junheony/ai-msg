@@ -2,7 +2,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import { roleSummary } from '../roles';
 import type { ChatItem } from '../state';
 import { RoleBadge } from './RoleBadge';
-import { ToolCallView } from './ToolCallView';
+import { ToolCalls } from './ToolCallView';
 import { TurnBadge } from './TurnBadge';
 
 /**
@@ -16,6 +16,7 @@ const MD_COMPONENTS: Components = {
   a: ({ href, children }) => <a href={href} rel="noreferrer noopener" target="_blank">{children}</a>,
 };
 
+/** Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines. */
 export function MessageView({ item }: { item: ChatItem }) {
   if (item.kind === 'user') return (
     <div className="msg user">
@@ -27,8 +28,8 @@ export function MessageView({ item }: { item: ChatItem }) {
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}`}>
       {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
       {item.attempts.map((t, i) => <div key={i} className="markdown failed-attempt muted"><ReactMarkdown components={MD_COMPONENTS}>{t}</ReactMarkdown></div>)}
-      {item.toolCalls.map((c) => <ToolCallView key={c.toolUseId} call={c} />)}
-      <div className="markdown"><ReactMarkdown components={MD_COMPONENTS}>{item.text}</ReactMarkdown></div>
+      <ToolCalls calls={item.toolCalls} live={item.streaming} />
+      {item.text && <div className="markdown"><ReactMarkdown components={MD_COMPONENTS}>{item.text}</ReactMarkdown></div>}
       {item.streaming && <span className="cursor">▍</span>}
       {item.error && <div className="error">오류: {item.error}</div>}
       {item.badge && <TurnBadge badge={item.badge} />}
