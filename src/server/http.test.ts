@@ -334,7 +334,7 @@ describe('POST /api/pins (F2)', () => {
 describe('GET /api/attachments/:id (ux-state thumbnails)', () => {
   const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
   const cookie = () => ({ cookie: `deck_session=${cookieValueFor(TOKEN)}` });
-  const upload = async (name: string, body: Buffer) => {
+  const upload = async (name: string, body: typeof PNG) => {
     const res = await fetch(`${base}/api/attachments`, { method: 'POST', headers: { ...cookie(), origin: base, 'x-deck-filename': name }, body });
     return ((await res.json()) as { id: string }).id;
   };
