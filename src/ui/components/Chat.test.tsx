@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Chat } from './Chat';
 import type { ChatProps } from './Chat';
 import type { ChatItem } from '../state';
@@ -11,7 +11,7 @@ Element.prototype.scrollIntoView = () => {};
 const failed: ChatItem = { kind: 'assistant', turnId: 't', text: '', toolCalls: [], badge: null, streaming: false, error: '한도 도달', notes: [], attempts: [] };
 
 function renderChat(items: ChatItem[], busy = false, onSend = vi.fn(), extra: Partial<ChatProps> = {}) {
-  render(<Chat items={items} pending={[]} questions={[]} activeTurnId={null} busy={busy} title="t" model="opus" engine="claude" sandbox="read-only" sessionEngine={null} sessionSandbox={null} isNew={false} codexAvailable={false} attachments={[]} onSend={onSend} onInterrupt={() => {}} onDecide={() => {}} onAnswer={() => {}} onModel={() => {}} onEngine={() => {}} onSandbox={() => {}} onAttach={() => {}} onUnattach={() => {}} {...extra} />);
+  render(<Chat items={items} pending={[]} questions={[]} activeTurnId={null} busy={busy} title="t" model="opus" effort="high" engine="claude" sandbox="read-only" sessionEngine={null} sessionSandbox={null} isNew={false} codexAvailable={false} attachments={[]} onSend={onSend} onInterrupt={() => {}} onDecide={() => {}} onAnswer={() => {}} onModel={() => {}} onEffort={() => {}} onEngine={() => {}} onSandbox={() => {}} onAttach={() => {}} onUnattach={() => {}} {...extra} />);
   return onSend;
 }
 
@@ -42,7 +42,8 @@ describe('Chat', () => {
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'auto' } });
     expect(onEngine).toHaveBeenCalledWith('auto');
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    expect(Array.from((screen.getByTestId('model-select') as HTMLSelectElement).options).map((o) => o.value)).toEqual(['gpt-6-sol', 'gpt-6-astra']);
+    fireEvent.click(screen.getByTestId('model-picker'));
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'workspace-write', model: 'gpt-6-astra' });
     expect(screen.getByText(/샌드박스: 작업폴더 쓰기/)).toBeTruthy();
@@ -52,7 +53,8 @@ describe('Chat', () => {
   it('PF11: a new session follows the engine picker even when the session engine frozen at open says claude', () => {
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, engine: 'codex', sessionEngine: 'claude', model: 'gpt-6-sol' });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    expect(Array.from((screen.getByTestId('model-select') as HTMLSelectElement).options).map((o) => o.value)).toEqual(['gpt-6-sol', 'gpt-6-astra']);
+    fireEvent.click(screen.getByTestId('model-picker'));
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
     expect(screen.queryByText(/샌드박스:/)).toBeNull();
   });
 

@@ -369,6 +369,16 @@ describe('TurnRunner', () => {
     expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ badge: { model: 'opus', modelNote: expect.stringContaining('Fable') } });
   });
 
+  it('effort travels to the Claude engine and survives a Fable → Opus downgrade; absent → no effort', async () => {
+    const eng = new StubEngine(() => ok('e1'));
+    const c = await ctx(eng, {}, await usageWith([13, 7, 85], [2, 3, 90], [0, 50, 80]));
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi', model: 'fable', effort: 'xhigh' }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ model: 'opus', effort: 'xhigh' });
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi', model: 'sonnet' }, c.sink);
+    expect(eng.calls[1]).not.toHaveProperty('effort');
+  });
+
   it('unknown session id → error, no engine call', async () => {
     const eng = new StubEngine(() => ok('x'));
     const c = await ctx(eng);
@@ -427,6 +437,14 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ model: 'gpt-6-sol' });
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, badge: { account: 'gpt', model: 'gpt-6-sol' } });
     expect(c.deps.store.get('tid-2')).toMatchObject({ defaultModel: 'gpt-6-astra' });
+  });
+
+  it('a per-turn effort reaches the codex engine', async () => {
+    const codex = fakeCodex((req) => codexOk(req.resumeThreadId ?? 'x'));
+    const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
+    await c.deps.store.set({ engine: 'codex', sessionId: 'tid-2', cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gpt-6-astra', sandbox: 'read-only', rolloutFile: null, createdAtMs: 1 });
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w2', sessionId: 'tid-2', text: 'again', model: 'gpt-6-sol', effort: 'high' }, c.sink);
+    expect(codex.calls[0]).toMatchObject({ model: 'gpt-6-sol', effort: 'high' });
   });
 
   it('resuming a codex session keeps its engine, model and sandbox; the sent sandbox and a non-Codex model are ignored', async () => {

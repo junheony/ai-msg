@@ -20,7 +20,7 @@ describe('Pane (D6)', () => {
     fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: 'hello' } });
     fireEvent.click(screen.getByText('보내기'));
     expect(dispatch).toHaveBeenCalledWith({ type: 'sent', text: 'hello', paneId: 'p1', attachments: ['shot.png'], clientRef: expect.any(String) });
-    expect(send).toHaveBeenCalledWith({ type: 'send', sessionId: null, cwd: '/w', text: 'hello', model: 'gpt-6-astra', engine: 'codex', sandbox: 'workspace-write', attachments: ['a1'], clientRef: expect.any(String) });
+    expect(send).toHaveBeenCalledWith({ type: 'send', sessionId: null, cwd: '/w', text: 'hello', model: 'gpt-6-astra', effort: 'medium', engine: 'codex', sandbox: 'workspace-write', attachments: ['a1'], clientRef: expect.any(String) });
     // T9 prerequisite (a): the frame carries the same clientRef the reducer waits for.
     const ref1 = (dispatch.mock.calls.find((c) => (c[0] as Action).type === 'sent')![0] as { clientRef: string }).clientRef;
     expect((send.mock.calls[0]![0] as { clientRef: string }).clientRef).toBe(ref1);
@@ -32,7 +32,7 @@ describe('Pane (D6)', () => {
     fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: 'again' } });
     fireEvent.click(screen.getByText('보내기'));
     // PF13: a Claude session is never sent a GPT model (falls back to the Claude default).
-    expect(send).toHaveBeenLastCalledWith({ type: 'send', sessionId: 's1', cwd: '/w', text: 'again', model: 'opus', attachments: ['a1'], clientRef: expect.any(String) });
+    expect(send).toHaveBeenLastCalledWith({ type: 'send', sessionId: 's1', cwd: '/w', text: 'again', model: 'opus', effort: 'high', attachments: ['a1'], clientRef: expect.any(String) });
     const ref2 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
     expect(ref2).not.toBe(ref1);
   });
@@ -55,9 +55,37 @@ describe('Pane (D6)', () => {
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    const select = screen.getByTestId('model-select') as HTMLSelectElement;
-    expect(Array.from(select.options).map((o) => o.value)).toEqual(['gpt-6-sol', 'gpt-6-astra']);
-    expect(select.value).toBe('gpt-6-sol');
+    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6-Sol · 중간');
+    fireEvent.click(screen.getByTestId('model-picker'));
+    const items = within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio');
+    expect(items.slice(0, 2).map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6-Sol'), expect.stringContaining('GPT-6-Astra')]);
+    expect(items[0]!.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('effort is kept per pane and per engine, and sent with each turn', () => {
+    let s0: AppState = reducer(initialState, { type: 'add_pane' });
+    s0 = reducer(s0, { type: 'open', sessionId: null, cwd: '/w', title: 'n0', paneId: 'p0' });
+    s0 = reducer(s0, { type: 'open', sessionId: null, cwd: '/w', title: 'n1', paneId: 'p1' });
+    s0 = { ...s0, codexAvailable: true };
+    const frames: ClientMessage[] = [];
+    function Harness() {
+      const [state, dispatch] = useReducer(reducer, s0);
+      return <>{state.panes.map((p) => <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable dispatch={dispatch} send={(m) => frames.push(m)} onClose={() => {}} />)}</>;
+    }
+    render(<Harness />);
+    const p0 = within(screen.getByTestId('pane-p0'));
+    fireEvent.click(p0.getByTestId('model-picker'));
+    fireEvent.click(within(p0.getByTestId('model-menu')).getByText('엑스트라'));
+    expect(p0.getByTestId('model-picker').textContent).toContain('Opus 5.5 · 엑스트라');
+    // The other pane keeps the default.
+    expect(within(screen.getByTestId('pane-p1')).getByTestId('model-picker').textContent).toContain('Opus 5.5 · 높음');
+    // GPT has its own effort (default 중간); switching back to Claude restores 엑스트라.
+    fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'codex' } });
+    expect(p0.getByTestId('model-picker').textContent).toContain('GPT-6-Sol · 중간');
+    fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'claude' } });
+    fireEvent.change(p0.getByPlaceholderText(/메시지/), { target: { value: 'go' } });
+    fireEvent.click(p0.getByText('보내기'));
+    expect(frames.at(-1)).toMatchObject({ type: 'send', model: 'opus', effort: 'xhigh', engine: 'claude' });
   });
 
   it('T9 (a): two panes sending into new sessions whose turn_started arrive in reverse order each get their own turn', () => {

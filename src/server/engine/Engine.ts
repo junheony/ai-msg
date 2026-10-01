@@ -1,7 +1,7 @@
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { Account } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
-import type { ClaudeModel } from '../../shared/models';
+import type { ClaudeModel, Effort } from '../../shared/models';
 import type { PermissionDecision, Question, QuestionAnswers, TurnUsage } from '../../shared/turn-types';
 import type { UsageWindow } from '../../shared/usage-types';
 
@@ -133,6 +133,8 @@ export type TurnRequest = {
   cwd: string;
   resumeSessionId: string | null;
   model: ClaudeModel;
+  /** Reasoning effort → SDK `Options.effort`; absent = the CLI's default for the model. */
+  effort?: Effort;
   prompt: string;
   /** D7: resolved uploads; images → image blocks, others → `첨부 파일:` path lines. */
   attachments?: Attachment[];

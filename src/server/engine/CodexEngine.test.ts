@@ -37,6 +37,14 @@ describe('codexArgs', () => {
     ]);
   });
 
+  it('effort: -c model_reasoning_effort="<level>" on both forms; absent = no override', () => {
+    const fresh = codexArgs({ cwd: '/w', resumeThreadId: null, model: 'gpt-6-sol', sandbox: 'read-only', effort: 'xhigh' });
+    expect(fresh.slice(-3)).toEqual(['-c', 'model_reasoning_effort="xhigh"', '-']);
+    const resumed = codexArgs({ cwd: '/w', resumeThreadId: 'tid', model: 'gpt-6-astra', sandbox: 'read-only', effort: 'low' });
+    expect(resumed).toContain('model_reasoning_effort="low"');
+    expect(codexArgs({ cwd: '/w', resumeThreadId: null, model: 'gpt-6-sol', sandbox: 'read-only' }).join(' ')).not.toContain('model_reasoning_effort');
+  });
+
   it('resume: exec resume <id>, no -C, same overrides', () => {
     const a = codexArgs({ cwd: '/w', resumeThreadId: 'tid', model: 'gpt-6-astra', sandbox: 'workspace-write' });
     expect(a.slice(0, 3)).toEqual(['exec', 'resume', 'tid']);
