@@ -42,3 +42,10 @@ deck v1(Plan 1): Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 �
 - **E2E 부산물**: GPT E2E 는 `~/.codex/sessions` 아래에 스레드(롤아웃)를 남긴다 — 기록으로 두고 지우지 않는다. 사용자 `~/.codex/config.toml` 의 oh-my-codex 알림 훅이 Codex 턴이 끝나고 몇 초 뒤(하네스가 폴더를 지운 뒤) cwd 에 `.omx/` 를 다시 만들어, GPT E2E 한 번마다 `$TMPDIR/deck-e2e-work-*/.omx/` 가 하나 남는다(무해, 수동 삭제). Claude 쪽은 E2E 임시 폴더 slug 의 프로젝트 폴더만 지운다.
 - deck 은 `~/.codex/auth.json`·키체인을 읽지도 쓰지도 않는다(토큰 갱신은 CLI 만 — OpenAI 는 refresh token 재사용을 감지해 로그인을 끊는다).
 - 환경: Node v26, `npm install` 은 optional deps 유지(Agent SDK 네이티브 claude 바이너리). Bash 도구는 zsh(따옴표 없는 변수 분리 안 됨), `timeout` 없음(perl alarm).
+
+## 6. 서버 수명주기 (2026-10-01, `feat/lifecycle`)
+- **백그라운드 서브에이전트가 턴 뒤에도 산다.** 턴은 이제 전부 SDK streaming-input(입력 `AsyncIterable`)으로 돈다. 단발 문자열 prompt 는 결과 직후 프로세스가 끝나 백그라운드 작업이 함께 죽었다(sdk.d.ts `SDKResultMessage`). 결과 뒤에 `system/background_tasks_changed`(없으면 `task_started`/`task_notification`)로 본 작업이 남아 있으면 입력을 열어 둔다. 작업이 끝나 CLI 가 스스로 이어 가는 턴은 같은 패널에 **'백그라운드 계속'** 세그먼트(turnId `<원래>:bgN`, 자체 뱃지)로 뜬다. 대기 중에는 "백그라운드 작업 N개 진행 중" + 중지(= interrupt, 프로세스와 작업 전부 종료).
+- 대기 중 같은 세션으로 보낸 메시지는 **같은 프로세스 입력에 다음 사용자 턴으로 써 넣는다**(SDK 의 multi-turn streaming input; 계정·모델은 그 프로세스 그대로, 다르면 뱃지에 표시). '백그라운드 계속'이 흐르는 중이면 그 결과 뒤로 줄 세운다. 본 턴이 아직 스트리밍 중이면 예전처럼 "이미 실행 중".
+- 상한: 턴 뒤 대기 최대 `DECK_BG_MAX_MIN`(기본 120분), 작업 집합이 빈 뒤 60초 동안 이어지는 턴이 없으면 정리.
+- **우아한 재시작**: `npm run restart`(9320 리스너에 SIGUSR2; `-- --wait` 면 새 서버가 뜰 때까지 대기). SIGTERM 도 같다(launchd stop·`kickstart -k`). 새 send 거절 → 진행 중 턴·백그라운드 대기를 최대 `DECK_DRAIN_MAX_MIN`(기본 15분) 기다림 → 남은 것 중단 → 종료. 신호를 한 번 더 보내거나 Ctrl-C(SIGINT)면 즉시.
+- **launchd**: 메인 체크아웃에서 `npm run build && scripts/install-launchd.sh`. `~/Library/LaunchAgents/com.deck.server.plist`(KeepAlive·RunAtLoad, PATH = 지금 `which node` 의 폴더 + `~/.local/bin`(codex) + 시스템 경로, 로그 `~/.config/deck/deck.log`, ExitTimeOut = 드레인 + 60초). 환경은 `~/.config/deck/env`(KEY=value; 없으면 현재 셸의 `DECK_EXTRA_HOSTS` 로 생성) — `scripts/launchd/run.sh` 가 시작마다 읽는다. 설치 스크립트는 9320 에 떠 있는 수동 서버를 SIGTERM 으로 내리고(드레인을 기다림; 이 변경 전 버전 서버는 즉시 끊김) 로드한다. 제거 `scripts/install-launchd.sh --uninstall`, 상태 `launchctl print gui/$(id -u)/com.deck.server`. env 를 고친 뒤엔 `npm run restart`.

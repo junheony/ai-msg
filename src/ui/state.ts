@@ -8,7 +8,7 @@ export type ToolCallItem = { toolUseId: string; name: string; input: unknown; re
 
 export type ChatItem =
   | { kind: 'user'; text: string; /** attachment names, display only */ attachments?: string[] }
-  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[] };
+  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Live background tasks of this turn's process (turn_background); absent/empty = none. */ background?: string[] };
 
 export type PendingPermission = Omit<Extract<ServerMessage, { type: 'permission_request' }>, 'type'>;
 export type PendingQuestion = Omit<Extract<ServerMessage, { type: 'question_request' }>, 'type'>;
@@ -184,6 +184,19 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       if (!belongs(pane, msg)) return pane;
       // Review M11: the retry streams into a fresh segment; the failed attempt's text is kept apart.
       return updateTurn(pane, msg.turnId, (it) => ({ ...it, text: '', attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
+    case 'turn_background': {
+      if (!belongs(pane, msg)) return pane;
+      // One indicator per pane: on the named turn (or the last assistant item, e.g. after a reload), cleared elsewhere.
+      let idx = pane.items.findIndex((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
+      if (idx < 0) idx = pane.items.findLastIndex((it) => it.kind === 'assistant');
+      if (idx < 0) return pane;
+      const items = pane.items.map((it, i) => {
+        if (it.kind !== 'assistant') return it;
+        if (i === idx) return { ...it, turnId: it.turnId ?? msg.turnId, background: msg.tasks };
+        return it.background?.length ? { ...it, background: [] } : it;
+      });
+      return { ...pane, items };
+    }
     case 'turn_notice':
       if (!belongs(pane, msg)) return pane;
       return updateTurn(pane, msg.turnId, (it) => ({ ...it, notes: [...it.notes, msg.message] }));
@@ -274,7 +287,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       });
       return { ...state, panes };
     }
-    case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry':
+    case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
       return { ...state, panes: mapPanes(state, msg) };
     case 'turn_notice': {
       const panes = mapPanes(state, msg);

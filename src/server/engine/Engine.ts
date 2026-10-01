@@ -36,7 +36,20 @@ export type EngineEvent =
   | { kind: 'compact' }
   /** Non-fatal engine warning shown as a turn note (Codex `item.type === 'error'` items). */
   | { kind: 'notice'; message: string }
+  /** Live background tasks (Agent run_in_background, background Bash), emitted whenever the set changes; descriptions, one per task. */
+  | { kind: 'background'; tasks: string[] }
+  /**
+   * After a result, the CLI started another turn on its own — a finished background task's
+   * notification woke the model. Everything up to the next result belongs to that continuation.
+   */
+  | { kind: 'continue'; cause: 'background' }
   | EngineResult;
+
+/** A user message sent into a still-open Claude process (background work pending). */
+export type FollowUp = { text: string; attachments: Attachment[] };
+
+/** Handed to `TurnRequest.onLive` once the process is up; `send` resolves false when the input is already closed. */
+export type LiveInput = { send(f: FollowUp): Promise<boolean> };
 
 /**
  * One canUseTool call. `signal` is the SDK's per-request abort signal (the prompt must close
@@ -154,6 +167,8 @@ export type TurnRequest = {
   autoApprove?: () => boolean;
   /** Called for each tool call 자동 승인 allowed (audit). */
   onAutoApproved?: (req: PermissionRequest) => Promise<void>;
+  /** Receives the process's input handle (streaming-input mode) so later user messages can join it while background work runs. */
+  onLive?: (live: LiveInput) => void;
 };
 
 export interface Engine {

@@ -178,8 +178,8 @@ describe('mapSdkMessage', () => {
 
 describe('ClaudeEngine.runTurn', () => {
   it('streams mapped events, attaches the assistant error kind to the result, and passes options to queryFn', async () => {
-    let captured: { prompt: string; options?: Record<string, unknown> } | null = null;
-    const queryFn = (params: { prompt: string; options?: Record<string, unknown> }) => {
+    let captured: { prompt: AsyncIterable<SDKUserMessage>; options?: Record<string, unknown> } | null = null;
+    const queryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: Record<string, unknown> }) => {
       captured = params;
       return (async function* () {
         yield M({ type: 'system', subtype: 'init', session_id: 's9', model: 'claude-opus-5-5' });
@@ -192,7 +192,8 @@ describe('ClaudeEngine.runTurn', () => {
     for await (const e of eng.runTurn(req({ prompt: 'p', account: 'a' }))) events.push(e);
     expect(events[0]).toEqual({ kind: 'init', sessionId: 's9', model: 'claude-opus-5-5' });
     expect(events[1]).toMatchObject({ kind: 'result', ok: false, errorKind: 'rate_limit', errorText: 'limit hit', usage: { inputTokens: 0 } });
-    expect(captured!.prompt).toBe('p');
+    // Streaming-input mode always (background work needs the process to outlive the result).
+    expect(((await first(captured!.prompt)) as SDKUserMessage).message.content).toBe('p');
     expect(captured!.options?.env).toEqual({ PATH: '/bin' });
   });
 
@@ -276,10 +277,10 @@ describe('ClaudeEngine with attachments', () => {
     expect(pulled).toBe(0);
   });
 
-  it('without images the prompt stays the plain string (D14 isolation)', async () => {
+  it('without images the streamed message carries the plain text with path lines', async () => {
     const seen: unknown[] = [];
     const queryFn = async function* (p: { prompt: string | AsyncIterable<SDKUserMessage> }) {
-      seen.push(p.prompt);
+      seen.push(((await first(p.prompt)) as SDKUserMessage).message.content);
       yield M({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's', usage: {} });
     };
     const engine = new ClaudeEngine({ queryFn, home: '/h', baseEnv: {}, readFile: async () => { throw new Error('must not read'); } });

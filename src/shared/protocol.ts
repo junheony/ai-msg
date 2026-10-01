@@ -92,5 +92,12 @@ export type ServerMessage =
   /** Non-terminal note about a running turn (e.g. a refused session move). */
   | ({ type: 'turn_notice'; message: string } & TurnScope)
   | ({ type: 'turn_retry'; fromAccount: Account; toAccount: Account; reason: string; attempt: number } & TurnScope)
+  /**
+   * Background tasks (Agent run_in_background, background Bash) live in the turn's process, one
+   * description each; [] = none left. While non-empty the process stays open after the turn's
+   * result; a finished task's continuation arrives as a new turn (reason 백그라운드 계속).
+   * `turnId` names the turn the work belongs to (interrupt it to stop the work).
+   */
+  | ({ type: 'turn_background'; tasks: string[] } & TurnScope)
   | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null } & TurnScope)
   | { type: 'error'; turnId: string | null; message: string; clientRef?: string };

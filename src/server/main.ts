@@ -7,6 +7,7 @@ import { loadConfig } from './config';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { CodexEngine } from './engine/CodexEngine';
 import { createRequestHandler } from './http';
+import { installGracefulShutdown } from './lifecycle';
 import { PinStore } from './sessions/PinStore';
 import { SettingsStore } from './settings';
 import { SessionIndex } from './sessions/SessionIndex';
@@ -36,7 +37,7 @@ async function main(): Promise<void> {
   const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
 
   const runner = new TurnRunner({
-    engine: new ClaudeEngine(),
+    engine: new ClaudeEngine({ bgMaxMs: cfg.bgMaxMs }),
     codex,
     attachments,
     codexSessionsRoot: cfg.codexSessionsRoot,
@@ -68,9 +69,13 @@ async function main(): Promise<void> {
   for (const a of addresses) console.log(`deck: http://${a}:${cfg.port}`);
   console.log(`deck: 로그인 토큰은 ${cfg.tokenFile} 에 있습니다 (내용은 출력하지 않음)`);
 
-  const shutdown = () => { ws.close(); usage.stop(); codexUsage.stop(); attachments.stop(); for (const s of servers) s.close(); setTimeout(() => process.exit(0), 200); };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
+  const shutdown = (reason: string) => {
+    console.log(`deck: 종료 (${reason})`);
+    ws.close(); usage.stop(); codexUsage.stop(); attachments.stop(); for (const s of servers) s.close();
+    setTimeout(() => process.exit(0), 200);
+  };
+  installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown });
 }
 
 main().catch((err: unknown) => { console.error('deck: 시작 실패', err); process.exit(1); });

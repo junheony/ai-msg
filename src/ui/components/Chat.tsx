@@ -36,6 +36,8 @@ export type ChatProps = {
   uploadFn?: UploadFn;
   onSend: (text: string) => void;
   onInterrupt: () => void;
+  /** Stops the background work held by that turn's process (interrupt by its turn id). */
+  onStopBackground?: (turnId: string) => void;
   onDecide: (requestId: string, decision: PermissionDecision) => void;
   onAnswer: (requestId: string, answers: QuestionAnswers) => void;
   onModel: (m: AnyModel) => void;
@@ -109,6 +111,8 @@ export function Chat(p: ChatProps) {
     if (files.length) void addFiles(files);
   };
 
+  const bgItem = p.items.findLast((it) => it.kind === 'assistant' && (it.background?.length ?? 0) > 0);
+
   return (
     <main className="chat">
       <div className="chat-head">
@@ -126,6 +130,13 @@ export function Chat(p: ChatProps) {
         <div ref={endRef} />
       </div>
       <div className="composer-wrap">
+        {bgItem?.kind === 'assistant' && bgItem.turnId && (
+          <div className="bg-status" role="status" data-testid="bg-status" title={bgItem.background?.join('\n')}>
+            <span className="spark spin" aria-hidden="true">✳</span>
+            <span>백그라운드 작업 {bgItem.background?.length}개 진행 중</span>
+            {p.onStopBackground && <button type="button" className="btn ghost bg-stop" onClick={() => p.onStopBackground?.(bgItem.turnId!)}>중지</button>}
+          </div>
+        )}
         {p.busy && (
           <div className="turn-status" role="status" data-testid="turn-status">
             <span className="spark spin" aria-hidden="true">✳</span>

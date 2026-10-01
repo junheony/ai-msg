@@ -6,7 +6,7 @@ import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/At
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
-import { parseQuestions, sessionUpdates, type Engine, type EngineEvent, type EngineResult, type RateLimitSignal, type TurnRequest } from './Engine';
+import { parseQuestions, sessionUpdates, type Engine, type EngineEvent, type EngineResult, type LiveInput, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
 
 export type PromptInput = string | AsyncIterable<SDKUserMessage>;
@@ -39,7 +39,113 @@ export async function buildPrompt(text: string, attachments: Attachment[], readF
   return (async function* () { yield message; })();
 }
 
+/** The prompt as one streamed user message (text + image blocks) — every turn runs in streaming-input mode. */
+export async function toUserMessage(text: string, attachments: Attachment[], readFile: ReadFile = (p) => fs.readFile(p)): Promise<SDKUserMessage> {
+  const prompt = await buildPrompt(text, attachments, readFile);
+  if (typeof prompt === 'string') return { type: 'user', session_id: '', parent_tool_use_id: null, message: { role: 'user', content: prompt } };
+  for await (const m of prompt) return m;
+  throw new Error('empty prompt');
+}
+
+/**
+ * The process's stdin in streaming-input mode. Open = the CLI stays alive after a result
+ * (sdk.d.ts SDKResultMessage: "In single-prompt (non-streaming-input) mode the process exits
+ * after the turn" — which is what killed background Agent/Bash tasks).
+ */
+export class InputChannel implements AsyncIterable<SDKUserMessage> {
+  private readonly queue: SDKUserMessage[] = [];
+  private waiter: ((r: IteratorResult<SDKUserMessage>) => void) | null = null;
+  closed = false;
+
+  push(m: SDKUserMessage): boolean {
+    if (this.closed) return false;
+    const w = this.waiter;
+    if (w) { this.waiter = null; w({ value: m, done: false }); } else this.queue.push(m);
+    return true;
+  }
+
+  close(): void {
+    this.closed = true;
+    const w = this.waiter;
+    this.waiter = null;
+    w?.({ value: undefined, done: true });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    return {
+      next: () => {
+        const m = this.queue.shift();
+        if (m) return Promise.resolve({ value: m, done: false });
+        if (this.closed) return Promise.resolve({ value: undefined, done: true });
+        return new Promise((resolve) => { this.waiter = resolve; });
+      },
+      return: () => { this.close(); return Promise.resolve({ value: undefined, done: true }); },
+    };
+  }
+}
+
 type Rec = Record<string, unknown>;
+
+/**
+ * Which background tasks are live. Prefers the CLI's level signal `background_tasks_changed`
+ * (REPLACE semantics, sdk.d.ts SDKBackgroundTasksChangedMessage); falls back to pairing the
+ * task_started / task_updated / task_notification bookends for CLIs that never send the level.
+ * Ambient tasks (housekeeping, watchers) are not activity and are left out.
+ */
+export class BackgroundTracker {
+  private level: Map<string, string> | null = null;
+  private readonly edge = new Map<string, string>();
+  private readonly known = new Map<string, string>();
+
+  /** Feeds one SDK message; true when it was a task message (the set may have changed). */
+  apply(m: SDKMessage): boolean {
+    if (m.type !== 'system') return false;
+    const r = m as unknown as Rec;
+    const id = typeof r.task_id === 'string' ? r.task_id : '';
+    const desc = typeof r.description === 'string' ? r.description : '';
+    const ambient = r.ambient === true || r.skip_transcript === true;
+    switch (r.subtype) {
+      case 'background_tasks_changed': {
+        const tasks = Array.isArray(r.tasks) ? (r.tasks as Rec[]) : [];
+        this.level = new Map(tasks.filter((t) => t.ambient !== true).map((t) => [String(t.task_id ?? ''), String(t.description ?? '')]));
+        return true;
+      }
+      case 'task_started':
+        if (ambient) return true;
+        this.known.set(id, desc);
+        if (r.is_backgrounded === true) this.edge.set(id, desc);
+        return true;
+      case 'task_updated': {
+        const patch = (r.patch ?? {}) as Rec;
+        if (patch.is_backgrounded === true && this.known.has(id)) this.edge.set(id, this.known.get(id) ?? '');
+        if (patch.status === 'completed' || patch.status === 'failed' || patch.status === 'killed') this.edge.delete(id);
+        return true;
+      }
+      case 'task_notification':
+        this.edge.delete(id);
+        this.known.delete(id);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  tasks(): string[] {
+    return [...(this.level ?? this.edge).values()];
+  }
+}
+
+/** A message that means the main conversation is producing output (subagent traffic and replays are not). */
+function isActivity(m: SDKMessage): boolean {
+  if (m.type === 'result') return true;
+  if (m.type !== 'assistant' && m.type !== 'stream_event' && m.type !== 'user') return false;
+  const r = m as unknown as Rec;
+  return r.parent_tool_use_id === null && r.isReplay !== true;
+}
+
+/** Background waiting caps: total wait after the first result, and how long an emptied set may stay idle. */
+export const BG_MAX_MS = 2 * 60 * 60_000;
+export const BG_GRACE_MS = 60_000;
 
 export function buildOptions(
   req: TurnRequest,
@@ -196,14 +302,26 @@ export class ClaudeEngine implements Engine {
   private readonly home: string;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly readFile: ReadFile;
+  private readonly bgMaxMs: number;
+  private readonly bgGraceMs: number;
 
-  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile } = {}) {
+  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number } = {}) {
     this.queryFn = opts.queryFn ?? ((p) => query(p));
     this.home = opts.home ?? os.homedir();
     this.baseEnv = opts.baseEnv ?? process.env;
     this.readFile = opts.readFile ?? ((p) => fs.readFile(p));
+    this.bgMaxMs = opts.bgMaxMs ?? BG_MAX_MS;
+    this.bgGraceMs = opts.bgGraceMs ?? BG_GRACE_MS;
   }
 
+  /**
+   * One deck turn = one CLI process in streaming-input mode. The input stays open after a result
+   * while background tasks are live: when one settles, the CLI injects its task notification and
+   * runs another turn by itself (yielded as `continue` + that turn's events + its result), and
+   * `onLive().send` can add user messages. The input closes — and the process ends — after a result
+   * with no live background task and no unanswered message, after an emptied set stays idle for
+   * `bgGraceMs`, after `bgMaxMs`, or on abort.
+   */
   async *runTurn(req: TurnRequest): AsyncIterable<EngineEvent> {
     // Review M2: an interrupt that landed before the turn started must not spawn the CLI at all.
     if (req.signal.aborted) {
@@ -217,23 +335,75 @@ export class ClaudeEngine implements Engine {
     let sessionId: string | null = req.resumeSessionId;
     let errorKind: string | null = null;
     let sawResult = false;
+    const input = new InputChannel();
+    const bg = new BackgroundTracker();
+    let shownTasks: string[] = [];
+    /** Messages sent (initial prompt + follow-ups) not yet answered by a result. */
+    let outstanding = 1;
+    /** Between a result and the next main-thread output: new output there is a background continuation. */
+    let idle = false;
+    let capTimer: NodeJS.Timeout | null = null;
+    let graceTimer: NodeJS.Timeout | null = null;
+    let ended: 'cap' | 'grace' | null = null;
+    const finish = (why: 'cap' | 'grace') => { if (input.closed) return; ended = why; input.close(); abortController.abort(); };
+    const clearGrace = () => { if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; } };
+    const armGrace = () => {
+      clearGrace();
+      if (!idle || outstanding > 0 || bg.tasks().length > 0) return;
+      graceTimer = setTimeout(() => finish('grace'), this.bgGraceMs);
+      graceTimer.unref?.();
+    };
     const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
+    const live: LiveInput = {
+      send: async (f) => {
+        if (input.closed) return false;
+        // Counted before the first await: the loop decides whether to close right after a result,
+        // and a follow-up sent from that result's handler must already keep the input open.
+        outstanding++;
+        idle = false;
+        clearGrace();
+        const undo = () => { outstanding = Math.max(0, outstanding - 1); idle = outstanding === 0; armGrace(); };
+        let m: SDKUserMessage;
+        try {
+          m = await toUserMessage(f.text, f.attachments, this.readFile);
+        } catch (err) {
+          undo();
+          throw err;
+        }
+        if (!input.push(m)) { undo(); return false; }
+        return true;
+      },
+    };
     try {
-      const prompt = await buildPrompt(req.prompt, req.attachments ?? [], this.readFile);
-      for await (const m of this.queryFn({ prompt, options })) {
+      input.push(await toUserMessage(req.prompt, req.attachments ?? [], this.readFile));
+      req.onLive?.(live);
+      for await (const m of this.queryFn({ prompt: input, options })) {
+        if (bg.apply(m)) {
+          const tasks = bg.tasks();
+          if (tasks.length !== shownTasks.length || tasks.some((t, i) => t !== shownTasks[i])) { shownTasks = tasks; yield { kind: 'background', tasks }; }
+          armGrace();
+        }
+        if (idle && isActivity(m)) { idle = false; clearGrace(); yield { kind: 'continue', cause: 'background' }; }
         if (m.type === 'assistant' && typeof (m as unknown as Rec).error === 'string') errorKind = (m as unknown as Rec).error as string;
+        let gotResult = false;
         for (const ev of mapSdkMessage(m)) {
           if (ev.kind === 'init') sessionId = ev.sessionId;
           if (ev.kind === 'result') {
             sawResult = true;
+            gotResult = true;
+            outstanding = Math.max(0, outstanding - 1);
             yield { ...ev, errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : stderrTail || null };
+            errorKind = null;
           } else {
             yield ev;
           }
         }
-        // D14: with a streamed prompt the CLI would wait for more input, so the result ends the turn.
-        // String prompts keep the Plan 1 behavior (read to the end) so an unmeasured change stays isolated to image turns.
-        if (sawResult && typeof prompt !== 'string') break;
+        if (!gotResult) continue;
+        // Decided after the consumer handled the result (it may have sent a queued follow-up meanwhile).
+        if (outstanding === 0 && bg.tasks().length === 0) break;
+        idle = outstanding === 0;
+        if (!capTimer) { capTimer = setTimeout(() => finish('cap'), this.bgMaxMs); capTimer.unref?.(); }
+        armGrace();
       }
     } catch (err) {
       // The SDK throws after yielding an error result; only synthesize one if none was seen.
@@ -242,7 +412,12 @@ export class ClaudeEngine implements Engine {
         yield { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: msg, stderr: stderrTail || null, errorKind, terminalReason: null };
       }
     } finally {
+      input.close();
+      if (capTimer) clearTimeout(capTimer);
+      clearGrace();
       req.signal.removeEventListener('abort', onAbort);
     }
+    if (ended === 'cap') yield { kind: 'notice', message: `백그라운드 작업이 ${Math.round(this.bgMaxMs / 60_000)}분 안에 끝나지 않아 프로세스를 종료했습니다` };
+    if (shownTasks.length) yield { kind: 'background', tasks: [] };
   }
 }
