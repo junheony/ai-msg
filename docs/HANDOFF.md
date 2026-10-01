@@ -14,6 +14,9 @@ deck v1(Plan 1): Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 �
   - GPT · codex-cli 0.159.2: `gpt-6-sol` 새 세션 ok(뱃지 `GPT 지정`, 목록에 뜨고 GPT 주간 % 가 롤아웃에서 채워짐) · 롤아웃 기록 + 재개(같은 스레드·엔진 유지, 턴마다 고른 GPT 모델이 적용 — 재개 턴에 `gpt-6-astra` 를 고르면 astra) · `gpt-6-astra` 새 세션 ok · 이미지 `-i` 새 세션 → "red", **재개(`exec resume … -i`)에서도** → "blue".
 
 ## 2. 살아있는 것 / 세션 한정
+- **2026-10-01 UI 라운드 반영**(폴더 열기·고정됨·GPT 사용량 폴러·Desktop 풍 재디자인·GFM 표·NFC 경로 그룹·CSP script-src): 단위 405. 실계정 E2E 는 이번 라운드에 재실행 안 함(GPT 한도 소진). 산출 보고서는 `.superpowers/sdd/ui-round/`(gitignore).
+- 지금 nohup 으로 떠 있음: `DECK_EXTRA_HOSTS=max-macbookpro.tail88e649.ts.net npm start`(로그 `~/.config/deck/deck.log`) — Tailnet `http://max-macbookpro.tail88e649.ts.net:9320`. 재부팅하면 내려감(launchd 미등록).
+- 리눅스 옛 Fleet(`fleet-control.service`)은 2026-10-01 정지·비활성화(되살리기 `systemctl --user enable --now fleet-control`).
 - 상시 서비스 없음. 사용자가 `npm start` 로 실행(127.0.0.1:9320 + Tailscale 주소만). 로그인 토큰 `~/.config/deck/token`(첫 실행 시 생성, 0600).
 - 보호 계정 `~/.config/offload/protect` = `a`(Claude Desktop 이 A). 쿨다운은 claude-pick/offload 와 공유(`~/.cache/offload/cooldown`).
 
@@ -34,7 +37,7 @@ deck v1(Plan 1): Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 �
 - **실한도 도달 시 SDK 반환은 아직 미실측**(리눅스 `claude-limit-probe` 포착 대기). `limitDetect.ts` 패턴은 errorKind → SDK 오류문만 본다(stderr·모델 답변 제외).
 - 알려진 한계: 프로필 settings 의 allow 규칙(`Bash(ssh linux *)` 등)은 "매번 묻기"를 우회 · 재시도 턴은 같은 프롬프트가 기록에 두 번 · 1회 스트림 중 재접속은 `watch_turn` 으로 이어받음.
 - **모델 선택은 턴마다**: 패널의 모델 선택기가 곧 그 턴의 모델(Claude·GPT 공통). 저장된 세션을 새 패널로 열면 선택기 기본값(Claude `opus`, GPT `gpt-6-sol`)으로 돈다 — astra/fable 로 이어가려면 다시 고른다.
-- **GPT 한계**: Codex Desktop/CLI 에서 따로 만든 스레드는 가져오지 않음(deck 이 만든 것만 목록) · Codex 승인 카드 없음 — 샌드박스만(`approval_policy=never`) · Codex 답은 토큰 스트리밍이 아니라 항목 단위 · **codex-cli ≥ 0.159 필요**(0.146 은 ChatGPT 계정에서 `gpt-6-sol` 거부; nvm 쪽 옛 바이너리는 자동으로 건너뜀) · usage-deck codex 카드가 `setup_needed` 인 동안 GPT 열은 `—`(GPT 턴 뒤 롤아웃 rate_limits 로 채워짐).
+- **GPT 한계**: Codex Desktop/CLI 에서 따로 만든 스레드는 가져오지 않음(deck 이 만든 것만 목록) · Codex 승인 카드 없음 — 샌드박스만(`approval_policy=never`) · Codex 답은 토큰 스트리밍이 아니라 항목 단위 · **codex-cli ≥ 0.159 필요**(0.146 은 ChatGPT 계정에서 `gpt-6-sol` 거부; nvm 쪽 옛 바이너리는 자동으로 건너뜀) · GPT 잔여량은 서버 시작 시·60초마다 `~/.codex/sessions` 최신 롤아웃의 rate_limits(limit_id codex)에서 읽는다(usage-deck 카드 고장과 무관). 2026-10-01 기준 ChatGPT Pro 주간 100% 소진, 10/7 15:16 KST 리셋.
 - **E2E 부산물**: GPT E2E 는 `~/.codex/sessions` 아래에 스레드(롤아웃)를 남긴다 — 기록으로 두고 지우지 않는다. 사용자 `~/.codex/config.toml` 의 oh-my-codex 알림 훅이 Codex 턴이 끝나고 몇 초 뒤(하네스가 폴더를 지운 뒤) cwd 에 `.omx/` 를 다시 만들어, GPT E2E 한 번마다 `$TMPDIR/deck-e2e-work-*/.omx/` 가 하나 남는다(무해, 수동 삭제). Claude 쪽은 E2E 임시 폴더 slug 의 프로젝트 폴더만 지운다.
 - deck 은 `~/.codex/auth.json`·키체인을 읽지도 쓰지도 않는다(토큰 갱신은 CLI 만 — OpenAI 는 refresh token 재사용을 감지해 로그인을 끊는다).
 - 환경: Node v26, `npm install` 은 optional deps 유지(Agent SDK 네이티브 claude 바이너리). Bash 도구는 zsh(따옴표 없는 변수 분리 안 됨), `timeout` 없음(perl alarm).
