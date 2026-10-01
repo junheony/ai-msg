@@ -148,6 +148,10 @@ export type TurnRequest = {
   allowDirs?: string[];
   /** Set when 이 세션 accepted the SDK's "allow all edits" (setMode acceptEdits) on an earlier turn. */
   permissionMode?: 'acceptEdits';
+  /** 자동 승인: consulted per tool call; true = allow at once (no card). AskUserQuestion is never auto-answered. */
+  autoApprove?: () => boolean;
+  /** Called for each tool call 자동 승인 allowed (audit). */
+  onAutoApproved?: (req: PermissionRequest) => Promise<void>;
 };
 
 export interface Engine {

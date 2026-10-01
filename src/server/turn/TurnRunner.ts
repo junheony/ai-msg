@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type EngineChoice } from '../../shared/models';
+import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, defaultSandbox, isClaudeModel, isCodexModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type EngineChoice } from '../../shared/models';
 import type { ServerMessage } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -57,6 +57,8 @@ export type TurnRunnerDeps = {
   cooldownDir: string;
   protectedAccount: Account | null;
   auditFile: string;
+  /** 자동 승인 (read per tool call / per new GPT session); absent = off. */
+  autoApprove?: () => boolean;
   projectsRoots: Record<Account, string>;
   move?: typeof moveSession;
   findRollout?: typeof findRolloutFile;
@@ -155,6 +157,14 @@ export class TurnRunner {
         }
         return decision;
       },
+      ...(this.deps.autoApprove ? { autoApprove: this.deps.autoApprove } : {}),
+      onAutoApproved: async (pr) => {
+        try {
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision: 'auto', inputSha256: hashInput(pr.input) });
+        } catch (err) {
+          console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
+        }
+      },
       onQuestion: async (q) => {
         const answers = await sink.askQuestion({ turnId: p.turnId, sessionId: out.sessionId, cwd, ...q });
         try {
@@ -245,7 +255,7 @@ export class TurnRunner {
     const cwd = state?.cwd ?? p.cwd;
     // A per-turn Codex model wins on resume too (like Claude's per-turn model); the session's stored default is kept.
     const model: CodexModel = isCodexModel(p.model) ? p.model : (state?.defaultModel ?? DEFAULT_CODEX_MODEL);
-    const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? DEFAULT_SANDBOX;
+    const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? defaultSandbox(deps.autoApprove?.() ?? false);
     // Task 2 follow-up: the id is either the stored one (itself CLI-reported) or what the CLI reports via init
     // (thread.started) — never the result's sessionId, which echoes a rejected resume id.
     let sessionId: string | null = state?.sessionId ?? null;

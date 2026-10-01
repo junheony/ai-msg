@@ -92,3 +92,42 @@ describe('Sidebar folding and search', () => {
     expect(onNew).toHaveBeenCalledWith('/w', 'w');
   });
 });
+
+describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
+  afterEach(cleanup);
+  const d = (n: number, title: string, project: string) => ({ sessionId: `d${n}`, account: 'a' as const, title, cwd: `/Users/u/${project}`, project, lastModified: Date.now() - n * 3_600_000 });
+
+  it('lists the Desktop sessions with project and relative time; a click opens it like any session; search filters them', () => {
+    const onOpen = vi.fn();
+    render(<Sidebar projects={[]} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} desktop={[d(1, 'Fix login', 'deck'), d(2, 'Write docs', 'harness')]} />);
+    const group = screen.getByTestId('desktop-group');
+    expect(group.textContent).toContain('최근 Desktop 세션');
+    expect(group.textContent).toContain('deck · 1시간 전');
+    fireEvent.click(screen.getByText('Write docs'));
+    expect(onOpen).toHaveBeenCalledWith('d2', '/Users/u/harness', 'Write docs');
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'harness' } });
+    expect(screen.queryByText('Fix login')).toBeNull();
+    expect(screen.getByText('Write docs')).toBeTruthy();
+  });
+
+  it('no Desktop sessions → no section', () => {
+    render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(screen.queryByTestId('desktop-group')).toBeNull();
+  });
+
+  it('the footer toggle shows 자동 승인 켜짐/꺼짐 and flips it; hidden until the server says', () => {
+    const onAuto = vi.fn();
+    const { rerender } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} autoApprove={null} onAutoApprove={onAuto} />);
+    expect(screen.queryByRole('switch')).toBeNull();
+    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} autoApprove={true} onAutoApprove={onAuto} />);
+    const sw = screen.getByRole('switch');
+    expect(sw.textContent).toContain('자동 승인 켜짐');
+    expect(sw.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(sw);
+    expect(onAuto).toHaveBeenCalledWith(false);
+    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} autoApprove={false} onAutoApprove={onAuto} />);
+    expect(screen.getByRole('switch').textContent).toContain('자동 승인 꺼짐');
+    fireEvent.click(screen.getByRole('switch'));
+    expect(onAuto).toHaveBeenLastCalledWith(true);
+  });
+});

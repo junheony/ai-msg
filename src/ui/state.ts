@@ -1,7 +1,7 @@
 import type { Account, Seat } from '../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, isClaudeModel, isCodexModel, type AnyModel, type CodexSandbox, type EngineChoice, type EngineKind } from '../shared/models';
-import type { ServerMessage, TurnBadge } from '../shared/protocol';
-import type { ProjectEntry, TranscriptMessage } from '../shared/session-types';
+import { DEFAULT_CODEX_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, type AnyModel, type CodexSandbox, type EngineChoice, type EngineKind } from '../shared/models';
+import type { DeckSettings, ServerMessage, TurnBadge } from '../shared/protocol';
+import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
@@ -47,6 +47,10 @@ export type AppState = {
   codexAvailable: boolean;
   /** F2: pinned session ids, pin order (server-side pins.json). */
   pins: string[];
+  /** Recent Claude Desktop sessions (server-side, newest first). */
+  desktop: DesktopSession[];
+  /** 자동 승인 (server setting); null until the server says. */
+  autoApprove: boolean | null;
 };
 
 export const MAX_PANES = 5;
@@ -55,7 +59,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, pins: [] };
+export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, pins: [], desktop: [], autoApprove: null };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage }
@@ -217,12 +221,21 @@ function applyTitles(panes: PaneState[], projects: ProjectEntry[]): PaneState[] 
   });
 }
 
+/** 자동 승인 changes the default sandbox of new GPT sessions; panes still on the old default follow it. */
+function applySettings(state: AppState, settings: DeckSettings | undefined): AppState {
+  if (!settings || settings.autoApprove === state.autoApprove) return state;
+  const from = defaultSandbox(state.autoApprove ?? false);
+  const to = defaultSandbox(settings.autoApprove);
+  return { ...state, autoApprove: settings.autoApprove, panes: state.panes.map((p) => (p.sandbox === from ? { ...p, sandbox: to } : p)) };
+}
+
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
     case 'hello':
-      return { ...state, connected: true, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, codexAvailable: msg.codex.available, panes: applyTitles(mapPanes(state, msg), msg.projects) };
+      return applySettings({ ...state, connected: true, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
+    case 'settings': return applySettings(state, msg.settings);
     case 'usage': return { ...state, usage: msg.usage };
-    case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, panes: applyTitles(state.panes, msg.projects) };
+    case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
     case 'history': {
       // Every pane with this session open (`open` records the id before open_session is sent, so a pane still
       // waiting for its reply counts). A history no pane views — its pane was closed or switched while the reply
@@ -296,7 +309,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'add_pane': {
       if (state.panes.length >= MAX_PANES) return state;
       const n = Math.max(...state.panes.map((p) => Number(p.id.slice(1)) || 0)) + 1;
-      const pane = newPane(`p${n}`);
+      const pane = { ...newPane(`p${n}`), sandbox: defaultSandbox(state.autoApprove ?? false) };
       return { ...state, panes: [...state.panes, pane], activePaneId: pane.id };
     }
     case 'close_pane': {

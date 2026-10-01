@@ -17,6 +17,18 @@ export type SessionEntry = {
   sizeBytes: number;
 };
 
+/** A recent Claude Desktop (Code tab) session; opened like any other session by `sessionId`. */
+export type DesktopSession = {
+  sessionId: string;
+  /** Profile the transcript lives in now (A, or B/C after deck moved it). */
+  account: Seat;
+  title: string;
+  cwd: string;
+  /** basename of cwd */
+  project: string;
+  lastModified: number;
+};
+
 export type PinnedProject = { cwd: string; name?: string };
 
 export type ProjectEntry = { cwd: string; name: string; pinned: boolean; sessions: SessionEntry[] };

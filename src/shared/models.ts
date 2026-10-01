@@ -37,4 +37,8 @@ export type EngineChoice = EngineKind | 'auto';
 export type CodexSandbox = 'read-only' | 'workspace-write';
 export const CODEX_SANDBOXES: readonly CodexSandbox[] = ['read-only', 'workspace-write'];
 export const DEFAULT_SANDBOX: CodexSandbox = 'read-only';
+/** 자동 승인 on: new GPT sessions default to workspace-write (network stays off, approval never). */
+export function defaultSandbox(autoApprove: boolean): CodexSandbox {
+  return autoApprove ? 'workspace-write' : DEFAULT_SANDBOX;
+}
 export const SANDBOX_LABEL: Record<CodexSandbox, string> = { 'read-only': '읽기 전용', 'workspace-write': '작업폴더 쓰기(네트워크 차단)' };

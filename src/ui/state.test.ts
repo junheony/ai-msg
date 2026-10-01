@@ -449,3 +449,21 @@ describe('panes (D6)', () => {
     });
   });
 });
+
+describe('reducer: 자동 승인 and Desktop sessions', () => {
+  it('hello/settings set autoApprove; panes still on the default sandbox follow it, an explicit pick stays; new panes use it', () => {
+    let s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: true }, settings: { autoApprove: true }, desktop: [{ sessionId: 'd1', account: 'a', title: 'T', cwd: '/w/x', project: 'x', lastModified: 1 }] }]);
+    expect(s.autoApprove).toBe(true);
+    expect(s.desktop.map((d) => d.sessionId)).toEqual(['d1']);
+    expect(s.panes[0]!.sandbox).toBe('workspace-write');
+    s = reducer(s, { type: 'add_pane' });
+    expect(s.panes[1]!.sandbox).toBe('workspace-write');
+    s = reducer(s, { type: 'set_sandbox', sandbox: 'read-only', paneId: s.panes[1]!.id });
+    s = play([{ type: 'settings', settings: { autoApprove: false } }], s);
+    expect(s.autoApprove).toBe(false);
+    expect(s.panes.map((p) => p.sandbox)).toEqual(['read-only', 'read-only']);
+    s = reducer(s, { type: 'set_sandbox', sandbox: 'workspace-write', paneId: s.panes[1]!.id });
+    s = play([{ type: 'settings', settings: { autoApprove: true } }], s);
+    expect(s.panes.map((p) => p.sandbox)).toEqual(['workspace-write', 'workspace-write']);
+  });
+});

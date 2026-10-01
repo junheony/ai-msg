@@ -331,3 +331,35 @@ describe('AskUserQuestion (D8)', () => {
     expect(await noHandler.canUseTool!('Bash', { command: 'ls' }, ctx)).toEqual({ behavior: 'allow' });
   });
 });
+
+describe('자동 승인 (autoApprove)', () => {
+  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1' } as never;
+
+  it('on: every tool is allowed at once without asking, each reported for the audit; AskUserQuestion still asks', async () => {
+    const asked: string[] = [];
+    const audited: string[] = [];
+    const questions: unknown[] = [];
+    const o = buildOptions(req({
+      autoApprove: () => true,
+      onPermission: async (p) => { asked.push(p.toolName); return 'deny'; },
+      onAutoApproved: async (p) => { audited.push(`${p.toolName}:${p.toolUseId}`); },
+      onQuestion: async (q) => { questions.push(q); return { 'Which color?': 'red' }; },
+    }), deps);
+    for (const t of ['Bash', 'Edit', 'Write', 'Read']) expect(await o.canUseTool!(t, { command: 'git -C /x log' }, ctx)).toEqual({ behavior: 'allow' });
+    expect(asked).toEqual([]);
+    expect(audited).toEqual(['Bash:tu1', 'Edit:tu1', 'Write:tu1', 'Read:tu1']);
+    expect(await o.canUseTool!('AskUserQuestion', { questions: QUESTIONS }, ctx)).toMatchObject({ behavior: 'allow', updatedInput: { answers: { 'Which color?': 'red' } } });
+    expect(questions).toHaveLength(1);
+  });
+
+  it('off (or toggled off mid-turn): back to the per-call card', async () => {
+    let on = true;
+    const asked: string[] = [];
+    const o = buildOptions(req({ autoApprove: () => on, onPermission: async (p) => { asked.push(p.toolName); return 'deny'; } }), deps);
+    expect(await o.canUseTool!('Bash', {}, ctx)).toEqual({ behavior: 'allow' });
+    on = false;
+    expect(await o.canUseTool!('Bash', {}, ctx)).toMatchObject({ behavior: 'deny' });
+    expect(asked).toEqual(['Bash']);
+  });
+});

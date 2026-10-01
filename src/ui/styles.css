@@ -377,3 +377,33 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 @media (hover: none) { .pin-btn { opacity: .5; } .pin-btn.on { opacity: 1; } .project-head .icon-btn { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* === desktop-sessions & permissions === */
+/* Permission / question cards: never wider than their pane (300px panes, phones). */
+.permission-card, .question-card { min-width: 0; max-width: 100%; overflow: hidden; }
+.permission-title, .permission-reason, .permission-path, .question-text, .option-desc { overflow-wrap: anywhere; }
+.permission-card pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; }
+.permission-actions { align-items: center; justify-content: flex-end; }
+.permission-actions .btn { max-width: 100%; min-width: 0; flex: 0 1 auto; }
+.permission-actions .btn.session-allow { overflow: hidden; text-overflow: ellipsis; display: inline-block; line-height: 30px; }
+.permission-session-rule { margin-top: 6px; font-size: 12px; overflow-wrap: anywhere; }
+.permission-session-rule code { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.question-options .option { max-width: 100%; min-width: 0; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.question-free { max-width: 100%; box-sizing: border-box; }
+@media (max-width: 720px) {
+  .permission-actions .btn { flex: 1 1 auto; }
+  .permission-actions .btn.session-allow { line-height: var(--phone-tap); }
+}
+
+/* Recent Claude Desktop sessions */
+.desktop-group .session-meta { max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Sidebar footer: 자동 승인 toggle */
+.sidebar-foot { position: sticky; bottom: -24px; margin: auto -8px -24px; padding: 8px 10px 12px; border-top: 1px solid var(--line); background: var(--sidebar); }
+.auto-approve-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 6px; border-radius: 8px; font-size: 13.5px; color: var(--fg); text-align: left; }
+.auto-approve-toggle:hover { background: var(--hover); }
+.switch-track { position: relative; width: 28px; height: 16px; border-radius: 8px; background: var(--line-strong); flex-shrink: 0; transition: background .15s; }
+.switch-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-raised); transition: transform .15s; }
+.auto-approve-toggle.on .switch-track { background: var(--warn); }
+.auto-approve-toggle.on .switch-knob { transform: translateX(12px); }
+@media (max-width: 720px) { .auto-approve-toggle { min-height: var(--phone-tap); } }

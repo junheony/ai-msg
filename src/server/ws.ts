@@ -11,6 +11,7 @@ import { readCodexTranscript } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
 import type { PinStore } from './sessions/PinStore';
+import type { SettingsStore } from './settings';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readTranscript } from './sessions/transcript';
 import { isCodexState, type SessionStateStore } from './turn/SessionState';
@@ -108,6 +109,8 @@ export type WsDeps = {
   cwdRoots?: string[];
   /** F2: pinned session ids ride hello and every index message. */
   pins?: PinStore;
+  /** 자동 승인 etc.; rides hello, changed with set_settings. */
+  settings?: SettingsStore;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -136,7 +139,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
   /** Sidebar listing: profile scan + deck-created Codex sessions (D4). */
   const projects = () => deps.index.projects(deps.store.codexEntries());
   const pinList = () => deps.pins?.list() ?? [];
-  const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList() });
+  const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList(), desktop: deps.index.desktop() });
 
   const send = (ws: WebSocket, msg: ServerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
@@ -268,7 +271,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), running: running(), codex: { available: deps.codexAvailable } });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), codex: { available: deps.codexAvailable } });
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
 
@@ -339,6 +342,18 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): { broadca
             .then(() => broadcast(indexMsg()))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
           break;
+        case 'set_settings': {
+          const store = deps.settings;
+          if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
+          void store.set({ autoApprove: msg.autoApprove })
+            .then((settings) => {
+              broadcast({ type: 'settings', settings });
+              // Turning 자동 승인 on also lets through the cards already waiting.
+              if (settings.autoApprove) for (const m of broker.pending()) if (m.type === 'permission_request') broker.resolve(m.requestId, 'once');
+            })
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `설정을 저장하지 못했습니다: ${errMsg(err)}` }));
+          break;
+        }
       }
     });
 

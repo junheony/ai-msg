@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Account, Seat } from './accounts';
 import type { AnyModel, CodexSandbox, EngineKind } from './models';
-import type { ProjectEntry, TranscriptMessage } from './session-types';
+import type { DesktopSession, ProjectEntry, TranscriptMessage } from './session-types';
 import type { PermissionDecision, Question, QuestionAnswers, TurnUsage } from './turn-types';
 import type { UsageSnapshot } from './usage-types';
 
@@ -38,9 +38,14 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   /** After a reconnect: keep receiving a running turn this tab started (e.g. a new session with no id yet). */
   z.object({ type: z.literal('watch_turn'), turnId: z.string().min(1) }),
   z.object({ type: z.literal('refresh_index') }),
+  /** 자동 승인 toggle (server-wide, persisted, broadcast to every device as `settings`). */
+  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean() }),
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
+
+/** Server-wide settings. autoApprove (자동 승인): Claude tool calls run without a card; new GPT sessions default to workspace-write. */
+export type DeckSettings = { autoApprove: boolean };
 
 export type TurnBadge = { account: Seat; model: AnyModel; reason: string; usage: TurnUsage; modelNote: string | null };
 
@@ -52,9 +57,11 @@ type TurnScope = { turnId: string; sessionId: string | null; cwd: string };
 
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; running: RunningTurn[]; codex: { available: boolean } }
+  /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; codex: { available: boolean } }
+  | { type: 'settings'; settings: DeckSettings }
   | { type: 'usage'; usage: UsageSnapshot }
-  | { type: 'index'; projects: ProjectEntry[]; pins?: string[] }
+  | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[] }
   | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null }
   | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)

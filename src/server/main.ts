@@ -8,6 +8,7 @@ import { ClaudeEngine } from './engine/ClaudeEngine';
 import { CodexEngine } from './engine/CodexEngine';
 import { createRequestHandler } from './http';
 import { PinStore } from './sessions/PinStore';
+import { SettingsStore } from './settings';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
@@ -19,10 +20,11 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   const token = await loadOrCreateToken(cfg.tokenFile);
   const usage = new UsageService({ deckUrl: cfg.deckUrl });
-  const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile });
+  const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot });
   const store = new SessionStateStore(cfg.stateFile);
   const pins = new PinStore(cfg.pinsFile);
-  await Promise.all([index.refresh(), store.load(), pins.load()]);
+  const settings = new SettingsStore(cfg.settingsFile);
+  await Promise.all([index.refresh(), store.load(), pins.load(), settings.load()]);
   usage.start();
   // F3: GPT usage from the newest Codex rollouts (Desktop/CLI too), at start and every 60 s.
   const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
@@ -44,6 +46,7 @@ async function main(): Promise<void> {
     cooldownDir: cfg.cooldownDir,
     protectedAccount: cfg.protectedAccount,
     auditFile: cfg.auditFile,
+    autoApprove: () => settings.get().autoApprove,
     projectsRoots: cfg.projectsRoots,
   });
 
@@ -56,7 +59,7 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, cwdRoots: cfg.cwdRoots, pins });
+  const ws = attachWebSocket(servers, { token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, cwdRoots: cfg.cwdRoots, pins, settings });
   notifyIndex = () => ws.broadcastIndex();
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 

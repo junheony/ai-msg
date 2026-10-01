@@ -92,6 +92,10 @@ export function buildOptions(
         ...(ctx.blockedPath !== undefined ? { blockedPath: ctx.blockedPath } : {}),
         ...(ctx.defaultToNo !== undefined ? { defaultToNo: ctx.defaultToNo } : {}),
       };
+      if (req.autoApprove?.()) {
+        await req.onAutoApproved?.(pr);
+        return { behavior: 'allow' };
+      }
       const decision = await req.onPermission(pr);
       if (decision === 'deny') return { behavior: 'deny', message: '사용자가 거부했습니다', interrupt: false };
       // Only the SDK's own suggestions, sanitized to destination 'session' — never ctx.suggestions

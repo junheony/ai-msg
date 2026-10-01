@@ -33,8 +33,12 @@ export type DeckConfig = {
   recentFoldersFile: string;
   /** F2: pinned session ids. */
   pinsFile: string;
+  /** Server settings (자동 승인). */
+  settingsFile: string;
   /** F1: a new session's cwd must lie inside one of these: home, plus `DECK_EXTRA_CWD_ROOTS` (E2E temp dirs; loopback-only servers, never `/`). */
   cwdRoots: string[];
+  /** Claude Desktop's Code-tab session records (read-only; titles/recency of Desktop sessions). */
+  desktopSessionsRoot: string;
 };
 
 /** ~/.config/offload/protect: comment lines start with '#'; first non-blank token must be a|b|c. */
@@ -95,6 +99,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     attachmentsDir: path.join(configDir, 'attachments'),
     recentFoldersFile: path.join(configDir, 'recent-folders.json'),
     pinsFile: path.join(configDir, 'pins.json'),
+    settingsFile: path.join(configDir, 'settings.json'),
     cwdRoots: [home, ...extraCwdRoots(env)],
+    desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
   };
 }

@@ -559,3 +559,29 @@ describe('TurnRunner: questions (D8)', () => {
     expect(audit.at(-1)).toMatchObject({ toolName: 'AskUserQuestion', decision: 'deny', turnId: 't1', inputSha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
   });
 });
+
+describe('TurnRunner: 자동 승인', () => {
+  it('on: tool calls skip the card and are audited as auto', async () => {
+    const eng = new StubEngine(async (req) => {
+      expect(req.autoApprove?.()).toBe(true);
+      await req.onAutoApproved?.({ toolName: 'Bash', input: { command: 'rm -rf build' }, toolUseId: 'tu1' });
+      return ok('aa1');
+    });
+    const c = await ctx(eng, { autoApprove: () => true });
+    let asked = 0;
+    c.sink.askPermission = async () => { asked++; return 'deny'; };
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(asked).toBe(0);
+    const audit = (await fs.readFile(c.deps.auditFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { toolName: string; decision: string });
+    expect(audit).toEqual([expect.objectContaining({ toolName: 'Bash', decision: 'auto' })]);
+  });
+
+  it('new GPT session without an explicit sandbox: workspace-write when on, read-only when off; an explicit choice wins', async () => {
+    for (const [auto, sent, want] of [[true, undefined, 'workspace-write'], [false, undefined, 'read-only'], [true, 'read-only', 'read-only']] as const) {
+      const codex = fakeCodex(codexOk('tid-aa'));
+      const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, autoApprove: () => auto, findRollout: async () => null }, await usageWithGpt(null));
+      await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'codex', ...(sent ? { sandbox: sent } : {}) }, c.sink);
+      expect(codex.calls[0]?.sandbox).toBe(want);
+    }
+  });
+});

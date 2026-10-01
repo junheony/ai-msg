@@ -195,7 +195,7 @@ export function createRequestHandler(deps: HttpDeps) {
       if (url.pathname.startsWith('/api/')) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
-        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [] }); return; }
+        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }
         if (url.pathname === '/api/pins' && req.method === 'POST') {
           if (!deps.pins) { json(res, 404, { error: 'not found' }); return; }
           let body: { sessionId?: unknown; pinned?: unknown } = {};

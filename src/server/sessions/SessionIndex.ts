@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ACCOUNTS, type Account } from '../../shared/accounts';
-import type { PinnedProject, ProjectEntry, SessionEntry } from '../../shared/session-types';
+import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry } from '../../shared/session-types';
+import { recentDesktopSessions } from './DesktopSessions';
 import { pathKey } from './slug';
 import { readHead } from './transcript';
 
@@ -127,8 +128,10 @@ export class SessionIndex {
   private pinned: PinnedProject[] = [];
   private recentFolders: string[] = [];
   private recentWrite: Promise<void> = Promise.resolve();
+  private desktopList: DesktopSession[] = [];
 
-  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string }) {}
+  /** `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list. */
+  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string }) {}
 
   async refresh(): Promise<void> {
     const all = (await Promise.all(ACCOUNTS.map((a) => scanProfile(a, this.opts.roots[a])))).flat();
@@ -141,6 +144,12 @@ export class SessionIndex {
     this.pinned = await readPinned(this.opts.pinnedFile);
     if (this.opts.recentFile) this.recentFolders = await readRecent(this.opts.recentFile);
     this.grouped = groupProjects(all, this.pinned, this.recentFolders);
+    this.desktopList = this.opts.desktopRoot ? await recentDesktopSessions(this.opts.desktopRoot, (id) => this.lookup(id)).catch(() => []) : [];
+  }
+
+  /** The most recently active Claude Desktop sessions deck can open (as of the last refresh). */
+  desktop(): DesktopSession[] {
+    return this.desktopList;
   }
 
   recent(): string[] {

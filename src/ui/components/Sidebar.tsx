@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
+import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { FolderPicker } from './FolderPicker';
 
 /** Sessions shown per project before "더 보기". */
@@ -14,7 +14,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove }: {
   projects: ProjectEntry[];
   currentSessionId: string | null;
   onOpen: (sessionId: string, cwd: string, title: string) => void;
@@ -26,6 +26,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** F2: pinned session ids in pin order, shown as 고정됨 above the projects. */
   pins?: string[];
   onTogglePin?: (sessionId: string, pinned: boolean) => void;
+  /** Recent Claude Desktop sessions (newest first); opened like any session. */
+  desktop?: DesktopSession[];
+  /** 자동 승인 (null = not known yet); the footer toggle calls onAutoApprove with the new value. */
+  autoApprove?: boolean | null;
+  onAutoApprove?: (on: boolean) => void;
 }) {
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState('');
@@ -39,6 +44,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const byId = new Map<string, SessionEntry>();
   for (const p of projects) for (const s of p.sessions) byId.set(s.sessionId, s);
   const pinned = pins.map((id) => byId.get(id)).filter((s): s is SessionEntry => !!s && match(s));
+  const desktopShown = desktop.filter((d) => !q || d.title.toLowerCase().includes(q) || d.project.toLowerCase().includes(q));
 
   const row = (s: SessionEntry) => {
     const on = pinSet.has(s.sessionId);
@@ -80,6 +86,21 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <ul>{pinned.map(row)}</ul>
         </section>
       )}
+      {desktopShown.length > 0 && (
+        <section className="project desktop-group" data-testid="desktop-group">
+          <div className="project-head"><span className="project-name">최근 Desktop 세션</span></div>
+          <ul>
+            {desktopShown.map((d) => (
+              <li key={d.sessionId} className={d.sessionId === currentSessionId ? 'active' : ''} title={`${d.title}\n${d.cwd}`} onClick={() => onOpen(d.sessionId, d.cwd, d.title)}>
+                <span className="session-row">
+                  <span className="session-title">{d.title}</span>
+                  <span className="session-meta">{d.project} · {ago(d.lastModified)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {projects.length === 0 && <div className="muted sidebar-empty">세션이 없습니다. ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</div>}
       {q && visible.length === 0 && pinned.length === 0 && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
       {visible.map(({ p, sessions }) => {
@@ -106,6 +127,15 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           </section>
         );
       })}
+      {onAutoApprove && autoApprove !== null && (
+        <div className="sidebar-foot">
+          <button type="button" className={`auto-approve-toggle ${autoApprove ? 'on' : ''}`} role="switch" aria-checked={autoApprove} onClick={() => onAutoApprove(!autoApprove)}
+            title={autoApprove ? 'Claude 도구 호출을 묻지 않고 허용합니다(감사 로그에 기록). 새 GPT 세션은 작업폴더 쓰기. 클릭하면 매번 묻기로' : '도구 호출마다 권한 카드로 묻습니다. 클릭하면 자동 승인'}>
+            <span className="switch-track" aria-hidden="true"><span className="switch-knob" /></span>
+            <span>자동 승인 {autoApprove ? '켜짐' : '꺼짐'}</span>
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

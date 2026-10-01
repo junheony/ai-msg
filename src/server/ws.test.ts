@@ -11,6 +11,7 @@ import { cookieValueFor } from './auth';
 import { StubEngine, okResult } from './engine/StubEngine';
 import { createRequestHandler } from './http';
 import { PinStore } from './sessions/PinStore';
+import { SettingsStore } from './settings';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
@@ -25,6 +26,7 @@ let wsUrl = '';
 let stub: StubEngine;
 let wsApi: ReturnType<typeof attachWebSocket>;
 let pins: PinStore;
+let settings: SettingsStore;
 let base: string;
 let work: string;
 let store: SessionStateStore;
@@ -74,8 +76,10 @@ beforeAll(async () => {
   const runner = new TurnRunner({ attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
   pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
+  settings = new SettingsStore(path.join(base, 'settings.json'));
+  await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -391,6 +395,23 @@ describe('ws', () => {
     wsApi.broadcastIndex();
     expect((await p).at(-1)).toMatchObject({ type: 'index', projects: expect.any(Array), pins: [] });
     ws.close();
+  });
+
+  it('hello carries 자동 승인 (default on); set_settings persists it and broadcasts to every client', async () => {
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    const b = await connect({ Origin: origin, Cookie: COOKIE });
+    expect((await collect(a.ws, (m) => m.type === 'hello')).at(-1)).toMatchObject({ type: 'hello', settings: { autoApprove: true } });
+    await collect(b.ws, (m) => m.type === 'hello');
+    const pa = collect(a.ws, (m) => m.type === 'settings');
+    const pb = collect(b.ws, (m) => m.type === 'settings');
+    a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: false }));
+    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false } });
+    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false } });
+    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: false });
+    const pc = collect(a.ws, (m) => m.type === 'settings');
+    a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: true }));
+    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: true } });
+    a.ws.close(); b.ws.close();
   });
 
   it('rejects invalid messages with an error and keeps the socket open', async () => {

@@ -8,8 +8,8 @@ export type AuditEntry = {
   turnId: string;
   sessionId: string | null;
   toolName: string;
-  /** 'answered' = an AskUserQuestion the user answered (answers themselves are never logged). */
-  decision: PermissionDecision | 'answered';
+  /** 'answered' = an AskUserQuestion the user answered (answers themselves are never logged); 'auto' = allowed by 자동 승인 without a card. */
+  decision: PermissionDecision | 'answered' | 'auto';
   /** sha256 of the JSON input — lets you correlate without storing secrets (spec §6). */
   inputSha256: string;
 };
