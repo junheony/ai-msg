@@ -218,7 +218,7 @@ describe('메시지 편집 갈래 · sidebar', () => {
     const tree = [{ cwd: '/w', name: 'w', pinned: false, sessions: [e('B', '원본 B', now - 120_000, { branch: { parent: 'R', n: 1 } }), e('A', '원본 A', now - 600_000, { branch: { parent: 'R', n: 1 } }), e('R', '원본', now - 3_600_000)] }];
     render(<Sidebar projects={tree} currentSessionId={null} onOpen={() => {}} onNew={() => {}} onRefresh={() => {}} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />);
     const row = document.querySelector('.project li')!;
-    expect(row.querySelector('.session-title')?.textContent).toBe('원본');
+    expect(row.querySelector('.session-title')?.textContent).toBe('원본 B');
     fireEvent.click(screen.getByLabelText('세션 메뉴'));
     expect(screen.getByTestId('session-menu-which').textContent).toBe('갈래 3/3 · 2분 전 수정');
     fireEvent.click(screen.getByText('보관'));

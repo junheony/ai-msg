@@ -147,7 +147,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const order = members.map((id) => byId.get(id)).filter((x): x is SessionEntry => !!x).sort((a, b) => a.lastModified - b.lastModified);
     const which = members.length > 1 ? `갈래 ${order.findIndex((x) => x.sessionId === target.sessionId) + 1}/${members.length} · ${ago(target.lastModified)} 수정` : undefined;
     return (
-      <li key={s.sessionId} className={currentSessionId && members.includes(currentSessionId) ? 'active' : ''} title={s.title}
+      <li key={s.sessionId} className={currentSessionId && members.includes(currentSessionId) ? 'active' : ''} title={target.title}
         // The second click of a double-click (rename) must not re-open the session.
         onClick={(e) => { if (e.detail > 1 || edit) return; onOpen(target.sessionId, target.cwd, target.title); }}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
@@ -163,7 +163,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
               }}
               onBlur={() => commitEdit(target, key)} onClick={(e) => e.stopPropagation()} />
           ) : (
-            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}>{s.title}</span>
+            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}>{target.title}</span>
           )}
           <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{project ?? s.account.toUpperCase()}{s.imported ? ' · Codex' : ''}{members.length > 1 ? ` · 갈래 ${members.length}` : ''} · {ago(s.lastModified)}</span>
           {canEdit && !edit && (
