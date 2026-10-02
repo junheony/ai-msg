@@ -55,6 +55,9 @@ describe('config', () => {
     expect(cfg.geminiBin).toBeNull();
     expect(cfg.codexSessionsRoot).toBe('/h/.codex-alt/sessions');
     expect(cfg.attachmentsDir).toBe('/h/.config/deck/attachments');
+    expect(cfg.backupRetentionDays).toBe(30);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_BACKUP_RETENTION_DAYS: '7' }, '/h', '/repo').backupRetentionDays).toBe(7);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_BACKUP_RETENTION_DAYS: '-1' }, '/h', '/repo').backupRetentionDays).toBe(30);
     expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').codexSessionsRoot).toBe('/h/.codex/sessions');
   });
 

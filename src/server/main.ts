@@ -17,6 +17,7 @@ import { PushNotifier } from './push/PushNotifier';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { loadOrCreateVapid } from './push/vapid';
 import { PinStore } from './sessions/PinStore';
+import { startBackupPruning } from './sessions/backupPrune';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
 import { TranscriptSearch } from './sessions/search';
 import { SettingsStore } from './settings';
@@ -26,7 +27,7 @@ import { TurnRunner } from './turn/TurnRunner';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
-import { GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
+import { ACCOUNTS, GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -51,6 +52,8 @@ async function main(): Promise<void> {
   const attachments = new AttachmentStore(cfg.attachmentsDir);
   await attachments.init();
   attachments.startPurgeTimer();
+  // Fork backups (SessionFork) live in each profile's session-backups/; only deck-named, expired entries go.
+  const stopBackupPruning = startBackupPruning(ACCOUNTS.map((a) => path.join(path.dirname(cfg.projectsRoots[a]), 'session-backups')), cfg.backupRetentionDays);
   // D11: Codex is optional; without the binary the UI hides the GPT option and 'auto' means Claude.
   const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
   // Gemini: explicit engine only; an account counts as logged in once its OAuth file exists (never read).
@@ -107,7 +110,7 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    ws.close(); usage.stop(); codexUsage.stop(); attachments.stop(); for (const s of servers) s.close();
+    ws.close(); usage.stop(); codexUsage.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
     setTimeout(() => process.exit(0), 200);
   };
   installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown });
