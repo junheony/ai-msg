@@ -58,6 +58,8 @@ async function main(): Promise<void> {
   const gemini = cfg.geminiBin ? { engine: new GeminiEngine(cfg.geminiBin, cfg.home), loggedIn: geminiLogin } : null;
   const geminiStatus = () => ({ available: gemini !== null, loggedIn: Object.fromEntries(GEMINI_ACCOUNTS.map((a) => [a, gemini !== null && geminiLogin(a)])) as Record<GeminiAccount, boolean> });
 
+  // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) or by a fork reach it through this.
+  let notifyIndex = () => {};
   const runner = new TurnRunner({
     engine: new ClaudeEngine({ bgMaxMs: cfg.bgMaxMs, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) }),
     codex,
@@ -74,6 +76,7 @@ async function main(): Promise<void> {
     projectsRoots: cfg.projectsRoots,
     // Claude Desktop reads/writes A (~/.claude): deck mirrors sessions it ran on B/C back there.
     homeAccount: 'a',
+    onIndexChanged: () => notifyIndex(),
   });
 
   const addresses = bindAddresses(os.networkInterfaces(), { loopbackOnly: cfg.loopbackOnly, tailscaleIps: tailscaleIPv4s() });
@@ -88,8 +91,6 @@ async function main(): Promise<void> {
     subject: cfg.vapidSubject ?? (dnsName ? `https://${dnsName}` : 'mailto:deck@localhost.localdomain'),
     titleOf: (sessionId, cwd) => (sessionId ? index.lookup(sessionId)?.title ?? store.codexEntries().find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'deck',
   });
-  // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) reach it through this.
-  let notifyIndex = () => {};
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);

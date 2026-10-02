@@ -382,3 +382,71 @@ describe('TurnRunner.openInDesktop', () => {
     expect(await c.runner.openInDesktop(SID)).toEqual({ ok: false, reason: 'unsupported' });
   });
 });
+
+describe('TurnRunner: a diverged copy in the routing target', () => {
+  it('is forked aside under a new id (listed, clients told) and the session moves; A stays untouched', async () => {
+    const c = await setup();
+    let indexChanged = 0;
+    const runner = new TurnRunner({ ...c.deps, onIndexChanged: () => { indexChanged++; } });
+    const shared = line('one');
+    const bCopy = shared + line('went on in deck on B');
+    const aCopy = shared + line('went on in Desktop');
+    await put(c, 'a', aCopy, NOW - 7_200_000);
+    await put(c, 'b', bCopy, NOW - 3_600_000);
+    await put(c, 'c', shared + line('went on in the CLI on C'), NOW - 60_000);
+    // Deck last ran it on C, long ago: routing wants B (C's weekly is at 91%).
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    await runner.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
+    await runner.mirrorsSettled();
+
+    expect(c.eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: SID });
+    expect(c.seen[0]).toBe(shared + line('went on in the CLI on C'));
+    expect((c.deps.store.get(SID) as ClaudeSessionState).account).toBe('b');
+    const forks = (await fs.readdir(path.join(c.roots.b, DIR))).filter((n) => n.endsWith('.jsonl') && n !== `${SID}.jsonl`);
+    expect(forks).toHaveLength(1);
+    const forkId = forks[0]!.replace(/\.jsonl$/, '');
+    const forkText = await read(path.join(c.roots.b, DIR, forks[0]!));
+    expect(forkText.startsWith(bCopy)).toBe(true); // these lines carry no sessionId: kept verbatim
+    expect(c.deps.index.lookup(forkId)).toMatchObject({ account: 'b', title: 'one (갈라진 사본)' });
+    expect(indexChanged).toBe(1);
+    const backups = await fs.readdir(path.join(c.base, 'session-backups'));
+    expect(backups).toHaveLength(1);
+    expect(await read(path.join(c.base, 'session-backups', backups[0]!, `${SID}.jsonl`))).toBe(bCopy);
+
+    // The notice is informative and comes after turn_started (a turn note, not an error banner).
+    const started = c.msgs.findIndex((m) => m.type === 'turn_started');
+    const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes("'one (갈라진 사본)'으로 따로 보관하고 B 계정으로 옮겼어요"));
+    expect(i).toBeGreaterThan(started);
+    expect(notices(c).some((m) => m.includes('옮기지 못해'))).toBe(false);
+
+    // A (Desktop's profile) is never forked or overwritten: the write-back still refuses.
+    expect(await read(fileOf(c, 'a'))).toBe(aCopy);
+    expect((await fs.readdir(path.join(c.roots.a, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
+  });
+
+  it('a failed fork keeps the current account with a plain notice; the target copy is restored', async () => {
+    const c = await setup();
+    const bCopy = line('one') + line('went on in deck on B');
+    await put(c, 'b', bCopy, NOW - 3_600_000);
+    await put(c, 'c', line('one') + line('went on in the CLI on C'), NOW - 60_000);
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    let moves = 0;
+    const runner = new TurnRunner({ ...c.deps, homeAccount: null, move: async (o) => (++moves === 2 ? { ok: false, error: 'disk full' } : moveSession(o)) });
+    await runner.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
+    expect(moves).toBe(2);
+    expect(c.eng.calls[0]).toMatchObject({ account: 'c' });
+    expect(await read(fileOf(c, 'b'))).toBe(bCopy);
+    expect((await fs.readdir(path.join(c.roots.b, DIR))).filter((n) => n !== `${SID}.jsonl`)).toEqual([]);
+    expect(notices(c).some((m) => m.startsWith('세션을 B 계정으로 옮기지 못해 C 계정에서 이어가요') && m.includes('disk full'))).toBe(true);
+  });
+
+  it('warns that the session seems open elsewhere when its copy was written moments ago, not by deck', async () => {
+    const c = await setup();
+    await put(c, 'b', line('one') + line('went on in deck on B'), NOW - 3_600_000);
+    await put(c, 'c', line('one') + line('the CLI on C, just now')); // mtime = now
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    await turn(c, SID);
+    expect(c.eng.calls[0]).toMatchObject({ account: 'b' });
+    expect(notices(c).some((m) => m.includes('B 계정으로 옮겼어요') && m.includes('Desktop 이나 CLI 에서도 열려 있는 것 같아요'))).toBe(true);
+  });
+});
