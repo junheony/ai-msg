@@ -9,7 +9,7 @@ export function createSocket(
   onMessage: (m: ServerMessage) => void,
   onStatus: (connected: boolean) => void,
   onUnauthed: () => void = () => {},
-): { send(m: ClientMessage): void; close(): void } {
+): { /** `false`: not connected, nothing sent. */ send(m: ClientMessage): boolean; close(): void } {
   let ws: WebSocket | null = null;
   let closed = false;
   let delay = 1000;
@@ -37,7 +37,11 @@ export function createSocket(
   open();
 
   return {
-    send(m) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); },
+    send(m) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(JSON.stringify(m));
+      return true;
+    },
     close() { closed = true; ws?.close(); },
   };
 }

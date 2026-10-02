@@ -42,4 +42,11 @@ describe('createSocket', () => {
     expect(onUnauthed).not.toHaveBeenCalled();
     expect(FakeWS.instances.length).toBeGreaterThan(1);
   });
+
+  it('send reports whether the message left: false until open', () => {
+    const s = createSocket(() => {}, () => {});
+    expect(s.send({ type: 'interrupt', turnId: 't' })).toBe(false);
+    FakeWS.instances[0]!.readyState = FakeWS.OPEN;
+    expect(s.send({ type: 'interrupt', turnId: 't' })).toBe(true);
+  });
 });

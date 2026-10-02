@@ -204,7 +204,7 @@ export function App() {
   if (authed === null) return <div className="center">확인 중…</div>;
   if (!authed) return <Login onLoggedIn={() => setAuthed(true)} />;
 
-  const send = (m: ClientMessage) => sock.current?.send(m);
+  const send = (m: ClientMessage) => sock.current?.send(m) ?? false;
   /**
    * Pane-changing actions (open / close): the server's per-socket view set must shrink too, so every session
    * no pane views after the action gets a close_session (T9 prerequisite b; duplicate-session panes keep it).

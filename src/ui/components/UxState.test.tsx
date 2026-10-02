@@ -3,11 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useReducer } from 'react';
 import type { ClientMessage, ServerMessage } from '../../shared/protocol';
-import { newPane, reducer, initialState, type AppState, type ChatItem } from '../state';
+import { newPane, nextQueued, reducer, initialState, type AppState, type ChatItem } from '../state';
 import { AttachmentBar } from './AttachmentBar';
 import { Chat, type ChatProps } from './Chat';
 import { MessageView } from './MessageView';
-import { Pane, useQueueRunner } from './Pane';
+import { Pane, STEER_ANSWER_MS, useQueueRunner } from './Pane';
 
 Element.prototype.scrollIntoView = () => {};
 
@@ -168,7 +168,7 @@ describe('composer queue (ux-state)', () => {
   });
 
   function claudeHarness() {
-    const send = vi.fn<(m: ClientMessage) => void>();
+    const send = vi.fn<(m: ClientMessage) => unknown>();
     const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }] };
     let dispatchOut: (a: Parameters<typeof reducer>[1]) => void = () => {};
     let state = start;
@@ -239,6 +239,53 @@ describe('composer queue (ux-state)', () => {
     server({ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: steer.steerId, message: 'closed' });
     expect(send).toHaveBeenCalledTimes(4);
     expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'urgent' });
+  });
+
+  it('Pane (Claude): a steer the socket could not send is an ordinary queue item at once', () => {
+    const { send, server, box } = claudeHarness();
+    send.mockReturnValueOnce(false);
+    fireEvent.change(box(), { target: { value: 'offline' } });
+    fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+    expect(send.mock.lastCall![0]).toMatchObject({ type: 'steer' });
+    expect(screen.getByTestId('queue').textContent).not.toContain('전달 대기');
+    server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null });
+    expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'offline' });
+  });
+
+  it('Pane (Claude): a reconnect turns in-flight steers back into paused queue items; a late delivery still drops it', () => {
+    const { send, server, box, pane } = claudeHarness();
+    fireEvent.change(box(), { target: { value: 'lost' } });
+    fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+    const steer = send.mock.lastCall![0] as Extract<ClientMessage, { type: 'steer' }>;
+    server({ type: 'hello', usage: { accounts: [] }, projects: [], running: [{ turnId: 't1', sessionId: 's1' }], codex: { available: false } } as unknown as ServerMessage);
+    expect(pane().queue[0]).toMatchObject({ text: 'lost', lostSteer: steer.steerId });
+    expect(pane().queue[0]!.steer).toBeUndefined();
+    expect(screen.getByTestId('queue').textContent).toContain('대기열 멈춤');
+    server({ type: 'steer_delivered', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: steer.steerId, prompt: { text: 'lost', attachments: [] } });
+    expect(pane().queue).toHaveLength(0);
+    expect(pane().items.filter((it) => it.kind === 'user' && it.text === 'lost')).toHaveLength(1);
+  });
+
+  it('Pane (Claude): a steer unanswered STEER_ANSWER_MS after its turn ended becomes a paused queue item (no deadlock)', () => {
+    vi.useFakeTimers();
+    try {
+      const { send, server, box, pane } = claudeHarness();
+      fireEvent.change(box(), { target: { value: 'silent' } });
+      fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+      // While the turn runs a steer may wait as long as a tool takes: no timeout.
+      act(() => { vi.advanceTimersByTime(STEER_ANSWER_MS * 3); });
+      expect(pane().queue[0]!.steer).toBeTruthy();
+      server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null });
+      expect(nextQueued(pane())).toBeNull();
+      act(() => { vi.advanceTimersByTime(STEER_ANSWER_MS); });
+      expect(pane().queue[0]).toMatchObject({ text: 'silent' });
+      expect(pane().queue[0]!.steer).toBeUndefined();
+      expect(pane().queuePaused).toBe(true);
+      fireEvent.click(screen.getByText('이어서 보내기'));
+      expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'silent' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

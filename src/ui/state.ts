@@ -37,7 +37,16 @@ export type QueueItem = {
   id: string; text: string; attachments: UploadedAttachment[];
   /** Sent into the running Claude turn (`steer`) under this id, not yet confirmed: 전달 대기. Cleared on refusal (then sent after the turn). */
   steer?: string;
+  /** A steer whose answer never came (reconnect, timeout): queued (paused) again, but dropped if the server later confirms it went in. */
+  lostSteer?: string;
 };
+
+/** Steer-flagged items back to ordinary (paused) queue items: their answer was lost, so they may or may not have gone in. */
+function unsteer(pane: PaneState, which: (steerId: string) => boolean): PaneState {
+  if (!pane.queue.some((q) => q.steer && which(q.steer))) return pane;
+  const queue = pane.queue.map(({ steer, ...q }) => (steer && which(steer) ? { ...q, lostSteer: steer } : { ...q, ...(steer ? { steer } : {}) }));
+  return { ...pane, queue, queuePaused: true };
+}
 
 export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null; /** Claude permission mode (absent = the server's default for new sessions); a new session sends it with its first turn. */ permissionMode?: PermMode; /** Picked while the new session's first turn ran (no id yet): sent as soon as the id arrives. */ permissionModePending?: true };
 
@@ -148,7 +157,9 @@ export type Action =
   | { type: 'queue_pause'; paneId?: string }
   | { type: 'queue_resume'; paneId?: string }
   /** 지금 전송: move the item to the head and send it as soon as the turn ends (the caller interrupts the turn). */
-  | { type: 'queue_send_now'; id: string; paneId?: string };
+  | { type: 'queue_send_now'; id: string; paneId?: string }
+  /** A steer got no answer (send failed, or none came in time): an ordinary queue item again (paused if it may have gone in). */
+  | { type: 'steer_lost'; steerId: string; paneId?: string; /** The send itself failed: it never left, so the queue need not pause. */ unsent?: boolean };
 
 const withN = (n: number | undefined) => (n !== undefined ? { n } : {});
 
@@ -294,10 +305,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // An empty turn_background missed while disconnected must not leave the pill lingering.
       const bg = msg.activity && !(act && act.bg > 0) ? null : pane.bg;
       const run = activeTurnId ? { runStartedAt: pane.runStartedAt ?? (act?.running ? Date.now() - act.forMs : Date.now()) } : { runStartedAt: null, progress: null };
-      // Steers whose turn ended while disconnected: their answer was missed, so they may have gone in — kept, paused.
-      const lost = !activeTurnId && pane.queue.some((q) => q.steer);
-      const queue = lost ? pane.queue.map(({ steer: _s, ...q }) => q) : pane.queue;
-      return { ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null, bg, ...run, ...(lost ? { queue, queuePaused: true } : {}) };
+      // Steers in flight across a reconnect: their answer went to the old socket, so they may have gone in — queued again, paused.
+      return unsteer({ ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null, bg, ...run }, () => true);
     }
     case 'activity': {
       const sid = pane.session?.sessionId;
@@ -402,7 +411,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
     }
     case 'steer_delivered': {
       // The sending pane knows it by its queue item; other panes / devices show the server's copy of the prompt.
-      const q = pane.queue.find((x) => x.steer === msg.steerId);
+      const q = pane.queue.find((x) => x.steer === msg.steerId || x.lostSteer === msg.steerId);
       if (!q && !belongs(pane, msg)) return pane;
       const n = nextUserN(pane.items, pane.session);
       const bubble: ChatItem = q
@@ -686,6 +695,10 @@ export function reducer(state: AppState, action: Action): AppState {
     });
     case 'queue_pause': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: true }));
     case 'queue_resume': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: false }));
+    case 'steer_lost': return updatePane(state, action.paneId, (p) => {
+      if (action.unsent) return { ...p, queue: p.queue.map(({ steer, ...q }) => (steer === action.steerId ? q : { ...q, ...(steer ? { steer } : {}) })) };
+      return unsteer(p, (id) => id === action.steerId);
+    });
   }
 }
 
@@ -736,7 +749,8 @@ export function nextQueued(pane: PaneState): QueueItem | null {
   const now = pane.queueSendNow ? pane.queue.find((q) => q.id === pane.queueSendNow) : undefined;
   if (now && !now.steer) return now;
   if (pane.queuePaused) return null;
-  // A steer still on its way may yet run as its own turn right after this one: later items wait for its answer.
+  // A steer still on its way may yet run as its own turn right after this one: later items wait for its answer
+  // (bounded — useQueueRunner turns a steer still unanswered STEER_ANSWER_MS after the turn back into a paused item).
   if (pane.queue.some((q) => q.steer)) return null;
   return pane.queue[0] ?? null;
 }

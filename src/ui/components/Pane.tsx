@@ -87,12 +87,28 @@ function titleIn(projects: ProjectEntry[], sessionId: string): { title: string; 
   return { title: e?.title ?? sessionId.slice(0, 8), cwd: e?.cwd ?? null };
 }
 
+/** How long after its turn ended a steer may stay 전달 대기 without an answer. */
+export const STEER_ANSWER_MS = 30_000;
+
 /**
  * ux-state: when a pane's turn is over, its next queued message goes out by itself (once per queue item).
  * Runs at app level so panes not rendered (phone shows one) still drain their queues.
  */
 export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch: (a: Action) => void, send: (m: ClientMessage) => void, defaultMode: AppState['defaultPermMode'] = null): void {
   const fired = useRef(new Set<string>());
+  const steerTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  useEffect(() => () => { for (const t of steerTimers.current.values()) clearTimeout(t); }, []);
+  useEffect(() => {
+    // A steer still unanswered well after its turn ended: the answer was lost — back to a (paused) queue item, so nothing waits on it forever.
+    for (const p of panes) {
+      if (p.activeTurnId || p.awaitingStart) continue;
+      for (const q of p.queue) {
+        const id = q.steer;
+        if (!id || steerTimers.current.has(id)) continue;
+        steerTimers.current.set(id, setTimeout(() => dispatch({ type: 'steer_lost', steerId: id, paneId: p.id }), STEER_ANSWER_MS));
+      }
+    }
+  });
   useEffect(() => {
     if (!connected) return;
     for (const p of panes) {
@@ -118,7 +134,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   active: boolean;
   closable: boolean;
   dispatch: (a: Action) => void;
-  send: (m: ClientMessage) => void;
+  /** `false`: not sent (socket down). */
+  send: (m: ClientMessage) => unknown;
   onClose: () => void;
   /** Opens a session in this pane (the 이전 세션 / 새 세션으로 이어감 links). */
   onOpenSession?: (sessionId: string, cwd: string, title: string) => void;
@@ -275,7 +292,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
               const steerId = nextClientRef();
               const ids = pane.attachments.map((a) => a.id);
               dispatch({ type: 'queue_add', text, paneId: pane.id, steerId });
-              send({ type: 'steer', turnId: pane.activeTurnId, steerId, text: body, ...(ids.length ? { attachments: ids } : {}) });
+              // Never left (socket down): an ordinary queue item at once.
+              if (send({ type: 'steer', turnId: pane.activeTurnId, steerId, text: body, ...(ids.length ? { attachments: ids } : {}) }) === false) dispatch({ type: 'steer_lost', steerId, paneId: pane.id, unsent: true });
               return;
             }
             dispatch({ type: 'queue_add', text, paneId: pane.id });
