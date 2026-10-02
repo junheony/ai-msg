@@ -99,4 +99,13 @@ describe('ws: imported Codex threads', () => {
     expect(c.got.some((m) => m.type === 'turn_notice')).toBe(false);
     c.ws.close();
   });
+
+  it('handoff is refused for an imported Codex thread (Claude only)', async () => {
+    const c = await client();
+    await c.until((m) => m.type === 'hello');
+    c.ws.send(JSON.stringify({ type: 'send', sessionId: CLI_ID, cwd: work, text: 'x', handoff: true, clientRef: 'h-codex' }));
+    expect(await c.until((m) => m.type === 'error')).toMatchObject({ clientRef: 'h-codex', message: '이어서 새 세션은 Claude 대화에서만 돼요' });
+    expect(c.got.some((m) => m.type === 'turn_started')).toBe(false);
+    c.ws.close();
+  });
 });

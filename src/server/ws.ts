@@ -331,6 +331,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, ...ref }); return; }
+    if (msg.handoff && msg.sessionId) {
+      const st = deps.store.get(msg.sessionId);
+      if (msg.engine === 'codex' || msg.engine === 'gemini' || (st && (isCodexState(st) || isGeminiState(st))) || (!st && !deps.index.lookup(msg.sessionId) && deps.index.codexImport(msg.sessionId))) {
+        send(ws, { type: 'error', turnId: null, message: '이어서 새 세션은 Claude 대화에서만 돼요', ...ref });
+        return;
+      }
+    }
     if (msg.handoff && (!msg.sessionId || busy.has(msg.sessionId))) {
       send(ws, { type: 'error', turnId: null, message: msg.sessionId ? '세션이 실행 중이라 지금은 넘길 수 없습니다 — 끝난 뒤 다시 시도하세요' : '새 세션은 넘길 대화가 없습니다', ...ref });
       return;
