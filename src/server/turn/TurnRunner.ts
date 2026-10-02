@@ -604,8 +604,6 @@ export class TurnRunner {
       say(`갈래를 ${LABEL[to]} 계정에 만들지 못해 ${LABEL[state.account]} 계정에서 만들어요 (${r.error})`);
       return null;
     }
-    // deck wrote this copy: not a sign of Desktop/CLI having the parent open.
-    if (r.targetFile) this.deckWroteAt.set(path.resolve(r.targetFile), this.now());
     say(`${why} 대화를 ${LABEL[to]} 계정에 복사해 갈래를 만들어요 — 원래 대화는 ${LABEL[state.account]} 계정에 그대로 있어요`);
     return { ...state, account: to, projectDir: r.targetDir };
   }
