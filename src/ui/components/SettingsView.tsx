@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { usePrefs } from '../usePrefs';
 import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
+import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, type PermMode } from '../../shared/permission';
 import { NotifyMenu } from './NotifyMenu';
 
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
@@ -17,7 +18,14 @@ function Seg<T extends string>({ label, value, options, onPick }: { label: strin
   );
 }
 
-export function SettingsView({ build, onOpenUsage, onClose }: { build: string | null; onOpenUsage: () => void; onClose: () => void }) {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, onOpenUsage, onClose }: {
+  build: string | null;
+  /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
+  defaultPermMode?: PermMode | null;
+  onDefaultPermMode?: (m: PermMode) => void;
+  onOpenUsage: () => void;
+  onClose: () => void;
+}) {
   const [prefs, dispatch] = usePrefs();
   const set = <K extends keyof Prefs>(key: K, value: Prefs[K]) => dispatch({ type: 'set', key, value });
   useEffect(() => {
@@ -43,7 +51,17 @@ export function SettingsView({ build, onOpenUsage, onClose }: { build: string | 
         </section>
         <section aria-label="권한">
           <h3>권한</h3>
-          {/* PERM-MODE SLOT: the perm-mode branch adds the default permission mode control here. */}
+          {onDefaultPermMode && defaultPermMode !== null ? (
+            <label className="settings-row default-perm" title={`새 세션이 시작할 권한 모드 — ${PERM_MODE_HINT[defaultPermMode]}. 모두 자동 승인이면 새 GPT 세션은 작업폴더 쓰기`}>
+              <span>새 세션 기본 권한</span>
+              <span className={`pick perm perm-${defaultPermMode}`}>
+                <select value={defaultPermMode} onChange={(e) => onDefaultPermMode(e.target.value as PermMode)} aria-label="새 세션 기본 권한" data-testid="default-perm-select">
+                  {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
+                </select>
+              </span>
+            </label>
+          ) : <p className="muted">서버 연결 후 표시됩니다.</p>}
+          <p className="muted">세션별 모드는 입력창의 권한 선택(Shift+Tab)으로 바꿉니다.</p>
         </section>
         <section aria-label="알림">
           <h3>알림</h3>

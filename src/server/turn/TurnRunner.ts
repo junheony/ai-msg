@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { GEMINI_ACCOUNTS, SEAT_LABEL, isGeminiAccount, type Account, type GeminiAccount } from '../../shared/accounts';
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
+import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { ServerMessage } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -51,6 +52,8 @@ export type TurnParams = {
   attachments?: string[];
   /** New Claude sessions only: the account to pin (existing sessions keep their stored pin). */
   accountPin?: Account | null;
+  /** New Claude sessions only: the mode picked before the first send (existing sessions keep their stored mode). */
+  permissionMode?: PermMode;
   /** 새 세션으로 이어가기: the handoff-note turn — Claude runs it with every tool call denied (TurnRequest.noTools). */
   handoff?: boolean;
 };
@@ -70,8 +73,10 @@ export type TurnRunnerDeps = {
   cooldownDir: string;
   protectedAccount: Account | null;
   auditFile: string;
-  /** 자동 승인 (read per tool call / per new GPT session); absent = off. */
-  autoApprove?: () => boolean;
+  /** The mode for new sessions and sessions with no stored mode (read per turn / per new GPT session); absent = 'default'. */
+  defaultPermissionMode?: () => PermMode;
+  /** A session's mode changed during a turn (approved plan, 이 세션's "allow all edits") or via setPermissionMode. */
+  onPermissionMode?: (sessionId: string, mode: PermMode) => void;
   projectsRoots: Record<Account, string>;
   /**
    * The profile Claude Desktop and a plain `claude --resume` use (A). After every Claude turn that ran
@@ -113,8 +118,11 @@ type Cursor = { turnId: string };
 
 type LiveSession = { submit(f: FollowUpParams, attachments: Attachment[]): boolean };
 
-/** What 이 세션 accepted: allow rules as rule strings, added directories, and acceptEdits. */
-type SessionGrants = { rules: string[]; dirs: string[]; acceptEdits: boolean };
+/** What 이 세션 accepted: allow rules as rule strings and added directories (its acceptEdits becomes the session's mode). */
+type SessionGrants = { rules: string[]; dirs: string[] };
+
+/** A Claude turn's live permission mode: read per tool call, changed mid-turn by setPermissionMode or an approved plan. */
+type ModeRef = { mode: PermMode };
 
 function addGrants(g: SessionGrants, pr: PermissionRequest): void {
   // The same sanitized set the engine returned to the SDK: nothing broader is ever remembered.
@@ -126,8 +134,6 @@ function addGrants(g: SessionGrants, pr: PermissionRequest): void {
       }
     } else if (u.type === 'addDirectories') {
       for (const d of u.directories) if (!g.dirs.includes(d)) g.dirs.push(d);
-    } else if (u.type === 'setMode' && u.mode === 'acceptEdits') {
-      g.acceptEdits = true;
     }
   }
 }
@@ -168,6 +174,8 @@ export class TurnRunner {
   private readonly live = new Map<string, LiveSession>();
   /** The engine input handle of each running Claude turn, by its first turn id (per-task stop). */
   private readonly inputs = new Map<string, LiveInput>();
+  /** The live mode of each running Claude turn and the session it is for, by its first turn id. */
+  private readonly modes = new Map<string, { ref: ModeRef; sessionId: () => string | null }>();
   /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
   private geminiCooldownUntil: Partial<Record<GeminiAccount, number>> = {};
   /** Home write-backs in flight, by session id (serialized per session; the next turn waits for it). */
@@ -437,6 +445,52 @@ export class TurnRunner {
     return store.setAccountPin(sessionId, pin);
   }
 
+  private defaultMode(): PermMode {
+    return this.deps.defaultPermissionMode?.() ?? 'default';
+  }
+
+  /** The mode a Claude session's next tool call runs in: its running turn's, else the stored one, else the default. */
+  permissionModeOf(sessionId: string): PermMode {
+    for (const m of this.modes.values()) if (m.sessionId() === sessionId) return m.ref.mode;
+    const st = this.deps.store.get(sessionId);
+    return (st && !isCodexState(st) && !isGeminiState(st) ? st.mode : undefined) ?? this.defaultMode();
+  }
+
+  /**
+   * The picker / Shift+Tab: stores a Claude session's mode and applies it to its running turn at once (tool calls read
+   * it per call; the process gets Query.setPermissionMode). False = not a Claude session deck knows.
+   */
+  async setPermissionMode(sessionId: string, mode: PermMode): Promise<boolean> {
+    const { store, index } = this.deps;
+    const st = store.get(sessionId);
+    if (!st) {
+      const e = index.lookup(sessionId);
+      if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return false;
+      await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL, mode });
+    } else if (isCodexState(st) || isGeminiState(st)) {
+      return false;
+    } else {
+      await store.set({ ...st, mode });
+    }
+    for (const [turnId, m] of this.modes) {
+      if (m.sessionId() !== sessionId || m.ref.mode === mode) continue;
+      m.ref.mode = mode;
+      await this.inputs.get(turnId)?.setPermissionMode?.(sdkPermMode(mode)).catch((err: unknown) => console.error('deck: setPermissionMode failed', err instanceof Error ? err.message : err));
+    }
+    return true;
+  }
+
+  /** A turn changed its own mode (the SDK already switched): remember it for the session and tell the clients. */
+  private async applyMode(sessionId: string | null, ref: ModeRef, mode: PermMode): Promise<void> {
+    ref.mode = mode;
+    if (!sessionId) return;
+    const st = this.deps.store.get(sessionId);
+    if (st && !isCodexState(st) && !isGeminiState(st) && st.mode !== mode) {
+      await this.deps.store.set({ ...st, mode }).catch((err: unknown) => console.error('deck: saving the permission mode failed', err instanceof Error ? err.message : err));
+    }
+    this.deps.onPermissionMode?.(sessionId, mode);
+  }
+
   /** D3: set after a Codex limit failure; consulted by chooseEngine for 'auto'. In memory only. */
   gptCooldownUntilMs(): number | null {
     return this.gptCooldownUntil;
@@ -505,7 +559,7 @@ export class TurnRunner {
     });
   }
 
-  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
+  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, modeRef: ModeRef, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
     const scope = () => ({ turnId: cur.turnId, sessionId: out.sessionId, cwd });
     // The effort applies to the resolved model (a Fable → Opus downgrade keeps it when Opus supports it).
     const effort = effortFor(model, p.effort);
@@ -520,10 +574,16 @@ export class TurnRunner {
       signal: sink.signal,
       allowRules: [...grants.rules],
       allowDirs: [...grants.dirs],
-      ...(grants.acceptEdits ? { permissionMode: 'acceptEdits' as const } : {}),
+      ...(sdkPermMode(modeRef.mode) !== 'default' ? { permissionMode: sdkPermMode(modeRef.mode) as 'acceptEdits' | 'plan' } : {}),
       onPermission: async (pr) => {
         const decision = await sink.askPermission({ turnId: cur.turnId, sessionId: out.sessionId, cwd, ...pr });
-        if (decision === 'session') addGrants(grants, pr);
+        if (pr.toolName === 'ExitPlanMode') {
+          // The plan card: 'session' = approve with edits auto-accepted, 'once' = approve and ask every time.
+          if (decision !== 'deny') await this.applyMode(out.sessionId, modeRef, decision === 'session' ? 'acceptEdits' : 'default');
+        } else if (decision === 'session') {
+          addGrants(grants, pr);
+          if (modeRef.mode === 'default' && sessionUpdates(pr).some((u) => u.type === 'setMode' && u.mode === 'acceptEdits')) await this.applyMode(out.sessionId, modeRef, 'acceptEdits');
+        }
         // Review M6: the audit log is best-effort; losing it must not lose the user's answer.
         try {
           await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
@@ -532,7 +592,8 @@ export class TurnRunner {
         }
         return decision;
       },
-      ...(this.deps.autoApprove ? { autoApprove: this.deps.autoApprove } : {}),
+      // 모두 자동 승인 is read per call, so a mode change mid-turn applies to the next tool call.
+      autoApprove: () => modeRef.mode === 'bypassPermissions',
       onAutoApproved: async (pr) => {
         try {
           await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision: 'auto', inputSha256: hashInput(pr.input) });
@@ -562,6 +623,7 @@ export class TurnRunner {
     });
     const rest = events[Symbol.asyncIterator]();
     const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null, rest, live: null, bgTasks: [] };
+    this.modes.set(p.turnId, { ref: modeRef, sessionId: () => out.sessionId });
     // The first result ends the attempt; whatever follows (background continuations) is `rest`.
     while (!out.result) {
       const n = await rest.next();
@@ -638,7 +700,6 @@ export class TurnRunner {
         ...(ok ? { lastTurnAtMs: this.now() } : {}),
         ...(grants.rules.length ? { allowRules: [...grants.rules] } : {}),
         ...(grants.dirs.length ? { allowDirs: [...grants.dirs] } : {}),
-        ...(grants.acceptEdits ? { mode: 'acceptEdits' as const } : {}),
       });
     };
     // Follow-ups are taken only while background work holds the process open (else it closes right after this result).
@@ -732,7 +793,7 @@ export class TurnRunner {
         // A Codex Desktop / CLI thread: resumed in its own cwd under deck's sandbox; stored as a deck Codex session after this turn.
         state = {
           engine: 'codex', sessionId: imported.sessionId, cwd: imported.cwd, lastTurnAtMs: null, justCompacted: false,
-          defaultModel: isCodexModel(p.model) ? p.model : DEFAULT_CODEX_MODEL, sandbox: p.sandbox ?? defaultSandbox(deps.autoApprove?.() ?? false),
+          defaultModel: isCodexModel(p.model) ? p.model : DEFAULT_CODEX_MODEL, sandbox: p.sandbox ?? defaultSandbox(this.defaultMode() === 'bypassPermissions'),
           rolloutFile: imported.file, createdAtMs: this.now(), title: imported.title,
         };
         if (await rolloutRecentlyActive(imported.file, this.now())) notice = LIVE_ROLLOUT_NOTICE;
@@ -771,7 +832,7 @@ export class TurnRunner {
     const cwd = state?.cwd ?? p.cwd;
     // A per-turn Codex model wins on resume too (like Claude's per-turn model); the session's stored default is kept.
     const model: CodexModel = isCodexModel(p.model) ? p.model : (state?.defaultModel ?? DEFAULT_CODEX_MODEL);
-    const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? defaultSandbox(deps.autoApprove?.() ?? false);
+    const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? defaultSandbox(this.defaultMode() === 'bypassPermissions');
     // Task 2 follow-up: the id is either the stored one (itself CLI-reported) or what the CLI reports via init
     // (thread.started) — never the result's sessionId, which echoes a rejected resume id.
     let sessionId: string | null = state?.sessionId ?? null;
@@ -817,7 +878,7 @@ export class TurnRunner {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const model: GeminiModel = isGeminiModel(p.model) ? p.model : (state?.defaultModel ?? DEFAULT_GEMINI_MODEL);
-    const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? defaultSandbox(deps.autoApprove?.() ?? false);
+    const sandbox: CodexSandbox = state?.sandbox ?? p.sandbox ?? defaultSandbox(this.defaultMode() === 'bypassPermissions');
     let sessionId: string | null = state?.sessionId ?? null;
     const scope = () => ({ turnId: p.turnId, sessionId, cwd });
     const fail = (account: GeminiAccount, errorText: string) =>
@@ -878,6 +939,7 @@ export class TurnRunner {
         end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, early, newSessionModel);
       } finally {
         this.inputs.delete(p.turnId);
+        this.modes.delete(p.turnId);
       }
       // The final write-back at close (also after a long hold for background work).
       if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
@@ -923,7 +985,9 @@ export class TurnRunner {
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];
-    const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])], acceptEdits: state?.mode === 'acceptEdits' };
+    const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])] };
+    // Handoff turns keep the mode as is: noTools denies every call before any mode is consulted.
+    const modeRef: ModeRef = { mode: (state ? state.mode : p.permissionMode) ?? this.defaultMode() };
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
@@ -937,7 +1001,7 @@ export class TurnRunner {
       flushEarly();
 
       const cur: Cursor = { turnId: p.turnId };
-      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants, attachments, cur);
+      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants, modeRef, attachments, cur);
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
       const sessionId = a.sessionId ?? state?.sessionId ?? null;
       if (sessionId) {
@@ -951,7 +1015,7 @@ export class TurnRunner {
           defaultModel: sessionDefault,
           ...(grants.rules.length ? { allowRules: [...grants.rules] } : {}),
           ...(grants.dirs.length ? { allowDirs: [...grants.dirs] } : {}),
-          ...(grants.acceptEdits ? { mode: 'acceptEdits' as const } : {}),
+          mode: modeRef.mode,
           // Taken only by a new entry (a new session's pin); an existing entry keeps its stored pin.
           ...(pin ? { accountPin: pin } : {}),
         };

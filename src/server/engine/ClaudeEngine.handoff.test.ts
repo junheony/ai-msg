@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HookCallbackMatcher, Options } from '@anthropic-ai/claude-agent-sdk';
-import { ClaudeEngine, NO_TOOLS_MESSAGE, buildOptions } from './ClaudeEngine';
+import { ClaudeEngine, KEEP_PLANNING_MESSAGE, NO_TOOLS_MESSAGE, buildOptions } from './ClaudeEngine';
 import type { EngineEvent, TurnRequest } from './Engine';
 import { fakeSdk, sdk } from './fakeSdk';
 
@@ -24,6 +24,18 @@ describe('buildOptions: handoff note turn (noTools)', () => {
     expect(await o.canUseTool!('Bash', { command: 'ls' }, ctx)).toMatchObject({ behavior: 'deny', message: NO_TOOLS_MESSAGE });
     expect(await o.canUseTool!('AskUserQuestion', { questions: [] }, ctx)).toMatchObject({ behavior: 'deny' });
     expect(asked).toEqual([]);
+  });
+
+  it('wins over every permission mode: plan, acceptEdits and 모두 자동 승인 still get no tools', async () => {
+    for (const mode of [undefined, 'acceptEdits', 'plan'] as const) {
+      for (const auto of [true, false]) {
+        const asked: string[] = [];
+        const o = buildOptions(req({ noTools: true, permissionMode: mode, autoApprove: () => auto, onPermission: async (p) => { asked.push(p.toolName); return 'session'; } }), deps);
+        expect(await runHook(o)).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+        for (const t of ['Bash', 'Edit', 'ExitPlanMode']) expect(await o.canUseTool!(t, { plan: 'p' }, ctx)).toMatchObject({ behavior: 'deny', message: NO_TOOLS_MESSAGE });
+        expect(asked).toEqual([]);
+      }
+    }
   });
 
   it('keeps the rest of the options (tools, model, resume) as a normal turn so the cached prefix still hits', () => {

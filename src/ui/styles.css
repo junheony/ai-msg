@@ -397,13 +397,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* Sidebar footer: 자동 승인 toggle */
 .sidebar-foot { position: sticky; bottom: -24px; margin: auto -8px -24px; padding: 8px 10px 12px; border-top: 1px solid var(--line); background: var(--sidebar); }
-.auto-approve-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 6px; border-radius: 8px; font-size: calc(13.5px * var(--font-scale, 1)); color: var(--fg); text-align: left; }
-.auto-approve-toggle:hover { background: var(--hover); }
 .switch-track { position: relative; width: 28px; height: 16px; border-radius: 8px; background: var(--line-strong); flex-shrink: 0; transition: background .15s; }
 .switch-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-raised); transition: transform .15s; }
-.auto-approve-toggle.on .switch-track { background: var(--warn); }
-.auto-approve-toggle.on .switch-knob { transform: translateX(12px); }
-@media (max-width: 720px) { .auto-approve-toggle { min-height: var(--phone-tap); } }
 /* === usage header === */
 /* Each seat is a small card: mark + letter, then aligned rows (label · rounded bar · remaining %).
    Colour follows what is left (green → amber ≤20% → red ≤5%); the current account gets a quiet accent ring + dot.
@@ -1061,7 +1056,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @keyframes dictate-pulse { 50% { opacity: .45; } }
 @media (max-width: 720px) { .seg button { height: var(--phone-tap); } .settings-backdrop { padding: 0; align-items: stretch; } .settings { max-height: 100%; border-radius: 0; width: 100%; } }
 .sidebar-foot { display: flex; align-items: center; gap: 4px; }
-.sidebar-foot .auto-approve-toggle { flex: 1; min-width: 0; }
 .sidebar-foot .settings-open { margin-left: auto; font-size: calc(16px * var(--font-scale, 1)); }
 @media (max-width: 720px) { .settings-open { width: var(--phone-tap); height: var(--phone-tap); } }
 /* Thinking disclosure (collapsed above the reply). */
@@ -1090,3 +1084,16 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
 .markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+/* Permission modes: the composer picker / header badge (plan = blue, bypass = red warning) and the plan card. */
+.pick.perm-acceptEdits select { color: var(--accent); }
+.pick.perm-plan select { color: #3b82f6; }
+.pick.perm-bypassPermissions select { color: var(--danger, #dc2626); }
+.pick.perm select:disabled { opacity: .5; cursor: not-allowed; }
+.chip.perm-badge { flex-shrink: 0; border: 1px solid currentColor; }
+.chip.perm-acceptEdits { color: var(--accent); }
+.chip.perm-plan { color: #3b82f6; background: rgba(59, 130, 246, .1); }
+.chip.perm-bypassPermissions { color: var(--danger, #dc2626); background: rgba(220, 38, 38, .1); }
+.plan-card { border-color: rgba(59, 130, 246, .5); }
+.plan-card .dot { background: #3b82f6; }
+.plan-body { max-height: 50vh; overflow: auto; margin: 6px 0; }
+.default-perm { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 6px; font-size: 13.5px; color: var(--fg); }

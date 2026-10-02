@@ -29,6 +29,7 @@ import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
 import { ACCOUNTS, GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
+import type { PermMode } from '../shared/permission';
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -68,6 +69,7 @@ async function main(): Promise<void> {
 
   // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) or by a fork reach it through this.
   let notifyIndex = () => {};
+  let notifyPermissionMode: (sessionId: string, mode: PermMode) => void = () => {};
   const runner = new TurnRunner({
     engine: new ClaudeEngine({ bgMaxMs: cfg.bgMaxMs, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) }),
     codex,
@@ -80,7 +82,8 @@ async function main(): Promise<void> {
     cooldownDir: cfg.cooldownDir,
     protectedAccount: cfg.protectedAccount,
     auditFile: cfg.auditFile,
-    autoApprove: () => settings.get().autoApprove,
+    defaultPermissionMode: () => settings.get().defaultPermissionMode,
+    onPermissionMode: (sessionId, mode) => notifyPermissionMode(sessionId, mode),
     projectsRoots: cfg.projectsRoots,
     // Claude Desktop reads/writes A (~/.claude): deck mirrors sessions it ran on B/C back there.
     homeAccount: 'a',
@@ -105,6 +108,7 @@ async function main(): Promise<void> {
   const ws = attachWebSocket(servers, { build: computeBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments, meta });
   notifyIndex = () => ws.broadcastIndex();
   index.onChange = () => notifyIndex();
+  notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 
   console.log(`deck: 세션 ${index.sessions().length}개 · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · codex ${cfg.codexBin ?? '없음'} · gemini ${cfg.geminiBin ?? '없음'}`);

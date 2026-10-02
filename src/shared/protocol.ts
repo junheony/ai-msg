@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Account, GeminiAccount, Seat } from './accounts';
 import type { AnyModel, CodexSandbox, EngineKind } from './models';
+import { PERM_MODES, type PermMode } from './permission';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from './session-types';
 import type { BgTaskInfo, PermissionDecision, Question, QuestionAnswers, TaskUpdate, TaskUsage, TurnPhase, TurnUsage } from './turn-types';
 import type { UsageSnapshot } from './usage-types';
@@ -29,6 +30,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     sandbox: z.enum(['read-only', 'workspace-write']).optional(),
     /** New Claude sessions only: 이 세션은 B 써 (null/absent = 자동). Existing sessions use set_account_pin. */
     accountPin: z.enum(['a', 'b', 'c']).nullable().optional(),
+    /** New Claude sessions only: the permission mode picked before the first send (existing sessions use set_permission_mode). */
+    permissionMode: z.enum(PERM_MODES).optional(),
     attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
     /** Client correlation id: echoed on this send's turn_started and on any error refusing it (which pane sent it). */
     clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional(),
@@ -51,14 +54,22 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('refresh_index') }),
   /** Pin a Claude session to an account (null = 자동); persisted, applied from the next turn, broadcast as `account_pin`. */
   z.object({ type: z.literal('set_account_pin'), sessionId: z.string().min(1), pin: z.enum(['a', 'b', 'c']).nullable() }),
-  /** 자동 승인 toggle (server-wide, persisted, broadcast to every device as `settings`). */
-  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean() }),
+  /** A Claude session's permission mode; persisted, applied to its running turn at once, broadcast as `permission_mode`. */
+  z.object({ type: z.literal('set_permission_mode'), sessionId: z.string().min(1), mode: z.enum(PERM_MODES) }),
+  /**
+   * Server-wide settings (persisted, broadcast to every device as `settings`). `defaultPermissionMode` = the mode new
+   * sessions start in; `autoApprove` is the legacy switch (true = bypassPermissions, false = default).
+   */
+  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional() }),
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
-/** Server-wide settings. autoApprove (자동 승인): Claude tool calls run without a card; new GPT sessions default to workspace-write. */
-export type DeckSettings = { autoApprove: boolean };
+/**
+ * Server-wide settings. defaultPermissionMode: the mode new Claude sessions (and sessions deck has no mode for) start in.
+ * autoApprove mirrors `defaultPermissionMode === 'bypassPermissions'` (legacy 자동 승인; new GPT sessions default to workspace-write).
+ */
+export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMode };
 
 /** gemini-cli present, and which accounts have an OAuth file (existence only; the UI shows "로그인 필요" otherwise). */
 export type GeminiStatus = { available: boolean; loggedIn: Record<GeminiAccount, boolean> };
@@ -87,11 +98,13 @@ export type ServerMessage =
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
   | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   | { type: 'settings'; settings: DeckSettings }
+  /** A Claude session's permission mode changed (picker, Shift+Tab, or an approved plan). */
+  | { type: 'permission_mode'; sessionId: string; mode: PermMode }
   /** A session's account pin changed (null = 자동). */
   | { type: 'account_pin'; sessionId: string; pin: Account | null }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[] }
-  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number }
+  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number }
   | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string; /** The user message that started this turn (absent for a background continuation); the sending pane already shows it. */ prompt?: TurnPrompt } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)
   /** Claude thinking content so far (chunks; empty text = a block started); `redacted` = an encrypted block. */

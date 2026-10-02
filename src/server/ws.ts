@@ -446,6 +446,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
           ...(msg.attachments ? { attachments: msg.attachments } : {}),
           ...(msg.sessionId === null && msg.accountPin ? { accountPin: msg.accountPin } : {}),
+          ...(msg.sessionId === null && msg.permissionMode ? { permissionMode: msg.permissionMode } : {}),
           ...(msg.handoff ? { handoff: true } : {}),
         }, sink);
       } catch (err) {
@@ -561,7 +562,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               .catch(() => readTranscript(found.file))
               .then((messages) => {
                 const t = turns.get(busy.get(sessionId) ?? '');
-                send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, messages, ...runningOf(sessionId) });
+                send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), messages, ...runningOf(sessionId) });
                 if (t) replay(ws, t, sessionId);
                 // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
                 void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
@@ -586,15 +587,22 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `계정 고정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
+        case 'set_permission_mode':
+          void deps.runner.setPermissionMode(msg.sessionId, msg.mode)
+            .then((ok) => {
+              if (!ok) { send(ws, { type: 'error', turnId: null, message: `권한 모드를 바꿀 수 없는 세션입니다: ${msg.sessionId}` }); return; }
+              broadcast({ type: 'permission_mode', sessionId: msg.sessionId, mode: msg.mode });
+              // 모두 자동 승인 also lets through this session's cards already waiting (a plan still needs its own choice).
+              if (msg.mode === 'bypassPermissions') for (const m of broker.pending()) if (m.sessionId === msg.sessionId && m.toolName !== 'ExitPlanMode') broker.resolve(m.requestId, 'once');
+            })
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `권한 모드를 저장하지 못했습니다: ${errMsg(err)}` }));
+          break;
         case 'set_settings': {
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
-          void store.set({ autoApprove: msg.autoApprove })
-            .then((settings) => {
-              broadcast({ type: 'settings', settings });
-              // Turning 자동 승인 on also lets through the cards already waiting.
-              if (settings.autoApprove) for (const m of broker.pending()) if (m.type === 'permission_request') broker.resolve(m.requestId, 'once');
-            })
+          // The default only applies to new sessions (and ones with no stored mode) from their next turn: waiting cards stay.
+          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}) })
+            .then((settings) => broadcast({ type: 'settings', settings }))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `설정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
         }

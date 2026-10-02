@@ -561,12 +561,15 @@ describe('ws', () => {
     const pa = collect(a.ws, (m) => m.type === 'settings');
     const pb = collect(b.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: false }));
-    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false } });
-    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false } });
-    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: false });
+    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } });
+    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } });
+    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: false, defaultPermissionMode: 'default' });
     const pc = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: true }));
-    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: true } });
+    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions' } });
+    const pd = collect(a.ws, (m) => m.type === 'settings');
+    a.ws.send(JSON.stringify({ type: 'set_settings', defaultPermissionMode: 'plan' }));
+    expect((await pd).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan' } });
     a.ws.close(); b.ws.close();
   });
 

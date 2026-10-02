@@ -93,7 +93,7 @@ export function App() {
     return () => sock.current?.close();
   }, [authed]);
 
-  useQueueRunner(state.panes, state.connected, dispatch, (m) => sock.current?.send(m));
+  useQueueRunner(state.panes, state.connected, dispatch, (m) => sock.current?.send(m), state.defaultPermMode);
   useTabTitle(state.activity.some((a) => a.running) || state.panes.some((p) => p.activeTurnId !== null));
   // PWA: a notification click opens deck at /?session=<id> or, with deck already open, posts the id here.
   const [openReq, setOpenReq] = useState<string | null>(() => new URLSearchParams(window.location.search).get('session'));
@@ -184,7 +184,7 @@ export function App() {
         </div>
       </header>
       {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
-      {settingsOpen && <SettingsView build={buildId} onOpenUsage={() => setUsageOpen(true)} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} onOpenUsage={() => setUsageOpen(true)} onClose={() => setSettingsOpen(false)} />}
       {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
       {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}
       {(orphanPerms.length > 0 || orphanQs.length > 0) && (
@@ -204,8 +204,6 @@ export function App() {
             onRefresh={() => send({ type: 'refresh_index' })}
             pins={state.pins}
             desktop={state.desktop}
-            autoApprove={state.autoApprove}
-            onAutoApprove={(autoApprove) => send({ type: 'set_settings', autoApprove })}
             onTogglePin={(sessionId, pinned) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 실패' })); }}
             collapsed={collapsed}
             onCollapsedChange={setCollapsed}

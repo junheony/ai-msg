@@ -297,6 +297,9 @@ export const BG_GRACE_MS = 60_000;
 /** The handoff-note turn (TurnRequest.noTools): what a denied tool call tells the model. */
 export const NO_TOOLS_MESSAGE = '인계 메모 작성 중에는 도구를 쓸 수 없습니다 — 지금까지의 대화만으로 메모를 써 주세요';
 
+/** 계속 계획 on the plan card: what the denied ExitPlanMode call tells the model. */
+export const KEEP_PLANNING_MESSAGE = '사용자가 계획을 승인하지 않았습니다 — 계획 모드를 유지하며 계획을 더 다듬어 주세요';
+
 export function buildOptions(
   req: TurnRequest,
   deps: { home: string; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void },
@@ -308,8 +311,8 @@ export function buildOptions(
     // sdk.d.ts Options.effort?: EffortLevel ('low' | 'medium' | 'high' | 'xhigh' | 'max'), "works with adaptive thinking".
     ...(req.effort ? { effort: req.effort } : {}),
     resume: req.resumeSessionId ?? undefined,
-    // ~/.claude/settings.json sets defaultMode "auto"; spec §6 wants ask-every-time — unless
-    // 이 세션 accepted the SDK's own "allow all edits this session" on an earlier turn.
+    // ~/.claude/settings.json sets defaultMode "auto"; spec §6 wants ask-every-time — unless the session's mode
+    // (picker, plan approval, or 이 세션's "allow all edits") says acceptEdits / plan. Never 'bypassPermissions'.
     permissionMode: req.permissionMode ?? 'default',
     // Spec §4.3: hooks, agents, CLAUDE.md from the profile + project.
     settingSources: ['user', 'project', 'local'],
@@ -357,6 +360,11 @@ export function buildOptions(
         return { behavior: 'allow' };
       }
       const decision = await req.onPermission(pr);
+      // The plan card: approval also leaves plan mode, into the mode the user picked (Desktop: auto-accept edits vs manually approve).
+      if (toolName === 'ExitPlanMode') {
+        if (decision === 'deny') return { behavior: 'deny', message: KEEP_PLANNING_MESSAGE, interrupt: false };
+        return { behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: decision === 'session' ? 'acceptEdits' : 'default', destination: 'session' }] };
+      }
       if (decision === 'deny') return { behavior: 'deny', message: '사용자가 거부했습니다', interrupt: false };
       // Only the SDK's own suggestions, sanitized to destination 'session' — never ctx.suggestions
       // verbatim (a localSettings rule would be written to disk) and never a rule of our own.
@@ -551,7 +559,8 @@ export class ClaudeEngine implements Engine {
     let shownTasks: string[] = [];
     let shownSig = '[]';
     /** The SDK handle (Query) once the process is spawned: per-task stop when it has stopTask. */
-    let handle: { stopTask?: (id: string) => Promise<void> } | null = null;
+    type Handle = { stopTask?: (id: string) => Promise<void>; setPermissionMode?: (m: 'default' | 'acceptEdits' | 'plan') => Promise<void> };
+    let handle: Handle | null = null;
     /** Messages sent (initial prompt + follow-ups) not yet answered by a result. */
     let outstanding = 1;
     /** Between a result and the next main-thread output: new output there is a background continuation. */
@@ -592,12 +601,18 @@ export class ClaudeEngine implements Engine {
         await handle.stopTask(taskId);
         return true;
       },
+      setPermissionMode: async (mode) => {
+        if (input.closed || typeof handle?.setPermissionMode !== 'function') return false;
+        await handle.setPermissionMode(mode);
+        return true;
+      },
     };
     try {
       input.push(await toUserMessage(req.prompt, req.attachments ?? [], this.readFile));
       const stream = this.queryFn({ prompt: input, options });
-      handle = stream as { stopTask?: (id: string) => Promise<void> };
+      handle = stream as Handle;
       if (typeof handle.stopTask !== 'function') delete live.stopTask;
+      if (typeof handle.setPermissionMode !== 'function') delete live.setPermissionMode;
       req.onLive?.(live);
       for await (const m of stream) {
         if (bg.apply(m)) {
