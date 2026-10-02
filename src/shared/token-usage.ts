@@ -24,7 +24,7 @@ export type UsageHistory = { generatedAt: string; days: number; lastScanAt: stri
  * 추정 단가 (USD per million tokens), the one place prices live. Claude: claude-api skill model table
  * (2026-09-25) — Opus 5.5 $4/$20, Sonnet 5.5 $2/$10, Fable 5.1 $10/$50, Haiku 4.5 $1/$5; older versions in a
  * family are priced as the current one. GPT: no published per-token price for the ChatGPT-plan models — a
- * rough placeholder. Cache read = input × CACHE_READ_MULT, cache write = input × CACHE_WRITE_MULT.
+ * rough placeholder (the UI labels GPT as 구독 포함 · 추정 환산, never as a bill). Cache read = input × CACHE_READ_MULT, cache write = input × CACHE_WRITE_MULT.
  */
 export const PRICES_PER_MTOK: Record<ModelFamily, { input: number; output: number }> = {
   opus: { input: 4, output: 20 },

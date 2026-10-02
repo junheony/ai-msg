@@ -23,6 +23,12 @@ export function fmtCost(usd: number): string {
   return `$${usd >= 100 ? Math.round(usd).toLocaleString('en-US') : usd.toFixed(2)}`;
 }
 
+/** GPT/Codex runs on the ChatGPT subscription: no per-token bill, so the API-rate conversion is shown rounded ("약 $12"), never to the cent. */
+export function fmtSubscriptionCost(usd: number): string {
+  const r = usd >= 100 ? Math.round(usd / 10) * 10 : usd >= 10 ? Math.round(usd) : Math.round(usd * 10) / 10;
+  return `구독 포함 · 약 $${r.toLocaleString('en-US')} 환산(추정)`;
+}
+
 function fmtPct(p: number | null): string {
   return p === null ? '—' : `${p.toFixed(1)}%`;
 }
@@ -63,13 +69,15 @@ export function dailyStacks(rows: UsageRow[], view: View, today: string, n: numb
   return days.map((d) => at.get(d)!);
 }
 
-function Tile({ label, s }: { label: string; s: Sum }) {
+function Tile({ label, s, sub }: { label: string; s: Sum; sub: boolean }) {
   return (
     <div className="uv-tile">
       <div className="uv-tile-label">{label}</div>
       <div className="uv-tile-value" title={`${totalTokens(s).toLocaleString('en-US')} 토큰`}>{fmtTokens(totalTokens(s))}</div>
       <div className="uv-tile-sub">
-        <span title="추정 비용 — API 단가 기준, 실제 구독 요금과 다릅니다">{fmtCost(s.cost)} 추정</span>
+        {sub
+          ? <span title="구독에 포함된 사용량입니다. API 단가로 환산한 대략적인 추정치이며 실제 청구액이 아닙니다">{fmtSubscriptionCost(s.cost)}</span>
+          : <span title="추정 비용 — API 단가 기준, 실제 구독 요금과 다릅니다">{fmtCost(s.cost)} 추정</span>}
         <span>캐시 적중 {fmtPct(cacheHitPct(s))}</span>
       </div>
     </div>
@@ -174,11 +182,12 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
         </div>
         {error && <div className="uv-note error">{error}</div>}
         {data?.scanning && <div className="uv-note">기록을 읽는 중입니다 — 처음에는 몇 분 걸릴 수 있어요. 숫자가 계속 늘어납니다.</div>}
-        {view === 'all' && <div className="uv-note muted">합계는 여러 계정에 복사된 같은 메시지를 한 번만 셉니다. 비용은 API 단가 기준 추정치입니다.</div>}
+        {view === 'all' && <div className="uv-note muted">합계는 여러 계정에 복사된 같은 메시지를 한 번만 셉니다. 비용은 API 단가 기준 추정치이며, GPT(Codex)는 구독에 포함되어 환산값이 실제 청구액이 아닙니다.</div>}
+        {view === 'codex' && <div className="uv-note muted">GPT(Codex) 사용량은 ChatGPT 구독에 포함됩니다. 금액은 공개 단가가 없어 임의 단가로 환산한 대략적인 추정치입니다.</div>}
         <section className="uv-tiles">
-          <Tile label="오늘" s={sumRows(rows, view, (d) => d === today)} />
-          <Tile label="이번 주" s={sumRows(rows, view, (d) => d >= week && d <= today)} />
-          <Tile label="30일" s={sumRows(rows, view, (d) => d >= month && d <= today)} />
+          <Tile label="오늘" sub={view === 'codex'} s={sumRows(rows, view, (d) => d === today)} />
+          <Tile label="이번 주" sub={view === 'codex'} s={sumRows(rows, view, (d) => d >= week && d <= today)} />
+          <Tile label="30일" sub={view === 'codex'} s={sumRows(rows, view, (d) => d >= month && d <= today)} />
         </section>
         <section>
           <h3>일별 (최근 {CHART_DAYS}일)</h3>
@@ -202,7 +211,7 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
                     <td>{fmtTokens(sum.cacheWrite)}</td>
                     <td><b>{fmtTokens(totalTokens(sum))}</b></td>
                     <td>{fmtPct(cacheHitPct(sum))}</td>
-                    <td>{fmtCost(sum.cost)}</td>
+                    <td>{view === 'codex' ? fmtSubscriptionCost(sum.cost) : fmtCost(sum.cost)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -24,6 +24,12 @@ describe('readRolloutHead', () => {
     expect(await readRolloutHead(cli)).toEqual({ threadId: CLI_ID, cwd: work, title: 'List the files' });
   });
 
+  it('null for `codex exec` automation rollouts', async () => {
+    const f = path.join(base, 'exec.jsonl');
+    await fs.writeFile(f, jsonl([meta(CLI_ID, work, { originator: 'codex_exec', source: 'exec' }), user('automated')]));
+    expect(await readRolloutHead(f)).toBeNull();
+  });
+
   it('takes the prompt after either Desktop request heading', async () => {
     const f = path.join(base, 'r.jsonl');
     await fs.writeFile(f, jsonl([meta(CLI_ID, work), user('\n# Files mentioned by the user:\n\n## x.png: /tmp/x.png\n## My request:\n이거 파악해봐 \n')]));

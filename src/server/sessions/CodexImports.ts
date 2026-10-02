@@ -30,7 +30,7 @@ function titleOf(text: string): string | null {
 
 /**
  * Streams the first HEAD_BYTES of a rollout: `session_meta` (thread id, cwd) and the first real user prompt.
- * Null for sub-agent threads (Codex Desktop spawns hundreds; they are not conversations) and unusable files.
+ * Null for sub-agent and `codex exec` automation threads (Codex Desktop spawns hundreds; they are not conversations) and unusable files.
  */
 export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES): Promise<RolloutHead | null> {
   const stream = createReadStream(file, { encoding: 'utf8', start: 0, end: maxBytes - 1 });
@@ -49,6 +49,8 @@ export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES): Prom
         const id = typeof p.id === 'string' ? p.id : null;
         if (!id || !UUID.test(id) || typeof p.cwd !== 'string' || !p.cwd.startsWith('/')) return null;
         if (p.thread_source === 'subagent' || (p.source !== undefined && typeof p.source !== 'string')) return null;
+        // `codex exec` automation runs (non-interactive) are not conversations to continue.
+        if (p.source === 'exec' || p.originator === 'codex_exec') return null;
         meta = { threadId: id, cwd: p.cwd };
         continue;
       }

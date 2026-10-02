@@ -30,7 +30,7 @@ export async function writeFixtures(root: string, work: string): Promise<{ deskt
     assistant('고쳤습니다.'),
   ]));
   const cli = path.join(dir, `rollout-2026-10-01T11-00-00-${CLI_ID}.jsonl`);
-  await fs.writeFile(cli, jsonl([meta(CLI_ID, work, { originator: 'codex_exec', source: 'exec' }), user('<environment_context>…'), user('List the files'), assistant('a.txt')]));
+  await fs.writeFile(cli, jsonl([meta(CLI_ID, work, { originator: 'codex_cli_rs', source: 'cli' }), user('<environment_context>…'), user('List the files'), assistant('a.txt')]));
   await fs.writeFile(path.join(dir, `rollout-2026-10-01T12-00-00-${SUB_ID}.jsonl`), jsonl([meta(SUB_ID, work, { source: { subagent: { thread_spawn: { parent_thread_id: DESKTOP_ID } } }, thread_source: 'subagent' }), user('do part 1')]));
   await fs.writeFile(path.join(dir, `rollout-2026-10-01T13-00-00-${GONE_ID}.jsonl`), jsonl([meta(GONE_ID, path.join(work, 'deleted-temp-dir')), user('hi')]));
   await fs.writeFile(path.join(dir, 'rollout-junk.jsonl'), 'not json\n');
