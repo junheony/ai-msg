@@ -104,8 +104,10 @@ export type ChatProps = {
   onHandoff?: () => void;
   /** The handoff-note turn is running. */
   handoffWriting?: boolean;
-  /** Text put into the composer once (the new session's first message after a handoff); not sent. */
+  /** Text put into the composer once (the new session's first message after a handoff); not sent. Never over a draft. */
   prefill?: string | null;
+  /** Where the draft of a session with no id yet is kept (per pane), so a remount or reload does not lose it. */
+  draftKey?: string;
   /** 새 세션으로 이어가기 links: the session this one continues / continues in. */
   prevSession?: { title: string; open: () => void } | null;
   nextSession?: { title: string; open: () => void } | null;
@@ -136,16 +138,20 @@ function useCoarsePointer(): boolean {
 const NO_AGENTS: Record<string, AgentInfo> = {};
 
 export function Chat(p: ChatProps) {
-  const [text, setText] = useState(() => loadDraft(p.sessionId));
+  const draftKey = p.sessionId ?? p.draftKey ?? null;
+  const [text, setText] = useState(() => loadDraft(draftKey));
   // The pane switched sessions: show that session's draft, not the previous one's. Done during render so the save
   // effect below never writes the old text under the new id. A new session getting its id (null → id) keeps the text.
   const [draftId, setDraftId] = useState(p.sessionId);
   if (draftId !== p.sessionId) {
     setDraftId(p.sessionId);
-    if (draftId) setText(loadDraft(p.sessionId));
+    if (draftId) setText(loadDraft(draftKey));
   }
-  useEffect(() => { saveDraft(p.sessionId, text); }, [p.sessionId, text]);
-  useEffect(() => { if (p.prefill) setText(p.prefill); }, [p.prefill]);
+  useEffect(() => { saveDraft(draftKey, text); }, [draftKey, text]);
+  // The session has its id now: its draft lives under the id; the id-less one is spent.
+  useEffect(() => { if (p.sessionId && p.draftKey) saveDraft(p.draftKey, ''); }, [p.sessionId, p.draftKey]);
+  // Only into an empty composer: a remount must not put the original note back over the user's edits.
+  useEffect(() => { if (p.prefill) setText((t) => (t.trim() ? t : p.prefill!)); }, [p.prefill]);
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);

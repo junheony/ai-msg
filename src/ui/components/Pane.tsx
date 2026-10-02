@@ -250,6 +250,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onHandoff={canHandoff ? () => startHandoff(pane, dispatch, send) : undefined}
           handoffWriting={pane.handoff !== null}
           prefill={pane.prefill}
+          draftKey={`new:${pane.id}`}
           prevSession={link(prevId)}
           nextSession={link(entry?.nextSession ?? null)}
           onInterrupt={() => {

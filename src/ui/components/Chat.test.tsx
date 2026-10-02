@@ -184,3 +184,28 @@ describe('Composer keyboard (Desktop)', () => {
     expect(box().value).toBe('previous ask');
   });
 });
+
+describe('Chat · handoff prefill vs. an edited draft', () => {
+  afterEach(() => { cleanup(); sessionStorage.clear(); });
+  const box = () => document.querySelector('textarea') as HTMLTextAreaElement;
+
+  it('a remount keeps the draft the user edited instead of putting the original note back', () => {
+    const extra: Partial<ChatProps> = { isNew: true, sessionId: null, draftKey: 'new:p0', prefill: '인계 메모' };
+    renderChat([], false, vi.fn(), extra);
+    expect(box().value).toBe('인계 메모');
+    fireEvent.change(box(), { target: { value: '인계 메모 — 고쳐 씀' } });
+    cleanup();
+    renderChat([], false, vi.fn(), extra);
+    expect(box().value).toBe('인계 메모 — 고쳐 씀');
+  });
+
+  it('with no draft yet the note is put in; once the session has its id the id-less draft is dropped', () => {
+    renderChat([], false, vi.fn(), { isNew: true, sessionId: null, draftKey: 'new:p1', prefill: '노트' });
+    expect(box().value).toBe('노트');
+    cleanup();
+    renderChat([], false, vi.fn(), { sessionId: 'sid-1', draftKey: 'new:p1', prefill: null });
+    cleanup();
+    renderChat([], false, vi.fn(), { isNew: true, sessionId: null, draftKey: 'new:p1', prefill: null });
+    expect(box().value).toBe('');
+  });
+});
