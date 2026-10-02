@@ -506,6 +506,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .msg { min-width: 0; }
 .chat-body > .msg { animation: msg-in .22s cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
+/* Scroll lock: the browser keeps what is read in place when content above changes (overflow-anchor; Safari: stickToBottom.ts).
+   Jump-to-bottom floats over the transcript's bottom edge while detached. */
+.chat-body { overflow-anchor: auto; }
+.jump-anchor { position: relative; height: 0; z-index: 5; }
+.jump-bottom { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); min-width: 32px; height: 32px; padding: 0 12px; border-radius: 999px; border: 0; background: var(--panel); color: var(--fg); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.jump-bottom.unread { color: var(--accent); }
 
 /* User bubble — right, soft, rounded; attachments as tiles above it */
 .msg.user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
