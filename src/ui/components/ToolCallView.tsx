@@ -5,10 +5,17 @@ import { applyTodoCall, todoCounts } from '../todos';
 import { TodoList } from './TodoPanel';
 import { DiffList } from './DiffView';
 import { AgentCard } from './Activity';
+import { CopyButton } from './CopyButton';
 
 function pretty(v: unknown, max = 4000): string {
   const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
   return s.length > max ? s.slice(0, max) + '\n…' : s;
+}
+
+/** What a tool card's copy button copies: the shell command itself when there is one, else the full (uncut) value. */
+function copyable(v: unknown): string {
+  if (v && typeof v === 'object' && typeof (v as { command?: unknown }).command === 'string') return (v as { command: string }).command;
+  return typeof v === 'string' ? v : JSON.stringify(v, null, 2);
 }
 
 function stateOf(call: ToolCallItem, live: boolean): { cls: string; text: string } {
@@ -51,8 +58,8 @@ export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; 
         <div className="tool-detail todo-detail"><TodoList todos={todos} /></div>
       ) : (
         <div className="tool-detail">
-          <pre className="tool-input">{pretty(call.input)}</pre>
-          {call.result !== null && <pre className="tool-output">{pretty(call.result)}</pre>}
+          <div className="tool-pre"><pre className="tool-input">{pretty(call.input)}</pre><CopyButton icon text={() => copyable(call.input)} label={typeof (call.input as { command?: unknown } | null)?.command === 'string' ? '명령 복사' : '입력 복사'} /></div>
+          {call.result !== null && <div className="tool-pre out"><pre className="tool-output">{pretty(call.result)}</pre><CopyButton icon text={() => copyable(call.result)} label="출력 복사" /></div>}
         </div>
       )}
     </details>

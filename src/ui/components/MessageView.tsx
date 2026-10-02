@@ -1,10 +1,12 @@
-import { isValidElement, memo, useEffect, useState, type ReactNode } from 'react';
+import { createContext, isValidElement, memo, useContext, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
 import type { ChatItem, SentFile } from '../state';
+import { CopyButton } from './CopyButton';
+import { EditIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
 import { RoleBadge } from './RoleBadge';
 import { ToolCalls } from './ToolCallView';
@@ -19,38 +21,6 @@ function textOf(node: ReactNode): string {
   return '';
 }
 
-/** Clipboard API needs a secure context; deck over plain-http Tailnet falls back to execCommand. */
-async function copyText(s: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(s); return true; }
-  } catch { /* fall through */ }
-  const ta = document.createElement('textarea');
-  ta.value = s;
-  ta.setAttribute('readonly', '');
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch { ok = false; }
-  ta.remove();
-  return ok;
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle');
-  useEffect(() => {
-    if (state === 'idle') return;
-    const id = setTimeout(() => setState('idle'), 1600);
-    return () => clearTimeout(id);
-  }, [state]);
-  return (
-    <button type="button" className="code-copy" onClick={() => void copyText(text).then((ok) => setState(ok ? 'ok' : 'fail'))} aria-label="코드 복사">
-      {state === 'ok' ? '복사됨' : state === 'fail' ? '복사 실패' : '복사'}
-    </button>
-  );
-}
-
 /** Fenced code: a header strip with the language and a copy button above the scrolling body. */
 function CodeBlock({ children }: { children?: ReactNode }) {
   const code = Array.isArray(children) ? children[0] : children;
@@ -61,7 +31,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
     <div className="code-block">
       <div className="code-head">
         <span className="code-lang">{lang || 'text'}</span>
-        <CopyButton text={text} />
+        <CopyButton text={text} label="코드 복사" />
       </div>
       <pre>{children}</pre>
     </div>
@@ -152,11 +122,20 @@ function AttachmentTiles({ files }: { files: SentFile[] }) {
 }
 
 /**
+ * Message actions supplied by the chat (a context so MessageView's memo still holds across composer keystrokes).
+ * onEdit: put a sent message back in the composer; onRetry: re-send the last prompt (only given while idle).
+ */
+export type MessageActions = { onEdit?: (text: string) => void; onRetry?: () => void };
+export const MessageActionsContext = createContext<MessageActions>({});
+
+/**
  * Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines.
  * Memoized: the composer's draft lives in Chat, so without this every keystroke re-rendered (and re-parsed the
  * markdown of) the whole transcript. Items are immutable (the reducer replaces what changes), so identity is enough.
+ * `last`: the conversation's last message (its actions stay visible and it offers 재시도).
  */
-export const MessageView = memo(function MessageView({ item, cwd }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string }) {
+export const MessageView = memo(function MessageView({ item, cwd, last = false }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean }) {
+  const actions = useContext(MessageActionsContext);
   if (item.kind === 'user') {
     if (item.text === HANDOFF_PROMPT) return <div className="msg user handoff-req" title={HANDOFF_PROMPT}><pre>인계 메모 요청 (새 세션으로 이어가기)</pre></div>;
     const { text, notices } = parseUserText(item.text);
@@ -169,21 +148,35 @@ export const MessageView = memo(function MessageView({ item, cwd }: { item: Chat
         <div className="msg user">
           {files.length > 0 && <AttachmentTiles files={files} />}
           {text && <pre>{text}</pre>}
+          {text && (
+            <div className="msg-actions" data-testid="user-actions">
+              <CopyButton icon text={text} label="메시지 복사" />
+              {actions.onEdit && <button type="button" className="msg-act" aria-label="편집" title="편집 — 입력창에서 고쳐 다시 보내기" onClick={() => actions.onEdit?.(text)}><EditIcon /></button>}
+            </div>
+          )}
         </div>
       </>
     );
   }
   const stopped = !!item.badge && !item.streaming && isStoppedTurn({ badge: item.badge, error: item.error, text: item.text });
+  const retry = last && !item.streaming ? actions.onRetry : undefined;
+  const hasActions = !item.streaming && (!!item.text || !!retry);
   return (
-    <div className={`msg assistant ${item.streaming ? 'streaming' : ''}`}>
+    <div className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}`}>
       {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
       {item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
       <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} />
       {item.text && <Markdown text={item.text} />}
       {item.streaming && <span className="cursor">▍</span>}
       {item.error && !(stopped && item.error === '중단됨') && <div className="error">오류: {item.error}</div>}
-      {(item.badge || item.toolCalls.length > 0) && (
+      {(item.badge || item.toolCalls.length > 0 || hasActions) && (
         <div className="turn-foot">
+          {hasActions && (
+            <div className="msg-actions" data-testid="turn-actions">
+              {item.text && <CopyButton icon text={item.text} label="응답 복사" />}
+              {retry && <button type="button" className="msg-act" aria-label="재시도" title="재시도" onClick={retry}><RetryIcon /></button>}
+            </div>
+          )}
           {item.badge && <TurnBadge badge={item.badge} stopped={stopped} cacheNote={item.cacheNote ?? null} />}
           <RoleBadge roles={roleSummary(item.toolCalls)} />
         </div>
