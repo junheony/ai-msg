@@ -675,6 +675,12 @@ describe('reducer: 새 세션으로 이어가기 (handoff)', () => {
     expect(pane(reducer(s, { type: 'open', sessionId: 'other', cwd: '/w', title: 'o' })).handoffFrom).toBeNull();
   });
 
+  it('the new session keeps the old session\'s account pin', () => {
+    let s = reducer(start(), { type: 'set_account_pin', paneId: initialState.panes[0]!.id, pin: 'c' });
+    s = play([{ type: 'turn_result', turnId: 'th', sessionId: SID, cwd: '/w', ok: true, text: '메모', badge, errorText: null }], s);
+    expect(pane(s).session).toMatchObject({ sessionId: null, accountPin: 'c' });
+  });
+
   it('a failed note turn or a refused send keeps the old session', () => {
     const failed = play([{ type: 'turn_result', turnId: 'th', sessionId: SID, cwd: '/w', ok: false, text: '', badge, errorText: 'boom' }], start());
     expect(pane(failed).session?.sessionId).toBe(SID);

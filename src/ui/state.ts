@@ -395,7 +395,8 @@ function afterHandoffNote(pane: PaneState, ok: boolean): PaneState {
   if (!ok || !note) return { ...pane, handoff: null };
   return {
     ...pane,
-    session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null },
+    // The old session's account pin carries over (rides the new session's first send).
+    session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null, ...(pane.session?.accountPin ? { accountPin: pane.session.accountPin } : {}) },
     engine: 'claude',
     items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [],
     // Messages queued meanwhile stay, paused: they were meant for the old session.
