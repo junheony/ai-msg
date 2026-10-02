@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Sidebar } from './Sidebar';
 
 const noop = () => {};
+/** Fixture times: now, each one 1 ms older, so the 최근 view's newest-first order is the creation order (equal / ms-apart Date.now() made it flaky). */
+const stamp = (() => { const base = Date.now(); let k = 0; return () => base - k++; })();
 
 describe('Sidebar 폴더 열기 (F1)', () => {
   afterEach(cleanup);
@@ -27,7 +29,7 @@ describe('Sidebar 폴더 열기 (F1)', () => {
 
 describe('Sidebar pins (F2)', () => {
   afterEach(cleanup);
-  const s = (id: string, cwd: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd, projectDir: '/p', file: '/f', title, lastModified: Date.now(), sizeBytes: 1 });
+  const s = (id: string, cwd: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd, projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1 });
   const projects = [
     { cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first'), s('s2', '/w/one', 'second')] },
     { cwd: '/w/two', name: 'two', pinned: false, sessions: [s('s3', '/w/two', 'third')] },
@@ -119,7 +121,7 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
 
 describe('Sidebar rename / archive / 대화 내용 검색', () => {
   afterEach(cleanup);
-  const s = (id: string, title: string, archived = false) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: Date.now(), sizeBytes: 1, ...(archived ? { archived } : {}) });
+  const s = (id: string, title: string, archived = false) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1, ...(archived ? { archived } : {}) });
   const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'Alpha'), s('s2', 'Beta'), s('s3', 'Old', true)] }];
 
   it('double-click renames inline: Enter saves, Esc cancels, empty resets to the transcript title; the 2nd click does not re-open', () => {
@@ -204,7 +206,7 @@ describe('Sidebar rename / archive / 대화 내용 검색', () => {
 
 describe('Sidebar activity dots', () => {
   afterEach(cleanup);
-  const s = (id: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: Date.now(), sizeBytes: 1 });
+  const s = (id: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1 });
   it('running → spinner, background only → pulsing dot, finished unseen → unread dot', () => {
     const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'one'), s('s2', 'two'), s('s3', 'three'), s('s4', 'four')] }];
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop}
