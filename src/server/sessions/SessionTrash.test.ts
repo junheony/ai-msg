@@ -35,13 +35,13 @@ describe('SessionTrash', () => {
     }
     expect(await fs.readFile(path.join(a.configDir, TRASH_DIR, r.trashId, ID, 'note.txt'), 'utf8')).toBe('n');
 
-    const back = await restoreFromTrash({ trashId: r.trashId, configDirs: [a.configDir, b.configDir] });
+    const back = await restoreFromTrash({ trashId: r.trashId, projectsRoots: [path.join(a.configDir, 'projects'), path.join(b.configDir, 'projects')] });
     expect(back.sessionId).toBe(ID);
     expect(back.restored).toHaveLength(2);
     expect(await fs.readFile(path.join(a.projectDir, ID, 'note.txt'), 'utf8')).toBe('n');
     expect(await exists(path.join(b.projectDir, `${ID}.jsonl`))).toBe(true);
     expect(await exists(path.join(a.configDir, TRASH_DIR, r.trashId))).toBe(false);
-    await expect(restoreFromTrash({ trashId: r.trashId, configDirs: [a.configDir] })).rejects.toThrow(/휴지통에 없는/);
+    await expect(restoreFromTrash({ trashId: r.trashId, projectsRoots: [path.join(a.configDir, 'projects')] })).rejects.toThrow(/휴지통에 없는/);
   });
 
   it('a second delete in the same second gets its own trash dir; restore refuses to overwrite', async () => {
@@ -52,7 +52,7 @@ describe('SessionTrash', () => {
     const second = await moveToTrash({ sessionId: ID, projectDirs: [a.projectDir], nowMs: NOW });
     expect(second.trashId).toBe(`${first.trashId}-1`);
     await fs.writeFile(path.join(a.projectDir, `${ID}.jsonl`), 'again\n');
-    await expect(restoreFromTrash({ trashId: first.trashId, configDirs: [a.configDir] })).rejects.toThrow(/이미 있어/);
+    await expect(restoreFromTrash({ trashId: first.trashId, projectsRoots: [path.join(a.configDir, 'projects')] })).rejects.toThrow(/이미 있어/);
     expect(await fs.readFile(path.join(a.projectDir, `${ID}.jsonl`), 'utf8')).toBe('again\n');
     expect(await exists(path.join(a.configDir, TRASH_DIR, first.trashId, `${ID}.jsonl`))).toBe(true);
   });
@@ -60,7 +60,28 @@ describe('SessionTrash', () => {
   it('refuses a missing transcript and malformed trash ids', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trash-'));
     await expect(moveToTrash({ sessionId: ID, projectDirs: [path.join(root, 'nope', 'projects', 'x')] })).rejects.toThrow(/없습니다/);
-    await expect(restoreFromTrash({ trashId: '../../etc', configDirs: [root] })).rejects.toThrow(/잘못된/);
+    await expect(restoreFromTrash({ trashId: '../../etc', projectsRoots: [path.join(root, 'projects')] })).rejects.toThrow(/잘못된/);
+  });
+
+  it('restore refuses a tampered manifest: another id, an unnormalized path, or a dir outside projects/', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trash-'));
+    const a = await profile(root, 'a');
+    const { trashId } = await moveToTrash({ sessionId: ID, projectDirs: [a.projectDir], nowMs: NOW });
+    const mf = path.join(a.configDir, TRASH_DIR, trashId, 'manifest.json');
+    const good = JSON.parse(await fs.readFile(mf, 'utf8')) as { sessionId: string; copies: { projectDir: string; dir: string }[] };
+    const bad = [
+      { ...good, sessionId: '' },
+      { ...good, sessionId: ID.slice(0, 8) },
+      { ...good, copies: [{ projectDir: `${a.configDir}/projects/x/../-Users-me-app`, dir: '' }] },
+      { ...good, copies: [{ projectDir: path.join(a.configDir, 'other', '-Users-me-app'), dir: '' }] },
+      { ...good, copies: [{ projectDir: path.join(a.configDir, 'projects', 'p', 'deeper'), dir: '' }] },
+    ];
+    for (const m of bad) {
+      await fs.writeFile(mf, JSON.stringify(m));
+      await expect(restoreFromTrash({ trashId, projectsRoots: [path.join(a.configDir, 'projects')] }), JSON.stringify(m)).rejects.toThrow(/맞지 않습니다/);
+    }
+    await fs.writeFile(mf, JSON.stringify(good));
+    expect((await restoreFromTrash({ trashId, projectsRoots: [path.join(a.configDir, 'projects')] })).sessionId).toBe(ID);
   });
 
   it('expired trash entries are pruned with the backups (DECK_BACKUP_RETENTION_DAYS)', async () => {

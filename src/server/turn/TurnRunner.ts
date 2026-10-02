@@ -388,8 +388,7 @@ export class TurnRunner {
   /** 되돌리기 for trashSession. */
   async restoreSession(trashId: string): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> {
     try {
-      const configDirs = Object.values(this.deps.projectsRoots).map((r) => path.dirname(r));
-      const r = await restoreFromTrash({ trashId, configDirs });
+      const r = await restoreFromTrash({ trashId, projectsRoots: Object.values(this.deps.projectsRoots) });
       return { ok: true, sessionId: r.sessionId };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };

@@ -6,7 +6,7 @@ export const TRASH_DIR = 'session-trash';
 const MANIFEST = 'manifest.json';
 
 /** `<yyyymmdd-hhmmss>-<uuid>[-n]` — the same names SessionFork gives its backups. */
-const TRASH_ID = /^\d{8}-\d{6}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-\d+)?$/i;
+const TRASH_ID = /^\d{8}-\d{6}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:-\d+)?$/i;
 
 export function isTrashId(v: unknown): v is string {
   return typeof v === 'string' && TRASH_ID.test(v);
@@ -93,20 +93,25 @@ export async function moveToTrash(opts: { sessionId: string; projectDirs: string
 }
 
 /**
- * Undo: every `<configDir>/session-trash/<trashId>/` found is moved back to its manifest's project dir.
- * Refused (nothing moved) when a transcript of that id already exists there again.
+ * Undo: every `<configDir>/session-trash/<trashId>/` found (configDir = a projects root's parent) is moved back to its
+ * manifest's project dir. Refused (nothing moved) when a transcript of that id already exists there again.
  */
-export async function restoreFromTrash(opts: { trashId: string; configDirs: string[] }): Promise<{ sessionId: string; restored: string[] }> {
-  if (!isTrashId(opts.trashId)) throw new Error('잘못된 휴지통 항목입니다');
+export async function restoreFromTrash(opts: { trashId: string; projectsRoots: string[] }): Promise<{ sessionId: string; restored: string[] }> {
+  const idOfTrash = TRASH_ID.exec(opts.trashId)?.[1];
+  if (!idOfTrash) throw new Error('잘못된 휴지통 항목입니다');
   const found: { entry: string; m: Manifest }[] = [];
-  for (const configDir of [...new Set(opts.configDirs.map((d) => path.resolve(d)))]) {
+  const roots = [...new Set(opts.projectsRoots.map((r) => path.resolve(r)))];
+  for (const configDir of [...new Set(roots.map((r) => path.dirname(r)))]) {
     const entry = path.join(configDir, TRASH_DIR, opts.trashId);
     const st = await fs.lstat(entry).catch(() => null);
     if (!st?.isDirectory()) continue;
     const m = JSON.parse(await fs.readFile(path.join(entry, MANIFEST), 'utf8')) as Manifest;
-    // Every copy must point back into the same config dir (never somewhere else on disk).
-    const ok = typeof m.sessionId === 'string' && opts.trashId.includes(m.sessionId) && Array.isArray(m.copies) && m.copies.length > 0
-      && m.copies.every((c) => typeof c.projectDir === 'string' && trashRootOf(c.projectDir) === path.join(configDir, TRASH_DIR) && /^(copy-\d+)?$/.test(c.dir));
+    // The manifest's id is exactly the trash name's, and every copy points back to a project dir directly inside a
+    // projects root of this same config dir (a normalized absolute path: never somewhere else on disk).
+    const own = roots.filter((r) => path.dirname(r) === configDir);
+    const ok = m.sessionId === idOfTrash && Array.isArray(m.copies) && m.copies.length > 0
+      && m.copies.every((c) => typeof c.projectDir === 'string' && path.resolve(c.projectDir) === c.projectDir && own.includes(path.dirname(c.projectDir))
+        && trashRootOf(c.projectDir) === path.join(configDir, TRASH_DIR) && typeof c.dir === 'string' && /^(copy-\d+)?$/.test(c.dir));
     if (!ok) throw new Error('휴지통 항목 정보가 맞지 않습니다');
     if (!found.some((f) => f.entry === entry)) found.push({ entry, m });
   }
