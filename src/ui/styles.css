@@ -1011,3 +1011,46 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .share-item:disabled { color: var(--faint); }
 .share-toast { position: absolute; right: 0; top: calc(100% + 6px); z-index: 41; padding: 4px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); color: var(--fg); font-size: 12.5px; white-space: nowrap; pointer-events: none; }
 @media (max-width: 720px) { .share-item { min-height: var(--phone-tap); } }
+
+/* Side panel (artifacts / file preview), one per pane. */
+.pane.with-side { flex-direction: row; }
+.pane.with-side > .chat { min-width: 280px; }
+.side-splitter { flex: 0 0 5px; margin: 0 -2px; cursor: col-resize; position: relative; z-index: 2; touch-action: none; }
+.side-splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: var(--line-strong); }
+.side-splitter:hover::after, .side-splitter:active::after { width: 2px; background: var(--accent); }
+.side-wrap { flex: 0 0 auto; min-width: 0; display: flex; }
+.side-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-raised); }
+.side-head { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 6px 0 12px; flex-shrink: 0; border-bottom: 1px solid var(--line); }
+.side-head .spacer { flex: 1; }
+.side-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; color: var(--fg); }
+.side-tabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.side-tabs button { height: 28px; padding: 0 10px; font-size: 12.5px; color: var(--muted); border-bottom: 2px solid transparent; }
+.side-tabs button.on { color: var(--fg-strong); border-bottom-color: var(--accent); }
+.side-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.side-msg { padding: 16px; font-size: 13px; }
+.side-msg.error { color: var(--danger); }
+.side-code { display: flex; align-items: flex-start; min-width: max-content; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+.side-code pre { margin: 0; padding: 10px 0; white-space: pre; font: inherit; }
+.side-gutter { position: sticky; left: 0; padding: 10px 10px 10px 12px !important; text-align: right; color: var(--faint); background: var(--bg-raised); user-select: none; border-right: 1px solid var(--line); }
+.side-lines { padding: 10px 14px !important; color: var(--fg); }
+.side-md { padding: 12px 18px; }
+.side-image { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.side-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.side-frame { flex: 1; width: 100%; min-height: 300px; border: 0; background: #fff; }
+.side-body .diff-list { padding: 10px; }
+.side-pick { display: flex; flex-direction: column; gap: 8px; padding: 16px; font-size: 13px; }
+.side-pick input { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: 13px; }
+.side-pick .btn { align-self: flex-start; }
+.icon-btn.side-open { width: auto; padding: 0 8px; font-size: 12.5px; }
+.icon-btn.side-open[aria-pressed="true"] { color: var(--fg-strong); background: var(--selected); }
+.code-actions { display: inline-flex; align-items: center; gap: 2px; }
+.file-link { display: inline; padding: 0; font: inherit; color: inherit; text-align: inherit; cursor: pointer; text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
+.file-link:hover { color: var(--accent); }
+.tool-open { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+@media (max-width: 720px) {
+  /* Phone: the panel is a full-screen sheet over the pane. */
+  .pane.with-side { flex-direction: column; }
+  .side-splitter { display: none; }
+  .side-wrap { position: fixed; inset: 0; z-index: 60; width: auto !important; padding-top: env(safe-area-inset-top); background: var(--bg-raised); }
+  .side-head .icon-btn, .side-head .code-copy { min-width: var(--phone-tap); min-height: var(--phone-tap); }
+}

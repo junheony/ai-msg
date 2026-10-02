@@ -97,3 +97,15 @@ export async function openInDesktop(sessionId: string, fetchFn: typeof fetch = f
   if (!res.ok) throw new Error(body.error ?? `Desktop 에서 열기 실패 (${res.status})`);
   return body as OpenInDesktopResult;
 }
+
+/** Mirrors server/files.ts FilePreview. */
+export type FilePreview =
+  | { path: string; size: number; kind: 'text'; text: string }
+  | { path: string; size: number; kind: 'image'; mediaType: string; base64: string };
+
+/** Side panel: one file of the session folder (the server checks containment and the deny list). */
+export function readFile(cwd: string, sessionId: string | null, path: string, fetchFn: typeof fetch = fetch): Promise<FilePreview> {
+  const qs = new URLSearchParams({ cwd, path });
+  if (sessionId) qs.set('session', sessionId);
+  return getJson(`/api/file?${qs}`, fetchFn, '파일 열기');
+}

@@ -7,7 +7,7 @@ import { AttachmentTooLarge, IMAGE_TYPES, MAX_ATTACHMENT_BYTES, isAttachmentId, 
 import { DirError, listDirs, resolveUnderHome } from './dirs';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
 import type { SlashCommandCache } from './engine/slashCommands';
-import type { FileLister } from './files';
+import { FileReadError, type FileLister } from './files';
 import type { PushNotifier } from './push/PushNotifier';
 import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
@@ -230,6 +230,23 @@ async function serveAttachment(store: AttachmentStore | undefined, id: string, h
   }
 }
 
+/** Side panel HTML preview: the iframe shell (static, no data, so served without the login check). */
+export const PREVIEW_FRAME_PATH = '/api/preview-frame';
+/**
+ * The shell's OWN policy (it replaces SECURITY_HEADERS for this response). `sandbox allow-scripts` forces an opaque
+ * origin even if the page is opened directly, so it can never read deck's cookies/storage or call its API as us;
+ * no connect-src/img-src http(s) means no fetch/WebSocket/beacon to deck or anywhere else; inline script/style are
+ * allowed only here (the previewed page needs them); frame-ancestors 'self' lets only deck embed it.
+ */
+export const PREVIEW_FRAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; sandbox allow-scripts";
+// The parent posts the HTML once; the shell replaces itself with it (document.write keeps this response's CSP).
+const PREVIEW_FRAME_HTML = '<!doctype html><meta charset="utf-8"><script>addEventListener("message",function(e){if(e.source!==parent||typeof e.data!=="string")return;document.open();document.write(e.data);document.close();},{once:true});</script>';
+
+function servePreviewFrame(res: http.ServerResponse): void {
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': PREVIEW_FRAME_CSP });
+  res.end(PREVIEW_FRAME_HTML);
+}
+
 export function createRequestHandler(deps: HttpDeps) {
   const devOrigins = deps.devOrigins ?? [];
   const extraHosts = deps.extraHosts ?? [];
@@ -257,6 +274,7 @@ export function createRequestHandler(deps: HttpDeps) {
         return;
       }
       if (url.pathname === '/api/logout' && req.method === 'POST') { json(res, 200, { ok: true }, { 'set-cookie': logoutCookieHeader(secure) }); return; }
+      if (url.pathname === PREVIEW_FRAME_PATH && req.method === 'GET') { servePreviewFrame(res); return; }
       if (url.pathname.startsWith('/api/')) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
@@ -333,6 +351,20 @@ export function createRequestHandler(deps: HttpDeps) {
           const q = url.searchParams.get('q') ?? '';
           if (q.length > MAX_QUERY_CHARS) { json(res, 400, { error: '검색어가 너무 깁니다' }); return; }
           json(res, 200, await deps.search.search(q));
+          return;
+        }
+        if (url.pathname === '/api/file' && req.method === 'GET') {
+          if (!deps.files) { json(res, 404, { error: 'not found' }); return; }
+          try {
+            // A known session's own folder wins over the client's cwd (a new, unsaved session only has the cwd).
+            const sid = url.searchParams.get('session');
+            const known = sid ? deps.index.projects(deps.extraSessions?.() ?? []).flatMap((p) => p.sessions).find((e) => e.sessionId === sid) : undefined;
+            json(res, 200, await deps.files.read(known?.cwd ?? url.searchParams.get('cwd') ?? '', url.searchParams.get('path') ?? ''));
+          } catch (err) {
+            if (err instanceof DirError) { json(res, 400, { error: err.message }); return; }
+            if (err instanceof FileReadError) { json(res, err.status, { error: err.message }); return; }
+            throw err;
+          }
           return;
         }
         if (url.pathname === '/api/files' && req.method === 'GET') {

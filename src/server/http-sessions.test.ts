@@ -6,7 +6,7 @@ import path from 'node:path';
 import { cookieValueFor } from './auth';
 import { SlashCommandCache } from './engine/slashCommands';
 import { FileLister } from './files';
-import { createRequestHandler } from './http';
+import { PREVIEW_FRAME_PATH, createRequestHandler } from './http';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
 import { TranscriptSearch } from './sessions/search';
@@ -31,6 +31,7 @@ beforeAll(async () => {
   home = path.join(dir, 'home');
   await fs.mkdir(path.join(home, 'proj', 'src'), { recursive: true });
   await fs.writeFile(path.join(home, 'proj', 'src', 'main.ts'), '');
+  await fs.writeFile(path.join(home, 'proj', 'note.md'), '# hi');
   const root = path.join(dir, 'b');
   await fs.mkdir(path.join(root, '-w-p'), { recursive: true });
   await fs.writeFile(path.join(root, '-w-p', `${ID1}.jsonl`), JSON.stringify({ type: 'user', cwd: '/w/p', message: { role: 'user', content: 'how do I rotate the token' } }) + '\n');
@@ -92,10 +93,31 @@ describe('session endpoints', () => {
   it('files lists inside home only', async () => {
     const ok = await fetch(`${base}/api/files?cwd=${encodeURIComponent(path.join(home, 'proj'))}`, { headers: cookie });
     expect(ok.status).toBe(200);
-    expect(((await ok.json()) as { files: string[] }).files).toEqual(['src/main.ts']);
+    expect(((await ok.json()) as { files: string[] }).files).toEqual(['note.md', 'src/main.ts']);
     for (const cwd of [dir, '/etc', 'proj', '']) {
       expect((await fetch(`${base}/api/files?cwd=${encodeURIComponent(cwd)}`, { headers: cookie })).status).toBe(400);
     }
+  });
+
+  it('/api/file: authed, contained in the cwd, errors mapped', async () => {
+    const q = (cwd: string, p: string) => `${base}/api/file?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(p)}`;
+    expect((await fetch(q(path.join(home, 'proj'), 'note.md'))).status).toBe(401);
+    const ok = await fetch(q(path.join(home, 'proj'), 'note.md'), { headers: cookie });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ kind: 'text', text: '# hi' });
+    expect((await fetch(q(path.join(home, 'proj'), '../../b/x'), { headers: cookie })).status).toBe(403);
+    expect((await fetch(q(path.join(home, 'proj'), 'nope.md'), { headers: cookie })).status).toBe(404);
+    expect((await fetch(q('/etc', 'hosts'), { headers: cookie })).status).toBe(400);
+  });
+
+  it('preview frame: static shell with its own sandboxing CSP', async () => {
+    const r = await fetch(`${base}${PREVIEW_FRAME_PATH}`);
+    expect(r.status).toBe(200);
+    const csp = r.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain('sandbox allow-scripts');
+    expect(csp).not.toContain('allow-same-origin');
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("frame-ancestors 'self'");
   });
 
   it('commands per session, defaults otherwise', async () => {

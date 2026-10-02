@@ -1,4 +1,6 @@
-import { fileDiffsFor } from '../diff';
+import { useContext } from 'react';
+import { fileDiffsFor, relPath } from '../diff';
+import { SidePanelContext } from '../sidePanel';
 import type { ToolCallItem } from '../state';
 import { groupLabel, toolLabel } from '../toolLabel';
 import { applyTodoCall, todoCounts } from '../todos';
@@ -40,18 +42,31 @@ function DiffToolCall({ call, live, cwd }: { call: ToolCallItem; live: boolean; 
 const isDiffCall = (c: ToolCallItem) => fileDiffsFor(c.name, c.input, c.result) !== null;
 const isAgentCall = (c: ToolCallItem) => c.name === 'Agent' || c.name === 'Task';
 
+/** The file a Read call looked at (a Read of a missing file still offers the panel; it shows the error). */
+function readPath(call: ToolCallItem): string | null {
+  const p = call.name === 'Read' && call.input && typeof call.input === 'object' ? (call.input as { file_path?: unknown }).file_path : null;
+  return typeof p === 'string' && p ? p : null;
+}
+
 /** One tool call = one muted line; click to see its input and output. File edits render as diff cards. */
 export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; live?: boolean; cwd?: string | null }) {
+  const open = useContext(SidePanelContext);
   const st = stateOf(call, live);
   if (isDiffCall(call)) return <DiffToolCall call={call} live={live} cwd={cwd} />;
   // ux-state: a TodoWrite shows its checklist, not raw JSON.
   const todos = call.name === 'TodoWrite' ? applyTodoCall(null, call) : null;
+  const file = readPath(call);
   return (
     <details className={`tool-call ${st.cls}`} data-testid="tool-call">
       <summary title={call.name}>
         <span className="tool-label">{toolLabel(call)}</span>
         {todos && todos.length > 0 && <span className="tool-state todo-count">{todoCounts(todos).done}/{todos.length}</span>}
         {st.text && <span className="tool-state">{st.text}</span>}
+        {open && file && (
+          <button type="button" className="file-link tool-open" title={`${file} — 사이드 패널에서 열기`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); open({ kind: 'file', path: file }); }}>
+            {relPath(file, cwd)}
+          </button>
+        )}
         <span className="tool-caret" aria-hidden="true">›</span>
       </summary>
       {todos ? (
@@ -83,7 +98,7 @@ export function ToolCalls({ calls, live = false, cwd }: { calls: ToolCallItem[];
   if (segments.length > 1) return <>{segments.map((s) => <ToolCalls key={s.calls[0]!.toolUseId} calls={s.calls} live={live} cwd={cwd} />)}</>;
   if (isAgentCall(calls[0]!)) return <AgentCard call={calls[0]!} live={live} />;
   if (segments[0]!.solo) return <ToolCallView call={calls[0]!} live={live} cwd={cwd} />;
-  if (calls.length === 1) return <ToolCallView call={calls[0]!} live={live} />;
+  if (calls.length === 1) return <ToolCallView call={calls[0]!} live={live} cwd={cwd} />;
   const running = live && calls.some((c) => c.result === null);
   const errors = calls.filter((c) => c.isError).length;
   return (
@@ -95,7 +110,7 @@ export function ToolCalls({ calls, live = false, cwd }: { calls: ToolCallItem[];
         <span className="tool-caret" aria-hidden="true">›</span>
       </summary>
       <div className="tool-group-list">
-        {calls.map((c) => <ToolCallView key={c.toolUseId} call={c} live={live} />)}
+        {calls.map((c) => <ToolCallView key={c.toolUseId} call={c} live={live} cwd={cwd} />)}
       </div>
     </details>
   );

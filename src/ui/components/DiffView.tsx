@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useContext, useState } from 'react';
+import { SidePanelContext } from '../sidePanel';
 import { relPath, type FileDiff } from '../diff';
 
 /** Lines shown before "더 보기". */
@@ -10,10 +11,13 @@ export function DiffCard({ diff, cwd, state }: { diff: FileDiff; cwd?: string | 
   const shown = open ? diff.lines : diff.lines.slice(0, DIFF_FOLD_AT);
   const hidden = diff.lines.length - shown.length;
   const numbered = diff.lines.some((l) => l.oldNo !== null || l.newNo !== null);
+  const openSide = useContext(SidePanelContext);
   return (
     <div className="diff-card" data-testid="diff-card">
       <div className="diff-head" title={diff.path}>
-        <span className="diff-path">{relPath(diff.path, cwd)}</span>
+        {openSide && !diff.isDeleted
+          ? <button type="button" className="diff-path file-link" title={`${diff.path} — 사이드 패널에서 열기`} onClick={() => openSide({ kind: 'file', path: diff.path, diffs: [diff] })}>{relPath(diff.path, cwd)}</button>
+          : <span className="diff-path">{relPath(diff.path, cwd)}</span>}
         {diff.isNew && <span className="diff-tag new">새 파일</span>}
         {diff.isDeleted && <span className="diff-tag del">삭제</span>}
         {state && <span className="tool-state">{state}</span>}

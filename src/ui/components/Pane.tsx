@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Effort, ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import type { ClientMessage } from '../../shared/protocol';
@@ -8,6 +8,8 @@ import type { UploadFn } from '../upload';
 import { Chat } from './Chat';
 import { ForkMenu } from './ForkMenu';
 import { OpenInDesktop } from './OpenInDesktop';
+import { SidePanel } from './SidePanel';
+import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -95,10 +97,41 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   uploadFn?: UploadFn;
 }) {
   const s = pane.session;
+  // Side panel (artifacts / file preview): per pane, closed by ✕ or Esc, dropped when the pane's session changes.
+  const [side, setSide] = useState<SideDoc | null>(null);
+  const [sideWidth, setSideWidth] = useState(440);
+  const sectionRef = useRef<HTMLElement>(null);
+  const openSide = useCallback((doc: SideDoc) => setSide(doc), []);
+  const sessionKey = s ? `${s.sessionId ?? ''}\n${s.cwd}` : '';
+  useEffect(() => { setSide(null); }, [sessionKey]);
+  useEffect(() => {
+    if (!side) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // Only the pane the user is in (split view: one Esc closes one panel).
+      if (!active && !sectionRef.current?.contains(document.activeElement)) return;
+      setSide(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [side, active]);
+  const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const box = sectionRef.current?.getBoundingClientRect();
+    if (!box) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture?.(e.pointerId);
+    const move = (ev: PointerEvent) => setSideWidth(clampSideWidth(box.right - ev.clientX, box.width));
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  };
   const focus = () => { if (!active) dispatch({ type: 'focus_pane', paneId: pane.id }); };
   const isNew = s?.sessionId === null;
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
+  const fileBtn = s && <button type="button" className="icon-btn side-open" aria-label="파일 열기" title="파일 — 사이드 패널에서 세션 폴더의 파일 보기" aria-pressed={!!side} onClick={() => setSide(side ? null : { kind: 'pick' })}>파일</button>;
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   const busy = pane.activeTurnId !== null || pane.awaitingStart;
   const fork = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && (
@@ -118,7 +151,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     return { title: id === pane.handoffFrom?.sessionId && !t.cwd ? pane.handoffFrom.title : t.title, open: () => onOpenSession?.(id, t.cwd ?? s.cwd, t.title) };
   };
   return (
-    <section className={`pane ${active ? 'active' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
+    <section ref={sectionRef} className={`pane ${active ? 'active' : ''}${side && s ? ' with-side' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
+      <SidePanelContext.Provider value={s ? openSide : null}>
       {s ? (
         <Chat
           items={pane.items}
@@ -129,7 +163,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           title={s.title}
           cwd={s.cwd}
           sessionId={s.sessionId}
-          headActions={<>{desktop}{fork}{close}</>}
+          headActions={<>{fileBtn}{desktop}{fork}{close}</>}
           model={model}
           effort={effort}
           engine={pane.engine}
@@ -193,6 +227,15 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>
         </>
       )}
+      {side && s && (
+        <>
+          <div className="side-splitter" role="separator" aria-orientation="vertical" aria-label="사이드 패널 크기 조절" onPointerDown={startResize} />
+          <div className="side-wrap" style={{ width: sideWidth }}>
+            <SidePanel doc={side} cwd={s.cwd} sessionId={s.sessionId} onClose={() => setSide(null)} onOpen={openSide} />
+          </div>
+        </>
+      )}
+      </SidePanelContext.Provider>
     </section>
   );
 }
