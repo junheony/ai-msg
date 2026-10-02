@@ -10,7 +10,7 @@ import { coldWriteNote, latestContext, type ContextInfo } from './context';
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
 
 export type ChatItem =
-  | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[] }
+  | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number }
   | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null };
 
 /** A subagent's own tool call, shown in its Agent card (nested subagents' calls are flattened into the top card). */
@@ -112,6 +112,8 @@ export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
   | { type: 'connected'; value: boolean }
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
+  /** 메시지 편집 갈래: the pane becomes a new session holding its history before user message `n`, then `text` (the send is under way). */
+  | { type: 'branch_edit'; n: number; text: string; paneId?: string; clientRef?: string }
   | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean }
   | { type: 'set_model'; model: ModelChoice; paneId?: string }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
@@ -134,6 +136,8 @@ export type Action =
   | { type: 'queue_pause'; paneId?: string }
   | { type: 'queue_resume'; paneId?: string };
 
+const withN = (n: number | undefined) => (n !== undefined ? { n } : {});
+
 /** A sent message's text and files, kept per session so a reloaded transcript can show thumbnails again. */
 export type SentRecord = { text: string; files: SentFile[] };
 
@@ -142,7 +146,7 @@ const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   for (const m of messages) {
-    if (m.kind === 'user') items.push({ kind: 'user', text: m.text });
+    if (m.kind === 'user') items.push({ kind: 'user', text: m.text, ...(m.n !== undefined ? { n: m.n } : {}) });
     else if (m.kind === 'assistant') {
       const at = m.ts ? Date.parse(m.ts) : NaN;
       const ctx: ContextInfo | null = m.usage ? { usage: m.usage, window: contextWindowOf(m.model), at: Number.isNaN(at) ? null : at, model: m.model, account: null } : null;
@@ -194,8 +198,15 @@ function streamingItem(turnId: string): AssistantItem {
   return { kind: 'assistant', turnId, text: '', toolCalls: [], badge: null, streaming: true, error: null, notes: [], attempts: [] };
 }
 
-function promptItem(prompt: TurnPrompt): ChatItem {
-  return { kind: 'user', text: prompt.text, ...(prompt.attachments.length ? { attachments: prompt.attachments } : {}) };
+function promptItem(prompt: TurnPrompt, n?: number): ChatItem {
+  return { kind: 'user', text: prompt.text, ...(prompt.attachments.length ? { attachments: prompt.attachments } : {}), ...(n !== undefined ? { n } : {}) };
+}
+
+/** The ordinal the next user message of these items gets: one past the last known one; 0 in a new session; undefined = unknown. */
+export function nextUserN(items: ChatItem[], session: PaneSession | null): number | undefined {
+  const last = items.findLast((it) => it.kind === 'user');
+  if (last) return last.kind === 'user' && last.n !== undefined ? last.n + 1 : undefined;
+  return session?.sessionId === null ? 0 : undefined;
 }
 
 /**
@@ -211,7 +222,7 @@ function withRunningPrompt(items: ChatItem[], prompt: TurnPrompt): ChatItem[] {
     out[idx] = { ...lastUser, attachments: prompt.attachments };
     return out;
   }
-  return [...items, promptItem(prompt)];
+  return [...items, promptItem(prompt, nextUserN(items, null))];
 }
 
 const ACTIVITY_RESET = { runStartedAt: null, progress: null, agents: {}, bg: null } as const;
@@ -278,7 +289,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       if (!belongs(p, msg)) return p;
       const exists = p.items.some((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
       // Another device's (or pane's) message: its bubble goes before the turn's answer. The sending pane shows it already ('sent').
-      const echo = msg.prompt && !p.myTurns.includes(msg.turnId) ? [promptItem(msg.prompt)] : [];
+      const echo = msg.prompt && !p.myTurns.includes(msg.turnId) ? [promptItem(msg.prompt, nextUserN(p.items, p.session))] : [];
       const items = exists ? p.items.map((it) => (it.kind === 'assistant' && it.turnId === msg.turnId ? { ...it, streaming: true } : it)) : [...p.items, ...echo, streamingItem(msg.turnId)];
       // The timer runs from the send (sent) or from this start; a retry of the same turn keeps it.
       const runStartedAt = p.activeTurnId === msg.turnId || (p.runStartedAt !== null && p.activeTurnId === null) ? (p.runStartedAt ?? Date.now()) : Date.now();
@@ -516,9 +527,22 @@ export function reducer(state: AppState, action: Action): AppState {
       items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, ...ACTIVITY_RESET,
       handoff: null, handoffFrom: null, prefill: null,
     }));
+    case 'branch_edit': return updatePane(state, action.paneId, (p) => {
+      if (!p.session) return p;
+      const at = p.items.findIndex((it) => it.kind === 'user' && it.n === action.n);
+      // The history before the edited message stays on screen (the fork shares it); the edited text replaces the rest.
+      const kept = at >= 0 ? p.items.slice(0, at) : p.items;
+      return {
+        ...p,
+        session: { sessionId: null, cwd: p.session.cwd, account: null, title: p.session.title, engine: 'claude', sandbox: null, ...(p.session.accountPin ? { accountPin: p.session.accountPin } : {}) },
+        items: [...kept, { kind: 'user', text: action.text, n: action.n }],
+        activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, queuePaused: p.queuePaused || p.queue.length > 0,
+        ...ACTIVITY_RESET, runStartedAt: Date.now(), handoff: null, handoffFrom: null, prefill: null,
+      };
+    });
     case 'sent': return updatePane(state, action.paneId, (p) => ({
       ...p,
-      items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }],
+      items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(nextUserN(p.items, p.session)) }],
       awaitingStart: true, awaitingRef: action.clientRef ?? null, attachments: [], queuePaused: false, prefill: null,
       ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
       ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),

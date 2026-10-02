@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { SessionActivity } from '../../shared/protocol';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
+import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 
@@ -121,17 +122,21 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     return null;
   };
 
-  const row = (s: SessionEntry, group: string) => {
+  /** `tree`: a 메시지 편집 갈래 tree shown as this one row — a click opens its newest session. */
+  const row = (s: SessionEntry, group: string, tree?: BranchGroup<SessionEntry>) => {
     const on = pinSet.has(s.sessionId);
     const key = `${group}:${s.sessionId}`;
     const edit = editing?.id === key ? editing : null;
+    const members = tree?.members ?? [s.sessionId];
+    const openId = tree?.openId ?? s.sessionId;
+    const target = byId.get(openId) ?? s;
     return (
-      <li key={s.sessionId} className={s.sessionId === currentSessionId ? 'active' : ''} title={s.title}
+      <li key={s.sessionId} className={currentSessionId && members.includes(currentSessionId) ? 'active' : ''} title={s.title}
         // The second click of a double-click (rename) must not re-open the session.
-        onClick={(e) => { if (e.detail > 1 || edit) return; onOpen(s.sessionId, s.cwd, s.title); }}
+        onClick={(e) => { if (e.detail > 1 || edit) return; onOpen(target.sessionId, target.cwd, target.title); }}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
         <span className="session-row">
-          {dot(s.sessionId)}
+          {members.map(dot).find((d) => d !== null) ?? null}
           {edit ? (
             <input className="session-rename" aria-label="세션 이름" value={edit.text} autoFocus maxLength={200}
               onChange={(e) => setEditing({ id: key, text: e.target.value })}
@@ -144,7 +149,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           ) : (
             <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(s, key); } : undefined}>{s.title}</span>
           )}
-          <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{s.account.toUpperCase()}{s.imported ? ' · Codex' : ''} · {ago(s.lastModified)}</span>
+          <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{s.account.toUpperCase()}{s.imported ? ' · Codex' : ''}{members.length > 1 ? ` · 갈래 ${members.length}` : ''} · {ago(s.lastModified)}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="이름 바꾸기 · 보관" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
@@ -167,7 +172,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
 
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || inView(s); });
   const searching = fullOn && found?.q !== fullQ;
-  const visible = projects.map((p) => ({ p, sessions: p.sessions.filter(inView).slice(0, MAX_SESSIONS).filter(match) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
+  // 메시지 편집 갈래: one row per branch tree (its root, opening the newest version); the tree's other sessions are not listed.
+  const links = linksOf(byId.values());
+  const visible = projects.map((p) => ({ p, sessions: groupBranches(p.sessions.filter(inView), links).slice(0, MAX_SESSIONS).filter((g) => match(g.entry)) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
@@ -228,7 +235,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             </div>
             {!isCollapsed && (
               <>
-                <ul>{shown.map((s) => row(s, p.cwd))}</ul>
+                <ul>{shown.map((g) => row(g.entry, p.cwd, g))}</ul>
                 {hidden > 0 && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>더 보기 ({hidden})</button>}
                 {!q && expanded.has(p.cwd) && sessions.length > FOLD_AT && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>접기</button>}
               </>

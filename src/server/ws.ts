@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
+import { isGeminiAccount } from '../shared/accounts';
 import { defaultSandbox } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
@@ -17,7 +18,7 @@ import { isPinnableId, type PinStore } from './sessions/PinStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
 import type { SessionIndex } from './sessions/SessionIndex';
-import { readTranscript } from './sessions/transcript';
+import { readBranchPoint, readTranscript, type BranchPoint } from './sessions/transcript';
 import { isCodexState, isGeminiState, type SessionStateStore } from './turn/SessionState';
 import type { TurnRunner, TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
@@ -128,7 +129,7 @@ export type WsDeps = {
   /** Attachment metadata (name, image or not) for the prompt every viewing device is shown. */
   attachments?: { resolve(ids: string[]): { found: { id: string; name: string; isImage: boolean }[] } };
   /** 새 세션으로 이어가기: a new session sent with `handoffFrom` is linked to that session (and titled) here once it has an id. */
-  meta?: Pick<SessionMetaStore, 'link'>;
+  meta?: Pick<SessionMetaStore, 'link' | 'branch'>;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -150,7 +151,7 @@ type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T
 type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null };
 const MAX_REPLAY_SUBS = 500;
 
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -260,6 +261,36 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
   };
 
+  /** 메시지 편집 갈래: `child` was forked from `parent` at user message `n` (deck's session meta, never the transcript). */
+  const linkBranch = async (child: string, parent: string, n: number) => {
+    if (!deps.meta) return;
+    try {
+      await deps.meta.branch(child, parent, n);
+      deps.index.regroup();
+      broadcast(indexMsg());
+    } catch (err) {
+      console.error('deck: branch link failed', errMsg(err));
+    }
+  };
+
+  /**
+   * 메시지 편집 갈래: where to fork Claude session `from` so that its user message `n` (checked against `expect`)
+   * is replaced — read from the copy the session's history is shown from. Null = not a Claude session / not found.
+   */
+  const resolveBranch = async (from: string, n: number, expect: string | undefined): Promise<BranchPoint | null> => {
+    const st = deps.store.get(from);
+    if (st && (isCodexState(st) || isGeminiState(st))) return null;
+    const entry = deps.index.lookup(from);
+    if (!st && (!entry || entry.account === 'gpt' || isGeminiAccount(entry.account))) return null;
+    const best = st ? await deps.index.bestCopy(from, st.projectDir, st.account).catch(() => null) : null;
+    const files = [best?.file ?? (st ? `${st.projectDir}/${from}.jsonl` : entry!.file), ...(entry ? [entry.file] : [])];
+    for (const f of new Set(files)) {
+      const bp = await readBranchPoint(f, n, expect).catch(() => null);
+      if (bp) return bp;
+    }
+    return null;
+  };
+
   /** Turn events reach the socket that started the turn and sockets viewing its session — nobody else. */
   const emitTurn = (turn: Turn, msg: ServerMessage) => {
     const sid = 'sessionId' in msg ? msg.sessionId : null;
@@ -269,6 +300,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (turn.fresh) {
         turn.fresh = false;
         if (turn.handoffFrom) void linkHandoff(turn.handoffFrom, sid).finally(() => announceSession(sid));
+        else if (turn.branch) { const b = turn.branch; void linkBranch(sid, b.parent, b.n).finally(() => announceSession(sid)); }
         else announceSession(sid);
       }
       broadcastActivity();
@@ -358,7 +390,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, afterRelease: [] };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [] };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -431,9 +463,25 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             return;
           }
         }
+        // 메시지 편집 갈래: fork at the entry the edited message followed; editing the first message starts afresh.
+        let fork: { from: string; at: string } | null = null;
+        let model = msg.model;
+        if (msg.branch && msg.sessionId === null) {
+          const b = msg.branch;
+          const bp = isPinnableId(b.from) ? await resolveBranch(b.from, b.n, b.expect) : null;
+          if (!bp || (bp.n > 0 && !bp.at)) { send(ws, { type: 'error', turnId: null, message: '편집할 메시지를 기록에서 찾지 못해 새 갈래를 만들지 못했습니다 — 원래 세션으로 돌아갑니다', ...ref }); return; }
+          turn.branch = { parent: b.from, n: bp.n };
+          if (bp.at) fork = { from: b.from, at: bp.at };
+          else if (!model || model === 'auto') {
+            // The first message: a fresh session, on the original's model (a fork inherits it in the runner).
+            const st = deps.store.get(b.from);
+            if (st && !isCodexState(st) && !isGeminiState(st)) model = st.defaultModel;
+          }
+        }
         await deps.runner.run({
           turnId, cwd: runCwd, sessionId: msg.sessionId, text: msg.text,
-          ...(msg.model ? { model: msg.model } : {}),
+          ...(fork ? { fork } : {}),
+          ...(model ? { model } : {}),
           ...(msg.effort ? { effort: msg.effort } : {}),
           ...(msg.engine ? { engine: msg.engine } : {}),
           ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),

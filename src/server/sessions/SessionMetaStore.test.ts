@@ -25,6 +25,24 @@ describe('SessionMetaStore', () => {
     expect(again.snapshot()).toEqual({ titles: { [ID1]: '새 이름' }, archived: [ID2] });
   });
 
+  it('records branch links with the parent title, persists and reloads; junk links dropped', async () => {
+    const file = path.join(await tmp(), 'm.json');
+    const s = new SessionMetaStore(file);
+    await s.load();
+    await s.update(ID1, { title: '원본' });
+    await s.branch(ID2, ID1, 3);
+    expect(s.branchOf(ID2)).toEqual({ parent: ID1, n: 3 });
+    expect(s.branchOf(ID1)).toBeNull();
+    expect(s.title(ID2)).toBe('원본');
+    const again = new SessionMetaStore(file);
+    await again.load();
+    expect(again.snapshot().branches).toEqual({ [ID2]: { parent: ID1, n: 3 } });
+    await fs.writeFile(file, JSON.stringify({ titles: {}, archived: [], branches: { [ID2]: { parent: ID1, n: -1 }, [ID1]: { parent: '../x', n: 1 }, x: 5 } }));
+    const junk = new SessionMetaStore(file);
+    await junk.load();
+    expect(junk.snapshot().branches).toBeUndefined();
+  });
+
   it('empty / null title resets; unarchive removes; title capped', async () => {
     const s = new SessionMetaStore(path.join(await tmp(), 'm.json'));
     await s.update(ID1, { title: 'x', archived: true });

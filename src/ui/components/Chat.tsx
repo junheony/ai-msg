@@ -88,6 +88,12 @@ export type ChatProps = {
   onQueueRemove?: (id: string) => void;
   onQueueClear?: () => void;
   onQueueResume?: () => void;
+  /** 메시지 편집 갈래: send `text` in place of user message `n` (shown as `original`). Absent = 편집 fills the composer instead. */
+  onBranch?: (n: number, text: string, original: string) => void;
+  /** Why 편집 fills the composer instead of branching (tooltip); null = it branches. */
+  editNote?: string | null;
+  /** The versions of user message `n` (`< i/N >`); null = one version only. */
+  versions?: (n: number) => { index: number; count: number; go: (i: number) => void } | null;
   /** 새 세션으로 이어가기 (absent = not offered: new / GPT / Gemini session, or a turn running). Also `/handoff`. */
   onHandoff?: () => void;
   /** The handoff-note turn is running. */
@@ -173,6 +179,9 @@ export function Chat(p: ChatProps) {
   // Stable across keystrokes (refs) so the memoized transcript does not re-render while typing.
   const onSendRef = useRef(p.onSend);
   onSendRef.current = p.onSend;
+  const onBranchRef = useRef(p.onBranch);
+  onBranchRef.current = p.onBranch;
+  const canBranch = !!p.onBranch;
   const canRetry = !p.busy && retryPrompt === null && retryable !== null && last?.kind === 'assistant';
   const msgActions = useMemo<MessageActions>(() => ({
     onEdit: (t) => {
@@ -180,7 +189,11 @@ export function Chat(p: ChatProps) {
       requestAnimationFrame(() => { const ta = taRef.current; if (ta) { ta.focus(); ta.setSelectionRange(t.length, t.length); } });
     },
     ...(canRetry && retryable !== null ? { onRetry: () => { onSendRef.current(retryable); scroll.attach(); } } : {}),
-  }), [canRetry, retryable, scroll.attach]);
+    ...(canBranch ? { onBranch: (n: number, t: string, original: string) => { onBranchRef.current?.(n, t, original); scroll.attach(); } } : {}),
+    editNote: p.editNote ?? null,
+    ...(p.versions ? { versions: p.versions } : {}),
+    coarse,
+  }), [canRetry, retryable, scroll.attach, canBranch, p.editNote, p.versions, coarse]);
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
   const submit = () => {

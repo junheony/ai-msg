@@ -64,7 +64,7 @@ describe('reducer', () => {
       { type: 'tool_call', turnId: 't1', sessionId: null, cwd: '/w', toolUseId: 'tu1', name: 'Bash', input: { command: 'ls' } },
       { type: 'permission_request', turnId: 't1', sessionId: null, cwd: '/w', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' },
     ], s);
-    expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'hi' });
+    expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'hi', n: 0 });
     expect(pane(s).items[1]).toMatchObject({ kind: 'assistant', turnId: 't1', text: 'ok', streaming: true, toolCalls: [{ toolUseId: 'tu1', name: 'Bash', result: null }] });
     expect(s.pending).toMatchObject([{ turnId: 't1', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, cwd: '/w' }]);
     expect(pane(s).activeTurnId).toBe('t1');
@@ -301,7 +301,7 @@ describe('panes (D6)', () => {
     s = reducer(s, { type: 'attach', attachment: { id: 'a1', name: 'shot.png', size: 3, isImage: true } });
     const shot = { id: 'a1', name: 'shot.png', isImage: true };
     s = reducer(s, { type: 'sent', text: 'look', attachments: [shot] });
-    expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'look', attachments: [shot] });
+    expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'look', attachments: [shot], n: 0 });
     expect(pane(s).attachments).toEqual([]);
     const q: ServerMessage = { type: 'question_request', turnId: 't1', sessionId: null, cwd: '/w', requestId: 'q1', questions: [{ question: 'Which?', header: 'H', options: [{ label: 'a', description: '' }, { label: 'b', description: '' }], multiSelect: false }] };
     s = play([q, q], s);

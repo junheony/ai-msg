@@ -1,4 +1,5 @@
 import type { Seat } from './accounts';
+import type { BranchLink } from './branches';
 import type { CodexSandbox, EngineKind } from './models';
 import type { ContextUsage } from './turn-types';
 
@@ -23,6 +24,8 @@ export type SessionEntry = {
   /** 새 세션으로 이어가기 (session-meta.json): the session this one continued from / was continued in. */
   prevSession?: string;
   nextSession?: string;
+  /** 메시지 편집 갈래 (session-meta.json): this session was forked from `parent` by editing its user message `n`. */
+  branch?: BranchLink;
 };
 
 /** A recent Claude Desktop (Code tab) session; opened like any other session by `sessionId`. */
@@ -43,6 +46,7 @@ export type PinnedProject = { cwd: string; name?: string };
 export type ProjectEntry = { cwd: string; name: string; pinned: boolean; sessions: SessionEntry[] };
 
 export type TranscriptMessage =
-  | { kind: 'user'; text: string; ts: string | null }
+  /** `n`: ordinal among the session's user messages (0 = first), counted over the whole transcript (Claude only). */
+  | { kind: 'user'; text: string; ts: string | null; n?: number }
   | { kind: 'assistant'; text: string; model: string | null; toolCalls: { id: string; name: string; input: unknown }[]; ts: string | null; /** The API call's prompt tokens (Claude transcripts): restores the context gauge. */ usage?: ContextUsage }
   | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean; ts: string | null; /** content was cut to the size cap */ truncated?: boolean };

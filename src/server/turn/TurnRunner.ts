@@ -53,6 +53,12 @@ export type TurnParams = {
   accountPin?: Account | null;
   /** 새 세션으로 이어가기: the handoff-note turn — Claude runs it with every tool call denied (TurnRequest.noTools). */
   handoff?: boolean;
+  /**
+   * 메시지 편집 갈래 (new sessions only): fork Claude session `from` at chain entry `at` (the entry the edited
+   * message followed) into a new session; `text` replaces that message. The fork keeps the parent's cwd, pin,
+   * model and grants. The parent's transcript is never written.
+   */
+  fork?: { from: string; at: string };
 };
 
 export type TurnRunnerDeps = {
@@ -505,7 +511,7 @@ export class TurnRunner {
     });
   }
 
-  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
+  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, forkAt: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
     const scope = () => ({ turnId: cur.turnId, sessionId: out.sessionId, cwd });
     // The effort applies to the resolved model (a Fable → Opus downgrade keeps it when Opus supports it).
     const effort = effortFor(model, p.effort);
@@ -513,6 +519,7 @@ export class TurnRunner {
       account,
       cwd,
       resumeSessionId,
+      ...(forkAt ? { forkAt } : {}),
       model,
       ...(effort ? { effort } : {}),
       prompt: p.text,
@@ -561,7 +568,8 @@ export class TurnRunner {
       ...(p.handoff ? { noTools: true } : {}),
     });
     const rest = events[Symbol.asyncIterator]();
-    const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null, rest, live: null, bgTasks: [] };
+    // A fork's id is the one init reports, never the parent's.
+    const out: Attempt = { result: null, rateLimit: null, sessionId: forkAt ? null : resumeSessionId, compacted: false, initCwd: null, rest, live: null, bgTasks: [] };
     // The first result ends the attempt; whatever follows (background continuations) is `rest`.
     while (!out.result) {
       const n = await rest.next();
@@ -723,6 +731,14 @@ export class TurnRunner {
     }
     let state: SessionState | null = null;
     let notice: string | null = null;
+    if (p.fork && !p.sessionId) {
+      // 메시지 편집 갈래: a Claude session only (Codex / Gemini cannot resume at an entry).
+      const st = deps.store.get(p.fork.from);
+      const e = st ? null : deps.index.lookup(p.fork.from);
+      const parent: SessionState | null = st ?? (e && !(e.account === 'gpt' || isGeminiAccount(e.account)) ? { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL } : null);
+      if (!parent || isCodexState(parent) || isGeminiState(parent)) { sink.emit({ type: 'error', turnId: p.turnId, message: `편집할 Claude 세션을 찾을 수 없습니다: ${p.fork.from}` }); return; }
+      return this.runClaude(p, parent, sink, '메시지 편집', attachments);
+    }
     if (p.sessionId) {
       state = deps.store.get(p.sessionId);
       const imported = state ? null : deps.index.codexImport(p.sessionId);
@@ -896,6 +912,10 @@ export class TurnRunner {
     const wantedClaude = isClaudeModel(p.model) ? p.model : undefined;
     const wanted = wantedClaude ?? sessionDefault;
     const pin = state ? (state.accountPin ?? null) : (p.accountPin ?? null);
+    // 메시지 편집 갈래: until the CLI reports the fork's id, `state` is the parent's and its id is not this turn's.
+    let forkAt = p.fork && state?.sessionId === p.fork.from ? p.fork.at : null;
+    const shownId = () => (forkAt ? null : (state?.sessionId ?? null));
+    const done = () => (forkAt ? null : state);
     const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin };
 
     const first = chooseAccount({
@@ -907,7 +927,7 @@ export class TurnRunner {
     });
     let account = first.account;
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
-    const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, message }); };
+    const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: shownId(), cwd, message }); };
     // The badge's pin marker: the account is the pinned one because of the pin.
     let byPin = first.pinned === true;
     if (state && account !== state.account) {
@@ -916,7 +936,7 @@ export class TurnRunner {
       else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; byPin = false; }
     }
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
-    if (state && (await this.openElsewhere(state))) early.push(OPEN_ELSEWHERE_NOTICE);
+    if (state && !forkAt && (await this.openElsewhere(state))) early.push(OPEN_ELSEWHERE_NOTICE);
     if (pin && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
@@ -926,25 +946,26 @@ export class TurnRunner {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
         flushEarly();
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null, ...pinMark() }, errorText: '중단됨' });
-        return state;
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: shownId(), cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null, ...pinMark() }, errorText: '중단됨' });
+        return done();
       }
       const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
       const { model, note } = resolveModel(wantedClaude, sessionDefault, fable);
-      sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt, engine: 'claude' });
+      sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: shownId(), cwd, account, model, reason, attempt, engine: 'claude' });
       flushEarly();
 
       const cur: Cursor = { turnId: p.turnId };
-      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants, attachments, cur);
+      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, forkAt, sink, grants, attachments, cur);
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
-      const sessionId = a.sessionId ?? state?.sessionId ?? null;
+      const sessionId = a.sessionId ?? shownId();
+      const forked = forkAt !== null;
       if (sessionId) {
         state = {
           sessionId,
           cwd,
           account,
           projectDir: await this.locateProjectDir(sessionId, account, state?.projectDir ?? path.join(deps.projectsRoots[account], projectSlug(a.initCwd ?? cwd))),
-          lastTurnAtMs: res.ok ? this.now() : (state?.lastTurnAtMs ?? null),
+          lastTurnAtMs: res.ok ? this.now() : forked ? null : (state?.lastTurnAtMs ?? null),
           justCompacted: a.compacted,
           defaultModel: sessionDefault,
           ...(grants.rules.length ? { allowRules: [...grants.rules] } : {}),
@@ -954,6 +975,8 @@ export class TurnRunner {
           ...(pin ? { accountPin: pin } : {}),
         };
         await deps.store.set(state);
+        // The fork exists now: later attempts resume it like any session.
+        forkAt = null;
       }
 
       const failure = classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
@@ -965,7 +988,7 @@ export class TurnRunner {
         if (sessionId && a.bgTasks.length) this.mirrorSoon(sessionId, sink, p.turnId);
         if (sessionId) await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants });
         else await a.rest.return?.();
-        return state;
+        return done();
       }
       await a.rest.return?.();
 
@@ -989,7 +1012,7 @@ export class TurnRunner {
         });
         if (cand.account === account || tried.includes(cand.account)) break;
         if (!state) { next = cand; break; }
-        const sid = state.sessionId;
+        const sid = shownId();
         const moved = await this.relocate(state, cand.account, (message) => sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: sid, cwd, message }));
         if (moved) { state = moved; next = cand; break; }
         moveRefused = true;
@@ -997,13 +1020,13 @@ export class TurnRunner {
       }
       if (!next) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : '대안 계정 없음'} · ${shownError ?? ''}`.trim() });
-        return state;
+        return done();
       }
-      sink.emit({ type: 'turn_retry', turnId: p.turnId, sessionId: state?.sessionId ?? sessionId, cwd, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
+      sink.emit({ type: 'turn_retry', turnId: p.turnId, sessionId: shownId() ?? sessionId, cwd, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
       reason = `재시도(${why}) · ${next.reason}`;
       account = next.account;
       byPin = false;
     }
-    return state;
+    return done();
   }
 }

@@ -134,6 +134,8 @@ function parseLine(line: string): Rec | null {
 class TranscriptBuilder {
   private out: TranscriptMessage[] = [];
   private lastAssistantId: string | null = null;
+  /** User messages seen so far (their ordinal `n`; must count exactly as `promptText` does). */
+  private userCount = 0;
   private readonly max: number;
   private readonly maxChars: number;
 
@@ -169,7 +171,7 @@ class TranscriptBuilder {
         return;
       }
       const t = textOfContent(content);
-      if (t) this.push({ kind: 'user', text: t, ts });
+      if (t) this.push({ kind: 'user', text: t, ts, n: this.userCount++ });
       this.lastAssistantId = null;
     } else if (r.type === 'assistant' && !r.isSidechain) {
       const m = message(r);
@@ -217,4 +219,72 @@ export async function readTranscript(file: string, opts: TranscriptOptions = {})
     if (r) b.add(r);
   }
   return b.result();
+}
+
+/** The text of a user prompt record (what the transcript shows as a user message, counted by `n`), else null. */
+function promptText(r: Rec): string | null {
+  if (!isRealUser(r)) return null;
+  const content = message(r)?.content;
+  if (Array.isArray(content) && content.some((b) => b && typeof b === 'object' && (b as Rec).type === 'tool_result')) return null;
+  return textOfContent(content) || null;
+}
+
+const squash = (t: string) => t.replace(/\s+/g, ' ').trim();
+
+/**
+ * 메시지 편집 갈래: where to fork a Claude transcript so user message `n` is replaced.
+ * `at` = the chain entry the message was appended after (its `parentUuid`, else the last chain entry before it): the
+ * kept turn's last entry, which `resumeSessionAt` accepts. null = the message opens the conversation (no history to keep).
+ * `expect` (the text the user saw, injected blocks stripped): the chosen message must contain it; when message `n`
+ * does not (e.g. the device counted differently), the nearest message that does is taken. Null = not found.
+ */
+export type BranchPoint = { n: number; at: string | null; uuid: string | null };
+
+/** Line-by-line `findBranchPoint`: `feed` returns true once the answer is known (stop reading). */
+function branchScanner(n: number, expect?: string): { feed(line: string): boolean; result(): BranchPoint | null } {
+  const want = expect ? squash(expect) : '';
+  let lastUuid: string | null = null;
+  let count = 0;
+  let best: BranchPoint | null = null;
+  let done = false;
+  return {
+    feed(line) {
+      if (done) return true;
+      const r = parseLine(line);
+      if (!r) return false;
+      const t = promptText(r);
+      if (t !== null) {
+        const k = count++;
+        if (!want || squash(t).includes(want)) {
+          const parent = typeof r.parentUuid === 'string' && r.parentUuid ? r.parentUuid : null;
+          const cand: BranchPoint = { n: k, at: parent ?? (k === 0 ? null : lastUuid), uuid: typeof r.uuid === 'string' ? r.uuid : null };
+          if (k === n || !best || Math.abs(k - n) < Math.abs(best.n - n)) best = cand;
+          // Exact hit, or past `n` and only moving away from it.
+          if (k >= n) done = true;
+        }
+      }
+      if (typeof r.uuid === 'string' && r.uuid && !r.isSidechain && 'parentUuid' in r) lastUuid = r.uuid;
+      return done;
+    },
+    // Without a text to match only message `n` itself will do.
+    result: () => (want || best?.n === n ? best : null),
+  };
+}
+
+export function findBranchPoint(lines: Iterable<string>, n: number, expect?: string): BranchPoint | null {
+  const scan = branchScanner(n, expect);
+  for (const line of lines) if (scan.feed(line)) break;
+  return scan.result();
+}
+
+/** `findBranchPoint` over a transcript file, streamed (sessions reach hundreds of MB). */
+export async function readBranchPoint(file: string, n: number, expect?: string): Promise<BranchPoint | null> {
+  const scan = branchScanner(n, expect);
+  const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
+  try {
+    for await (const line of rl) if (scan.feed(line)) break;
+  } finally {
+    rl.close();
+  }
+  return scan.result();
 }
