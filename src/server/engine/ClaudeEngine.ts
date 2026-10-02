@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -318,6 +319,9 @@ export function buildOptions(
     // Spec §4.3: hooks, agents, CLAUDE.md from the profile + project.
     settingSources: ['user', 'project', 'local'],
     includePartialMessages: true,
+    // Echo each user message as the CLI takes it off stdin (isReplay frames carrying our uuid): how a steer is seen
+    // reaching the model — at the tool boundary it was folded in at, or at the start of its own turn. null = bare flag.
+    extraArgs: { 'replay-user-messages': null },
     abortController: deps.abortController,
     stderr: deps.onStderr,
     // Review I4: "이 세션" on an earlier turn stored the SDK's own scoped suggestions; they are
@@ -563,8 +567,13 @@ export class ClaudeEngine implements Engine {
     /** The SDK handle (Query) once the process is spawned: per-task stop when it has stopTask. */
     type Handle = { stopTask?: (id: string) => Promise<void>; setPermissionMode?: (m: 'default' | 'acceptEdits' | 'plan') => Promise<void> };
     let handle: Handle | null = null;
-    /** Messages sent (initial prompt + follow-ups) not yet answered by a result. */
-    let outstanding = 1;
+    /** uuids of the messages written (initial prompt, follow-ups, steers) not yet answered by a result, oldest first. */
+    const unanswered: string[] = [];
+    /** Steers written but not yet seen reaching the model: our uuid → the caller's id. */
+    const steers = new Map<string, string>();
+    /** Steers seen reaching the model since the last result (fallback attribution for a result without uuids). */
+    let echoed: string[] = [];
+    const answer = (ids: Iterable<string>) => { for (const id of ids) { const i = unanswered.indexOf(id); if (i >= 0) unanswered.splice(i, 1); } };
     /** Between a result and the next main-thread output: new output there is a background continuation. */
     let idle = false;
     let capTimer: NodeJS.Timeout | null = null;
@@ -574,30 +583,35 @@ export class ClaudeEngine implements Engine {
     const clearGrace = () => { if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; } };
     const armGrace = () => {
       clearGrace();
-      if (!idle || outstanding > 0 || bg.tasks().length > 0) return;
+      if (!idle || unanswered.length > 0 || bg.tasks().length > 0) return;
       graceTimer = setTimeout(() => finish('grace'), this.bgGraceMs);
       graceTimer.unref?.();
     };
     const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
+    const write = async (f: { text: string; attachments: Attachment[] }, steerId: string | null): Promise<boolean> => {
+      if (input.closed) return false;
+      // Counted before the first await: the loop decides whether to close right after a result,
+      // and a message sent from that result's handler must already keep the input open.
+      const uuid = randomUUID();
+      unanswered.push(uuid);
+      if (steerId !== null) steers.set(uuid, steerId);
+      idle = false;
+      clearGrace();
+      const undo = () => { answer([uuid]); steers.delete(uuid); idle = unanswered.length === 0; armGrace(); };
+      let m: SDKUserMessage;
+      try {
+        m = await toUserMessage(f.text, f.attachments, this.readFile);
+      } catch (err) {
+        undo();
+        throw err;
+      }
+      // 'next' (the CLI's default) is what folds a mid-turn message in at the next tool boundary; 'now' would abort the turn.
+      if (!input.push({ ...m, uuid, ...(steerId !== null ? { priority: 'next' as const } : {}) })) { undo(); return false; }
+      return true;
+    };
     const live: LiveInput = {
-      send: async (f) => {
-        if (input.closed) return false;
-        // Counted before the first await: the loop decides whether to close right after a result,
-        // and a follow-up sent from that result's handler must already keep the input open.
-        outstanding++;
-        idle = false;
-        clearGrace();
-        const undo = () => { outstanding = Math.max(0, outstanding - 1); idle = outstanding === 0; armGrace(); };
-        let m: SDKUserMessage;
-        try {
-          m = await toUserMessage(f.text, f.attachments, this.readFile);
-        } catch (err) {
-          undo();
-          throw err;
-        }
-        if (!input.push(m)) { undo(); return false; }
-        return true;
-      },
+      send: (f) => write(f, null),
+      steer: (f, id) => write(f, id),
       stopTask: async (taskId) => {
         if (input.closed || typeof handle?.stopTask !== 'function') return false;
         await handle.stopTask(taskId);
@@ -610,7 +624,9 @@ export class ClaudeEngine implements Engine {
       },
     };
     try {
-      input.push(await toUserMessage(req.prompt, req.attachments ?? [], this.readFile));
+      const first = randomUUID();
+      unanswered.push(first);
+      input.push({ ...(await toUserMessage(req.prompt, req.attachments ?? [], this.readFile)), uuid: first });
       const stream = this.queryFn({ prompt: input, options });
       handle = stream as Handle;
       if (typeof handle.stopTask !== 'function') delete live.stopTask;
@@ -630,13 +646,31 @@ export class ClaudeEngine implements Engine {
         if (m.type === 'assistant' && m.parent_tool_use_id === null) lastCtx = contextUsageOf((m.message as unknown as Rec).usage) ?? lastCtx;
         if (m.type === 'assistant' && typeof (m as unknown as Rec).error === 'string') errorKind = (m as unknown as Rec).error as string;
         if (this.onCommands) noteCommands(m, req.cwd, this.onCommands);
+        if (m.type === 'user' && (m as unknown as Rec).isReplay === true && typeof m.uuid === 'string') {
+          const id = steers.get(m.uuid);
+          if (id !== undefined) { steers.delete(m.uuid); echoed.push(m.uuid); yield { kind: 'steer_delivered', id }; }
+        }
         let gotResult = false;
         for (const ev of mapSdkMessage(m)) {
           if (ev.kind === 'init') sessionId = ev.sessionId;
           if (ev.kind === 'result') {
             sawResult = true;
             gotResult = true;
-            outstanding = Math.max(0, outstanding - 1);
+            const r = m as unknown as Rec;
+            const ids = Array.isArray(r.user_message_uuids) ? (r.user_message_uuids as unknown[]).filter((x): x is string => typeof x === 'string')
+              : typeof r.user_message_uuid === 'string' ? [r.user_message_uuid] : null;
+            if (ids) {
+              // A steer the result names but whose echo never came still reached the model: report it before the result.
+              for (const u of ids) {
+                const id = steers.get(u);
+                if (id !== undefined) { steers.delete(u); yield { kind: 'steer_delivered', id }; }
+              }
+              answer(ids);
+            } else {
+              // No uuids (older CLI, synthesized error): the oldest message, plus any steer folded into this turn.
+              answer([...unanswered.slice(0, 1), ...echoed]);
+            }
+            echoed = [];
             yield { ...ev, ...(lastCtx ? { usage: { ...ev.usage, context: lastCtx } } : {}), errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : stderrTail || null };
             errorKind = null;
             lastCtx = null;
@@ -647,8 +681,8 @@ export class ClaudeEngine implements Engine {
         }
         if (!gotResult) continue;
         // Decided after the consumer handled the result (it may have sent a queued follow-up meanwhile).
-        if (outstanding === 0 && bg.tasks().length === 0) break;
-        idle = outstanding === 0;
+        if (unanswered.length === 0 && bg.tasks().length === 0) break;
+        idle = unanswered.length === 0;
         if (!capTimer) { capTimer = setTimeout(() => finish('cap'), this.bgMaxMs); capTimer.unref?.(); }
         armGrace();
       }

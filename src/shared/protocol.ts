@@ -48,6 +48,19 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('permission_response'), requestId: z.string().min(1), decision: z.enum(['once', 'session', 'deny']) }),
   /** D8: answers keyed by the question text, values are option labels (comma-joined for multiSelect) or free text. */
   z.object({ type: z.literal('question_response'), requestId: z.string().min(1), answers: z.record(z.string().max(2000), z.string().max(4000)) }),
+  /**
+   * A message typed while a Claude turn runs: written into the running process's input (priority 'next'), so the CLI
+   * folds it in at the next tool boundary of the same turn — or runs it right after the turn when none comes.
+   * `turnId` = the running turn the device shows; `steerId` = the device's id for it (echoed on steer_delivered /
+   * steer_rejected). Refused (steer_rejected) when it cannot go in now: the device then sends it after the turn.
+   */
+  z.object({
+    type: z.literal('steer'),
+    turnId: z.string().min(1),
+    steerId: z.string().min(1).max(CLIENT_REF_MAX),
+    text: z.string().min(1).max(200_000),
+    attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
+  }),
   z.object({ type: z.literal('interrupt'), turnId: z.string().min(1) }),
   /** Stop one background task of a running turn (the rest of the turn keeps going). */
   z.object({ type: z.literal('stop_task'), turnId: z.string().min(1), taskId: z.string().min(1).max(200) }),
@@ -157,4 +170,11 @@ export type ServerMessage =
    */
   | ({ type: 'turn_background'; tasks: string[]; /** Per task: id (for stop_task), type, age. */ detail?: BgTaskInfo[]; /** stop_task works for this turn. */ canStop?: boolean } & TurnScope)
   | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null } & TurnScope)
+  /**
+   * A steer reached the model, at this point of the transcript (mid-turn after a tool round, or as the start of its own
+   * turn right after `turnId`'s result). Every device viewing the session shows `prompt` as the user's message here.
+   */
+  | ({ type: 'steer_delivered'; steerId: string; prompt: TurnPrompt } & TurnScope)
+  /** A steer did not go in (no running Claude turn, process closed, retry/failover): the sending device sends it after the turn. */
+  | ({ type: 'steer_rejected'; steerId: string; message: string } & TurnScope)
   | { type: 'error'; turnId: string | null; message: string; clientRef?: string };

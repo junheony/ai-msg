@@ -44,9 +44,10 @@ export function QueueChips({ queue, paused, onEdit, onRemove, onClear, onResume,
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') setEditing(null); }}
               />
             ) : (
-              <button type="button" className="queue-text" title={`${q.text}\n(클릭해서 수정)`} onClick={() => { setEditing(q.id); setDraft(q.text); }}>
+              <button type="button" className="queue-text" title={q.steer ? q.text : `${q.text}\n(클릭해서 수정)`} onClick={() => { if (q.steer) return; setEditing(q.id); setDraft(q.text); }}>
                 {q.attachments.length > 0 && <span className="queue-att" aria-hidden="true">📎{q.attachments.length}</span>}
                 {q.text || '첨부만'}
+                {q.steer && <span className="queue-steer" title="실행 중인 턴에 보냈습니다 — 다음 도구 실행이 끝나면 전달됩니다"> · 전달 대기</span>}
               </button>
             )}
             {onSendNow && editing !== q.id && (

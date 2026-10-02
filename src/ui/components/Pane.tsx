@@ -267,7 +267,19 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           bg={pane.bg}
           queue={pane.queue}
           queuePaused={pane.queuePaused}
-          onQueue={(text) => dispatch({ type: 'queue_add', text, paneId: pane.id })}
+          onQueue={(text) => {
+            // A running Claude turn takes the message in at its next tool boundary (전달 대기 until the server confirms);
+            // Codex / Gemini, or a refused steer, keep it queued for after the turn.
+            const body = text.trim();
+            if (pane.activeTurnId && s.engine === 'claude' && !pane.awaitingStart && body) {
+              const steerId = nextClientRef();
+              const ids = pane.attachments.map((a) => a.id);
+              dispatch({ type: 'queue_add', text, paneId: pane.id, steerId });
+              send({ type: 'steer', turnId: pane.activeTurnId, steerId, text: body, ...(ids.length ? { attachments: ids } : {}) });
+              return;
+            }
+            dispatch({ type: 'queue_add', text, paneId: pane.id });
+          }}
           onQueueEdit={(id, text) => dispatch({ type: 'queue_edit', id, text, paneId: pane.id })}
           onQueueRemove={(id) => dispatch({ type: 'queue_remove', id, paneId: pane.id })}
           onQueueClear={() => dispatch({ type: 'queue_clear', paneId: pane.id })}

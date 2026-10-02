@@ -57,6 +57,8 @@ export type EngineEvent =
   | { kind: 'continue'; cause: 'background' }
   /** Claude `system/task_notification`: a background task settled. */
   | { kind: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string; taskId?: string; toolUseId?: string | null; usage?: TaskUsage }
+  /** A steer (`LiveInput.steer`) reached the model here: the CLI echoed it back (mid-turn fold, or start of its own turn). */
+  | { kind: 'steer_delivered'; id: string }
   | EngineResult;
 
 /** A user message sent into a still-open Claude process (background work pending). */
@@ -65,6 +67,12 @@ export type FollowUp = { text: string; attachments: Attachment[] };
 /** Handed to `TurnRequest.onLive` once the process is up; `send` resolves false when the input is already closed. */
 export type LiveInput = {
   send(f: FollowUp): Promise<boolean>;
+  /**
+   * Writes a message typed mid-turn into the running process with priority 'next': the CLI folds it in at the next
+   * tool boundary (or runs it as its own turn right after). `id` comes back as a `steer_delivered` event once the model
+   * has it. Resolves false when the input is closed.
+   */
+  steer?(f: FollowUp, id: string): Promise<boolean>;
   /** Stops one task in the process (SDK Query.stopTask); absent when the SDK handle has no stopTask. Resolves false when the input is closed. */
   stopTask?(taskId: string): Promise<boolean>;
   /** Changes the running process's permission mode (SDK Query.setPermissionMode); absent when the SDK handle lacks it. */

@@ -93,9 +93,9 @@ describe('composer queue (ux-state)', () => {
     expect(state.panes[0]!.session?.permissionMode).toBe('acceptEdits');
   });
 
-  it('Pane: the next queued message goes out by itself when the turn ends; stop pauses the queue', () => {
+  it('Pane (Codex): the next queued message goes out by itself when the turn ends; stop pauses the queue', () => {
     const send = vi.fn<(m: ClientMessage) => void>();
-    const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }] };
+    const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: 'gpt', title: 't', engine: 'codex', sandbox: 'workspace-write' } }] };
     let dispatchOut: (a: Parameters<typeof reducer>[1]) => void = () => {};
     function Harness() {
       const [s, dispatch] = useReducer(reducer, start);
@@ -108,7 +108,7 @@ describe('composer queue (ux-state)', () => {
     fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'one' } });
     fireEvent.click(screen.getByText('보내기'));
     const ref1 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
-    server({ type: 'turn_started', turnId: 't1', sessionId: 's1', cwd: '/w', clientRef: ref1 } as ServerMessage);
+    server({ type: 'turn_started', turnId: 't1', sessionId: 's1', cwd: '/w', engine: 'codex', clientRef: ref1 } as ServerMessage);
     fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'two' } });
     fireEvent.keyDown(screen.getByLabelText('메시지'), { key: 'Enter', ctrlKey: true });
     expect(send).toHaveBeenCalledTimes(1);
@@ -119,7 +119,7 @@ describe('composer queue (ux-state)', () => {
     expect(screen.queryByTestId('queue')).toBeNull();
     // stop with a queued message: interrupt goes out, the queue stays and does not fire
     const ref2 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
-    server({ type: 'turn_started', turnId: 't2', sessionId: 's1', cwd: '/w', clientRef: ref2 } as ServerMessage);
+    server({ type: 'turn_started', turnId: 't2', sessionId: 's1', cwd: '/w', engine: 'codex', clientRef: ref2 } as ServerMessage);
     fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'three' } });
     fireEvent.keyDown(screen.getByLabelText('메시지'), { key: 'Enter', ctrlKey: true });
     fireEvent.click(screen.getByTitle('중단'));
@@ -132,9 +132,9 @@ describe('composer queue (ux-state)', () => {
     expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'three' });
   });
 
-  it('Pane: 지금 전송 interrupts the turn and sends that item first; the rest of the queue follows', () => {
+  it('Pane (Codex): 지금 전송 interrupts the turn and sends that item first; the rest of the queue follows', () => {
     const send = vi.fn<(m: ClientMessage) => void>();
-    const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }] };
+    const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: 'gpt', title: 't', engine: 'codex', sandbox: 'workspace-write' } }] };
     let dispatchOut: (a: Parameters<typeof reducer>[1]) => void = () => {};
     function Harness() {
       const [s, dispatch] = useReducer(reducer, start);
@@ -148,7 +148,7 @@ describe('composer queue (ux-state)', () => {
     fireEvent.change(box(), { target: { value: 'one' } });
     fireEvent.click(screen.getByText('보내기'));
     const ref1 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
-    server({ type: 'turn_started', turnId: 't1', sessionId: 's1', cwd: '/w', clientRef: ref1 } as ServerMessage);
+    server({ type: 'turn_started', turnId: 't1', sessionId: 's1', cwd: '/w', engine: 'codex', clientRef: ref1 } as ServerMessage);
     for (const t of ['two', 'three']) {
       fireEvent.change(box(), { target: { value: t } });
       fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
@@ -161,10 +161,84 @@ describe('composer queue (ux-state)', () => {
     expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'three', sessionId: 's1' });
     expect(screen.getByTestId('queue').textContent).toContain('two');
     const ref3 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
-    server({ type: 'turn_started', turnId: 't3', sessionId: 's1', cwd: '/w', clientRef: ref3 } as ServerMessage);
+    server({ type: 'turn_started', turnId: 't3', sessionId: 's1', cwd: '/w', engine: 'codex', clientRef: ref3 } as ServerMessage);
     server({ type: 'turn_result', turnId: 't3', sessionId: 's1', cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null });
     expect(send).toHaveBeenCalledTimes(4);
     expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'two' });
+  });
+
+  function claudeHarness() {
+    const send = vi.fn<(m: ClientMessage) => void>();
+    const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }] };
+    let dispatchOut: (a: Parameters<typeof reducer>[1]) => void = () => {};
+    let state = start;
+    function Harness() {
+      const [s, dispatch] = useReducer(reducer, start);
+      dispatchOut = dispatch;
+      state = s;
+      useQueueRunner(s.panes, s.connected, dispatch, send);
+      return <Pane pane={s.panes[0]!} app={s} active closable={false} dispatch={dispatch} send={send} onClose={() => {}} />;
+    }
+    render(<Harness />);
+    const server = (msg: ServerMessage) => act(() => dispatchOut({ type: 'server', msg }));
+    const box = () => screen.getByLabelText('메시지');
+    fireEvent.change(box(), { target: { value: 'one' } });
+    fireEvent.click(screen.getByText('보내기'));
+    const ref1 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
+    server({ type: 'turn_started', turnId: 't1', sessionId: 's1', cwd: '/w', engine: 'claude', clientRef: ref1 } as ServerMessage);
+    return { send, server, box, pane: () => state.panes[0]! };
+  }
+
+  it('Pane (Claude): Enter during a running turn sends a steer; 전달 대기 until delivered, then a user bubble at that point', () => {
+    const { send, server, box, pane } = claudeHarness();
+    server({ type: 'delta', turnId: 't1', sessionId: 's1', cwd: '/w', text: 'working' });
+    fireEvent.change(box(), { target: { value: 'also check b' } });
+    fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+    expect(send).toHaveBeenCalledTimes(2);
+    const steer = send.mock.lastCall![0] as Extract<ClientMessage, { type: 'steer' }>;
+    expect(steer).toMatchObject({ type: 'steer', turnId: 't1', text: 'also check b' });
+    expect(steer.steerId).toBeTruthy();
+    expect(screen.getByTestId('queue').textContent).toContain('전달 대기');
+    // Pending steer: the queue runner must not resend it when the turn ends.
+    server({ type: 'steer_delivered', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: steer.steerId, prompt: { text: 'also check b', attachments: [] } });
+    expect(screen.queryByTestId('queue')).toBeNull();
+    server({ type: 'delta', turnId: 't1', sessionId: 's1', cwd: '/w', text: 'done b' });
+    const items = pane().items;
+    expect(items.map((it) => it.kind === 'user' ? `u:${it.text}` : `a:${(it as { text: string }).text}`)).toEqual(['u:one', 'a:working', 'u:also check b', 'a:done b']);
+    server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: true, text: 'done b', badge: null, errorText: null });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(pane().items.filter((it) => it.kind === 'assistant' && (it as { streaming: boolean }).streaming)).toHaveLength(0);
+  });
+
+  it('Pane (Claude): a refused steer stays queued and goes out after the turn; another device shows a delivered steer from its prompt', () => {
+    const { send, server, box, pane } = claudeHarness();
+    fireEvent.change(box(), { target: { value: 'later please' } });
+    fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+    const steer = send.mock.lastCall![0] as Extract<ClientMessage, { type: 'steer' }>;
+    server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null });
+    expect(send).toHaveBeenCalledTimes(2);
+    server({ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: steer.steerId, message: 'no' });
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'later please', sessionId: 's1' });
+    // Someone else's steer into this session's running turn: shown from the server's prompt.
+    const ref = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
+    server({ type: 'turn_started', turnId: 't2', sessionId: 's1', cwd: '/w', engine: 'claude', clientRef: ref } as ServerMessage);
+    server({ type: 'steer_delivered', turnId: 't2', sessionId: 's1', cwd: '/w', steerId: 'other-1', prompt: { text: 'from phone', attachments: [] } });
+    expect(pane().items.some((it) => it.kind === 'user' && it.text === 'from phone')).toBe(true);
+  });
+
+  it('Pane (Claude): 지금 전송 on a pending steer interrupts; the rejected steer then goes out first', () => {
+    const { send, server, box } = claudeHarness();
+    fireEvent.change(box(), { target: { value: 'urgent' } });
+    fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+    const steer = send.mock.lastCall![0] as Extract<ClientMessage, { type: 'steer' }>;
+    fireEvent.click(screen.getByLabelText('대기 메시지 1 지금 전송'));
+    expect(send.mock.lastCall![0]).toEqual({ type: 'interrupt', turnId: 't1' });
+    server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: false, text: '', badge: null, errorText: '중단됨' });
+    expect(send).toHaveBeenCalledTimes(3);
+    server({ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: steer.steerId, message: 'closed' });
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'urgent' });
   });
 });
 

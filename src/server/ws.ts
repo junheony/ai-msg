@@ -179,7 +179,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const baseOf = (turnId: string) => aliases.get(turnId) ?? turnId;
   /** The user message of each deck turn started by a send (its own turn or a follow-up), until the turn's process ends. */
   const prompts = new Map<string, TurnPrompt>();
-  const promptOf = (msg: Extract<ClientMessage, { type: 'send' }>): TurnPrompt => ({
+  const promptOf = (msg: { text: string; attachments?: string[] }): TurnPrompt => ({
     text: msg.text,
     attachments: msg.attachments?.length ? (deps.attachments?.resolve([...new Set(msg.attachments)]).found ?? []).map(({ id, name, isImage }) => ({ id, name, isImage })) : [],
   });
@@ -546,6 +546,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'watch_turn':
           turns.get(msg.turnId)?.watchers.add(ws);
           break;
+        case 'steer': {
+          // Into the running Claude turn's process; refused (the device sends it after the turn) when there is none.
+          const turn = turns.get(baseOf(msg.turnId));
+          const reject = (message: string) => send(ws, { type: 'steer_rejected', turnId: msg.turnId, sessionId: turn?.sessionId ?? null, cwd: turn?.cwd ?? '', steerId: msg.steerId, message });
+          if (draining) { reject(DRAINING_MESSAGE); break; }
+          if (!turn || turn.current === null) { reject('실행 중인 턴이 없어 끝난 뒤 보냅니다'); break; }
+          void deps.runner.steer(turn.turnId, { steerId: msg.steerId, text: msg.text, ...(msg.attachments ? { attachments: msg.attachments } : {}), prompt: promptOf(msg) })
+            .then((ok) => { if (!ok) reject('지금은 실행 중인 턴에 넣을 수 없어 끝난 뒤 보냅니다'); })
+            .catch((err: unknown) => reject(`실행 중인 턴에 넣지 못했습니다: ${errMsg(err)}`));
+          break;
+        }
         case 'interrupt': {
           // A continuation's or follow-up's id stops the process it runs in (and its background work).
           const base = baseOf(msg.turnId);

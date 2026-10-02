@@ -3,7 +3,7 @@ import path from 'node:path';
 import { GEMINI_ACCOUNTS, SEAT_LABEL, isGeminiAccount, type Account, type GeminiAccount } from '../../shared/accounts';
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
-import type { ServerMessage } from '../../shared/protocol';
+import type { ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
@@ -186,6 +186,8 @@ export class TurnRunner {
   private readonly live = new Map<string, LiveSession>();
   /** The engine input handle of each running Claude turn, by its first turn id (per-task stop). */
   private readonly inputs = new Map<string, LiveInput>();
+  /** Steers written into each running Claude turn's process and not yet seen reaching the model, by its first turn id → steerId. */
+  private readonly steering = new Map<string, Map<string, TurnPrompt>>();
   /** The live mode of each running Claude turn and the session it is for, by its first turn id. */
   private readonly modes = new Map<string, { ref: ModeRef; sessionId: () => string | null }>();
   /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
@@ -464,6 +466,49 @@ export class TurnRunner {
     }
   }
 
+  /**
+   * A message typed while Claude turn `turnId` (its first id) runs, written into its process with priority 'next': the
+   * CLI folds it in at the next tool boundary, or runs it right after the turn. `steer_delivered` (with `prompt`) is
+   * emitted once it reaches the model; `steer_rejected` if the process ends or the turn retries first. Never resent by a
+   * retry or failover. False = cannot go in now (no running Claude process, attachment gone, input closed, retrying).
+   */
+  async steer(turnId: string, s: { steerId: string; text: string; attachments?: string[]; prompt: TurnPrompt }): Promise<boolean> {
+    const l = this.inputs.get(turnId);
+    const pending = this.steering.get(turnId);
+    if (!l?.steer || !pending || pending.has(s.steerId)) return false;
+    let attachments: Attachment[] = [];
+    if (s.attachments?.length) {
+      const r = this.deps.attachments?.resolve([...new Set(s.attachments)]) ?? { found: [], missing: s.attachments };
+      if (r.missing.length) return false;
+      attachments = r.found;
+    }
+    // Registered before the write: the CLI may echo it back before the write resolves.
+    pending.set(s.steerId, s.prompt);
+    try {
+      if (await l.steer({ text: s.text, attachments }, s.steerId)) return true;
+    } catch (err) {
+      console.error('deck: steer failed', err instanceof Error ? err.message : err);
+    }
+    pending.delete(s.steerId);
+    return false;
+  }
+
+  private steerDelivered(turnId: string, steerId: string, sink: TurnSink, scope: { turnId: string; sessionId: string | null; cwd: string }): void {
+    const pending = this.steering.get(turnId);
+    const prompt = pending?.get(steerId);
+    if (!pending || !prompt) return;
+    pending.delete(steerId);
+    sink.emit({ type: 'steer_delivered', ...scope, steerId, prompt });
+  }
+
+  /** Every steer of `turnId` still waiting goes back to its device (sent after the turn instead). */
+  private rejectSteers(turnId: string, sink: TurnSink, scope: { turnId: string; sessionId: string | null; cwd: string }, message: string): void {
+    const pending = this.steering.get(turnId);
+    if (!pending) return;
+    for (const steerId of pending.keys()) sink.emit({ type: 'steer_rejected', ...scope, steerId, message });
+    pending.clear();
+  }
+
   private bgExtra(turnId: string, detail: BgTask[] | undefined): { detail?: BgTaskInfo[]; canStop?: boolean } {
     const info = bgInfo(detail, this.now());
     return { ...(info ? { detail: info } : {}), ...(this.canStopTasks(turnId) ? { canStop: true } : {}) };
@@ -718,6 +763,7 @@ export class TurnRunner {
           case 'compact': out.compacted = true; break;
           case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
           case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
+          case 'steer_delivered': this.steerDelivered(p.turnId, ev.id, sink, scope()); break;
           case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
         }
       }
@@ -761,6 +807,7 @@ export class TurnRunner {
     type Seg = { turnId: string; reason: string; modelNote: string | null };
     let seg: Seg | null = null;
     let n = 0;
+    let steered = 0;
     let tasks = a.bgTasks;
     const queue: { f: FollowUpParams; attachments: Attachment[] }[] = [];
     const open = (turnId: string, reason: string, modelNote: string | null, clientRef?: string) => {
@@ -816,8 +863,11 @@ export class TurnRunner {
         if (!holdsThinking(ev)) flushThinking();
         // Output with no segment open (e.g. a continuation racing a follow-up) still gets a turn of its own.
         const needSeg = ev.kind === 'delta' || ev.kind === 'tool_call' || ev.kind === 'tool_result' || ev.kind === 'result';
+        // A steer the CLI ran as its own turn (no tool boundary came before the result): a segment of its own.
+        if (ev.kind === 'steer_delivered' && !seg) open(`${p.turnId}:s${++steered}`, '실행 중 보낸 메시지', null);
         if ((ev.kind === 'continue' && !seg) || (needSeg && !seg)) openBackground();
         switch (ev.kind) {
+          case 'steer_delivered': this.steerDelivered(p.turnId, ev.id, sink, scope()); break;
           case 'background': tasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks, ...this.bgExtra(p.turnId, ev.detail) }); break;
           case 'progress': if (seg) sink.emit({ type: 'turn_progress', ...scope(), outputTokens: ev.outputTokens, phase: ev.phase }); break;
           case 'sub_tool_call': sink.emit({ type: 'sub_tool_call', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
@@ -1041,11 +1091,14 @@ export class TurnRunner {
         await this.mirrors.get(state.sessionId);
         state = await this.reconcile(state, (m) => early.push(m));
       }
+      this.steering.set(p.turnId, new Map());
       try {
         end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, early, newSessionModel);
       } finally {
         this.inputs.delete(p.turnId);
         this.modes.delete(p.turnId);
+        this.rejectSteers(p.turnId, sink, { turnId: p.turnId, sessionId: end?.sessionId ?? state?.sessionId ?? null, cwd: end?.cwd ?? state?.cwd ?? p.cwd }, '세션 프로세스가 끝나 턴이 끝난 뒤 보냅니다');
+        this.steering.delete(p.turnId);
       }
       // The final write-back at close (also after a long hold for background work).
       if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
@@ -1171,6 +1224,9 @@ export class TurnRunner {
         return done();
       }
       await a.rest.return?.();
+      // The retry sends only the turn's own prompt: a steer still waiting in the closed process goes back to its device.
+      this.inputs.delete(p.turnId);
+      this.rejectSteers(p.turnId, sink, { turnId: p.turnId, sessionId, cwd }, '재시도 중이라 턴이 끝난 뒤 보냅니다');
 
       // Spec §8: limit/auth → cooldown (shared with claude-pick) → move → retry on the next account.
       writeCooldown(deps.cooldownDir, account, this.now() + COOLDOWN_MS[failure]);

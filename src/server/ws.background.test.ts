@@ -135,6 +135,41 @@ describe('ws: sessions held open for background work', () => {
     b.close();
   });
 
+  it('steer: refused with no running turn; into a running turn it reaches every viewer as steer_delivered with its prompt', async () => {
+    const S = '55555555-5555-4555-8555-555555555555';
+    const cwd = await seed(S, 'steer1');
+    fake = fakeSdk();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'steer', turnId: 'no-such-turn', steerId: 'k0', text: 'x' });
+    expect(await a.next('steer_rejected')).toMatchObject({ steerId: 'k0', turnId: 'no-such-turn' });
+    a.send({ type: 'steer', turnId: 'no-such-turn', steerId: 'k0', text: '' });
+    expect((await a.next('error')).message).toContain('형식 오류');
+
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
+    const t = await a.next('turn_started');
+    const b = await client();
+    await b.next('hello');
+    b.send({ type: 'open_session', sessionId: S });
+    await b.next('history');
+    fake.push(sdk.init(S));
+    await vi.waitFor(() => expect(fake.inputs).toHaveLength(1));
+    a.send({ type: 'steer', turnId: t.turnId, steerId: 'k1', text: 'also this' });
+    await vi.waitFor(() => expect(fake.inputs).toHaveLength(2));
+    const steer = fake.inputs[1]!;
+    expect(steer.priority).toBe('next');
+    fake.push({ type: 'user', isReplay: true, uuid: steer.uuid, parent_tool_use_id: null, message: steer.message, session_id: S });
+    const want = { type: 'steer_delivered', turnId: t.turnId, sessionId: S, steerId: 'k1', prompt: { text: 'also this', attachments: [] } };
+    expect(await a.next('steer_delivered')).toMatchObject(want);
+    expect(await b.next('steer_delivered')).toMatchObject(want);
+    fake.push({ ...sdk.result('done', S), user_message_uuids: [fake.inputs[0]!.uuid, steer.uuid] });
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    expect(a.got.filter((m) => m.type === 'turn_result')).toHaveLength(1);
+    a.close();
+    b.close();
+  });
+
   it('interrupting a follow-up stops the whole process; drain refuses new sends and counts held turns', async () => {
     const S = '44444444-4444-4444-8444-444444444444';
     const cwd = await seed(S, 'bg2');

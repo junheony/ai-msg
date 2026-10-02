@@ -33,7 +33,11 @@ export type UploadedAttachment = { id: string; name: string; size: number; isIma
 /** An attachment as shown in a sent bubble; images load from GET /api/attachments/:id. */
 export type SentFile = { id: string; name: string; isImage: boolean };
 /** ux-state: a message typed while the pane's turn runs; sent when the turn ends. */
-export type QueueItem = { id: string; text: string; attachments: UploadedAttachment[] };
+export type QueueItem = {
+  id: string; text: string; attachments: UploadedAttachment[];
+  /** Sent into the running Claude turn (`steer`) under this id, not yet confirmed: 전달 대기. Cleared on refusal (then sent after the turn). */
+  steer?: string;
+};
 
 export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null; /** Claude permission mode (absent = the server's default for new sessions); a new session sends it with its first turn. */ permissionMode?: PermMode; /** Picked while the new session's first turn ran (no id yet): sent as soon as the id arrives. */ permissionModePending?: true };
 
@@ -137,7 +141,7 @@ export type Action =
   | { type: 'dismiss_error' }
   | { type: 'set_pins'; pins: string[] }
   | { type: 'show_error'; message: string }
-  | { type: 'queue_add'; text: string; paneId?: string }
+  | { type: 'queue_add'; text: string; paneId?: string; /** Also sent as a steer under this id (전달 대기 until the server answers). */ steerId?: string }
   | { type: 'queue_edit'; id: string; text: string; paneId?: string }
   | { type: 'queue_remove'; id: string; paneId?: string }
   | { type: 'queue_clear'; paneId?: string }
@@ -189,8 +193,9 @@ export function modelFor(engine: EngineKind, model: ModelChoice): ModelChoice {
 
 type AssistantItem = Extract<ChatItem, { kind: 'assistant' }>;
 
+/** The turn's latest item: a steer delivered mid-turn splits a turn's answer into items before and after the user's bubble. */
 function updateTurn(pane: PaneState, turnId: string, fn: (item: AssistantItem) => AssistantItem): PaneState {
-  const idx = pane.items.findIndex((it) => it.kind === 'assistant' && it.turnId === turnId);
+  const idx = pane.items.findLastIndex((it) => it.kind === 'assistant' && it.turnId === turnId);
   if (idx < 0) return pane;
   const items = pane.items.slice();
   items[idx] = fn(items[idx] as AssistantItem);
@@ -244,6 +249,21 @@ function withRunningPrompt(items: ChatItem[], prompt: TurnPrompt): ChatItem[] {
   return [...items, promptItem(prompt, nextUserN(items, null))];
 }
 
+/**
+ * A steer reached the model in turn `turnId`: the user's bubble goes where the turn's answer stands now — after what
+ * streamed so far (that part closes; the rest streams into a new item of the same turn), or before a still-empty item.
+ */
+function withSteerBubble(items: ChatItem[], turnId: string, bubble: ChatItem): ChatItem[] {
+  const idx = items.findLastIndex((it) => it.kind === 'assistant' && it.turnId === turnId);
+  if (idx < 0) return [...items, bubble];
+  const it = items[idx] as AssistantItem;
+  const out = items.slice();
+  if (!it.text && !it.toolCalls.length && !it.thinking && !it.attempts.length) out.splice(idx, 0, bubble);
+  else if (it.streaming) out.splice(idx, 1, { ...endThinking(it), streaming: false }, bubble, streamingItem(turnId));
+  else out.splice(idx + 1, 0, bubble);
+  return out;
+}
+
 const ACTIVITY_RESET = { runStartedAt: null, progress: null, agents: {}, bg: null } as const;
 
 /** The agent card a subagent call belongs to: its own Agent call, or the top card holding the nested Agent call. */
@@ -274,7 +294,10 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // An empty turn_background missed while disconnected must not leave the pill lingering.
       const bg = msg.activity && !(act && act.bg > 0) ? null : pane.bg;
       const run = activeTurnId ? { runStartedAt: pane.runStartedAt ?? (act?.running ? Date.now() - act.forMs : Date.now()) } : { runStartedAt: null, progress: null };
-      return { ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null, bg, ...run };
+      // Steers whose turn ended while disconnected: their answer was missed, so they may have gone in — kept, paused.
+      const lost = !activeTurnId && pane.queue.some((q) => q.steer);
+      const queue = lost ? pane.queue.map(({ steer: _s, ...q }) => q) : pane.queue;
+      return { ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null, bg, ...run, ...(lost ? { queue, queuePaused: true } : {}) };
     }
     case 'activity': {
       const sid = pane.session?.sessionId;
@@ -306,10 +329,10 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       }
       if (p.handoff && p.handoff.turnId === null && msg.clientRef !== undefined && msg.clientRef === p.handoff.ref) p = { ...p, handoff: { ...p.handoff, turnId: msg.turnId } };
       if (!belongs(p, msg)) return p;
-      const exists = p.items.some((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
+      const last = p.items.findLastIndex((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
       // Another device's (or pane's) message: its bubble goes before the turn's answer. The sending pane shows it already ('sent').
       const echo = msg.prompt && !p.myTurns.includes(msg.turnId) ? [promptItem(msg.prompt, nextUserN(p.items, p.session))] : [];
-      const items = exists ? p.items.map((it) => (it.kind === 'assistant' && it.turnId === msg.turnId ? { ...it, streaming: true } : it)) : [...p.items, ...echo, streamingItem(msg.turnId)];
+      const items = last >= 0 ? p.items.map((it, i) => (i === last ? { ...it, streaming: true } : it)) : [...p.items, ...echo, streamingItem(msg.turnId)];
       // The timer runs from the send (sent) or from this start; a retry of the same turn keeps it.
       const runStartedAt = p.activeTurnId === msg.turnId || (p.runStartedAt !== null && p.activeTurnId === null) ? (p.runStartedAt ?? Date.now()) : Date.now();
       return { ...p, items, activeTurnId: msg.turnId, runStartedAt, progress: p.activeTurnId === msg.turnId ? p.progress : null };
@@ -367,9 +390,31 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
     case 'tool_call':
       if (!belongs(pane, msg)) return pane;
       return updateTurn(pane, msg.turnId, (it) => ({ ...endThinking(it), toolCalls: [...it.toolCalls, { toolUseId: msg.toolUseId, name: msg.name, input: msg.input, result: null, isError: false }] }));
-    case 'tool_result':
+    case 'tool_result': {
       if (!belongs(pane, msg)) return pane;
-      return updateTurn(pane, msg.turnId, (it) => ({ ...it, toolCalls: it.toolCalls.map((t) => (t.toolUseId === msg.toolUseId ? { ...t, result: msg.content, isError: msg.isError } : t)) }));
+      // The item holding the call (a steer may have split the turn since).
+      const at = pane.items.findLastIndex((it) => it.kind === 'assistant' && it.turnId === msg.turnId && it.toolCalls.some((t) => t.toolUseId === msg.toolUseId));
+      if (at < 0) return pane;
+      const items = pane.items.slice();
+      const it = items[at] as AssistantItem;
+      items[at] = { ...it, toolCalls: it.toolCalls.map((t) => (t.toolUseId === msg.toolUseId ? { ...t, result: msg.content, isError: msg.isError } : t)) };
+      return { ...pane, items };
+    }
+    case 'steer_delivered': {
+      // The sending pane knows it by its queue item; other panes / devices show the server's copy of the prompt.
+      const q = pane.queue.find((x) => x.steer === msg.steerId);
+      if (!q && !belongs(pane, msg)) return pane;
+      const n = nextUserN(pane.items, pane.session);
+      const bubble: ChatItem = q
+        ? { kind: 'user', text: q.text, ...(q.attachments.length ? { attachments: q.attachments.map(({ id, name, isImage }) => ({ id, name, isImage })) } : {}), ...(n !== undefined ? { n } : {}) }
+        : promptItem(msg.prompt, n);
+      const items = withSteerBubble(pane.items, msg.turnId, bubble);
+      return q ? { ...pane, items, queue: pane.queue.filter((x) => x !== q), ...(pane.queueSendNow === q.id ? { queueSendNow: null } : {}) } : { ...pane, items };
+    }
+    case 'steer_rejected':
+      // Not taken into the running turn: an ordinary queue item now, sent after the turn.
+      if (!pane.queue.some((q) => q.steer === msg.steerId)) return pane;
+      return { ...pane, queue: pane.queue.map(({ steer, ...q }) => (steer === msg.steerId ? q : { ...q, ...(steer ? { steer } : {}) })) };
     case 'turn_retry':
       if (!belongs(pane, msg)) return pane;
       // Review M11: the retry streams into a fresh segment; the failed attempt's text is kept apart.
@@ -524,6 +569,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     }
     case 'thinking': case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
     case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result':
+    case 'steer_delivered': case 'steer_rejected':
       return { ...state, panes: mapPanes(state, msg) };
     case 'activity': {
       // A turn that finished while no focused pane showed its session leaves an unread dot.
@@ -629,7 +675,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'show_error': return { ...state, error: action.message };
     case 'queue_add': {
       const text = action.text.trim();
-      return updatePane(state, action.paneId, (p) => (!text && !p.attachments.length ? p : { ...p, queue: [...p.queue, { id: nextQueueId(), text, attachments: p.attachments }], attachments: [] }));
+      return updatePane(state, action.paneId, (p) => (!text && !p.attachments.length ? p : { ...p, queue: [...p.queue, { id: nextQueueId(), text, attachments: p.attachments, ...(action.steerId ? { steer: action.steerId } : {}) }], attachments: [] }));
     }
     case 'queue_edit': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.map((q) => (q.id === action.id ? { ...q, text: action.text } : q)) }));
     case 'queue_remove': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.filter((q) => q.id !== action.id), ...(p.queueSendNow === action.id ? { queueSendNow: null } : {}) }));
@@ -688,8 +734,10 @@ export function nextQueued(pane: PaneState): QueueItem | null {
   if (!pane.session || pane.activeTurnId !== null || pane.awaitingStart) return null;
   // 지금 전송 goes out even though the interrupt it caused paused the queue; its send unpauses the rest.
   const now = pane.queueSendNow ? pane.queue.find((q) => q.id === pane.queueSendNow) : undefined;
-  if (now) return now;
+  if (now && !now.steer) return now;
   if (pane.queuePaused) return null;
+  // A steer still on its way may yet run as its own turn right after this one: later items wait for its answer.
+  if (pane.queue.some((q) => q.steer)) return null;
   return pane.queue[0] ?? null;
 }
 
