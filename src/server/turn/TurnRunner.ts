@@ -598,13 +598,16 @@ export class TurnRunner {
    * safe mover (source never written) and the fork made from that copy. The parent itself is not relocated: its stored
    * state keeps its account and folder.
    */
-  private async copyForFork(state: ClaudeSessionState, to: Account, say: (message: string) => void): Promise<ClaudeSessionState | null> {
+  private async copyForFork(state: ClaudeSessionState, to: Account, say: (message: string) => void, byPin = false): Promise<ClaudeSessionState | null> {
     const r = await this.move({ sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] });
     if (!r.ok) {
       say(`갈래를 ${LABEL[to]} 계정에 만들지 못해 ${LABEL[state.account]} 계정에서 만들어요 (${r.error})`);
       return null;
     }
-    say(`${LABEL[state.account]} 계정을 지금 쓸 수 없어 대화를 ${LABEL[to]} 계정에 복사해 갈래를 만들어요 — 원래 대화는 ${LABEL[state.account]} 계정에 그대로 있어요`);
+    // deck wrote this copy: not a sign of Desktop/CLI having the parent open.
+    if (r.targetFile) this.deckWroteAt.set(path.resolve(r.targetFile), this.now());
+    const why = byPin ? `${LABEL[to]} 계정 고정이라` : `${LABEL[state.account]} 계정을 지금 쓸 수 없어`;
+    say(`${why} 대화를 ${LABEL[to]} 계정에 복사해 갈래를 만들어요 — 원래 대화는 ${LABEL[state.account]} 계정에 그대로 있어요`);
     return { ...state, account: to, projectDir: r.targetDir };
   }
 
@@ -1061,15 +1064,17 @@ export class TurnRunner {
     if (p.model === 'auto' && p.effort === undefined) p = { ...p, effort: AUTO_EFFORT[sessionDefault] };
     const wantedClaude = isClaudeModel(p.model) ? p.model : undefined;
     const wanted = wantedClaude ?? sessionDefault;
-    const pin = state ? (state.accountPin ?? null) : (p.accountPin ?? null);
     // 메시지 편집 갈래: until the CLI reports the fork's id, `state` is the parent's and its id is not this turn's.
     let forkAt = p.fork && state?.sessionId === p.fork.from ? p.fork.at : null;
+    // A fork takes the parent's pin (the pane sends the same one; it covers a pin set a moment before the edit).
+    const pin = state ? (state.accountPin ?? (forkAt ? p.accountPin : null) ?? null) : (p.accountPin ?? null);
     const shownId = () => (forkAt ? null : (state?.sessionId ?? null));
     const done = () => (forkAt ? null : state);
     const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin };
 
-    // An edit-fork runs on the parent's own account (it is not moved for a branch) unless that account is unusable.
-    const forkFrom = forkAt && state ? state.account : null;
+    // An unpinned edit-fork runs on the parent's own account (it is not moved for a branch) unless that account is
+    // unusable; a pinned one routes like any turn of the session, copying the parent to the pinned account.
+    const forkFrom = forkAt && state && !pin ? state.account : null;
     const first = chooseAccount({
       ...routerBase,
       ...(forkFrom ? { pinned: forkFrom } : {}),
@@ -1084,13 +1089,13 @@ export class TurnRunner {
     // The badge's pin marker: the account is the pinned one because of the pin.
     let byPin = first.pinned === true && account === pin;
     if (state && account !== state.account) {
-      const moved = forkAt ? await this.copyForFork(state, account, (m) => early.push(m)) : await this.relocate(state, account, (m) => early.push(m));
+      const moved = forkAt ? await this.copyForFork(state, account, (m) => early.push(m), byPin) : await this.relocate(state, account, (m) => early.push(m));
       if (moved) state = moved;
       else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; byPin = false; }
     }
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
     if (state && !forkAt && (await this.openElsewhere(state))) early.push(OPEN_ELSEWHERE_NOTICE);
-    if (pin && !forkFrom && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
+    if (pin && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];

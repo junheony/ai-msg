@@ -105,6 +105,41 @@ describe('TurnRunner · 메시지 편집 갈래', () => {
     expect(c.msgs.some((m) => m.type === 'turn_notice' && m.message.includes('복사해 갈래'))).toBe(true);
   });
 
+  it('a session pinned to another account forks there: the parent is copied (not moved), the fork is stored on the pin', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const c = await setup(eng, { usage: await roomyUsage() });
+    // Pinned to b after its last turn on c (a pin applies from the next turn): the edit-fork is that next turn.
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'sonnet', accountPin: 'b' });
+    const before = await fs.readFile(c.file, 'utf8');
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', accountPin: 'b', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: PARENT, forkAt: 'a0' });
+    const bDir = path.join(path.dirname(path.dirname(c.dir)), 'b', '-w-one');
+    // The fork resumes from the pinned account's copy of the parent; the parent's own file and state are untouched.
+    expect(await fs.readFile(path.join(bDir, `${PARENT}.jsonl`), 'utf8')).toBe(before);
+    expect(await fs.readFile(c.file, 'utf8')).toBe(before);
+    expect(c.store.get(PARENT)).toMatchObject({ account: 'c', projectDir: c.dir, accountPin: 'b', lastTurnAtMs: NOW - 60_000 });
+    expect(c.store.get(CHILD)).toMatchObject({ account: 'b', accountPin: 'b', projectDir: bDir });
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'b', sessionId: null });
+    expect(c.msgs.find((m) => m.type === 'turn_result')).toMatchObject({ ok: true, sessionId: CHILD, badge: { account: 'b', pinned: true } });
+    const notices = c.msgs.filter((m) => m.type === 'turn_notice').map((m) => (m as { message: string }).message);
+    expect(notices.some((n) => n.includes('고정') && n.includes('B'))).toBe(true);
+    expect(notices.some((n) => n.includes('쓸 수 없어'))).toBe(false);
+  });
+
+  it('pinned account unusable: the fork falls back like a normal turn (parent’s account, no copy) with the same pin notice', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const moves: unknown[] = [];
+    const c = await setup(eng, { usage: await roomyUsage(), move: async (o) => { moves.push(o); return { ok: false, error: 'no' }; } });
+    writeCooldown(path.join(path.dirname(path.dirname(c.dir)), 'cooldown'), 'b', NOW + 3_600_000);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'sonnet', accountPin: 'b' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', accountPin: 'b', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ account: 'c', resumeSessionId: PARENT, forkAt: 'a0' });
+    expect(moves).toEqual([]);
+    expect(c.msgs.some((m) => m.type === 'turn_notice' && /B 계정 .+ — 이번 턴은 C 로 \(고정은 유지\)/.test(m.message))).toBe(true);
+    // The pin is kept on the fork, as a normal turn keeps it on its session.
+    expect(c.store.get(CHILD)).toMatchObject({ account: 'c', accountPin: 'b' });
+  });
+
   it('a fork ending does not unmark its parent’s running turn', async () => {
     let release: () => void = () => {};
     let started: () => void = () => {};
