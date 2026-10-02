@@ -4,6 +4,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 import { contextUsageOf } from '../../shared/turn-types';
+import { redactSecrets } from '../engine/redact';
 
 export type HeadInfo = { cwd: string | null; title: string | null };
 
@@ -189,7 +190,7 @@ class TranscriptBuilder {
       for (const b of blocks) {
         if (b.type === 'text' && typeof b.text === 'string') entry.text += (entry.text ? '\n' : '') + b.text;
         else if (b.type === 'thinking') {
-          if (typeof b.thinking === 'string' && b.thinking.trim()) entry.thinking = (entry.thinking ? `${entry.thinking}\n\n` : '') + b.thinking;
+          if (typeof b.thinking === 'string' && b.thinking.trim()) entry.thinking = (entry.thinking ? `${entry.thinking}\n\n` : '') + redactSecrets(b.thinking); // as the live stream shows it
           else if (typeof b.signature === 'string' && b.signature) entry.thinkingRedacted = true; // empty text + signature = thinking the API did not return
         } else if (b.type === 'redacted_thinking') entry.thinkingRedacted = true;
         else if (b.type === 'tool_use') entry.toolCalls.push({ id: String(b.id ?? ''), name: String(b.name ?? ''), input: b.input });

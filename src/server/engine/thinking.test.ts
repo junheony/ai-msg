@@ -23,6 +23,15 @@ describe('thinking: transcript', () => {
     expect(m).toHaveLength(1);
     expect(m[0]).toMatchObject({ kind: 'assistant', text: 'hi', thinking: 'a\n\nb' });
   });
+  it('thinking loaded from a transcript is redacted like the live stream (whole block)', () => {
+    const key = 'sk-ant-api03-AbCdEf0123456789_xyzQRST';
+    const m = parseTranscript([asst([{ type: 'thinking', thinking: `키는 ${key} 이고 token: zz9yy8xx7ww6` }]), asst([{ type: 'thinking', thinking: 'Bearer abcdefgh12345678' }, { type: 'text', text: 'hi' }])].join('\n'));
+    expect(m[0]).toMatchObject({ thinking: `${redactSecrets(`키는 ${key} 이고 token: zz9yy8xx7ww6`)}\n\n${redactSecrets('Bearer abcdefgh12345678')}` });
+    const t = (m[0] as { thinking: string }).thinking;
+    expect(t).not.toContain(key);
+    expect(t).not.toContain('zz9yy8xx7ww6');
+    expect(t).not.toContain('abcdefgh12345678');
+  });
   it('marks redacted / empty-text thinking', () => {
     expect(parseTranscript(asst([{ type: 'redacted_thinking', data: 'zz' }, { type: 'text', text: 'hi' }]))[0]).toMatchObject({ thinkingRedacted: true });
     expect(parseTranscript(asst([{ type: 'thinking', thinking: '', signature: 's' }]))[0]).toMatchObject({ thinkingRedacted: true });
