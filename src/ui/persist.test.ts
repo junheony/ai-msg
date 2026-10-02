@@ -54,6 +54,24 @@ describe('persist (ux-state)', () => {
     expect(hydrate(initialState, parseUi(snapshotUi(afterSend, { collapsed: [], drawer: false }))).panes[0]).toMatchObject({ handoffFrom: { sessionId: SID }, prefill: null });
   });
 
+  it('an id-less session keeps its account pin across a reload (it rides the first send); bad or id-ful pins are not restored', () => {
+    const store = memStore();
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: '작업 (이어서)' });
+    s = reducer(s, { type: 'set_account_pin', pin: 'c' });
+    saveUi(snapshotUi(s, { collapsed: [], drawer: false }), null, store);
+    const h = hydrate(initialState, loadUi(store));
+    expect(h.panes[0]!.session).toMatchObject({ sessionId: null, accountPin: 'c' });
+    const sent: ClientMessage[] = [];
+    sendFromPane(h.panes[0]!, 'hi', [], () => {}, (m) => sent.push(m));
+    expect(sent[0]).toMatchObject({ sessionId: null, accountPin: 'c' });
+    // An existing session's pin is the server's (history brings it): not persisted.
+    let e = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+    e = reducer(e, { type: 'set_account_pin', pin: 'b' });
+    expect(snapshotUi(e, { collapsed: [], drawer: false }).panes[0]).not.toHaveProperty('accountPin');
+    const bad = parseUi({ v: 1, panes: [{ session: { sessionId: null, cwd: '/w', title: 't', engine: 'claude' }, accountPin: 'gpt' }], active: 0, collapsed: [], drawer: false });
+    expect(hydrate(initialState, bad).panes[0]!.session).not.toHaveProperty('accountPin');
+  });
+
   it('a handoff link is only kept while the session has no id, and bad values are dropped', () => {
     const SID = '11111111-1111-4111-8111-111111111111';
     let s = reducer(initialState, { type: 'open', sessionId: 'new1', cwd: '/w', title: 't' });

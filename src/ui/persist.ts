@@ -1,3 +1,4 @@
+import { isAccount, type Account } from '../shared/accounts';
 import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { MAX_PANES, newPane, type AppState, type ChatItem, type PaneState, type SentFile, type SentRecord } from './state';
 
@@ -14,8 +15,9 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
 /**
  * `handoffFrom` / `prefill`: a pending 새 세션으로 이어가기 — the new session has no id (it exists only once its first
  * send runs), so the link to its predecessor and the note waiting in the composer live only here until then.
+ * `accountPin`: likewise the pin an id-less session sends with its first turn (an existing session's pin is the server's).
  */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string };
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -67,6 +69,7 @@ function pane(x: unknown): PersistedPane {
     sandbox: CODEX_SANDBOXES.includes(x.sandbox as CodexSandbox) ? (x.sandbox as CodexSandbox) : d.sandbox,
     ...(pending && hf && shortStr(hf.sessionId, 200) && hf.sessionId && shortStr(hf.title, 500) ? { handoffFrom: { sessionId: hf.sessionId, title: hf.title } } : {}),
     ...(pending && shortStr(x.prefill, 100_000) && x.prefill ? { prefill: x.prefill } : {}),
+    ...(pending && isAccount(x.accountPin) ? { accountPin: x.accountPin } : {}),
   };
 }
 
@@ -94,6 +97,7 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
       model: p.model, efforts: p.efforts, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
       ...(p.session && p.session.sessionId === null && p.handoffFrom ? { handoffFrom: p.handoffFrom } : {}),
       ...(p.session && p.session.sessionId === null && p.prefill ? { prefill: p.prefill } : {}),
+      ...(p.session && p.session.sessionId === null && p.session.accountPin ? { accountPin: p.session.accountPin } : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
@@ -113,7 +117,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null): AppState {
   if (!ui) return base;
   const panes: PaneState[] = ui.panes.map((p, i) => ({
     ...newPane(`p${i}`),
-    session: p.session ? { ...p.session, account: null, sandbox: null } : null,
+    session: p.session ? { ...p.session, account: null, sandbox: null, ...(p.accountPin ? { accountPin: p.accountPin } : {}) } : null,
     model: p.model, efforts: { ...p.efforts }, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
     handoffFrom: p.handoffFrom ?? null, prefill: p.prefill ?? null,
   }));
