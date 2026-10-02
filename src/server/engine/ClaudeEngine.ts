@@ -573,6 +573,8 @@ export class ClaudeEngine implements Engine {
     const steers = new Map<string, string>();
     /** Steers seen reaching the model since the last result (fallback attribution for a result without uuids). */
     let echoed: string[] = [];
+    /** This CLI names what each result answered (user_message_uuids): a result without them then answers nothing (a background continuation). */
+    let namesAnswers = false;
     const answer = (ids: Iterable<string>) => { for (const id of ids) { const i = unanswered.indexOf(id); if (i >= 0) unanswered.splice(i, 1); } };
     /** Between a result and the next main-thread output: new output there is a background continuation. */
     let idle = false;
@@ -659,17 +661,23 @@ export class ClaudeEngine implements Engine {
             const r = m as unknown as Rec;
             const ids = Array.isArray(r.user_message_uuids) ? (r.user_message_uuids as unknown[]).filter((x): x is string => typeof x === 'string')
               : typeof r.user_message_uuid === 'string' ? [r.user_message_uuid] : null;
-            if (ids) {
+            if (ids) namesAnswers = true;
+            if (ids && ids.length && ids.some((u) => unanswered.includes(u))) {
               // A steer the result names but whose echo never came still reached the model: report it before the result.
               for (const u of ids) {
                 const id = steers.get(u);
                 if (id !== undefined) { steers.delete(u); yield { kind: 'steer_delivered', id }; }
               }
               answer(ids);
-            } else {
-              // No uuids (older CLI, synthesized error): the oldest message, plus any steer folded into this turn.
+            } else if (ids && ids.length) {
+              // Names none of ours: attribute as if unnamed rather than leave the input open until bgMaxMs.
+              console.warn('deck: result answers no message written to this process', { session: sessionId, ids, unanswered: unanswered.length });
+              answer([...unanswered.slice(0, 1), ...echoed]);
+            } else if (!namesAnswers || !ev.ok) {
+              // No uuids from an older CLI, or a delivery failure / error result: the oldest message, plus any steer folded into this turn.
               answer([...unanswered.slice(0, 1), ...echoed]);
             }
+            // else: a CLI that names its answers named none — a background continuation, answering nothing we wrote.
             echoed = [];
             yield { ...ev, ...(lastCtx ? { usage: { ...ev.usage, context: lastCtx } } : {}), errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : stderrTail || null };
             errorKind = null;
