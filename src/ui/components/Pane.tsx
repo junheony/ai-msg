@@ -7,6 +7,7 @@ import { cardsForPane, engineOf, modelFor, nextQueued, type Action, type AppStat
 import type { UploadFn } from '../upload';
 import { Chat } from './Chat';
 import { ForkMenu } from './ForkMenu';
+import { NewChat } from './NewChat';
 import { OpenInDesktop } from './OpenInDesktop';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
@@ -82,7 +83,7 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
 }
 
 /** One split-view pane: its own session, items and composer; user actions become `send`/`dispatch` here (D6). */
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, uploadFn }: {
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage' | 'projects'>>;
   active: boolean;
@@ -92,6 +93,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   onClose: () => void;
   /** Opens a session in this pane (the 이전 세션 / 새 세션으로 이어감 links). */
   onOpenSession?: (sessionId: string, cwd: string, title: string) => void;
+  /** The empty pane's start box: a new session in `cwd`, `text` (if any) sent as its first message. */
+  onStartChat?: (cwd: string, name: string, text: string) => void;
+  /** The empty pane's preselected project. */
+  newChatCwd?: string | null;
   uploadFn?: UploadFn;
 }) {
   const s = pane.session;
@@ -190,7 +195,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       ) : (
         <>
           {close && <div className="chat-head"><span className="spacer" />{close}</div>}
-          <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>
+          {onStartChat
+            ? <NewChat projects={projects} defaultCwd={newChatCwd ?? null} onStart={onStartChat} {...(onOpenSession ? { onOpenSession } : {})} />
+            : <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>}
         </>
       )}
     </section>

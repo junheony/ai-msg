@@ -40,6 +40,7 @@ describe('App split view (D6)', () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
   it('ux-state: a reload restores the split, each pane\'s session/picker and folded groups, and re-opens the sessions', async () => {
+    localStorage.setItem('deck.sidebarView', 'projects'); // folding is a 프로젝트 view feature
     await boot();
     openSession('one');
     fireEvent.click(screen.getByText('+ 분할'));
@@ -111,7 +112,7 @@ describe('App split view (D6)', () => {
     fireEvent.click(screen.getByText('+ 분할')); // blank active pane (ids are reused: max remaining + 1)
     server({ type: 'history', sessionId: 's2', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [{ kind: 'user', text: 'stale-history', ts: null }] });
     expect(screen.queryByText('stale-history')).toBeNull();
-    expect(within(lastPane()).getByText(/세션을 고르거나/)).toBeTruthy();
+    expect(within(lastPane()).getByLabelText('첫 메시지')).toBeTruthy(); // the new-chat screen
   });
 
   it('every send carries a fresh clientRef; a reconnect re-opens each viewed session once', async () => {

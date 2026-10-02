@@ -1,11 +1,11 @@
 import type { AppState } from './state';
 
-/** Nothing the user would lose or be interrupted by: no attachments, no running turn on the focused pane, no open card. */
-export type ReloadSafety = { draftText: boolean; state: Pick<AppState, 'panes' | 'activePaneId' | 'pending' | 'questions'> };
+/** Nothing the user would lose or be interrupted by: no attachments, no running turn on the focused pane, no open card, no open dialog. */
+export type ReloadSafety = { draftText: boolean; /** A modal (⌘K palette, 사용량, confirm…) is open. */ modalOpen?: boolean; state: Pick<AppState, 'panes' | 'activePaneId' | 'pending' | 'questions'> };
 
 /** Reload now only when it cannot lose or interrupt anything; otherwise the caller shows the "새 버전" pill. */
-export function shouldAutoReload({ draftText, state }: ReloadSafety): boolean {
-  if (draftText) return false;
+export function shouldAutoReload({ draftText, modalOpen = false, state }: ReloadSafety): boolean {
+  if (draftText || modalOpen) return false;
   if (state.panes.some((p) => p.attachments.length > 0)) return false;
   const focused = state.panes.find((p) => p.id === state.activePaneId) ?? state.panes[0];
   if (focused?.activeTurnId) return false;
@@ -30,7 +30,12 @@ export function claimReload(build: string, store: Pick<Storage, 'getItem' | 'set
 
 /** Any composer holding unsent text (the draft lives in Chat's local state, so the DOM is the source of truth). */
 export function hasDraftText(root: ParentNode = document): boolean {
-  return Array.from(root.querySelectorAll<HTMLTextAreaElement>('.composer textarea')).some((t) => t.value.trim().length > 0);
+  return Array.from(root.querySelectorAll<HTMLTextAreaElement>('.composer textarea, .newchat textarea')).some((t) => t.value.trim().length > 0);
+}
+
+/** Any modal dialog on screen (the DOM is the source of truth: palette, cheat sheet, 사용량, confirm). */
+export function hasOpenModal(root: ParentNode = document): boolean {
+  return root.querySelector('[aria-modal="true"]') !== null;
 }
 
 const DRAFT_PREFIX = 'deck.draft.';

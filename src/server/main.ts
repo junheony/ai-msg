@@ -17,7 +17,7 @@ import { PushNotifier } from './push/PushNotifier';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { loadOrCreateVapid } from './push/vapid';
 import { PinStore } from './sessions/PinStore';
-import { startBackupPruning } from './sessions/backupPrune';
+import { pruneRootsOf, startBackupPruning } from './sessions/backupPrune';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
 import { TranscriptSearch } from './sessions/search';
 import { SettingsStore } from './settings';
@@ -56,8 +56,8 @@ async function main(): Promise<void> {
   const attachments = new AttachmentStore(cfg.attachmentsDir);
   await attachments.init();
   attachments.startPurgeTimer();
-  // Fork backups (SessionFork) live in each profile's session-backups/; only deck-named, expired entries go.
-  const stopBackupPruning = startBackupPruning(ACCOUNTS.map((a) => path.join(path.dirname(cfg.projectsRoots[a]), 'session-backups')), cfg.backupRetentionDays);
+  // Fork backups (SessionFork) and the 삭제 trash (SessionTrash) live in each profile's config dir; only deck-named, expired entries go.
+  const stopBackupPruning = startBackupPruning(ACCOUNTS.flatMap((a) => pruneRootsOf(path.dirname(cfg.projectsRoots[a]))), cfg.backupRetentionDays);
   // D11: Codex is optional; without the binary the UI hides the GPT option and 'auto' means Claude.
   const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
   // Gemini: explicit engine only; an account counts as logged in once its OAuth file exists (never read).
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
     subject: cfg.vapidSubject ?? (dnsName ? `https://${dnsName}` : 'mailto:deck@localhost.localdomain'),
     titleOf: (sessionId, cwd) => (sessionId ? index.lookup(sessionId)?.title ?? store.codexEntries().find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'deck',
   });
-  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, usageHistory });
+  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
   const ws = attachWebSocket(servers, { build: computeBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments, meta });

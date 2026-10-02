@@ -22,6 +22,7 @@ import { findCopies, resolveCopies } from '../sessions/copies';
 import { LIVE_ROLLOUT_NOTICE, rolloutRecentlyActive } from '../sessions/CodexImports';
 import { forkDivergedAndMove } from '../sessions/SessionFork';
 import { isBytePrefix, moveSession } from '../sessions/SessionMover';
+import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
 import { isCodexState, isGeminiState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type SessionState, type SessionStateStore } from './SessionState';
@@ -344,6 +345,41 @@ export class TurnRunner {
       for (const k of [...this.noted]) if (k.startsWith(`${sessionId}\0`)) this.noted.delete(k);
       return { ok: true as const, backup: `${file}.${stamp}` };
     });
+  }
+
+  /**
+   * 삭제: every profile's copy of a Claude session goes to that profile's `session-trash/` (moved, never unlinked;
+   * pruned after the backup retention). Refused while deck runs it (turn or background process) or while
+   * another program (Desktop/CLI) seems to have it open. Returns the undo handle.
+   */
+  async trashSession(sessionId: string): Promise<{ ok: true; trashId: string } | { ok: false; error: string }> {
+    return this.serialize(sessionId, async () => {
+      const st = this.deps.store.get(sessionId);
+      if (st && (isCodexState(st) || isGeminiState(st))) return { ok: false as const, error: 'Claude 대화만 삭제할 수 있습니다' };
+      const e = this.deps.index.lookup(sessionId);
+      if (!st && (!e || e.account === 'gpt' || isGeminiAccount(e.account) || e.imported)) return { ok: false as const, error: 'Claude 대화만 삭제할 수 있습니다' };
+      if (this.active.has(sessionId) || this.live.has(sessionId)) return { ok: false as const, error: '실행 중인 대화는 삭제할 수 없습니다 — 끝난 뒤 다시 시도하세요' };
+      const base: ClaudeSessionState = st ?? { sessionId, cwd: e!.cwd, account: e!.account as Account, projectDir: e!.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
+      if (await this.openElsewhere(base)) return { ok: false as const, error: '다른 곳(Desktop/CLI)에서 열려 있는 것 같아 삭제하지 않았습니다' };
+      const copies = await findCopies(this.deps.projectsRoots, sessionId, base.projectDir, base.account).catch(() => []);
+      try {
+        const r = await moveToTrash({ sessionId, projectDirs: copies.map((c) => c.projectDir), nowMs: this.now() });
+        return { ok: true as const, trashId: r.trashId };
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      }
+    });
+  }
+
+  /** 되돌리기 for trashSession. */
+  async restoreSession(trashId: string): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> {
+    try {
+      const configDirs = Object.values(this.deps.projectsRoots).map((r) => path.dirname(r));
+      const r = await restoreFromTrash({ trashId, configDirs });
+      return { ok: true, sessionId: r.sessionId };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   private async mirrorHome(sessionId: string, home: Account, sink: TurnSink, turnId: string): Promise<void> {

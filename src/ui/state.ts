@@ -122,6 +122,8 @@ export type Action =
   | { type: 'attach'; attachment: UploadedAttachment; paneId?: string }
   | { type: 'unattach'; id: string; paneId?: string }
   | { type: 'add_pane' }
+  /** Back to the empty / new-chat screen (⌘N, the shown session was deleted). */
+  | { type: 'clear_pane'; paneId?: string }
   | { type: 'close_pane'; paneId: string }
   | { type: 'focus_pane'; paneId: string }
   | { type: 'dismiss_error' }
@@ -531,6 +533,10 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'set_account_pin': return updatePane(state, action.paneId, (p) => (p.session ? { ...p, session: { ...p.session, accountPin: action.pin } } : p));
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
+    case 'clear_pane': return updatePane(state, action.paneId, (p) => ({
+      ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, ...ACTIVITY_RESET,
+      handoff: null, handoffFrom: null, prefill: null,
+    }));
     case 'add_pane': {
       if (state.panes.length >= MAX_PANES) return state;
       const n = Math.max(...state.panes.map((p) => Number(p.id.slice(1)) || 0)) + 1;

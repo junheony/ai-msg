@@ -46,7 +46,7 @@ export type DeckConfig = {
   drainMaxMs: number;
   /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`, default 120). */
   bgMaxMs: number;
-  /** Fork backups under `<profile>/session-backups/` older than this many days are deleted (`DECK_BACKUP_RETENTION_DAYS`, default 30). */
+  /** Fork backups (`<profile>/session-backups/`) and 삭제 trash (`<profile>/session-trash/`) older than this many days are deleted (`DECK_BACKUP_RETENTION_DAYS`, default 30). */
   backupRetentionDays: number;
   /** Web Push: VAPID keypair (0600, generated once) and browser subscriptions (0600). */
   vapidFile: string;

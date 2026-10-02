@@ -3,6 +3,14 @@ import path from 'node:path';
 
 const DAY_MS = 86_400_000;
 
+/**
+ * Every dir under a profile's config dir that holds deck-named, dated entries: fork backups (SessionFork)
+ * and the 삭제 trash (SessionTrash). Both are pruned after the same retention.
+ */
+export function pruneRootsOf(configDir: string): string[] {
+  return [path.join(configDir, 'session-backups'), path.join(configDir, 'session-trash')];
+}
+
 /** `<yyyymmdd-hhmmss>-<uuid>[-n]` — exactly the names SessionFork gives its backups (local time). */
 const BACKUP_NAME = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-\d+)?$/i;
 
@@ -43,7 +51,7 @@ export function startBackupPruning(backupRoots: string[], retentionDays: number,
   const run = () => {
     for (const root of backupRoots) {
       pruneSessionBackups(root, retentionDays).then(
-        (removed) => { if (removed.length) console.log(`deck: ${retentionDays}일 지난 세션 백업 ${removed.length}개 정리 (${root})`); },
+        (removed) => { if (removed.length) console.log(`deck: ${retentionDays}일 지난 세션 백업/휴지통 ${removed.length}개 정리 (${root})`); },
         (err: unknown) => console.error('deck: session backup cleanup failed', err instanceof Error ? err.message : err),
       );
     }
