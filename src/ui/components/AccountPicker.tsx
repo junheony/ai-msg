@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { usePopoverPlacement } from './usePopoverPlacement';
 import { ACCOUNTS, type Account, type Seat } from '../../shared/accounts';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
 
@@ -34,6 +35,7 @@ export function AccountPicker({ pin, current, usage, onPin }: {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+  const pos = usePopoverPlacement(open, btnRef, popRef, 240);
 
   useEffect(() => {
     if (!open) return;
@@ -78,7 +80,7 @@ export function AccountPicker({ pin, current, usage, onPin }: {
         <span className="mp-caret" aria-hidden="true">⌄</span>
       </button>
       {open && (
-        <div ref={popRef} className="mp-pop ap-pop" role="menu" aria-label="계정" data-testid="account-menu">
+        <div ref={popRef} className="mp-pop ap-pop" role="menu" aria-label="계정" style={pos} data-testid="account-menu">
           <div className="mp-section" role="group" aria-label="계정">
             <div className="mp-head">이 세션의 계정</div>
             {item(null, '자동', '턴마다 잔여량과 캐시를 보고 고름')}

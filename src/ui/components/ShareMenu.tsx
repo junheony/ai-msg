@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { copyText } from '../clipboard';
 import { conversationMarkdown, exportFileName } from '../exportMarkdown';
 import type { ChatItem } from '../state';
+import { usePopoverPlacement } from './usePopoverPlacement';
 import { ShareIcon } from './icons';
 
 /** The deck link that opens this session (App reads ?session= on load). */
@@ -25,6 +26,9 @@ export function ShareMenu({ title, items, cwd, sessionId, assistant }: { title: 
   const [open, setOpen] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const pos = usePopoverPlacement(open, btnRef, popRef, 220);
 
   useEffect(() => {
     if (!open) return;
@@ -55,10 +59,10 @@ export function ShareMenu({ title, items, cwd, sessionId, assistant }: { title: 
 
   return (
     <div className="share" ref={ref}>
-      <button type="button" className="icon-btn share-btn" aria-label="공유" title={done ?? '공유'} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><ShareIcon /></button>
+      <button ref={btnRef} type="button" className="icon-btn share-btn" aria-label="공유" title={done ?? '공유'} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><ShareIcon /></button>
       {done && <span className="share-toast" role="status">{done}</span>}
       {open && (
-        <div className="share-pop" role="menu">
+        <div ref={popRef} className="share-pop" role="menu" style={pos}>
           {canShare && <button type="button" role="menuitem" className="share-item" onClick={share}>공유…</button>}
           <button type="button" role="menuitem" className="share-item" disabled={empty} onClick={copyAll}>대화 복사 (마크다운)</button>
           <button type="button" role="menuitem" className="share-item" disabled={empty} onClick={exportMd}>마크다운으로 내보내기</button>

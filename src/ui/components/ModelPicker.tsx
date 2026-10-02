@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { usePopoverPlacement } from './usePopoverPlacement';
 import { AUTO_MODEL_INFO, EFFORTS, EFFORT_LABEL, MODEL_EFFORTS, MODEL_INFO, isCodexModel, isGeminiModel, type Effort, type ModelChoice } from '../../shared/models';
 
 const MARGIN = 8;
@@ -20,34 +21,12 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: {
   onEffort: (e: Effort | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<CSSProperties>({});
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const auto = model === 'auto';
   const efforts = auto ? EFFORTS : MODEL_EFFORTS[model];
 
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const b = btnRef.current?.getBoundingClientRect();
-      const pop = popRef.current;
-      if (!b || !pop) return;
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const width = Math.min(pop.offsetWidth || 300, vw - 2 * MARGIN);
-      // Right-aligned to the button like Desktop, then pushed back inside the viewport.
-      const left = Math.max(MARGIN, Math.min(b.right - width, vw - width - MARGIN));
-      // Opens upward (the composer sits at the bottom); downward only if there is clearly more room below.
-      const above = b.top - GAP - MARGIN;
-      const below = vh - b.bottom - GAP - MARGIN;
-      setPos(below > above
-        ? { left, top: b.bottom + GAP, maxHeight: below }
-        : { left, bottom: vh - b.top + GAP, maxHeight: above });
-    };
-    place();
-    window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
-  }, [open]);
+  const pos = usePopoverPlacement(open, btnRef, popRef);
 
   useEffect(() => {
     if (!open) return;
