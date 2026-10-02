@@ -18,7 +18,8 @@ import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
-import { moveSession } from '../sessions/SessionMover';
+import { findCopies, resolveCopies } from '../sessions/copies';
+import { isBytePrefix, moveSession } from '../sessions/SessionMover';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
 import { isCodexState, isGeminiState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type SessionState, type SessionStateStore } from './SessionState';
@@ -66,6 +67,11 @@ export type TurnRunnerDeps = {
   /** 자동 승인 (read per tool call / per new GPT session); absent = off. */
   autoApprove?: () => boolean;
   projectsRoots: Record<Account, string>;
+  /**
+   * The profile Claude Desktop and a plain `claude --resume` use (A). After every Claude turn that ran
+   * elsewhere the session is mirrored back into it (append-only, prefix-checked). Absent/null = no write-back.
+   */
+  homeAccount?: Account | null;
   move?: typeof moveSession;
   findRollout?: typeof findRolloutFile;
   readRateLimits?: typeof readRolloutRateLimits;
@@ -132,6 +138,10 @@ export class TurnRunner {
   private readonly live = new Map<string, LiveSession>();
   /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
   private geminiCooldownUntil: Partial<Record<GeminiAccount, number>> = {};
+  /** Home write-backs in flight, by session id (serialized per session; the next turn waits for it). */
+  private readonly mirrors = new Map<string, Promise<void>>();
+  /** Notices already shown, `${sessionId}\0${message}` — a lasting divergence is told once, not every turn. */
+  private readonly noted = new Set<string>();
 
   constructor(private readonly deps: TurnRunnerDeps) {
     this.move = deps.move ?? moveSession;
@@ -159,6 +169,78 @@ export class TurnRunner {
       attachments = r.found;
     }
     return entry.submit(f, attachments);
+  }
+
+  /** Resolves when every home write-back started so far has finished (tests, shutdown). */
+  async mirrorsSettled(): Promise<void> {
+    while (this.mirrors.size) await Promise.all([...this.mirrors.values()]);
+  }
+
+  private noteOnce(sink: TurnSink, turnId: string, state: { sessionId: string; cwd: string }, message: string): void {
+    const key = `${state.sessionId}\0${message}`;
+    if (this.noted.has(key)) return;
+    this.noted.add(key);
+    sink.emit({ type: 'turn_notice', turnId, sessionId: state.sessionId, cwd: state.cwd, message });
+  }
+
+  /**
+   * After a Claude turn (its process closed, the jsonl flushed): copy the session back into the home
+   * profile so Claude Desktop / `claude --resume` there see it. Runs in the background; a failure is a
+   * notice on the turn, never a turn failure. A home copy that went its own way is left untouched.
+   */
+  private scheduleMirror(sessionId: string, sink: TurnSink, turnId: string): void {
+    const home = this.deps.homeAccount;
+    if (!home) return;
+    const run = (this.mirrors.get(sessionId) ?? Promise.resolve())
+      .then(() => this.mirrorHome(sessionId, home, sink, turnId))
+      .catch((err: unknown) => console.error('deck: home write-back failed', err instanceof Error ? err.message : err));
+    this.mirrors.set(sessionId, run);
+    void run.then(() => { if (this.mirrors.get(sessionId) === run) this.mirrors.delete(sessionId); });
+  }
+
+  private async mirrorHome(sessionId: string, home: Account, sink: TurnSink, turnId: string): Promise<void> {
+    const st = this.deps.store.get(sessionId);
+    if (!st || isCodexState(st) || isGeminiState(st) || st.account === home) return;
+    // Only the same-named dir is refreshed: a stale copy under an older dir spelling must not block it (nor is it touched).
+    const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.deps.projectsRoots[home], ignoreOtherDirs: true });
+    if (r.ok) return;
+    // The home copy already contains ours (Desktop went on, deck added nothing): the next turn pulls it in.
+    if (r.diverged && (await isBytePrefix(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return;
+    console.error(`deck: home write-back of ${sessionId} to ${LABEL[home]} failed: ${r.error}`);
+    this.noteOnce(sink, turnId, st, r.diverged
+      ? `Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — ${LABEL[home]} 계정 사본은 덮어쓰지 않았습니다 (다음 턴은 가장 최근 사본으로 이어갑니다)`
+      : `${LABEL[home]} 계정 사본 갱신 실패(${r.error}) — 대화는 계속됩니다`);
+  }
+
+  /**
+   * Before a turn: the same session may have moved on in another profile (Claude Desktop on A).
+   * A copy that contains ours is pulled into the profile deck last used (so routing is unchanged);
+   * if that copy cannot be written, the session follows it instead. Truly diverged copies are never
+   * merged or overwritten: the newest (mtime) is used and the user is told.
+   */
+  private async reconcile(state: ClaudeSessionState, sink: TurnSink, turnId: string): Promise<ClaudeSessionState> {
+    try {
+      const copies = await findCopies(this.deps.projectsRoots, state.sessionId, state.projectDir, state.account);
+      // No copy where deck left it: nothing to compare against (locateProjectDir / the engine handle that).
+      if (copies[0]?.projectDir !== state.projectDir || copies.length < 2) return state;
+      const r = (await resolveCopies(copies))!;
+      if (r.heads.length > 1) {
+        const others = r.heads.filter((h) => h !== r.best).map((h) => LABEL[h.account]).join('·');
+        this.noteOnce(sink, turnId, state, `Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근에 바뀐 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${others} 계정 사본은 그대로 둡니다`);
+      }
+      if (r.best.projectDir === state.projectDir) return state;
+      if (!r.heads.includes(copies[0]!)) {
+        // Ours is an older prefix of the winner: refresh it in place (moveSession accepts only that).
+        const m = await this.move({ sessionId: state.sessionId, sourceProjectDir: r.best.projectDir, targetProjectsRoot: this.deps.projectsRoots[state.account] });
+        if (m.ok && path.resolve(m.targetDir) === path.resolve(state.projectDir)) return state;
+      }
+      const next = { ...state, account: r.best.account, projectDir: r.best.projectDir };
+      await this.deps.store.set(next);
+      return next;
+    } catch (err) {
+      console.error('deck: session copy check failed', err instanceof Error ? err.message : err);
+      return state;
+    }
   }
 
   /** Session ids whose process is held open for background work. */
@@ -517,6 +599,17 @@ export class TurnRunner {
   }
 
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
+    if (state) {
+      // A write-back still copying this session finishes first (it must not see the next turn's writes).
+      await this.mirrors.get(state.sessionId);
+      state = await this.reconcile(state, sink, p.turnId);
+    }
+    const end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, newSessionModel);
+    if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
+  }
+
+  /** The Claude turn proper; resolves (after any background follow-through) with the session's final state. */
+  private async runClaudeTurn(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<ClaudeSessionState | null> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const sessionDefault = state?.defaultModel ?? newSessionModel ?? DEFAULT_MODEL;
@@ -547,7 +640,7 @@ export class TurnRunner {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null }, errorText: '중단됨' });
-        return;
+        return state;
       }
       const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
       const { model, note } = resolveModel(wantedClaude, sessionDefault, fable);
@@ -580,7 +673,7 @@ export class TurnRunner {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
         if (sessionId) await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants });
         else await a.rest.return?.();
-        return;
+        return state;
       }
       await a.rest.return?.();
 
@@ -611,11 +704,12 @@ export class TurnRunner {
       }
       if (!next) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : '대안 계정 없음'} · ${shownError ?? ''}`.trim() });
-        return;
+        return state;
       }
       sink.emit({ type: 'turn_retry', turnId: p.turnId, sessionId: state?.sessionId ?? sessionId, cwd, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
       reason = `재시도(${why}) · ${next.reason}`;
       account = next.account;
     }
+    return state;
   }
 }

@@ -2,7 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ACCOUNTS, type Account } from '../../shared/accounts';
 import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry } from '../../shared/session-types';
+import { findCopies, resolveCopies, type PrefixFn, type SessionCopy } from './copies';
 import { recentDesktopSessions } from './DesktopSessions';
+import { isBytePrefix } from './SessionMover';
 import { pathKey } from './slug';
 import { readHead } from './transcript';
 
@@ -132,6 +134,17 @@ export class SessionIndex {
   private recentFolders: string[] = [];
   private recentWrite: Promise<void> = Promise.resolve();
   private desktopList: DesktopSession[] = [];
+  /** Byte-prefix answers by (file, size, mtime) pair: a rescan does not re-read unchanged transcripts. */
+  private prefixCache = new Map<string, boolean>();
+  private readonly cachedPrefix: PrefixFn = async (a, b) => {
+    const key = `${a.file}\0${a.size}\0${a.mtimeMs}\0${b.file}\0${b.size}\0${b.mtimeMs}`;
+    const hit = this.prefixCache.get(key);
+    if (hit !== undefined) return hit;
+    const v = a.size <= b.size && (await isBytePrefix(a.file, b.file).catch(() => false));
+    if (this.prefixCache.size > 2000) this.prefixCache.clear();
+    this.prefixCache.set(key, v);
+    return v;
+  };
 
   /** `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list. */
   constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; meta?: SessionMetaView }) {}
@@ -162,10 +175,14 @@ export class SessionIndex {
   async refresh(): Promise<void> {
     const all = (await Promise.all(ACCOUNTS.map((a) => scanProfile(a, this.opts.roots[a])))).flat();
     this.entries = all;
+    // The same id in several profiles/dirs: the copy containing the others wins; truly diverged → newest.
+    const byId = new Map<string, SessionEntry[]>();
+    for (const e of all) byId.set(e.sessionId, [...(byId.get(e.sessionId) ?? []), e]);
     this.byId = new Map();
-    for (const e of all) {
-      const prev = this.byId.get(e.sessionId);
-      if (!prev || e.lastModified > prev.lastModified) this.byId.set(e.sessionId, e);
+    for (const [id, list] of byId) {
+      if (list.length === 1) { this.byId.set(id, list[0]!); continue; }
+      const stamped = list.sort((x, y) => y.lastModified - x.lastModified).map((e) => ({ e, file: e.file, size: e.sizeBytes, mtimeMs: e.lastModified }));
+      this.byId.set(id, (await resolveCopies(stamped, this.cachedPrefix))!.best.e);
     }
     this.pinned = await readPinned(this.opts.pinnedFile);
     if (this.opts.recentFile) this.recentFolders = await readRecent(this.opts.recentFile);
@@ -199,6 +216,14 @@ export class SessionIndex {
       await this.recentWrite;
     }
     return snapshot;
+  }
+
+  /**
+   * The copy of a Claude session to show/resume, starting from the one deck last used (`projectDir`):
+   * a superset copy in another profile (e.g. Claude Desktop continued it on A) wins; truly diverged → newest.
+   */
+  async bestCopy(sessionId: string, projectDir: string, account: Account): Promise<SessionCopy | null> {
+    return (await resolveCopies(await findCopies(this.opts.roots, sessionId, projectDir, account), this.cachedPrefix))?.best ?? null;
   }
 
   lookup(sessionId: string): SessionEntry | null {

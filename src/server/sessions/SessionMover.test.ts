@@ -73,6 +73,7 @@ describe('moveSession', () => {
     const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('대상 세션이 따로 진행됨');
+    if (!r.ok) expect(r.diverged).toBe(true);
     expect(await snapshot(tDir)).toEqual(snap);
   });
 
@@ -145,6 +146,19 @@ describe('moveSession', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('-Users-x-proj-nfd');
     await expect(fs.stat(path.join(dstRoot, '-Users-x-proj', `${ID}.jsonl`))).rejects.toThrow();
+  });
+
+  it('ignoreOtherDirs (home write-back): copies into the same-named dir and leaves the other copy as is', async () => {
+    const { srcDir, dstRoot } = await fixture();
+    const other = path.join(dstRoot, '-Users-x-proj-nfd');
+    await fs.mkdir(other, { recursive: true });
+    await fs.writeFile(path.join(other, `${ID}.jsonl`), 'x\n');
+    const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot, ignoreOtherDirs: true });
+    expect(r.ok).toBe(true);
+    expect(await sha256File(path.join(dstRoot, '-Users-x-proj', `${ID}.jsonl`))).toBe(await sha256File(path.join(srcDir, `${ID}.jsonl`)));
+    expect(await fs.readFile(path.join(other, `${ID}.jsonl`), 'utf8')).toBe('x\n');
+    if (!r.ok) return;
+    expect('diverged' in r).toBe(false);
   });
 
   it('works without a companion dir and is a no-op when source == target', async () => {

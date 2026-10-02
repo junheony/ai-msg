@@ -552,6 +552,24 @@ describe('ws', () => {
     ws.close();
   });
 
+  it('open_session shows the A copy when Claude Desktop extended the session deck last ran on B', async () => {
+    const SID = '77777777-7777-4777-8777-777777777777';
+    const cwd = await seed(SID, 'desk');
+    const dirName = cwd.replace(/[^a-zA-Z0-9]/g, '-');
+    const bFile = path.join(base, 'b', dirName, `${SID}.jsonl`);
+    const aDir = path.join(base, 'a', dirName);
+    await fs.mkdir(aDir, { recursive: true });
+    await fs.writeFile(path.join(aDir, `${SID}.jsonl`), (await fs.readFile(bFile, 'utf8')) + JSON.stringify({ type: 'user', cwd, message: { role: 'user', content: 'from desktop' } }) + '\n');
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const p = collect(ws, (m) => m.type === 'history');
+    ws.send(JSON.stringify({ type: 'open_session', sessionId: SID }));
+    const h = (await p).at(-1) as Extract<ServerMessage, { type: 'history' }>;
+    expect(h.messages.map((m) => m.kind)).toEqual(['user', 'user']);
+    expect(h.account).toBe('b');
+    ws.close();
+  });
+
   it('open_session on a Gemini session: engine, pinned account and sandbox, empty history (no transcript reader)', async () => {
     const GID = '4f1c2b9e-1111-4222-8333-944455556666';
     await store.set({ engine: 'gemini', account: 'g2', sessionId: GID, cwd: '/w/g', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gemini-pro', sandbox: 'read-only', createdAtMs: 1 });

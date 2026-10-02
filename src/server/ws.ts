@@ -433,7 +433,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             view(ws, sessionId);
             // PF5: `st` is narrowed to a Claude state (or null) by the Codex return above.
             const found = entry;
-            await readTranscript(st ? `${st.projectDir}/${sessionId}.jsonl` : found.file)
+            // A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one shown.
+            const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
+            await readTranscript(best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file))
               .catch(() => readTranscript(found.file))
               .then((messages) => {
                 const t = turns.get(busy.get(sessionId) ?? '');

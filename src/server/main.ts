@@ -71,6 +71,8 @@ async function main(): Promise<void> {
     auditFile: cfg.auditFile,
     autoApprove: () => settings.get().autoApprove,
     projectsRoots: cfg.projectsRoots,
+    // Claude Desktop reads/writes A (~/.claude): deck mirrors sessions it ran on B/C back there.
+    homeAccount: 'a',
   });
 
   const addresses = bindAddresses(os.networkInterfaces(), { loopbackOnly: cfg.loopbackOnly, tailscaleIps: tailscaleIPv4s() });

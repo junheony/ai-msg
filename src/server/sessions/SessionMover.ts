@@ -5,7 +5,7 @@ import path from 'node:path';
 
 export type MoveResult =
   | { ok: true; targetDir: string; targetFile: string; copied: string[] }
-  | { ok: false; error: string };
+  | { ok: false; error: string; diverged?: true };
 
 export async function sha256File(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -78,8 +78,10 @@ async function findDuplicates(projectsRoot: string, sessionId: string, targetDir
 /**
  * Spec §7/§8: copy a session (jsonl + `<id>/` companions) into another profile's
  * projects root under the same directory name, verify, and never write the source.
+ * `ignoreOtherDirs`: skip the M12 check — for the home write-back, which only refreshes the
+ * same-named copy and leaves a stale copy in a differently spelled dir untouched.
  */
-export async function moveSession(opts: { sessionId: string; sourceProjectDir: string; targetProjectsRoot: string }): Promise<MoveResult> {
+export async function moveSession(opts: { sessionId: string; sourceProjectDir: string; targetProjectsRoot: string; ignoreOtherDirs?: boolean }): Promise<MoveResult> {
   const { sessionId } = opts;
   const srcFile = path.join(opts.sourceProjectDir, `${sessionId}.jsonl`);
   const srcDir = path.join(opts.sourceProjectDir, sessionId);
@@ -97,16 +99,18 @@ export async function moveSession(opts: { sessionId: string; sourceProjectDir: s
   let movedOld = false;
   let installedNew = false;
   let committed = false;
+  let diverged = false;
   try {
     const srcStat = await fs.stat(srcFile);
     const srcHash = await sha256File(srcFile);
 
     // M12: the same id in another directory of this profile — which one resume picks is unverified.
-    const dups = await findDuplicates(opts.targetProjectsRoot, sessionId, targetDir);
+    const dups = opts.ignoreOtherDirs ? [] : await findDuplicates(opts.targetProjectsRoot, sessionId, targetDir);
     if (dups.length) throw new Error(`대상 프로필의 다른 디렉터리에 같은 세션이 있음: ${dups.join(', ')}`);
 
     // Sessions are append-only: an older deck copy is always a byte-prefix. Anything else diverged.
     if ((await exists(targetFile)) && !(await isBytePrefix(targetFile, srcFile))) {
+      diverged = true;
       throw new Error('대상 세션이 따로 진행됨(원본의 앞부분이 아님) — 덮어쓰지 않음');
     }
 
@@ -172,6 +176,6 @@ export async function moveSession(opts: { sessionId: string; sourceProjectDir: s
     }
     await fs.rm(tmpFile, { force: true }).catch(() => undefined);
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: err instanceof Error ? err.message : String(err), ...(diverged ? { diverged: true as const } : {}) };
   }
 }
