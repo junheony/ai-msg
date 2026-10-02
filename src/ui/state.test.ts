@@ -515,6 +515,27 @@ describe('message queue (ux-state)', () => {
     expect(nextQueued({ ...pane(s), session: null, awaitingStart: false })).toBeNull();
   });
 
+  it('queue_send_now: the item moves to the head and goes out once the interrupted turn ends, ahead of the rest', () => {
+    let s = reducer(running(), { type: 'queue_add', text: 'a' });
+    s = reducer(s, { type: 'queue_add', text: 'b' });
+    s = reducer(s, { type: 'queue_add', text: 'c' });
+    const b = pane(s).queue[1]!;
+    s = reducer(s, { type: 'queue_send_now', id: b.id });
+    expect(pane(s).queue.map((q) => q.text)).toEqual(['b', 'a', 'c']);
+    expect(nextQueued(pane(s))).toBeNull(); // the turn is still running (interrupt in flight)
+    s = result(s, 't1', false); // interrupted: the queue pauses, but 지금 전송 still goes
+    expect(pane(s).queuePaused).toBe(true);
+    expect(nextQueued(pane(s))?.text).toBe('b');
+    s = reducer(s, { type: 'queue_remove', id: b.id });
+    expect(pane(s).queueSendNow).toBeNull();
+    s = reducer(s, { type: 'sent', text: 'b', clientRef: 'r2' });
+    expect(pane(s).queuePaused).toBe(false); // the rest follows after b's turn
+    s = started(s, 't2', 'r2');
+    s = result(s, 't2', true);
+    expect(nextQueued(pane(s))?.text).toBe('a');
+    expect(pane(reducer(s, { type: 'queue_send_now', id: 'nope' }))).toBe(pane(s));
+  });
+
   it('stop / a failed turn pause the queue (kept); resume or a manual send unpause; open drops it', () => {
     let s = reducer(running(), { type: 'queue_add', text: 'second' });
     s = reducer(s, { type: 'queue_pause' });

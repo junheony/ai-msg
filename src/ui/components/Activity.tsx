@@ -84,8 +84,8 @@ export function StatusRow({ startedAt, started, progress, live, onInterrupt }: {
       {tool?.arg && <code className="status-arg" title={tool.arg}>{tool.arg}</code>}
       <span className="status-meta">
         <span>{clock(ms)}</span>
-        {progress && progress.outputTokens > 0 && <><span className="sep">·</span><span title="출력 토큰">↓ {tokens(progress.outputTokens)} 토큰</span></>}
-        {tools > 0 && <><span className="sep">·</span><span>도구 {tools}회</span></>}
+        {progress && progress.outputTokens > 0 && <span className="status-tokens"><span className="sep">·</span><span title="출력 토큰">↓ {tokens(progress.outputTokens)}<span className="status-unit"> 토큰</span></span></span>}
+        {tools > 0 && <span className="status-tools"><span className="sep">·</span><span>도구 {tools}회</span></span>}
       </span>
       {started && onInterrupt && <button type="button" className="status-stop" onClick={onInterrupt} title="중단 (Esc)">중단</button>}
     </div>
@@ -195,7 +195,7 @@ export function BackgroundPill({ bg, onStopTask, onStopAll }: { bg: PaneBackgrou
     <div className="bg-pill-wrap" ref={ref}>
       <button type="button" className={`bg-pill ${open ? 'open' : ''}`} onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" data-testid="bg-pill">
         <span className="pulse-dot" aria-hidden="true" />
-        <span>백그라운드 작업 {n}개</span>
+        <span className="bg-pill-label"><span className="bg-pill-word">백그라운드</span><span className="bg-pill-long"> 작업</span> {n}개</span>
       </button>
       {open && (
         <div className="bg-popover" role="dialog" aria-label="백그라운드 작업" data-testid="bg-popover">

@@ -76,7 +76,8 @@ export function AccountPicker({ pin, current, usage, onPin }: {
         onClick={() => setOpen((o) => !o)}
       >
         {pin && <PinIcon />}
-        <span className="mp-label">{label}</span>
+        {/* "자동 · B": a narrow composer keeps only the seat letter. */}
+        <span className="mp-label">{!pin && cur ? <><span className="mp-label-extra">자동 · </span>{cur}</> : label}</span>
         <span className="mp-caret" aria-hidden="true">⌄</span>
       </button>
       {open && (

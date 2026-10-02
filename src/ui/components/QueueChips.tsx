@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import type { QueueItem } from '../state';
 
-/** ux-state: messages queued while a turn runs, above the composer — click to edit, ✕ to drop. */
-export function QueueChips({ queue, paused, onEdit, onRemove, onClear, onResume }: {
+/** ux-state: messages queued while a turn runs — a compact card above the composer: header (대기열 N · 모두 지우기), then one row per message (click to edit, ✕ to drop). */
+export function QueueChips({ queue, paused, onEdit, onRemove, onClear, onResume, onSendNow }: {
   queue: QueueItem[];
   paused: boolean;
   onEdit: (id: string, text: string) => void;
   onRemove: (id: string) => void;
   onClear: () => void;
   onResume: () => void;
+  /** 지금 전송 (absent = not offered). */
+  onSendNow?: (id: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -22,30 +24,43 @@ export function QueueChips({ queue, paused, onEdit, onRemove, onClear, onResume 
     setEditing(null);
   };
   return (
-    <div className="queue" data-testid="queue">
-      <span className="queue-label">{paused ? '대기열 멈춤' : '대기열'} {queue.length}</span>
-      {queue.map((q, i) => (
-        <span key={q.id} className="chip queue-chip">
-          {editing === q.id ? (
-            <input
-              autoFocus
-              value={draft}
-              aria-label={`대기 메시지 ${i + 1} 수정`}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={save}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') setEditing(null); }}
-            />
-          ) : (
-            <button type="button" className="queue-text" title={`${q.text}\n(클릭해서 수정)`} onClick={() => { setEditing(q.id); setDraft(q.text); }}>
-              {q.attachments.length > 0 && <span aria-hidden="true">📎{q.attachments.length} </span>}
-              {q.text || '첨부만'}
+    <div className={`queue ${paused ? 'paused' : ''}`} data-testid="queue">
+      <div className="queue-head">
+        <span className="queue-label">{paused ? '대기열 멈춤' : '대기열'} <span className="queue-count">{queue.length}</span></span>
+        <span className="spacer" />
+        {paused && <button type="button" className="text-btn queue-resume" onClick={onResume}>이어서 보내기</button>}
+        <button type="button" className="text-btn queue-clear" onClick={onClear}>모두 지우기</button>
+      </div>
+      <ol className="queue-list">
+        {queue.map((q, i) => (
+          <li key={q.id} className="queue-item">
+            {editing === q.id ? (
+              <input
+                autoFocus
+                value={draft}
+                aria-label={`대기 메시지 ${i + 1} 수정`}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={save}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') setEditing(null); }}
+              />
+            ) : (
+              <button type="button" className="queue-text" title={`${q.text}\n(클릭해서 수정)`} onClick={() => { setEditing(q.id); setDraft(q.text); }}>
+                {q.attachments.length > 0 && <span className="queue-att" aria-hidden="true">📎{q.attachments.length}</span>}
+                {q.text || '첨부만'}
+              </button>
+            )}
+            {onSendNow && editing !== q.id && (
+              <button type="button" className="queue-now" aria-label={`대기 메시지 ${i + 1} 지금 전송`} title="지금 전송 — 실행 중인 턴을 멈추고 이 메시지를 바로 보냅니다" onClick={() => onSendNow(q.id)}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 13V3.5M4 7.5l4-4 4 4" /></svg>
+                <span className="queue-now-label" aria-hidden="true">지금 전송</span>
+              </button>
+            )}
+            <button type="button" className="queue-remove" aria-label={`대기 메시지 ${i + 1} 삭제`} title="대기열에서 빼기" onClick={() => onRemove(q.id)}>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
             </button>
-          )}
-          <button type="button" className="chip-remove" aria-label={`대기 메시지 ${i + 1} 삭제`} onClick={() => onRemove(q.id)}>✕</button>
-        </span>
-      ))}
-      {paused && <button type="button" className="text-btn queue-resume" onClick={onResume}>이어서 보내기</button>}
-      <button type="button" className="text-btn queue-clear" onClick={onClear}>모두 지우기</button>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

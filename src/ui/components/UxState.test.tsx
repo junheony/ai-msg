@@ -131,6 +131,41 @@ describe('composer queue (ux-state)', () => {
     expect(send).toHaveBeenCalledTimes(4);
     expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'three' });
   });
+
+  it('Pane: 지금 전송 interrupts the turn and sends that item first; the rest of the queue follows', () => {
+    const send = vi.fn<(m: ClientMessage) => void>();
+    const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }] };
+    let dispatchOut: (a: Parameters<typeof reducer>[1]) => void = () => {};
+    function Harness() {
+      const [s, dispatch] = useReducer(reducer, start);
+      dispatchOut = dispatch;
+      useQueueRunner(s.panes, s.connected, dispatch, send);
+      return <Pane pane={s.panes[0]!} app={s} active closable={false} dispatch={dispatch} send={send} onClose={() => {}} />;
+    }
+    render(<Harness />);
+    const server = (msg: ServerMessage) => act(() => dispatchOut({ type: 'server', msg }));
+    const box = () => screen.getByLabelText('메시지');
+    fireEvent.change(box(), { target: { value: 'one' } });
+    fireEvent.click(screen.getByText('보내기'));
+    const ref1 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
+    server({ type: 'turn_started', turnId: 't1', sessionId: 's1', cwd: '/w', clientRef: ref1 } as ServerMessage);
+    for (const t of ['two', 'three']) {
+      fireEvent.change(box(), { target: { value: t } });
+      fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+    }
+    fireEvent.click(screen.getByLabelText('대기 메시지 2 지금 전송'));
+    expect(send.mock.lastCall![0]).toEqual({ type: 'interrupt', turnId: 't1' });
+    expect(send).toHaveBeenCalledTimes(2);
+    server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: false, text: '', badge: null, errorText: '중단됨' });
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'three', sessionId: 's1' });
+    expect(screen.getByTestId('queue').textContent).toContain('two');
+    const ref3 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
+    server({ type: 'turn_started', turnId: 't3', sessionId: 's1', cwd: '/w', clientRef: ref3 } as ServerMessage);
+    server({ type: 'turn_result', turnId: 't3', sessionId: 's1', cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null });
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'two' });
+  });
 });
 
 describe('todo panel (ux-state)', () => {

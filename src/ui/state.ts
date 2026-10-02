@@ -61,6 +61,8 @@ export type PaneState = {
   queue: QueueItem[];
   /** Stop / a failed turn pauses the queue; a manual send or 이어서 resumes it. */
   queuePaused: boolean;
+  /** 지금 전송: the queued item to send the moment the running turn ends (it was interrupted for it), even if paused. */
+  queueSendNow?: string | null;
   /** Status row: when the running turn started (client clock), its output tokens and phase. */
   runStartedAt: number | null;
   progress: { outputTokens: number; phase: TurnPhase } | null;
@@ -106,7 +108,7 @@ export type AppState = {
 export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null };
 }
 
 export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, activity: [], unread: [] };
@@ -140,7 +142,9 @@ export type Action =
   | { type: 'queue_remove'; id: string; paneId?: string }
   | { type: 'queue_clear'; paneId?: string }
   | { type: 'queue_pause'; paneId?: string }
-  | { type: 'queue_resume'; paneId?: string };
+  | { type: 'queue_resume'; paneId?: string }
+  /** 지금 전송: move the item to the head and send it as soon as the turn ends (the caller interrupts the turn). */
+  | { type: 'queue_send_now'; id: string; paneId?: string };
 
 const withN = (n: number | undefined) => (n !== undefined ? { n } : {});
 
@@ -560,7 +564,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'open': return updatePane({ ...state, unread: action.sessionId ? state.unread.filter((u) => u !== action.sessionId) : state.unread }, action.paneId, (p) => ({
       ...p,
       session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
-      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, ...ACTIVITY_RESET,
+      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET,
       handoff: null, handoffFrom: null, prefill: null,
     }));
     case 'branch_edit': return updatePane(state, action.paneId, (p) => {
@@ -600,7 +604,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
     case 'clear_pane': return updatePane(state, action.paneId, (p) => ({
-      ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, ...ACTIVITY_RESET,
+      ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET,
       handoff: null, handoffFrom: null, prefill: null,
     }));
     case 'add_pane': {
@@ -628,8 +632,12 @@ export function reducer(state: AppState, action: Action): AppState {
       return updatePane(state, action.paneId, (p) => (!text && !p.attachments.length ? p : { ...p, queue: [...p.queue, { id: nextQueueId(), text, attachments: p.attachments }], attachments: [] }));
     }
     case 'queue_edit': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.map((q) => (q.id === action.id ? { ...q, text: action.text } : q)) }));
-    case 'queue_remove': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.filter((q) => q.id !== action.id) }));
-    case 'queue_clear': return updatePane(state, action.paneId, (p) => ({ ...p, queue: [], queuePaused: false }));
+    case 'queue_remove': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.filter((q) => q.id !== action.id), ...(p.queueSendNow === action.id ? { queueSendNow: null } : {}) }));
+    case 'queue_clear': return updatePane(state, action.paneId, (p) => ({ ...p, queue: [], queuePaused: false, queueSendNow: null }));
+    case 'queue_send_now': return updatePane(state, action.paneId, (p) => {
+      const item = p.queue.find((q) => q.id === action.id);
+      return item ? { ...p, queue: [item, ...p.queue.filter((q) => q !== item)], queueSendNow: item.id } : p;
+    });
     case 'queue_pause': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: true }));
     case 'queue_resume': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: false }));
   }
@@ -675,9 +683,13 @@ export function answersFor(q: PendingQuestion, values: (string | string[])[]): R
 let queueSeq = 0;
 const nextQueueId = () => `q${++queueSeq}`;
 
-/** ux-state: the queued message a pane should send now — its turn is over, nothing is pending, the queue isn't paused. */
+/** ux-state: the queued message a pane should send now — its turn is over, nothing is pending, the queue isn't paused (or the item was 지금 전송). */
 export function nextQueued(pane: PaneState): QueueItem | null {
-  if (pane.queuePaused || !pane.session || pane.activeTurnId !== null || pane.awaitingStart) return null;
+  if (!pane.session || pane.activeTurnId !== null || pane.awaitingStart) return null;
+  // 지금 전송 goes out even though the interrupt it caused paused the queue; its send unpauses the rest.
+  const now = pane.queueSendNow ? pane.queue.find((q) => q.id === pane.queueSendNow) : undefined;
+  if (now) return now;
+  if (pane.queuePaused) return null;
   return pane.queue[0] ?? null;
 }
 

@@ -272,6 +272,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onQueueRemove={(id) => dispatch({ type: 'queue_remove', id, paneId: pane.id })}
           onQueueClear={() => dispatch({ type: 'queue_clear', paneId: pane.id })}
           onQueueResume={() => dispatch({ type: 'queue_resume', paneId: pane.id })}
+          onQueueSendNow={(id) => {
+            // 지금 전송: the item jumps the queue and goes out once the interrupt ends the turn (useQueueRunner).
+            dispatch({ type: 'queue_send_now', id, paneId: pane.id });
+            if (pane.activeTurnId) send({ type: 'interrupt', turnId: pane.activeTurnId });
+          }}
           onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
           onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
           onModel={onModel}
