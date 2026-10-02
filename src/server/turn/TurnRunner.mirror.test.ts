@@ -7,6 +7,7 @@ import type { ServerMessage } from '../../shared/protocol';
 import { StubEngine, okResult } from '../engine/StubEngine';
 import type { TurnRequest } from '../engine/Engine';
 import { SessionIndex } from '../sessions/SessionIndex';
+import { moveSession } from '../sessions/SessionMover';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState } from './SessionState';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
@@ -195,6 +196,146 @@ describe('TurnRunner: home (A) write-back', () => {
     await r.run({ turnId: 't', cwd: CWD, sessionId: null, text: 'go' }, c.sink);
     await r.mirrorsSettled();
     await expect(fs.stat(fileOf(c, 'a'))).rejects.toThrow();
+  });
+});
+
+function gate() {
+  let open!: () => void;
+  const p = new Promise<void>((r) => { open = r; });
+  return { p, open };
+}
+
+async function until(cond: () => Promise<boolean>, what: string, ms = 3000): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await cond()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+describe('TurnRunner: write-back while the session is held open for background work', () => {
+  it('writes back after the results of a held-open session (throttled), and once more at close', async () => {
+    const c = await setup();
+    const g1 = gate();
+    const g2 = gate();
+    const append = (text: string) => fs.mkdir(path.join(c.roots.b, DIR), { recursive: true }).then(() => fs.appendFile(fileOf(c, 'b'), line(text)));
+    const eng = new StubEngine(async () => (async function* () {
+      await append('turn');
+      yield { kind: 'init' as const, sessionId: SID, model: 'm', cwd: CWD };
+      yield { kind: 'background' as const, tasks: ['agent'] };
+      yield okResult(SID);
+      await g1.p;
+      await append('bg one');
+      yield okResult(SID, 'bg one');
+      await g2.p;
+      await append('bg two');
+      yield { kind: 'background' as const, tasks: [] };
+      yield okResult(SID, 'bg two');
+    })());
+    let moves = 0;
+    const r = new TurnRunner({ ...c.deps, engine: eng, mirrorThrottleMs: 400, move: async (o) => { moves++; return moveSession(o); } });
+    const results = () => c.msgs.filter((m) => m.type === 'turn_result').length;
+    const done = r.run({ turnId: 't', cwd: CWD, sessionId: null, text: 'go' }, c.sink);
+
+    // Still held open (the stream has not ended): the first result is already written back.
+    await until(async () => (await read(fileOf(c, 'a')).catch(() => '')) === line('turn'), 'first write-back');
+    const t0 = Date.now();
+    g1.open();
+    await until(async () => results() === 2, 'bg result');
+    // Within the throttle window: not yet …
+    if (Date.now() - t0 < 300) expect(await read(fileOf(c, 'a'))).toBe(line('turn'));
+    // … but the trailing write-back follows without another result.
+    await until(async () => (await read(fileOf(c, 'a'))) === line('turn') + line('bg one'), 'trailing write-back');
+    expect(moves).toBe(2);
+
+    g2.open();
+    await done;
+    await r.mirrorsSettled();
+    expect(await read(fileOf(c, 'a'))).toBe(await read(fileOf(c, 'b')));
+    expect(await read(fileOf(c, 'a'))).toContain('bg two');
+    // The final write-back at close replaced the throttled one (no extra copy left pending).
+    expect(moves).toBe(3);
+    expect(notices(c).filter((m) => m.includes('갱신 실패'))).toEqual([]);
+  });
+});
+
+describe('TurnRunner: resolving a session that diverged between deck and Desktop', () => {
+  async function diverged(c: Ctx) {
+    await put(c, 'a', line('one') + line('desktop went on'), NOW - 3_600_000);
+    await fs.mkdir(path.join(c.roots.a, DIR, SID, 'subagents'), { recursive: true });
+    await fs.writeFile(path.join(c.roots.a, DIR, SID, 'subagents', 'agent-d.jsonl'), '{"d":1}\n');
+    await put(c, 'b', line('one') + line('deck went on'), NOW - 60_000);
+    await fs.mkdir(path.join(c.roots.b, DIR, SID), { recursive: true });
+    await fs.writeFile(path.join(c.roots.b, DIR, SID, 'deck.txt'), 'b');
+    await onB(c);
+  }
+  const listing = async (dir: string) => (await fs.readdir(dir)).sort();
+
+  it('keep deck: A\'s copy and companions are renamed to *.deck-fork-<ts> (never deleted) and deck\'s copy is written to A', async () => {
+    const c = await setup();
+    await diverged(c);
+    expect(await c.runner.forkStatus(SID)).toEqual({ diverged: true, deckAccount: 'b', homeAccount: 'a' });
+    const r = await c.runner.resolveFork(SID, 'deck');
+    expect(r.ok).toBe(true);
+    const aDir = path.join(c.roots.a, DIR);
+    const names = await listing(aDir);
+    const bak = names.find((n) => n.startsWith(`${SID}.jsonl.deck-fork-`))!;
+    const bakDir = names.find((n) => n.startsWith(`${SID}.deck-fork-`))!;
+    expect(bak).toBeTruthy();
+    expect(r.ok && r.backup).toBe(path.join(aDir, bak));
+    expect(await read(path.join(aDir, bak))).toBe(line('one') + line('desktop went on'));
+    expect(await read(path.join(aDir, bakDir, 'subagents', 'agent-d.jsonl'))).toBe('{"d":1}\n');
+    expect(await read(fileOf(c, 'a'))).toBe(line('one') + line('deck went on'));
+    expect(await read(path.join(aDir, SID, 'deck.txt'))).toBe('b');
+    expect(await read(fileOf(c, 'b'))).toBe(line('one') + line('deck went on'));
+    expect(await c.runner.forkStatus(SID)).toMatchObject({ diverged: false });
+    // Nothing left to resolve; later turns write back normally.
+    expect(await c.runner.resolveFork(SID, 'deck')).toEqual({ ok: false, error: '갈라진 사본이 없습니다' });
+    await turn(c, SID);
+    expect(await read(fileOf(c, 'a'))).toBe(await read(fileOf(c, 'b')));
+  });
+
+  it('keep home: deck\'s copy is backed up in its own profile and A\'s is adopted; refused while deck runs it', async () => {
+    const c = await setup();
+    await diverged(c);
+    const g = gate();
+    const eng = new StubEngine(async () => (async function* () {
+      yield { kind: 'init' as const, sessionId: SID, model: 'm', cwd: CWD };
+      await g.p;
+      yield okResult(SID);
+    })());
+    const r = new TurnRunner({ ...c.deps, engine: eng });
+    const running = r.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
+    await until(async () => eng.calls.length === 1, 'turn started');
+    expect(await r.resolveFork(SID, 'home')).toMatchObject({ ok: false, error: expect.stringContaining('실행 중') });
+    g.open();
+    await running;
+    await r.mirrorsSettled();
+
+    const res = await r.resolveFork(SID, 'home');
+    expect(res.ok).toBe(true);
+    const bDir = path.join(c.roots.b, DIR);
+    const names = await listing(bDir);
+    const bak = names.find((n) => n.startsWith(`${SID}.jsonl.deck-fork-`))!;
+    expect(await read(path.join(bDir, bak))).toBe(line('one') + line('deck went on'));
+    expect(await read(path.join(bDir, names.find((n) => n.startsWith(`${SID}.deck-fork-`))!, 'deck.txt'))).toBe('b');
+    expect(await read(fileOf(c, 'b'))).toBe(line('one') + line('desktop went on'));
+    expect(await read(path.join(bDir, SID, 'subagents', 'agent-d.jsonl'))).toBe('{"d":1}\n');
+    // A is untouched.
+    expect(await read(fileOf(c, 'a'))).toBe(line('one') + line('desktop went on'));
+    expect(c.deps.store.get(SID)).toMatchObject({ account: 'b', projectDir: bDir });
+  });
+
+  it('a failed copy puts the backups back', async () => {
+    const c = await setup();
+    await diverged(c);
+    const r = new TurnRunner({ ...c.deps, move: async () => ({ ok: false, error: 'injected' }) });
+    expect(await r.resolveFork(SID, 'deck')).toEqual({ ok: false, error: 'injected' });
+    const aDir = path.join(c.roots.a, DIR);
+    expect((await listing(aDir)).filter((n) => n.includes('deck-fork'))).toEqual([]);
+    expect(await read(fileOf(c, 'a'))).toBe(line('one') + line('desktop went on'));
+    expect(await read(path.join(aDir, SID, 'subagents', 'agent-d.jsonl'))).toBe('{"d":1}\n');
   });
 });
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { moveSession, sha256File } from './SessionMover';
+import { moveSession, sha256File, sha256Prefix, snapshotCopy } from './SessionMover';
 
 const ID = '44444444-4444-4444-8444-444444444444';
 
@@ -118,14 +118,19 @@ describe('moveSession', () => {
     expect(await snapshot(tDir)).toEqual(snap);
   });
 
-  it('refuses when the source changes mid-copy and leaves the target untouched', async () => {
+  it('refuses when the source is rewritten (not appended) mid-copy and leaves the target untouched', async () => {
     const { srcDir, dstRoot } = await fixture();
     const srcFile = path.join(srcDir, `${ID}.jsonl`);
-    const real = fs.cp.bind(fs);
-    const spy = vi.spyOn(fs, 'cp').mockImplementation(async (...args: Parameters<typeof fs.cp>) => {
-      await real(...args);
-      await fs.appendFile(srcFile, '{"type":"user","late":true}\n');
-    });
+    const real = fs.readdir.bind(fs) as (...a: unknown[]) => Promise<unknown>;
+    // Companions are listed after the jsonl snapshot is staged: rewrite the source's first line there.
+    const spy = vi.spyOn(fs, 'readdir').mockImplementation((async (...args: unknown[]) => {
+      if (String(args[0]) === path.join(srcDir, ID)) {
+        const fh = await fs.open(srcFile, 'r+');
+        await fh.write('{"type":"user","cwd":"/Users/x/PROJ"}', 0);
+        await fh.close();
+      }
+      return real(...args);
+    }) as typeof fs.readdir);
     try {
       const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
       expect(r.ok).toBe(false);
@@ -135,6 +140,64 @@ describe('moveSession', () => {
     }
     const tDir = path.join(dstRoot, '-Users-x-proj');
     expect(await fs.readdir(tDir).catch(() => [])).toEqual([]);
+  });
+
+  it('snapshot-copies a jsonl that keeps growing during the copy, cut at a line boundary', async () => {
+    const { srcDir, dstRoot } = await fixture();
+    const srcFile = path.join(srcDir, `${ID}.jsonl`);
+    const companion = path.join(srcDir, ID, 'subagents', 'agent-1.jsonl');
+    // A half-written last line: only complete lines are taken.
+    await fs.appendFile(srcFile, '{"type":"assistant","partial":');
+    const before = await fs.readFile(srcFile);
+    const complete = before.subarray(0, before.lastIndexOf(0x0a) + 1);
+    // Keep appending to the jsonl and a subagent transcript while the move runs (the live CLI).
+    let stop = false;
+    const writer = (async () => {
+      while (!stop) {
+        await fs.appendFile(srcFile, 'true}\n{"type":"assistant","partial":');
+        await fs.appendFile(companion, '{"a":2}\n');
+        await new Promise((r) => setTimeout(r, 1));
+      }
+    })();
+    let r;
+    try {
+      r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
+    } finally {
+      stop = true;
+      await writer;
+    }
+    expect(r).toMatchObject({ ok: true });
+    const tFile = path.join(dstRoot, '-Users-x-proj', `${ID}.jsonl`);
+    const copy = await fs.readFile(tFile);
+    const now = await fs.readFile(srcFile);
+    expect(copy.length).toBeGreaterThanOrEqual(complete.length);
+    expect(copy.subarray(0, complete.length).equals(complete)).toBe(true);
+    expect(now.subarray(0, copy.length).equals(copy)).toBe(true);
+    expect(copy[copy.length - 1]).toBe(0x0a);
+    const tComp = await fs.readFile(path.join(dstRoot, '-Users-x-proj', ID, 'subagents', 'agent-1.jsonl'));
+    expect((await fs.readFile(companion)).subarray(0, tComp.length).equals(tComp)).toBe(true);
+    // A second write-back over the older snapshot: accepted as a prefix, no companion backup left behind.
+    const again = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
+    expect(again).toMatchObject({ ok: true });
+    expect(await sha256File(tFile)).toBe(await sha256Prefix(srcFile, (await fs.stat(tFile)).size));
+    expect((await fs.readdir(path.join(dstRoot, '-Users-x-proj'))).filter((n) => n.includes('deck-bak'))).toEqual([]);
+  });
+
+  it('snapshotCopy gives up (null) on a file that is rewritten on every attempt', async () => {
+    const { base } = await fixture();
+    const src = path.join(base, 'flappy.txt');
+    await fs.writeFile(src, 'aaaa');
+    const real = fs.stat.bind(fs);
+    let n = 0;
+    const spy = vi.spyOn(fs, 'stat').mockImplementation((async (p: Parameters<typeof fs.stat>[0], o?: Parameters<typeof fs.stat>[1]) => {
+      if (String(p) === src) await fs.writeFile(src, 'b'.repeat(4 + (++n % 3)));
+      return real(p, o);
+    }) as typeof fs.stat);
+    try {
+      expect(await snapshotCopy(src, path.join(base, 'copy.txt'))).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('refuses when the same session id already exists in another directory of the target profile', async () => {

@@ -72,6 +72,8 @@ export type TurnRunnerDeps = {
    * elsewhere the session is mirrored back into it (append-only, prefix-checked). Absent/null = no write-back.
    */
   homeAccount?: Account | null;
+  /** While a session is held open for background work: at most one write-back per this many ms (default 20 s). */
+  mirrorThrottleMs?: number;
   move?: typeof moveSession;
   findRollout?: typeof findRolloutFile;
   readRateLimits?: typeof readRolloutRateLimits;
@@ -142,6 +144,11 @@ export class TurnRunner {
   private readonly mirrors = new Map<string, Promise<void>>();
   /** Notices already shown, `${sessionId}\0${message}` — a lasting divergence is told once, not every turn. */
   private readonly noted = new Set<string>();
+  /** When each session's last write-back was started (wall clock), and a trailing one due while throttled. */
+  private readonly mirrorAt = new Map<string, number>();
+  private readonly mirrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Claude sessions with a deck turn running now (its process may write the jsonl at any moment). */
+  private readonly active = new Set<string>();
 
   constructor(private readonly deps: TurnRunnerDeps) {
     this.move = deps.move ?? moveSession;
@@ -191,11 +198,89 @@ export class TurnRunner {
   private scheduleMirror(sessionId: string, sink: TurnSink, turnId: string): void {
     const home = this.deps.homeAccount;
     if (!home) return;
-    const run = (this.mirrors.get(sessionId) ?? Promise.resolve())
-      .then(() => this.mirrorHome(sessionId, home, sink, turnId))
-      .catch((err: unknown) => console.error('deck: home write-back failed', err instanceof Error ? err.message : err));
-    this.mirrors.set(sessionId, run);
-    void run.then(() => { if (this.mirrors.get(sessionId) === run) this.mirrors.delete(sessionId); });
+    clearTimeout(this.mirrorTimers.get(sessionId));
+    this.mirrorTimers.delete(sessionId);
+    this.mirrorAt.set(sessionId, Date.now());
+    this.serialize(sessionId, () => this.mirrorHome(sessionId, home, sink, turnId)).catch((err: unknown) => console.error('deck: home write-back failed', err instanceof Error ? err.message : err));
+  }
+
+  /** Runs `fn` after every write-back / fork resolution already queued for this session. */
+  private serialize<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const run = (this.mirrors.get(sessionId) ?? Promise.resolve()).then(fn);
+    const done = run.then(() => undefined, () => undefined);
+    this.mirrors.set(sessionId, done);
+    void done.then(() => { if (this.mirrors.get(sessionId) === done) this.mirrors.delete(sessionId); });
+    return run;
+  }
+
+  /**
+   * A result while the process stays open for background work (sessions are held open for a long
+   * time): write back now, or — within the throttle window — once when it ends. The final one at
+   * close is scheduled by runClaude regardless.
+   */
+  private mirrorSoon(sessionId: string, sink: TurnSink, turnId: string): void {
+    if (!this.deps.homeAccount || this.mirrorTimers.has(sessionId)) return;
+    const wait = (this.mirrorAt.get(sessionId) ?? -Infinity) + (this.deps.mirrorThrottleMs ?? 20_000) - Date.now();
+    if (wait <= 0) { this.scheduleMirror(sessionId, sink, turnId); return; }
+    const t = setTimeout(() => this.scheduleMirror(sessionId, sink, turnId), wait);
+    t.unref?.();
+    this.mirrorTimers.set(sessionId, t);
+  }
+
+  /** deck's copy and the home profile's copy of a session, when deck runs it on another profile. */
+  private async forkPair(sessionId: string): Promise<{ st: ClaudeSessionState; home: Account; deckFile: string; homeDir: string; homeFile: string } | null> {
+    const home = this.deps.homeAccount;
+    const st = this.deps.store.get(sessionId);
+    if (!home || !st || isCodexState(st) || isGeminiState(st) || st.account === home) return null;
+    const homeDir = path.join(this.deps.projectsRoots[home], path.basename(st.projectDir));
+    return { st, home, deckFile: path.join(st.projectDir, `${sessionId}.jsonl`), homeDir, homeFile: path.join(homeDir, `${sessionId}.jsonl`) };
+  }
+
+  /**
+   * Whether deck's copy and the home copy (Claude Desktop) went their own ways — neither contains the other.
+   * Null: not a deck Claude session run outside the home profile.
+   */
+  async forkStatus(sessionId: string): Promise<{ diverged: boolean; deckAccount: Account; homeAccount: Account } | null> {
+    const pair = await this.forkPair(sessionId);
+    if (!pair) return null;
+    const both = (await exists(pair.deckFile)) && (await exists(pair.homeFile));
+    const diverged = both && !(await isBytePrefix(pair.homeFile, pair.deckFile)) && !(await isBytePrefix(pair.deckFile, pair.homeFile));
+    return { diverged, deckAccount: pair.st.account, homeAccount: pair.home };
+  }
+
+  /**
+   * The user's answer to a divergence. `keep: 'deck'` — the home copy (and its `<id>/` dir) is renamed to
+   * `*.deck-fork-<ts>` and deck's copy is written there; `keep: 'home'` — the same on deck's side, adopting
+   * the home copy. Nothing is deleted. Adopting the home copy needs the deck process gone (it would keep
+   * appending to the old file); on failure the backups are put back.
+   */
+  async resolveFork(sessionId: string, keep: 'deck' | 'home'): Promise<{ ok: true; backup: string } | { ok: false; error: string }> {
+    return this.serialize(sessionId, async () => {
+      const pair = await this.forkPair(sessionId);
+      if (!pair || !(await this.forkStatus(sessionId))?.diverged) return { ok: false as const, error: '갈라진 사본이 없습니다' };
+      if (keep === 'home' && (this.active.has(sessionId) || this.live.has(sessionId))) {
+        return { ok: false as const, error: 'deck 에서 이 세션이 실행 중입니다 — 끝난 뒤 다시 시도하세요' };
+      }
+      const [srcDir, dstDir] = keep === 'deck' ? [pair.st.projectDir, pair.homeDir] : [pair.homeDir, pair.st.projectDir];
+      const stamp = `deck-fork-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+      const file = path.join(dstDir, `${sessionId}.jsonl`);
+      const dir = path.join(dstDir, sessionId);
+      const moved: [string, string][] = [];
+      try {
+        for (const [from, to] of [[file, `${file}.${stamp}`], [dir, `${dir}.${stamp}`]] as const) {
+          if (!(await exists(from))) continue;
+          await fs.rename(from, to);
+          moved.push([from, to]);
+        }
+        const r = await this.move({ sessionId, sourceProjectDir: srcDir, targetProjectsRoot: path.dirname(dstDir), ignoreOtherDirs: true });
+        if (!r.ok) throw new Error(r.error);
+      } catch (err) {
+        for (const [from, to] of moved.reverse()) if (!(await exists(from))) await fs.rename(to, from).catch(() => undefined);
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      }
+      for (const k of [...this.noted]) if (k.startsWith(`${sessionId}\0`)) this.noted.delete(k);
+      return { ok: true as const, backup: `${file}.${stamp}` };
+    });
   }
 
   private async mirrorHome(sessionId: string, home: Account, sink: TurnSink, turnId: string): Promise<void> {
@@ -208,7 +293,7 @@ export class TurnRunner {
     if (r.diverged && (await isBytePrefix(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return;
     console.error(`deck: home write-back of ${sessionId} to ${LABEL[home]} failed: ${r.error}`);
     this.noteOnce(sink, turnId, st, r.diverged
-      ? `Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — ${LABEL[home]} 계정 사본은 덮어쓰지 않았습니다 (다음 턴은 가장 최근 사본으로 이어갑니다)`
+      ? `Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — ${LABEL[home]} 계정 사본은 덮어쓰지 않았습니다 (머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다)`
       : `${LABEL[home]} 계정 사본 갱신 실패(${r.error}) — 대화는 계속됩니다`);
   }
 
@@ -226,7 +311,7 @@ export class TurnRunner {
       const r = (await resolveCopies(copies))!;
       if (r.heads.length > 1) {
         const others = r.heads.filter((h) => h !== r.best).map((h) => LABEL[h.account]).join('·');
-        this.noteOnce(sink, turnId, state, `Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근에 바뀐 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${others} 계정 사본은 그대로 둡니다`);
+        this.noteOnce(sink, turnId, state, `Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근에 바뀐 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${others} 계정 사본은 그대로 둡니다 (머리글의 '갈라짐' 메뉴에서 맞출 수 있습니다)`);
       }
       if (r.best.projectDir === state.projectDir) return state;
       if (!r.heads.includes(copies[0]!)) {
@@ -428,6 +513,7 @@ export class TurnRunner {
               sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : displayError(ev.errorText, ev.stderr) });
             }
             await saveState(ev.ok);
+            this.mirrorSoon(sessionId, sink, s?.turnId ?? cur.turnId);
             // Sent before the engine resumes, so it sees the message outstanding and keeps the input open.
             const q = queue.shift();
             if (q) sendFollowUp(q.f, q.attachments);
@@ -599,13 +685,20 @@ export class TurnRunner {
   }
 
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
-    if (state) {
-      // A write-back still copying this session finishes first (it must not see the next turn's writes).
-      await this.mirrors.get(state.sessionId);
-      state = await this.reconcile(state, sink, p.turnId);
+    const id = state?.sessionId;
+    if (id) this.active.add(id);
+    try {
+      if (state) {
+        // A write-back still copying this session finishes first (it must not see the next turn's writes).
+        await this.mirrors.get(state.sessionId);
+        state = await this.reconcile(state, sink, p.turnId);
+      }
+      const end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, newSessionModel);
+      // The final write-back at close (also after a long hold for background work).
+      if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
+    } finally {
+      if (id) this.active.delete(id);
     }
-    const end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, newSessionModel);
-    if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
   }
 
   /** The Claude turn proper; resolves (after any background follow-through) with the session's final state. */
@@ -671,6 +764,8 @@ export class TurnRunner {
       const shownError = displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
+        // Held open for background work: write back now too, not only once at the end.
+        if (sessionId && a.bgTasks.length) this.mirrorSoon(sessionId, sink, p.turnId);
         if (sessionId) await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants });
         else await a.rest.return?.();
         return state;

@@ -14,6 +14,7 @@ import { isPinnableId, type PinStore } from './sessions/PinStore';
 import { MAX_TITLE_CHARS, type SessionMetaStore } from './sessions/SessionMetaStore';
 import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
 import type { SessionIndex } from './sessions/SessionIndex';
+import type { TurnRunner } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
@@ -35,6 +36,8 @@ export type HttpDeps = {
   commands?: SlashCommandCache;
   /** Web Push (알림); absent = no /api/push/*. */
   push?: { notifier: PushNotifier; store: SubscriptionStore };
+  /** Sessions whose deck and Desktop (home profile) copies diverged; absent = no /api/session-fork. */
+  forks?: Pick<TurnRunner, 'forkStatus' | 'resolveFork'>;
 };
 
 /**
@@ -273,6 +276,26 @@ export function createRequestHandler(deps: HttpDeps) {
           deps.onIndexChanged?.();
           json(res, 200, { meta });
           return;
+        }
+        if (url.pathname === '/api/session-fork') {
+          if (!deps.forks) { json(res, 404, { error: 'not found' }); return; }
+          if (req.method === 'GET') {
+            const sessionId = url.searchParams.get('sessionId');
+            if (!isPinnableId(sessionId)) { json(res, 400, { error: '잘못된 세션입니다' }); return; }
+            json(res, 200, (await deps.forks.forkStatus(sessionId)) ?? { diverged: false });
+            return;
+          }
+          if (req.method === 'POST') {
+            let body: { sessionId?: unknown; keep?: unknown } = {};
+            try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
+            if (!body || !isPinnableId(body.sessionId) || (body.keep !== 'deck' && body.keep !== 'home')) { json(res, 400, { error: '잘못된 요청입니다' }); return; }
+            const r = await deps.forks.resolveFork(body.sessionId, body.keep);
+            if (!r.ok) { json(res, 409, { error: r.error }); return; }
+            await deps.index.refresh();
+            deps.onIndexChanged?.();
+            json(res, 200, r);
+            return;
+          }
         }
         if (url.pathname === '/api/search' && req.method === 'GET') {
           if (!deps.search) { json(res, 404, { error: 'not found' }); return; }

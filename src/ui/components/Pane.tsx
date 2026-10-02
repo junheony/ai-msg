@@ -4,6 +4,7 @@ import type { ClientMessage } from '../../shared/protocol';
 import { cardsForPane, engineOf, modelFor, nextQueued, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
 import { Chat } from './Chat';
+import { ForkMenu } from './ForkMenu';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -76,6 +77,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
+  const busy = pane.activeTurnId !== null || pane.awaitingStart;
+  const fork = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && (
+    <ForkMenu sessionId={s.sessionId} busy={busy} onResolved={() => send({ type: 'open_session', sessionId: s.sessionId! })} onError={(message) => dispatch({ type: 'show_error', message })} />
+  );
   return (
     <section className={`pane ${active ? 'active' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
       {s ? (
@@ -84,11 +89,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           pending={cardsForPane(pane, app.pending)}
           questions={cardsForPane(pane, app.questions)}
           activeTurnId={pane.activeTurnId}
-          busy={pane.activeTurnId !== null || pane.awaitingStart}
+          busy={busy}
           title={s.title}
           cwd={s.cwd}
           sessionId={s.sessionId}
-          headActions={close}
+          headActions={<>{fork}{close}</>}
           model={model}
           effort={effort}
           engine={pane.engine}

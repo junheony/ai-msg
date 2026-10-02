@@ -61,3 +61,24 @@ export function listCommands(sessionId: string | null, cwd: string | null, fetch
   if (cwd) qs.set('cwd', cwd);
   return getJson(`/api/commands?${qs.toString()}`, fetchFn, '명령 목록');
 }
+
+/** Mirrors TurnRunner.forkStatus: deck's copy and Claude Desktop's (home profile) went separate ways. */
+export type ForkStatus = { diverged: boolean; deckAccount?: string; homeAccount?: string };
+
+export function getForkStatus(sessionId: string, fetchFn: typeof fetch = fetch): Promise<ForkStatus> {
+  return getJson(`/api/session-fork?sessionId=${encodeURIComponent(sessionId)}`, fetchFn, '사본 확인');
+}
+
+/** keep 'deck': Desktop's copy is backed up and replaced by deck's; 'home': the reverse. Nothing is deleted. */
+export async function resolveFork(sessionId: string, keep: 'deck' | 'home', fetchFn: typeof fetch = fetch): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetchFn('/api/session-fork', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId, keep }) });
+  } catch {
+    throw new Error('사본 맞추기 실패: 네트워크 오류');
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `사본 맞추기 실패 (${res.status})`);
+  }
+}

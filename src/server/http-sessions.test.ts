@@ -21,6 +21,7 @@ let dir: string;
 let home: string;
 let index: SessionIndex;
 let changed = 0;
+const forkCalls: [string, string][] = [];
 
 beforeAll(async () => {
   dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-hs-')));
@@ -41,6 +42,10 @@ beforeAll(async () => {
     search: new TranscriptSearch({ sessions: () => index.projects().flatMap((p) => p.sessions) }),
     files: new FileLister({ home, roots: [home] }),
     commands,
+    forks: {
+      forkStatus: async (id) => (id === ID1 ? { diverged: true, deckAccount: 'b', homeAccount: 'a' } : null),
+      resolveFork: async (id, keep) => { forkCalls.push([id, keep]); return keep === 'deck' ? { ok: true, backup: '/x.deck-fork-1' } : { ok: false, error: '실행 중' }; },
+    },
   }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -92,5 +97,20 @@ describe('session endpoints', () => {
   it('commands per session, defaults otherwise', async () => {
     const r = (await (await fetch(`${base}/api/commands?sessionId=${ID1}`, { headers: cookie })).json()) as { commands: { name: string }[] };
     expect(r.commands.map((c) => c.name)).toEqual(['compact', 'mine']);
+  });
+
+  it('/api/session-fork: status, resolution (409 on refusal), input checks, auth', async () => {
+    expect((await fetch(`${base}/api/session-fork?sessionId=${ID1}`)).status).toBe(401);
+    expect(await (await fetch(`${base}/api/session-fork?sessionId=${ID1}`, { headers: cookie })).json()).toEqual({ diverged: true, deckAccount: 'b', homeAccount: 'a' });
+    expect(await (await fetch(`${base}/api/session-fork?sessionId=22222222-2222-4222-8222-222222222222`, { headers: cookie })).json()).toEqual({ diverged: false });
+    expect((await fetch(`${base}/api/session-fork?sessionId=../x`, { headers: cookie })).status).toBe(400);
+    const before = changed;
+    const ok = await post('/api/session-fork', { sessionId: ID1, keep: 'deck' });
+    expect(ok.status).toBe(200);
+    expect(changed).toBe(before + 1);
+    expect((await post('/api/session-fork', { sessionId: ID1, keep: 'home' })).status).toBe(409);
+    expect((await post('/api/session-fork', { sessionId: ID1, keep: 'both' })).status).toBe(400);
+    expect((await post('/api/session-fork', { sessionId: ID1, keep: 'deck' }, {})).status).toBe(401);
+    expect(forkCalls).toEqual([[ID1, 'deck'], [ID1, 'home']]);
   });
 });

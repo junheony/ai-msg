@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 export type MoveResult =
   | { ok: true; targetDir: string; targetFile: string; copied: string[] }
@@ -14,15 +16,75 @@ export async function sha256File(file: string): Promise<string> {
   });
 }
 
-/** Relative path → sha256 for every regular file under `dir`. */
-async function hashTree(dir: string): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+/** sha256 of the first `n` bytes of `file`. */
+export async function sha256Prefix(file: string, n: number): Promise<string> {
+  const h = createHash('sha256');
+  if (n <= 0) return h.digest('hex');
+  return new Promise((resolve, reject) => {
+    createReadStream(file, { start: 0, end: n - 1 }).on('data', (d) => h.update(d)).on('error', reject).on('end', () => resolve(h.digest('hex')));
+  });
+}
+
+/** Relative paths of every regular file under `dir`. */
+async function listTree(dir: string): Promise<string[]> {
+  const out: string[] = [];
   for (const e of await fs.readdir(dir, { withFileTypes: true, recursive: true })) {
-    if (!e.isFile()) continue;
-    const p = path.join(e.parentPath, e.name);
-    out.set(path.relative(dir, p), await sha256File(p));
+    if (e.isFile()) out.push(path.relative(dir, path.join(e.parentPath, e.name)));
   }
   return out;
+}
+
+/** End of the last complete line within the first `size` bytes (0 = none). */
+async function lastLineEnd(file: string, size: number): Promise<number> {
+  const fh = await fs.open(file, 'r');
+  try {
+    const CHUNK = 1 << 16;
+    const buf = Buffer.alloc(CHUNK);
+    for (let end = size; end > 0; end -= CHUNK) {
+      const start = Math.max(0, end - CHUNK);
+      const { bytesRead } = await fh.read(buf, 0, end - start, start);
+      const i = buf.subarray(0, bytesRead).lastIndexOf(0x0a);
+      if (i >= 0) return start + i + 1;
+    }
+    return 0;
+  } finally {
+    await fh.close();
+  }
+}
+
+/** Copies exactly the first `n` bytes of `src` to `dst`; returns the sha256 of the bytes written. */
+async function copyPrefix(src: string, dst: string, n: number): Promise<string> {
+  const h = createHash('sha256');
+  if (n > 0) {
+    const hashing = new Transform({ transform(chunk: Buffer, _enc, cb) { h.update(chunk); cb(null, chunk); } });
+    await pipeline(createReadStream(src, { start: 0, end: n - 1 }), hashing, createWriteStream(dst));
+  } else {
+    await fs.writeFile(dst, '');
+  }
+  return h.digest('hex');
+}
+
+export type Snapshot = { size: number; hash: string };
+
+/**
+ * Snapshot copy of a file another process may still be appending to (the live CLI, Claude Desktop):
+ * take its size N now, copy exactly the first N bytes (a `.jsonl` is cut back to its last complete line),
+ * and accept only when the copy and the source's first N bytes hash the same — an append during the
+ * copy is fine, a rewrite is not. Retried a few times; null = it kept changing under us.
+ * Any other file must also keep its size (it is not append-only).
+ */
+export async function snapshotCopy(src: string, dst: string, attempts = 3): Promise<Snapshot | null> {
+  const lines = src.endsWith('.jsonl');
+  for (let i = 0; i < attempts; i++) {
+    const size = (await fs.stat(src)).size;
+    const n = lines ? await lastLineEnd(src, size) : size;
+    // Bytes but no complete line yet: nothing safe to take this round.
+    if (n === 0 && size > 0) continue;
+    const hash = await copyPrefix(src, dst, n);
+    const copied = (await fs.stat(dst)).size === n && (await sha256File(dst)) === hash;
+    if (copied && (await sha256Prefix(src, n)) === hash && (lines || (await fs.stat(src)).size === size)) return { size: n, hash };
+  }
+  return null;
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -101,48 +163,48 @@ export async function moveSession(opts: { sessionId: string; sourceProjectDir: s
   let committed = false;
   let diverged = false;
   try {
-    const srcStat = await fs.stat(srcFile);
-    const srcHash = await sha256File(srcFile);
+    await fs.stat(srcFile);
 
     // M12: the same id in another directory of this profile — which one resume picks is unverified.
     const dups = opts.ignoreOtherDirs ? [] : await findDuplicates(opts.targetProjectsRoot, sessionId, targetDir);
     if (dups.length) throw new Error(`대상 프로필의 다른 디렉터리에 같은 세션이 있음: ${dups.join(', ')}`);
 
-    // Sessions are append-only: an older deck copy is always a byte-prefix. Anything else diverged.
-    if ((await exists(targetFile)) && !(await isBytePrefix(targetFile, srcFile))) {
+    await fs.mkdir(targetDir, { recursive: true });
+    const copied: string[] = [`${sessionId}.jsonl`];
+
+    // Stage 1: jsonl — a snapshot of its first N bytes (the live CLI / Desktop may still be appending).
+    await fs.rm(tmpFile, { force: true });
+    const snap = await snapshotCopy(srcFile, tmpFile);
+    if (!snap) throw new Error('복사본 검증 실패(jsonl 해시 불일치)');
+
+    // Sessions are append-only: an older copy is always a byte-prefix of the snapshot. Anything else diverged.
+    if ((await exists(targetFile)) && !(await isBytePrefix(targetFile, tmpFile))) {
       diverged = true;
       throw new Error('대상 세션이 따로 진행됨(원본의 앞부분이 아님) — 덮어쓰지 않음');
     }
 
-    await fs.mkdir(targetDir, { recursive: true });
-    const copied: string[] = [`${sessionId}.jsonl`];
-
-    // Stage 1: jsonl.
-    await fs.rm(tmpFile, { force: true });
-    await fs.copyFile(srcFile, tmpFile);
-    const tmpStat = await fs.stat(tmpFile);
-    if (tmpStat.size !== srcStat.size || (await sha256File(tmpFile)) !== srcHash) {
-      throw new Error('복사본 검증 실패(jsonl 해시 불일치)');
-    }
-
-    // Stage 2: companions (source wins; files only on the target are merged in so nothing is lost).
+    // Stage 2: companions, each a snapshot (source wins; files only on the target are merged in so nothing
+    // is lost). A file that keeps changing is skipped this round — the target keeps its version if any.
     const hasCompanions = await exists(srcDir);
     let conflict = false;
     if (hasCompanions) {
       await fs.rm(tmpDir, { recursive: true, force: true });
-      await fs.cp(srcDir, tmpDir, { recursive: true, errorOnExist: false });
-      const srcTree = await hashTree(srcDir);
-      const tmpTree = await hashTree(tmpDir);
-      if (tmpTree.size !== srcTree.size || [...srcTree].some(([k, h]) => tmpTree.get(k) !== h)) {
-        throw new Error('복사본 검증 실패(부속 파일 불일치)');
+      await fs.mkdir(tmpDir, { recursive: true });
+      const staged = new Set<string>();
+      for (const rel of await listTree(srcDir)) {
+        const dst = path.join(tmpDir, rel);
+        await fs.mkdir(path.dirname(dst), { recursive: true });
+        if (await snapshotCopy(path.join(srcDir, rel), dst)) staged.add(rel);
+        else await fs.rm(dst, { force: true });
       }
       if (await exists(finalDir)) {
-        for (const [rel, h] of await hashTree(finalDir)) {
-          const staged = tmpTree.get(rel);
-          if (staged === undefined) {
+        for (const rel of await listTree(finalDir)) {
+          const old = path.join(finalDir, rel);
+          if (!staged.has(rel)) {
             await fs.mkdir(path.dirname(path.join(tmpDir, rel)), { recursive: true });
-            await fs.copyFile(path.join(finalDir, rel), path.join(tmpDir, rel));
-          } else if (staged !== h) {
+            await fs.copyFile(old, path.join(tmpDir, rel));
+          } else if (!(await isBytePrefix(old, path.join(tmpDir, rel)))) {
+            // An appended file (a growing subagent transcript) is not a conflict; a rewritten one is.
             conflict = true;
           }
         }
@@ -150,9 +212,8 @@ export async function moveSession(opts: { sessionId: string; sourceProjectDir: s
       copied.push(`${sessionId}/`);
     }
 
-    // Everything staged and verified; the source must still be the snapshot we copied.
-    const nowStat = await fs.stat(srcFile);
-    if (nowStat.size !== srcStat.size || (await sha256File(srcFile)) !== srcHash) throw new Error('원본이 복사 중 바뀜');
+    // Everything staged and verified; the source's first N bytes must still be the snapshot we copied.
+    if ((await sha256Prefix(srcFile, snap.size)) !== snap.hash) throw new Error('원본이 복사 중 바뀜');
 
     // Commit: companions first, jsonl LAST (the final rename is the commit point).
     if (hasCompanions) {

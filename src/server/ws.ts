@@ -18,6 +18,8 @@ import { isCodexState, isGeminiState, type SessionStateStore } from './turn/Sess
 import type { TurnRunner, TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 
+const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
+
 type PermissionMsg = Extract<ServerMessage, { type: 'permission_request' }>;
 type QuestionMsg = Extract<ServerMessage, { type: 'question_request' }>;
 
@@ -441,6 +443,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
                 const t = turns.get(busy.get(sessionId) ?? '');
                 send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, messages, ...runningOf(sessionId) });
                 if (t?.bg) send(ws, { type: 'turn_background', turnId: t.bg.turnId, sessionId, cwd: t.cwd, tasks: t.bg.tasks });
+                // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
+                void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
               })
               .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
           })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
