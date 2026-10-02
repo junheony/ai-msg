@@ -1286,7 +1286,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
    (the composer's permission picker shows the mode; bypass stays as a warning). */
 @media (max-width: 720px) {
   .chat-head { gap: 6px; }
-  .chat-head > .folder-chip { max-width: 28%; }
+  .chat-head > .folder-chip { max-width: 28%; min-width: 5.5em; }
   .chat-head > .chip.sandbox { flex-shrink: 0; max-width: 35%; }
   .chat-head > .chip.perm-acceptEdits, .chat-head > .chip.perm-plan { display: none; }
 }
