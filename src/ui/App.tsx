@@ -16,6 +16,24 @@ import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Ac
 import { useIsPhone } from './useIsPhone';
 import { createSocket } from './ws';
 
+const TITLE = 'deck';
+/** Tab title: "● deck" while any turn runs; "✓ deck" when one finished while the tab was hidden, until it is shown. */
+function useTabTitle(running: boolean) {
+  const was = useRef(running);
+  useEffect(() => {
+    const finished = was.current && !running;
+    was.current = running;
+    if (running) document.title = `● ${TITLE}`;
+    else if (finished && document.hidden) document.title = `✓ ${TITLE}`;
+    else if (!document.hidden || document.title.startsWith('●')) document.title = TITLE;
+  }, [running]);
+  useEffect(() => {
+    const onVis = () => { if (!document.hidden && document.title.startsWith('✓')) document.title = TITLE; };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+}
+
 export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   // ux-state: panes, pickers, folded sidebar groups and the drawer come back after a reload (persist.ts).
@@ -54,6 +72,7 @@ export function App() {
   }, [authed]);
 
   useQueueRunner(state.panes, state.connected, dispatch, (m) => sock.current?.send(m));
+  useTabTitle(state.activity.some((a) => a.running) || state.panes.some((p) => p.activeTurnId !== null));
   // PWA: a notification click opens deck at /?session=<id> or, with deck already open, posts the id here.
   const [openReq, setOpenReq] = useState<string | null>(() => new URLSearchParams(window.location.search).get('session'));
   const openById = useRef<(sessionId: string) => boolean>(() => false);
@@ -171,6 +190,8 @@ export function App() {
               else setDrawer(false);
               setScrollTo({ paneId: active.id, sessionId: h.sessionId, snippet: h.snippet, match: h.snippet.slice(h.matchStart, h.matchStart + h.matchLength), until: Date.now() + 15_000 });
             }}
+            activity={state.activity}
+            unread={state.unread}
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
           />
         </div>

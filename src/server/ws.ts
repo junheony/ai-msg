@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
-import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RunningTurn, type ServerMessage, type TurnPrompt } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { DirError, resolveUnderRoots } from './dirs';
@@ -132,7 +132,15 @@ async function isDirectory(p: string): Promise<boolean> {
  * the deck turn now streaming — that turn, a background continuation or a follow-up — and null
  * while the process only waits for background work; `bg` is the last turn_background.
  */
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; bg: { turnId: string; tasks: string[] } | null; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
+type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T }>;
+/**
+ * What a device opening the session mid-turn needs besides the transcript: the latest state of each
+ * task (subagent cards), the subagents' tool calls so far (bounded), and the status row's progress.
+ */
+type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null };
+const MAX_REPLAY_SUBS = 500;
+
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -185,6 +193,21 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const broker = new PermissionBroker(broadcastAndNotify);
   const questions = new QuestionBroker(broadcastAndNotify);
   const unsubscribeUsage = deps.usage.onChange((usage) => broadcast({ type: 'usage', usage }));
+  /** Every session with a turn streaming or background work held open (sidebar dots, tab title on all devices). */
+  const activity = (): SessionActivity[] => {
+    const now = Date.now();
+    return [...turns.values()]
+      .filter((t): t is Turn & { sessionId: string } => t.sessionId !== null && (t.current !== null || (t.bg?.msg.tasks.length ?? 0) > 0))
+      .map((t) => ({ sessionId: t.sessionId, cwd: t.cwd, turnId: t.current ?? t.turnId, running: t.current !== null, bg: t.bg?.msg.tasks.length ?? 0, forMs: t.current !== null ? Math.max(0, now - t.since) : 0 }));
+  };
+  let activitySig = '[]';
+  const broadcastActivity = () => {
+    const sessions = activity();
+    const sig = JSON.stringify(sessions.map(({ forMs: _f, ...rest }) => rest));
+    if (sig === activitySig) return;
+    activitySig = sig;
+    broadcast({ type: 'activity', sessions });
+  };
   const running = (): RunningTurn[] => [...turns.values()].filter((t) => t.current !== null).map(({ current, sessionId, cwd }) => ({ turnId: current!, sessionId, cwd }));
 
   /**
@@ -221,6 +244,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       turn.sessionId = sid;
       if (!busy.has(sid)) busy.set(sid, turn.turnId);
       if (turn.fresh) { turn.fresh = false; announceSession(sid); }
+      broadcastActivity();
     }
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
     if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
@@ -242,6 +266,36 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     });
   }
+
+  /** Keeps what `replay` re-sends to a device that opens the session mid-turn. */
+  const record = (turn: Turn, m: ServerMessage) => {
+    const log = turn.log;
+    if (m.type === 'task_update') {
+      const prev = log.tasks.get(m.taskId);
+      // A patch (task_updated) carries no Agent call id; keep the one task_started gave.
+      log.tasks.set(m.taskId, { msg: prev ? { ...prev.msg, ...m, toolUseId: m.toolUseId ?? prev.msg.toolUseId } : m, at: prev?.at ?? Date.now() });
+    } else if (m.type === 'task_done' && m.taskId) {
+      const prev = log.tasks.get(m.taskId);
+      if (prev) prev.msg = { ...prev.msg, status: m.status, ...(m.usage ? { usage: m.usage } : {}) };
+    } else if (m.type === 'sub_tool_call' || m.type === 'sub_tool_result') {
+      log.subs.push(m);
+      if (log.subs.length > MAX_REPLAY_SUBS) log.subs.splice(0, log.subs.length - MAX_REPLAY_SUBS);
+    } else if (m.type === 'turn_progress') {
+      log.progress = m;
+    }
+  };
+  /** After `history`: the running turn's tasks, subagent calls, progress and background work, as of now. */
+  const replay = (ws: WebSocket, t: Turn, sessionId: string) => {
+    const now = Date.now();
+    for (const { msg, at } of t.log.tasks.values()) send(ws, { ...msg, sessionId, ageMs: Math.max(0, now - at) });
+    for (const m of t.log.subs) send(ws, { ...m, sessionId });
+    if (t.current && t.log.progress) send(ws, { ...t.log.progress, sessionId });
+    if (t.bg) {
+      const elapsed = now - t.bg.at;
+      const { msg } = t.bg;
+      send(ws, { ...msg, sessionId, cwd: t.cwd, ...(msg.detail ? { detail: msg.detail.map((d) => ({ ...d, ageMs: d.ageMs + elapsed })) } : {}) });
+    }
+  };
 
   const startTurn = (ws: WebSocket, msg: Extract<ClientMessage, { type: 'send' }>) => {
     if (msg.sessionId) view(ws, msg.sessionId);
@@ -271,7 +325,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, bg: null, fresh: msg.sessionId === null, afterRelease: [] };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null }, fresh: msg.sessionId === null, afterRelease: [] };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -283,6 +337,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       broker.cancelTurn(turnId);
       questions.cancelTurn(turnId);
       for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); prompts.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
+      broadcastActivity();
       // Sends that arrived while the process was closing after its result (a closed socket's send is dropped).
       for (const d of turn.afterRelease.splice(0)) if (clients.has(d.ws)) startTurn(d.ws, d.msg);
     };
@@ -290,17 +345,22 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const sink: TurnSink = {
       emit: (m) => {
         if (m.type === 'turn_started') {
+          if (turn.current !== m.turnId) turn.since = Date.now();
           turn.current = m.turnId;
+          turn.log.progress = null;
           // Every device viewing the session gets the prompt with each start (retries included); the sending pane skips it.
           const prompt = prompts.get(m.turnId);
           const withPrompt = prompt ? { ...m, prompt } : m;
-          if (m.turnId !== turnId) { aliases.set(m.turnId, turnId); emitTurn(turn, withPrompt); return; }
+          if (m.turnId !== turnId) { aliases.set(m.turnId, turnId); emitTurn(turn, withPrompt); broadcastActivity(); return; }
           started = true;
           emitTurn(turn, { ...withPrompt, ...ref });
+          broadcastActivity();
           return;
         }
-        if (m.type === 'turn_result' && m.turnId === turn.current) turn.current = null;
-        if (m.type === 'turn_background') turn.bg = m.tasks.length ? { turnId: m.turnId, tasks: m.tasks } : null;
+        record(turn, m);
+        if (m.type === 'turn_result' && m.turnId === turn.current) { turn.current = null; turn.log.progress = null; }
+        if (m.type === 'turn_background') turn.bg = m.tasks.length ? { msg: m, at: Date.now() } : null;
+        if (m.type === 'turn_result' || m.type === 'turn_background') queueMicrotask(broadcastActivity);
         if (m.type === 'error' && !started && (m.turnId === null || m.turnId === turnId)) emitTurn(turn, { ...m, ...ref });
         else emitTurn(turn, m);
       },
@@ -366,7 +426,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), codex: { available: deps.codexAvailable }, ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}) });
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
 
@@ -402,12 +462,19 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           for (const id of new Set([msg.turnId, base])) { broker.cancelTurn(id); questions.cancelTurn(id); }
           break;
         }
+        case 'stop_task': {
+          void deps.runner.stopTask(baseOf(msg.turnId), msg.taskId)
+            .then((ok) => { if (!ok) send(ws, { type: 'error', turnId: null, message: '이 작업은 따로 멈출 수 없습니다 — 모두 중지를 써 주세요' }); })
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `작업을 멈추지 못했습니다: ${errMsg(err)}` }));
+          break;
+        }
         case 'open_session': {
           const sessionId = msg.sessionId;
           /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
           const runningOf = (sid: string) => {
-            const current = turns.get(busy.get(sid) ?? '')?.current ?? null;
-            return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null };
+            const t = turns.get(busy.get(sid) ?? '');
+            const current = t?.current ?? null;
+            return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}) };
           };
           void (async () => {
             // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
@@ -442,7 +509,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               .then((messages) => {
                 const t = turns.get(busy.get(sessionId) ?? '');
                 send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, messages, ...runningOf(sessionId) });
-                if (t?.bg) send(ws, { type: 'turn_background', turnId: t.bg.turnId, sessionId, cwd: t.cwd, tasks: t.bg.tasks });
+                if (t) replay(ws, t, sessionId);
                 // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
                 void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
               })

@@ -152,7 +152,7 @@ describe('sessionAllowOffered / sessionAllowLabel', () => {
 
 describe('mapSdkMessage', () => {
   it('a background task notification → task_done (drives a push)', () => {
-    expect(mapSdkMessage(M({ type: 'system', subtype: 'task_notification', task_id: 'k', status: 'completed', output_file: '/tmp/o', summary: 'npm test 끝' }))).toEqual([{ kind: 'task_done', status: 'completed', summary: 'npm test 끝' }]);
+    expect(mapSdkMessage(M({ type: 'system', subtype: 'task_notification', task_id: 'k', status: 'completed', output_file: '/tmp/o', summary: 'npm test 끝' }))).toEqual([{ kind: 'task_done', status: 'completed', summary: 'npm test 끝', taskId: 'k', toolUseId: null }]);
   });
 
   it('init, text deltas (top-level only), tool calls, tool results, rate limit, compact, result', () => {

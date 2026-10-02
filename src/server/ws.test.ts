@@ -196,7 +196,7 @@ describe('ws', () => {
     await collect(ws, (m) => m.type === 'hello');
     const p = collect(ws, (m) => m.type === 'index');
     ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'hello' }));
-    const msgs = await p;
+    const msgs = (await p).filter((m) => m.type !== 'activity');
     expect(msgs.map((m) => m.type)).toEqual(['turn_started', 'delta', 'delta', 'turn_result', 'index']);
     expect(msgs[3]).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: 'sess-1', badge: { model: 'opus' } });
     ws.close();

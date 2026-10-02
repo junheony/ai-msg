@@ -113,6 +113,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
             send({ type: 'interrupt', turnId: pane.activeTurnId });
           }}
           onStopBackground={(turnId) => send({ type: 'interrupt', turnId })}
+          onStopTask={(taskId) => { if (pane.bg) send({ type: 'stop_task', turnId: pane.bg.turnId, taskId }); }}
+          runStartedAt={pane.runStartedAt}
+          progress={pane.progress}
+          agents={pane.agents}
+          bg={pane.bg}
           queue={pane.queue}
           queuePaused={pane.queuePaused}
           onQueue={(text) => dispatch({ type: 'queue_add', text, paneId: pane.id })}
