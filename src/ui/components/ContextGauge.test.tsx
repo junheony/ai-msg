@@ -43,3 +43,36 @@ describe('ContextHint', () => {
     expect(render(<ContextHint info={info(50_000, { at: Date.now() - WARM_MS - 60_000 })} />).getByTestId('context-hint').textContent).toBe('캐시 만료 · 이번 턴은 전체 다시 읽기');
   });
 });
+
+describe('새 세션으로 이어가기 button', () => {
+  afterEach(cleanup);
+
+  it('the gauge popover offers it when onHandoff is given; mousedown does not blur the gauge, click hands off and closes', () => {
+    let n = 0;
+    const { getByTestId, container } = render(<ContextGauge info={info(300_000)} onHandoff={() => { n++; }} />);
+    fireEvent.click(getByTestId('context-gauge'));
+    const btn = getByTestId('handoff-btn');
+    expect(btn.textContent).toBe('새 세션으로 이어가기');
+    expect(fireEvent.mouseDown(btn)).toBe(false); // default prevented: focus stays, the popover is not closed by blur
+    fireEvent.click(btn);
+    expect(n).toBe(1);
+    expect(container.querySelector('.ctx-pop')).toBeNull();
+    cleanup();
+    render(<ContextGauge info={info(300_000)} />);
+    fireEvent.click(document.querySelector('[data-testid="context-gauge"]')!);
+    expect(document.querySelector('[data-testid="handoff-btn"]')).toBeNull();
+  });
+
+  it('the long-session hint carries the button; other hints and a missing onHandoff do not', () => {
+    let n = 0;
+    const long = render(<ContextHint info={info(300_000)} onHandoff={() => { n++; }} />);
+    fireEvent.click(long.getByTestId('handoff-btn'));
+    expect(n).toBe(1);
+    cleanup();
+    expect(render(<ContextHint info={info(300_000)} />).queryByTestId('handoff-btn')).toBeNull();
+    cleanup();
+    const cold = render(<ContextHint info={info(50_000, { at: Date.now() - WARM_MS - 60_000 })} onHandoff={() => {}} />);
+    expect(cold.queryByTestId('context-hint')).not.toBeNull();
+    expect(cold.queryByTestId('handoff-btn')).toBeNull();
+  });
+});

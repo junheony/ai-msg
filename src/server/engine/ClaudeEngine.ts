@@ -294,6 +294,9 @@ function isActivity(m: SDKMessage): boolean {
 export const BG_MAX_MS = 2 * 60 * 60_000;
 export const BG_GRACE_MS = 60_000;
 
+/** The handoff-note turn (TurnRequest.noTools): what a denied tool call tells the model. */
+export const NO_TOOLS_MESSAGE = '인계 메모 작성 중에는 도구를 쓸 수 없습니다 — 지금까지의 대화만으로 메모를 써 주세요';
+
 export function buildOptions(
   req: TurnRequest,
   deps: { home: string; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void },
@@ -322,7 +325,9 @@ export function buildOptions(
     // over auto-answering in canUseTool (would mean re-implementing the CLI's rule matching).
     ...(req.allowRules?.length ? { settings: { permissions: { allow: req.allowRules } } } : {}),
     ...(req.allowDirs?.length ? { additionalDirectories: req.allowDirs } : {}),
+    ...(req.noTools ? { hooks: { PreToolUse: [{ hooks: [async () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const, permissionDecisionReason: NO_TOOLS_MESSAGE } })] }] } } : {}),
     canUseTool: async (toolName, input, ctx) => {
+      if (req.noTools) return { behavior: 'deny', message: NO_TOOLS_MESSAGE, interrupt: false };
       // D8: AskUserQuestion is not a permission prompt. The answers travel back as updatedInput.answers
       // (sdk-tools.d.ts AskUserQuestionInput.answers: "User answers collected by the permission component").
       if (toolName === 'AskUserQuestion') {

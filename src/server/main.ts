@@ -94,7 +94,7 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { build: computeBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments });
+  const ws = attachWebSocket(servers, { build: computeBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments, meta });
   notifyIndex = () => ws.broadcastIndex();
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 

@@ -124,7 +124,7 @@ export async function readRecent(file: string): Promise<string[]> {
 }
 
 /** deck-side titles / archive flags (SessionMetaStore) laid over the scanned entries. */
-export type SessionMetaView = { title(sessionId: string): string | null; isArchived(sessionId: string): boolean };
+export type SessionMetaView = { title(sessionId: string): string | null; isArchived(sessionId: string): boolean; /** 새 세션으로 이어가기 links. */ next?(sessionId: string): string | null; prev?(sessionId: string): string | null };
 
 export class SessionIndex {
   private entries: SessionEntry[] = [];
@@ -150,15 +150,21 @@ export class SessionIndex {
   constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; meta?: SessionMetaView }) {}
 
   /** A deck rename wins over the transcript's title; archived entries carry the flag. Unchanged entries are returned as is. */
-  private decorate<T extends { sessionId: string; title: string; archived?: boolean }>(e: T): T {
+  private decorate<T extends { sessionId: string; title: string; archived?: boolean; prevSession?: string; nextSession?: string }>(e: T): T {
     const meta = this.opts.meta;
     if (!meta) return e;
     const title = meta.title(e.sessionId);
     const archived = meta.isArchived(e.sessionId);
-    if (!title && !archived && !e.archived) return e;
+    const prev = meta.prev?.(e.sessionId) ?? null;
+    const next = meta.next?.(e.sessionId) ?? null;
+    if (!title && !archived && !e.archived && !prev && !next && !e.prevSession && !e.nextSession) return e;
     const out: T = { ...e, title: title ?? e.title };
     if (archived) out.archived = true;
     else delete out.archived;
+    if (prev) out.prevSession = prev;
+    else delete out.prevSession;
+    if (next) out.nextSession = next;
+    else delete out.nextSession;
     return out;
   }
 

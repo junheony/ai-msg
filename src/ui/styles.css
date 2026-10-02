@@ -904,11 +904,18 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .ctx-gauge.high .ctx-arc { stroke: var(--danger); }
 .ctx-pop { position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 20; padding: 6px 9px; border-radius: 8px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line); color: var(--fg); font-size: 12px; white-space: nowrap; }
 .ctx-hint { padding: 0 6px 4px; color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.handoff-btn { margin-left: 8px; padding: 2px 8px; border: 0; border-radius: 6px; background: var(--accent-soft); color: var(--fg); font: inherit; font-size: 12px; cursor: pointer; }
+.ctx-pop .handoff-btn { display: block; margin: 6px 0 0; }
+.handoff-status { padding: 0 6px 4px; color: var(--muted); font-size: 12px; }
+.session-link { display: block; margin: 8px auto; padding: 4px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-link:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.msg.user.handoff-req pre { color: var(--muted); font-size: 12px; }
 .tb-cold { text-decoration: underline dotted color-mix(in srgb, var(--warn) 70%, transparent); text-underline-offset: 3px; cursor: help; }
 .tb-cold b { color: color-mix(in srgb, var(--warn) 80%, var(--fg)); }
 @media (max-width: 720px) {
   .ctx-gauge { min-height: var(--phone-tap); padding: 0 4px; }
   .ctx-hint { white-space: normal; }
   .ctx-pop { white-space: normal; width: max-content; max-width: min(240px, 70vw); }
+  .handoff-btn, .session-link { min-height: var(--phone-tap); }
 }
 @media (max-width: 400px) { .ctx-num { display: none; } }

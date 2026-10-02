@@ -30,6 +30,10 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
     /** Client correlation id: echoed on this send's turn_started and on any error refusing it (which pane sent it). */
     clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional(),
+    /** 새 세션으로 이어가기, step 1 (existing sessions only): the server runs shared/handoff HANDOFF_PROMPT with every tool call denied. */
+    handoff: z.boolean().optional(),
+    /** Step 2 (new sessions only): the session this one continues; once it has an id, deck's session meta links the two. */
+    handoffFrom: z.string().min(1).max(200).optional(),
   }),
   z.object({ type: z.literal('permission_response'), requestId: z.string().min(1), decision: z.enum(['once', 'session', 'deny']) }),
   /** D8: answers keyed by the question text, values are option labels (comma-joined for multiSelect) or free text. */

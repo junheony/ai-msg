@@ -5,7 +5,8 @@ import { isPinnableId } from './PinStore';
 export const MAX_TITLE_CHARS = 200;
 export const MAX_META_ENTRIES = 5000;
 
-export type SessionMeta = { titles: Record<string, string>; archived: string[] };
+/** `next`: 새 세션으로 이어가기 links, old session id → the session that continues it (present only when non-empty). */
+export type SessionMeta = { titles: Record<string, string>; archived: string[]; next?: Record<string, string> };
 
 /**
  * deck-only session metadata (`session-meta.json`): custom titles and archived ids. The Claude jsonl and
@@ -14,6 +15,8 @@ export type SessionMeta = { titles: Record<string, string>; archived: string[] }
 export class SessionMetaStore {
   private titles = new Map<string, string>();
   private archivedIds = new Set<string>();
+  private nextIds = new Map<string, string>();
+  private prevIds = new Map<string, string>();
   private writing: Promise<void> = Promise.resolve();
 
   constructor(private readonly file: string) {}
@@ -39,6 +42,36 @@ export class SessionMetaStore {
       if (isPinnableId(id) && typeof t === 'string' && t.trim()) this.titles.set(id, t.trim().slice(0, MAX_TITLE_CHARS));
     }
     if (Array.isArray(o.archived)) for (const id of o.archived) if (isPinnableId(id)) this.archivedIds.add(id);
+    const next = o.next && typeof o.next === 'object' ? (o.next as Record<string, unknown>) : {};
+    for (const [from, to] of Object.entries(next)) if (isPinnableId(from) && isPinnableId(to) && from !== to) this.setLink(from, to);
+  }
+
+  private setLink(from: string, to: string): void {
+    const old = this.nextIds.get(from);
+    if (old) this.prevIds.delete(old);
+    this.nextIds.set(from, to);
+    this.prevIds.set(to, from);
+  }
+
+  /** The session that continues `sessionId` (새 세션으로 이어가기), or null. */
+  next(sessionId: string): string | null {
+    return this.nextIds.get(sessionId) ?? null;
+  }
+
+  /** The session `sessionId` continues, or null. */
+  prev(sessionId: string): string | null {
+    return this.prevIds.get(sessionId) ?? null;
+  }
+
+  /** 새 세션으로 이어가기: `to` continues `from`; `to` is titled `title`. */
+  async link(from: string, to: string, title: string): Promise<SessionMeta> {
+    if (from !== to) this.setLink(from, to);
+    if (this.nextIds.size > MAX_META_ENTRIES) {
+      const [k, v] = this.nextIds.entries().next().value!;
+      this.nextIds.delete(k);
+      this.prevIds.delete(v);
+    }
+    return this.update(to, { title });
   }
 
   title(sessionId: string): string | null {
@@ -50,7 +83,7 @@ export class SessionMetaStore {
   }
 
   snapshot(): SessionMeta {
-    return { titles: Object.fromEntries(this.titles), archived: [...this.archivedIds] };
+    return { titles: Object.fromEntries(this.titles), archived: [...this.archivedIds], ...(this.nextIds.size ? { next: Object.fromEntries(this.nextIds) } : {}) };
   }
 
   /** `title`: string = rename, null/'' = back to the transcript's own title, undefined = unchanged. */

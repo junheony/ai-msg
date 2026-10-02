@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { contextHint, contextLabel, contextPct, contextTokens, fmtTokens, isLongContext, type ContextInfo } from '../context';
+import { LONG_HINT, contextHint, contextLabel, contextPct, contextTokens, fmtTokens, isLongContext, type ContextInfo } from '../context';
 
 /** Re-renders every `ms` so time-based hints (cache expiry) appear without new server messages. */
 function useNow(ms: number): number {
@@ -15,7 +15,17 @@ const R = 7;
 const C = 2 * Math.PI * R;
 
 /** Desktop-style context ring next to the model picker; hover (or tap, on phones) shows "컨텍스트 312k / 1M · 캐시 적중 97%". */
-export function ContextGauge({ info }: { info: ContextInfo | null }) {
+/** The 새 세션으로 이어가기 button; mousedown keeps focus where it is so the popover's blur does not eat the click. */
+function HandoffButton({ onHandoff }: { onHandoff: () => void }) {
+  return (
+    <button type="button" className="handoff-btn" data-testid="handoff-btn" onMouseDown={(e) => e.preventDefault()} onPointerDown={(e) => e.preventDefault()} onClick={onHandoff} title="이 세션의 인계 메모를 쓰고 새 세션에서 이어갑니다">
+      새 세션으로 이어가기
+    </button>
+  );
+}
+
+/** `onHandoff` (absent = not offered): 새 세션으로 이어가기 in the popover. */
+export function ContextGauge({ info, onHandoff }: { info: ContextInfo | null; onHandoff?: () => void }) {
   const [open, setOpen] = useState(false);
   if (!info) return null;
   const tokens = contextTokens(info.usage);
@@ -31,14 +41,25 @@ export function ContextGauge({ info }: { info: ContextInfo | null }) {
         </svg>
         <span className="ctx-num">{fmtTokens(tokens)}</span>
       </button>
-      {open && <span className="ctx-pop" role="status">{label}</span>}
+      {open && (
+        <span className="ctx-pop" role="status">
+          {label}
+          {onHandoff && <HandoffButton onHandoff={() => { setOpen(false); onHandoff(); }} />}
+        </span>
+      )}
     </span>
   );
 }
 
 /** One muted line above the composer: cache expired (next turn re-reads everything) or the session is long. Never blocks. */
-export function ContextHint({ info }: { info: ContextInfo | null }) {
+export function ContextHint({ info, onHandoff }: { info: ContextInfo | null; onHandoff?: () => void }) {
   const now = useNow(60_000);
   const hint = contextHint(info, now);
-  return hint ? <div className="ctx-hint" data-testid="context-hint">{hint}</div> : null;
+  if (!hint) return null;
+  return (
+    <div className="ctx-hint" data-testid="context-hint">
+      {hint}
+      {hint === LONG_HINT && onHandoff && <HandoffButton onHandoff={onHandoff} />}
+    </div>
+  );
 }

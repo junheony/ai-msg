@@ -11,7 +11,7 @@ type Item = { key: string; label: string; detail: string; insert: string };
  * for the composer textarea. The caller wires `track` to the textarea's onChange/onSelect, calls `onKeyDown` first
  * in its own key handler (true = handled), and renders `popup` inside the composer.
  */
-export function useComposerSuggest({ text, setText, textareaRef, cwd, sessionId, commands, fetchFn }: {
+export function useComposerSuggest({ text, setText, textareaRef, cwd, sessionId, commands, extraCommands, fetchFn }: {
   text: string;
   setText: (t: string) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -19,6 +19,8 @@ export function useComposerSuggest({ text, setText, textareaRef, cwd, sessionId,
   sessionId: string | null;
   /** False for engines without slash commands (GPT sessions). */
   commands: boolean;
+  /** deck's own commands (e.g. /handoff), listed before the server's. */
+  extraCommands?: CommandItem[];
   fetchFn?: typeof fetch;
 }): { track: (e: SyntheticEvent<HTMLTextAreaElement>) => void; onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => boolean; popup: ReactNode } {
   const [cursor, setCursor] = useState(0);
@@ -60,7 +62,7 @@ export function useComposerSuggest({ text, setText, textareaRef, cwd, sessionId,
     ? []
     : trigger.kind === 'file'
       ? rankFiles(trigger.query, files?.list ?? [], SHOW).map((f) => ({ key: f, label: f, detail: '', insert: mentionFor(f) }))
-      : rankCommands(trigger.query, cmds ?? [], SHOW).map((c) => ({ key: c.name, label: `/${c.name}`, detail: [c.argumentHint, c.description].filter(Boolean).join(' · '), insert: `/${c.name}` }));
+      : rankCommands(trigger.query, [...(extraCommands ?? []), ...(cmds ?? []).filter((c) => !extraCommands?.some((x) => x.name === c.name))], SHOW).map((c) => ({ key: c.name, label: `/${c.name}`, detail: [c.argumentHint, c.description].filter(Boolean).join(' · '), insert: `/${c.name}` }));
   const open = !!trigger && tKey !== dismissed;
   const fileError = trigger?.kind === 'file' ? (files?.error ?? null) : null;
 

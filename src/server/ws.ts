@@ -7,10 +7,12 @@ import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiSta
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { DirError, resolveUnderRoots } from './dirs';
+import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
 import { readCodexTranscript } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
-import type { PinStore } from './sessions/PinStore';
+import { isPinnableId, type PinStore } from './sessions/PinStore';
+import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readTranscript } from './sessions/transcript';
@@ -121,6 +123,8 @@ export type WsDeps = {
   notify?: (msg: ServerMessage) => void;
   /** Attachment metadata (name, image or not) for the prompt every viewing device is shown. */
   attachments?: { resolve(ids: string[]): { found: { id: string; name: string; isImage: boolean }[] } };
+  /** 새 세션으로 이어가기: a new session sent with `handoffFrom` is linked to that session (and titled) here once it has an id. */
+  meta?: Pick<SessionMetaStore, 'link'>;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -142,7 +146,7 @@ type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T
 type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null };
 const MAX_REPLAY_SUBS = 500;
 
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -239,13 +243,30 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       .catch((err: unknown) => console.error('deck: index refresh for a new session failed', errMsg(err)));
   };
 
+  /** 새 세션으로 이어가기: `to` continues `from` (deck's session meta, never the transcript), titled "<old title> (이어서)". */
+  const linkHandoff = async (from: string, to: string) => {
+    if (!deps.meta) return;
+    const old = deps.index.lookup(from)?.title ?? deps.store.codexEntries().find((e) => e.sessionId === from)?.title ?? from.slice(0, 8);
+    try {
+      await deps.meta.link(from, to, handoffTitle(old));
+      deps.index.regroup();
+      broadcast(indexMsg());
+    } catch (err) {
+      console.error('deck: handoff link failed', errMsg(err));
+    }
+  };
+
   /** Turn events reach the socket that started the turn and sockets viewing its session — nobody else. */
   const emitTurn = (turn: Turn, msg: ServerMessage) => {
     const sid = 'sessionId' in msg ? msg.sessionId : null;
     if (sid && turn.sessionId !== sid) {
       turn.sessionId = sid;
       if (!busy.has(sid)) busy.set(sid, turn.turnId);
-      if (turn.fresh) { turn.fresh = false; announceSession(sid); }
+      if (turn.fresh) {
+        turn.fresh = false;
+        if (turn.handoffFrom) void linkHandoff(turn.handoffFrom, sid).finally(() => announceSession(sid));
+        else announceSession(sid);
+      }
       broadcastActivity();
     }
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
@@ -299,11 +320,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
   };
 
-  const startTurn = (ws: WebSocket, msg: Extract<ClientMessage, { type: 'send' }>) => {
+  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>) => {
+    // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
+    const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
     if (msg.sessionId) view(ws, msg.sessionId);
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, ...ref }); return; }
+    if (msg.handoff && (!msg.sessionId || busy.has(msg.sessionId))) {
+      send(ws, { type: 'error', turnId: null, message: msg.sessionId ? '세션이 실행 중이라 지금은 넘길 수 없습니다 — 끝난 뒤 다시 시도하세요' : '새 세션은 넘길 대화가 없습니다', ...ref });
+      return;
+    }
     if (msg.sessionId && busy.has(msg.sessionId)) {
       // The session's process may only be waiting for background work: then the message joins it (TurnRunner.followUp).
       const base = turns.get(busy.get(msg.sessionId)!);
@@ -327,7 +354,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null }, fresh: msg.sessionId === null, afterRelease: [] };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, afterRelease: [] };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -407,6 +434,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.engine ? { engine: msg.engine } : {}),
           ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
           ...(msg.attachments ? { attachments: msg.attachments } : {}),
+          ...(msg.handoff ? { handoff: true } : {}),
         }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
