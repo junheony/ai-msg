@@ -39,9 +39,9 @@ async function setup(engine: StubEngine, extra: Partial<TurnRunnerDeps> = {}) {
 }
 
 /** Every account known and roomy (the router has real alternatives). */
-async function roomyUsage() {
+async function roomyUsage(weekly: Record<string, number> = {}) {
   const resetsAt = new Date(NOW + 3_600_000).toISOString();
-  const card = (id: string) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Session (5h)', used: 10, resetsAt }, { label: 'Weekly (7d)', used: 10, resetsAt }, { label: 'Fable (7d)', used: 0, resetsAt }] });
+  const card = (id: string) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Session (5h)', used: 10, resetsAt }, { label: 'Weekly (7d)', used: weekly[id] ?? 10, resetsAt }, { label: 'Fable (7d)', used: 0, resetsAt }] });
   const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
@@ -129,15 +129,33 @@ describe('TurnRunner · 메시지 편집 갈래', () => {
   it('pinned account unusable: the fork falls back like a normal turn (parent’s account, no copy) with the same pin notice', async () => {
     const eng = new StubEngine(() => ok(CHILD));
     const moves: unknown[] = [];
-    const c = await setup(eng, { usage: await roomyUsage(), move: async (o) => { moves.push(o); return { ok: false, error: 'no' }; } });
+    // c (the parent's account) scores worse than a
+    const c = await setup(eng, { usage: await roomyUsage({ 'claude:third': 50 }), move: async (o) => { moves.push(o); return { ok: false, error: 'no' }; } });
     writeCooldown(path.join(path.dirname(path.dirname(c.dir)), 'cooldown'), 'b', NOW + 3_600_000);
-    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'sonnet', accountPin: 'b' });
+    // The parent's cache is cold: a normal turn would be free to move to the best-scored account (a) — a fork stays.
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 3_600_000, justCompacted: false, defaultModel: 'sonnet', accountPin: 'b' });
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', accountPin: 'b', fork: { from: PARENT, at: 'a0' } }, c.sink);
     expect(eng.calls[0]).toMatchObject({ account: 'c', resumeSessionId: PARENT, forkAt: 'a0' });
     expect(moves).toEqual([]);
     expect(c.msgs.some((m) => m.type === 'turn_notice' && /B 계정 .+ — 이번 턴은 C 로 \(고정은 유지\)/.test(m.message))).toBe(true);
     // The pin is kept on the fork, as a normal turn keeps it on its session.
     expect(c.store.get(CHILD)).toMatchObject({ account: 'c', accountPin: 'b' });
+  });
+
+  it('pinned account and the parent’s account both unusable: the parent is copied to a third one, the notice names both', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const moves: { targetProjectsRoot: string }[] = [];
+    const c = await setup(eng, { usage: await roomyUsage(), move: async (o) => { moves.push(o); return { ok: true, targetDir: path.join(o.targetProjectsRoot, '-w-one'), targetFile: path.join(o.targetProjectsRoot, '-w-one', o.sessionId + '.jsonl') } as never; } });
+    const cd = path.join(path.dirname(path.dirname(c.dir)), 'cooldown');
+    writeCooldown(cd, 'b', NOW + 3_600_000);
+    writeCooldown(cd, 'c', NOW + 3_600_000);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 3_600_000, justCompacted: false, defaultModel: 'sonnet', accountPin: 'b' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', accountPin: 'b', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ account: 'a', resumeSessionId: PARENT, forkAt: 'a0' });
+    expect(moves).toHaveLength(1);
+    const notices = c.msgs.filter((m) => m.type === 'turn_notice').map((m) => (m as { message: string }).message);
+    expect(notices.some((n) => n.includes('B 고정 계정과 C 계정을 지금 쓸 수 없어') && n.includes('A 계정에 복사해 갈래'))).toBe(true);
+    expect(c.store.get(CHILD)).toMatchObject({ account: 'a', accountPin: 'b' });
   });
 
   it('a fork ending does not unmark its parent’s running turn', async () => {

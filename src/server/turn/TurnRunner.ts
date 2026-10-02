@@ -598,7 +598,7 @@ export class TurnRunner {
    * safe mover (source never written) and the fork made from that copy. The parent itself is not relocated: its stored
    * state keeps its account and folder.
    */
-  private async copyForFork(state: ClaudeSessionState, to: Account, say: (message: string) => void, byPin = false): Promise<ClaudeSessionState | null> {
+  private async copyForFork(state: ClaudeSessionState, to: Account, say: (message: string) => void, why = `${LABEL[state.account]} 계정을 지금 쓸 수 없어`): Promise<ClaudeSessionState | null> {
     const r = await this.move({ sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] });
     if (!r.ok) {
       say(`갈래를 ${LABEL[to]} 계정에 만들지 못해 ${LABEL[state.account]} 계정에서 만들어요 (${r.error})`);
@@ -606,7 +606,6 @@ export class TurnRunner {
     }
     // deck wrote this copy: not a sign of Desktop/CLI having the parent open.
     if (r.targetFile) this.deckWroteAt.set(path.resolve(r.targetFile), this.now());
-    const why = byPin ? `${LABEL[to]} 계정 고정이라` : `${LABEL[state.account]} 계정을 지금 쓸 수 없어`;
     say(`${why} 대화를 ${LABEL[to]} 계정에 복사해 갈래를 만들어요 — 원래 대화는 ${LABEL[state.account]} 계정에 그대로 있어요`);
     return { ...state, account: to, projectDir: r.targetDir };
   }
@@ -1075,21 +1074,30 @@ export class TurnRunner {
     // An unpinned edit-fork runs on the parent's own account (it is not moved for a branch) unless that account is
     // unusable; a pinned one routes like any turn of the session, copying the parent to the pinned account.
     const forkFrom = forkAt && state && !pin ? state.account : null;
-    const first = chooseAccount({
+    const routeInput = {
       ...routerBase,
-      ...(forkFrom ? { pinned: forkFrom } : {}),
       current: state?.account ?? null,
       lastTurnAtMs: state?.lastTurnAtMs ?? null,
       justCompacted: state?.justCompacted ?? false,
       cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()),
-    });
+    };
+    let first = chooseAccount(forkFrom ? { ...routeInput, pinned: forkFrom } : routeInput);
+    // A fork whose pin is unusable stays on the parent's account like an unpinned one (a cold cache must not send it,
+    // and a copy of the parent, to a third account); only if that one is unusable too is the parent copied elsewhere.
+    let forkWhy: string | undefined;
+    if (forkAt && state && pin && first.pinBlocked && pin !== state.account) {
+      const stay = chooseAccount({ ...routeInput, pinned: state.account });
+      if (stay.pinBlocked) forkWhy = `${LABEL[pin]} 고정 계정과 ${LABEL[state.account]} 계정을 지금 쓸 수 없어`;
+      first = { ...stay, pinned: false, pinBlocked: first.pinBlocked, reason: `고정 ${LABEL[pin]} ${first.pinBlocked} → 갈래는 ${stay.reason}` };
+    }
     let account = first.account;
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
     const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: shownId(), cwd, message }); };
     // The badge's pin marker: the account is the pinned one because of the pin.
     let byPin = first.pinned === true && account === pin;
     if (state && account !== state.account) {
-      const moved = forkAt ? await this.copyForFork(state, account, (m) => early.push(m), byPin) : await this.relocate(state, account, (m) => early.push(m));
+      if (byPin) forkWhy = `${LABEL[account]} 계정 고정이라`;
+      const moved = forkAt ? await this.copyForFork(state, account, (m) => early.push(m), forkWhy) : await this.relocate(state, account, (m) => early.push(m));
       if (moved) state = moved;
       else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; byPin = false; }
     }
