@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DirError } from './dirs';
-import { FileLister } from './files';
+import { FileLister, FileReadError, isDeniedPath, readSessionFile } from './files';
 
 async function home(): Promise<string> {
   return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-files-')));
@@ -60,5 +60,82 @@ describe('FileLister', () => {
     await expect(lister.list('relative/path')).rejects.toBeInstanceOf(DirError);
     await expect(lister.list(path.join(h, 'link'))).rejects.toBeInstanceOf(DirError);
     await expect(lister.list(`${h}/../`)).rejects.toBeInstanceOf(DirError);
+  });
+});
+
+describe('readSessionFile', () => {
+  async function setup() {
+    const h = await home();
+    const p = path.join(h, 'proj');
+    await fs.mkdir(path.join(p, 'src'), { recursive: true });
+    await fs.writeFile(path.join(p, 'src', 'a.ts'), 'export const a = 1;\n');
+    return { h, p, read: (file: string, cwd = p, max?: number) => readSessionFile({ home: h, roots: [h], cwd, file, ...(max ? { max } : {}) }) };
+  }
+  const status = async (pr: Promise<unknown>) => { try { await pr; return 200; } catch (e) { if (e instanceof FileReadError) return e.status; if (e instanceof DirError) return 400; throw e; } };
+
+  it('reads text by relative or absolute path inside the cwd', async () => {
+    const { p, read } = await setup();
+    expect(await read('src/a.ts')).toEqual({ path: path.join(p, 'src', 'a.ts'), size: 20, kind: 'text', text: 'export const a = 1;\n' });
+    expect((await read(path.join(p, 'src', 'a.ts'))).kind).toBe('text');
+  });
+
+  it('refuses traversal, absolute paths outside the cwd, and symlinks escaping it', async () => {
+    const { h, p, read } = await setup();
+    const outside = await home();
+    await fs.writeFile(path.join(outside, 'secret.txt'), 'x');
+    await fs.writeFile(path.join(h, 'sibling.txt'), 'x');
+    await fs.symlink(path.join(outside, 'secret.txt'), path.join(p, 'link.txt'));
+    await fs.symlink(outside, path.join(p, 'linkdir'));
+    expect(await status(read('../sibling.txt'))).toBe(403);
+    expect(await status(read('src/../../sibling.txt'))).toBe(403);
+    expect(await status(read(path.join(outside, 'secret.txt')))).toBe(403);
+    expect(await status(read('/etc/hosts'))).toBe(403);
+    expect(await status(read('link.txt'))).toBe(403);
+    expect(await status(read('linkdir/secret.txt'))).toBe(403);
+    // The cwd itself must be inside the roots.
+    expect(await status(read('secret.txt', outside))).toBe(400);
+  });
+
+  it('a symlink staying inside the cwd is fine', async () => {
+    const { p, read } = await setup();
+    await fs.symlink(path.join(p, 'src', 'a.ts'), path.join(p, 'alias.ts'));
+    expect((await read('alias.ts')).path).toBe(path.join(p, 'src', 'a.ts'));
+  });
+
+  it('refuses credential files and dirs even inside the cwd', async () => {
+    const { h, read } = await setup();
+    for (const f of ['.env', '.env.local', 'id_rsa', 'server.pem', '.npmrc', 'auth.json', '.ssh/config', '.aws/credentials', '.codex/auth.json', '.claude/settings.json', '.claude-b/x.json']) {
+      await fs.mkdir(path.dirname(path.join(h, f)), { recursive: true });
+      await fs.writeFile(path.join(h, f), 'secret');
+      expect(await status(read(f, h)), f).toBe(403);
+    }
+    await fs.writeFile(path.join(h, '.env.example'), 'A=');
+    expect((await read('.env.example', h)).kind).toBe('text');
+    // ~ expansion is still contained and deny-listed.
+    expect(await status(read('~/.ssh/config', h))).toBe(403);
+    // A symlink inside the project pointing at a denied file.
+    await fs.symlink(path.join(h, '.ssh', 'config'), path.join(h, 'proj', 'innocent.txt'));
+    expect(await status(read('innocent.txt'))).toBe(403);
+  });
+
+  it('isDeniedPath: home-level .claude* only, project .claude folders stay readable', () => {
+    expect(isDeniedPath('/u/.claude/x', '/u')).toBe(true);
+    expect(isDeniedPath('/u/.claude-work/x', '/u')).toBe(true);
+    expect(isDeniedPath('/u/code/deck/.claude/worktrees/a/src/x.ts', '/u')).toBe(false);
+    expect(isDeniedPath('/u/code/.ssh/x', '/u')).toBe(true);
+  });
+
+  it('size cap, binary detection, images sniffed by content', async () => {
+    const { p, read } = await setup();
+    await fs.writeFile(path.join(p, 'big.txt'), 'x'.repeat(101));
+    expect(await status(read('big.txt', p, 100))).toBe(413);
+    await fs.writeFile(path.join(p, 'bin.dat'), Buffer.from([1, 2, 0, 3]));
+    expect(await status(read('bin.dat'))).toBe(415);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+    await fs.writeFile(path.join(p, 'pic.png'), png);
+    expect(await read('pic.png')).toMatchObject({ kind: 'image', mediaType: 'image/png', base64: png.toString('base64') });
+    expect(await status(read('src'))).toBe(400);
+    expect(await status(read('missing.ts'))).toBe(404);
+    expect(await status(read(''))).toBe(400);
   });
 });

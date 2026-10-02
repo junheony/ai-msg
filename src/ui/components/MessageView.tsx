@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
+import { SidePanelContext, filePathIn } from '../sidePanel';
 import type { ChatItem, SentFile } from '../state';
 import { CopyButton } from './CopyButton';
 import { EditIcon, RetryIcon } from './icons';
@@ -27,15 +28,31 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const cls = isValidElement<{ className?: string }>(code) ? (code.props.className ?? '') : '';
   const lang = /language-([\w+#.-]+)/.exec(cls)?.[1] ?? '';
   const text = textOf(children).replace(/\n$/, '');
+  const open = useContext(SidePanelContext);
+  const previewable = open && (lang === 'html' || lang === 'svg' || (lang === 'xml' && /^\s*<svg[\s>]/i.test(text)));
   return (
     <div className="code-block">
       <div className="code-head">
         <span className="code-lang">{lang || 'text'}</span>
-        <CopyButton text={text} label="코드 복사" />
+        <span className="code-actions">
+          {previewable && <button type="button" className="code-copy" onClick={() => open({ kind: 'html', title: `${lang.toUpperCase()} 미리보기`, html: text })}>미리보기</button>}
+          <CopyButton text={text} label="코드 복사" />
+        </span>
       </div>
       <pre>{children}</pre>
     </div>
   );
+}
+
+function decodeSafe(s: string): string {
+  try { return decodeURIComponent(s); } catch { return s; }
+}
+
+/** A file path in a reply: a button opening it in the side panel when the pane has one, else `fallback`. */
+function FileLink({ path, fallback, children }: { path: string | null; fallback: ReactNode; children: ReactNode }) {
+  const open = useContext(SidePanelContext);
+  if (!path || !open) return <>{fallback}</>;
+  return <button type="button" className="file-link" title={`${path} — 사이드 패널에서 열기`} onClick={() => open({ kind: 'file', path })}>{children}</button>;
 }
 
 /**
@@ -46,7 +63,13 @@ const MD_COMPONENTS: Components = {
   img: ({ src, alt }) => (
     <a href={typeof src === 'string' ? src : undefined} rel="noreferrer noopener" target="_blank">🖼 {alt || (typeof src === 'string' ? src : '이미지')}</a>
   ),
-  a: ({ href, children }) => <a href={href} rel="noreferrer noopener" target="_blank">{children}</a>,
+  a: ({ href, children }) => <FileLink path={href && !/^[a-z][\w+.-]*:/i.test(href) && !href.startsWith('#') ? filePathIn(decodeSafe(href)) : null} fallback={<a href={href} rel="noreferrer noopener" target="_blank">{children}</a>}>{children}</FileLink>,
+  // Inline code naming a file opens it in the pane's side panel (fenced code ends with a newline, so it never matches).
+  code: ({ className, children }) => {
+    const text = typeof children === 'string' ? children : null;
+    const plain = <code className={className}>{children}</code>;
+    return <FileLink path={text && !className ? filePathIn(text) : null} fallback={plain}><code>{children}</code></FileLink>;
+  },
   // GFM tables scroll sideways inside the message instead of widening the chat (phone).
   table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,

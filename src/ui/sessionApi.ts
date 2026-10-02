@@ -118,3 +118,15 @@ export function trashSession(sessionId: string, fetchFn: typeof fetch = fetch): 
 export function restoreSession(trashId: string, fetchFn: typeof fetch = fetch): Promise<{ sessionId: string }> {
   return postJson('/api/session-trash/restore', { trashId }, fetchFn, '되돌리기');
 }
+
+/** Mirrors server/files.ts FilePreview. */
+export type FilePreview =
+  | { path: string; size: number; kind: 'text'; text: string }
+  | { path: string; size: number; kind: 'image'; mediaType: string; base64: string };
+
+/** Side panel: one file of the session folder (the server checks containment and the deny list). */
+export function readFile(cwd: string, sessionId: string | null, path: string, fetchFn: typeof fetch = fetch): Promise<FilePreview> {
+  const qs = new URLSearchParams({ cwd, path });
+  if (sessionId) qs.set('session', sessionId);
+  return getJson(`/api/file?${qs}`, fetchFn, '파일 열기');
+}
