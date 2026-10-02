@@ -106,4 +106,37 @@ describe('UsageIndex', () => {
     const saved = JSON.parse(await fs.readFile(indexFile, 'utf8')) as { version: number };
     expect(saved.version).toBe(1);
   });
+
+  it('takes the max output_tokens of a message split over lines and scans, without double counting', async () => {
+    const f = path.join(roots.a, '-proj', 's.jsonl');
+    await fs.writeFile(f, asst('m1', { input_tokens: 10, output_tokens: 2 }) + asst('m1', { input_tokens: 10, output_tokens: 9 }));
+    await fs.writeFile(path.join(roots.c, '-proj', 's.jsonl'), asst('m1', { input_tokens: 10, output_tokens: 2 }));
+    const idx = make();
+    await idx.refresh();
+    expect(pick(idx.history(30).rows, 'a')).toMatchObject({ input: 10, output: 9, messages: 1 });
+    expect(pick(idx.history(30).rows, 'c')).toMatchObject({ input: 10, output: 9, messages: 1 }); // a copy joins at the largest output known
+    expect(pick(idx.history(30).rows, 'all')).toMatchObject({ input: 10, output: 9, messages: 1 });
+    // A later line (next scan, after a restart) with the final count tops every counter up exactly once.
+    await fs.appendFile(f, asst('m1', { input_tokens: 10, output_tokens: 15 }));
+    const again = make();
+    await again.refresh();
+    await again.refresh();
+    const rows = again.history(30).rows;
+    expect(pick(rows, 'a')).toMatchObject({ output: 15, messages: 1 });
+    expect(pick(rows, 'all')).toMatchObject({ input: 10, output: 15, messages: 1 });
+    expect(pick(rows, 'c').output).toBe(15);
+  });
+
+  it('keeps the dedupe map out of the index JSON (append-only .seen log) and still dedupes after restart', async () => {
+    const f = path.join(roots.a, '-proj', 's.jsonl');
+    await fs.writeFile(f, asst('m1', { output_tokens: 4 }));
+    await make().refresh();
+    expect(JSON.parse(await fs.readFile(indexFile, 'utf8')).seen).toBeUndefined();
+    expect(await fs.readFile(`${indexFile}.seen`, 'utf8')).toContain('m1\t');
+    // The same message in a new file after restart: already seen.
+    await fs.writeFile(path.join(roots.b, '-proj', 's.jsonl'), asst('m1', { output_tokens: 4 }));
+    const again = make();
+    await again.refresh();
+    expect(pick(again.history(30).rows, 'all')).toMatchObject({ output: 4, messages: 1 });
+  });
 });

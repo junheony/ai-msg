@@ -14,8 +14,10 @@ type IndexFile = {
   version: 1;
   lastScanAt: string | null;
   files: Record<string, FileState>;
-  /** message id → bitmask of accounts that already counted it (a=1, b=2, c=4) plus GLOBAL once the global total did. */
-  seen: Record<string, number>;
+  /** Bytes of the `.seen` log this file's counts include (anything beyond is from a save that never finished). */
+  seenLen?: number;
+  /** Legacy (pre-log) inline dedupe map; migrated into the `.seen` log on load. */
+  seen?: Record<string, number>;
   /** `${day}|${source|all}|${family}` → counts. */
   buckets: Record<string, Bucket>;
 };
@@ -27,7 +29,7 @@ const SAVE_EVERY_MS = 30_000;
 const CHUNK = 1024 * 1024;
 const NL = 0x0a;
 const CLAUDE_NEEDLE = Buffer.from('"usage"');
-const CODEX_NEEDLES = [Buffer.from('"token_count"'), Buffer.from('"turn_context"')];
+const CODEX_NEEDLES = [Buffer.from('"token_count"')];
 
 export type UsageIndexOpts = {
   /** Claude `projects` dir per account (transcripts + `<id>/subagents/*.jsonl`). */
@@ -41,7 +43,7 @@ export type UsageIndexOpts = {
 };
 
 function emptyIndex(): IndexFile {
-  return { version: VERSION, lastScanAt: null, files: {}, seen: {}, buckets: {} };
+  return { version: VERSION, lastScanAt: null, files: {}, buckets: {} };
 }
 
 const yieldLoop = () => new Promise<void>((r) => setImmediate(r));
@@ -73,6 +75,14 @@ export class UsageIndex {
   private running: Promise<void> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastSave = 0;
+  /**
+   * message id → `mask | maxOutput * 16`: mask = accounts that counted it (a=1, b=2, c=4) plus GLOBAL once the
+   * global total did; maxOutput = the largest output_tokens seen for it (every counted target holds exactly that).
+   * Persisted as an append-only log (`<indexFile>.seen`), not inside the JSON that is rewritten on every save.
+   */
+  private seen = new Map<string, number>();
+  private dirtySeen = new Map<string, number>();
+  private seenLines = 0;
   private readonly now: () => Date;
 
   constructor(private readonly opts: UsageIndexOpts) {
@@ -122,15 +132,58 @@ export class UsageIndex {
     this.loaded = true;
     try {
       const raw = JSON.parse(await fs.promises.readFile(this.opts.indexFile, 'utf8')) as IndexFile;
-      if (raw?.version === VERSION && raw.files && raw.seen && raw.buckets) this.state = raw;
+      if (raw?.version === VERSION && raw.files && raw.buckets) {
+        this.state = raw;
+        if (raw.seen) {
+          for (const [id, v] of Object.entries(raw.seen)) { this.seen.set(id, v); this.dirtySeen.set(id, v); }
+          delete this.state.seen;
+        } else {
+          await this.loadSeen(raw.seenLen ?? 0);
+        }
+        return;
+      }
     } catch {
       // missing or unreadable: start over (Claude counts are idempotent by message id)
     }
+    // Counts start from zero, so a leftover dedupe log would make messages count as already seen.
+    await fs.promises.rm(this.seenFile, { force: true });
+  }
+
+  private get seenFile(): string {
+    return `${this.opts.indexFile}.seen`;
+  }
+
+  private async loadSeen(len: number): Promise<void> {
+    let buf: Buffer;
+    try { buf = (await fs.promises.readFile(this.seenFile)).subarray(0, len); } catch { return; }
+    const text = buf.toString('utf8');
+    const end = text.lastIndexOf('\n');
+    for (const line of end < 0 ? [] : text.slice(0, end).split('\n')) {
+      const tab = line.indexOf('\t');
+      const v = Number(line.slice(tab + 1));
+      if (tab > 0 && Number.isFinite(v)) { this.seen.set(line.slice(0, tab), v); this.seenLines++; }
+    }
+    // Drop what a crashed save left beyond the counted part, so appends continue from a clean tail.
+    if (buf.length < (await fs.promises.stat(this.seenFile)).size) await fs.promises.truncate(this.seenFile, buf.length);
   }
 
   private async save(): Promise<void> {
     this.lastSave = Date.now();
     await fs.promises.mkdir(path.dirname(this.opts.indexFile), { recursive: true, mode: 0o700 });
+    // The dedupe log first: a crash between the two leaves it ahead of the counts, never behind.
+    if (this.seenLines > 2 * this.seen.size + 10_000) {
+      this.dirtySeen.clear();
+      this.seenLines = this.seen.size;
+      const all = [...this.seen].map(([id, v]) => `${id}\t${v}\n`).join('');
+      await fs.promises.writeFile(`${this.seenFile}.tmp`, all, { mode: 0o600 });
+      await fs.promises.rename(`${this.seenFile}.tmp`, this.seenFile);
+    } else if (this.dirtySeen.size) {
+      const add = [...this.dirtySeen].map(([id, v]) => `${id}\t${v}\n`).join('');
+      await fs.promises.appendFile(this.seenFile, add, { mode: 0o600 });
+      this.seenLines += this.dirtySeen.size;
+      this.dirtySeen.clear();
+    }
+    this.state.seenLen = (await fs.promises.stat(this.seenFile).catch(() => ({ size: 0 }))).size;
     const tmp = `${this.opts.indexFile}.${process.pid}.tmp`;
     await fs.promises.writeFile(tmp, JSON.stringify(this.state), { mode: 0o600 });
     await fs.promises.rename(tmp, this.opts.indexFile);
@@ -212,14 +265,26 @@ export class UsageIndex {
     const n = (k: string) => { const v = u[k]; return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0; };
     const c: Bucket = [n('input_tokens'), n('output_tokens'), n('cache_read_input_tokens'), n('cache_creation_input_tokens'), 1];
     if (c[0] + c[1] + c[2] + c[3] === 0) return;
-    const mask = this.state.seen[id] ?? 0;
+    const prev = this.seen.get(id) ?? 0;
+    const mask = prev & 15;
+    const maxOut = Math.floor(prev / 16);
     const bit = ACCOUNT_BIT[account];
-    if (mask & bit) return;
+    const newMax = Math.max(maxOut, c[1]);
+    if (mask & bit && newMax === maxOut) return;
     const day = localDay(new Date(t));
     const family = familyOf(typeof m.model === 'string' ? m.model : null);
-    this.add(day, account, family, c);
-    if (!(mask & GLOBAL_BIT)) this.add(day, 'all', family, c);
-    this.state.seen[id] = mask | bit | GLOBAL_BIT;
+    // A later line of the same message can carry a larger output_tokens: top up every target that counted it.
+    const full: Bucket = [c[0], newMax, c[2], c[3], 1];
+    if (!(mask & bit)) this.add(day, account, family, full);
+    if (!(mask & GLOBAL_BIT)) this.add(day, 'all', family, full);
+    if (newMax > maxOut && mask) {
+      const top: Bucket = [0, newMax - maxOut, 0, 0, 0];
+      for (const a of ['a', 'b', 'c'] as const) if (mask & ACCOUNT_BIT[a]) this.add(day, a, family, top);
+      if (mask & GLOBAL_BIT) this.add(day, 'all', family, top);
+    }
+    const next = (mask | bit | GLOBAL_BIT) + newMax * 16;
+    this.seen.set(id, next);
+    this.dirtySeen.set(id, next);
   }
 
   private codexLine(line: Buffer, state: FileState): void {
