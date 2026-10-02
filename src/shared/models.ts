@@ -105,3 +105,18 @@ export function defaultSandbox(autoApprove: boolean): CodexSandbox {
 export const SANDBOX_LABEL: Record<CodexSandbox, string> = { 'read-only': '읽기 전용', 'workspace-write': '작업폴더 쓰기(네트워크 차단)' };
 /** Gemini: read-only = `--approval-mode plan`; workspace-write = `auto_edit` (edits run, shell is denied headless). Network stays open. */
 export const GEMINI_SANDBOX_LABEL: Record<CodexSandbox, string> = { 'read-only': '읽기 전용', 'workspace-write': '파일 편집 허용(셸 거부)' };
+
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
+
+/**
+ * Context window for a deck id or wire model id (claude-opus-5-5, opus[1m]…), for when the SDK did not report one
+ * (a reopened session). claude-api skill (2026-09-25): Opus 5.5, Sonnet 5.5, Fable 5.1 = 1M; Haiku 4.5 and
+ * pre-4.6 Opus/Sonnet = 200k. Anything else (GPT, Gemini, unknown) = 200k.
+ */
+export function contextWindowOf(model: string | null | undefined): number {
+  if (!model) return DEFAULT_CONTEXT_WINDOW;
+  if (/\[1m\]/i.test(model)) return 1_000_000;
+  if (/haiku|claude-3|(opus|sonnet)-4-[0-5](?!\d)/i.test(model)) return DEFAULT_CONTEXT_WINDOW;
+  if (/opus|sonnet|fable|mythos/i.test(model)) return 1_000_000;
+  return DEFAULT_CONTEXT_WINDOW;
+}

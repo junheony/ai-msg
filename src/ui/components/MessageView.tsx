@@ -182,7 +182,7 @@ export const MessageView = memo(function MessageView({ item, cwd }: { item: Chat
       {item.error && !(stopped && item.error === '중단됨') && <div className="error">오류: {item.error}</div>}
       {(item.badge || item.toolCalls.length > 0) && (
         <div className="turn-foot">
-          {item.badge && <TurnBadge badge={item.badge} stopped={stopped} />}
+          {item.badge && <TurnBadge badge={item.badge} stopped={stopped} cacheNote={item.cacheNote ?? null} />}
           <RoleBadge roles={roleSummary(item.toolCalls)} />
         </div>
       )}

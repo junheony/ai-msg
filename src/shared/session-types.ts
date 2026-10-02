@@ -1,5 +1,6 @@
 import type { Seat } from './accounts';
 import type { CodexSandbox, EngineKind } from './models';
+import type { ContextUsage } from './turn-types';
 
 export type SessionEntry = {
   sessionId: string;
@@ -38,5 +39,5 @@ export type ProjectEntry = { cwd: string; name: string; pinned: boolean; session
 
 export type TranscriptMessage =
   | { kind: 'user'; text: string; ts: string | null }
-  | { kind: 'assistant'; text: string; model: string | null; toolCalls: { id: string; name: string; input: unknown }[]; ts: string | null }
+  | { kind: 'assistant'; text: string; model: string | null; toolCalls: { id: string; name: string; input: unknown }[]; ts: string | null; /** The API call's prompt tokens (Claude transcripts): restores the context gauge. */ usage?: ContextUsage }
   | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean; ts: string | null; /** content was cut to the size cap */ truncated?: boolean };

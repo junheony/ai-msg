@@ -1,15 +1,16 @@
 import type { Account, Seat } from '../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
+import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import type { DeckSettings, GeminiStatus, ServerMessage, SessionActivity, TurnBadge, TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
+import { coldWriteNote, latestContext, type ContextInfo } from './context';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
 
 export type ChatItem =
   | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[] }
-  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[] };
+  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null };
 
 /** A subagent's own tool call, shown in its Agent card (nested subagents' calls are flattened into the top card). */
 export type AgentCall = { toolUseId: string; name: string; input: unknown; done: boolean; isError: boolean };
@@ -135,7 +136,9 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
   for (const m of messages) {
     if (m.kind === 'user') items.push({ kind: 'user', text: m.text });
     else if (m.kind === 'assistant') {
-      items.push({ kind: 'assistant', turnId: null, text: m.text, toolCalls: m.toolCalls.map((t) => ({ toolUseId: t.id, name: t.name, input: t.input, result: null, isError: false })), badge: null, streaming: false, error: null, notes: [], attempts: [] });
+      const at = m.ts ? Date.parse(m.ts) : NaN;
+      const ctx: ContextInfo | null = m.usage ? { usage: m.usage, window: contextWindowOf(m.model), at: Number.isNaN(at) ? null : at, model: m.model, account: null } : null;
+      items.push({ kind: 'assistant', turnId: null, text: m.text, toolCalls: m.toolCalls.map((t) => ({ toolUseId: t.id, name: t.name, input: t.input, result: null, isError: false })), badge: null, streaming: false, error: null, notes: [], attempts: [], ...(ctx ? { ctx } : {}) });
     } else {
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
@@ -337,7 +340,11 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const mine = pane.myTurns.includes(msg.turnId);
       const myTurns = mine ? pane.myTurns.filter((t) => t !== msg.turnId) : pane.myTurns;
       if (!belongs(pane, msg)) return myTurns === pane.myTurns ? pane : { ...pane, myTurns };
-      const next = updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패') }));
+      const b = msg.badge;
+      const prev = latestContext(pane.items);
+      const ctx: ContextInfo | null = b?.usage.context ? { usage: b.usage.context, window: b.usage.contextWindow ?? contextWindowOf(b.model), at: Date.now(), model: b.model, account: b.account } : null;
+      const cacheNote = b ? coldWriteNote(b.usage, prev, { account: b.account, model: b.model, reason: b.reason, startedAt: pane.runStartedAt ?? Date.now() }) : null;
+      const next = updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패'), ...(ctx ? { ctx } : {}), ...(cacheNote ? { cacheNote } : {}) }));
       // Only a turn this pane started may re-point the pane's session (id / account).
       const session = mine && next.session ? { ...next.session, sessionId: msg.sessionId || next.session.sessionId, account: msg.badge?.account ?? next.session.account } : next.session;
       // ux-state: a failed (or stopped) turn of this pane pauses its queue instead of firing the next message into it.

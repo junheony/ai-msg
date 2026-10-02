@@ -55,3 +55,14 @@ describe('TurnBadge stopped rendering', () => {
     expect(container.querySelector('.tb-tokens')?.textContent).toContain('입력 1.2k');
   });
 });
+
+describe('TurnBadge cache rewrite note', () => {
+  afterEach(cleanup);
+  it('marks 캐시 쓰기 with the cold-write reason as its tooltip', () => {
+    const item = { ...turn(mk(1200, 340), { text: 'ok' }), cacheNote: '캐시 새로 씀 · 계정 전환' };
+    const { container } = render(<MessageView item={item} />);
+    expect(container.querySelector('.tb-cold')?.getAttribute('title')).toBe('캐시 새로 씀 · 계정 전환');
+    cleanup();
+    expect(render(<MessageView item={turn(mk(1200, 340), { text: 'ok' })} />).container.querySelector('.tb-cold')).toBeNull();
+  });
+});

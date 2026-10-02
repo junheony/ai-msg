@@ -3,7 +3,7 @@ import os from 'node:os';
 import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { accountEnv } from '../../shared/accounts';
 import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
-import { ZERO_USAGE, type TaskStatus, type TaskUpdate, type TaskUsage, type TurnPhase, type TurnUsage } from '../../shared/turn-types';
+import { ZERO_USAGE, contextUsageOf, type ContextUsage, type TaskStatus, type TaskUpdate, type TaskUsage, type TurnPhase, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
 import { parseQuestions, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type RateLimitSignal, type TurnRequest } from './Engine';
@@ -381,6 +381,13 @@ function usageOf(u: unknown): TurnUsage {
   return { inputTokens: n('input_tokens'), outputTokens: n('output_tokens'), cacheReadTokens: n('cache_read_input_tokens'), cacheCreationTokens: n('cache_creation_input_tokens') };
 }
 
+/** result.modelUsage → the largest reported contextWindow (the main model's; subagent models are never larger). */
+function windowFromModelUsage(mu: unknown): { contextWindow?: number } {
+  if (!mu || typeof mu !== 'object') return {};
+  const ws = Object.values(mu as Rec).map((v) => (v && typeof v === 'object' ? (v as Rec).contextWindow : null)).filter((w): w is number => typeof w === 'number' && w > 0);
+  return ws.length ? { contextWindow: Math.max(...ws) } : {};
+}
+
 /** Pure translation of one SDKMessage into zero or more EngineEvents. */
 export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
   switch (m.type) {
@@ -455,7 +462,7 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
         sessionId: m.session_id,
         ok,
         text: ok ? m.result : '',
-        usage: usageOf(m.usage),
+        usage: { ...usageOf(m.usage), ...windowFromModelUsage(m.modelUsage) },
         errorText,
         stderr: null,
         errorKind: null,
@@ -525,6 +532,8 @@ export class ClaudeEngine implements Engine {
     let sessionId: string | null = req.resumeSessionId;
     let errorKind: string | null = null;
     let sawResult = false;
+    /** Prompt tokens of the main conversation's latest API call (the turn's result carries it as the context size). */
+    let lastCtx: ContextUsage | null = null;
     const input = new InputChannel();
     const bg = new BackgroundTracker();
     const meter = new ProgressMeter();
@@ -590,6 +599,7 @@ export class ClaudeEngine implements Engine {
         if (idle && isActivity(m)) { idle = false; clearGrace(); yield { kind: 'continue', cause: 'background' }; }
         const prog = meter.apply(m);
         if (prog) yield { kind: 'progress', ...prog };
+        if (m.type === 'assistant' && m.parent_tool_use_id === null) lastCtx = contextUsageOf((m.message as unknown as Rec).usage) ?? lastCtx;
         if (m.type === 'assistant' && typeof (m as unknown as Rec).error === 'string') errorKind = (m as unknown as Rec).error as string;
         if (this.onCommands) noteCommands(m, req.cwd, this.onCommands);
         let gotResult = false;
@@ -599,8 +609,9 @@ export class ClaudeEngine implements Engine {
             sawResult = true;
             gotResult = true;
             outstanding = Math.max(0, outstanding - 1);
-            yield { ...ev, errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : stderrTail || null };
+            yield { ...ev, ...(lastCtx ? { usage: { ...ev.usage, context: lastCtx } } : {}), errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : stderrTail || null };
             errorKind = null;
+            lastCtx = null;
             meter.reset();
           } else {
             yield ev;

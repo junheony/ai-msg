@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
+import { contextUsageOf } from '../../shared/turn-types';
 
 export type HeadInfo = { cwd: string | null; title: string | null };
 
@@ -187,6 +188,8 @@ class TranscriptBuilder {
         if (b.type === 'text' && typeof b.text === 'string') entry.text += (entry.text ? '\n' : '') + b.text;
         else if (b.type === 'tool_use') entry.toolCalls.push({ id: String(b.id ?? ''), name: String(b.name ?? ''), input: b.input });
       }
+      const usage = contextUsageOf(m.usage);
+      if (usage) entry.usage = usage;
       this.lastAssistantId = id;
     }
   }

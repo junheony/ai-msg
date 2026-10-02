@@ -615,3 +615,29 @@ describe('cross-device prompt sync', () => {
     expect(pane(written).items[0]).toMatchObject({ attachments: [{ id: 'a1', name: 'f.txt', isImage: false }] });
   });
 });
+
+describe('context gauge state', () => {
+  const S = 'sctx';
+  const usage0 = { inputTokens: 1, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 };
+  it('history restores the context from the last assistant usage (window from the model)', () => {
+    const s = play([{ type: 'history', sessionId: S, cwd: '/w', account: 'b', messages: [
+      { kind: 'assistant', text: 'a', model: 'claude-opus-5-5', toolCalls: [], ts: '2026-10-01T00:00:00.000Z', usage: { inputTokens: 1, cacheReadTokens: 2, cacheCreationTokens: 3 } },
+      { kind: 'user', text: 'q', ts: null },
+      { kind: 'assistant', text: 'b', model: 'claude-opus-5-5', toolCalls: [], ts: '2026-10-01T01:00:00.000Z', usage: { inputTokens: 4, cacheReadTokens: 300_000, cacheCreationTokens: 6 } },
+    ], runningTurnId: null }], openedOn(S));
+    const items = pane(s).items as Extract<ChatItem, { kind: 'assistant' }>[];
+    expect(items.at(-1)!.ctx).toEqual({ usage: { inputTokens: 4, cacheReadTokens: 300_000, cacheCreationTokens: 6 }, window: 1_000_000, at: Date.parse('2026-10-01T01:00:00.000Z'), model: 'claude-opus-5-5', account: null });
+  });
+  it('turn_result sets the turn context from badge.usage.context and notes a cold cache write', () => {
+    const s0 = play([{ type: 'history', sessionId: S, cwd: '/w', account: 'b', messages: [
+      { kind: 'assistant', text: 'a', model: 'claude-opus-5-5', toolCalls: [], ts: null, usage: { inputTokens: 1, cacheReadTokens: 2, cacheCreationTokens: 3 } },
+    ], runningTurnId: null }], openedOn(S));
+    const s = play([
+      { type: 'turn_started', turnId: 'tc', sessionId: S, cwd: '/w', account: 'c', model: 'opus', reason: '5h 한도 → C 전환', attempt: 1 },
+      { type: 'turn_result', turnId: 'tc', sessionId: S, cwd: '/w', ok: true, text: 'ok', errorText: null, badge: { account: 'c', model: 'opus', reason: '5h 한도 → C 전환', modelNote: null, usage: { ...usage0, cacheCreationTokens: 120_000, context: { inputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 120_000 }, contextWindow: 1_000_000 } } },
+    ], s0);
+    const last = pane(s).items.at(-1) as Extract<ChatItem, { kind: 'assistant' }>;
+    expect(last.ctx).toMatchObject({ usage: { cacheCreationTokens: 120_000 }, window: 1_000_000, model: 'opus', account: 'c' });
+    expect(last.cacheNote).toBe('캐시 새로 씀 · 계정 전환');
+  });
+});

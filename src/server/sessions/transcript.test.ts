@@ -66,6 +66,19 @@ describe('parseTranscript', () => {
   });
 });
 
+describe('parseTranscript — context usage', () => {
+  it('keeps the latest chunk usage on a merged assistant entry; zero-usage (synthetic) messages carry none', () => {
+    const text = [
+      L({ type: 'assistant', timestamp: 't1', message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'a' }], usage: { input_tokens: 3, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, output_tokens: 1 } } }),
+      L({ type: 'assistant', timestamp: 't1', message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'b' }], usage: { input_tokens: 3, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, output_tokens: 9 } } }),
+      L({ type: 'assistant', timestamp: 't2', message: { id: 'm2', model: '<synthetic>', content: [{ type: 'text', text: 'x' }], usage: { input_tokens: 0, output_tokens: 0 } } }),
+    ].join('\n');
+    const out = parseTranscript(text);
+    expect(out[0]).toMatchObject({ kind: 'assistant', usage: { inputTokens: 3, cacheReadTokens: 100, cacheCreationTokens: 20 } });
+    expect(out[1]).not.toHaveProperty('usage');
+  });
+});
+
 describe('readHead — title', () => {
   const ID = '66666666-6666-4666-8666-666666666666';
   async function big(extra: string[] = []): Promise<string> {
