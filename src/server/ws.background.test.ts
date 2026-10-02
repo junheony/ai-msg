@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -126,7 +126,7 @@ describe('ws: sessions held open for background work', () => {
     expect(await a.next('turn_result', (m) => m.turnId === cont.turnId)).toMatchObject({ ok: true, text: 'found' });
 
     // The process ended → the session is free again: a new send starts a new process.
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     fake = fakeSdk();
     fake.push(sdk.init(S), sdk.result('fresh', S));
     a.send({ type: 'send', sessionId: S, cwd, text: 'again' });
@@ -158,8 +158,7 @@ describe('ws: sessions held open for background work', () => {
     a.send({ type: 'interrupt', turnId: fu.turnId });
     expect(await a.next('turn_background', (m) => m.tasks.length === 0)).toMatchObject({ turnId: fu.turnId });
     expect(await a.next('turn_result', (m) => m.turnId === fu.turnId)).toMatchObject({ ok: false, errorText: '중단됨' });
-    for (let i = 0; i < 50 && wsApi.activeTurns() > 0; i++) await new Promise((r) => setTimeout(r, 10));
-    expect(wsApi.activeTurns()).toBe(0);
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
   });
 });
