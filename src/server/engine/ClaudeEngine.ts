@@ -260,8 +260,8 @@ function taskUpdateOf(r: Rec): TaskUpdate | null {
     case 'task_progress': {
       const usage = taskUsageOf(r.usage);
       return {
+        // Its `description` is the subagent's current activity ("Reading README.md"), not the task's: left out.
         taskId, toolUseId, status: 'running',
-        ...(typeof r.description === 'string' ? { description: r.description } : {}),
         ...(str('subagent_type').subagent_type ? { subagentType: r.subagent_type as string } : {}),
         ...(usage ? { usage } : {}),
         ...(str('last_tool_name').last_tool_name ? { lastToolName: r.last_tool_name as string } : {}),

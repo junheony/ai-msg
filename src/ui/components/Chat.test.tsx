@@ -139,20 +139,17 @@ describe('Composer keyboard (Desktop)', () => {
     expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toContain('Enter 로 보내기 · Shift+Enter 줄바꿈');
   });
 
-  it('an Enter that belongs to an IME composition never sends (isComposing, keyCode 229, right after compositionend)', () => {
+  it('an Enter that belongs to an IME composition never sends (isComposing, keyCode 229, between compositionstart/end)', () => {
     const onSend = renderChat([]);
     type('안녕하세요');
     fireEvent.keyDown(box(), { key: 'Enter', isComposing: true });
     fireEvent.keyDown(box(), { key: 'Enter', keyCode: 229 });
     fireEvent.compositionStart(box());
     fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(onSend).not.toHaveBeenCalled();
+    // Committed: the next real Enter sends the whole text, once.
     fireEvent.compositionEnd(box());
     fireEvent.keyDown(box(), { key: 'Enter' });
-    expect(onSend).not.toHaveBeenCalled();
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 100);
-    fireEvent.keyDown(box(), { key: 'Enter' });
-    vi.useRealTimers();
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenCalledWith('안녕하세요');
   });

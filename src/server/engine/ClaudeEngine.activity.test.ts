@@ -26,7 +26,7 @@ describe('mapSdkMessage: subagent activity', () => {
 
   it('task_started / task_progress / task_updated → task_update; ambient tasks are left out', () => {
     expect(mapSdkMessage(M(sdk.agentStarted()))).toEqual([{ kind: 'task_update', taskId: 'a1', toolUseId: 'toolu_ag', status: 'running', description: 'count files', subagentType: 'general-purpose', taskType: 'local_agent' }]);
-    expect(mapSdkMessage(M(sdk.agentProgress()))).toEqual([{ kind: 'task_update', taskId: 'a1', toolUseId: 'toolu_ag', status: 'running', description: 'count files', usage: { totalTokens: 1200, toolUses: 2, durationMs: 3000 }, lastToolName: 'Bash' }]);
+    expect(mapSdkMessage(M(sdk.agentProgress()))).toEqual([{ kind: 'task_update', taskId: 'a1', toolUseId: 'toolu_ag', status: 'running', usage: { totalTokens: 1200, toolUses: 2, durationMs: 3000 }, lastToolName: 'Bash' }]);
     expect(mapSdkMessage(M({ type: 'system', subtype: 'task_updated', task_id: 'a1', patch: { status: 'killed' } }))).toEqual([{ kind: 'task_update', taskId: 'a1', toolUseId: null, status: 'stopped' }]);
     expect(mapSdkMessage(M({ ...sdk.agentStarted(), ambient: true }))).toEqual([]);
   });

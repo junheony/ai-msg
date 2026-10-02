@@ -270,7 +270,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const log = turn.log;
     if (m.type === 'task_update') {
       const prev = log.tasks.get(m.taskId);
-      log.tasks.set(m.taskId, { msg: prev ? { ...prev.msg, ...m } : m, at: prev?.at ?? Date.now() });
+      // A patch (task_updated) carries no Agent call id; keep the one task_started gave.
+      log.tasks.set(m.taskId, { msg: prev ? { ...prev.msg, ...m, toolUseId: m.toolUseId ?? prev.msg.toolUseId } : m, at: prev?.at ?? Date.now() });
     } else if (m.type === 'task_done' && m.taskId) {
       const prev = log.tasks.get(m.taskId);
       if (prev) prev.msg = { ...prev.msg, status: m.status, ...(m.usage ? { usage: m.usage } : {}) };

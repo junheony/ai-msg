@@ -91,8 +91,6 @@ function useCoarsePointer(): boolean {
   return coarse;
 }
 
-/** Safari fires the Enter that commits a Hangul syllable just after compositionend (isComposing already false). */
-const IME_SETTLE_MS = 30;
 const NO_AGENTS: Record<string, AgentInfo> = {};
 
 export function Chat(p: ChatProps) {
@@ -103,8 +101,8 @@ export function Chat(p: ChatProps) {
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [p.items, p.pending, p.questions]);
   const { addFiles, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
   const coarse = useCoarsePointer();
+  // Set between compositionstart/end: some browsers report isComposing late or not at all.
   const composing = useRef(false);
-  const compositionEnd = useRef(0);
   const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
   const todos = useMemo(() => latestTodos(p.items), [p.items]);
 
@@ -129,7 +127,8 @@ export function Chat(p: ChatProps) {
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
   const agents = p.agents ?? NO_AGENTS;
   const bgLive = !!p.bg;
-  const agentCtx = useMemo<AgentCtx>(() => ({ agents, bgLive }), [agents, bgLive]);
+  const turnActive = p.activeTurnId !== null;
+  const agentCtx = useMemo<AgentCtx>(() => ({ agents, bgLive, active: turnActive }), [agents, bgLive, turnActive]);
   const suggest = useComposerSuggest({ text, setText, textareaRef: taRef, cwd: p.cwd, sessionId: p.sessionId ?? null, commands: effectiveEngine !== 'codex' });
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
@@ -142,8 +141,10 @@ export function Chat(p: ChatProps) {
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggest.onKeyDown(e)) return;
-    // IME: never act on a key that is still part of a composition (Korean/Japanese/Chinese input).
-    const ime = e.nativeEvent.isComposing || e.keyCode === 229 || composing.current || Date.now() - compositionEnd.current < IME_SETTLE_MS;
+    // IME: never act on a key that is still part of a composition (Korean/Japanese/Chinese input). keyCode 229 is
+    // Safari's Enter that commits the syllable (fired after compositionend with isComposing false). Chrome's own Enter
+    // after the commit is a real Enter and sends the full text.
+    const ime = e.nativeEvent.isComposing || e.keyCode === 229 || composing.current;
     if (ime) return;
     if (e.key === 'Escape') {
       if (p.activeTurnId) { e.preventDefault(); p.onInterrupt(); }
@@ -216,7 +217,7 @@ export function Chat(p: ChatProps) {
             onSelect={suggest.track}
             onKeyDown={onKeyDown}
             onCompositionStart={() => { composing.current = true; }}
-            onCompositionEnd={() => { composing.current = false; compositionEnd.current = Date.now(); }}
+            onCompositionEnd={() => { composing.current = false; }}
             onPaste={onPaste}
             placeholder={queueing ? (coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈'}
             aria-label="메시지"

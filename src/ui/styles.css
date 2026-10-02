@@ -860,7 +860,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (max-width: 720px) {
   .activity-bar { flex-wrap: wrap; row-gap: 2px; }
   .turn-status .status-arg { display: none; }
-  .turn-status .status-stop { height: 30px; }
+  /* The composer's stop button sits right below; the row keeps room for the pill. */
+  .turn-status .status-stop { display: none; }
   .bg-pill { height: 32px; }
   .bg-popover { position: fixed; left: 0; right: 0; bottom: 0; width: auto; max-width: none; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); border-radius: 14px 14px 0 0; }
   .bg-list li { min-height: var(--phone-tap); }

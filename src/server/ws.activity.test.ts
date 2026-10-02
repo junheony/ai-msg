@@ -110,6 +110,8 @@ describe('ws: activity on every device', () => {
     fake.push(
       sdk.init(S), sdk.messageStart(), sdk.blockStart('tool_use'), sdk.agentCall(), sdk.messageDelta(40),
       sdk.agentStarted(), sdk.subToolCall(), sdk.subToolResult(), sdk.agentProgress(),
+      // A patch carries no Agent call id; the replay must keep the one task_started gave.
+      { type: 'system', subtype: 'task_updated', task_id: 'a1', patch: { status: 'running' }, session_id: S },
     );
     expect(await a.next('turn_progress', (m) => m.outputTokens === 40)).toMatchObject({ turnId: t.turnId, phase: 'tool' });
     expect(await a.next('task_update', (m) => m.usage !== undefined)).toMatchObject({ taskId: 'a1', toolUseId: 'toolu_ag', usage: { totalTokens: 1200 } });
@@ -123,7 +125,7 @@ describe('ws: activity on every device', () => {
     const h = await late.next('history');
     expect(h).toMatchObject({ runningTurnId: t.turnId });
     expect(h.runningForMs).toBeGreaterThanOrEqual(0);
-    expect(await late.next('task_update')).toMatchObject({ taskId: 'a1', status: 'running', subagentType: 'general-purpose', usage: { totalTokens: 1200 }, sessionId: S });
+    expect(await late.next('task_update')).toMatchObject({ taskId: 'a1', toolUseId: 'toolu_ag', description: 'count files', status: 'running', subagentType: 'general-purpose', usage: { totalTokens: 1200 }, sessionId: S });
     expect(await late.next('sub_tool_call')).toMatchObject({ parentToolUseId: 'toolu_ag', toolUseId: 'sub1', name: 'Bash' });
     expect(await late.next('sub_tool_result')).toMatchObject({ toolUseId: 'sub1', isError: false });
     expect(await late.next('turn_progress')).toMatchObject({ outputTokens: 40 });

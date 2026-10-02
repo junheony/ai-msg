@@ -65,6 +65,7 @@ describe('reducer: live activity (status row, agent cards, sidebar)', () => {
       { type: 'turn_progress', turnId: 't1', ...scope, outputTokens: 120, phase: 'thinking' },
       { type: 'tool_call', turnId: 't1', ...scope, toolUseId: 'ag', name: 'Agent', input: { description: 'count files' } },
       { type: 'task_update', turnId: 't1', ...scope, taskId: 'a1', toolUseId: 'ag', status: 'running', description: 'count files', subagentType: 'general-purpose' },
+      { type: 'task_update', turnId: 't1', ...scope, taskId: 'a1', toolUseId: null, usage: { totalTokens: 300, toolUses: 1, durationMs: 1000 } },
       { type: 'sub_tool_call', turnId: 't1', ...scope, parentToolUseId: 'ag', toolUseId: 'x1', name: 'Bash', input: { command: 'ls' } },
       { type: 'sub_tool_result', turnId: 't1', ...scope, parentToolUseId: 'ag', toolUseId: 'x1', isError: false },
       { type: 'task_done', turnId: 't1', ...scope, status: 'completed', summary: '42', taskId: 'a1', toolUseId: 'ag', usage: { totalTokens: 900, toolUses: 1, durationMs: 4000 } },

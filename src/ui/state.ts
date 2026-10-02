@@ -276,10 +276,13 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       if (!belongs(pane, msg) || msg.turnId !== pane.activeTurnId) return pane;
       return { ...pane, progress: { outputTokens: msg.outputTokens, phase: msg.phase } };
     case 'task_update': {
-      if (!belongs(pane, msg) || !msg.toolUseId) return pane;
+      if (!belongs(pane, msg)) return pane;
+      // A patch (task_updated) has no Agent call id: find the card by task id.
+      const id = msg.toolUseId ?? Object.keys(pane.agents).find((k) => pane.agents[k]!.taskId === msg.taskId);
+      if (!id) return pane;
       const now = Date.now();
-      const fresh = !pane.agents[msg.toolUseId];
-      return withAgent(pane, msg.toolUseId, (a) => ({
+      const fresh = !pane.agents[id];
+      return withAgent(pane, id, (a) => ({
         ...a,
         taskId: msg.taskId,
         ...(msg.status ? { status: msg.status, endedAt: msg.status === 'running' ? null : (a.endedAt ?? now) } : {}),

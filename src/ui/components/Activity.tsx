@@ -93,16 +93,19 @@ export function StatusRow({ startedAt, started, progress, live, onInterrupt }: {
 }
 
 /** Subagent cards read live agent state from here, so MessageView's memo holds while agents update. */
-export type AgentCtx = { agents: Record<string, AgentInfo>; bgLive: boolean };
-export const AgentContext = createContext<AgentCtx>({ agents: {}, bgLive: false });
+export type AgentCtx = { agents: Record<string, AgentInfo>; bgLive: boolean; /** the pane has a turn running */ active: boolean };
+export const AgentContext = createContext<AgentCtx>({ agents: {}, bgLive: false, active: false });
 
 const STATUS_TEXT: Record<TaskStatus, string> = { running: '실행 중', completed: '완료', failed: '실패', stopped: '중단됨' };
 
-/** What an Agent/Task call's card shows: the call's own result wins; live subagent state fills in the rest. */
+/**
+ * What an Agent/Task call's card shows: the call's own result wins; live subagent state fills in the rest.
+ * `live`: the call's item streams, or (opened mid-turn: the call sits in the reloaded transcript) the pane's turn runs.
+ */
 export function agentStatus(call: ToolCallItem, info: AgentInfo | undefined, live: boolean, bgLive: boolean): TaskStatus {
   if (call.isError) return 'failed';
   if (info?.backgrounded) return info.status === 'running' && !live && !bgLive ? 'completed' : info.status;
-  if (call.result === null) return live ? 'running' : 'stopped';
+  if (call.result === null) return info && info.status !== 'running' ? info.status : live ? 'running' : 'stopped';
   return info?.status === 'failed' ? 'failed' : 'completed';
 }
 
@@ -115,9 +118,9 @@ function pretty(v: unknown, max = 4000): string {
 
 /** One Agent/Task call: type and description, live timer/tokens, its last few tool calls, then ✓/✗ and duration. */
 export function AgentCard({ call, live }: { call: ToolCallItem; live: boolean }) {
-  const { agents, bgLive } = useContext(AgentContext);
+  const { agents, bgLive, active } = useContext(AgentContext);
   const info = agents[call.toolUseId];
-  const status = agentStatus(call, info, live, bgLive);
+  const status = agentStatus(call, info, live || (active && !!info), bgLive);
   const running = status === 'running';
   const now = useNow(running && !!info);
   const [all, setAll] = useState(false);

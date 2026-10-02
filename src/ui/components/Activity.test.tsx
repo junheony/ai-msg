@@ -48,7 +48,7 @@ describe('StatusRow', () => {
 describe('AgentCard', () => {
   afterEach(cleanup);
   const renderCard = (agents: Record<string, AgentInfo>, call = agentCall, live = true) => render(
-    <AgentContext.Provider value={{ agents, bgLive: false }}><ToolCalls calls={[{ toolUseId: 'b', name: 'Bash', input: { command: 'pwd' }, result: 'x', isError: false }, call]} live={live} /></AgentContext.Provider>,
+    <AgentContext.Provider value={{ agents, bgLive: false, active: false }}><ToolCalls calls={[{ toolUseId: 'b', name: 'Bash', input: { command: 'pwd' }, result: 'x', isError: false }, call]} live={live} /></AgentContext.Provider>,
   );
 
   it('running: type, description, timer and tokens, the last 5 sub calls with "+N개 더 보기"', () => {
@@ -80,6 +80,12 @@ describe('AgentCard', () => {
     expect(agentStatus({ ...agentCall, isError: true, result: 'x' }, undefined, false, false)).toBe('failed');
     expect(agentStatus(agentCall, undefined, false, false)).toBe('stopped');
     expect(agentStatus(agentCall, info({ backgrounded: true }), false, true)).toBe('running');
+    expect(agentStatus(agentCall, info({ status: 'stopped' }), true, false)).toBe('stopped');
+  });
+
+  it('opened mid-turn: the Agent call sits in the reloaded (not streaming) transcript, yet runs while the pane turn does', () => {
+    render(<AgentContext.Provider value={{ agents: { ag: info() }, bgLive: false, active: true }}><ToolCalls calls={[agentCall]} live={false} /></AgentContext.Provider>);
+    expect(screen.getByTestId('agent-card').classList.contains('running')).toBe(true);
   });
 });
 
