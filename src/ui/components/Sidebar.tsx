@@ -180,6 +180,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <div className="session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
             {which && <div className="session-menu-which muted" data-testid="session-menu-which">{which}</div>}
             {onRename && <button type="button" role="menuitem" onClick={() => startEdit(target, key)}>이름 바꾸기</button>}
+            {/* Touch screens hide the row's pin button (it ate the title's width); pinning lives here too. */}
+            {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {onArchive && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
             {canDelete(target) && <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete?.(target, which); }}>삭제…</button>}
           </div>

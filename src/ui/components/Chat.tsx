@@ -359,7 +359,13 @@ export function Chat(p: ChatProps) {
             </div>
             {/* Send/stop live outside the picker cluster so they never get pushed off a narrow (phone) row. */}
             <div className="composer-send">
-              {p.activeTurnId && queueing && hasDraft && <button type="button" className="send queue-add" onClick={submit} title="대기열에 추가 (Enter)"><span aria-hidden="true">+</span><span className="sr-only">대기열에 추가</span></button>}
+              {/* A labelled "⤵ 대기열" pill, not a round "+": next to the attach "+" a second plus read as another attach button. */}
+              {p.activeTurnId && queueing && hasDraft && (
+                <button type="button" className="queue-add" onClick={submit} title="대기열에 추가 — 지금 턴이 끝나면 보냅니다 (Enter)">
+                  <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4h8M2.5 8h5M2.5 12h4" /><path d="M12 6.5v6.5M9.75 10.75 12 13l2.25-2.25" /></svg>
+                  <span className="queue-add-label" aria-hidden="true">대기열</span><span className="sr-only">대기열에 추가</span>
+                </button>
+              )}
               {p.activeTurnId
                 ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
                 : <button type="button" className="send" onClick={submit} disabled={!canSend} title="보내기 (Enter)"><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}

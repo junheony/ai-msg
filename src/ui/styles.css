@@ -737,7 +737,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .queue-text { min-width: 0; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--fg); font: inherit; padding: 0 4px; cursor: text; }
 .queue-chip input { width: 220px; max-width: 60vw; height: 22px; border: 0; outline: none; background: var(--bg); color: var(--fg); font: inherit; border-radius: 4px; padding: 0 4px; }
 .queue-resume, .queue-clear { font-size: calc(12.5px * var(--font-scale, 1)); }
-.send.queue-add { margin-right: 4px; }
+/* 대기열에 추가: a labelled pill (icon + "대기열"), so it never reads as a second attach "+". Only rendered with a draft mid-turn. */
+.queue-add { display: inline-flex; align-items: center; gap: 4px; height: 30px; margin-right: 4px; padding: 0 10px 0 8px; border-radius: 999px; flex-shrink: 0; white-space: nowrap; color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 600; }
+.queue-add:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.queue-add svg { flex-shrink: 0; }
+@media (max-width: 720px) { .queue-add { min-height: var(--phone-tap); padding: 0 12px 0 10px; } }
 
 /* Attachment thumbnails */
 .chip.attachment.has-thumb { padding-left: 2px; }
@@ -1214,4 +1218,107 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .side-splitter { display: none; }
   .side-wrap { position: fixed; inset: 0; z-index: 60; width: auto !important; padding-top: env(safe-area-inset-top); background: var(--bg-raised); }
   .side-head .icon-btn, .side-head .code-copy { min-width: var(--phone-tap); min-height: var(--phone-tap); }
+}
+
+/* === fold layout: Galaxy Z Fold cover (phone) and unfolded inner screen (tablet, 721–1100px) === */
+/* Everywhere, only when something overflows: the segmented control never breaks a word, the sidebar head wraps
+   instead; a long meta (project · engine · time) gives way before the title; header chips shrink before the title. */
+.view-toggle { flex-shrink: 0; }
+.view-toggle button { white-space: nowrap; }
+.sidebar-head { flex-wrap: wrap; row-gap: 4px; }
+.session-meta { max-width: 50%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chat-head > .chip.perm-badge { max-width: 30%; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-toggle { display: none; }
+.usage-sum { display: none; }
+
+/* Composer: a narrow composer (split column, tablet pane) wraps its pickers onto their own row like the phone does,
+   so [+ 첨부] and send/stop are never pushed off the edge. */
+.composer { container: composer / inline-size; }
+@container composer (max-width: 680px) {
+  .composer-row { flex-wrap: wrap; row-gap: 2px; }
+  .composer-actions { order: -1; flex: 1 1 100%; flex-wrap: wrap; flex-shrink: 1; min-width: 0; margin-left: 0; justify-content: flex-start; }
+  .attachment-bar { flex: 1 1 0; }
+  .composer-send { margin-left: auto; }
+}
+
+/* Sidebar rows on phone + tablet: title on line 1, meta on line 2, the buttons span both lines at the end. */
+@media (max-width: 1100px) {
+  .session-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 2px; }
+  .session-row > .session-title, .session-row > .session-rename { grid-column: 1; grid-row: 1; }
+  .sidebar .session-row > .session-meta { grid-column: 1; grid-row: 2; max-width: none; line-height: 1.35; }
+  .session-row > .row-more-btn { grid-column: 2; grid-row: 1 / span 2; }
+  .session-row > .pin-btn { grid-column: 3; grid-row: 1 / span 2; }
+  .sidebar li { padding-top: 5px; padding-bottom: 5px; }
+}
+/* Touch: no hover to reveal them, so only a compact ⋯ stays (고정 is in its menu); a pinned row keeps its pin. */
+@media (pointer: coarse) {
+  .row-more-btn ~ .pin-btn:not(.on) { display: none; }
+  .row-more-btn { opacity: .6; }
+}
+
+/* Compact usage cards (phone + tablet): one line per seat — mark, letter, the lowest remaining % — over thin bars
+   (5h · 주간 · Fable side by side). Exact numbers and reset times stay in the tap popover. */
+@media (max-width: 1100px) {
+  .usage-card { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto 3px; align-items: center; column-gap: 6px; row-gap: 4px; padding: 5px 8px 6px; border-radius: 9px; cursor: pointer; overflow: hidden; }
+  .usage-dot { top: 4px; right: 4px; width: 5px; height: 5px; }
+  .usage-id { flex-direction: row; justify-content: flex-start; gap: 3px; min-width: 0; height: auto; }
+  .usage-mark.claude { font-size: calc(11px * var(--font-scale, 1)); }
+  .usage-mark.gpt { width: 12px; height: 12px; }
+  .usage-letter { font-size: calc(14px * var(--font-scale, 1)); }
+  .usage-card.gpt .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
+  .usage-sum { display: block; justify-self: end; min-width: 0; overflow: hidden; white-space: nowrap; line-height: 1.2; font-size: calc(13.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
+  .usage-sum small { margin-left: 1px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
+  .usage-sum.warn { color: var(--warn); }
+  .usage-sum.danger { color: var(--danger); }
+  .usage-sum.none { color: var(--faint); font-weight: 500; }
+  .usage-rows { grid-column: 1 / -1; flex-direction: row; gap: 3px; height: 3px; }
+  .usage-row, .usage-row.spent, .usage-row.credits { display: block; flex: 1 1 0; height: 3px; min-width: 0; border-radius: 2px; background: var(--track); overflow: hidden; }
+  .usage-row.credits { display: none; }
+  .usage-row.spent { background: color-mix(in srgb, var(--danger) 60%, transparent); }
+  .usage-label, .usage-value, .usage-pill, .usage-credits { display: none; }
+  .usage-bar { display: block; height: 100%; border-radius: 0; background: transparent; }
+  .usage-bar > i { border-radius: 2px; }
+}
+/* Phone: four cards share ~400px, so the letter alone names the seat. */
+@media (max-width: 720px) { .usage-mark { display: none; } }
+
+/* Phone header: the title keeps priority; the project chip shrinks, the 편집 자동 승인 / 계획 badge steps aside
+   (the composer's permission picker shows the mode; bypass stays as a warning). */
+@media (max-width: 720px) {
+  .chat-head { gap: 6px; }
+  .chat-head > .folder-chip { max-width: 28%; }
+  .chat-head > .chip.sandbox { flex-shrink: 0; max-width: 35%; }
+  .chat-head > .chip.perm-acceptEdits, .chat-head > .chip.perm-plan { display: none; }
+}
+
+/* Tablet / unfolded inner screen: one-line top bar, a font-scale-aware sidebar that can be folded away (☰). */
+@media (min-width: 721px) and (max-width: 1100px) {
+  .topbar { flex-wrap: nowrap; height: 56px; column-gap: 8px; padding: 0 10px 0 8px; }
+  .topbar::after { display: none; }
+  .sidebar-toggle { display: inline-flex; order: 0; width: 36px; height: 36px; font-size: calc(16px * var(--font-scale, 1)); color: var(--fg); }
+  .topbar > .brand { order: 1; height: auto; margin-right: 0; }
+  .topbar > .palette-open { order: 1; }
+  .palette-open kbd { display: none; }
+  .usage-card { order: 2; flex: 1 1 0; max-width: 150px; }
+  .usage-stale { order: 2; }
+  .usage-loading { order: 2; flex: 1 1 auto; padding: 0; }
+  .topbar-end .conn { padding: 0 6px; font-size: 0; gap: 0; }
+  .sidebar { width: min(380px, max(280px, 32vw, calc(255px * var(--font-scale, 1)))); }
+  .chat-head > .folder-chip { max-width: 25%; }
+}
+/* Unfolded and touch: tap targets a step up from desktop's 26–30px, still denser than the phone's 44px. */
+@media (min-width: 721px) and (max-width: 1100px) and (pointer: coarse) {
+  .sidebar li { min-height: 40px; }
+  .row-more-btn, .pin-btn { width: 30px; height: 30px; }
+  .project-head { height: 34px; }
+  .chat-head .icon-btn { min-width: 36px; height: 36px; }
+  .attach, .pick select, .mp-button, .ctx-gauge, .icon-btn.dictate { min-height: 36px; }
+  .send, .queue-add { height: 36px; }
+  .send { width: 36px; }
+}
+
+/* Foldables reporting two side-by-side viewport segments: the sidebar fills the left segment, the panes the right. */
+@media (horizontal-viewport-segments: 2) {
+  .sidebar-wrap:not(.drawer):not(.hidden) .sidebar { width: env(viewport-segment-width 0 0, 320px); }
+  .sidebar-wrap:not(.drawer):not(.hidden) { margin-right: calc(env(viewport-segment-left 1 0, 0px) - env(viewport-segment-right 0 0, 0px)); }
 }

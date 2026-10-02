@@ -104,6 +104,15 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
   };
   const open = pop?.seat === seat;
   const credits = seat === 'gpt' ? creditsText(u.credits) : null;
+  // Compact layouts (phone, tablet) show one number per seat: the least left of 5h / 주간, the windows that gate every model.
+  // Fable only gates Fable (a spent Fable must not read "소진" for the whole seat); its bar still shows.
+  let worst: { name: string; w: UsageWindow; rem: number } | null = null;
+  for (const { key, name } of windows) {
+    if (key === 'fable') continue;
+    const w = u[key];
+    const rem = remainingPct(w);
+    if (w && rem !== null && (!worst || rem < worst.rem)) worst = { name, w, rem };
+  }
   return (
     <div
       data-testid={`account-${seat}`}
@@ -126,6 +135,9 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
         {seat === 'gpt' ? <OpenAIMark /> : <span className="usage-mark claude" aria-hidden="true">✳</span>}
         <span className="usage-letter">{SEAT_LABEL[seat]}</span>
       </div>
+      <span className={`usage-sum ${worst ? levelClass(worst.w) : 'none'}`} aria-hidden="true" title={worst ? `가장 적게 남은 한도 · ${worst.name} ${worst.rem}%` : '잔여량 알 수 없음'}>
+        {!worst ? '—' : worst.rem === 0 ? '소진' : <>{worst.rem}<small>%</small></>}
+      </span>
       <div className="usage-rows">
         {windows.map(({ key, name }) => <WindowRow key={key} seat={seat} name={name} k={key} w={u[key]} now={now} />)}
         {credits && (
