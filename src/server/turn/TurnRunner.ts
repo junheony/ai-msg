@@ -192,8 +192,11 @@ export class TurnRunner {
   /** When each session's last write-back was started (wall clock), and a trailing one due while throttled. */
   private readonly mirrorAt = new Map<string, number>();
   private readonly mirrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Claude sessions with a deck turn running now (its process may write the jsonl at any moment). */
-  private readonly active = new Set<string>();
+  /**
+   * Claude sessions with a deck turn running now (its process may write the jsonl at any moment), counted: an edit-fork
+   * reading its parent and the parent's own turn each hold it, so the first to end does not unmark the other.
+   */
+  private readonly active = new Map<string, number>();
   /** When deck itself last wrote a transcript (its turn's process closed, a move/write-back), by resolved path. In memory only. */
   private readonly deckWroteAt = new Map<string, number>();
 
@@ -583,6 +586,21 @@ export class TurnRunner {
     await this.deps.store.set(next);
     if (forked) say(forked);
     return next;
+  }
+
+  /**
+   * 메시지 편집 갈래 when the parent's account cannot take the turn: the parent is copied into `to`'s profile by the
+   * safe mover (source never written) and the fork made from that copy. The parent itself is not relocated: its stored
+   * state keeps its account and folder.
+   */
+  private async copyForFork(state: ClaudeSessionState, to: Account, say: (message: string) => void): Promise<ClaudeSessionState | null> {
+    const r = await this.move({ sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] });
+    if (!r.ok) {
+      say(`갈래를 ${LABEL[to]} 계정에 만들지 못해 ${LABEL[state.account]} 계정에서 만들어요 (${r.error})`);
+      return null;
+    }
+    say(`${LABEL[state.account]} 계정을 지금 쓸 수 없어 대화를 ${LABEL[to]} 계정에 복사해 갈래를 만들어요 — 원래 대화는 ${LABEL[state.account]} 계정에 그대로 있어요`);
+    return { ...state, account: to, projectDir: r.targetDir };
   }
 
   /**
@@ -977,7 +995,7 @@ export class TurnRunner {
 
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
     const id = state?.sessionId;
-    if (id) this.active.add(id);
+    if (id) this.active.set(id, (this.active.get(id) ?? 0) + 1);
     // Notices before the turn has started would have no turn item to attach to (the UI shows them as an error).
     const early: string[] = [];
     let end: ClaudeSessionState | null = null;
@@ -996,7 +1014,7 @@ export class TurnRunner {
       // The final write-back at close (also after a long hold for background work).
       if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
     } finally {
-      if (id) this.active.delete(id);
+      if (id) { const n = (this.active.get(id) ?? 1) - 1; if (n > 0) this.active.set(id, n); else this.active.delete(id); }
       // The CLI process has closed: whatever it wrote was deck's.
       if (end) this.deckWroteAt.set(path.resolve(end.projectDir, `${end.sessionId}.jsonl`), this.now());
     }
@@ -1018,8 +1036,11 @@ export class TurnRunner {
     const done = () => (forkAt ? null : state);
     const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin };
 
+    // An edit-fork runs on the parent's own account (it is not moved for a branch) unless that account is unusable.
+    const forkFrom = forkAt && state ? state.account : null;
     const first = chooseAccount({
       ...routerBase,
+      ...(forkFrom ? { pinned: forkFrom } : {}),
       current: state?.account ?? null,
       lastTurnAtMs: state?.lastTurnAtMs ?? null,
       justCompacted: state?.justCompacted ?? false,
@@ -1029,15 +1050,15 @@ export class TurnRunner {
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
     const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: shownId(), cwd, message }); };
     // The badge's pin marker: the account is the pinned one because of the pin.
-    let byPin = first.pinned === true;
+    let byPin = first.pinned === true && account === pin;
     if (state && account !== state.account) {
-      const moved = await this.relocate(state, account, (m) => early.push(m));
+      const moved = forkAt ? await this.copyForFork(state, account, (m) => early.push(m)) : await this.relocate(state, account, (m) => early.push(m));
       if (moved) state = moved;
       else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; byPin = false; }
     }
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
     if (state && !forkAt && (await this.openElsewhere(state))) early.push(OPEN_ELSEWHERE_NOTICE);
-    if (pin && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
+    if (pin && !forkFrom && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];
@@ -1125,7 +1146,8 @@ export class TurnRunner {
         if (cand.account === account || tried.includes(cand.account)) break;
         if (!state) { next = cand; break; }
         const sid = shownId();
-        const moved = await this.relocate(state, cand.account, (message) => sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: sid, cwd, message }));
+        const say = (message: string) => sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: sid, cwd, message });
+        const moved = forkAt ? await this.copyForFork(state, cand.account, say) : await this.relocate(state, cand.account, say);
         if (moved) { state = moved; next = cand; break; }
         moveRefused = true;
         tried.push(cand.account);

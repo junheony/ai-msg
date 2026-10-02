@@ -9,6 +9,7 @@ import { StubEngine, okResult } from '../engine/StubEngine';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
+import { writeCooldown } from '../routing/cooldown';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -35,6 +36,15 @@ async function setup(engine: StubEngine, extra: Partial<TurnRunnerDeps> = {}) {
   const msgs: ServerMessage[] = [];
   const sink: TurnSink = { emit: (m) => msgs.push(m), askPermission: async () => 'once', askQuestion: async () => null, signal: new AbortController().signal };
   return { runner, store, msgs, sink, dir, file };
+}
+
+/** Every account known and roomy (the router has real alternatives). */
+async function roomyUsage() {
+  const resetsAt = new Date(NOW + 3_600_000).toISOString();
+  const card = (id: string) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Session (5h)', used: 10, resetsAt }, { label: 'Weekly (7d)', used: 10, resetsAt }, { label: 'Fable (7d)', used: 0, resetsAt }] });
+  const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }), now: () => new Date(NOW) });
+  await u.pollOnce();
+  return u;
 }
 
 const ok = (sid: string): EngineEvent[] => [{ kind: 'init', sessionId: sid, model: 'claude-opus-5-5' }, { kind: 'delta', text: '새 답' }, okResult(sid)];
@@ -68,6 +78,50 @@ describe('TurnRunner · 메시지 편집 갈래', () => {
     expect(eng.calls[0]?.permissionMode).toBe('plan');
     expect(c.store.get(CHILD)).toMatchObject({ mode: 'plan' });
     expect(told).toEqual([[CHILD, 'plan']]);
+  });
+
+  it('forks on the parent’s own account even when the router would pick another; nothing is moved', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const moves: unknown[] = [];
+    const c = await setup(eng, { usage: await roomyUsage(), move: async (o) => { moves.push(o); return { ok: false, error: 'no' }; } });
+    // b looks better (warm, unpinned), but the parent lives on c.
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: null, justCompacted: false, defaultModel: 'sonnet' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ account: 'c', resumeSessionId: PARENT });
+    expect(moves).toEqual([]);
+    expect(c.store.get(PARENT)).toMatchObject({ account: 'c', projectDir: c.dir });
+  });
+
+  it('parent’s account unusable: the parent is copied by the safe mover, not relocated, and a notice says so', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const moves: { targetProjectsRoot: string }[] = [];
+    const c = await setup(eng, { usage: await roomyUsage(), move: async (o) => { moves.push(o); return { ok: true, targetDir: path.join(o.targetProjectsRoot, '-w-one'), targetFile: path.join(o.targetProjectsRoot, '-w-one', o.sessionId + '.jsonl') } as never; } });
+    writeCooldown(path.join(path.dirname(path.dirname(c.dir)), 'cooldown'), 'c', NOW + 3_600_000);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: null, justCompacted: false, defaultModel: 'sonnet' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(moves).toHaveLength(1);
+    expect(eng.calls[0]?.account).not.toBe('c');
+    expect(c.store.get(PARENT)).toMatchObject({ account: 'c', projectDir: c.dir });
+    expect(c.msgs.some((m) => m.type === 'turn_notice' && m.message.includes('복사해 갈래'))).toBe(true);
+  });
+
+  it('a fork ending does not unmark its parent’s running turn', async () => {
+    let release: () => void = () => {};
+    let started: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const parentStarted = new Promise<void>((r) => { started = r; });
+    const eng = new StubEngine(async (_req, call) => {
+      if (call === 0) { started(); await gate; return ok(PARENT); }
+      return ok(CHILD);
+    });
+    const c = await setup(eng);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: null, justCompacted: false, defaultModel: 'sonnet' });
+    const parentRun = c.runner.run({ turnId: 'tp', cwd: '/w/one', sessionId: PARENT, text: 'long' }, c.sink);
+    await parentStarted;
+    await c.runner.run({ turnId: 'tf', cwd: '/w/one', sessionId: null, text: 'x', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(await c.runner.trashSession(PARENT)).toMatchObject({ ok: false, error: expect.stringContaining('실행 중') });
+    release();
+    await parentRun;
   });
 
   it('works for an index-only parent too', async () => {
