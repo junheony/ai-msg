@@ -356,6 +356,9 @@ export function Chat(p: ChatProps) {
                 </span>
               )}
               <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
+            </div>
+            {/* Send/stop live outside the picker cluster so they never get pushed off a narrow (phone) row. */}
+            <div className="composer-send">
               {p.activeTurnId && queueing && hasDraft && <button type="button" className="send queue-add" onClick={submit} title="대기열에 추가 (Enter)"><span aria-hidden="true">+</span><span className="sr-only">대기열에 추가</span></button>}
               {p.activeTurnId
                 ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
