@@ -29,7 +29,7 @@ async function fixture() {
   await fs.writeFile(path.join(dstDir, ID, 'tool-result.txt'), 'big output');
   const old = new Date(Date.now() - 10 * 60_000);
   await fs.utimes(path.join(dstDir, `${ID}.jsonl`), old, old);
-  return { base, srcRoot, dstRoot, srcDir, dstDir, srcFile: path.join(srcDir, `${ID}.jsonl`), dstFile: path.join(dstDir, `${ID}.jsonl`) };
+  return { base, homeRoot: path.join(base, 'a', 'projects'), srcRoot, dstRoot, srcDir, dstDir, srcFile: path.join(srcDir, `${ID}.jsonl`), dstFile: path.join(dstDir, `${ID}.jsonl`) };
 }
 
 async function tree(dir: string): Promise<Record<string, string>> {
@@ -49,8 +49,8 @@ describe('forkDivergedAndMove', () => {
     const dstText = await fs.readFile(f.dstFile, 'utf8');
     const dstComp = await tree(path.join(f.dstDir, ID));
 
-    const r = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, newId: NEW });
-    expect(r).toMatchObject({ ok: true, fork: { sessionId: NEW, title: `first question ${FORK_SUFFIX}` } });
+    const r = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW });
+    expect(r).toMatchObject({ ok: true, fork: { sessionId: NEW, title: `first question ${FORK_SUFFIX}` }, keptAside: [] });
     if (!r.ok) return;
 
     // Backup: the old target copy, byte for byte, under <configDir>/session-backups/<stamp>-<id>/.
@@ -90,7 +90,7 @@ describe('forkDivergedAndMove', () => {
     const dstBefore = await tree(f.dstDir);
     let calls = 0;
     const r = await forkDivergedAndMove({
-      sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, newId: NEW,
+      sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW,
       move: async (o) => { calls++; expect(await fs.stat(f.dstFile).catch(() => null)).toBeNull(); return { ok: false, error: `disk full (${o.sessionId})` }; },
     });
     expect(calls).toBe(1);
@@ -105,7 +105,7 @@ describe('forkDivergedAndMove', () => {
     const f = await fixture();
     const dstBefore = await tree(f.dstDir);
     const r = await forkDivergedAndMove({
-      sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, newId: NEW,
+      sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW,
       move: async () => {
         await fs.rm(`${f.dstFile}.deck-forking`);
         await fs.rm(path.join(f.dstDir, `${ID}.deck-forking`), { recursive: true });
@@ -120,14 +120,14 @@ describe('forkDivergedAndMove', () => {
     const f = await fixture();
     const dstBefore = await tree(f.dstDir);
     await fs.writeFile(path.join(f.dstDir, `${NEW}.jsonl`), 'x\n');
-    const taken = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, newId: NEW });
+    const taken = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW });
     expect(taken).toMatchObject({ ok: false, restored: true, backupDir: null });
     await fs.rm(path.join(f.dstDir, `${NEW}.jsonl`));
     expect(await tree(f.dstDir)).toEqual(dstBefore);
 
     const now = new Date();
     await fs.utimes(f.dstFile, now, now);
-    const busy = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, newId: NEW });
+    const busy = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW });
     expect(busy).toMatchObject({ ok: false, restored: true, backupDir: null, error: expect.stringContaining('열려 있는 것 같음') });
     expect(await tree(f.dstDir)).toEqual(dstBefore);
     expect(await fs.stat(path.join(f.base, 'b', 'session-backups')).catch(() => null)).toBeNull();
@@ -138,7 +138,57 @@ describe('forkDivergedAndMove', () => {
     await fs.writeFile(f.dstFile, user('first question'));
     const old = new Date(Date.now() - 10 * 60_000);
     await fs.utimes(f.dstFile, old, old);
-    const r = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, newId: NEW });
+    const r = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW });
     expect(r).toMatchObject({ ok: false, error: '대상 사본이 갈라지지 않음' });
+  });
+
+  it('refuses the home/protected profile itself before reading anything (also through another spelling)', async () => {
+    const f = await fixture();
+    const dstBefore = await tree(f.dstDir);
+    const r = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [path.join(f.dstRoot, '..', 'projects')], newId: NEW });
+    expect(r).toMatchObject({ ok: false, restored: true, backupDir: null, error: expect.stringContaining('보호 계정') });
+    expect(await tree(f.dstDir)).toEqual(dstBefore);
+    expect(await fs.stat(path.join(f.base, 'b', 'session-backups')).catch(() => null)).toBeNull();
+  });
+
+  it('does not fork when the target is simply ahead (the source is its byte-prefix)', async () => {
+    const f = await fixture();
+    await fs.writeFile(f.dstFile, (await fs.readFile(f.srcFile, 'utf8')) + user('later on B'));
+    const old = new Date(Date.now() - 10 * 60_000);
+    await fs.utimes(f.dstFile, old, old);
+    const dstBefore = await tree(f.dstDir);
+    const r = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW });
+    expect(r).toMatchObject({ ok: false, restored: true, backupDir: null, error: expect.stringContaining('더 최신') });
+    expect(await tree(f.dstDir)).toEqual(dstBefore);
+  });
+
+  it('keeps the set-aside copy (reported) when something appended to it after the backup', async () => {
+    const f = await fixture();
+    const staged = `${f.dstFile}.deck-forking`;
+    const r = await forkDivergedAndMove({
+      sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW,
+      move: async (o) => { await fs.appendFile(staged, user('a writer still holding it')); return moveSession(o); },
+    });
+    expect(r).toMatchObject({ ok: true, keptAside: [staged] });
+    expect(await fs.readFile(staged, 'utf8')).toContain('a writer still holding it');
+    // The companion dir did not change: it is dropped as before.
+    expect(await fs.stat(path.join(f.dstDir, `${ID}.deck-forking`)).catch(() => null)).toBeNull();
+  });
+
+  it('a restored original that grew meanwhile counts as restored, and the fork is cleaned up', async () => {
+    const f = await fixture();
+    const staged = `${f.dstFile}.deck-forking`;
+    const r = await forkDivergedAndMove({
+      sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW,
+      move: async () => {
+        await fs.appendFile(staged, user('appended while set aside'));
+        await fs.appendFile(path.join(f.dstDir, `${ID}.deck-forking`, 'subagents', 'agent-1.jsonl'), line({ sessionId: ID, a: 2 }));
+        await fs.writeFile(path.join(f.dstDir, `${ID}.deck-forking`, 'new-file.txt'), 'x');
+        return { ok: false, error: 'disk full' };
+      },
+    });
+    expect(r).toMatchObject({ ok: false, restored: true, error: 'disk full' });
+    expect(await fs.readFile(f.dstFile, 'utf8')).toContain('appended while set aside');
+    expect((await fs.readdir(f.dstDir)).sort()).toEqual([ID, `${ID}.jsonl`]);
   });
 });

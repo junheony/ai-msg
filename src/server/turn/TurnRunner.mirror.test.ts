@@ -10,7 +10,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { moveSession } from '../sessions/SessionMover';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState } from './SessionState';
-import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { OPEN_ELSEWHERE_NOTICE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const SID = '22222222-2222-4222-8222-222222222222';
@@ -120,7 +120,7 @@ describe('TurnRunner: home (A) write-back', () => {
     expect(c.eng.calls[0]).toMatchObject({ account: 'b' });
     expect(await read(fileOf(c, 'a'))).toBe(desktop);
     const n = notices(c);
-    expect(n.some((m) => m.startsWith('Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다'))).toBe(true);
+    expect(n.some((m) => m.startsWith('다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다'))).toBe(true);
     // A second turn does not repeat the same notice.
     const before = n.length;
     await turn(c, SID, 't2');
@@ -157,7 +157,12 @@ describe('TurnRunner: home (A) write-back', () => {
     expect(c.eng.calls[0]).toMatchObject({ account: 'a' });
     expect(c.seen[0]).toBe(line('one') + line('desktop went on'));
     expect(await read(fileOf(c, 'b'))).toBe(deckCopy);
-    expect(notices(c).some((m) => m.includes('갈라졌습니다') && m.includes('A 계정 사본으로 이어가고'))).toBe(true);
+    // A turn note after turn_started, not an error banner before it.
+    const started = c.msgs.findIndex((m) => m.type === 'turn_started');
+    const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes('갈라졌습니다') && m.message.includes('A 계정 사본으로 이어가고'));
+    expect(started).toBeGreaterThanOrEqual(0);
+    expect(i).toBeGreaterThan(started);
+    expect(notices(c).some((m) => m.includes('Desktop 에서'))).toBe(false);
   });
 
   it('Desktop extended A during a turn that wrote nothing on B: no divergence notice, A untouched, the next turn pulls it', async () => {
@@ -443,10 +448,82 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
   it('warns that the session seems open elsewhere when its copy was written moments ago, not by deck', async () => {
     const c = await setup();
     await put(c, 'b', line('one') + line('went on in deck on B'), NOW - 3_600_000);
-    await put(c, 'c', line('one') + line('the CLI on C, just now')); // mtime = now
+    await put(c, 'c', line('one') + line('the CLI on C, just now'), NOW - 10_000);
     await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
     await turn(c, SID);
     expect(c.eng.calls[0]).toMatchObject({ account: 'b' });
-    expect(notices(c).some((m) => m.includes('B 계정으로 옮겼어요') && m.includes('Desktop 이나 CLI 에서도 열려 있는 것 같아요'))).toBe(true);
+    const started = c.msgs.findIndex((m) => m.type === 'turn_started');
+    expect(c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes('B 계정으로 옮겼어요'))).toBeGreaterThan(started);
+    expect(c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message === OPEN_ELSEWHERE_NOTICE)).toBeGreaterThan(started);
+  });
+
+  it('adopts the target copy when it simply extends ours (no fork, no backup)', async () => {
+    const c = await setup();
+    const cCopy = line('one') + line('two');
+    const bCopy = cCopy + line('went on in the CLI on B');
+    await put(c, 'b', bCopy, NOW - 3_600_000);
+    await put(c, 'c', cCopy, NOW - 7_200_000);
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    // A move that reports divergence for the ahead copy (as a racing reconcile would leave it).
+    const runner = new TurnRunner({ ...c.deps, homeAccount: null, move: async (o) => (path.resolve(o.targetProjectsRoot) === path.resolve(c.roots.b) ? { ok: false, error: 'x', diverged: true } : moveSession(o)) });
+    await runner.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
+    expect(c.eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: SID });
+    expect(c.seen[0]).toBe(bCopy);
+    expect(c.deps.store.get(SID)).toMatchObject({ account: 'b', projectDir: path.join(c.roots.b, DIR) });
+    expect(notices(c)).toContain('다른 계정에 더 최신 대화가 있어 그걸로 이어가요');
+    expect((await fs.readdir(path.join(c.roots.b, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
+    expect(await fs.stat(path.join(c.base, 'session-backups')).catch(() => null)).toBeNull();
+  });
+});
+
+describe('TurnRunner: concurrent-open warning', () => {
+  it('warns right after turn_started when another profile\'s copy was written moments ago (not by deck)', async () => {
+    const c = await setup();
+    const same = line('one') + line('two');
+    await put(c, 'b', same, NOW - 60_000);
+    await put(c, 'a', same, NOW - 30_000); // Desktop touched A's copy after deck's last turn
+    await onB(c);
+    await turn(c, SID);
+    const started = c.msgs.findIndex((m) => m.type === 'turn_started');
+    const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message === OPEN_ELSEWHERE_NOTICE);
+    expect(i).toBeGreaterThan(started);
+    expect(c.msgs.filter((m) => m.type === 'turn_result').every((m) => m.type === 'turn_result' && m.ok)).toBe(true);
+  });
+
+  it('stays quiet for copies deck wrote itself or that were not touched recently', async () => {
+    const c = await setup();
+    await put(c, 'b', line('one'), NOW - 60_000);
+    await put(c, 'a', line('one'), NOW - 3_600_000);
+    await onB(c);
+    await turn(c, SID);
+    expect(notices(c)).not.toContain(OPEN_ELSEWHERE_NOTICE);
+
+  });
+
+  it('a real clock: deck\'s own turn and home write-back just wrote both copies; the next turn does not warn', async () => {
+    const c = await setup();
+    const r = new TurnRunner({ ...c.deps, now: () => Date.now() });
+    await put(c, 'b', line('one'), Date.now() - 60_000);
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'b', projectDir: path.join(c.roots.b, DIR), lastTurnAtMs: Date.now() - 60_000, justCompacted: false, defaultModel: 'opus' });
+    await r.run({ turnId: 't2', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
+    await r.mirrorsSettled();
+    expect(await fs.stat(fileOf(c, 'a')).then(() => true, () => false)).toBe(true);
+    await r.run({ turnId: 't3', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
+    await r.mirrorsSettled();
+    expect(c.eng.calls).toHaveLength(2);
+    expect(notices(c)).not.toContain(OPEN_ELSEWHERE_NOTICE);
+  });
+
+  it('a copy deck itself just refreshed (pulling the longer one in) does not count as another writer', async () => {
+    const c = await setup();
+    const r = new TurnRunner({ ...c.deps, now: () => Date.now() });
+    const old = Date.now() - 600_000;
+    await put(c, 'b', line('one'), old);
+    await put(c, 'a', line('one') + line('Desktop, long ago'), old);
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'b', projectDir: path.join(c.roots.b, DIR), lastTurnAtMs: old, justCompacted: false, defaultModel: 'opus' });
+    await r.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
+    await r.mirrorsSettled();
+    expect(c.seen[0]).toBe(line('one') + line('Desktop, long ago'));
+    expect(notices(c)).not.toContain(OPEN_ELSEWHERE_NOTICE);
   });
 });

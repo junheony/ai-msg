@@ -88,6 +88,9 @@ export type TurnRunnerDeps = {
 
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
+/** Shown right after turn_started when a copy of the session was just written by something other than deck. */
+export const OPEN_ELSEWHERE_NOTICE = '이 대화가 Desktop/CLI 에서도 열려 있는 것 같아요 — 두 곳에서 이어 쓰면 갈라져요';
+
 /** gemini-cli's quota / 429 errors (TerminalQuotaError, RESOURCE_EXHAUSTED); matched on the CLI's result error only. */
 const GEMINI_LIMIT_RE = /\bRESOURCE_EXHAUSTED\b|exhausted your (daily )?quota|\bQuota exceeded\b|"code"\s*:\s*429\b/i;
 
@@ -171,9 +174,16 @@ export class TurnRunner {
   private readonly mirrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Claude sessions with a deck turn running now (its process may write the jsonl at any moment). */
   private readonly active = new Set<string>();
+  /** When deck itself last wrote a transcript (its turn's process closed, a move/write-back), by resolved path. In memory only. */
+  private readonly deckWroteAt = new Map<string, number>();
 
   constructor(private readonly deps: TurnRunnerDeps) {
-    this.move = deps.move ?? moveSession;
+    const move = deps.move ?? moveSession;
+    this.move = async (o) => {
+      const r = await move(o);
+      if (r.ok) this.deckWroteAt.set(path.resolve(r.targetFile), this.now());
+      return r;
+    };
     this.fork = deps.fork ?? forkDivergedAndMove;
     this.now = deps.now ?? (() => Date.now());
     this.maxRetries = deps.maxRetries ?? 2;
@@ -206,10 +216,16 @@ export class TurnRunner {
     while (this.mirrors.size) await Promise.all([...this.mirrors.values()]);
   }
 
-  private noteOnce(sink: TurnSink, turnId: string, state: { sessionId: string; cwd: string }, message: string): void {
-    const key = `${state.sessionId}\0${message}`;
-    if (this.noted.has(key)) return;
+  /** True the first time `message` is seen for this session (a lasting state is told once). */
+  private firstNote(sessionId: string, message: string): boolean {
+    const key = `${sessionId}\0${message}`;
+    if (this.noted.has(key)) return false;
     this.noted.add(key);
+    return true;
+  }
+
+  private noteOnce(sink: TurnSink, turnId: string, state: { sessionId: string; cwd: string }, message: string): void {
+    if (!this.firstNote(state.sessionId, message)) return;
     sink.emit({ type: 'turn_notice', turnId, sessionId: state.sessionId, cwd: state.cwd, message });
   }
 
@@ -335,7 +351,7 @@ export class TurnRunner {
     if (r.diverged && (await isBytePrefix(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return;
     console.error(`deck: home write-back of ${sessionId} to ${LABEL[home]} failed: ${r.error}`);
     this.noteOnce(sink, turnId, st, r.diverged
-      ? `Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — ${LABEL[home]} 계정 사본은 덮어쓰지 않았습니다 (머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다)`
+      ? `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — ${LABEL[home]} 계정 사본은 덮어쓰지 않았습니다 (머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다)`
       : `${LABEL[home]} 계정 사본 갱신 실패(${r.error}) — 대화는 계속됩니다`);
   }
 
@@ -345,7 +361,7 @@ export class TurnRunner {
    * if that copy cannot be written, the session follows it instead. Truly diverged copies are never
    * merged or overwritten: the newest (mtime) is used and the user is told.
    */
-  private async reconcile(state: ClaudeSessionState, sink: TurnSink, turnId: string): Promise<ClaudeSessionState> {
+  private async reconcile(state: ClaudeSessionState, say: (message: string) => void): Promise<ClaudeSessionState> {
     try {
       const copies = await findCopies(this.deps.projectsRoots, state.sessionId, state.projectDir, state.account);
       // No copy where deck left it: nothing to compare against (locateProjectDir / the engine handle that).
@@ -353,7 +369,8 @@ export class TurnRunner {
       const r = (await resolveCopies(copies))!;
       if (r.heads.length > 1) {
         const others = r.heads.filter((h) => h !== r.best).map((h) => LABEL[h.account]).join('·');
-        this.noteOnce(sink, turnId, state, `Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근에 바뀐 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${others} 계정 사본은 그대로 둡니다 (머리글의 '갈라짐' 메뉴에서 맞출 수 있습니다)`);
+        const message = `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근에 바뀐 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${others} 계정 사본은 그대로 둡니다 (머리글의 '갈라짐' 메뉴에서 맞출 수 있습니다)`;
+        if (this.firstNote(state.sessionId, message)) say(message);
       }
       if (r.best.projectDir === state.projectDir) return state;
       if (!r.heads.includes(copies[0]!)) {
@@ -415,16 +432,28 @@ export class TurnRunner {
     let r = await this.move(req);
     let forked: string | null = null;
     if (!r.ok && r.diverged) {
+      // The target copy merely extends ours (it is ahead, not diverged): continue from it, as openInDesktop does.
+      const targetDir = path.join(this.deps.projectsRoots[to], path.basename(state.projectDir));
+      if (await isBytePrefix(path.join(state.projectDir, `${state.sessionId}.jsonl`), path.join(targetDir, `${state.sessionId}.jsonl`)).catch(() => false)) {
+        const next = { ...state, account: to, projectDir: targetDir };
+        await this.deps.store.set(next);
+        say('다른 계정에 더 최신 대화가 있어 그걸로 이어가요');
+        return next;
+      }
       if (to === this.deps.homeAccount || to === this.deps.protectedAccount) {
         say(`${LABEL[to]} 계정(Desktop)에 따로 이어진 대화가 있어 그 사본은 그대로 두었어요 — ${LABEL[state.account]} 계정에서 이어가요`);
         return null;
       }
-      const f = await this.fork({ ...req, move: this.move });
+      const refuse = [this.deps.homeAccount, this.deps.protectedAccount].filter((a): a is Account => !!a).map((a) => this.deps.projectsRoots[a]);
+      const f = await this.fork({ ...req, refuseProjectsRoots: refuse, move: this.move });
       if (f.ok) {
         r = f.move;
         console.log(`deck: ${state.sessionId} 의 ${LABEL[to]} 계정 사본이 갈라져 ${f.fork.sessionId} 로 보관 (백업 ${f.backupDir})`);
         forked = `다른 곳에서 이어진 대화가 있어 '${f.fork.title}'으로 따로 보관하고 ${LABEL[to]} 계정으로 옮겼어요`;
-        if (await this.openElsewhere(state)) forked += ' · 이 대화가 Desktop 이나 CLI 에서도 열려 있는 것 같아요 — 두 곳에서 이어 쓰면 또 갈라져요';
+        if (f.keptAside.length) {
+          console.error(`deck: ${state.sessionId} 의 옮겨 둔 원래 사본이 백업 뒤에 바뀌어 지우지 않음: ${f.keptAside.join(', ')}`);
+          forked += ' (옮기는 사이 바뀐 원래 사본은 지우지 않고 남겨 두었어요)';
+        }
         await this.deps.index.refresh().then(() => this.deps.onIndexChanged?.(), (err: unknown) => console.error('deck: index refresh after fork failed', err instanceof Error ? err.message : err));
       } else {
         console.error(`deck: fork of ${state.sessionId} in ${LABEL[to]} failed (${f.restored ? 'restored' : 'NOT restored'}, backup ${f.backupDir ?? '-'}): ${f.error}`);
@@ -441,12 +470,19 @@ export class TurnRunner {
     return next;
   }
 
-  /** deck's copy was written in the last 2 minutes, after deck's last turn, with no deck process holding it. */
+  /**
+   * A copy of the session (deck's or another profile's) was written in the last 2 minutes, after deck's own
+   * last turn or write, with no deck process holding it: Desktop or a CLI probably has it open. Stat only.
+   */
   private async openElsewhere(state: ClaudeSessionState): Promise<boolean> {
     if (this.live.has(state.sessionId)) return false;
-    const st = await fs.stat(path.join(state.projectDir, `${state.sessionId}.jsonl`)).catch(() => null);
-    if (!st) return false;
-    return Date.now() - st.mtimeMs < 120_000 && st.mtimeMs > (state.lastTurnAtMs ?? 0) + 5_000;
+    const now = this.now();
+    const copies = await findCopies(this.deps.projectsRoots, state.sessionId, state.projectDir, state.account).catch(() => []);
+    // A clearly future mtime is clock skew, not a writer.
+    return copies.some((c) => {
+      const deckAt = Math.max(state.lastTurnAtMs ?? 0, this.deckWroteAt.get(path.resolve(c.file)) ?? 0);
+      return now - c.mtimeMs < 120_000 && now - c.mtimeMs > -5_000 && c.mtimeMs > deckAt + 5_000;
+    });
   }
 
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
@@ -795,15 +831,17 @@ export class TurnRunner {
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
     const id = state?.sessionId;
     if (id) this.active.add(id);
+    // Notices before the turn has started would have no turn item to attach to (the UI shows them as an error).
+    const early: string[] = [];
+    let end: ClaudeSessionState | null = null;
     try {
       if (state) {
         // A write-back still copying this session finishes first (it must not see the next turn's writes).
         await this.mirrors.get(state.sessionId);
-        state = await this.reconcile(state, sink, p.turnId);
+        state = await this.reconcile(state, (m) => early.push(m));
       }
-      let end: ClaudeSessionState | null;
       try {
-        end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, newSessionModel);
+        end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, early, newSessionModel);
       } finally {
         this.inputs.delete(p.turnId);
       }
@@ -811,11 +849,13 @@ export class TurnRunner {
       if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
     } finally {
       if (id) this.active.delete(id);
+      // The CLI process has closed: whatever it wrote was deck's.
+      if (end) this.deckWroteAt.set(path.resolve(end.projectDir, `${end.sessionId}.jsonl`), this.now());
     }
   }
 
   /** The Claude turn proper; resolves (after any background follow-through) with the session's final state. */
-  private async runClaudeTurn(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<ClaudeSessionState | null> {
+  private async runClaudeTurn(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], early: string[], newSessionModel?: ClaudeModel): Promise<ClaudeSessionState | null> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const sessionDefault = state?.defaultModel ?? newSessionModel ?? DEFAULT_MODEL;
@@ -834,14 +874,14 @@ export class TurnRunner {
     });
     let account = first.account;
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
-    // Notices before the turn has started would have no turn item to attach to (the UI shows them as an error).
-    const early: string[] = [];
     const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, message }); };
     if (state && account !== state.account) {
       const moved = await this.relocate(state, account, (m) => early.push(m));
       if (moved) state = moved;
       else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; }
     }
+    // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
+    if (state && (await this.openElsewhere(state))) early.push(OPEN_ELSEWHERE_NOTICE);
 
     const tried: Account[] = [];
     const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])], acceptEdits: state?.mode === 'acceptEdits' };

@@ -9,7 +9,11 @@ import { readHead } from './transcript';
 export const FORK_SUFFIX = '(갈라진 사본)';
 
 export type ForkResult =
-  | { ok: true; move: Extract<MoveResult, { ok: true }>; fork: { sessionId: string; title: string; file: string }; backupDir: string }
+  | {
+    ok: true; move: Extract<MoveResult, { ok: true }>; fork: { sessionId: string; title: string; file: string }; backupDir: string;
+    /** Set-aside copies that changed after the backup (something still wrote them): kept, not deleted. */
+    keptAside: string[];
+  }
   | { ok: false; error: string; restored: boolean; backupDir: string | null };
 
 async function exists(p: string): Promise<boolean> {
@@ -20,6 +24,15 @@ async function exists(p: string): Promise<boolean> {
 async function sameFile(a: string, b: string): Promise<boolean> {
   const [sa, sb] = await Promise.all([fs.stat(a), fs.stat(b)]);
   return sa.size === sb.size && (await sha256File(a)) === (await sha256File(b));
+}
+
+/** Every file of `prefixTree` is in `fullTree` and a byte-prefix of it there (append-only companions; extra files allowed). */
+async function treeContains(prefixTree: string, fullTree: string): Promise<boolean> {
+  for (const rel of await listTree(prefixTree)) {
+    const full = path.join(fullTree, rel);
+    if (!(await exists(full)) || !(await isBytePrefix(path.join(prefixTree, rel), full))) return false;
+  }
+  return true;
 }
 
 /** Same set of files, each with the same bytes. */
@@ -66,10 +79,12 @@ function rewriteSessionId(text: string, oldId: string, newId: string): string {
  *  4. only after the move succeeded drop the set-aside copy (the backup stays).
  * Any failure puts the original back (from the set-aside copy, else from the backup) and removes the fork.
  * The source copy is only ever read (by `move`). A target copy written within `quietMs` is left alone —
- * something (Desktop/CLI) probably still has it open.
+ * something (Desktop/CLI) probably still has it open. A target that merely extends the source (it is ahead,
+ * not diverged) is refused — the caller adopts it. `refuseProjectsRoots`: profiles never forked in
+ * (the home/protected one, Desktop's) — refused before anything is read.
  */
 export async function forkDivergedAndMove(opts: {
-  sessionId: string; sourceProjectDir: string; targetProjectsRoot: string;
+  sessionId: string; sourceProjectDir: string; targetProjectsRoot: string; refuseProjectsRoots: string[];
   move?: typeof moveSession; backupRoot?: string; quietMs?: number; nowMs?: number; newId?: string;
 }): Promise<ForkResult> {
   const id = opts.sessionId;
@@ -93,10 +108,15 @@ export async function forkDivergedAndMove(opts: {
   let touched = false;
   const created: string[] = [];
   try {
+    const real = (p: string) => fs.realpath(p).catch(() => path.resolve(p));
+    const targetRoot = await real(opts.targetProjectsRoot);
+    for (const r of opts.refuseProjectsRoots) if ((await real(r)) === targetRoot) throw new Error('보호 계정(Desktop)의 사본은 갈라 보관하지 않음');
     if (path.resolve(targetDir) === path.resolve(opts.sourceProjectDir)) throw new Error('원본과 대상이 같은 곳');
     const st = await fs.stat(tFile);
     if (nowMs - st.mtimeMs < (opts.quietMs ?? 120_000)) throw new Error('대상 사본이 방금 전에도 바뀌어 다른 곳(Desktop/CLI)에서 열려 있는 것 같음');
-    if (await isBytePrefix(tFile, path.join(opts.sourceProjectDir, `${id}.jsonl`))) throw new Error('대상 사본이 갈라지지 않음');
+    const sFile = path.join(opts.sourceProjectDir, `${id}.jsonl`);
+    if (await isBytePrefix(tFile, sFile)) throw new Error('대상 사본이 갈라지지 않음');
+    if (await isBytePrefix(sFile, tFile)) throw new Error('대상 사본이 더 최신(원본이 그 앞부분)');
     for (const p of [nFile, nComp, nFileTmp, nCompTmp, stagedFile, stagedComp]) if (await exists(p)) throw new Error(`이미 있음: ${p}`);
     hadComp = await exists(tComp);
 
@@ -155,9 +175,15 @@ export async function forkDivergedAndMove(opts: {
     // 4. Retry the move once.
     const r = await move({ sessionId: id, sourceProjectDir: opts.sourceProjectDir, targetProjectsRoot: opts.targetProjectsRoot });
     if (!r.ok) throw new Error(r.error);
-    await fs.rm(stagedFile, { force: true }).catch(() => undefined);
-    await fs.rm(stagedComp, { recursive: true, force: true }).catch(() => undefined);
-    return { ok: true, move: r, fork: { sessionId: newId, title, file: nFile }, backupDir };
+    // The set-aside copy goes only if it still is exactly the backup (a writer holding it open may have appended).
+    const keptAside: string[] = [];
+    if (await sameFile(stagedFile, bFile).catch(() => false)) await fs.rm(stagedFile, { force: true }).catch(() => undefined);
+    else if (await exists(stagedFile)) keptAside.push(stagedFile);
+    if (hadComp) {
+      if (await sameTree(stagedComp, bComp).catch(() => false)) await fs.rm(stagedComp, { recursive: true, force: true }).catch(() => undefined);
+      else if (await exists(stagedComp)) keptAside.push(stagedComp);
+    }
+    return { ok: true, move: r, fork: { sessionId: newId, title, file: nFile }, backupDir, keptAside };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     const restored = await restore().catch(() => false);
@@ -183,9 +209,10 @@ export async function forkDivergedAndMove(opts: {
     } else if (hadComp && !(await exists(tComp)) && bComp && (await exists(bComp))) {
       await fs.cp(bComp, tComp, { recursive: true, errorOnExist: true, force: false });
     }
+    // Restored = the original's bytes are back; appended to since (a writer still holding it) counts too.
     if (bFile && (await exists(bFile))) {
-      good = good && (await exists(tFile)) && (await sameFile(tFile, bFile));
-      if (hadComp) good = good && (await exists(tComp)) && (await sameTree(tComp, bComp));
+      good = good && (await exists(tFile)) && (await isBytePrefix(bFile, tFile));
+      if (hadComp) good = good && (await exists(tComp)) && (await treeContains(bComp, tComp));
     }
     // The fork is ours and the backup holds its bytes; only remove it once the original is back.
     if (good) for (const p of created.reverse()) await fs.rm(p, { recursive: true, force: true }).catch(() => undefined);
