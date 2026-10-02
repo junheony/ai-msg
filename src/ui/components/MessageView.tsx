@@ -60,7 +60,7 @@ let enhancing: Promise<void> | null = null;
 function loadEnhance(): Promise<void> {
   return (enhancing ??= import('../mdEnhance').then((m) => { enhance = m; }, () => { enhancing = null; }));
 }
-const NEEDS_ENHANCE = /```|~~~|\$/;
+const NEEDS_ENHANCE = /```|~~~|\$\$/;
 
 /** Memoized on its text: parsing is the expensive part, and a streaming turn re-creates its item on every delta. */
 const Markdown = memo(function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {

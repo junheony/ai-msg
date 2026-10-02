@@ -35,8 +35,21 @@ describe('thinking render', () => {
   });
 
   it('renders math with KaTeX', async () => {
-    const { container } = render(<MessageView item={{ ...base, text: '식 $x^2$ 입니다' }} />);
+    const { container } = render(<MessageView item={{ ...base, text: '식 $$x^2$$ 입니다' }} />);
     await waitFor(() => expect(container.querySelector('.katex')).not.toBeNull());
+  });
+});
+
+describe('dollar signs', () => {
+  afterEach(cleanup);
+  it('prices and tickers stay plain text', async () => {
+    for (const text of ['$5 and $10', '$BTC $ETH']) {
+      const { container } = render(<MessageView item={{ ...base, text }} />);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(container.querySelector('.katex')).toBeNull();
+      expect(container.querySelector('.markdown')?.textContent).toBe(text);
+      cleanup();
+    }
   });
 });
 
