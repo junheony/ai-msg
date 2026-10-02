@@ -1011,3 +1011,30 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .share-item:disabled { color: var(--faint); }
 .share-toast { position: absolute; right: 0; top: calc(100% + 6px); z-index: 41; padding: 4px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); color: var(--fg); font-size: 12.5px; white-space: nowrap; pointer-events: none; }
 @media (max-width: 720px) { .share-item { min-height: var(--phone-tap); } }
+
+/* Thinking disclosure (collapsed above the reply). */
+.thinking, .thinking-line { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.thinking > summary { cursor: pointer; user-select: none; width: fit-content; }
+.thinking > summary:hover { color: var(--fg); }
+.thinking[open] > summary { margin-bottom: 6px; }
+.thinking-body { padding-left: 12px; border-left: 2px solid var(--line); color: var(--muted); font-size: 13px; }
+.thinking-body.markdown p { margin: 0 0 8px; }
+
+/* Syntax highlighting (highlight.js classes): dark default, light by OS preference, [data-theme] overrides both. */
+:root { --hl-fg: #e6edf3; --hl-comment: #8b949e; --hl-keyword: #ff7b72; --hl-string: #a5d6ff; --hl-number: #79c0ff; --hl-title: #d2a8ff; --hl-built: #ffa657; --hl-tag: #7ee787; --hl-add: #7ee787; --hl-del: #ffa198; }
+@media (prefers-color-scheme: light) { :root:not([data-theme='dark']) { --hl-fg: #24292f; --hl-comment: #6e7781; --hl-keyword: #cf222e; --hl-string: #0a3069; --hl-number: #0550ae; --hl-title: #8250df; --hl-built: #953800; --hl-tag: #116329; --hl-add: #116329; --hl-del: #82071e; } }
+:root[data-theme='dark'] { --hl-fg: #e6edf3; --hl-comment: #8b949e; --hl-keyword: #ff7b72; --hl-string: #a5d6ff; --hl-number: #79c0ff; --hl-title: #d2a8ff; --hl-built: #ffa657; --hl-tag: #7ee787; --hl-add: #7ee787; --hl-del: #ffa198; }
+:root[data-theme='light'] { --hl-fg: #24292f; --hl-comment: #6e7781; --hl-keyword: #cf222e; --hl-string: #0a3069; --hl-number: #0550ae; --hl-title: #8250df; --hl-built: #953800; --hl-tag: #116329; --hl-add: #116329; --hl-del: #82071e; }
+.code-block pre code.hljs { color: var(--hl-fg); }
+.hljs-comment, .hljs-quote { color: var(--hl-comment); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-meta .hljs-keyword { color: var(--hl-keyword); }
+.hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--hl-string); }
+.hljs-number, .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-selector-id, .hljs-selector-class { color: var(--hl-number); }
+.hljs-title, .hljs-section, .hljs-type, .hljs-class .hljs-title, .hljs-function .hljs-title { color: var(--hl-title); }
+.hljs-built_in, .hljs-symbol, .hljs-bullet, .hljs-link, .hljs-params { color: var(--hl-built); }
+.hljs-name, .hljs-tag, .hljs-selector-attr, .hljs-selector-pseudo { color: var(--hl-tag); }
+.hljs-addition { color: var(--hl-add); }
+.hljs-deletion { color: var(--hl-del); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+.markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }

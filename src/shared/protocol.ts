@@ -94,6 +94,8 @@ export type ServerMessage =
   | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number }
   | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string; /** The user message that started this turn (absent for a background continuation); the sending pane already shows it. */ prompt?: TurnPrompt } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)
+  /** Claude thinking content so far (chunks; empty text = a block started); `redacted` = an encrypted block. */
+  | ({ type: 'thinking'; text: string; redacted?: boolean } & TurnScope)
   | ({ type: 'tool_call'; toolUseId: string; name: string; input: unknown } & TurnScope)
   | ({ type: 'tool_result'; toolUseId: string; content: string; isError: boolean } & TurnScope)
   | ({

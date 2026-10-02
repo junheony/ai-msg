@@ -1,4 +1,4 @@
-import { createContext, isValidElement, memo, useContext, useState, type ReactNode } from 'react';
+import { createContext, isValidElement, memo, useContext, useEffect, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
@@ -53,10 +53,43 @@ const MD_COMPONENTS: Components = {
 };
 const MD_PLUGINS = [remarkGfm];
 
+type Enhance = typeof import('../mdEnhance');
+let enhance: Enhance | null = null;
+let enhancing: Promise<void> | null = null;
+/** Highlighting + math are a separate chunk, fetched the first time a message has a code fence or a `$`. */
+function loadEnhance(): Promise<void> {
+  return (enhancing ??= import('../mdEnhance').then((m) => { enhance = m; }, () => { enhancing = null; }));
+}
+const NEEDS_ENHANCE = /```|~~~|\$/;
+
 /** Memoized on its text: parsing is the expensive part, and a streaming turn re-creates its item on every delta. */
 const Markdown = memo(function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {
-  return <div className={className}><ReactMarkdown components={MD_COMPONENTS} remarkPlugins={MD_PLUGINS}>{text}</ReactMarkdown></div>;
+  const wants = NEEDS_ENHANCE.test(text);
+  const [, ready] = useState(enhance !== null);
+  useEffect(() => {
+    if (wants && !enhance) void loadEnhance().then(() => ready(enhance !== null));
+  }, [wants, ready]);
+  const on = wants && enhance !== null;
+  return (
+    <div className={className}>
+      <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={on ? [...MD_PLUGINS, ...enhance!.REMARK_ENHANCE] : MD_PLUGINS} rehypePlugins={on ? enhance!.REHYPE_ENHANCE : undefined}>{text}</ReactMarkdown>
+    </div>
+  );
 });
+
+/** Claude's thinking as a collapsed disclosure above the reply (Desktop: "N초 동안 생각함"). */
+function Thinking({ t, streaming }: { t: NonNullable<Extract<ChatItem, { kind: 'assistant' }>['thinking']>; streaming: boolean }) {
+  const secs = t.ms === null ? null : Math.max(1, Math.round(t.ms / 1000));
+  const label = t.ms === null && streaming ? '생각하는 중…' : secs === null ? '생각 과정' : `${secs}초 동안 생각함`;
+  const body = t.text.trim();
+  if (!body && !t.redacted) return <div className="thinking-line" data-testid="thinking">{label}</div>;
+  return (
+    <details className="thinking" data-testid="thinking">
+      <summary>{label}</summary>
+      {body ? <Markdown text={body} className="markdown thinking-body" /> : <div className="thinking-body muted">(암호화된 생각)</div>}
+    </details>
+  );
+}
 
 const NOTICE_ICON: Record<InjectedNotice['kind'], string> = { task: '⚙', command: '›_', output: '›_', hook: '↪' };
 
@@ -165,6 +198,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}`}>
       {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
       {item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
+      {item.thinking && <Thinking t={item.thinking} streaming={item.streaming} />}
       <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} />
       {item.text && <Markdown text={item.text} />}
       {item.streaming && <span className="cursor">▍</span>}

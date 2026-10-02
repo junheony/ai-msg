@@ -44,5 +44,5 @@ export type ProjectEntry = { cwd: string; name: string; pinned: boolean; session
 
 export type TranscriptMessage =
   | { kind: 'user'; text: string; ts: string | null }
-  | { kind: 'assistant'; text: string; model: string | null; toolCalls: { id: string; name: string; input: unknown }[]; ts: string | null; /** The API call's prompt tokens (Claude transcripts): restores the context gauge. */ usage?: ContextUsage }
+  | { kind: 'assistant'; text: string; model: string | null; toolCalls: { id: string; name: string; input: unknown }[]; ts: string | null; /** Claude transcripts: the turn's thinking text, and whether an encrypted (redacted) block was in it. */ thinking?: string; thinkingRedacted?: boolean; /** The API call's prompt tokens (Claude transcripts): restores the context gauge. */ usage?: ContextUsage }
   | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean; ts: string | null; /** content was cut to the size cap */ truncated?: boolean };

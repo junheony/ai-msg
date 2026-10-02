@@ -59,7 +59,7 @@ describe('parseTranscript', () => {
     ].join('\n');
     expect(parseTranscript(text)).toEqual([
       { kind: 'user', text: 'run ls', ts: 't1' },
-      { kind: 'assistant', text: 'Sure.', model: 'claude-opus-5-5', toolCalls: [{ id: 'tu1', name: 'Bash', input: { command: 'ls' } }], ts: 't2' },
+      { kind: 'assistant', text: 'Sure.', model: 'claude-opus-5-5', toolCalls: [{ id: 'tu1', name: 'Bash', input: { command: 'ls' } }], ts: 't2', thinking: 'hm' },
       { kind: 'tool_result', toolUseId: 'tu1', content: 'a.txt', isError: false, ts: 't3' },
       { kind: 'assistant', text: 'Done.', model: 'claude-opus-5-5', toolCalls: [], ts: 't4' },
     ]);
