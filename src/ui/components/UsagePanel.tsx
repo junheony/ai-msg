@@ -94,9 +94,9 @@ function WindowRow({ seat, name, k, w, now }: { seat: Seat; name: string; k: Win
 }
 
 /** One seat as a small card: mark + letter, then aligned rows; reset times on hover (title) and in a tap popover. */
-function SeatCard({ seat, u, windows, current, now, pop, onPop, hint }: {
+function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHistory }: {
   seat: Seat; u: AccountUsage; windows: { key: WindowKey; name: string }[]; current: boolean; now: number;
-  pop: Pop | null; onPop: (p: Pop | null) => void; hint?: string;
+  pop: Pop | null; onPop: (p: Pop | null) => void; hint?: string; onOpenHistory?: () => void;
 }) {
   const at = (el: HTMLElement, pinned: boolean): Pop => {
     const r = el.getBoundingClientRect();
@@ -150,13 +150,18 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint }: {
             );
           })}
           {credits && <div className="usage-pop-row"><span>크레딧</span><b>{credits}</b></div>}
+          {onOpenHistory && pop.pinned && (
+            <div className="usage-pop-row link">
+              <button type="button" onClick={(e) => { e.stopPropagation(); onPop(null); onOpenHistory(); }}>토큰 사용량 기록 보기 ›</button>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export function UsagePanel({ usage, current, now: fixedNow }: { usage: UsageSnapshot | null; current: Seat | null; now?: number }) {
+export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory }: { usage: UsageSnapshot | null; current: Seat | null; now?: number; onOpenHistory?: () => void }) {
   const now = useClock(fixedNow);
   const [pop, setPop] = useState<Pop | null>(null);
   useEffect(() => {
@@ -171,10 +176,10 @@ export function UsagePanel({ usage, current, now: fixedNow }: { usage: UsageSnap
   return (
     <div className="usage-panel">
       {ACCOUNTS.map((a) => (
-        <SeatCard key={a} seat={a} u={usage.accounts[a]} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} />
+        <SeatCard key={a} seat={a} u={usage.accounts[a]} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />
       ))}
       <SeatCard
-        seat="gpt" u={gpt} windows={GPT_WINDOWS} current={current === 'gpt'} now={now} pop={pop} onPop={setPop}
+        seat="gpt" u={gpt} windows={GPT_WINDOWS} current={current === 'gpt'} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory}
         {...(gpt.status === 'down' ? { hint: 'GPT 잔여량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {})}
       />
       {!usage.deckReachable && <span className="usage-stale" title="usage-deck 에 닿지 않아 마지막 값을 보여 줍니다">오래된 값</span>}
