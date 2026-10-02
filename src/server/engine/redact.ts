@@ -22,6 +22,10 @@ export function redactSecrets(s: string): string {
 
 // Chars a token-shaped match can run through without a break (union of the patterns' word classes).
 const RUN_CHAR = /[A-Za-z0-9._~+/=-]/;
+const TRAILING_RUN = /[A-Za-z0-9._~+/=-]+$/;
+const LEADING_RUN = /^[A-Za-z0-9._~+/=-]+/;
+// Most text StreamRedactor holds back; every pattern's value is long caught well before this.
+const HELD_MAX = 4096;
 // A text ending in one of these may still become a match once more text arrives: a key/auth word, its
 // separator, or a value shorter than the pattern's minimum.
 const OPENERS: RegExp[] = [
@@ -37,28 +41,52 @@ const OPENERS: RegExp[] = [
  */
 export class StreamRedactor {
   private pending = '';
+  // after a collapsed over-cap run: the rest of that run is already covered by its marker
+  private swallow = false;
 
   push(chunk: string): string {
+    if (this.swallow) {
+      chunk = chunk.replace(LEADING_RUN, '');
+      if (!chunk) return '';
+      this.swallow = false;
+    }
     const buf = this.pending + chunk;
     const cut = safeCut(buf);
     this.pending = buf.slice(cut);
-    return cut ? redactSecrets(buf.slice(0, cut)) : '';
+    const out = cut ? redactSecrets(buf.slice(0, cut)) : '';
+    return this.pending.length > HELD_MAX ? out + this.collapse() : out;
   }
 
   flush(): string {
     const rest = this.pending;
     this.pending = '';
+    this.swallow = false;
     return rest ? redactSecrets(rest) : '';
+  }
+
+  /**
+   * The held text outgrew HELD_MAX (an unbroken run, or a match still growing): stop holding it. A trailing
+   * run that long is token-shaped, so it becomes one marker and the rest of it is dropped as it arrives;
+   * otherwise the held text goes out redacted as it stands.
+   */
+  private collapse(): string {
+    const held = this.pending;
+    this.pending = '';
+    const run = TRAILING_RUN.exec(held)?.[0] ?? '';
+    if (!run) return redactSecrets(held);
+    this.swallow = true;
+    return redactSecrets(held.slice(0, held.length - run.length)) + '[redacted]';
   }
 }
 
 /** The largest i such that buf[0:i] redacts the same whatever follows. */
 function safeCut(buf: string): number {
-  const spans: [number, number][] = [];
-  for (const re of TOKEN_PATTERNS) for (const m of buf.matchAll(new RegExp(re.source, re.flags))) spans.push([m.index, m.index + m[0].length]);
+  let spans: [number, number][] | null = null;
   for (let i = buf.length; i > 0; i--) {
     // never inside a run (a word may grow into a key / hex / long-run match); the end counts as "may continue"
     if (RUN_CHAR.test(buf[i - 1]!) && (i === buf.length || RUN_CHAR.test(buf[i]!))) continue;
+    // matches are only needed once there is a candidate cut (a pure run has none: no regex rescan per delta)
+    spans ??= TOKEN_PATTERNS.flatMap((re) => [...buf.matchAll(new RegExp(re.source, re.flags))].map((m): [number, number] => [m.index, m.index + m[0].length]));
     if (spans.some(([s, e]) => s < i && (e > i || e === buf.length))) continue;
     const head = buf.slice(0, i);
     if (OPENERS.some((re) => re.test(head))) continue;

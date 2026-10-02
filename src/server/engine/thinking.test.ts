@@ -94,4 +94,34 @@ describe('thinking: streaming redaction across chunk boundaries', () => {
     expect(r.flush()).toBe('used');
     expect(r.flush()).toBe('');
   });
+
+  it('a long unbroken run in tiny deltas does not stall: 4000 × "a-" well under 1s, collapsed past the cap', () => {
+    const t0 = performance.now();
+    const { joined } = run([...Array.from({ length: 4000 }, () => 'a-'), ' 그리고 끝']);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    // longer than the held-text cap: the run is collapsed to the marker and the stream carries on
+    expect(joined).toBe('[redacted] 그리고 끝');
+  });
+
+  it('under the cap, many tiny deltas stay fast and equal redaction of the whole text', () => {
+    const runText = 'a-'.repeat(1500);
+    const prose = Array.from({ length: 400 }, (_, i) => `word${i} ${i % 50 === 0 ? SECRETS[i % SECRETS.length] : 'x'} `).join('');
+    for (const whole of [runText, prose, `${runText} ${prose}`]) {
+      const t0 = performance.now();
+      const chunks = whole.match(/[\s\S]{1,2}/g)!;
+      expect(run(chunks).joined).toBe(redactSecrets(whole));
+      expect(performance.now() - t0).toBeLessThan(1000);
+    }
+  });
+
+  it('a secret run longer than the cap leaks no fragment, whatever the delta size', () => {
+    const hex = 'deadbeef0123456789'.repeat(400); // 7200 hex-ish chars, one run
+    for (const k of [1, 7, 333]) {
+      const whole = `키: ${hex} 다음 줄`;
+      const chunks: string[] = [];
+      for (let i = 0; i < whole.length; i += k) chunks.push(whole.slice(i, i + k));
+      const { joined } = run(chunks);
+      expect(joined).toBe('키: [redacted] 다음 줄');
+    }
+  });
 });
