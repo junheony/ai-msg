@@ -4,6 +4,7 @@ import type { GeminiStatus } from '../../shared/protocol';
 import type { PermissionDecision, QuestionAnswers, TurnPhase } from '../../shared/turn-types';
 import type { AgentInfo, ChatItem, PaneBackground, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
 import { latestTodos } from '../todos';
+import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
 import { filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
@@ -97,8 +98,9 @@ export function Chat(p: ChatProps) {
   const [text, setText] = useState('');
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [p.items, p.pending, p.questions]);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
+  const scroll = useStickToBottom(bodyRef, content, p.sessionId);
   const { addFiles, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
   const coarse = useCoarsePointer();
   // Set between compositionstart/end: some browsers report isComposing late or not at all.
@@ -138,6 +140,7 @@ export function Chat(p: ChatProps) {
     if (p.busy) p.onQueue?.(msg);
     else p.onSend(msg);
     setText('');
+    scroll.attach();
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggest.onKeyDown(e)) return;
@@ -188,15 +191,21 @@ export function Chat(p: ChatProps) {
         <span className="spacer" />
         {p.headActions}
       </div>
-      <div className="chat-body">
+      <div className="chat-body" ref={bodyRef}>
         <AgentContext.Provider value={agentCtx}>
           {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} />)}
         </AgentContext.Provider>
-        {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => p.onSend(retryPrompt)}>재시도</button>}
+        {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
-        <div ref={endRef} />
       </div>
+      {scroll.detached && (
+        <div className="jump-anchor">
+          <button type="button" className={`jump-bottom ${scroll.unread ? 'unread' : ''}`} onClick={scroll.attach} title="맨 아래로" data-testid="jump-bottom">
+            <span aria-hidden="true">↓</span>{scroll.unread ? ' 새 메시지' : <span className="sr-only">맨 아래로</span>}
+          </button>
+        </div>
+      )}
       <div className="composer-wrap">
         {todos && todos.length > 0 && <TodoPanel todos={todos} />}
         {p.queue && p.queue.length > 0 && (
