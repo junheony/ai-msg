@@ -16,7 +16,7 @@ import { AccountPicker } from './AccountPicker';
 import { AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
-import { HANDOFF_COMMAND } from '../../shared/handoff';
+import { HANDOFF_COMMAND, HANDOFF_PROMPT } from '../../shared/handoff';
 import type { CommandItem } from '../autocomplete';
 import { MessageActionsContext, MessageView, type MessageActions } from './MessageView';
 import { ModelPicker } from './ModelPicker';
@@ -145,9 +145,10 @@ export function Chat(p: ChatProps) {
 
   // Review M12: a failed last turn can be re-sent as-is.
   const last = p.items.at(-1);
-  const retryPrompt = !p.busy && last?.kind === 'assistant' && last.error !== null && !last.streaming
-    ? ([...p.items].reverse().find((it) => it.kind === 'user') as Extract<ChatItem, { kind: 'user' }> | undefined)?.text ?? null
-    : null;
+  const lastPrompt = ([...p.items].reverse().find((it) => it.kind === 'user') as Extract<ChatItem, { kind: 'user' }> | undefined)?.text ?? null;
+  // Never a handoff-note request: re-sending it would run the note prompt as a plain turn (tools allowed, no switch).
+  const retryable = lastPrompt !== HANDOFF_PROMPT ? lastPrompt : null;
+  const retryPrompt = !p.busy && last?.kind === 'assistant' && last.error !== null && !last.streaming ? retryable : null;
 
   // D3 / PF11: a new session follows the picker (the engine recorded at open time is ignored while it is new);
   // once the session exists its engine is fixed.
@@ -172,15 +173,14 @@ export function Chat(p: ChatProps) {
   // Stable across keystrokes (refs) so the memoized transcript does not re-render while typing.
   const onSendRef = useRef(p.onSend);
   onSendRef.current = p.onSend;
-  const lastPrompt = ([...p.items].reverse().find((it) => it.kind === 'user') as Extract<ChatItem, { kind: 'user' }> | undefined)?.text ?? null;
-  const canRetry = !p.busy && retryPrompt === null && lastPrompt !== null && last?.kind === 'assistant';
+  const canRetry = !p.busy && retryPrompt === null && retryable !== null && last?.kind === 'assistant';
   const msgActions = useMemo<MessageActions>(() => ({
     onEdit: (t) => {
       setText(t);
       requestAnimationFrame(() => { const ta = taRef.current; if (ta) { ta.focus(); ta.setSelectionRange(t.length, t.length); } });
     },
-    ...(canRetry && lastPrompt !== null ? { onRetry: () => { onSendRef.current(lastPrompt); scroll.attach(); } } : {}),
-  }), [canRetry, lastPrompt, scroll.attach]);
+    ...(canRetry && retryable !== null ? { onRetry: () => { onSendRef.current(retryable); scroll.attach(); } } : {}),
+  }), [canRetry, retryable, scroll.attach]);
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
   const submit = () => {

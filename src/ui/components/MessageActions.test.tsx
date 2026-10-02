@@ -7,6 +7,7 @@ import { ToolCallView } from './ToolCallView';
 import { ShareMenu, sessionLink } from './ShareMenu';
 import { copyText } from '../clipboard';
 import type { ChatItem } from '../state';
+import { HANDOFF_PROMPT } from '../../shared/handoff';
 
 Element.prototype.scrollIntoView = () => {};
 
@@ -86,6 +87,11 @@ describe('message actions', () => {
     expect(onSend).toHaveBeenCalledWith('둘');
     cleanup();
     renderChat(items, { busy: true });
+    expect(screen.queryByRole('button', { name: '재시도' })).toBeNull();
+  });
+
+  it('no 재시도 after a handoff-note request (it would re-run the note prompt as a plain turn with tools)', () => {
+    renderChat([{ kind: 'user', text: HANDOFF_PROMPT }, reply('실패한 메모', { error: 'boom' })]);
     expect(screen.queryByRole('button', { name: '재시도' })).toBeNull();
   });
 });
