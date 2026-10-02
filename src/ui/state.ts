@@ -5,6 +5,7 @@ import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/tur
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
 import { handoffFirstMessage, handoffTitle } from '../shared/handoff';
+import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
@@ -34,7 +35,7 @@ export type SentFile = { id: string; name: string; isImage: boolean };
 /** ux-state: a message typed while the pane's turn runs; sent when the turn ends. */
 export type QueueItem = { id: string; text: string; attachments: UploadedAttachment[] };
 
-export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null };
+export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null; /** Claude permission mode (absent = the server's default for new sessions); a new session sends it with its first turn. */ permissionMode?: PermMode };
 
 export type PaneState = {
   id: string;
@@ -94,6 +95,8 @@ export type AppState = {
   desktop: DesktopSession[];
   /** 자동 승인 (server setting); null until the server says. */
   autoApprove: boolean | null;
+  /** The mode new sessions start in (server setting); null until the server says. */
+  defaultPermMode: PermMode | null;
   /** Sessions with a turn running or background work, on any device (sidebar dots, tab title). */
   activity: SessionActivity[];
   /** Sessions whose turn finished while no focused pane showed them; cleared when opened. */
@@ -106,7 +109,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, activity: [], unread: [] };
+export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, activity: [], unread: [] };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -119,6 +122,7 @@ export type Action =
   | { type: 'set_engine'; engine: EngineChoice; paneId?: string }
   | { type: 'set_sandbox'; sandbox: CodexSandbox; paneId?: string }
   | { type: 'set_account_pin'; pin: Account | null; paneId?: string }
+  | { type: 'set_permission_mode'; mode: PermMode; paneId?: string }
   | { type: 'attach'; attachment: UploadedAttachment; paneId?: string }
   | { type: 'unattach'; id: string; paneId?: string }
   | { type: 'add_pane' }
@@ -261,7 +265,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // PF13: a Claude session is never sent a GPT model and vice versa.
       const model = modelFor(engine, pane.model);
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
-      return { ...pane, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt };
+      return { ...pane, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt };
     }
     case 'turn_started': {
       let p = pane;
@@ -396,7 +400,7 @@ function afterHandoffNote(pane: PaneState, ok: boolean): PaneState {
   return {
     ...pane,
     // The old session's account pin carries over (rides the new session's first send).
-    session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null, ...(pane.session?.accountPin ? { accountPin: pane.session.accountPin } : {}) },
+    session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null, ...(pane.session?.accountPin ? { accountPin: pane.session.accountPin } : {}), ...(pane.session?.permissionMode ? { permissionMode: pane.session.permissionMode } : {}) },
     engine: 'claude',
     items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [],
     // Messages queued meanwhile stay, paused: they were meant for the old session.
@@ -425,9 +429,16 @@ function applyTitles(panes: PaneState[], projects: ProjectEntry[]): PaneState[] 
   });
 }
 
+/** The mode a pane's session runs in: its own, else the server's default for new sessions. */
+export function paneMode(pane: PaneState, defaultMode: PermMode | null): PermMode {
+  return pane.session?.permissionMode ?? defaultMode ?? 'default';
+}
+
 /** 자동 승인 changes the default sandbox of new GPT sessions; panes still on the old default follow it. */
 function applySettings(state: AppState, settings: DeckSettings | undefined): AppState {
-  if (!settings || settings.autoApprove === state.autoApprove) return state;
+  if (!settings) return state;
+  if (settings.defaultPermissionMode !== state.defaultPermMode) state = { ...state, defaultPermMode: settings.defaultPermissionMode };
+  if (settings.autoApprove === state.autoApprove) return state;
   const from = defaultSandbox(state.autoApprove ?? false);
   const to = defaultSandbox(settings.autoApprove);
   return { ...state, autoApprove: settings.autoApprove, panes: state.panes.map((p) => (p.sandbox === from ? { ...p, sandbox: to } : p)) };
@@ -438,6 +449,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'hello':
       return applySettings({ ...state, connected: true, activity: msg.activity ?? state.activity, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
     case 'settings': return applySettings(state, msg.settings);
+    case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
     case 'account_pin': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, accountPin: msg.pin } } : p)) };
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
@@ -529,6 +541,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model) }));
     case 'set_sandbox': return updatePane(state, action.paneId, (p) => ({ ...p, sandbox: action.sandbox }));
     case 'set_account_pin': return updatePane(state, action.paneId, (p) => (p.session ? { ...p, session: { ...p.session, accountPin: action.pin } } : p));
+    case 'set_permission_mode': return updatePane(state, action.paneId, (p) => (p.session ? { ...p, session: { ...p.session, permissionMode: action.mode } } : p));
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
     case 'add_pane': {

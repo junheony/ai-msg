@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { ClaudeEngine, buildOptions, buildPrompt, mapSdkMessage } from './ClaudeEngine';
+import { ClaudeEngine, KEEP_PLANNING_MESSAGE, buildOptions, buildPrompt, mapSdkMessage } from './ClaudeEngine';
 import { parseQuestions, sessionAllowLabel, sessionAllowOffered, type EngineEvent, type TurnRequest } from './Engine';
 
 const M = (o: unknown) => o as SDKMessage;
@@ -394,5 +394,28 @@ describe('자동 승인 (autoApprove)', () => {
     on = false;
     expect(await o.canUseTool!('Bash', {}, ctx)).toMatchObject({ behavior: 'deny' });
     expect(asked).toEqual(['Bash']);
+  });
+});
+
+describe('permission modes and the plan card (ExitPlanMode)', () => {
+  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1' } as never;
+
+  it('passes the session mode to the SDK (absent = default)', () => {
+    expect(buildOptions(req({}), deps).permissionMode).toBe('default');
+    expect(buildOptions(req({ permissionMode: 'plan' }), deps).permissionMode).toBe('plan');
+    expect(buildOptions(req({ permissionMode: 'acceptEdits' }), deps).permissionMode).toBe('acceptEdits');
+  });
+
+  it('승인 · 편집 자동 승인 → allow + acceptEdits, 승인 · 수동 → allow + default, 계속 계획 → deny (no interrupt)', async () => {
+    let decision: 'session' | 'once' | 'deny' = 'session';
+    const asked: string[] = [];
+    const o = buildOptions(req({ permissionMode: 'plan', autoApprove: () => false, onPermission: async (p) => { asked.push(p.toolName); return decision; } }), deps);
+    expect(await o.canUseTool!('ExitPlanMode', { plan: '1. a' }, ctx)).toEqual({ behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] });
+    decision = 'once';
+    expect(await o.canUseTool!('ExitPlanMode', { plan: '1. a' }, ctx)).toEqual({ behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'default', destination: 'session' }] });
+    decision = 'deny';
+    expect(await o.canUseTool!('ExitPlanMode', { plan: '1. a' }, ctx)).toEqual({ behavior: 'deny', message: KEEP_PLANNING_MESSAGE, interrupt: false });
+    expect(asked).toEqual(['ExitPlanMode', 'ExitPlanMode', 'ExitPlanMode']);
   });
 });

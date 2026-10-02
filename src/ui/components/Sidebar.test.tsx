@@ -115,20 +115,15 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
     expect(screen.queryByTestId('desktop-group')).toBeNull();
   });
 
-  it('the footer toggle shows 자동 승인 켜짐/꺼짐 and flips it; hidden until the server says', () => {
-    const onAuto = vi.fn();
-    const { rerender } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} autoApprove={null} onAutoApprove={onAuto} />);
-    expect(screen.queryByRole('switch')).toBeNull();
-    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} autoApprove={true} onAutoApprove={onAuto} />);
-    const sw = screen.getByRole('switch');
-    expect(sw.textContent).toContain('자동 승인 켜짐');
-    expect(sw.getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(sw);
-    expect(onAuto).toHaveBeenCalledWith(false);
-    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} autoApprove={false} onAutoApprove={onAuto} />);
-    expect(screen.getByRole('switch').textContent).toContain('자동 승인 꺼짐');
-    fireEvent.click(screen.getByRole('switch'));
-    expect(onAuto).toHaveBeenLastCalledWith(true);
+  it('the footer select shows the default mode for new sessions and changes it; hidden until the server says', () => {
+    const onMode = vi.fn();
+    const { rerender } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} defaultPermMode={null} onDefaultPermMode={onMode} />);
+    expect(screen.queryByTestId('default-perm-select')).toBeNull();
+    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} defaultPermMode="bypassPermissions" onDefaultPermMode={onMode} />);
+    const sel = screen.getByTestId('default-perm-select') as HTMLSelectElement;
+    expect(sel.value).toBe('bypassPermissions');
+    fireEvent.change(sel, { target: { value: 'plan' } });
+    expect(onMode).toHaveBeenCalledWith('plan');
   });
 });
 

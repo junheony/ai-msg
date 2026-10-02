@@ -17,6 +17,7 @@ import { AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
 import { HANDOFF_COMMAND, HANDOFF_PROMPT } from '../../shared/handoff';
+import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, nextPermMode, type PermMode } from '../../shared/permission';
 import type { CommandItem } from '../autocomplete';
 import { MessageActionsContext, MessageView, type MessageActions } from './MessageView';
 import { ModelPicker } from './ModelPicker';
@@ -80,6 +81,9 @@ export type ChatProps = {
   usage?: UsageSnapshot | null;
   /** Absent = no account picker. */
   onAccountPin?: (pin: Account | null) => void;
+  /** Claude permission mode (Shift+Tab cycles); absent onPermMode = no mode picker. */
+  permMode?: PermMode;
+  onPermMode?: (m: PermMode) => void;
   /** ux-state: while busy, a submit queues the message (absent = the composer can't send while busy). */
   queue?: QueueItem[];
   queuePaused?: boolean;
@@ -181,6 +185,9 @@ export function Chat(p: ChatProps) {
     },
     ...(canRetry && retryable !== null ? { onRetry: () => { onSendRef.current(retryable); scroll.attach(); } } : {}),
   }), [canRetry, retryable, scroll.attach]);
+  // GPT/Gemini have no per-call approvals: their sandbox decides, so the mode picker is shown disabled.
+  const permSupported = effectiveEngine === 'claude' || effectiveEngine === 'auto';
+  const permMode: PermMode = p.permMode ?? 'default';
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
   const submit = () => {
@@ -204,6 +211,11 @@ export function Chat(p: ChatProps) {
     // after the commit is a real Enter and sends the full text.
     const ime = e.nativeEvent.isComposing || e.keyCode === 229 || composing.current;
     if (ime) return;
+    if (e.key === 'Tab' && e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && p.onPermMode && permSupported) {
+      e.preventDefault();
+      p.onPermMode(nextPermMode(permMode));
+      return;
+    }
     if (e.key === 'Escape') {
       if (p.activeTurnId) { e.preventDefault(); p.onInterrupt(); }
       return;
@@ -242,6 +254,7 @@ export function Chat(p: ChatProps) {
         <span className="chat-title" title={p.title}><span>{p.title}</span><span className="caret" aria-hidden="true">⌄</span></span>
         {folder && <span className="folder-chip" title={p.cwd}>{folder}</span>}
         {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
+        {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={PERM_MODE_HINT[permMode]} data-testid="perm-badge">{PERM_MODE_LABEL[permMode]}</span>}
         {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
         <span className="spacer" />
         {!p.isNew && <ShareMenu title={p.title} items={p.items} cwd={p.cwd} sessionId={p.sessionId} assistant={p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : 'Claude'} />}
@@ -317,6 +330,13 @@ export function Chat(p: ChatProps) {
               <ContextGauge info={ctx} onHandoff={p.onHandoff} />
               {p.onAccountPin && (effectiveEngine === 'claude' || (p.isNew && effectiveEngine === 'auto')) && (
                 <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
+              )}
+              {p.onPermMode && (
+                <span className={`pick perm perm-${permSupported ? permMode : 'default'}`}>
+                  <select value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${PERM_MODE_HINT[permMode]} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
+                    {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
+                  </select>
+                </span>
               )}
               <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
               {p.activeTurnId && queueing && hasDraft && <button type="button" className="send queue-add" onClick={submit} title="대기열에 추가 (Enter)"><span aria-hidden="true">+</span><span className="sr-only">대기열에 추가</span></button>}

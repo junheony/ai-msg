@@ -356,7 +356,7 @@ describe('TurnRunner', () => {
     const runner = new TurnRunner(c.deps);
     await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'x' }, c.sink);
     const st = c.deps.store.get('permX') as ClaudeSessionState | null;
-    expect(st?.mode).toBeUndefined();
+    expect(st?.mode).toBe('default');
     expect(st?.allowRules).toBeUndefined();
     expect(st?.allowDirs).toBeUndefined();
     await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'permX', text: 'x' }, c.sink);
@@ -622,7 +622,7 @@ describe('TurnRunner: 자동 승인', () => {
       await req.onAutoApproved?.({ toolName: 'Bash', input: { command: 'rm -rf build' }, toolUseId: 'tu1' });
       return ok('aa1');
     });
-    const c = await ctx(eng, { autoApprove: () => true });
+    const c = await ctx(eng, { defaultPermissionMode: () => 'bypassPermissions' });
     let asked = 0;
     c.sink.askPermission = async () => { asked++; return 'deny'; };
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
@@ -634,7 +634,7 @@ describe('TurnRunner: 자동 승인', () => {
   it('new GPT session without an explicit sandbox: workspace-write when on, read-only when off; an explicit choice wins', async () => {
     for (const [auto, sent, want] of [[true, undefined, 'workspace-write'], [false, undefined, 'read-only'], [true, 'read-only', 'read-only']] as const) {
       const codex = fakeCodex(codexOk('tid-aa'));
-      const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, autoApprove: () => auto, findRollout: async () => null }, await usageWithGpt(null));
+      const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, defaultPermissionMode: () => (auto ? 'bypassPermissions' : 'default'), findRollout: async () => null }, await usageWithGpt(null));
       await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'codex', ...(sent ? { sandbox: sent } : {}) }, c.sink);
       expect(codex.calls[0]?.sandbox).toBe(want);
     }
@@ -727,5 +727,95 @@ describe('TurnRunner: Gemini sessions (explicit only)', () => {
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: '보안 취약점 검토해줘', engine: 'auto', model: 'auto' }, c.sink);
     expect(g.calls).toHaveLength(0);
     expect(eng.calls).toHaveLength(1);
+  });
+});
+
+describe('TurnRunner: permission modes', () => {
+  it('a new session starts in the mode its first send names, keeps it, and the default applies when absent', async () => {
+    const sids = ['pmA', 'pmA', 'pmB'];
+    let n = 0;
+    const eng = new StubEngine(async () => ok(sids[n++]!));
+    const c = await ctx(eng, { defaultPermissionMode: () => 'bypassPermissions' });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'x', permissionMode: 'plan' }, c.sink);
+    expect(eng.calls[0]?.permissionMode).toBe('plan');
+    expect(eng.calls[0]?.autoApprove?.()).toBe(false);
+    expect(c.deps.store.get('pmA')).toMatchObject({ mode: 'plan' });
+    expect(runner.permissionModeOf('pmA')).toBe('plan');
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'pmA', text: 'x', permissionMode: 'default' }, c.sink);
+    expect(eng.calls[1]?.permissionMode).toBe('plan');
+    // No mode named: the global default (모두 자동 승인 → canUseTool auto-allow, SDK mode stays default).
+    await runner.run({ turnId: 't3', cwd: '/w/new', sessionId: null, text: 'x' }, c.sink);
+    expect(eng.calls[2]?.permissionMode).toBeUndefined();
+    expect(eng.calls[2]?.autoApprove?.()).toBe(true);
+    expect(c.deps.store.get('pmB')).toMatchObject({ mode: 'bypassPermissions' });
+  });
+
+  it('setPermissionMode reaches a running turn at once (tool calls and Query.setPermissionMode) and is stored', async () => {
+    const live: string[] = [];
+    const auto: boolean[] = [];
+    let runner!: TurnRunner;
+    const eng = new StubEngine(async (req) => {
+      req.onLive?.({ send: async () => true, setPermissionMode: async (m) => { live.push(m); return true; } });
+      auto.push(req.autoApprove!());
+      expect(await runner.setPermissionMode(SID, 'plan')).toBe(true);
+      auto.push(req.autoApprove!());
+      expect(runner.permissionModeOf(SID)).toBe('plan');
+      await runner.setPermissionMode(SID, 'bypassPermissions');
+      auto.push(req.autoApprove!());
+      return ok(SID);
+    });
+    const c = await ctx(eng);
+    await seedSession(c, 'b');
+    runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'x' }, c.sink);
+    expect(auto).toEqual([false, false, true]);
+    expect(live).toEqual(['plan', 'default']);
+    expect(c.deps.store.get(SID)).toMatchObject({ mode: 'bypassPermissions' });
+    expect(runner.permissionModeOf(SID)).toBe('bypassPermissions');
+  });
+
+  it('the plan card: 승인 · 편집 자동 승인 stores acceptEdits and tells the clients; 계속 계획 stays in plan', async () => {
+    const sids = ['plA', 'plB'];
+    let n = 0;
+    const eng = new StubEngine(async (req) => {
+      await req.onPermission({ toolName: 'ExitPlanMode', input: { plan: '1. a' }, toolUseId: 'tu' });
+      return ok(sids[n++] ?? SID);
+    });
+    const told: [string, string][] = [];
+    const c = await ctx(eng, { onPermissionMode: (s, m) => told.push([s, m]) });
+    const runner = new TurnRunner(c.deps);
+    c.sink.askPermission = async () => 'session';
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'x', permissionMode: 'plan' }, c.sink);
+    expect(c.deps.store.get('plA')).toMatchObject({ mode: 'acceptEdits' });
+    c.sink.askPermission = async () => 'deny';
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'x', permissionMode: 'plan' }, c.sink);
+    expect(c.deps.store.get('plB')).toMatchObject({ mode: 'plan' });
+    // An existing session: the approval is broadcast at once; 승인 · 수동 승인 → back to 매번 묻기.
+    await seedSession(c, 'b');
+    await runner.setPermissionMode(SID, 'plan');
+    c.sink.askPermission = async () => 'once';
+    await runner.run({ turnId: 't3', cwd: '/w/one', sessionId: SID, text: 'x' }, c.sink);
+    expect(eng.calls[2]?.permissionMode).toBe('plan');
+    expect(told).toEqual([[SID, 'default']]);
+    expect(c.deps.store.get(SID)).toMatchObject({ mode: 'default' });
+  });
+
+  it('a handoff-note turn is run without tools in every mode', async () => {
+    const eng = new StubEngine(async () => ok(SID));
+    const c = await ctx(eng);
+    await seedSession(c, 'b');
+    const runner = new TurnRunner(c.deps);
+    for (const mode of ['bypassPermissions', 'acceptEdits', 'plan', 'default'] as const) {
+      await runner.setPermissionMode(SID, mode);
+      await runner.run({ turnId: `h-${mode}`, cwd: '/w/one', sessionId: SID, text: 'note', handoff: true }, c.sink);
+      expect(eng.calls.at(-1)?.noTools).toBe(true);
+    }
+  });
+
+  it('GPT sessions have no Claude mode', async () => {
+    const c = await ctx(new StubEngine(async () => ok(SID)));
+    await c.deps.store.set({ engine: 'codex', sessionId: 'gpt1', cwd: '/w', sandbox: 'read-only' } as never);
+    expect(await new TurnRunner(c.deps).setPermissionMode('gpt1', 'plan')).toBe(false);
   });
 });

@@ -65,6 +65,8 @@ export type LiveInput = {
   send(f: FollowUp): Promise<boolean>;
   /** Stops one task in the process (SDK Query.stopTask); absent when the SDK handle has no stopTask. Resolves false when the input is closed. */
   stopTask?(taskId: string): Promise<boolean>;
+  /** Changes the running process's permission mode (SDK Query.setPermissionMode); absent when the SDK handle lacks it. */
+  setPermissionMode?(mode: 'default' | 'acceptEdits' | 'plan'): Promise<boolean>;
 };
 
 /**
@@ -177,9 +179,13 @@ export type TurnRequest = {
   allowRules?: string[];
   /** Directories the user allowed for this deck session on earlier turns. */
   allowDirs?: string[];
-  /** Set when 이 세션 accepted the SDK's "allow all edits" (setMode acceptEdits) on an earlier turn. */
-  permissionMode?: 'acceptEdits';
-  /** 자동 승인: consulted per tool call; true = allow at once (no card). AskUserQuestion is never auto-answered. */
+  /** The session's mode as the SDK takes it (absent = 'default'); 모두 자동 승인 is `autoApprove`, never 'bypassPermissions'. */
+  permissionMode?: 'acceptEdits' | 'plan';
+  /**
+   * 모두 자동 승인: consulted per tool call; true = allow at once (no card). AskUserQuestion is never auto-answered.
+   * False: ExitPlanMode goes to `onPermission` as the plan card — 'session' = approve + acceptEdits, 'once' = approve +
+   * ask every time, 'deny' = keep planning.
+   */
   autoApprove?: () => boolean;
   /** Called for each tool call 자동 승인 allowed (audit). */
   onAutoApproved?: (req: PermissionRequest) => Promise<void>;

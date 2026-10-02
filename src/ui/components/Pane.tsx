@@ -3,7 +3,7 @@ import type { Effort, ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import type { ClientMessage } from '../../shared/protocol';
 import type { ProjectEntry } from '../../shared/session-types';
-import { cardsForPane, engineOf, modelFor, nextQueued, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
+import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
 import { Chat } from './Chat';
 import { ForkMenu } from './ForkMenu';
@@ -28,7 +28,7 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
 }
 
 /** Sends `text` (+ attachments) as the pane's next turn: `sent` for the reducer, `send` for the server. */
-export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: (m: ClientMessage) => void): void {
+export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: (m: ClientMessage) => void, defaultMode: AppState['defaultPermMode'] = null): void {
   const s = pane.session;
   if (!s) return;
   const model = paneModel(pane);
@@ -39,7 +39,7 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
   send({
     type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, model,
     ...(effort ? { effort } : {}),
-    ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox, ...(s.accountPin ? { accountPin: s.accountPin } : {}) } : {}),
+    ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox, ...(s.accountPin ? { accountPin: s.accountPin } : {}), ...(s.permissionMode || defaultMode ? { permissionMode: paneMode(pane, defaultMode) } : {}) } : {}),
     ...(ids.length ? { attachments: ids } : {}),
     ...(s.sessionId === null && pane.handoffFrom ? { handoffFrom: pane.handoffFrom.sessionId } : {}),
     clientRef,
@@ -67,7 +67,7 @@ function titleIn(projects: ProjectEntry[], sessionId: string): { title: string; 
  * ux-state: when a pane's turn is over, its next queued message goes out by itself (once per queue item).
  * Runs at app level so panes not rendered (phone shows one) still drain their queues.
  */
-export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch: (a: Action) => void, send: (m: ClientMessage) => void): void {
+export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch: (a: Action) => void, send: (m: ClientMessage) => void, defaultMode: AppState['defaultPermMode'] = null): void {
   const fired = useRef(new Set<string>());
   useEffect(() => {
     if (!connected) return;
@@ -76,7 +76,7 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
       if (!next || fired.current.has(next.id)) continue;
       fired.current.add(next.id);
       dispatch({ type: 'queue_remove', id: next.id, paneId: p.id });
-      sendFromPane(p, next.text, next.attachments, dispatch, send);
+      sendFromPane(p, next.text, next.attachments, dispatch, send, defaultMode);
     }
   });
 }
@@ -84,7 +84,7 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
 /** One split-view pane: its own session, items and composer; user actions become `send`/`dispatch` here (D6). */
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, uploadFn }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage' | 'projects'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage' | 'projects' | 'defaultPermMode'>>;
   active: boolean;
   closable: boolean;
   dispatch: (a: Action) => void;
@@ -141,7 +141,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           gemini={app.gemini ?? null}
           attachments={pane.attachments}
           uploadFn={uploadFn}
-          onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send)}
+          onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
           onHandoff={canHandoff ? () => startHandoff(pane, dispatch, send) : undefined}
           handoffWriting={pane.handoff !== null}
           prefill={pane.prefill}
@@ -179,6 +179,12 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             dispatch({ type: 'set_account_pin', pin, paneId: pane.id });
             // An existing session's pin lives on the server (applied from its next turn); a new one rides the first send.
             if (s.sessionId) send({ type: 'set_account_pin', sessionId: s.sessionId, pin });
+          }}
+          permMode={paneMode(pane, app.defaultPermMode ?? null)}
+          onPermMode={(mode) => {
+            dispatch({ type: 'set_permission_mode', mode, paneId: pane.id });
+            // An existing session's mode lives on the server (a running turn switches at once); a new one rides the first send.
+            if (s.sessionId) send({ type: 'set_permission_mode', sessionId: s.sessionId, mode });
           }}
           onAttach={(attachment) => dispatch({ type: 'attach', attachment, paneId: pane.id })}
           onUnattach={(id) => {

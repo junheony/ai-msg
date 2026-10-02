@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, type PermMode } from '../../shared/permission';
 import type { SessionActivity } from '../../shared/protocol';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
@@ -19,7 +20,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove, collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [] }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], defaultPermMode = null, onDefaultPermMode, collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [] }: {
   projects: ProjectEntry[];
   currentSessionId: string | null;
   onOpen: (sessionId: string, cwd: string, title: string) => void;
@@ -33,9 +34,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onTogglePin?: (sessionId: string, pinned: boolean) => void;
   /** Recent Claude Desktop sessions (newest first); opened like any session. */
   desktop?: DesktopSession[];
-  /** 자동 승인 (null = not known yet); the footer toggle calls onAutoApprove with the new value. */
-  autoApprove?: boolean | null;
-  onAutoApprove?: (on: boolean) => void;
+  /** The mode new sessions start in (null = not known yet); per-session modes live in the composer. */
+  defaultPermMode?: PermMode | null;
+  onDefaultPermMode?: (m: PermMode) => void;
   /** ux-state: folded project groups (cwd), owned by the app so they survive a reload; absent = local state. */
   collapsed?: string[];
   onCollapsedChange?: (cwds: string[]) => void;
@@ -257,13 +258,16 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           {found?.q === fullQ && found.truncated && <div className="muted sidebar-empty">결과 일부만 표시됩니다.</div>}
         </section>
       )}
-      {onAutoApprove && autoApprove !== null && (
+      {onDefaultPermMode && defaultPermMode !== null && (
         <div className="sidebar-foot">
-          <button type="button" className={`auto-approve-toggle ${autoApprove ? 'on' : ''}`} role="switch" aria-checked={autoApprove} onClick={() => onAutoApprove(!autoApprove)}
-            title={autoApprove ? 'Claude 도구 호출을 묻지 않고 허용합니다(감사 로그에 기록). 새 GPT 세션은 작업폴더 쓰기. 클릭하면 매번 묻기로' : '도구 호출마다 권한 카드로 묻습니다. 클릭하면 자동 승인'}>
-            <span className="switch-track" aria-hidden="true"><span className="switch-knob" /></span>
-            <span>자동 승인 {autoApprove ? '켜짐' : '꺼짐'}</span>
-          </button>
+          <label className="default-perm" title={`새 세션이 시작할 권한 모드 — ${PERM_MODE_HINT[defaultPermMode]}. 모두 자동 승인이면 새 GPT 세션은 작업폴더 쓰기`}>
+            <span>새 세션 기본 권한</span>
+            <span className={`pick perm perm-${defaultPermMode}`}>
+              <select value={defaultPermMode} onChange={(e) => onDefaultPermMode(e.target.value as PermMode)} aria-label="새 세션 기본 권한" data-testid="default-perm-select">
+                {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
+              </select>
+            </span>
+          </label>
         </div>
       )}
     </aside>

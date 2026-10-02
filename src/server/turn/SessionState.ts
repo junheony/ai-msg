@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account, GeminiAccount } from '../../shared/accounts';
 import type { ClaudeModel, CodexModel, CodexSandbox, GeminiModel } from '../../shared/models';
+import type { PermMode } from '../../shared/permission';
 import type { SessionEntry } from '../../shared/session-types';
 
 type SessionBase = {
@@ -24,8 +25,11 @@ export type ClaudeSessionState = SessionBase & {
   allowRules?: string[];
   /** Directories accepted with 이 세션 (addDirectories suggestions). */
   allowDirs?: string[];
-  /** 이 세션 accepted "allow all edits" (setMode acceptEdits): later turns run in acceptEdits. */
-  mode?: 'acceptEdits';
+  /**
+   * The session's permission mode (picker / Shift+Tab, an approved plan, or 이 세션's "allow all edits"). Absent = the
+   * server's default for new sessions (DeckSettings.defaultPermissionMode). Plan 1 files only ever stored 'acceptEdits'.
+   */
+  mode?: PermMode;
   /** 이 세션은 B 써: routing always uses this account unless it is unusable. Absent = 자동. Changed only via setAccountPin. */
   accountPin?: Account;
 };

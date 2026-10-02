@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { HANDOFF_PROMPT, handoffFirstMessage } from '../shared/handoff';
+import { nextPermMode } from '../shared/permission';
 import type { ServerMessage } from '../shared/protocol';
-import { MAX_PANES, answersFor, engineOf, fromTranscript, modelFor, initialState, nextQueued, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
+import { MAX_PANES, answersFor, engineOf, fromTranscript, modelFor, initialState, nextQueued, paneMode, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 
@@ -467,18 +468,18 @@ describe('panes (D6)', () => {
 
 describe('reducer: 자동 승인 and Desktop sessions', () => {
   it('hello/settings set autoApprove; panes still on the default sandbox follow it, an explicit pick stays; new panes use it', () => {
-    let s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: true }, settings: { autoApprove: true }, desktop: [{ sessionId: 'd1', account: 'a', title: 'T', cwd: '/w/x', project: 'x', lastModified: 1 }] }]);
+    let s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: true }, settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions' }, desktop: [{ sessionId: 'd1', account: 'a', title: 'T', cwd: '/w/x', project: 'x', lastModified: 1 }] }]);
     expect(s.autoApprove).toBe(true);
     expect(s.desktop.map((d) => d.sessionId)).toEqual(['d1']);
     expect(s.panes[0]!.sandbox).toBe('workspace-write');
     s = reducer(s, { type: 'add_pane' });
     expect(s.panes[1]!.sandbox).toBe('workspace-write');
     s = reducer(s, { type: 'set_sandbox', sandbox: 'read-only', paneId: s.panes[1]!.id });
-    s = play([{ type: 'settings', settings: { autoApprove: false } }], s);
+    s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } }], s);
     expect(s.autoApprove).toBe(false);
     expect(s.panes.map((p) => p.sandbox)).toEqual(['read-only', 'read-only']);
     s = reducer(s, { type: 'set_sandbox', sandbox: 'workspace-write', paneId: s.panes[1]!.id });
-    s = play([{ type: 'settings', settings: { autoApprove: true } }], s);
+    s = play([{ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions' } }], s);
     expect(s.panes.map((p) => p.sandbox)).toEqual(['workspace-write', 'workspace-write']);
   });
 });
@@ -697,5 +698,36 @@ describe('reducer: 새 세션으로 이어가기 (handoff)', () => {
     let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
     s = reducer(s, { type: 'sent', text: HANDOFF_PROMPT, clientRef: 'h3', handoff: true });
     expect(pane(s).handoff).toBeNull();
+  });
+});
+
+describe('permission modes', () => {
+  const open = (sessionId: string | null) => reducer(initialState, { type: 'open', sessionId, cwd: '/w', title: 't' });
+  const first = (st: AppState) => st.panes[0]!;
+
+  it('a pane follows the server default until it picks its own; Shift+Tab cycles from the effective mode', () => {
+    let s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } }], open(null));
+    expect(s.defaultPermMode).toBe('default');
+    expect(paneMode(first(s), s.defaultPermMode)).toBe('default');
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      s = reducer(s, { type: 'set_permission_mode', mode: nextPermMode(paneMode(first(s), s.defaultPermMode)) });
+      seen.push(paneMode(first(s), s.defaultPermMode));
+    }
+    expect(seen).toEqual(['acceptEdits', 'plan', 'bypassPermissions', 'default']);
+    // The pane's own choice is kept when the default changes.
+    s = play([{ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions' } }], s);
+    expect(paneMode(first(s), s.defaultPermMode)).toBe('default');
+    expect(paneMode(first(open(null)), 'plan')).toBe('plan');
+    expect(paneMode(first(open(null)), null)).toBe('default');
+  });
+
+  it('history and permission_mode broadcasts set the session\'s mode (only for that session)', () => {
+    let s = play([{ type: 'history', sessionId: 's1', cwd: '/w', account: 'b', runningTurnId: null, messages: [], permissionMode: 'plan' }], open('s1'));
+    expect(first(s).session?.permissionMode).toBe('plan');
+    s = play([{ type: 'permission_mode', sessionId: 's1', mode: 'acceptEdits' }], s);
+    expect(first(s).session?.permissionMode).toBe('acceptEdits');
+    s = play([{ type: 'permission_mode', sessionId: 'other', mode: 'bypassPermissions' }], s);
+    expect(first(s).session?.permissionMode).toBe('acceptEdits');
   });
 });

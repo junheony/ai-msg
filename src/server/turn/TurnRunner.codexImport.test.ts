@@ -44,7 +44,7 @@ async function setup(opts: { autoApprove?: boolean } = {}) {
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
   const runner = new TurnRunner({
     engine: new StubEngine(async () => []), codex, attachments: null, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null,
-    auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codexSessionsRoot: root, autoApprove: () => opts.autoApprove ?? false,
+    auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codexSessionsRoot: root, defaultPermissionMode: () => (opts.autoApprove ? 'bypassPermissions' : 'default'),
     findRollout: async () => { throw new Error('the imported rollout is already known'); }, readRateLimits: async () => null,
   });
   const msgs: ServerMessage[] = [];

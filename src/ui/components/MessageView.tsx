@@ -54,7 +54,7 @@ const MD_COMPONENTS: Components = {
 const MD_PLUGINS = [remarkGfm];
 
 /** Memoized on its text: parsing is the expensive part, and a streaming turn re-creates its item on every delta. */
-const Markdown = memo(function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {
+export const Markdown = memo(function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {
   return <div className={className}><ReactMarkdown components={MD_COMPONENTS} remarkPlugins={MD_PLUGINS}>{text}</ReactMarkdown></div>;
 });
 

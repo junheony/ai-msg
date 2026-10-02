@@ -2,6 +2,7 @@ import type { PermissionDecision } from '../../shared/turn-types';
 import { fileDiffsFor } from '../diff';
 import type { PendingPermission } from '../state';
 import { DiffList } from './DiffView';
+import { Markdown } from './MessageView';
 
 /** "이 세션 동안 `Bash(…)` 허용" → "`Bash(…)`": what the session grant covers, shown under the buttons. */
 function sessionRule(label: string | null): string | null {
@@ -10,7 +11,29 @@ function sessionRule(label: string | null): string | null {
   return m ? m[1]! : label;
 }
 
+/**
+ * 계획 모드: ExitPlanMode asks to leave plan mode with its plan. 'session' = approve and auto-accept edits,
+ * 'once' = approve and keep asking, 'deny' = keep planning (the server maps these, TurnRunner/ClaudeEngine).
+ */
+function PlanCard({ req, onDecide }: { req: PendingPermission; onDecide: (requestId: string, decision: PermissionDecision) => void }) {
+  const raw = req.input && typeof req.input === 'object' ? (req.input as { plan?: unknown }).plan : undefined;
+  const plan = typeof raw === 'string' ? raw : '';
+  return (
+    <div className="permission-card plan-card" role="group" aria-label="계획 승인" data-testid="plan-card">
+      <div className="permission-head"><span className="dot" aria-hidden="true" />계획 승인</div>
+      <div className="permission-scope muted" title={req.cwd}>{req.sessionId ? `세션 ${req.sessionId.slice(0, 8)}` : '새 세션'} · {req.cwd}</div>
+      <div className="plan-body">{plan ? <Markdown text={plan} /> : <span className="muted">계획 내용이 없습니다.</span>}</div>
+      <div className="permission-actions">
+        <button type="button" className="btn deny" onClick={() => onDecide(req.requestId, 'deny')}>계속 계획</button>
+        <button type="button" className="btn ghost" title="진행하되 도구 호출마다 묻습니다" onClick={() => onDecide(req.requestId, 'once')}>승인하고 진행 · 수동 승인</button>
+        <button type="button" className="btn primary" title="진행하며 파일 편집은 묻지 않고 허용합니다" onClick={() => onDecide(req.requestId, 'session')}>승인하고 진행 · 편집 자동 승인</button>
+      </div>
+    </div>
+  );
+}
+
 export function PermissionCard({ req, onDecide }: { req: PendingPermission; onDecide: (requestId: string, decision: PermissionDecision) => void }) {
+  if (req.toolName === 'ExitPlanMode') return <PlanCard req={req} onDecide={onDecide} />;
   const input = JSON.stringify(req.input, null, 2);
   // Edit / Write / … asks show the change they would make, like the tool call card will.
   const diffs = fileDiffsFor(req.toolName, req.input, null);
