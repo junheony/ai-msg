@@ -196,11 +196,13 @@ class CodexTranscriptBuilder {
       const last = this.out.at(-1);
       if (last && last.kind === 'assistant' && !last.text && last.toolCalls.length === 0) { last.text = text; last.ts = ts; return; }
       this.out.push({ kind: 'assistant', text, model: null, toolCalls: [], ts });
-    } else if (p.type === 'function_call') {
-      let input: unknown = p.arguments;
-      if (typeof p.arguments === 'string') { try { input = JSON.parse(p.arguments); } catch { input = p.arguments; } }
+    } else if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+      // custom_tool_call (newer Codex, e.g. apply_patch) carries a raw `input` string instead of JSON `arguments`.
+      const raw = p.type === 'function_call' ? p.arguments : p.input;
+      let input: unknown = raw;
+      if (typeof raw === 'string') { try { input = JSON.parse(raw); } catch { input = raw; } }
       this.lastAssistant(ts).toolCalls.push({ id: String(p.call_id ?? ''), name: String(p.name ?? ''), input });
-    } else if (p.type === 'function_call_output') {
+    } else if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
       let content = typeof p.output === 'string' ? p.output : JSON.stringify(p.output ?? '');
       let truncated = false;
       if (content.length > this.opts.maxToolResultChars) { content = `${content.slice(0, this.opts.maxToolResultChars)}\n…[잘림: 원래 ${content.length}자]`; truncated = true; }
@@ -227,5 +229,15 @@ export async function readCodexTranscript(file: string, opts: CodexTranscriptOpt
     if (!line.trim()) continue;
     try { b.add(JSON.parse(line)); } catch { /* skip */ }
   }
+  return b.result();
+}
+
+/**
+ * Like readCodexTranscript, from the last `maxBytes` only: Codex Desktop rollouts reach gigabytes, and the
+ * sidebar opens them read-only to show the recent history. The first (cut) line is skipped.
+ */
+export async function readCodexTranscriptTail(file: string, maxBytes = 16 * 1024 * 1024, opts: CodexTranscriptOptions = {}): Promise<TranscriptMessage[]> {
+  const b = new CodexTranscriptBuilder({ maxMessages: opts.maxMessages ?? 200, maxToolResultChars: opts.maxToolResultChars ?? 8192 });
+  for (const l of await readTailLines(file, maxBytes)) b.add(l);
   return b.result();
 }

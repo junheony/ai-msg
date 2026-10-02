@@ -18,6 +18,8 @@ export type SessionEntry = {
   sizeBytes: number;
   /** deck-side 보관됨 (session-meta.json); hidden from the lists unless the 보관됨 filter is on. */
   archived?: boolean;
+  /** A Codex Desktop / CLI thread read from ~/.codex/sessions that deck has not run yet (becomes a deck Codex session on the first turn). */
+  imported?: boolean;
 };
 
 /** A recent Claude Desktop (Code tab) session; opened like any other session by `sessionId`. */

@@ -3,13 +3,15 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
+import { defaultSandbox } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { DirError, resolveUnderRoots } from './dirs';
-import { readCodexTranscript } from './engine/codexRollout';
+import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
+import { LIVE_ROLLOUT_NOTICE, rolloutRecentlyActive } from './sessions/CodexImports';
 import type { PinStore } from './sessions/PinStore';
 import type { SettingsStore } from './settings';
 import type { SessionIndex } from './sessions/SessionIndex';
@@ -111,6 +113,8 @@ export type WsDeps = {
   /** Read on every hello, so a login done while deck runs shows up on the next connect. Absent = no Gemini. */
   geminiStatus?: () => GeminiStatus;
   readCodexHistory?: typeof readCodexTranscript;
+  /** History of an imported (Codex Desktop / CLI) thread: the rollout's tail only. */
+  readCodexImportHistory?: typeof readCodexTranscriptTail;
   /** F1: a new session's cwd must (after realpath) lie inside one of these (default: the OS home dir). */
   cwdRoots?: string[];
   /** F2: pinned session ids ride hello and every index message. */
@@ -497,9 +501,20 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             let entry = deps.index.lookup(sessionId);
             // Review (flaky ws.test.ts): a session written just after the last scan isn't in
             // the in-memory index yet. Rescan once (single-flight) and re-check before giving up.
-            if (!entry) {
+            if (!entry && !deps.index.codexImport(sessionId)) {
               await rescanIndex();
               entry = deps.index.lookup(sessionId);
+            }
+            // A Codex Desktop / CLI thread deck has not run yet: its rollout, read-only; the first turn resumes it.
+            const imported = entry ? null : deps.index.codexImport(sessionId);
+            if (imported) {
+              view(ws, sessionId);
+              const messages = await (deps.readCodexImportHistory ?? readCodexTranscriptTail)(imported.file).catch(() => []);
+              send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: defaultSandbox(deps.settings?.get().autoApprove ?? false), messages, ...runningOf(sessionId) });
+              const t = turns.get(busy.get(sessionId) ?? '');
+              if (t) replay(ws, t, sessionId);
+              if (await rolloutRecentlyActive(imported.file)) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: LIVE_ROLLOUT_NOTICE });
+              return;
             }
             if (!entry) { send(ws, { type: 'error', turnId: null, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
             view(ws, sessionId);
