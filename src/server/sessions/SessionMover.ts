@@ -143,7 +143,20 @@ async function findDuplicates(projectsRoot: string, sessionId: string, targetDir
  * `ignoreOtherDirs`: skip the M12 check — for the home write-back, which only refreshes the
  * same-named copy and leaves a stale copy in a differently spelled dir untouched.
  */
-export async function moveSession(opts: { sessionId: string; sourceProjectDir: string; targetProjectsRoot: string; ignoreOtherDirs?: boolean }): Promise<MoveResult> {
+export function moveSession(opts: MoveOptions): Promise<MoveResult> {
+  // One move per target at a time: concurrent ones would share the staging names and race the commit renames.
+  const key = path.resolve(opts.targetProjectsRoot, path.basename(opts.sourceProjectDir), `${opts.sessionId}.jsonl`);
+  const run = (movesByTarget.get(key) ?? Promise.resolve()).then(() => moveOnce(opts));
+  const tail = run.then(() => undefined, () => undefined);
+  movesByTarget.set(key, tail);
+  void tail.then(() => { if (movesByTarget.get(key) === tail) movesByTarget.delete(key); });
+  return run;
+}
+
+type MoveOptions = { sessionId: string; sourceProjectDir: string; targetProjectsRoot: string; ignoreOtherDirs?: boolean };
+const movesByTarget = new Map<string, Promise<void>>();
+
+async function moveOnce(opts: MoveOptions): Promise<MoveResult> {
   const { sessionId } = opts;
   const srcFile = path.join(opts.sourceProjectDir, `${sessionId}.jsonl`);
   const srcDir = path.join(opts.sourceProjectDir, sessionId);

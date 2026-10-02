@@ -48,6 +48,17 @@ describe('moveSession', () => {
     expect((await fs.stat(path.join(srcDir, `${ID}.jsonl`))).mtimeMs).toBe(beforeStat.mtimeMs);
   });
 
+  it('concurrent copies of one session to the same target all succeed without trampling each other’s staging', async () => {
+    const { srcDir, dstRoot } = await fixture();
+    const before = await sha256File(path.join(srcDir, `${ID}.jsonl`));
+    const rs = await Promise.all(Array.from({ length: 8 }, () => moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot })));
+    expect(rs.map((r) => (r.ok ? 'ok' : r.error))).toEqual(Array(8).fill('ok'));
+    const targetDir = path.join(dstRoot, '-Users-x-proj');
+    expect(await sha256File(path.join(targetDir, `${ID}.jsonl`))).toBe(before);
+    expect(await fs.readFile(path.join(targetDir, ID, 'custom-title.json'), 'utf8')).toBe('{"customTitle":"T"}');
+    expect((await fs.readdir(targetDir)).sort()).toEqual([ID, `${ID}.jsonl`].sort());
+  });
+
   it('accepts a target that is a byte-prefix of the source (older deck copy) and keeps target-only companions', async () => {
     const { srcDir, dstRoot } = await fixture();
     const src = await fs.readFile(path.join(srcDir, `${ID}.jsonl`));
