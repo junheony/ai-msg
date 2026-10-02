@@ -453,7 +453,11 @@ function mapPanes(state: AppState, msg: ServerMessage): PaneState[] {
 function applyTitles(panes: PaneState[], projects: ProjectEntry[]): PaneState[] {
   return panes.map((p) => {
     const sessionId = p.session?.sessionId;
-    if (!sessionId) return p;
+    if (!sessionId) {
+      // a pending 이어서 whose old session already continues elsewhere (e.g. a reload mid first send) can't link again
+      const from = p.handoffFrom?.sessionId;
+      return from && projects.some((pr) => pr.sessions.some((s) => s.sessionId === from && s.nextSession)) ? { ...p, handoffFrom: null } : p;
+    }
     const found = projects.flatMap((pr) => pr.sessions).find((s) => s.sessionId === sessionId);
     return found && found.title !== p.session!.title ? { ...p, session: { ...p.session!, title: found.title } } : p;
   });

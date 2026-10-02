@@ -91,8 +91,16 @@ export class SessionMetaStore {
     return this.prevIds.get(sessionId) ?? null;
   }
 
-  /** 새 세션으로 이어가기: `to` continues `from`; `to` is titled `title`. */
+  /**
+   * 새 세션으로 이어가기: `to` continues `from`; `to` is titled `title`. A session continues into one session
+   * only — once `from` has a next session, a link to another is refused (it would orphan the first).
+   */
   async link(from: string, to: string, title: string): Promise<SessionMeta> {
+    const old = this.nextIds.get(from);
+    if (old && old !== to) {
+      console.warn(`deck: ${from} already continues in ${old}; not linking ${to}`);
+      return this.snapshot();
+    }
     if (from !== to) this.setLink(from, to);
     if (this.nextIds.size > MAX_META_ENTRIES) {
       const [k, v] = this.nextIds.entries().next().value!;

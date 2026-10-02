@@ -694,6 +694,17 @@ describe('reducer: 새 세션으로 이어가기 (handoff)', () => {
     expect(pane(s).session?.sessionId).toBe(SID);
   });
 
+  it('an id-less pane drops handoffFrom once the index shows the old session already continues elsewhere', () => {
+    let s = play([{ type: 'turn_result', turnId: 'th', sessionId: SID, cwd: '/w', ok: true, text: '메모', badge, errorText: null }], start());
+    const entry = (extra: object) => ({ sessionId: SID, account: 'b', cwd: '/w', projectDir: '/w', file: 'f', title: '작업', lastModified: 0, sizeBytes: 0, ...extra }) as const;
+    s = play([{ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry({})] }] }], s);
+    expect(pane(s).handoffFrom).toEqual({ sessionId: SID, title: '작업' });
+    // e.g. the page reloaded mid first send: the server linked SID → another session meanwhile
+    s = play([{ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry({ nextSession: '22222222-2222-4222-8222-222222222222' })] }] }], s);
+    expect(pane(s).handoffFrom).toBeNull();
+    expect(pane(s).prefill).not.toBeNull(); // the composer text stays
+  });
+
   it('a new session (no id) records no handoff', () => {
     let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
     s = reducer(s, { type: 'sent', text: HANDOFF_PROMPT, clientRef: 'h3', handoff: true });

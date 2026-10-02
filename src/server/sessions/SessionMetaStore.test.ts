@@ -109,6 +109,25 @@ describe('SessionMetaStore', () => {
     expect(junk.snapshot()).toEqual({ titles: {}, archived: [] });
   });
 
+  it('a session continues into one session only: a second link() from it is refused, the first link kept', async () => {
+    const ID3 = '33333333-3333-4333-8333-333333333333';
+    const file = path.join(await tmp(), 'm.json');
+    const s = new SessionMetaStore(file);
+    await s.load();
+    await s.link(ID1, ID2, '작업 (이어서)');
+    await s.link(ID1, ID3, '작업 (이어서)');
+    expect(s.next(ID1)).toBe(ID2);
+    expect(s.prev(ID2)).toBe(ID1);
+    expect(s.prev(ID3)).toBeNull();
+    expect(s.title(ID3)).toBeNull();
+    await s.link(ID1, ID2, '작업 (이어서)'); // the same link again is fine
+    expect(s.next(ID1)).toBe(ID2);
+    const again = new SessionMetaStore(file);
+    await again.load();
+    expect(again.next(ID1)).toBe(ID2);
+    expect(again.prev(ID3)).toBeNull();
+  });
+
   it('SessionIndex decorates entries with prevSession / nextSession from the links', async () => {
     const dir = await tmp();
     const root = path.join(dir, 'b');
