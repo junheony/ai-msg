@@ -1,6 +1,7 @@
 import { isValidElement, memo, useEffect, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
 import type { ChatItem, SentFile } from '../state';
@@ -157,6 +158,7 @@ function AttachmentTiles({ files }: { files: SentFile[] }) {
  */
 export const MessageView = memo(function MessageView({ item, cwd }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string }) {
   if (item.kind === 'user') {
+    if (item.text === HANDOFF_PROMPT) return <div className="msg user handoff-req" title={HANDOFF_PROMPT}><pre>인계 메모 요청 (새 세션으로 이어가기)</pre></div>;
     const { text, notices } = parseUserText(item.text);
     const files = item.attachments ?? [];
     const system = notices.length > 0 && <div className="msg system">{notices.map((n, i) => <SystemNotice key={i} n={n} />)}</div>;

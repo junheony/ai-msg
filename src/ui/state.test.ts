@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { HANDOFF_PROMPT, handoffFirstMessage } from '../shared/handoff';
 import type { ServerMessage } from '../shared/protocol';
 import { MAX_PANES, answersFor, engineOf, fromTranscript, modelFor, initialState, nextQueued, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
 
@@ -639,5 +640,56 @@ describe('context gauge state', () => {
     const last = pane(s).items.at(-1) as Extract<ChatItem, { kind: 'assistant' }>;
     expect(last.ctx).toMatchObject({ usage: { cacheCreationTokens: 120_000 }, window: 1_000_000, model: 'opus', account: 'c' });
     expect(last.cacheNote).toBe('캐시 새로 씀 · 계정 전환');
+  });
+});
+
+describe('reducer: 새 세션으로 이어가기 (handoff)', () => {
+  const badge = { account: 'b' as const, model: 'opus' as const, reason: 'r', usage: { inputTokens: 1, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 }, modelNote: null };
+  const SID = '11111111-1111-4111-8111-111111111111';
+  const start = (): AppState => {
+    let s = reducer(initialState, { type: 'open', sessionId: SID, cwd: '/w', title: '작업' });
+    s = reducer(s, { type: 'sent', text: HANDOFF_PROMPT, clientRef: 'h1', handoff: true });
+    return play([{ type: 'turn_started', turnId: 'th', sessionId: SID, cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0, clientRef: 'h1' }], s);
+  };
+
+  it('a finished note turn switches the pane to a new session in the same folder with the first message prefilled (not sent)', () => {
+    let s = start();
+    expect(pane(s).handoff).toMatchObject({ ref: 'h1', turnId: 'th', sessionId: SID, title: '작업', cwd: '/w' });
+    s = play([
+      { type: 'delta', turnId: 'th', sessionId: SID, cwd: '/w', text: '## 목표\n- X' },
+      { type: 'turn_result', turnId: 'th', sessionId: SID, cwd: '/w', ok: true, text: '## 목표\n- X', badge, errorText: null },
+    ], s);
+    const p = pane(s);
+    expect(p.session).toMatchObject({ sessionId: null, cwd: '/w', title: '작업 (이어서)', engine: 'claude' });
+    expect(p.items).toEqual([]);
+    expect(p.handoff).toBeNull();
+    expect(p.handoffFrom).toEqual({ sessionId: SID, title: '작업' });
+    expect(p.prefill).toBe(handoffFirstMessage('작업', SID, '## 목표\n- X'));
+    expect(p.prefill).toContain(`이전 세션(작업, ${SID})에서 이어서 작업합니다. 인계 메모:\n\n## 목표\n- X\n\n`);
+    expect(p.activeTurnId).toBeNull();
+    // Sending clears the prefill; handoffFrom stays for the 이전 세션 link (and the send's handoffFrom).
+    s = reducer(s, { type: 'sent', text: p.prefill!, clientRef: 'n1' });
+    expect(pane(s).prefill).toBeNull();
+    expect(pane(s).handoffFrom).toEqual({ sessionId: SID, title: '작업' });
+    // Opening another session drops it.
+    expect(pane(reducer(s, { type: 'open', sessionId: 'other', cwd: '/w', title: 'o' })).handoffFrom).toBeNull();
+  });
+
+  it('a failed note turn or a refused send keeps the old session', () => {
+    const failed = play([{ type: 'turn_result', turnId: 'th', sessionId: SID, cwd: '/w', ok: false, text: '', badge, errorText: 'boom' }], start());
+    expect(pane(failed).session?.sessionId).toBe(SID);
+    expect(pane(failed).handoff).toBeNull();
+    expect(pane(failed).prefill).toBeNull();
+    let s = reducer(initialState, { type: 'open', sessionId: SID, cwd: '/w', title: '작업' });
+    s = reducer(s, { type: 'sent', text: HANDOFF_PROMPT, clientRef: 'h2', handoff: true });
+    s = play([{ type: 'error', turnId: null, message: '세션이 실행 중이라 지금은 넘길 수 없습니다', clientRef: 'h2' }], s);
+    expect(pane(s).handoff).toBeNull();
+    expect(pane(s).session?.sessionId).toBe(SID);
+  });
+
+  it('a new session (no id) records no handoff', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    s = reducer(s, { type: 'sent', text: HANDOFF_PROMPT, clientRef: 'h3', handoff: true });
+    expect(pane(s).handoff).toBeNull();
   });
 });

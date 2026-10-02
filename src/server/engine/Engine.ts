@@ -185,6 +185,11 @@ export type TurnRequest = {
   onAutoApproved?: (req: PermissionRequest) => Promise<void>;
   /** Receives the process's input handle (streaming-input mode) so later user messages can join it while background work runs. */
   onLive?: (live: LiveInput) => void;
+  /**
+   * 새 세션으로 이어가기 (handoff note turn): every tool call is denied — a PreToolUse hook (also covers tools a
+   * settings allow rule would run without asking) and canUseTool. The tool list is left as is so the cached prompt still hits.
+   */
+  noTools?: boolean;
 };
 
 export interface Engine {

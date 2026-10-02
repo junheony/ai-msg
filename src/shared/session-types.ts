@@ -20,6 +20,9 @@ export type SessionEntry = {
   archived?: boolean;
   /** A Codex Desktop / CLI thread read from ~/.codex/sessions that deck has not run yet (becomes a deck Codex session on the first turn). */
   imported?: boolean;
+  /** 새 세션으로 이어가기 (session-meta.json): the session this one continued from / was continued in. */
+  prevSession?: string;
+  nextSession?: string;
 };
 
 /** A recent Claude Desktop (Code tab) session; opened like any other session by `sessionId`. */

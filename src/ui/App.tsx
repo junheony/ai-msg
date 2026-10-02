@@ -218,7 +218,7 @@ export function App() {
             </div>
           )}
           {(phone ? [active] : state.panes).map((p) => (
-            <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => apply({ type: 'close_pane', paneId: p.id })} />
+            <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => apply({ type: 'close_pane', paneId: p.id })} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)} />
           ))}
         </div>
       </div>

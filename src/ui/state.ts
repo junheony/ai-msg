@@ -4,6 +4,7 @@ import type { DeckSettings, GeminiStatus, ServerMessage, SessionActivity, TurnBa
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
+import { handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
@@ -66,6 +67,12 @@ export type PaneState = {
   agents: Record<string, AgentInfo>;
   /** Background tasks pill; null = none. */
   bg: PaneBackground | null;
+  /** 새 세션으로 이어가기, step 1: the handoff-note turn this pane sent (`ref` = its clientRef, `turnId` once started). */
+  handoff: { ref: string; turnId: string | null; sessionId: string; title: string; cwd: string } | null;
+  /** Step 2: the session this (new) pane session continues — rides its first send as `handoffFrom`, and the 이전 세션 link. */
+  handoffFrom: { sessionId: string; title: string } | null;
+  /** Composer text to put in once (the new session's first message, sent only when the user presses Enter). */
+  prefill: string | null;
 };
 
 export type AppState = {
@@ -96,7 +103,7 @@ export type AppState = {
 export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, runStartedAt: null, progress: null, agents: {}, bg: null };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null };
 }
 
 export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, activity: [], unread: [] };
@@ -105,7 +112,7 @@ export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
   | { type: 'connected'; value: boolean }
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
-  | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string }
+  | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean }
   | { type: 'set_model'; model: ModelChoice; paneId?: string }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
@@ -267,6 +274,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       if (pane.awaitingStart && sess && !pane.myTurns.includes(msg.turnId) && claims) {
         p = { ...pane, awaitingStart: false, awaitingRef: null, myTurns: [...pane.myTurns, msg.turnId], session: { ...sess, engine: msg.engine ?? 'claude' } };
       }
+      if (p.handoff && p.handoff.turnId === null && msg.clientRef !== undefined && msg.clientRef === p.handoff.ref) p = { ...p, handoff: { ...p.handoff, turnId: msg.turnId } };
       if (!belongs(p, msg)) return p;
       const exists = p.items.some((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
       // Another device's (or pane's) message: its bubble goes before the turn's answer. The sending pane shows it already ('sent').
@@ -351,7 +359,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // ux-state: a failed (or stopped) turn of this pane pauses its queue instead of firing the next message into it.
       const queuePaused = next.queuePaused || ((mine || pane.activeTurnId === msg.turnId) && !msg.ok);
       const ended = pane.activeTurnId === msg.turnId;
-      return { ...next, session, myTurns, queuePaused, activeTurnId: ended ? null : pane.activeTurnId, ...(ended ? { runStartedAt: null, progress: null } : {}) };
+      const done: PaneState = { ...next, session, myTurns, queuePaused, activeTurnId: ended ? null : pane.activeTurnId, ...(ended ? { runStartedAt: null, progress: null } : {}) };
+      return pane.handoff?.turnId === msg.turnId ? afterHandoffNote(done, msg.ok) : done;
     }
     case 'error': {
       const withItem = msg.turnId ? updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, error: it.error ?? msg.message })) : pane;
@@ -365,11 +374,37 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
         : msg.clientRef === undefined && (msg.turnId === null || !pane.myTurns.includes(msg.turnId));
       // ux-state: a refused send pauses the queue too (it would only be refused again).
       const idle = ends && activeTurnId === null ? { runStartedAt: null, progress: null } : stop;
-      return ends ? { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0, ...idle } : { ...withItem, activeTurnId, ...stop };
+      // A refused or failed handoff-note send leaves the pane where it is.
+      const handoff = pane.handoff && ((msg.clientRef !== undefined && msg.clientRef === pane.handoff.ref) || (msg.turnId !== null && msg.turnId === pane.handoff.turnId)) ? { handoff: null } : {};
+      return ends ? { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0, ...idle, ...handoff } : { ...withItem, activeTurnId, ...stop, ...handoff };
     }
     default:
       return pane;
   }
+}
+
+/**
+ * 새 세션으로 이어가기, step 2: the note is written — the pane opens a new session in the same folder, titled
+ * "<old title> (이어서)", with the first message (note included) in the composer. Nothing is sent until the user does.
+ * A failed or empty note leaves the pane on the old session (the turn shows its error).
+ */
+function afterHandoffNote(pane: PaneState, ok: boolean): PaneState {
+  const h = pane.handoff!;
+  const item = pane.items.findLast((it) => it.kind === 'assistant' && it.turnId === h.turnId);
+  const note = item?.kind === 'assistant' ? item.text.trim() : '';
+  if (!ok || !note) return { ...pane, handoff: null };
+  return {
+    ...pane,
+    session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null },
+    engine: 'claude',
+    items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [],
+    // Messages queued meanwhile stay, paused: they were meant for the old session.
+    queuePaused: pane.queuePaused || pane.queue.length > 0,
+    ...ACTIVITY_RESET,
+    handoff: null,
+    handoffFrom: { sessionId: h.sessionId, title: h.title },
+    prefill: handoffFirstMessage(h.title, h.sessionId, note),
+  };
 }
 
 function mapPanes(state: AppState, msg: ServerMessage): PaneState[] {
@@ -478,12 +513,14 @@ export function reducer(state: AppState, action: Action): AppState {
       ...p,
       session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
       items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, ...ACTIVITY_RESET,
+      handoff: null, handoffFrom: null, prefill: null,
     }));
     case 'sent': return updatePane(state, action.paneId, (p) => ({
       ...p,
       items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }],
-      awaitingStart: true, awaitingRef: action.clientRef ?? null, attachments: [], queuePaused: false,
+      awaitingStart: true, awaitingRef: action.clientRef ?? null, attachments: [], queuePaused: false, prefill: null,
       ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
+      ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
     }));
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));

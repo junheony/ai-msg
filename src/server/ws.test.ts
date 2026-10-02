@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { HANDOFF_PROMPT } from '../shared/handoff';
 import type { ServerMessage } from '../shared/protocol';
 import { AttachmentStore } from './attachments/AttachmentStore';
 import { cookieValueFor } from './auth';
@@ -13,6 +14,7 @@ import { createRequestHandler } from './http';
 import { PinStore } from './sessions/PinStore';
 import { SettingsStore } from './settings';
 import { SessionIndex } from './sessions/SessionIndex';
+import { SessionMetaStore } from './sessions/SessionMetaStore';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
@@ -31,6 +33,7 @@ let base: string;
 let work: string;
 let store: SessionStateStore;
 let index: SessionIndex;
+let meta: SessionMetaStore;
 let store2: AttachmentStore;
 let gate: Promise<void> = Promise.resolve();
 let release: () => void = () => {};
@@ -51,7 +54,8 @@ beforeAll(async () => {
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ws-work-')));
-  index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') });
+  meta = new SessionMetaStore(path.join(base, 'session-meta.json'));
+  index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), meta });
   await index.refresh();
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
   await usage.pollOnce();
@@ -81,6 +85,8 @@ beforeAll(async () => {
     if (req.prompt === 'announce') {
       return (async function* () { yield { kind: 'init' as const, sessionId: '14141414-1414-4141-8141-141414141414', model: 'm' }; yield { kind: 'delta' as const, text: 'thinking' }; await gate; yield okResult('14141414-1414-4141-8141-141414141414', 'done'); })();
     }
+    if (req.prompt === HANDOFF_PROMPT) return [{ kind: 'init', sessionId: req.resumeSessionId!, model: 'm' }, okResult(req.resumeSessionId!, `note noTools=${req.noTools === true}`)];
+    if (req.prompt === 'continued') return [{ kind: 'init', sessionId: '77777777-7777-4777-8777-777777777777', model: 'm' }, okResult('77777777-7777-4777-8777-777777777777', `noTools=${req.noTools === true}`)];
     if (req.prompt === 'throw') throw new Error('engine exploded');
     if (req.prompt === 'hold') await gate;
     const sid = req.resumeSessionId ?? 'sess-1';
@@ -94,7 +100,7 @@ beforeAll(async () => {
   settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2 });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2, meta });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -334,6 +340,52 @@ describe('ws', () => {
     const attErr = collect(a.ws, (m) => m.type === 'error' || m.type === 'turn_started');
     a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'x', attachments: ['99999999-9999-4999-8999-999999999999'], clientRef: 'p3-1' }));
     expect((await attErr).at(-1)).toMatchObject({ type: 'error', clientRef: 'p3-1' });
+    a.ws.close();
+  });
+
+  it('handoff: the note turn runs the fixed prompt with tools denied; new or busy sessions are refused', async () => {
+    const SX = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+    const cwd = await seed(SX, 'handoff');
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const done = collect(a.ws, (m) => m.type === 'turn_result' || m.type === 'error');
+    // The client's text is ignored (and attachments dropped): the server always sends HANDOFF_PROMPT.
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'anything', handoff: true, clientRef: 'h-1' }));
+    const msgs = await done;
+    expect(msgs.find((m) => m.type === 'turn_started')).toMatchObject({ sessionId: SX, clientRef: 'h-1', prompt: { text: HANDOFF_PROMPT } });
+    expect(msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'note noTools=true' });
+
+    const fresh = collect(a.ws, (m) => m.type === 'error');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'x', handoff: true, clientRef: 'h-2' }));
+    expect((await fresh).at(-1)).toMatchObject({ type: 'error', clientRef: 'h-2', message: '새 세션은 넘길 대화가 없습니다' });
+
+    hold();
+    const started = collect(a.ws, (m) => m.type === 'turn_started');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'hold' }));
+    await started;
+    const busyErr = collect(a.ws, (m) => m.type === 'error');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'x', handoff: true, clientRef: 'h-3' }));
+    expect((await busyErr).at(-1)).toMatchObject({ type: 'error', clientRef: 'h-3' });
+    const end = collect(a.ws, (m) => m.type === 'turn_result');
+    release();
+    await end;
+    a.ws.close();
+  });
+
+  it('handoff: a new session sent with handoffFrom is linked and titled in session meta once it has an id', async () => {
+    const SX = '99999999-9999-4999-8999-999999999990';
+    const cwd = await seed(SX, 'handoff-from');
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const done = collect(a.ws, (m) => m.type === 'turn_result');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'continued', handoffFrom: SX }));
+    // An ordinary turn: tools are not denied in the continued session.
+    expect((await done).at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'noTools=false' });
+    const NEW = '77777777-7777-4777-8777-777777777777';
+    await vi.waitFor(() => expect(meta.next(SX)).toBe(NEW));
+    expect(meta.prev(NEW)).toBe(SX);
+    expect(meta.title(NEW)).toBe('seed (이어서)');
+    await vi.waitFor(() => expect(index.projects().flatMap((p) => p.sessions).find((e) => e.sessionId === SX)?.nextSession).toBe(NEW));
     a.ws.close();
   });
 

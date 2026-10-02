@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { Effort, ModelChoice } from '../../shared/models';
+import { HANDOFF_PROMPT } from '../../shared/handoff';
 import type { ClientMessage } from '../../shared/protocol';
+import type { ProjectEntry } from '../../shared/session-types';
 import { cardsForPane, engineOf, modelFor, nextQueued, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
 import { Chat } from './Chat';
@@ -39,8 +41,26 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
     ...(effort ? { effort } : {}),
     ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox, ...(s.accountPin ? { accountPin: s.accountPin } : {}) } : {}),
     ...(ids.length ? { attachments: ids } : {}),
+    ...(s.sessionId === null && pane.handoffFrom ? { handoffFrom: pane.handoffFrom.sessionId } : {}),
     clientRef,
   });
+}
+
+/** 새 세션으로 이어가기, step 1: the handoff-note turn in the current session (same account and model: warm cache). */
+export function startHandoff(pane: PaneState, dispatch: (a: Action) => void, send: (m: ClientMessage) => void): void {
+  const s = pane.session;
+  if (!s?.sessionId || pane.activeTurnId !== null || pane.awaitingStart) return;
+  const model = paneModel(pane);
+  const effort = paneEffort(pane, model);
+  const clientRef = nextClientRef();
+  dispatch({ type: 'sent', text: HANDOFF_PROMPT, paneId: pane.id, clientRef, handoff: true });
+  send({ type: 'send', sessionId: s.sessionId, cwd: s.cwd, text: HANDOFF_PROMPT, model, ...(effort ? { effort } : {}), handoff: true, clientRef });
+}
+
+/** A session's title in the index (falls back to its id's head). */
+function titleIn(projects: ProjectEntry[], sessionId: string): { title: string; cwd: string | null } {
+  const e = projects.flatMap((p) => p.sessions).find((x) => x.sessionId === sessionId);
+  return { title: e?.title ?? sessionId.slice(0, 8), cwd: e?.cwd ?? null };
 }
 
 /**
@@ -62,14 +82,16 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
 }
 
 /** One split-view pane: its own session, items and composer; user actions become `send`/`dispatch` here (D6). */
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, uploadFn }: {
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, uploadFn }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage' | 'projects'>>;
   active: boolean;
   closable: boolean;
   dispatch: (a: Action) => void;
   send: (m: ClientMessage) => void;
   onClose: () => void;
+  /** Opens a session in this pane (the 이전 세션 / 새 세션으로 이어감 links). */
+  onOpenSession?: (sessionId: string, cwd: string, title: string) => void;
   uploadFn?: UploadFn;
 }) {
   const s = pane.session;
@@ -85,6 +107,16 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
   const desktop = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && (
     <OpenInDesktop sessionId={s.sessionId} onError={(message) => dispatch({ type: 'show_error', message })} />
   );
+  // 새 세션으로 이어가기: Claude sessions with an id, nothing running.
+  const canHandoff = !!s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && !busy;
+  const projects = app.projects ?? [];
+  const entry = s?.sessionId ? projects.flatMap((p) => p.sessions).find((x) => x.sessionId === s.sessionId) : undefined;
+  const prevId = entry?.prevSession ?? pane.handoffFrom?.sessionId ?? null;
+  const link = (id: string | null) => {
+    if (!id || !s) return null;
+    const t = titleIn(projects, id);
+    return { title: id === pane.handoffFrom?.sessionId && !t.cwd ? pane.handoffFrom.title : t.title, open: () => onOpenSession?.(id, t.cwd ?? s.cwd, t.title) };
+  };
   return (
     <section className={`pane ${active ? 'active' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
       {s ? (
@@ -110,6 +142,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           attachments={pane.attachments}
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send)}
+          onHandoff={canHandoff ? () => startHandoff(pane, dispatch, send) : undefined}
+          handoffWriting={pane.handoff !== null}
+          prefill={pane.prefill}
+          prevSession={link(prevId)}
+          nextSession={link(entry?.nextSession ?? null)}
           onInterrupt={() => {
             if (!pane.activeTurnId) return;
             // ux-state: stop keeps the queue but pauses it — the next message must not fire into the stop.

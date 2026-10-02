@@ -16,6 +16,8 @@ import { AccountPicker } from './AccountPicker';
 import { AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
+import { HANDOFF_COMMAND } from '../../shared/handoff';
+import type { CommandItem } from '../autocomplete';
 import { MessageView } from './MessageView';
 import { ModelPicker } from './ModelPicker';
 import { PermissionCard } from './PermissionCard';
@@ -85,7 +87,18 @@ export type ChatProps = {
   onQueueRemove?: (id: string) => void;
   onQueueClear?: () => void;
   onQueueResume?: () => void;
+  /** 새 세션으로 이어가기 (absent = not offered: new / GPT / Gemini session, or a turn running). Also `/handoff`. */
+  onHandoff?: () => void;
+  /** The handoff-note turn is running. */
+  handoffWriting?: boolean;
+  /** Text put into the composer once (the new session's first message after a handoff); not sent. */
+  prefill?: string | null;
+  /** 새 세션으로 이어가기 links: the session this one continues / continues in. */
+  prevSession?: { title: string; open: () => void } | null;
+  nextSession?: { title: string; open: () => void } | null;
 };
+
+const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
 
 const ATTACHMENT_ONLY_TEXT = '첨부 파일을 확인해 주세요.';
 
@@ -116,6 +129,7 @@ export function Chat(p: ChatProps) {
     if (draftId) setText(loadDraft(p.sessionId));
   }
   useEffect(() => { saveDraft(p.sessionId, text); }, [p.sessionId, text]);
+  useEffect(() => { if (p.prefill) setText(p.prefill); }, [p.prefill]);
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -151,12 +165,18 @@ export function Chat(p: ChatProps) {
   const bgLive = !!p.bg;
   const turnActive = p.activeTurnId !== null;
   const agentCtx = useMemo<AgentCtx>(() => ({ agents, bgLive, active: turnActive }), [agents, bgLive, turnActive]);
-  const suggest = useComposerSuggest({ text, setText, textareaRef: taRef, cwd: p.cwd, sessionId: p.sessionId ?? null, commands: effectiveEngine !== 'codex' });
+  const suggest = useComposerSuggest({ text, setText, textareaRef: taRef, cwd: p.cwd, sessionId: p.sessionId ?? null, commands: effectiveEngine !== 'codex', ...(p.onHandoff ? { extraCommands: HANDOFF_COMMANDS } : {}) });
   const ctx = useMemo(() => latestContext(p.items), [p.items]);
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
   const submit = () => {
     if (!canSend) return;
+    if (p.onHandoff && text.trim() === `/${HANDOFF_COMMAND}` && p.attachments.length === 0) {
+      p.onHandoff();
+      setText('');
+      scroll.attach();
+      return;
+    }
     const msg = text.trim() || ATTACHMENT_ONLY_TEXT;
     if (p.busy) p.onQueue?.(msg);
     else p.onSend(msg);
@@ -213,12 +233,14 @@ export function Chat(p: ChatProps) {
         {p.headActions}
       </div>
       <div className="chat-body" ref={bodyRef}>
+        {p.prevSession && <button type="button" className="session-link prev" data-testid="handoff-prev" onClick={p.prevSession.open} title={p.prevSession.title}>← 이전 세션 · {p.prevSession.title}</button>}
         <AgentContext.Provider value={agentCtx}>
           {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} />)}
         </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
+        {p.nextSession && <button type="button" className="session-link next" data-testid="handoff-next" onClick={p.nextSession.open} title={p.nextSession.title}>→ 새 세션으로 이어감 · {p.nextSession.title}</button>}
       </div>
       {scroll.detached && (
         <div className="jump-anchor">
@@ -238,7 +260,8 @@ export function Chat(p: ChatProps) {
             {p.bg && <BackgroundPill bg={p.bg} onStopTask={p.onStopTask} onStopAll={() => p.onStopBackground?.(p.bg!.turnId)} />}
           </div>
         )}
-        {!p.busy && <ContextHint info={ctx} />}
+        {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
+        {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} />}
         <div className={`composer ${drag ? 'dragover' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop}>
           {suggest.popup}
           <textarea
@@ -274,7 +297,7 @@ export function Chat(p: ChatProps) {
                   </select>
                 </span>
               )}
-              <ContextGauge info={ctx} />
+              <ContextGauge info={ctx} onHandoff={p.onHandoff} />
               {p.onAccountPin && (effectiveEngine === 'claude' || (p.isNew && effectiveEngine === 'auto')) && (
                 <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
               )}

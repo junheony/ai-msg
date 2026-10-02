@@ -51,6 +51,8 @@ export type TurnParams = {
   attachments?: string[];
   /** New Claude sessions only: the account to pin (existing sessions keep their stored pin). */
   accountPin?: Account | null;
+  /** 새 세션으로 이어가기: the handoff-note turn — Claude runs it with every tool call denied (TurnRequest.noTools). */
+  handoff?: boolean;
 };
 
 export type TurnRunnerDeps = {
@@ -556,6 +558,7 @@ export class TurnRunner {
         }
       },
       onLive: (l) => { out.live = l; this.inputs.set(p.turnId, l); },
+      ...(p.handoff ? { noTools: true } : {}),
     });
     const rest = events[Symbol.asyncIterator]();
     const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null, rest, live: null, bgTasks: [] };

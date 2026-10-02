@@ -58,3 +58,14 @@ describe('ClientMessageSchema', () => {
     expect(ClientMessageSchema.safeParse({ type: 'send', sessionId: null, cwd: '/w', text: 'hi', engine: 'gemini', model: 'gemini-flash' }).success).toBe(true);
   });
 });
+
+describe('ClientMessageSchema: handoff', () => {
+  it('send accepts handoff (boolean) and handoffFrom (1..200 chars)', () => {
+    const base = { type: 'send', sessionId: 's', cwd: '/w', text: 'x' };
+    expect(ClientMessageSchema.safeParse({ ...base, handoff: true }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...base, sessionId: null, handoffFrom: 'abc' }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...base, handoff: 'yes' }).success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ ...base, handoffFrom: '' }).success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ ...base, handoffFrom: 'a'.repeat(201) }).success).toBe(false);
+  });
+});
