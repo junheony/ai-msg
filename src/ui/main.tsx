@@ -2,6 +2,10 @@
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles.css';
+import { applyPrefs, loadPrefs } from './prefs';
+
+// Before the first render (no inline script: the CSP forbids it) so a saved theme/font size doesn't flash.
+applyPrefs(loadPrefs());
 
 createRoot(document.getElementById('root')!).render(<App />);
 

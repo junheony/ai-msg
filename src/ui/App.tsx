@@ -2,6 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } 
 import type { ClientMessage } from '../shared/protocol';
 import { Login } from './components/Login';
 import { NotifyMenu } from './components/NotifyMenu';
+import { SettingsView } from './components/SettingsView';
 import { postPin } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta } from './sessionApi';
@@ -50,6 +51,13 @@ export function App() {
   const phone = useIsPhone();
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [buildId, setBuildId] = useState<string | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); setSettingsOpen((o) => !o); } };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   const lastSaved = useRef<string | null>(null);
   useEffect(() => { lastSaved.current = saveUi(snapshotUi(state, { collapsed, drawer }), lastSaved.current); }, [state.panes, state.activePaneId, collapsed, drawer]);
   // Sent files per session (thumbnails after a transcript reload): re-saved only when some pane's sent files change.
@@ -68,6 +76,7 @@ export function App() {
       if (msg.type === 'hello') {
         // A restarted server with a new UI build: reload when nothing is at stake, else offer the pill.
         const build = msg.build ?? null;
+        setBuildId(build);
         if (firstBuild.current === undefined) firstBuild.current = build;
         else if (isNewBuild(firstBuild.current, build)) {
           const next = reducer(latest.current, { type: 'server', msg });
@@ -175,6 +184,7 @@ export function App() {
         </div>
       </header>
       {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
+      {settingsOpen && <SettingsView build={buildId} onOpenUsage={() => setUsageOpen(true)} onClose={() => setSettingsOpen(false)} />}
       {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
       {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}
       {(orphanPerms.length > 0 || orphanQs.length > 0) && (
@@ -208,6 +218,7 @@ export function App() {
             }}
             activity={state.activity}
             unread={state.unread}
+            onOpenSettings={() => setSettingsOpen(true)}
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
           />
         </div>
