@@ -101,3 +101,21 @@ describe('rolloutRecentlyActive', () => {
     expect(await rolloutRecentlyActive(path.join(base, 'missing'), mtime)).toBe(false);
   });
 });
+
+describe('SessionIndex codexInBackground', () => {
+  it('resolves before the Codex read finishes and calls onChange once threads are in', async () => {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-idx-bg-'));
+    const work = path.join(base, 'work');
+    await fs.mkdir(work);
+    const root = path.join(base, 'codex');
+    await writeFixtures(root, work);
+    const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
+    const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root });
+    const changed = new Promise<void>((r) => { index.onChange = r; });
+    await index.refresh({ codexInBackground: true });
+    expect(index.codexImport(DESKTOP_ID)).toBeNull();
+    await changed;
+    expect(index.codexImport(DESKTOP_ID)).not.toBeNull();
+    await fs.rm(base, { recursive: true, force: true });
+  });
+});

@@ -42,7 +42,8 @@ async function main(): Promise<void> {
   const pins = new PinStore(cfg.pinsFile);
   const settings = new SettingsStore(cfg.settingsFile);
   const pushSubs = new SubscriptionStore(cfg.pushSubscriptionsFile);
-  await Promise.all([index.refresh(), store.load(), pins.load(), settings.load(), pushSubs.load()]);
+  // Codex rollouts (~1000 files) are read after listening; the sidebar is told when they are in.
+  await Promise.all([index.refresh({ codexInBackground: true }), store.load(), pins.load(), settings.load(), pushSubs.load()]);
   const commands = new SlashCommandCache();
   const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries()).flatMap((p) => p.sessions) });
   const files = new FileLister({ home: cfg.home, roots: cfg.cwdRoots });
@@ -103,6 +104,7 @@ async function main(): Promise<void> {
   const servers = bound.map((b) => b.server);
   const ws = attachWebSocket(servers, { build: computeBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments, meta });
   notifyIndex = () => ws.broadcastIndex();
+  index.onChange = () => notifyIndex();
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 
   console.log(`deck: 세션 ${index.sessions().length}개 · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · codex ${cfg.codexBin ?? '없음'} · gemini ${cfg.geminiBin ?? '없음'}`);

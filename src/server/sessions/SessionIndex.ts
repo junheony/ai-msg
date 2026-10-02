@@ -186,7 +186,11 @@ export class SessionIndex {
     this.desktopList = this.desktopList.map((d) => this.decorate(d));
   }
 
-  async refresh(): Promise<void> {
+  /** Called when the background Codex read (see `refresh`) has added threads. */
+  onChange: (() => void) | null = null;
+
+  /** `codexInBackground`: do not wait for the (slow) Codex rollout read; `onChange` fires once it is done. */
+  async refresh(opts: { codexInBackground?: boolean } = {}): Promise<void> {
     const all = (await Promise.all(ACCOUNTS.map((a) => scanProfile(a, this.opts.roots[a])))).flat();
     this.entries = all;
     // The same id in several profiles/dirs: the copy containing the others wins; truly diverged → newest.
@@ -201,7 +205,11 @@ export class SessionIndex {
     this.pinned = await readPinned(this.opts.pinnedFile);
     if (this.opts.recentFile) this.recentFolders = await readRecent(this.opts.recentFile);
     this.grouped = this.group(all);
-    if (this.codex) await this.codex.refresh().catch(() => undefined);
+    if (this.codex) {
+      const codexDone = this.codex.refresh().catch(() => undefined);
+      if (opts.codexInBackground) void codexDone.then(() => this.onChange?.());
+      else await codexDone;
+    }
     this.desktopList = this.opts.desktopRoot ? (await recentDesktopSessions(this.opts.desktopRoot, (id) => this.lookup(id)).catch(() => [])).map((d) => this.decorate(d)) : [];
   }
 
