@@ -416,9 +416,15 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
     case 'stream_event': {
       if (m.parent_tool_use_id !== null) return [];
       const ev = m.event as unknown as Rec;
+      if (ev.type === 'content_block_start') {
+        const t = ((ev.content_block ?? {}) as Rec).type;
+        if (t === 'redacted_thinking') return [{ kind: 'thinking', text: '', redacted: true }];
+        return t === 'thinking' ? [{ kind: 'thinking', text: '' }] : [];
+      }
       if (ev.type !== 'content_block_delta') return [];
       const delta = ev.delta as Rec | undefined;
       if (delta?.type === 'text_delta' && typeof delta.text === 'string') return [{ kind: 'delta', text: delta.text }];
+      if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') return [{ kind: 'thinking', text: delta.thinking }];
       return [];
     }
     case 'assistant': {

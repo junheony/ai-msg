@@ -11,7 +11,7 @@ export type ToolCallItem = { toolUseId: string; name: string; input: unknown; re
 
 export type ChatItem =
   | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[] }
-  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null };
+  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null };
 
 /** A subagent's own tool call, shown in its Agent card (nested subagents' calls are flattened into the top card). */
 export type AgentCall = { toolUseId: string; name: string; input: unknown; done: boolean; isError: boolean };
@@ -137,6 +137,8 @@ export type Action =
 /** A sent message's text and files, kept per session so a reloaded transcript can show thumbnails again. */
 export type SentRecord = { text: string; files: SentFile[] };
 
+export type ThinkingInfo = { text: string; redacted: boolean; startedAt: number | null; ms: number | null };
+
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
 export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
@@ -146,7 +148,7 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
     else if (m.kind === 'assistant') {
       const at = m.ts ? Date.parse(m.ts) : NaN;
       const ctx: ContextInfo | null = m.usage ? { usage: m.usage, window: contextWindowOf(m.model), at: Number.isNaN(at) ? null : at, model: m.model, account: null } : null;
-      items.push({ kind: 'assistant', turnId: null, text: m.text, toolCalls: m.toolCalls.map((t) => ({ toolUseId: t.id, name: t.name, input: t.input, result: null, isError: false })), badge: null, streaming: false, error: null, notes: [], attempts: [], ...(ctx ? { ctx } : {}) });
+      items.push({ kind: 'assistant', turnId: null, text: m.text, toolCalls: m.toolCalls.map((t) => ({ toolUseId: t.id, name: t.name, input: t.input, result: null, isError: false })), badge: null, streaming: false, error: null, notes: [], attempts: [], ...(m.thinking || m.thinkingRedacted ? { thinking: { text: m.thinking ?? '', redacted: !!m.thinkingRedacted, startedAt: null, ms: null } } : {}), ...(ctx ? { ctx } : {}) });
     } else {
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
@@ -188,6 +190,13 @@ function belongs(pane: PaneState, msg: TurnMsg): boolean {
   if (!pane.session) return false;
   if (pane.myTurns.includes(msg.turnId) || msg.turnId === pane.activeTurnId) return true;
   return msg.sessionId !== null && msg.sessionId === pane.session.sessionId;
+}
+
+/** The first reply text / tool call after thinking closes it: its elapsed time is fixed. */
+function endThinking(it: AssistantItem): AssistantItem {
+  const t = it.thinking;
+  if (!t || t.ms !== null || t.startedAt === null) return it;
+  return { ...it, thinking: { ...t, ms: Date.now() - t.startedAt } };
 }
 
 function streamingItem(turnId: string): AssistantItem {
@@ -323,19 +332,27 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       if (!id) return pane;
       return withAgent(pane, id, (a) => ({ ...a, calls: a.calls.map((c) => (c.toolUseId === msg.toolUseId ? { ...c, done: true, isError: msg.isError } : c)) }));
     }
+    case 'thinking':
+      if (!belongs(pane, msg)) return pane;
+      return updateTurn(pane, msg.turnId, (it) => {
+        const t = it.thinking;
+        // A new thinking block (empty chunk) after an earlier one: separate the texts, keep the first start.
+        const sep = !msg.text && t?.text ? '\n\n' : '';
+        return { ...it, thinking: { text: (t?.text ?? '') + sep + msg.text, redacted: (t?.redacted ?? false) || !!msg.redacted, startedAt: !t ? Date.now() : t.ms !== null ? Date.now() - t.ms : t.startedAt, ms: null } };
+      });
     case 'delta':
       if (!belongs(pane, msg)) return pane;
-      return updateTurn(pane, msg.turnId, (it) => ({ ...it, text: it.text + msg.text }));
+      return updateTurn(pane, msg.turnId, (it) => ({ ...endThinking(it), text: it.text + msg.text }));
     case 'tool_call':
       if (!belongs(pane, msg)) return pane;
-      return updateTurn(pane, msg.turnId, (it) => ({ ...it, toolCalls: [...it.toolCalls, { toolUseId: msg.toolUseId, name: msg.name, input: msg.input, result: null, isError: false }] }));
+      return updateTurn(pane, msg.turnId, (it) => ({ ...endThinking(it), toolCalls: [...it.toolCalls, { toolUseId: msg.toolUseId, name: msg.name, input: msg.input, result: null, isError: false }] }));
     case 'tool_result':
       if (!belongs(pane, msg)) return pane;
       return updateTurn(pane, msg.turnId, (it) => ({ ...it, toolCalls: it.toolCalls.map((t) => (t.toolUseId === msg.toolUseId ? { ...t, result: msg.content, isError: msg.isError } : t)) }));
     case 'turn_retry':
       if (!belongs(pane, msg)) return pane;
       // Review M11: the retry streams into a fresh segment; the failed attempt's text is kept apart.
-      return updateTurn(pane, msg.turnId, (it) => ({ ...it, text: '', attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
+      return updateTurn(pane, msg.turnId, ({ thinking: _drop, ...it }) => ({ ...it, text: '', attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
     case 'turn_background': {
       if (!belongs(pane, msg)) return pane;
       // One pill per pane (one process per session); [] clears it.
@@ -471,7 +488,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       });
       return { ...state, panes };
     }
-    case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
+    case 'thinking': case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
     case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result':
       return { ...state, panes: mapPanes(state, msg) };
     case 'activity': {

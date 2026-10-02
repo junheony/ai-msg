@@ -576,6 +576,7 @@ export class TurnRunner {
         case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
         case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+        case 'thinking': sink.emit({ type: 'thinking', ...scope(), text: redactSecrets(ev.text), ...(ev.redacted ? { redacted: true } : {}) }); break;
         case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
         case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
         case 'rate_limit':
@@ -665,6 +666,7 @@ export class TurnRunner {
           case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
           case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
           case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+          case 'thinking': sink.emit({ type: 'thinking', ...scope(), text: redactSecrets(ev.text), ...(ev.redacted ? { redacted: true } : {}) }); break;
           case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
           case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;

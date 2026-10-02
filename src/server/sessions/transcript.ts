@@ -186,6 +186,10 @@ class TranscriptBuilder {
       }
       for (const b of blocks) {
         if (b.type === 'text' && typeof b.text === 'string') entry.text += (entry.text ? '\n' : '') + b.text;
+        else if (b.type === 'thinking') {
+          if (typeof b.thinking === 'string' && b.thinking.trim()) entry.thinking = (entry.thinking ? `${entry.thinking}\n\n` : '') + b.thinking;
+          else entry.thinkingRedacted = true; // empty text + signature = thinking the API did not return
+        } else if (b.type === 'redacted_thinking') entry.thinkingRedacted = true;
         else if (b.type === 'tool_use') entry.toolCalls.push({ id: String(b.id ?? ''), name: String(b.name ?? ''), input: b.input });
       }
       const usage = contextUsageOf(m.usage);

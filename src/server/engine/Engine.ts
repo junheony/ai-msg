@@ -33,6 +33,8 @@ export type EngineEvent =
   /** `cwd` is the CLI's own (realpath'd) working directory from system/init — the one it slugs. */
   | { kind: 'init'; sessionId: string; model: string; cwd?: string }
   | { kind: 'delta'; text: string }
+  /** Claude extended thinking: a text chunk of the thinking block (empty on block start); `redacted` = encrypted block, no text. */
+  | { kind: 'thinking'; text: string; redacted?: boolean }
   | { kind: 'tool_call'; toolUseId: string; name: string; input: unknown }
   | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean }
   | { kind: 'rate_limit'; info: RateLimitSignal }
