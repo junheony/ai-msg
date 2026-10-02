@@ -77,7 +77,7 @@ type TurnScope = { turnId: string; sessionId: string | null; cwd: string };
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus }
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   | { type: 'settings'; settings: DeckSettings }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[] }

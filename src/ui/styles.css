@@ -109,6 +109,7 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .conn.off::before { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 .banner.error { background: var(--danger-soft); color: var(--danger); padding: 7px 14px; font-size: 13.5px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.update-pill { display: block; width: 100%; background: var(--accent-soft, var(--bg-raised)); color: var(--accent, var(--text)); border: 0; border-bottom: 1px solid var(--line); padding: 5px 14px; font-size: 13px; cursor: pointer; text-align: center; }
 .global-cards { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--line); background: var(--bg-raised); max-height: 45vh; overflow-y: auto; }
 .body { display: flex; flex: 1; min-height: 0; }
 .menu { display: none; }

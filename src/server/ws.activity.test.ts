@@ -47,7 +47,7 @@ beforeAll(async () => {
   const settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, build: 'build-1', cwdRoots: [path.dirname(work)], pins, settings });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -100,7 +100,7 @@ describe('ws: activity on every device', () => {
     const a = await client();
     await a.next('hello');
     const other = await client();
-    expect(await other.next('hello')).toMatchObject({ activity: [] });
+    expect(await other.next('hello')).toMatchObject({ activity: [], build: 'build-1' });
 
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     const t = await a.next('turn_started');

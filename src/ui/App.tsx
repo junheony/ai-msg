@@ -10,6 +10,7 @@ import { PermissionCard } from './components/PermissionCard';
 import { QuestionCard } from './components/QuestionCard';
 import { Sidebar } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
+import { claimReload, hasDraftText, isNewBuild, shouldAutoReload } from './autoReload';
 import { hydrate, loadSent, loadUi, saveSent, saveUi, snapshotUi } from './persist';
 import { findSession } from './push';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action } from './state';
@@ -40,6 +41,8 @@ export function App() {
   const saved = useMemo(() => loadUi(), []);
   const [state, dispatch] = useReducer(reducer, saved, (ui) => hydrate(initialState, ui));
   const [collapsed, setCollapsed] = useState<string[]>(() => saved?.collapsed ?? []);
+  const firstBuild = useRef<string | null | undefined>(undefined);
+  const [newBuild, setNewBuild] = useState(false);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
   const latest = useRef(state);
   latest.current = state;
@@ -61,6 +64,14 @@ export function App() {
       dispatch(msg.type === 'history' ? { type: 'server', msg, sentFiles: loadSent(msg.sessionId) } : { type: 'server', msg });
       // Reconnected: re-open every pane's session (once each) so this socket receives their turn events again (review I3, D6).
       if (msg.type === 'hello') {
+        // A restarted server with a new UI build: reload when nothing is at stake, else offer the pill.
+        const build = msg.build ?? null;
+        if (firstBuild.current === undefined) firstBuild.current = build;
+        else if (isNewBuild(firstBuild.current, build)) {
+          const next = reducer(latest.current, { type: 'server', msg });
+          if (shouldAutoReload({ draftText: hasDraftText(), state: next }) && claimReload(build!)) { location.reload(); return; }
+          setNewBuild(true);
+        }
         const panes = latest.current.panes;
         for (const id of new Set(panes.map((p) => p.session?.sessionId).filter((x): x is string => !!x))) sock.current?.send({ type: 'open_session', sessionId: id });
         for (const p of panes) {
@@ -160,6 +171,7 @@ export function App() {
           <span className={`conn ${state.connected ? 'on' : 'off'}`} title={state.connected ? '연결됨' : '재연결 중…'}>{state.connected ? '연결됨' : '재연결 중…'}</span>
         </div>
       </header>
+      {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
       {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}
       {(orphanPerms.length > 0 || orphanQs.length > 0) && (
         <div className="global-cards">

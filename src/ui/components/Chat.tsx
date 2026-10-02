@@ -1,3 +1,4 @@
+import { loadDraft, saveDraft } from '../autoReload';
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { GeminiStatus } from '../../shared/protocol';
@@ -94,7 +95,8 @@ function useCoarsePointer(): boolean {
 const NO_AGENTS: Record<string, AgentInfo> = {};
 
 export function Chat(p: ChatProps) {
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => loadDraft(p.sessionId));
+  useEffect(() => { saveDraft(p.sessionId, text); }, [p.sessionId, text]);
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
