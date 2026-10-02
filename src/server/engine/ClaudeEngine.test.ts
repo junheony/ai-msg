@@ -45,6 +45,11 @@ describe('buildOptions: model version and effort', () => {
     expect(o.effort).toBe('xhigh');
     expect(buildOptions(req({ model: 'sonnet', effort: 'low' }), deps)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low' });
   });
+
+  it('asks the CLI to echo consumed user messages (steer confirmation) unless steering is switched off', () => {
+    expect(buildOptions(req(), deps).extraArgs).toEqual({ 'replay-user-messages': null });
+    expect(buildOptions(req(), { ...deps, steer: false }).extraArgs).toBeUndefined();
+  });
 });
 
 describe('buildOptions: allow for this session (review I4)', () => {

@@ -46,6 +46,8 @@ export type DeckConfig = {
   drainMaxMs: number;
   /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`, default 120). */
   bgMaxMs: number;
+  /** Messages typed while a Claude turn runs go into it at the next tool boundary (`DECK_STEER=0` turns it off: queued for after the turn). */
+  steer: boolean;
   /** Fork backups (`<profile>/session-backups/`) and 삭제 trash (`<profile>/session-trash/`) older than this many days are deleted (`DECK_BACKUP_RETENTION_DAYS`, default 30). */
   backupRetentionDays: number;
   /** Web Push: VAPID keypair (0600, generated once) and browser subscriptions (0600). */
@@ -127,6 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
     drainMaxMs: minutes(env.DECK_DRAIN_MAX_MIN, 15),
     bgMaxMs: minutes(env.DECK_BG_MAX_MIN, 120),
+    steer: env.DECK_STEER !== '0',
     backupRetentionDays: Number(env.DECK_BACKUP_RETENTION_DAYS) > 0 ? Number(env.DECK_BACKUP_RETENTION_DAYS) : 30,
     vapidFile: path.join(configDir, 'vapid.json'),
     pushSubscriptionsFile: path.join(configDir, 'push-subscriptions.json'),

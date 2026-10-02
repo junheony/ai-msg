@@ -210,6 +210,20 @@ describe('TurnRunner: steering a running Claude turn', () => {
     expect(of(msgs, 'steer_rejected')).toHaveLength(1);
   });
 
+  it('DECK_STEER=0 (engine steer: false): no live steer, so steer() refuses; follow-up bookkeeping still closes the process', async () => {
+    const g = fakeSdk();
+    const { msgs, sink, runner } = await setup({ engine: new ClaudeEngine({ queryFn: g.queryFn, readFile: async () => Buffer.from(''), steer: false }) });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    await waitFor(() => g.inputs.length === 1, 'prompt written');
+    g.push(sdk.init('s1'));
+    expect(await runner.steer('t1', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(false);
+    g.push(resultFor('ok', [g.inputs[0]!.uuid]));
+    await done;
+    expect(g.inputs).toHaveLength(1);
+    expect(g.state.inputClosed).toBe(true);
+    expect(of(msgs, 'turn_result')).toHaveLength(1);
+  });
+
   it('a handoff-note turn (no tools) takes no steers', async () => {
     const { f, sink, runner } = await setup();
     const done = runner.run({ turnId: 'h1', cwd: '/w/new', sessionId: null, text: 'write the note', handoff: true }, sink);

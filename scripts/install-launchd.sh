@@ -76,6 +76,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
     echo "DECK_EXTRA_HOSTS=${DECK_EXTRA_HOSTS:-}"
     echo "# DECK_DRAIN_MAX_MIN=15   # 재시작 때 진행 중 작업을 기다리는 최대 분"
     echo "# DECK_BG_MAX_MIN=120     # 턴 뒤 백그라운드 작업을 기다리는 최대 분"
+    echo "# DECK_STEER=0            # 실행 중 보낸 메시지를 턴에 끼워 넣지 않고 턴 뒤로 미룸 (기본 켜짐)"
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   echo "deck: $ENV_FILE 생성 (DECK_EXTRA_HOSTS=${DECK_EXTRA_HOSTS:-비어 있음})"

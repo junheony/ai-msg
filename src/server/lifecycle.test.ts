@@ -98,4 +98,10 @@ describe('config: drain and background limits', () => {
     expect(o.bgMaxMs).toBe(30_000);
     expect(loadConfig({ PATH: '/nonexistent', DECK_DRAIN_MAX_MIN: 'x', DECK_BG_MAX_MIN: '-1' }, '/h', '/repo')).toMatchObject({ drainMaxMs: 15 * 60_000, bgMaxMs: 120 * 60_000 });
   });
+
+  it('steering is on unless DECK_STEER=0', () => {
+    expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').steer).toBe(true);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_STEER: '1' }, '/h', '/repo').steer).toBe(true);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_STEER: '0' }, '/h', '/repo').steer).toBe(false);
+  });
 });

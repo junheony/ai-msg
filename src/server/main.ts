@@ -73,7 +73,7 @@ async function main(): Promise<void> {
   let notifyIndex = () => {};
   let notifyPermissionMode: (sessionId: string, mode: PermMode) => void = () => {};
   const runner = new TurnRunner({
-    engine: new ClaudeEngine({ bgMaxMs: cfg.bgMaxMs, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) }),
+    engine: new ClaudeEngine({ bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) }),
     codex,
     gemini,
     attachments,

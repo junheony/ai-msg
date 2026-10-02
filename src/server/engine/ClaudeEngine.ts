@@ -303,7 +303,7 @@ export const KEEP_PLANNING_MESSAGE = '사용자가 계획을 승인하지 않았
 
 export function buildOptions(
   req: TurnRequest,
-  deps: { home: string; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void },
+  deps: { home: string; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void; /** false: DECK_STEER=0 (no echo flag). */ steer?: boolean },
 ): Options {
   return {
     cwd: req.cwd,
@@ -321,7 +321,7 @@ export function buildOptions(
     includePartialMessages: true,
     // Echo each user message as the CLI takes it off stdin (isReplay frames carrying our uuid): how a steer is seen
     // reaching the model — at the tool boundary it was folded in at, or at the start of its own turn. null = bare flag.
-    extraArgs: { 'replay-user-messages': null },
+    ...(deps.steer !== false ? { extraArgs: { 'replay-user-messages': null } } : {}),
     abortController: deps.abortController,
     stderr: deps.onStderr,
     // Review I4: "이 세션" on an earlier turn stored the SDK's own scoped suggestions; they are
@@ -525,8 +525,10 @@ export class ClaudeEngine implements Engine {
   private readonly bgMaxMs: number;
   private readonly bgGraceMs: number;
   private readonly onCommands: CommandsListener | null;
+  /** Kill switch (DECK_STEER=0 → false): no `onLive().steer`, no echo flag; follow-ups and per-uuid bookkeeping stay. */
+  private readonly steer: boolean;
 
-  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number; onCommands?: CommandsListener } = {}) {
+  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number; onCommands?: CommandsListener; steer?: boolean } = {}) {
     this.queryFn = opts.queryFn ?? ((p) => query(p));
     this.home = opts.home ?? os.homedir();
     this.baseEnv = opts.baseEnv ?? process.env;
@@ -534,6 +536,7 @@ export class ClaudeEngine implements Engine {
     this.bgMaxMs = opts.bgMaxMs ?? BG_MAX_MS;
     this.bgGraceMs = opts.bgGraceMs ?? BG_GRACE_MS;
     this.onCommands = opts.onCommands ?? null;
+    this.steer = opts.steer ?? true;
   }
 
   /**
@@ -590,7 +593,7 @@ export class ClaudeEngine implements Engine {
       graceTimer = setTimeout(() => finish('grace'), this.bgGraceMs);
       graceTimer.unref?.();
     };
-    const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
+    const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, steer: this.steer, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
     const write = async (f: { text: string; attachments: Attachment[] }, steerId: string | null): Promise<boolean> => {
       if (input.closed) return false;
       // Counted before the first await: the loop decides whether to close right after a result,
@@ -634,6 +637,8 @@ export class ClaudeEngine implements Engine {
       handle = stream as Handle;
       if (typeof handle.stopTask !== 'function') delete live.stopTask;
       if (typeof handle.setPermissionMode !== 'function') delete live.setPermissionMode;
+      // Switched off, or a handoff note (no tools: no boundary to fold at): the caller queues for after the turn.
+      if (!this.steer || req.noTools) delete live.steer;
       req.onLive?.(live);
       for await (const m of stream) {
         if (bg.apply(m)) {
