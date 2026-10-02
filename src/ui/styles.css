@@ -1246,7 +1246,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .sidebar-head { flex-wrap: wrap; row-gap: 4px; }
 .session-meta { max-width: 50%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chat-head > .chip.perm-badge { max-width: 30%; overflow: hidden; text-overflow: ellipsis; }
-.sidebar-toggle { display: none; }
+.sidebar-toggle { display: inline-flex; width: 30px; height: 30px; font-size: calc(15px * var(--font-scale, 1)); color: var(--fg); }
+.sidebar-toggle[aria-pressed="false"] { color: var(--muted); }
 .usage-sum { display: none; }
 
 /* Composer: a narrow composer (split column, tablet pane) wraps its pickers onto their own row like the phone does,
