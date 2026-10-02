@@ -141,6 +141,10 @@ export async function readSessionFile(opts: { home: string; roots: string[]; cwd
   try {
     const st = await fh.stat();
     if (!st.isFile()) throw new FileReadError('파일이 아닙니다', 400);
+    // The opened file must still be the one checked (no swap of a parent dir in between), and a hard link to a file
+    // elsewhere (another name for a denied file) is refused.
+    const again = await fs.realpath(abs).then((r) => (r === real ? fs.stat(r) : null), () => null);
+    if (!again || again.ino !== st.ino || again.dev !== st.dev || st.nlink > 1) throw new FileReadError('파일을 열 수 없습니다', 403);
     if (st.size > (opts.max ?? MAX_PREVIEW_BYTES)) throw new FileReadError('파일이 너무 커서 미리 볼 수 없습니다 (2MB 초과)', 413);
     const buf = await fh.readFile();
     const image = IMAGE_MAGIC.find((m) => m.test(buf));

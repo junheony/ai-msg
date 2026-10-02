@@ -147,6 +147,13 @@ describe('readSessionFile', () => {
     expect(await status(lister.read(h, 'deckcfg/vapid.json'))).toBe(403);
   });
 
+  it('refuses a hard-linked file (another name for a file elsewhere)', async () => {
+    const { h, read } = await setup();
+    await fs.writeFile(path.join(h, 'secret.txt'), 'x');
+    await fs.link(path.join(h, 'secret.txt'), path.join(h, 'proj', 'alias.txt'));
+    expect(await status(read('alias.txt'))).toBe(403);
+  });
+
   it('size cap, binary detection, images sniffed by content', async () => {
     const { p, read } = await setup();
     await fs.writeFile(path.join(p, 'big.txt'), 'x'.repeat(101));
