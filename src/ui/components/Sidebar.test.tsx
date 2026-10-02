@@ -216,3 +216,19 @@ describe('Sidebar rename / archive / 대화 내용 검색', () => {
     expect(screen.queryByTestId('search-group')).toBeNull();
   });
 });
+
+describe('Sidebar activity dots', () => {
+  afterEach(cleanup);
+  const s = (id: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: Date.now(), sizeBytes: 1 });
+  it('running → spinner, background only → pulsing dot, finished unseen → unread dot', () => {
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'one'), s('s2', 'two'), s('s3', 'three'), s('s4', 'four')] }];
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop}
+      activity={[{ sessionId: 's1', cwd: '/w', turnId: 't1', running: true, bg: 0, forMs: 0 }, { sessionId: 's2', cwd: '/w', turnId: 't2', running: false, bg: 2, forMs: 0 }]}
+      unread={['s3']} />);
+    const dotOf = (title: string) => screen.getByText(title).closest('li')!.querySelector('.row-dot');
+    expect(dotOf('one')?.classList.contains('running')).toBe(true);
+    expect(dotOf('two')?.getAttribute('aria-label')).toBe('백그라운드 작업 2개');
+    expect(dotOf('three')?.classList.contains('unread')).toBe(true);
+    expect(dotOf('four')).toBeNull();
+  });
+});

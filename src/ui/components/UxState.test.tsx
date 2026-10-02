@@ -32,7 +32,7 @@ describe('composer queue (ux-state)', () => {
     fireEvent.change(box, { target: { value: 'another' } });
     fireEvent.click(screen.getByText('대기열에 추가'));
     expect(onQueue).toHaveBeenLastCalledWith('another');
-    expect(screen.getByText('중단')).toBeTruthy();
+    expect(screen.getByTitle('중단')).toBeTruthy();
   });
 
   it('queue chips: click to edit, ✕ removes, 모두 지우기 clears, 이어서 보내기 only when paused', () => {
@@ -88,7 +88,7 @@ describe('composer queue (ux-state)', () => {
     server({ type: 'turn_started', turnId: 't2', sessionId: 's1', cwd: '/w', clientRef: ref2 } as ServerMessage);
     fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'three' } });
     fireEvent.keyDown(screen.getByLabelText('메시지'), { key: 'Enter', ctrlKey: true });
-    fireEvent.click(screen.getByText('중단'));
+    fireEvent.click(screen.getByTitle('중단'));
     expect(send.mock.lastCall![0]).toEqual({ type: 'interrupt', turnId: 't2' });
     server({ type: 'turn_result', turnId: 't2', sessionId: 's1', cwd: '/w', ok: false, text: '', badge: null, errorText: '중단됨' });
     expect(send).toHaveBeenCalledTimes(3);

@@ -59,7 +59,7 @@ describe('TurnRunner: background work after the turn result', () => {
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'explore repo' }]), sdk.delta('launched'), sdk.result('launched', 's1'));
     await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
-    expect(of(msgs, 'turn_background')).toEqual([{ type: 'turn_background', turnId: 't1', sessionId: 's1', cwd: '/w/new', tasks: ['explore repo'] }]);
+    expect(of(msgs, 'turn_background')).toMatchObject([{ type: 'turn_background', turnId: 't1', sessionId: 's1', cwd: '/w/new', tasks: ['explore repo'] }]);
     expect(runner.backgroundSessions()).toEqual(['s1']);
 
     f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('found'), sdk.result('found', 's1'));
@@ -83,7 +83,7 @@ describe('TurnRunner: background work after the turn result', () => {
     await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
     f.push(sdk.taskDone('x'), sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('built'), sdk.result('built', 's1'));
     await done;
-    expect(of(msgs, 'task_done')).toEqual([{ type: 'task_done', turnId: 't1', sessionId: 's1', cwd: '/w/new', status: 'completed', summary: 'done' }]);
+    expect(of(msgs, 'task_done')).toMatchObject([{ type: 'task_done', turnId: 't1', sessionId: 's1', cwd: '/w/new', status: 'completed', summary: 'done' }]);
     expect(of(msgs, 'turn_result').map((m) => m.turnId)).toEqual(['t1', 't1:bg1']);
   });
 

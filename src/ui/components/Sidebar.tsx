@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { SessionActivity } from '../../shared/protocol';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
@@ -18,7 +19,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove, collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove, collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [] }: {
   projects: ProjectEntry[];
   currentSessionId: string | null;
   onOpen: (sessionId: string, cwd: string, title: string) => void;
@@ -45,6 +46,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** Enables 대화 내용 검색 (full-text over all transcripts); a clicked hit lands here. */
   onOpenHit?: (hit: SearchHit) => void;
   searchFn?: (q: string) => Promise<{ hits: SearchHit[]; truncated: boolean }>;
+  /** Sessions with a running turn or background work (any device): spinner / pulsing dot before the title. */
+  activity?: SessionActivity[];
+  /** Sessions that finished while not shown: unread dot until opened. */
+  unread?: string[];
 }) {
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState('');
@@ -106,6 +111,16 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const pinned = pins.map((id) => byId.get(id)).filter((s): s is SessionEntry => !!s && inView(s) && match(s));
   const desktopShown = desktop.filter((d) => inView(d)).filter((d) => !q || d.title.toLowerCase().includes(q) || d.project.toLowerCase().includes(q));
 
+  const actById = new Map(activity.map((a) => [a.sessionId, a]));
+  const unreadSet = new Set(unread);
+  const dot = (sessionId: string) => {
+    const a = actById.get(sessionId);
+    if (a?.running) return <span className="row-dot running" role="img" aria-label="실행 중" title="실행 중" />;
+    if (a && a.bg > 0) return <span className="row-dot bg" role="img" aria-label={`백그라운드 작업 ${a.bg}개`} title={`백그라운드 작업 ${a.bg}개`} />;
+    if (unreadSet.has(sessionId)) return <span className="row-dot unread" role="img" aria-label="새 응답" title="새 응답" />;
+    return null;
+  };
+
   const row = (s: SessionEntry, group: string) => {
     const on = pinSet.has(s.sessionId);
     const key = `${group}:${s.sessionId}`;
@@ -116,6 +131,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         onClick={(e) => { if (e.detail > 1 || edit) return; onOpen(s.sessionId, s.cwd, s.title); }}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
         <span className="session-row">
+          {dot(s.sessionId)}
           {edit ? (
             <input className="session-rename" aria-label="세션 이름" value={edit.text} autoFocus maxLength={200}
               onChange={(e) => setEditing({ id: key, text: e.target.value })}
@@ -184,6 +200,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {desktopShown.map((d) => (
               <li key={d.sessionId} className={d.sessionId === currentSessionId ? 'active' : ''} title={`${d.title}\n${d.cwd}`} onClick={() => onOpen(d.sessionId, d.cwd, d.title)}>
                 <span className="session-row">
+                  {dot(d.sessionId)}
                   <span className="session-title">{d.title}</span>
                   <span className="session-meta">{d.project} · {ago(d.lastModified)}</span>
                 </span>

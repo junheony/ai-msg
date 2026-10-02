@@ -109,12 +109,81 @@ describe('Chat composer and header (Desktop style)', () => {
     const chip = screen.getByText('proj');
     expect(chip.getAttribute('title')).toBe('/Users/u/Documents/proj');
     const status = screen.getByTestId('turn-status');
-    expect(status.textContent).toContain('실행 중인 작업 1개');
+    expect(status.textContent).toContain('명령 실행 중');
+    expect(status.textContent).toContain('ls');
+    expect(status.textContent).toContain('0:0');
     expect(status.textContent).toContain('도구 1회');
-    fireEvent.click(screen.getByText('중단'));
+    fireEvent.click(within(status).getByText('중단'));
     expect(onInterrupt).toHaveBeenCalled();
     cleanup();
     renderChat([]);
     expect(screen.queryByTestId('turn-status')).toBeNull();
+  });
+});
+
+describe('Composer keyboard (Desktop)', () => {
+  afterEach(cleanup);
+  const box = () => screen.getByLabelText('메시지') as HTMLTextAreaElement;
+  const type = (t: string) => fireEvent.change(box(), { target: { value: t } });
+
+  it('Enter sends; Shift+Enter does not (the textarea keeps its newline); Cmd/Ctrl+Enter also sends', () => {
+    const onSend = renderChat([]);
+    type('hi');
+    expect(fireEvent.keyDown(box(), { key: 'Enter', shiftKey: true })).toBe(true);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(box(), { key: 'Enter' })).toBe(false);
+    expect(onSend).toHaveBeenCalledWith('hi');
+    type('again');
+    fireEvent.keyDown(box(), { key: 'Enter', metaKey: true });
+    expect(onSend).toHaveBeenLastCalledWith('again');
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toContain('Enter 로 보내기 · Shift+Enter 줄바꿈');
+  });
+
+  it('an Enter that belongs to an IME composition never sends (isComposing, keyCode 229, right after compositionend)', () => {
+    const onSend = renderChat([]);
+    type('안녕하세요');
+    fireEvent.keyDown(box(), { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(box(), { key: 'Enter', keyCode: 229 });
+    fireEvent.compositionStart(box());
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    fireEvent.compositionEnd(box());
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(onSend).not.toHaveBeenCalled();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 100);
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    vi.useRealTimers();
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith('안녕하세요');
+  });
+
+  it('on a touch screen Enter is a newline; the send button sends', () => {
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes('coarse'), media: q, addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof window.matchMedia;
+    try {
+      const onSend = renderChat([]);
+      type('hi');
+      expect(fireEvent.keyDown(box(), { key: 'Enter' })).toBe(true);
+      expect(onSend).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTitle('보내기 (Enter)'));
+      expect(onSend).toHaveBeenCalledWith('hi');
+    } finally {
+      window.matchMedia = mm;
+    }
+  });
+
+  it('Esc interrupts a running turn; while busy Enter queues; ArrowUp in an empty composer recalls the last message', () => {
+    const onInterrupt = vi.fn();
+    const onQueue = vi.fn();
+    const onSend = renderChat([{ kind: 'user', text: 'previous ask' }], true, vi.fn(), { activeTurnId: 't1', onInterrupt, onQueue });
+    fireEvent.keyDown(box(), { key: 'Escape' });
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+    type('next');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(onQueue).toHaveBeenCalledWith('next');
+    expect(onSend).not.toHaveBeenCalled();
+    box().setSelectionRange(0, 0);
+    fireEvent.keyDown(box(), { key: 'ArrowUp' });
+    expect(box().value).toBe('previous ask');
   });
 });

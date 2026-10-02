@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { GeminiStatus } from '../../shared/protocol';
-import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-types';
-import type { ChatItem, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
+import type { PermissionDecision, QuestionAnswers, TurnPhase } from '../../shared/turn-types';
+import type { AgentInfo, ChatItem, PaneBackground, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
 import { latestTodos } from '../todos';
 import { mergeToolRuns } from '../toolRuns';
 import { filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
+import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { AttachmentBar } from './AttachmentBar';
 import { useComposerSuggest } from './ComposerSuggest';
 import { MessageView } from './MessageView';
@@ -47,6 +48,14 @@ export type ChatProps = {
   onInterrupt: () => void;
   /** Stops the background work held by that turn's process (interrupt by its turn id). */
   onStopBackground?: (turnId: string) => void;
+  /** Stops one background task (Query.stopTask). */
+  onStopTask?: (taskId: string) => void;
+  /** Status row: when the running turn started (client clock), its output tokens and phase. */
+  runStartedAt?: number | null;
+  progress?: { outputTokens: number; phase: TurnPhase } | null;
+  /** Subagent cards by Agent call id; the background pill. */
+  agents?: Record<string, AgentInfo>;
+  bg?: PaneBackground | null;
   onDecide: (requestId: string, decision: PermissionDecision) => void;
   onAnswer: (requestId: string, answers: QuestionAnswers) => void;
   onModel: (m: ModelChoice) => void;
@@ -67,26 +76,24 @@ export type ChatProps = {
 
 const ATTACHMENT_ONLY_TEXT = '첨부 파일을 확인해 주세요.';
 
-export function elapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(s / 60);
-  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+/** Enter inserts a newline on touch screens (send with the button), as on Desktop's mobile apps. */
+const COARSE_QUERY = '(pointer: coarse), (hover: none)';
+function useCoarsePointer(): boolean {
+  const read = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(COARSE_QUERY).matches;
+  const [coarse, setCoarse] = useState(read);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(COARSE_QUERY);
+    const on = () => setCoarse(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  return coarse;
 }
 
-/** Seconds since the pane went busy, ticking once a second while it stays busy. */
-function useElapsed(busy: boolean): number | null {
-  const [start, setStart] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!busy) { setStart(null); return; }
-    const t0 = Date.now();
-    setStart(t0);
-    setNow(t0);
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [busy]);
-  return start === null ? null : now - start;
-}
+/** Safari fires the Enter that commits a Hangul syllable just after compositionend (isComposing already false). */
+const IME_SETTLE_MS = 30;
+const NO_AGENTS: Record<string, AgentInfo> = {};
 
 export function Chat(p: ChatProps) {
   const [text, setText] = useState('');
@@ -95,7 +102,9 @@ export function Chat(p: ChatProps) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [p.items, p.pending, p.questions]);
   const { addFiles, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
-  const runMs = useElapsed(p.busy);
+  const coarse = useCoarsePointer();
+  const composing = useRef(false);
+  const compositionEnd = useRef(0);
   const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
   const todos = useMemo(() => latestTodos(p.items), [p.items]);
 
@@ -118,7 +127,9 @@ export function Chat(p: ChatProps) {
   const queueing = p.busy && !!p.onQueue;
   const canSend = hasDraft && (!p.busy || queueing);
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
-  const liveTools = live ? live.toolCalls.length : 0;
+  const agents = p.agents ?? NO_AGENTS;
+  const bgLive = !!p.bg;
+  const agentCtx = useMemo<AgentCtx>(() => ({ agents, bgLive }), [agents, bgLive]);
   const suggest = useComposerSuggest({ text, setText, textareaRef: taRef, cwd: p.cwd, sessionId: p.sessionId ?? null, commands: effectiveEngine !== 'codex' });
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
@@ -128,6 +139,32 @@ export function Chat(p: ChatProps) {
     if (p.busy) p.onQueue?.(msg);
     else p.onSend(msg);
     setText('');
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (suggest.onKeyDown(e)) return;
+    // IME: never act on a key that is still part of a composition (Korean/Japanese/Chinese input).
+    const ime = e.nativeEvent.isComposing || e.keyCode === 229 || composing.current || Date.now() - compositionEnd.current < IME_SETTLE_MS;
+    if (ime) return;
+    if (e.key === 'Escape') {
+      if (p.activeTurnId) { e.preventDefault(); p.onInterrupt(); }
+      return;
+    }
+    if (e.key === 'ArrowUp' && text === '' && e.currentTarget.selectionStart === 0 && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      // Recall: the last queued message comes back for editing; otherwise the last sent one.
+      const queued = p.queue?.at(-1);
+      const sent = [...p.items].reverse().find((it) => it.kind === 'user') as Extract<ChatItem, { kind: 'user' }> | undefined;
+      const recall = queued?.text ?? sent?.text;
+      if (!recall) return;
+      e.preventDefault();
+      if (queued) p.onQueueRemove?.(queued.id);
+      setText(recall);
+      return;
+    }
+    if (e.key !== 'Enter') return;
+    if (e.metaKey || e.ctrlKey) { e.preventDefault(); submit(); return; }
+    if (e.shiftKey || e.altKey || coarse) return;
+    e.preventDefault();
+    submit();
   };
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = filesFrom(e.clipboardData);
@@ -140,8 +177,6 @@ export function Chat(p: ChatProps) {
     if (files.length) void addFiles(files);
   };
 
-  const bgItem = p.items.findLast((it) => it.kind === 'assistant' && (it.background?.length ?? 0) > 0);
-
   return (
     <main className="chat">
       <div className="chat-head">
@@ -153,30 +188,23 @@ export function Chat(p: ChatProps) {
         {p.headActions}
       </div>
       <div className="chat-body">
-        {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} />)}
+        <AgentContext.Provider value={agentCtx}>
+          {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} />)}
+        </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => p.onSend(retryPrompt)}>재시도</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
         <div ref={endRef} />
       </div>
       <div className="composer-wrap">
-        {bgItem?.kind === 'assistant' && bgItem.turnId && (
-          <div className="bg-status" role="status" data-testid="bg-status" title={bgItem.background?.join('\n')}>
-            <span className="spark spin" aria-hidden="true">✳</span>
-            <span>백그라운드 작업 {bgItem.background?.length}개 진행 중</span>
-            {p.onStopBackground && <button type="button" className="btn ghost bg-stop" onClick={() => p.onStopBackground?.(bgItem.turnId!)}>중지</button>}
-          </div>
-        )}
         {todos && todos.length > 0 && <TodoPanel todos={todos} />}
         {p.queue && p.queue.length > 0 && (
           <QueueChips queue={p.queue} paused={!!p.queuePaused} onEdit={(id, t) => p.onQueueEdit?.(id, t)} onRemove={(id) => p.onQueueRemove?.(id)} onClear={() => p.onQueueClear?.()} onResume={() => p.onQueueResume?.()} />
         )}
-        {p.busy && (
-          <div className="turn-status" role="status" data-testid="turn-status">
-            <span className="spark spin" aria-hidden="true">✳</span>
-            <span>{p.activeTurnId ? '실행 중인 작업 1개' : '시작하는 중…'}</span>
-            {runMs !== null && <><span className="sep">·</span><span>{elapsed(runMs)}</span></>}
-            {liveTools > 0 && <><span className="sep">·</span><span>도구 {liveTools}회</span></>}
+        {(p.busy || p.bg) && (
+          <div className="activity-bar">
+            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} progress={p.progress ?? null} live={live} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} /> : <span className="spacer" />}
+            {p.bg && <BackgroundPill bg={p.bg} onStopTask={p.onStopTask} onStopAll={() => p.onStopBackground?.(p.bg!.turnId)} />}
           </div>
         )}
         <div className={`composer ${drag ? 'dragover' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop}>
@@ -186,9 +214,11 @@ export function Chat(p: ChatProps) {
             value={text}
             onChange={(e) => { setText(e.target.value); suggest.track(e); }}
             onSelect={suggest.track}
-            onKeyDown={(e) => { if (suggest.onKeyDown(e)) return; if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
+            onKeyDown={onKeyDown}
+            onCompositionStart={() => { composing.current = true; }}
+            onCompositionEnd={() => { composing.current = false; compositionEnd.current = Date.now(); }}
             onPaste={onPaste}
-            placeholder={queueing ? '실행 중 · ⌘/Ctrl+Enter 로 대기열에 추가' : '메시지 입력 · ⌘/Ctrl+Enter 보내기 · @ 파일 · / 명령'}
+            placeholder={queueing ? (coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈'}
             aria-label="메시지"
             rows={1}
           />
@@ -213,10 +243,10 @@ export function Chat(p: ChatProps) {
                 </span>
               )}
               <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
-              {p.activeTurnId && queueing && hasDraft && <button type="button" className="send queue-add" onClick={submit} title="대기열에 추가 (⌘/Ctrl+Enter)"><span aria-hidden="true">+</span><span className="sr-only">대기열에 추가</span></button>}
+              {p.activeTurnId && queueing && hasDraft && <button type="button" className="send queue-add" onClick={submit} title="대기열에 추가 (Enter)"><span aria-hidden="true">+</span><span className="sr-only">대기열에 추가</span></button>}
               {p.activeTurnId
                 ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
-                : <button type="button" className="send" onClick={submit} disabled={!canSend} title="보내기 (⌘/Ctrl+Enter)"><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
+                : <button type="button" className="send" onClick={submit} disabled={!canSend} title="보내기 (Enter)"><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
             </div>
           </div>
         </div>

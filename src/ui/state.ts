@@ -1,6 +1,7 @@
 import type { Account, Seat } from '../shared/accounts';
 import { DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import type { DeckSettings, GeminiStatus, ServerMessage, TurnBadge, TurnPrompt } from '../shared/protocol';
+import type { DeckSettings, GeminiStatus, ServerMessage, SessionActivity, TurnBadge, TurnPrompt } from '../shared/protocol';
+import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
 
@@ -8,7 +9,20 @@ export type ToolCallItem = { toolUseId: string; name: string; input: unknown; re
 
 export type ChatItem =
   | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[] }
-  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Live background tasks of this turn's process (turn_background); absent/empty = none. */ background?: string[] };
+  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[] };
+
+/** A subagent's own tool call, shown in its Agent card (nested subagents' calls are flattened into the top card). */
+export type AgentCall = { toolUseId: string; name: string; input: unknown; done: boolean; isError: boolean };
+/**
+ * Live state of the subagent an Agent/Task call started, keyed by that call's toolUseId. Times are this
+ * client's clock: `startedAt` is backdated by the server's `ageMs` on a replay.
+ */
+export type AgentInfo = {
+  taskId: string | null; status: TaskStatus; description: string; subagentType: string; backgrounded: boolean;
+  startedAt: number; endedAt: number | null; usage: TaskUsage | null; lastToolName: string | null; calls: AgentCall[];
+};
+/** The pane's background work (one process per session): `receivedAt` + `detail[].ageMs` gives each task's age now. */
+export type PaneBackground = { turnId: string; tasks: string[]; detail: BgTaskInfo[]; receivedAt: number; canStop: boolean };
 
 export type PendingPermission = Omit<Extract<ServerMessage, { type: 'permission_request' }>, 'type'>;
 export type PendingQuestion = Omit<Extract<ServerMessage, { type: 'question_request' }>, 'type'>;
@@ -44,6 +58,13 @@ export type PaneState = {
   queue: QueueItem[];
   /** Stop / a failed turn pauses the queue; a manual send or 이어서 resumes it. */
   queuePaused: boolean;
+  /** Status row: when the running turn started (client clock), its output tokens and phase. */
+  runStartedAt: number | null;
+  progress: { outputTokens: number; phase: TurnPhase } | null;
+  /** Subagent cards, by the Agent call's toolUseId. */
+  agents: Record<string, AgentInfo>;
+  /** Background tasks pill; null = none. */
+  bg: PaneBackground | null;
 };
 
 export type AppState = {
@@ -65,15 +86,19 @@ export type AppState = {
   desktop: DesktopSession[];
   /** 자동 승인 (server setting); null until the server says. */
   autoApprove: boolean | null;
+  /** Sessions with a turn running or background work, on any device (sidebar dots, tab title). */
+  activity: SessionActivity[];
+  /** Sessions whose turn finished while no focused pane showed them; cleared when opened. */
+  unread: string[];
 };
 
 export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, runStartedAt: null, progress: null, agents: {}, bg: null };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null };
+export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, activity: [], unread: [] };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -178,6 +203,23 @@ function withRunningPrompt(items: ChatItem[], prompt: TurnPrompt): ChatItem[] {
   return [...items, promptItem(prompt)];
 }
 
+const ACTIVITY_RESET = { runStartedAt: null, progress: null, agents: {}, bg: null } as const;
+
+/** The agent card a subagent call belongs to: its own Agent call, or the top card holding the nested Agent call. */
+function agentFor(agents: Record<string, AgentInfo>, parentToolUseId: string): string | null {
+  if (agents[parentToolUseId]) return parentToolUseId;
+  for (const [id, a] of Object.entries(agents)) if (a.calls.some((c) => c.toolUseId === parentToolUseId)) return id;
+  return null;
+}
+
+function blankAgent(now: number): AgentInfo {
+  return { taskId: null, status: 'running', description: '', subagentType: '', backgrounded: false, startedAt: now, endedAt: null, usage: null, lastToolName: null, calls: [] };
+}
+
+function withAgent(pane: PaneState, id: string, fn: (a: AgentInfo) => AgentInfo): PaneState {
+  return { ...pane, agents: { ...pane.agents, [id]: fn(pane.agents[id] ?? blankAgent(Date.now())) } };
+}
+
 /** One pane's view of a server message. `claim`: this pane may claim an unclaimed turn_started (only the first waiting pane does). */
 function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): PaneState {
   switch (msg.type) {
@@ -187,7 +229,17 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const live = msg.running.find((r) => r.turnId === pane.activeTurnId) ?? (sid ? msg.running.find((r) => r.sessionId === sid) : undefined);
       const activeTurnId = live?.turnId ?? null;
       const items = activeTurnId === pane.activeTurnId ? pane.items : pane.items.map((it) => (it.kind === 'assistant' && it.streaming && it.turnId === pane.activeTurnId ? { ...it, streaming: false } : it));
-      return { ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null };
+      const act = sid ? msg.activity?.find((a) => a.sessionId === sid) : undefined;
+      // An empty turn_background missed while disconnected must not leave the pill lingering.
+      const bg = msg.activity && !(act && act.bg > 0) ? null : pane.bg;
+      const run = activeTurnId ? { runStartedAt: pane.runStartedAt ?? (act?.running ? Date.now() - act.forMs : Date.now()) } : { runStartedAt: null, progress: null };
+      return { ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null, bg, ...run };
+    }
+    case 'activity': {
+      const sid = pane.session?.sessionId;
+      if (!sid) return pane;
+      const act = msg.sessions.find((a) => a.sessionId === sid);
+      return pane.bg && !(act && act.bg > 0) ? { ...pane, bg: null } : pane;
     }
     case 'history': {
       let items = fromTranscript(msg.messages);
@@ -197,7 +249,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const engine: EngineKind = msg.engine ?? 'claude';
       // PF13: a Claude session is never sent a GPT model and vice versa.
       const model = modelFor(engine, pane.model);
-      return { ...pane, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null }, items, activeTurnId: msg.runningTurnId, model };
+      const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
+      return { ...pane, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt };
     }
     case 'turn_started': {
       let p = pane;
@@ -215,7 +268,45 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // Another device's (or pane's) message: its bubble goes before the turn's answer. The sending pane shows it already ('sent').
       const echo = msg.prompt && !p.myTurns.includes(msg.turnId) ? [promptItem(msg.prompt)] : [];
       const items = exists ? p.items.map((it) => (it.kind === 'assistant' && it.turnId === msg.turnId ? { ...it, streaming: true } : it)) : [...p.items, ...echo, streamingItem(msg.turnId)];
-      return { ...p, items, activeTurnId: msg.turnId };
+      // The timer runs from the send (sent) or from this start; a retry of the same turn keeps it.
+      const runStartedAt = p.activeTurnId === msg.turnId || (p.runStartedAt !== null && p.activeTurnId === null) ? (p.runStartedAt ?? Date.now()) : Date.now();
+      return { ...p, items, activeTurnId: msg.turnId, runStartedAt, progress: p.activeTurnId === msg.turnId ? p.progress : null };
+    }
+    case 'turn_progress':
+      if (!belongs(pane, msg) || msg.turnId !== pane.activeTurnId) return pane;
+      return { ...pane, progress: { outputTokens: msg.outputTokens, phase: msg.phase } };
+    case 'task_update': {
+      if (!belongs(pane, msg) || !msg.toolUseId) return pane;
+      const now = Date.now();
+      const fresh = !pane.agents[msg.toolUseId];
+      return withAgent(pane, msg.toolUseId, (a) => ({
+        ...a,
+        taskId: msg.taskId,
+        ...(msg.status ? { status: msg.status, endedAt: msg.status === 'running' ? null : (a.endedAt ?? now) } : {}),
+        ...(msg.description !== undefined ? { description: msg.description } : {}),
+        ...(msg.subagentType ? { subagentType: msg.subagentType } : {}),
+        ...(msg.backgrounded !== undefined ? { backgrounded: msg.backgrounded } : {}),
+        ...(msg.usage ? { usage: msg.usage } : {}),
+        ...(msg.lastToolName ? { lastToolName: msg.lastToolName } : {}),
+        ...(msg.ageMs !== undefined && fresh ? { startedAt: now - msg.ageMs } : {}),
+      }));
+    }
+    case 'task_done': {
+      if (!belongs(pane, msg)) return pane;
+      const id = msg.toolUseId ?? (msg.taskId ? Object.keys(pane.agents).find((k) => pane.agents[k]!.taskId === msg.taskId) : undefined);
+      if (!id || !pane.agents[id]) return pane;
+      return withAgent(pane, id, (a) => ({ ...a, status: msg.status, endedAt: a.endedAt ?? Date.now(), ...(msg.usage ? { usage: msg.usage } : {}) }));
+    }
+    case 'sub_tool_call': {
+      if (!belongs(pane, msg)) return pane;
+      const id = agentFor(pane.agents, msg.parentToolUseId) ?? msg.parentToolUseId;
+      return withAgent(pane, id, (a) => (a.calls.some((c) => c.toolUseId === msg.toolUseId) ? a : { ...a, calls: [...a.calls, { toolUseId: msg.toolUseId, name: msg.name, input: msg.input, done: false, isError: false }] }));
+    }
+    case 'sub_tool_result': {
+      if (!belongs(pane, msg)) return pane;
+      const id = agentFor(pane.agents, msg.parentToolUseId);
+      if (!id) return pane;
+      return withAgent(pane, id, (a) => ({ ...a, calls: a.calls.map((c) => (c.toolUseId === msg.toolUseId ? { ...c, done: true, isError: msg.isError } : c)) }));
     }
     case 'delta':
       if (!belongs(pane, msg)) return pane;
@@ -232,16 +323,9 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       return updateTurn(pane, msg.turnId, (it) => ({ ...it, text: '', attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
     case 'turn_background': {
       if (!belongs(pane, msg)) return pane;
-      // One indicator per pane: on the named turn (or the last assistant item, e.g. after a reload), cleared elsewhere.
-      let idx = pane.items.findIndex((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
-      if (idx < 0) idx = pane.items.findLastIndex((it) => it.kind === 'assistant');
-      if (idx < 0) return pane;
-      const items = pane.items.map((it, i) => {
-        if (it.kind !== 'assistant') return it;
-        if (i === idx) return { ...it, turnId: it.turnId ?? msg.turnId, background: msg.tasks };
-        return it.background?.length ? { ...it, background: [] } : it;
-      });
-      return { ...pane, items };
+      // One pill per pane (one process per session); [] clears it.
+      if (!msg.tasks.length) return pane.bg ? { ...pane, bg: null } : pane;
+      return { ...pane, bg: { turnId: msg.turnId, tasks: msg.tasks, detail: msg.detail ?? [], receivedAt: Date.now(), canStop: msg.canStop === true } };
     }
     case 'turn_notice':
       if (!belongs(pane, msg)) return pane;
@@ -255,19 +339,22 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const session = mine && next.session ? { ...next.session, sessionId: msg.sessionId || next.session.sessionId, account: msg.badge?.account ?? next.session.account } : next.session;
       // ux-state: a failed (or stopped) turn of this pane pauses its queue instead of firing the next message into it.
       const queuePaused = next.queuePaused || ((mine || pane.activeTurnId === msg.turnId) && !msg.ok);
-      return { ...next, session, myTurns, queuePaused, activeTurnId: pane.activeTurnId === msg.turnId ? null : pane.activeTurnId };
+      const ended = pane.activeTurnId === msg.turnId;
+      return { ...next, session, myTurns, queuePaused, activeTurnId: ended ? null : pane.activeTurnId, ...(ended ? { runStartedAt: null, progress: null } : {}) };
     }
     case 'error': {
       const withItem = msg.turnId ? updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, error: it.error ?? msg.message })) : pane;
       // Review I6: an error that names the running turn ends it, or the composer stays locked on 중단.
       const activeTurnId = msg.turnId !== null && msg.turnId === pane.activeTurnId ? null : withItem.activeTurnId;
+      const stop = activeTurnId === null && pane.activeTurnId !== null ? { runStartedAt: null, progress: null } : {};
       // A send refused before its turn started (busy session, bad cwd, unknown session) ends the wait.
       // With a clientRef only the error echoing it ends the wait, so another pane's error never unlocks this one.
       const ends = pane.awaitingRef !== null
         ? msg.clientRef === pane.awaitingRef
         : msg.clientRef === undefined && (msg.turnId === null || !pane.myTurns.includes(msg.turnId));
       // ux-state: a refused send pauses the queue too (it would only be refused again).
-      return ends ? { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0 } : { ...withItem, activeTurnId };
+      const idle = ends && activeTurnId === null ? { runStartedAt: null, progress: null } : stop;
+      return ends ? { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0, ...idle } : { ...withItem, activeTurnId, ...stop };
     }
     default:
       return pane;
@@ -302,7 +389,7 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
     case 'hello':
-      return applySettings({ ...state, connected: true, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
+      return applySettings({ ...state, connected: true, activity: msg.activity ?? state.activity, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
     case 'settings': return applySettings(state, msg.settings);
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
@@ -337,7 +424,15 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       return { ...state, panes };
     }
     case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
+    case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result':
       return { ...state, panes: mapPanes(state, msg) };
+    case 'activity': {
+      // A turn that finished while no focused pane showed its session leaves an unread dot.
+      const focused = state.panes.find((p) => p.id === state.activePaneId)?.session?.sessionId ?? null;
+      const finished = state.activity.filter((a) => a.running && !msg.sessions.some((n) => n.sessionId === a.sessionId && n.running)).map((a) => a.sessionId);
+      const add = finished.filter((sid) => sid !== focused && !state.unread.includes(sid));
+      return { ...state, activity: msg.sessions, unread: add.length ? [...state.unread, ...add] : state.unread, panes: mapPanes(state, msg) };
+    }
     case 'turn_notice': {
       const panes = mapPanes(state, msg);
       if (panes.some((p, i) => p !== state.panes[i])) return { ...state, panes };
@@ -348,7 +443,6 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       return { ...state, panes: mapPanes(state, msg), pending: state.pending.filter((p) => p.turnId !== msg.turnId), questions: state.questions.filter((q) => q.turnId !== msg.turnId) };
     case 'error':
       return { ...state, panes: mapPanes(state, msg), error: msg.message };
-    case 'task_done': return state; // push only (the transcript shows the task notice)
   }
 }
 
@@ -368,15 +462,16 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'connected': return { ...state, connected: action.value };
     // Prompts stay: they belong to their own session and the card says which (review I3).
-    case 'open': return updatePane(state, action.paneId, (p) => ({
+    case 'open': return updatePane({ ...state, unread: action.sessionId ? state.unread.filter((u) => u !== action.sessionId) : state.unread }, action.paneId, (p) => ({
       ...p,
       session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
-      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false,
+      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, ...ACTIVITY_RESET,
     }));
     case 'sent': return updatePane(state, action.paneId, (p) => ({
       ...p,
       items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }],
       awaitingStart: true, awaitingRef: action.clientRef ?? null, attachments: [], queuePaused: false,
+      ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
     }));
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
@@ -396,7 +491,12 @@ export function reducer(state: AppState, action: Action): AppState {
       const panes = state.panes.filter((p) => p.id !== action.paneId);
       return { ...state, panes, activePaneId: state.activePaneId === action.paneId ? panes[0]!.id : state.activePaneId };
     }
-    case 'focus_pane': return state.panes.some((p) => p.id === action.paneId) ? { ...state, activePaneId: action.paneId } : state;
+    case 'focus_pane': {
+      const pane = state.panes.find((p) => p.id === action.paneId);
+      if (!pane) return state;
+      const sid = pane.session?.sessionId;
+      return { ...state, activePaneId: action.paneId, unread: sid && state.unread.includes(sid) ? state.unread.filter((u) => u !== sid) : state.unread };
+    }
     case 'dismiss_error': return { ...state, error: null };
     case 'set_pins': return { ...state, pins: action.pins };
     case 'show_error': return { ...state, error: action.message };

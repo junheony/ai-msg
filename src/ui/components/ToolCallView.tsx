@@ -4,6 +4,7 @@ import { groupLabel, toolLabel } from '../toolLabel';
 import { applyTodoCall, todoCounts } from '../todos';
 import { TodoList } from './TodoPanel';
 import { DiffList } from './DiffView';
+import { AgentCard } from './Activity';
 
 function pretty(v: unknown, max = 4000): string {
   const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
@@ -30,6 +31,7 @@ function DiffToolCall({ call, live, cwd }: { call: ToolCallItem; live: boolean; 
 }
 
 const isDiffCall = (c: ToolCallItem) => fileDiffsFor(c.name, c.input, c.result) !== null;
+const isAgentCall = (c: ToolCallItem) => c.name === 'Agent' || c.name === 'Task';
 
 /** One tool call = one muted line; click to see its input and output. File edits render as diff cards. */
 export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; live?: boolean; cwd?: string | null }) {
@@ -58,20 +60,22 @@ export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; 
 }
 
 /**
- * A turn's tool calls in order: file edits as their own diff cards (Desktop style); each run of other calls
+ * A turn's tool calls in order: file edits as their own diff cards and subagent calls as agent cards (Desktop style); each run of other calls
  * as one line alone, or one collapsed group line ("실행된 명령 5개 ›") for several.
  */
 export function ToolCalls({ calls, live = false, cwd }: { calls: ToolCallItem[]; live?: boolean; cwd?: string | null }) {
   if (calls.length === 0) return null;
-  const segments: { diff: boolean; calls: ToolCallItem[] }[] = [];
+  // File edits and subagent (Agent/Task) calls stand alone; other calls group.
+  const segments: { solo: boolean; calls: ToolCallItem[] }[] = [];
   for (const c of calls) {
-    const diff = isDiffCall(c);
+    const solo = isAgentCall(c) || isDiffCall(c);
     const last = segments.at(-1);
-    if (last && !diff && !last.diff) last.calls.push(c);
-    else segments.push({ diff, calls: [c] });
+    if (last && !solo && !last.solo) last.calls.push(c);
+    else segments.push({ solo, calls: [c] });
   }
   if (segments.length > 1) return <>{segments.map((s) => <ToolCalls key={s.calls[0]!.toolUseId} calls={s.calls} live={live} cwd={cwd} />)}</>;
-  if (segments[0]!.diff) return <ToolCallView call={calls[0]!} live={live} cwd={cwd} />;
+  if (isAgentCall(calls[0]!)) return <AgentCard call={calls[0]!} live={live} />;
+  if (segments[0]!.solo) return <ToolCallView call={calls[0]!} live={live} cwd={cwd} />;
   if (calls.length === 1) return <ToolCallView call={calls[0]!} live={live} />;
   const running = live && calls.some((c) => c.result === null);
   const errors = calls.filter((c) => c.isError).length;

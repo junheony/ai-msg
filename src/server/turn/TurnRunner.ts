@@ -4,12 +4,12 @@ import { GEMINI_ACCOUNTS, SEAT_LABEL, isGeminiAccount, type Account, type Gemini
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import type { ServerMessage } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
-import { ZERO_USAGE, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
+import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
 import type { CodexEngine } from '../engine/CodexEngine';
 import type { GeminiEngine } from '../engine/GeminiEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
-import { ruleString, sessionUpdates, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
+import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
@@ -122,6 +122,20 @@ async function exists(file: string): Promise<boolean> {
 }
 
 /** First non-empty line of the prompt, ≤ 80 chars — the sidebar title of a Codex session (D4). */
+/** Background task detail for the wire: age instead of a start time (the client's clock may differ). */
+function bgInfo(detail: BgTask[] | undefined, now: number): BgTaskInfo[] | undefined {
+  return detail?.map((t) => ({ id: t.id, description: t.description, type: t.type, ageMs: Math.max(0, now - t.startedAtMs) }));
+}
+
+function taskDoneOf(ev: Extract<EngineEvent, { kind: 'task_done' }>) {
+  return {
+    status: ev.status, summary: redactSecrets(ev.summary),
+    ...(ev.taskId ? { taskId: ev.taskId } : {}),
+    ...(ev.toolUseId !== undefined ? { toolUseId: ev.toolUseId } : {}),
+    ...(ev.usage ? { usage: ev.usage } : {}),
+  };
+}
+
 function titleOf(text: string): string {
   const first = text.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
   return first.length > 80 ? first.slice(0, 80) : first || '(제목 없음)';
@@ -136,6 +150,8 @@ export class TurnRunner {
   private gptCooldownUntil: number | null = null;
   /** Claude sessions whose process stays open for background work, by session id. */
   private readonly live = new Map<string, LiveSession>();
+  /** The engine input handle of each running Claude turn, by its first turn id (per-task stop). */
+  private readonly inputs = new Map<string, LiveInput>();
   /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
   private geminiCooldownUntil: Partial<Record<GeminiAccount, number>> = {};
   /** Home write-backs in flight, by session id (serialized per session; the next turn waits for it). */
@@ -243,6 +259,31 @@ export class TurnRunner {
     }
   }
 
+  /**
+   * Stop one background task of a running Claude turn (`turnId` = the turn's first id). False when the
+   * turn has no open process or the SDK cannot stop single tasks (the caller falls back to interrupt).
+   */
+  async stopTask(turnId: string, taskId: string): Promise<boolean> {
+    const l = this.inputs.get(turnId);
+    if (!l?.stopTask) return false;
+    try {
+      return await l.stopTask(taskId);
+    } catch (err) {
+      console.error('deck: stopTask failed', err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+
+  private bgExtra(turnId: string, detail: BgTask[] | undefined): { detail?: BgTaskInfo[]; canStop?: boolean } {
+    const info = bgInfo(detail, this.now());
+    return { ...(info ? { detail: info } : {}), ...(this.canStopTasks(turnId) ? { canStop: true } : {}) };
+  }
+
+  /** Whether `turnId` (a turn's first id) can stop single tasks. */
+  canStopTasks(turnId: string): boolean {
+    return typeof this.inputs.get(turnId)?.stopTask === 'function';
+  }
+
   /** Session ids whose process is held open for background work. */
   backgroundSessions(): string[] {
     return [...this.live.keys()];
@@ -316,7 +357,7 @@ export class TurnRunner {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
       },
-      onLive: (l) => { out.live = l; },
+      onLive: (l) => { out.live = l; this.inputs.set(p.turnId, l); },
     });
     const rest = events[Symbol.asyncIterator]();
     const out: Attempt = { result: null, rateLimit: null, sessionId: resumeSessionId, compacted: false, initCwd: null, rest, live: null, bgTasks: [] };
@@ -327,8 +368,12 @@ export class TurnRunner {
       const ev = n.value;
       switch (ev.kind) {
         case 'init': out.sessionId = ev.sessionId; if (ev.cwd) out.initCwd = ev.cwd; break;
-        case 'background': out.bgTasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks: ev.tasks }); break;
+        case 'background': out.bgTasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks: ev.tasks, ...this.bgExtra(p.turnId, ev.detail) }); break;
         case 'continue': break;
+        case 'progress': sink.emit({ type: 'turn_progress', ...scope(), outputTokens: ev.outputTokens, phase: ev.phase }); break;
+        case 'sub_tool_call': sink.emit({ type: 'sub_tool_call', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+        case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
+        case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
         case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
         case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
@@ -338,7 +383,7 @@ export class TurnRunner {
           break;
         case 'compact': out.compacted = true; break;
         case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
-        case 'task_done': sink.emit({ type: 'task_done', ...scope(), status: ev.status, summary: redactSecrets(ev.summary) }); break;
+        case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
         case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
       }
     }
@@ -413,13 +458,17 @@ export class TurnRunner {
         const needSeg = ev.kind === 'delta' || ev.kind === 'tool_call' || ev.kind === 'tool_result' || ev.kind === 'result';
         if ((ev.kind === 'continue' && !seg) || (needSeg && !seg)) openBackground();
         switch (ev.kind) {
-          case 'background': tasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks }); break;
+          case 'background': tasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks, ...this.bgExtra(p.turnId, ev.detail) }); break;
+          case 'progress': if (seg) sink.emit({ type: 'turn_progress', ...scope(), outputTokens: ev.outputTokens, phase: ev.phase }); break;
+          case 'sub_tool_call': sink.emit({ type: 'sub_tool_call', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+          case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
+          case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
           case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
           case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
           case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
           // A background task settled while the process waits: the push (PushNotifier) fires here, not only inside the turn.
-          case 'task_done': sink.emit({ type: 'task_done', ...scope(), status: ev.status, summary: redactSecrets(ev.summary) }); break;
+          case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
           case 'rate_limit': this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) }); break;
           case 'result': {
             const s = seg as Seg | null;
@@ -441,7 +490,7 @@ export class TurnRunner {
       const s = seg as Seg | null;
       if (s) sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: s.reason, usage: ZERO_USAGE, modelNote: s.modelNote }, errorText: sink.signal.aborted ? '중단됨' : '결과 없이 끝났습니다' });
       for (const q of queue) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
-      if (tasks.length) sink.emit({ type: 'turn_background', ...scope(), tasks: [] });
+      if (tasks.length) sink.emit({ type: 'turn_background', ...scope(), tasks: [], detail: [] });
     }
   }
 
@@ -527,7 +576,7 @@ export class TurnRunner {
         case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
         case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
         case 'result': result = ev; break;
-        case 'rate_limit': case 'compact': case 'task_done': break;
+        case 'rate_limit': case 'compact': case 'task_done': case 'background': case 'continue': case 'progress': case 'sub_tool_call': case 'sub_tool_result': case 'task_update': break;
       }
     }
     const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
@@ -604,7 +653,12 @@ export class TurnRunner {
       await this.mirrors.get(state.sessionId);
       state = await this.reconcile(state, sink, p.turnId);
     }
-    const end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, newSessionModel);
+    let end: ClaudeSessionState | null;
+    try {
+      end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, newSessionModel);
+    } finally {
+      this.inputs.delete(p.turnId);
+    }
     if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
   }
 

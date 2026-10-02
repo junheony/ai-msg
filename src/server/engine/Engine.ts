@@ -2,7 +2,7 @@ import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { Account } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
 import type { ClaudeModel, Effort } from '../../shared/models';
-import type { PermissionDecision, Question, QuestionAnswers, TurnUsage } from '../../shared/turn-types';
+import type { PermissionDecision, Question, QuestionAnswers, TaskUpdate, TaskUsage, TurnPhase, TurnUsage } from '../../shared/turn-types';
 import type { UsageWindow } from '../../shared/usage-types';
 
 export type RateLimitSignal = {
@@ -26,6 +26,9 @@ export type EngineResult = {
   terminalReason: string | null;
 };
 
+/** A live background task with its server-clock start (the wire form carries an age instead, `BgTaskInfo`). */
+export type BgTask = { id: string; description: string; type: string; startedAtMs: number };
+
 export type EngineEvent =
   /** `cwd` is the CLI's own (realpath'd) working directory from system/init — the one it slugs. */
   | { kind: 'init'; sessionId: string; model: string; cwd?: string }
@@ -37,21 +40,32 @@ export type EngineEvent =
   /** Non-fatal engine warning shown as a turn note (Codex `item.type === 'error'` items). */
   | { kind: 'notice'; message: string }
   /** Live background tasks (Agent run_in_background, background Bash), emitted whenever the set changes; descriptions, one per task. */
-  | { kind: 'background'; tasks: string[] }
+  | { kind: 'background'; tasks: string[]; /** Same tasks with id, type and start (for the task popover / per-task stop). */ detail?: BgTask[] }
+  /** Main-conversation output so far in this deck turn (estimate while streaming, exact at each message end) and what it is streaming. */
+  | { kind: 'progress'; outputTokens: number; phase: TurnPhase }
+  /** A subagent's (Agent/Task tool) own tool call, attached to the Agent call `parentToolUseId`; kept out of the main transcript. */
+  | { kind: 'sub_tool_call'; parentToolUseId: string; toolUseId: string; name: string; input: unknown }
+  | { kind: 'sub_tool_result'; parentToolUseId: string; toolUseId: string; isError: boolean }
+  /** A task started, progressed or changed state (task_started / task_progress / task_updated). */
+  | ({ kind: 'task_update' } & TaskUpdate)
   /**
    * After a result, the CLI started another turn on its own — a finished background task's
    * notification woke the model. Everything up to the next result belongs to that continuation.
    */
   | { kind: 'continue'; cause: 'background' }
   /** Claude `system/task_notification`: a background task settled. */
-  | { kind: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string }
+  | { kind: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string; taskId?: string; toolUseId?: string | null; usage?: TaskUsage }
   | EngineResult;
 
 /** A user message sent into a still-open Claude process (background work pending). */
 export type FollowUp = { text: string; attachments: Attachment[] };
 
 /** Handed to `TurnRequest.onLive` once the process is up; `send` resolves false when the input is already closed. */
-export type LiveInput = { send(f: FollowUp): Promise<boolean> };
+export type LiveInput = {
+  send(f: FollowUp): Promise<boolean>;
+  /** Stops one task in the process (SDK Query.stopTask); absent when the SDK handle has no stopTask. Resolves false when the input is closed. */
+  stopTask?(taskId: string): Promise<boolean>;
+};
 
 /**
  * One canUseTool call. `signal` is the SDK's per-request abort signal (the prompt must close

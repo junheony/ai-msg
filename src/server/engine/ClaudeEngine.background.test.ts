@@ -53,7 +53,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     const f = fakeSdk();
     const r = reader(new ClaudeEngine({ queryFn: f.queryFn }).runTurn(req()));
     f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'explore repo' }, { id: 'amb', desc: 'monitor', ambient: true }]), sdk.delta('started'), sdk.result('started'));
-    expect(await r.until('background')).toEqual({ kind: 'background', tasks: ['explore repo'] });
+    expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: ['explore repo'] });
     expect(await r.until('result')).toMatchObject({ ok: true, text: 'started' });
     await new Promise((res) => setTimeout(res, 5));
     expect(f.state.inputClosed).toBe(false);
@@ -61,7 +61,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     f.push(sdk.subagentTool());
     // The task settles; the CLI injects its notification and runs another turn by itself.
     f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('found it'), sdk.result('found it'));
-    expect(await r.until('background')).toEqual({ kind: 'background', tasks: [] });
+    expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: [] });
     const after: EngineEvent[] = [];
     for (let e = await r.next(); e && e.kind !== 'result'; e = await r.next()) after.push(e);
     expect(after.map((e) => e.kind)).toEqual(['continue', 'delta']);
@@ -101,7 +101,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     await r.until('result');
     f.push(sdk.bgLevel([]));
     const rest = await r.rest();
-    expect(rest).toEqual([{ kind: 'background', tasks: [] }]);
+    expect(rest).toMatchObject([{ kind: 'background', tasks: [] }]);
     expect(f.state.inputClosed).toBe(true);
   });
 
@@ -112,7 +112,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     await r.until('result');
     const rest = await r.rest();
     expect(rest[0]).toMatchObject({ kind: 'notice', message: expect.stringContaining('백그라운드 작업이') });
-    expect(rest.at(-1)).toEqual({ kind: 'background', tasks: [] });
+    expect(rest.at(-1)).toMatchObject({ kind: 'background', tasks: [] });
     expect(rest.some((e) => e.kind === 'result')).toBe(false);
   });
 
@@ -124,7 +124,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     await r.until('result');
     ac.abort();
     const rest = await r.rest();
-    expect(rest).toEqual([{ kind: 'background', tasks: [] }]);
+    expect(rest).toMatchObject([{ kind: 'background', tasks: [] }]);
     expect(f.state.inputClosed).toBe(true);
   });
 
@@ -132,7 +132,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     const f = fakeSdk();
     const r = reader(new ClaudeEngine({ queryFn: f.queryFn }).runTurn(req()));
     f.push(sdk.init(), sdk.taskStarted('t1', 'review'), sdk.taskStarted('t2', 'inline', false), sdk.result('r'));
-    expect(await r.until('background')).toEqual({ kind: 'background', tasks: ['review'] });
+    expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: ['review'] });
     await r.until('result');
     f.push(sdk.taskDone('t1'), sdk.notifyUser(), sdk.delta('d'), sdk.result('d'));
     const rest = await r.rest();

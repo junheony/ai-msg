@@ -3,10 +3,10 @@ import os from 'node:os';
 import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { accountEnv } from '../../shared/accounts';
 import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
-import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
+import { ZERO_USAGE, type TaskStatus, type TaskUpdate, type TaskUsage, type TurnPhase, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
 import { textOfContent } from '../sessions/transcript';
-import { parseQuestions, sessionUpdates, type Engine, type EngineEvent, type EngineResult, type LiveInput, type RateLimitSignal, type TurnRequest } from './Engine';
+import { parseQuestions, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
 import type { SlashCommandInfo } from './slashCommands';
 
@@ -97,6 +97,16 @@ export class BackgroundTracker {
   private level: Map<string, string> | null = null;
   private readonly edge = new Map<string, string>();
   private readonly known = new Map<string, string>();
+  /** Type and first-seen time per task id (task_started or the level signal, whichever came first). */
+  private readonly meta = new Map<string, { type: string; startedAtMs: number }>();
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  private see(id: string, type: unknown): void {
+    const m = this.meta.get(id);
+    if (!m) this.meta.set(id, { type: typeof type === 'string' ? type : '', startedAtMs: this.now() });
+    else if (!m.type && typeof type === 'string') m.type = type;
+  }
 
   /** Feeds one SDK message; true when it was a task message (the set may have changed). */
   apply(m: SDKMessage): boolean {
@@ -108,11 +118,13 @@ export class BackgroundTracker {
     switch (r.subtype) {
       case 'background_tasks_changed': {
         const tasks = Array.isArray(r.tasks) ? (r.tasks as Rec[]) : [];
+        for (const t of tasks) if (t.ambient !== true) this.see(String(t.task_id ?? ''), t.task_type);
         this.level = new Map(tasks.filter((t) => t.ambient !== true).map((t) => [String(t.task_id ?? ''), String(t.description ?? '')]));
         return true;
       }
       case 'task_started':
         if (ambient) return true;
+        this.see(id, r.task_type);
         this.known.set(id, desc);
         if (r.is_backgrounded === true) this.edge.set(id, desc);
         return true;
@@ -133,6 +145,140 @@ export class BackgroundTracker {
 
   tasks(): string[] {
     return [...(this.level ?? this.edge).values()];
+  }
+
+  /** The live tasks with id, type and start time, in the same order as `tasks()`. */
+  detail(): BgTask[] {
+    return [...(this.level ?? this.edge)].map(([id, description]) => {
+      const m = this.meta.get(id);
+      return { id, description, type: m?.type ?? '', startedAtMs: m?.startedAtMs ?? this.now() };
+    });
+  }
+}
+
+/**
+ * Main-conversation output tokens of the current deck turn, for the status row: exact
+ * `message_delta.usage.output_tokens` per finished API message plus a chars/4 estimate of the one
+ * streaming now (text, thinking, tool input) and the CLI's thinking-token estimates. Emits at most
+ * every `minGapMs` while streaming, and at once when the phase changes or a message ends. Messages
+ * without a `message_start` first (older producers, test doubles) are not metered.
+ */
+export class ProgressMeter {
+  private done = 0;
+  private est = 0;
+  private phase: TurnPhase | null = null;
+  private metering = false;
+  private lastEmit = 0;
+  private lastValue = -1;
+
+  constructor(private readonly now: () => number = Date.now, private readonly minGapMs = 400) {}
+
+  /** A deck turn ended (result): the next one counts from zero. */
+  reset(): void {
+    this.done = 0; this.est = 0; this.phase = null; this.metering = false; this.lastValue = -1;
+  }
+
+  apply(m: SDKMessage): { outputTokens: number; phase: TurnPhase } | null {
+    const r = m as unknown as Rec;
+    if (m.type === 'system' && r.subtype === 'thinking_tokens' && typeof r.estimated_tokens_delta === 'number') {
+      this.metering = true;
+      this.est += r.estimated_tokens_delta;
+      return this.emit(this.setPhase('thinking'));
+    }
+    if (m.type !== 'stream_event' || r.parent_tool_use_id !== null) return null;
+    const ev = (r.event ?? {}) as Rec;
+    switch (ev.type) {
+      case 'message_start':
+        this.metering = true;
+        this.est = 0;
+        return null;
+      case 'content_block_start': {
+        if (!this.metering) return null;
+        const t = ((ev.content_block ?? {}) as Rec).type;
+        const phase: TurnPhase = t === 'thinking' || t === 'redacted_thinking' ? 'thinking' : t === 'tool_use' || t === 'server_tool_use' ? 'tool' : 'responding';
+        return this.emit(this.setPhase(phase));
+      }
+      case 'content_block_delta': {
+        if (!this.metering) return null;
+        const d = (ev.delta ?? {}) as Rec;
+        const text = typeof d.text === 'string' ? d.text : typeof d.thinking === 'string' ? d.thinking : typeof d.partial_json === 'string' ? d.partial_json : '';
+        this.est += text.length / 4;
+        return this.emit(false);
+      }
+      case 'message_delta': {
+        if (!this.metering) return null;
+        const out = ((ev.usage ?? {}) as Rec).output_tokens;
+        if (typeof out === 'number') { this.done += out; this.est = 0; }
+        return this.emit(true);
+      }
+      default:
+        return null;
+    }
+  }
+
+  private setPhase(p: TurnPhase): boolean {
+    if (this.phase === p) return false;
+    this.phase = p;
+    return true;
+  }
+
+  private emit(force: boolean): { outputTokens: number; phase: TurnPhase } | null {
+    const value = this.done + Math.round(this.est);
+    const t = this.now();
+    if (!force && (t - this.lastEmit < this.minGapMs || value === this.lastValue)) return null;
+    this.lastEmit = t;
+    this.lastValue = value;
+    return { outputTokens: value, phase: this.phase ?? 'responding' };
+  }
+}
+
+function taskUsageOf(u: unknown): TaskUsage | undefined {
+  if (!u || typeof u !== 'object') return undefined;
+  const r = u as Rec;
+  const n = (k: string) => (typeof r[k] === 'number' ? (r[k] as number) : 0);
+  return { totalTokens: n('total_tokens'), toolUses: n('tool_uses'), durationMs: n('duration_ms') };
+}
+
+const PATCH_STATUS: Record<string, TaskStatus> = { pending: 'running', running: 'running', paused: 'running', completed: 'completed', failed: 'failed', killed: 'stopped' };
+
+/** task_started / task_progress / task_updated → one TaskUpdate (ambient housekeeping tasks are left out); null for anything else. */
+function taskUpdateOf(r: Rec): TaskUpdate | null {
+  if (r.ambient === true || r.skip_transcript === true) return null;
+  const taskId = typeof r.task_id === 'string' ? r.task_id : '';
+  if (!taskId) return null;
+  const toolUseId = typeof r.tool_use_id === 'string' ? r.tool_use_id : null;
+  const str = (k: string) => (typeof r[k] === 'string' && r[k] ? { [k]: r[k] as string } : {});
+  switch (r.subtype) {
+    case 'task_started':
+      return {
+        taskId, toolUseId, status: 'running',
+        ...(typeof r.description === 'string' ? { description: r.description } : {}),
+        ...(str('subagent_type').subagent_type ? { subagentType: r.subagent_type as string } : {}),
+        ...(str('task_type').task_type ? { taskType: r.task_type as string } : {}),
+        ...(typeof r.is_backgrounded === 'boolean' ? { backgrounded: r.is_backgrounded } : {}),
+      };
+    case 'task_progress': {
+      const usage = taskUsageOf(r.usage);
+      return {
+        taskId, toolUseId, status: 'running',
+        ...(typeof r.description === 'string' ? { description: r.description } : {}),
+        ...(str('subagent_type').subagent_type ? { subagentType: r.subagent_type as string } : {}),
+        ...(usage ? { usage } : {}),
+        ...(str('last_tool_name').last_tool_name ? { lastToolName: r.last_tool_name as string } : {}),
+        ...(str('summary').summary ? { summary: r.summary as string } : {}),
+      };
+    }
+    case 'task_updated': {
+      const patch = (r.patch ?? {}) as Rec;
+      const status = typeof patch.status === 'string' ? PATCH_STATUS[patch.status] : undefined;
+      const out: TaskUpdate = { taskId, toolUseId };
+      if (status) out.status = status;
+      if (typeof patch.description === 'string') out.description = patch.description;
+      if (typeof patch.is_backgrounded === 'boolean') out.backgrounded = patch.is_backgrounded;
+      return out.status || out.description !== undefined || out.backgrounded !== undefined ? out : null;
+    }
+    default:
+      return null;
   }
 }
 
@@ -241,8 +387,19 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
     case 'system': {
       if (m.subtype === 'init') return [{ kind: 'init', sessionId: m.session_id, model: m.model, ...(typeof m.cwd === 'string' ? { cwd: m.cwd } : {}) }];
       if (m.subtype === 'compact_boundary') return [{ kind: 'compact' }];
-      if (m.subtype === 'task_notification') return [{ kind: 'task_done', status: m.status, summary: typeof m.summary === 'string' ? m.summary : '' }];
-      return [];
+      if (m.subtype === 'task_notification') {
+        const r = m as unknown as Rec;
+        if (r.ambient === true || r.skip_transcript === true) return [{ kind: 'task_done', status: m.status, summary: typeof m.summary === 'string' ? m.summary : '' }];
+        const usage = taskUsageOf(r.usage);
+        return [{
+          kind: 'task_done', status: m.status, summary: typeof m.summary === 'string' ? m.summary : '',
+          ...(typeof r.task_id === 'string' ? { taskId: r.task_id } : {}),
+          toolUseId: typeof r.tool_use_id === 'string' ? r.tool_use_id : null,
+          ...(usage ? { usage } : {}),
+        }];
+      }
+      const update = taskUpdateOf(m as unknown as Rec);
+      return update ? [{ kind: 'task_update', ...update }] : [];
     }
     case 'stream_event': {
       if (m.parent_tool_use_id !== null) return [];
@@ -253,16 +410,28 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
       return [];
     }
     case 'assistant': {
-      if (m.parent_tool_use_id !== null) return [];
       const blocks = ((m.message as unknown as Rec).content as Rec[] | undefined) ?? [];
+      // A subagent's own tool calls ride with the Agent call that spawned it, never into the main transcript.
+      if (m.parent_tool_use_id !== null) {
+        const parentToolUseId = m.parent_tool_use_id;
+        return blocks
+          .filter((b) => b.type === 'tool_use')
+          .map((b) => ({ kind: 'sub_tool_call' as const, parentToolUseId, toolUseId: String(b.id ?? ''), name: String(b.name ?? ''), input: b.input }));
+      }
       return blocks
         .filter((b) => b.type === 'tool_use')
         .map((b) => ({ kind: 'tool_call' as const, toolUseId: String(b.id ?? ''), name: String(b.name ?? ''), input: b.input }));
     }
     case 'user': {
-      if (m.parent_tool_use_id !== null) return [];
       const content = (m.message as unknown as Rec).content;
       if (!Array.isArray(content)) return [];
+      if (m.parent_tool_use_id !== null) {
+        if ((m as unknown as Rec).isReplay === true) return [];
+        const parentToolUseId = m.parent_tool_use_id;
+        return (content as Rec[])
+          .filter((b) => b.type === 'tool_result')
+          .map((b) => ({ kind: 'sub_tool_result' as const, parentToolUseId, toolUseId: String(b.tool_use_id ?? ''), isError: b.is_error === true }));
+      }
       return (content as Rec[])
         .filter((b) => b.type === 'tool_result')
         .map((b) => ({
@@ -358,7 +527,11 @@ export class ClaudeEngine implements Engine {
     let sawResult = false;
     const input = new InputChannel();
     const bg = new BackgroundTracker();
+    const meter = new ProgressMeter();
     let shownTasks: string[] = [];
+    let shownSig = '[]';
+    /** The SDK handle (Query) once the process is spawned: per-task stop when it has stopTask. */
+    let handle: { stopTask?: (id: string) => Promise<void> } | null = null;
     /** Messages sent (initial prompt + follow-ups) not yet answered by a result. */
     let outstanding = 1;
     /** Between a result and the next main-thread output: new output there is a background continuation. */
@@ -394,17 +567,29 @@ export class ClaudeEngine implements Engine {
         if (!input.push(m)) { undo(); return false; }
         return true;
       },
+      stopTask: async (taskId) => {
+        if (input.closed || typeof handle?.stopTask !== 'function') return false;
+        await handle.stopTask(taskId);
+        return true;
+      },
     };
     try {
       input.push(await toUserMessage(req.prompt, req.attachments ?? [], this.readFile));
+      const stream = this.queryFn({ prompt: input, options });
+      handle = stream as { stopTask?: (id: string) => Promise<void> };
+      if (typeof handle.stopTask !== 'function') delete live.stopTask;
       req.onLive?.(live);
-      for await (const m of this.queryFn({ prompt: input, options })) {
+      for await (const m of stream) {
         if (bg.apply(m)) {
           const tasks = bg.tasks();
-          if (tasks.length !== shownTasks.length || tasks.some((t, i) => t !== shownTasks[i])) { shownTasks = tasks; yield { kind: 'background', tasks }; }
+          const detail = bg.detail();
+          const sig = JSON.stringify(detail.map((t) => [t.id, t.description, t.type]));
+          if (sig !== shownSig) { shownSig = sig; shownTasks = tasks; yield { kind: 'background', tasks, detail }; }
           armGrace();
         }
         if (idle && isActivity(m)) { idle = false; clearGrace(); yield { kind: 'continue', cause: 'background' }; }
+        const prog = meter.apply(m);
+        if (prog) yield { kind: 'progress', ...prog };
         if (m.type === 'assistant' && typeof (m as unknown as Rec).error === 'string') errorKind = (m as unknown as Rec).error as string;
         if (this.onCommands) noteCommands(m, req.cwd, this.onCommands);
         let gotResult = false;
@@ -416,6 +601,7 @@ export class ClaudeEngine implements Engine {
             outstanding = Math.max(0, outstanding - 1);
             yield { ...ev, errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : stderrTail || null };
             errorKind = null;
+            meter.reset();
           } else {
             yield ev;
           }
@@ -440,6 +626,6 @@ export class ClaudeEngine implements Engine {
       req.signal.removeEventListener('abort', onAbort);
     }
     if (ended === 'cap') yield { kind: 'notice', message: `백그라운드 작업이 ${Math.round(this.bgMaxMs / 60_000)}분 안에 끝나지 않아 프로세스를 종료했습니다` };
-    if (shownTasks.length) yield { kind: 'background', tasks: [] };
+    if (shownTasks.length) yield { kind: 'background', tasks: [], detail: [] };
   }
 }
