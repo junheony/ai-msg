@@ -722,6 +722,25 @@ describe('permission modes', () => {
     expect(paneMode(first(open(null)), null)).toBe('default');
   });
 
+  it('메시지 편집 갈래 keeps the parent\'s mode on the pane (the server forks in it)', () => {
+    let s = play([{ type: 'history', sessionId: 's1', cwd: '/w', account: 'b', runningTurnId: null, messages: [{ role: 'user', text: 'q', ts: null }] as never, permissionMode: 'plan' }], open('s1'));
+    s = reducer(s, { type: 'branch_edit', n: 1, text: 'q2', clientRef: 'r' });
+    expect(first(s).session).toMatchObject({ sessionId: null, permissionMode: 'plan' });
+  });
+
+  it('a pick during a new session\'s first turn is pending; a broadcast for the new id does not overwrite it', () => {
+    let s = reducer(open(null), { type: 'sent', text: 'x', clientRef: 'r1' });
+    s = reducer(s, { type: 'set_permission_mode', mode: 'plan' });
+    expect(first(s).session).toMatchObject({ permissionMode: 'plan', permissionModePending: true });
+    s = play([{ type: 'turn_started', turnId: 't1', sessionId: null, cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0, engine: 'claude', clientRef: 'r1' } as ServerMessage,
+      { type: 'turn_result', turnId: 't1', sessionId: 'n1', cwd: '/w', ok: true, text: '', badge: null, errorText: null },
+      { type: 'permission_mode', sessionId: 'n1', mode: 'default' }], s);
+    expect(first(s).session).toMatchObject({ sessionId: 'n1', permissionMode: 'plan', permissionModePending: true });
+    // Re-applying the pick once the id is known (what useQueueRunner does with the send) clears it.
+    s = reducer(s, { type: 'set_permission_mode', mode: 'plan' });
+    expect(first(s).session?.permissionModePending).toBeUndefined();
+  });
+
   it('history and permission_mode broadcasts set the session\'s mode (only for that session)', () => {
     let s = play([{ type: 'history', sessionId: 's1', cwd: '/w', account: 'b', runningTurnId: null, messages: [], permissionMode: 'plan' }], open('s1'));
     expect(first(s).session?.permissionMode).toBe('plan');

@@ -59,6 +59,40 @@ describe('composer queue (ux-state)', () => {
     expect(onQueueResume).toHaveBeenCalled();
   });
 
+  it('Pane: a mode picked during a new session\'s first turn is sent once the id arrives', () => {
+    const send = vi.fn<(m: ClientMessage) => void>();
+    const start: AppState = { ...initialState, connected: true, defaultPermMode: 'default', panes: [{ ...newPane('p0'), session: { sessionId: null, cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }] };
+    let dispatchOut: (a: Parameters<typeof reducer>[1]) => void = () => {};
+    let state = start;
+    function Harness() {
+      const [s, dispatch] = useReducer(reducer, start);
+      dispatchOut = dispatch;
+      state = s;
+      useQueueRunner(s.panes, s.connected, dispatch, send, s.defaultPermMode);
+      return <Pane pane={s.panes[0]!} app={s} active closable={false} dispatch={dispatch} send={send} onClose={() => {}} />;
+    }
+    render(<Harness />);
+    const server = (msg: ServerMessage) => act(() => dispatchOut({ type: 'server', msg }));
+    fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'one' } });
+    fireEvent.click(screen.getByText('보내기'));
+    const ref1 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
+    server({ type: 'turn_started', turnId: 't1', sessionId: null, cwd: '/w', clientRef: ref1 } as ServerMessage);
+    fireEvent.change(screen.getByTestId('perm-select'), { target: { value: 'plan' } });
+    expect(send.mock.calls.some(([m]) => m.type === 'set_permission_mode')).toBe(false);
+    server({ type: 'turn_result', turnId: 't1', sessionId: 'n1', cwd: '/w', ok: true, text: 'done', badge: null, errorText: null });
+    expect(send).toHaveBeenLastCalledWith({ type: 'set_permission_mode', sessionId: 'n1', mode: 'plan' });
+    expect(send.mock.calls.filter(([m]) => m.type === 'set_permission_mode')).toHaveLength(1);
+    expect(state.panes[0]!.session).toMatchObject({ sessionId: 'n1', permissionMode: 'plan' });
+    expect(state.panes[0]!.session?.permissionModePending).toBeUndefined();
+    // The server's announcement of the turn's mode, then its echo of the pick: the pane ends on the pick.
+    server({ type: 'permission_mode', sessionId: 'n1', mode: 'default' });
+    server({ type: 'permission_mode', sessionId: 'n1', mode: 'plan' });
+    expect(state.panes[0]!.session?.permissionMode).toBe('plan');
+    // Once synced, the server's broadcasts apply again.
+    server({ type: 'permission_mode', sessionId: 'n1', mode: 'acceptEdits' });
+    expect(state.panes[0]!.session?.permissionMode).toBe('acceptEdits');
+  });
+
   it('Pane: the next queued message goes out by itself when the turn ends; stop pauses the queue', () => {
     const send = vi.fn<(m: ClientMessage) => void>();
     const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }] };

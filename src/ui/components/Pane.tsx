@@ -95,6 +95,12 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
   useEffect(() => {
     if (!connected) return;
     for (const p of panes) {
+      // A mode picked during a new session's first turn goes out once the id is known (before any queued message).
+      const s = p.session;
+      if (s?.sessionId && s.permissionModePending && s.permissionMode) {
+        dispatch({ type: 'set_permission_mode', mode: s.permissionMode, paneId: p.id });
+        send({ type: 'set_permission_mode', sessionId: s.sessionId, mode: s.permissionMode });
+      }
       const next = nextQueued(p);
       if (!next || fired.current.has(next.id)) continue;
       fired.current.add(next.id);
@@ -276,7 +282,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           permMode={paneMode(pane, app.defaultPermMode ?? null)}
           onPermMode={(mode) => {
             dispatch({ type: 'set_permission_mode', mode, paneId: pane.id });
-            // An existing session's mode lives on the server (a running turn switches at once); a new one rides the first send.
+            // An existing session's mode lives on the server (a running turn switches at once); a new one rides the first
+            // send, or — picked while that send's turn runs — goes out when the id arrives (useQueueRunner).
             if (s.sessionId) send({ type: 'set_permission_mode', sessionId: s.sessionId, mode });
           }}
           onAttach={(attachment) => dispatch({ type: 'attach', attachment, paneId: pane.id })}

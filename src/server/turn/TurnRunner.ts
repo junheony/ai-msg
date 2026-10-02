@@ -625,7 +625,8 @@ export class TurnRunner {
           if (decision !== 'deny') await this.applyMode(out.sessionId, modeRef, decision === 'session' ? 'acceptEdits' : 'default');
         } else if (decision === 'session') {
           addGrants(grants, pr);
-          if (modeRef.mode === 'default' && sessionUpdates(pr).some((u) => u.type === 'setMode' && u.mode === 'acceptEdits')) await this.applyMode(out.sessionId, modeRef, 'acceptEdits');
+          // The engine hands the SDK this setMode from whatever mode the turn is in (plan included): deck follows it.
+          if (modeRef.mode !== 'acceptEdits' && sessionUpdates(pr).some((u) => u.type === 'setMode' && u.mode === 'acceptEdits')) await this.applyMode(out.sessionId, modeRef, 'acceptEdits');
         }
         // Review M6: the audit log is best-effort; losing it must not lose the user's answer.
         try {
@@ -1044,11 +1045,19 @@ export class TurnRunner {
     const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])] };
     // Handoff turns keep the mode as is: noTools denies every call before any mode is consulted.
     const modeRef: ModeRef = { mode: (state ? state.mode : p.permissionMode) ?? this.defaultMode() };
+    // A new or forked session's id reaches the clients with its turn_result; its mode follows right after (a pane only
+    // adopts the id then, so a mode broadcast earlier in the turn found no pane to apply to).
+    let bornId: string | null = null;
+    const announceMode = () => {
+      if (bornId) deps.onPermissionMode?.(bornId, this.permissionModeOf(bornId));
+      bornId = null;
+    };
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
         flushEarly();
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: shownId(), cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null, ...pinMark() }, errorText: '중단됨' });
+        announceMode();
         return done();
       }
       const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
@@ -1061,6 +1070,7 @@ export class TurnRunner {
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
       const sessionId = a.sessionId ?? shownId();
       const forked = forkAt !== null;
+      if (sessionId && (forked || !state)) bornId = sessionId;
       if (sessionId) {
         state = {
           sessionId,
@@ -1086,6 +1096,7 @@ export class TurnRunner {
       const shownError = displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
+        announceMode();
         // Held open for background work: write back now too, not only once at the end.
         if (sessionId && a.bgTasks.length) this.mirrorSoon(sessionId, sink, p.turnId);
         if (sessionId) await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants });
@@ -1122,6 +1133,7 @@ export class TurnRunner {
       }
       if (!next) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : '대안 계정 없음'} · ${shownError ?? ''}`.trim() });
+        announceMode();
         return done();
       }
       sink.emit({ type: 'turn_retry', turnId: p.turnId, sessionId: shownId() ?? sessionId, cwd, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });

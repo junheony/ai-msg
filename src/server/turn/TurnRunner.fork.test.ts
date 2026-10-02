@@ -9,13 +9,13 @@ import { StubEngine, okResult } from '../engine/StubEngine';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
-import { TurnRunner, type TurnSink } from './TurnRunner';
+import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const PARENT = '22222222-2222-4222-8222-222222222222';
 const CHILD = '33333333-3333-4333-8333-333333333333';
 
-async function setup(engine: StubEngine) {
+async function setup(engine: StubEngine, extra: Partial<TurnRunnerDeps> = {}) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-fork-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
@@ -25,7 +25,7 @@ async function setup(engine: StubEngine) {
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
   const runner = new TurnRunner({
     engine, index, store, usage, cooldownDir: path.join(base, 'cooldown'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots,
-    codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), now: () => NOW, maxRetries: 0,
+    codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), now: () => NOW, maxRetries: 0, ...extra,
   });
   const dir = path.join(roots.c, '-w-one');
   await fs.mkdir(dir, { recursive: true });
@@ -57,6 +57,17 @@ describe('TurnRunner · 메시지 편집 갈래', () => {
     expect(c.store.get(CHILD)).toMatchObject({ account: 'c', accountPin: 'c', defaultModel: 'sonnet', allowRules: ['Bash(ls:*)'], cwd: '/w/one' });
     expect(c.store.get(PARENT)).toMatchObject({ lastTurnAtMs: NOW - 3_600_000 });
     expect(await fs.readFile(c.file, 'utf8')).toBe(before);
+  });
+
+  it('the fork inherits the parent’s mode and announces it once the fork has an id', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const told: [string, string][] = [];
+    const c = await setup(eng, { onPermissionMode: (s, m) => told.push([s, m]) });
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: null, justCompacted: false, defaultModel: 'sonnet', mode: 'plan' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(eng.calls[0]?.permissionMode).toBe('plan');
+    expect(c.store.get(CHILD)).toMatchObject({ mode: 'plan' });
+    expect(told).toEqual([[CHILD, 'plan']]);
   });
 
   it('works for an index-only parent too', async () => {

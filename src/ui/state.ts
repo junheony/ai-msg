@@ -35,7 +35,7 @@ export type SentFile = { id: string; name: string; isImage: boolean };
 /** ux-state: a message typed while the pane's turn runs; sent when the turn ends. */
 export type QueueItem = { id: string; text: string; attachments: UploadedAttachment[] };
 
-export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null; /** Claude permission mode (absent = the server's default for new sessions); a new session sends it with its first turn. */ permissionMode?: PermMode };
+export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null; /** Claude permission mode (absent = the server's default for new sessions); a new session sends it with its first turn. */ permissionMode?: PermMode; /** Picked while the new session's first turn ran (no id yet): sent as soon as the id arrives. */ permissionModePending?: true };
 
 export type PaneState = {
   id: string;
@@ -479,7 +479,8 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'hello':
       return applySettings({ ...state, connected: true, activity: msg.activity ?? state.activity, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
     case 'settings': return applySettings(state, msg.settings);
-    case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
+    // A mode the user picked before the id arrived wins: it is on its way to the server.
+    case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && !p.session.permissionModePending ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
     case 'account_pin': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, accountPin: msg.pin } } : p)) };
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
@@ -565,7 +566,8 @@ export function reducer(state: AppState, action: Action): AppState {
       const kept = at >= 0 ? p.items.slice(0, at) : p.items;
       return {
         ...p,
-        session: { sessionId: null, cwd: p.session.cwd, account: null, title: p.session.title, engine: 'claude', sandbox: null, ...(p.session.accountPin ? { accountPin: p.session.accountPin } : {}) },
+        // The server forks in the parent's mode; the pane shows that mode until the fork's own arrives.
+        session: { sessionId: null, cwd: p.session.cwd, account: null, title: p.session.title, engine: 'claude', sandbox: null, ...(p.session.accountPin ? { accountPin: p.session.accountPin } : {}), ...(p.session.permissionMode ? { permissionMode: p.session.permissionMode } : {}) },
         items: [...kept, { kind: 'user', text: action.text, n: action.n }],
         activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, queuePaused: p.queuePaused || p.queue.length > 0,
         ...ACTIVITY_RESET, runStartedAt: Date.now(), handoff: null, handoffFrom: null, prefill: null,
@@ -584,7 +586,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model) }));
     case 'set_sandbox': return updatePane(state, action.paneId, (p) => ({ ...p, sandbox: action.sandbox }));
     case 'set_account_pin': return updatePane(state, action.paneId, (p) => (p.session ? { ...p, session: { ...p.session, accountPin: action.pin } } : p));
-    case 'set_permission_mode': return updatePane(state, action.paneId, (p) => (p.session ? { ...p, session: { ...p.session, permissionMode: action.mode } } : p));
+    case 'set_permission_mode': return updatePane(state, action.paneId, (p) => {
+      if (!p.session) return p;
+      // A new session whose first turn is already out: the send carried the old mode, so this one waits for the id.
+      const { permissionModePending: _was, ...session } = p.session;
+      const pending = session.sessionId === null && (p.awaitingStart || p.myTurns.length > 0);
+      return { ...p, session: { ...session, permissionMode: action.mode, ...(pending ? { permissionModePending: true as const } : {}) } };
+    });
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
     case 'clear_pane': return updatePane(state, action.paneId, (p) => ({

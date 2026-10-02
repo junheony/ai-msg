@@ -797,8 +797,36 @@ describe('TurnRunner: permission modes', () => {
     c.sink.askPermission = async () => 'once';
     await runner.run({ turnId: 't3', cwd: '/w/one', sessionId: SID, text: 'x' }, c.sink);
     expect(eng.calls[2]?.permissionMode).toBe('plan');
-    expect(told).toEqual([[SID, 'default']]);
+    // New sessions: their mode follows their turn_result (the pane adopts the id then).
+    expect(told).toEqual([['plA', 'acceptEdits'], ['plB', 'plan'], [SID, 'default']]);
     expect(c.deps.store.get(SID)).toMatchObject({ mode: 'default' });
+  });
+
+  it('a new session announces its mode right after the turn_result that names it', async () => {
+    const eng = new StubEngine(async () => ok('newM'));
+    const order: string[] = [];
+    const c = await ctx(eng, { onPermissionMode: (s, m) => order.push(`mode ${s} ${m}`) });
+    const emit = c.sink.emit;
+    c.sink.emit = (m) => { if (m.type === 'turn_result') order.push(`result ${m.sessionId}`); emit(m); };
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'x', permissionMode: 'acceptEdits' }, c.sink);
+    expect(order).toEqual(['result newM', 'mode newM acceptEdits']);
+  });
+
+  it('이 세션 with a setMode acceptEdits suggestion while in plan: deck follows the SDK into acceptEdits and says so', async () => {
+    const eng = new StubEngine(async (req) => {
+      await req.onPermission({ toolName: 'Write', input: { file_path: '/w/one/p.txt' }, toolUseId: 'tu', suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] });
+      return ok(SID);
+    });
+    const told: [string, string][] = [];
+    const c = await ctx(eng, { onPermissionMode: (s, m) => told.push([s, m]) });
+    await seedSession(c, 'b');
+    const runner = new TurnRunner(c.deps);
+    await runner.setPermissionMode(SID, 'plan');
+    c.sink.askPermission = async () => 'session';
+    await runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'x' }, c.sink);
+    expect(told).toEqual([[SID, 'acceptEdits']]);
+    expect(c.deps.store.get(SID)).toMatchObject({ mode: 'acceptEdits' });
+    expect(runner.permissionModeOf(SID)).toBe('acceptEdits');
   });
 
   it('a handoff-note turn is run without tools in every mode', async () => {
