@@ -912,3 +912,33 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .ctx-pop { white-space: normal; width: max-content; max-width: min(240px, 70vw); }
 }
 @media (max-width: 400px) { .ctx-num { display: none; } }
+
+/* Message actions (Desktop): copy / edit / retry under a message, shown on hover; always on the last reply and on touch. */
+.msg-actions { display: flex; align-items: center; gap: 2px; margin-left: -6px; opacity: 0; transition: opacity .15s ease; }
+.msg.user .msg-actions { margin: -2px -6px 0 0; }
+.msg:hover .msg-actions, .msg-actions:focus-within, .msg.assistant.last .msg-actions { opacity: 1; }
+.msg-act { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 7px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.msg-act:hover { background: var(--hover); color: var(--fg); }
+.msg-act.ok { color: var(--ok); }
+.msg-act svg { flex-shrink: 0; }
+.tool-pre { position: relative; }
+.tool-pre .msg-act { position: absolute; top: 4px; right: 4px; background: var(--code-bg); opacity: 0; }
+.tool-pre:hover .msg-act, .tool-pre .msg-act:focus-visible, .tool-pre .msg-act.ok { opacity: 1; }
+.tool-pre .msg-act-said { display: none; }
+@media (hover: none) {
+  .msg-actions { opacity: 1; }
+  .tool-pre .msg-act { opacity: .8; }
+}
+@media (max-width: 720px) {
+  .msg-act { min-width: 36px; height: 36px; }
+  .msg-act-said { display: none; }
+}
+
+/* Session 공유 menu (header, top-right). */
+.share { position: relative; display: inline-flex; align-items: center; }
+.share-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; min-width: 200px; max-width: calc(100vw - 16px); padding: 4px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
+.share-item { text-align: left; padding: 8px 10px; border-radius: 8px; color: var(--fg); font-size: 13.5px; white-space: nowrap; }
+.share-item:hover:not(:disabled) { background: var(--hover); }
+.share-item:disabled { color: var(--faint); }
+.share-toast { position: absolute; right: 0; top: calc(100% + 6px); z-index: 41; padding: 4px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); color: var(--fg); font-size: 12.5px; white-space: nowrap; pointer-events: none; }
+@media (max-width: 720px) { .share-item { min-height: var(--phone-tap); } }

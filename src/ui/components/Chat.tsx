@@ -13,11 +13,12 @@ import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activi
 import { AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
-import { MessageView } from './MessageView';
+import { MessageActionsContext, MessageView, type MessageActions } from './MessageView';
 import { ModelPicker } from './ModelPicker';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
 import { QueueChips } from './QueueChips';
+import { ShareMenu } from './ShareMenu';
 import { TodoPanel } from './TodoPanel';
 
 export type ChatProps = {
@@ -137,6 +138,19 @@ export function Chat(p: ChatProps) {
   const agentCtx = useMemo<AgentCtx>(() => ({ agents, bgLive, active: turnActive }), [agents, bgLive, turnActive]);
   const suggest = useComposerSuggest({ text, setText, textareaRef: taRef, cwd: p.cwd, sessionId: p.sessionId ?? null, commands: effectiveEngine !== 'codex' });
   const ctx = useMemo(() => latestContext(p.items), [p.items]);
+  // Message actions: 편집 puts the text back in the composer (sent as a new turn); 재시도 re-sends the last prompt.
+  // Stable across keystrokes (refs) so the memoized transcript does not re-render while typing.
+  const onSendRef = useRef(p.onSend);
+  onSendRef.current = p.onSend;
+  const lastPrompt = ([...p.items].reverse().find((it) => it.kind === 'user') as Extract<ChatItem, { kind: 'user' }> | undefined)?.text ?? null;
+  const canRetry = !p.busy && retryPrompt === null && lastPrompt !== null && last?.kind === 'assistant';
+  const msgActions = useMemo<MessageActions>(() => ({
+    onEdit: (t) => {
+      setText(t);
+      requestAnimationFrame(() => { const ta = taRef.current; if (ta) { ta.focus(); ta.setSelectionRange(t.length, t.length); } });
+    },
+    ...(canRetry && lastPrompt !== null ? { onRetry: () => { onSendRef.current(lastPrompt); scroll.attach(); } } : {}),
+  }), [canRetry, lastPrompt, scroll.attach]);
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
   const submit = () => {
@@ -194,11 +208,14 @@ export function Chat(p: ChatProps) {
         {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
         {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
         <span className="spacer" />
+        {!p.isNew && <ShareMenu title={p.title} items={p.items} cwd={p.cwd} sessionId={p.sessionId} assistant={p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : 'Claude'} />}
         {p.headActions}
       </div>
       <div className="chat-body" ref={bodyRef}>
         <AgentContext.Provider value={agentCtx}>
-          {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} />)}
+          <MessageActionsContext.Provider value={msgActions}>
+            {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} last={i === shown.length - 1} />)}
+          </MessageActionsContext.Provider>
         </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
