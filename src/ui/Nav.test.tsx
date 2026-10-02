@@ -151,6 +151,20 @@ describe('desktop-like navigation', () => {
     expect(frames().find((f) => f.type === 'send')).toMatchObject({ type: 'send', sessionId: null, cwd: '/w', text: '안녕' });
   });
 
+  it('new-chat screen: an attachment picked before the first message rides its send frame', async () => {
+    fetchMock.mockImplementation(async (url: string) => (url === '/api/attachments'
+      ? new Response(JSON.stringify({ id: 'att-1', name: 'shot.png', size: 1, isImage: true }), { status: 200 })
+      : new Response('{}', { status: 200 })));
+    await boot();
+    const pane = screen.getAllByTestId(/^pane-/)[0]!;
+    fireEvent.change(within(pane).getByTestId('attachment-gallery'), { target: { files: [new File(['x'], 'shot.png', { type: 'image/png' })] } });
+    await waitFor(() => expect(within(pane).getByText(/shot\.png/)).toBeTruthy());
+    const box = within(pane).getByLabelText('첫 메시지');
+    fireEvent.change(box, { target: { value: '봐줘' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(frames().find((f) => f.type === 'send')).toMatchObject({ type: 'send', sessionId: null, cwd: '/w', text: '봐줘', attachments: ['att-1'] });
+  });
+
   it('sidebar 최근 view groups by date; 삭제 asks, moves to trash, offers undo', async () => {
     await boot();
     expect(within(sidebar()).getByTestId('date-group-오늘').textContent).toContain('two');

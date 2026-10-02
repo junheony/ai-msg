@@ -18,7 +18,7 @@ import { UsageView } from './components/UsageView';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
 import { hydrate, loadSent, loadUi, saveSent, saveUi, snapshotUi } from './persist';
 import { findSession } from './push';
-import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action } from './state';
+import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type UploadedAttachment } from './state';
 import { isMacPlatform, isTypingTarget, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { usePrefs } from './usePrefs';
@@ -241,11 +241,11 @@ export function App() {
     dispatch({ type: 'focus_pane', paneId });
     setDrawer(false);
   };
-  const startChat = (paneId: string, cwd: string, name: string, text: string) => {
+  const startChat = (paneId: string, cwd: string, name: string, text: string, attachments: UploadedAttachment[] = []) => {
     openIn(paneId, null, cwd, `${name} · 새 세션`);
     const pane = latest.current.panes.find((p) => p.id === paneId);
     // Same first-turn defaults as the composer of a new session: pane model/engine/sandbox, 새 세션 기본 권한.
-    if (text && pane) sendFromPane(pane, text, [], dispatch, send, latest.current.defaultPermMode);
+    if (text && pane) sendFromPane(pane, text, attachments, dispatch, send, latest.current.defaultPermMode);
   };
   const openHit = (h: SearchHit) => {
     if (active.session?.sessionId !== h.sessionId) openIn(active.id, h.sessionId, h.cwd, h.title);
@@ -376,7 +376,7 @@ export function App() {
           )}
           {(phone ? [active] : state.panes).map((p) => (
             <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => apply({ type: 'close_pane', paneId: p.id })} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
-              onStartChat={(cwd, name, text) => startChat(p.id, cwd, name, text)} newChatCwd={newChatCwd[p.id] ?? null} />
+              onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} />
           ))}
         </div>
       </div>

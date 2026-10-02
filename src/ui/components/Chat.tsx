@@ -10,7 +10,7 @@ import { latestContext } from '../context';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
-import { filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
+import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { AccountPicker } from './AccountPicker';
 import { AttachmentBar } from './AttachmentBar';
@@ -113,7 +113,10 @@ export type ChatProps = {
 
 const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
 
-const ATTACHMENT_ONLY_TEXT = '첨부 파일을 확인해 주세요.';
+/** The model picker's choices for an engine (자동 offered for Claude and the engine 자동; Gemini only when picked). */
+export function modelChoices(engine: EngineChoice): readonly ModelChoice[] {
+  return engine === 'gemini' ? GEMINI_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
+}
 
 /** Enter inserts a newline on touch screens (send with the button), as on Desktop's mobile apps. */
 const COARSE_QUERY = '(pointer: coarse), (hover: none)';
@@ -167,7 +170,7 @@ export function Chat(p: ChatProps) {
   const effectiveEngine: EngineChoice = p.isNew ? p.engine : (p.sessionEngine ?? 'claude');
   // 자동 is offered for Claude (and the engine 자동, which may open on Claude); on an existing session it keeps the session's model.
   // Gemini is explicit only: its models appear only when the Gemini engine is picked (never under 자동).
-  const models: readonly ModelChoice[] = effectiveEngine === 'gemini' ? GEMINI_MODELS : effectiveEngine === 'codex' ? CODEX_MODELS : effectiveEngine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
+  const models = modelChoices(effectiveEngine);
   const geminiReady = !!p.gemini && (p.gemini.loggedIn.g1 || p.gemini.loggedIn.g2);
   const engineSelect = p.isNew && (p.codexAvailable || !!p.gemini?.available);
   const sandboxLabel = effectiveEngine === 'gemini' ? GEMINI_SANDBOX_LABEL : SANDBOX_LABEL;

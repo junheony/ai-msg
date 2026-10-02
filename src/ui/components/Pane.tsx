@@ -6,7 +6,8 @@ import type { ProjectEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
 import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
-import { Chat } from './Chat';
+import { Chat, modelChoices } from './Chat';
+import { ModelPicker } from './ModelPicker';
 import { ForkMenu } from './ForkMenu';
 import { NewChat } from './NewChat';
 import { OpenInDesktop } from './OpenInDesktop';
@@ -121,8 +122,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   onClose: () => void;
   /** Opens a session in this pane (the 이전 세션 / 새 세션으로 이어감 links). */
   onOpenSession?: (sessionId: string, cwd: string, title: string) => void;
-  /** The empty pane's start box: a new session in `cwd`, `text` (if any) sent as its first message. */
-  onStartChat?: (cwd: string, name: string, text: string) => void;
+  /** The empty pane's start box: a new session in `cwd`, `text` (if any) sent as its first message with `attachments`. */
+  onStartChat?: (cwd: string, name: string, text: string, attachments: UploadedAttachment[]) => void;
   /** The empty pane's preselected project. */
   newChatCwd?: string | null;
   uploadFn?: UploadFn;
@@ -162,9 +163,14 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const isNew = s?.sessionId === null;
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
-  const fileBtn = s && <button type="button" className="icon-btn side-open" aria-label="파일 열기" title="파일 — 사이드 패널에서 세션 폴더의 파일 보기" aria-pressed={!!side} onClick={() => setSide(side ? null : { kind: 'pick' })}>파일</button>;
+  const fileBtn = s && <button type="button" className="icon-btn side-open" aria-label="파일 열기" title="파일 — 사이드 패널에서 세션 폴더의 파일 보기" aria-pressed={!!side} onClick={() => setSide(side ? null : { kind: 'pick' })}>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true"><path d="M4 2.5h5l3 3v8H4z" /><path d="M9 2.5v3h3" /></svg>
+    <span className="side-open-label">파일</span>
+  </button>;
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   const busy = pane.activeTurnId !== null || pane.awaitingStart;
+  const onModel = (m: ModelChoice) => dispatch({ type: 'set_model', model: m, paneId: pane.id });
+  const onEffort = (e: Effort | null) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id });
   const fork = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && (
     <ForkMenu sessionId={s.sessionId} busy={busy} onResolved={() => send({ type: 'open_session', sessionId: s.sessionId! })} onError={(message) => dispatch({ type: 'show_error', message })} />
   );
@@ -267,8 +273,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onQueueResume={() => dispatch({ type: 'queue_resume', paneId: pane.id })}
           onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
           onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
-          onModel={(m) => dispatch({ type: 'set_model', model: m, paneId: pane.id })}
-          onEffort={(e) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id })}
+          onModel={onModel}
+          onEffort={onEffort}
           onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })}
           onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })}
           accountPin={s.accountPin ?? null}
@@ -297,7 +303,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         <>
           {close && <div className="chat-head"><span className="spacer" />{close}</div>}
           {onStartChat
-            ? <NewChat projects={projects} defaultCwd={newChatCwd ?? null} onStart={onStartChat} {...(onOpenSession ? { onOpenSession } : {})} />
+            ? <NewChat projects={projects} defaultCwd={newChatCwd ?? null} onStart={onStartChat} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}
+                modelPicker={<ModelPicker models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} />} />
             : <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>}
         </>
       )}

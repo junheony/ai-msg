@@ -2,6 +2,9 @@ import { useCallback, useRef, useState } from 'react';
 import { MAX_ATTACHMENTS_PER_TURN, MAX_ATTACHMENT_BYTES } from '../shared/protocol';
 import type { UploadedAttachment } from './state';
 
+/** The text of a turn sent with attachments only. */
+export const ATTACHMENT_ONLY_TEXT = '첨부 파일을 확인해 주세요.';
+
 export type UploadFn = (file: File) => Promise<UploadedAttachment>;
 
 /** D7: raw body upload; the server sniffs the type and sanitizes the name. */

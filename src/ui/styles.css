@@ -1151,30 +1151,48 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .view-toggle { display: inline-flex; padding: 2px; border-radius: 7px; box-shadow: inset 0 0 0 1px var(--line); }
 .view-toggle button { height: 22px; padding: 0 8px; border-radius: 5px; font-size: calc(12.5px * var(--font-scale, 1)); color: var(--muted); }
 .view-toggle button.on { background: var(--selected); color: var(--fg); }
-.newchat { flex: 1; min-height: 0; overflow-y: auto; display: flex; justify-content: center; padding: 10vh 20px 24px; }
-.newchat-inner { width: 100%; max-width: 680px; display: flex; flex-direction: column; gap: 18px; }
-.newchat-greeting { margin: 0; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: calc(30px * var(--font-scale, 1)); font-weight: 500; color: var(--fg-strong); font-family: Georgia, "Times New Roman", var(--font); }
-.newchat-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 16px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.newchat-box textarea { border: 0; resize: none; background: transparent; outline: none; font-size: calc(15.5px * var(--font-scale, 1)); min-height: 64px; }
+.newchat { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; display: flex; justify-content: center; padding: 10vh 16px 24px; container: newchat / inline-size; }
+.newchat-inner { width: 100%; max-width: 680px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.newchat-greeting { margin: 0; display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; font-size: calc(30px * var(--font-scale, 1)); font-weight: 500; color: var(--fg-strong); font-family: Georgia, "Times New Roman", var(--font); }
+/* The composer card: text on top, [+] · project · (model) ↑ in the bottom row, as in Desktop's new-chat box. */
+.newchat-box { display: flex; flex-direction: column; min-width: 0; border-radius: 18px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong), 0 1px 3px rgba(0, 0, 0, .06); transition: box-shadow .15s ease; }
+.newchat-box:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 28%, transparent), 0 1px 3px rgba(0, 0, 0, .06); }
+.newchat-box.dragover { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.newchat-box textarea { display: block; width: 100%; min-height: 64px; max-height: 40vh; overflow-y: auto; padding: 14px 16px 4px; border: 0; resize: none; background: transparent; outline: none; line-height: 1.5; font-size: calc(15.5px * var(--font-scale, 1)); }
+.newchat-box textarea::placeholder { color: var(--faint); }
 .newchat-box textarea:focus-visible { outline: none; }
-.newchat-box:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
-.newchat-row { display: flex; align-items: center; gap: 8px; }
-.newchat-row .grow { flex: 1; }
-.newchat-project select { max-width: 260px; height: 30px; padding: 0 8px; border-radius: 7px; border: 0; background: var(--hover); color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); }
-.newchat-recent h2 { margin: 0 0 8px; font-size: calc(13px * var(--font-scale, 1)); font-weight: 500; }
-.newchat-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
-.newchat-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; border-radius: 10px; text-align: left; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.newchat-row { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 4px 8px 8px; }
+.newchat-files { display: flex; min-width: 0; padding: 2px 14px 0; }
+.newchat-row > .attach { flex-shrink: 0; }
+.newchat-project { position: relative; display: inline-flex; align-items: center; flex: 0 3 auto; min-width: 4.5em; color: var(--muted); }
+.newchat-project svg { position: absolute; left: 8px; pointer-events: none; }
+.newchat-project::after { content: "⌄"; position: absolute; right: 7px; top: 50%; transform: translateY(-62%); font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); pointer-events: none; }
+.newchat-project select { appearance: none; -webkit-appearance: none; max-width: 240px; min-width: 0; height: 28px; padding: 0 22px 0 27px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); font-size: calc(13px * var(--font-scale, 1)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.newchat-project select:hover { background: var(--hover); color: var(--fg); }
+.newchat-project select option { background: var(--panel); color: var(--fg); }
+.newchat-actions { display: flex; align-items: center; gap: 2px; flex: 0 1 auto; min-width: 0; margin-left: auto; }
+.newchat-actions .send { margin-left: 2px; }
+.newchat-actions .mp-button { min-width: 3.6em; }
+.newchat-recent h2 { margin: 0 0 6px; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; }
+.newchat-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+@container newchat (min-width: 560px) { .newchat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.newchat-card { display: flex; flex-direction: column; align-items: stretch; gap: 1px; min-width: 0; padding: 7px 11px; border-radius: 9px; text-align: left; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); }
 .newchat-card:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.newchat-card-title { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: calc(14px * var(--font-scale, 1)); }
-.newchat-card-meta { font-size: calc(12px * var(--font-scale, 1)); color: var(--muted); }
+.newchat-card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); }
+.newchat-card-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: calc(11.5px * var(--font-scale, 1)); color: var(--muted); }
+/* Narrow pane (split view, cover screen): the model label gives way first, then the card padding. */
+@container newchat (max-width: 420px) {
+  .newchat-row { padding: 2px 6px 6px; }
+  .newchat-actions .mp-button { max-width: 7.5em; padding: 0 6px; }
+  .newchat-greeting { font-size: calc(24px * var(--font-scale, 1)); }
+}
 @media (max-width: 720px) {
   .modal-backdrop { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
   .palette { max-height: 80vh; }
   .palette-item, .view-toggle button { min-height: 36px; }
   .newchat { padding-top: 5vh; }
   .newchat-greeting { font-size: calc(24px * var(--font-scale, 1)); }
-  .newchat-cards { grid-template-columns: 1fr; }
-  .newchat-project select { max-width: 60vw; height: var(--phone-tap); }
+  .newchat-project select { height: var(--phone-tap); }
   .newchat-box textarea { font-size: calc(16px * var(--font-scale, 1)); }
 }
 /* Side panel (artifacts / file preview), one per pane. */
@@ -1321,4 +1339,31 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (horizontal-viewport-segments: 2) {
   .sidebar-wrap:not(.drawer):not(.hidden) .sidebar { width: env(viewport-segment-width 0 0, 320px); }
   .sidebar-wrap:not(.drawer):not(.hidden) { margin-right: calc(env(viewport-segment-left 1 0, 0px) - env(viewport-segment-right 0 0, 0px)); }
+}
+
+/* Attach menu: [+] → 사진 보관함 · 카메라 (touch) · 파일. */
+.attach.open { background: var(--hover); color: var(--fg); }
+.attach-pop { position: fixed; z-index: 40; min-width: 168px; max-width: calc(100vw - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 4px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
+.attach-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; text-align: left; color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); white-space: nowrap; }
+.attach-item svg { flex-shrink: 0; color: var(--muted); }
+.attach-item:hover, .attach-item:focus-visible { background: var(--hover); outline: none; }
+@media (max-width: 720px), (pointer: coarse) { .attach-item { min-height: var(--phone-tap); padding: 0 14px 0 12px; } }
+
+/* Pane header in a narrow pane (split view even on wide screens): the title keeps a readable width and wins;
+   the project chip and the permission badge shrink or step aside, 파일 collapses to its icon. */
+.pane { container: pane / inline-size; }
+.chat-head > .chat-title { flex: 0 1 auto; min-width: min(6em, 45%); }
+.icon-btn.side-open { gap: 4px; }
+@container pane (max-width: 520px) {
+  .chat-head { gap: 4px; padding-left: 10px; }
+  .chat-head > .folder-chip { flex-shrink: 1; min-width: 4em; max-width: 7em; }
+  .chat-head > .chip.perm-acceptEdits, .chat-head > .chip.perm-plan { display: none; }
+  .chat-head > .chip.perm-bypassPermissions { flex-shrink: 1; min-width: 3em; max-width: 6em; white-space: nowrap; }
+  .chat-head > .chip.sandbox { flex-shrink: 1; min-width: 3em; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .icon-btn.side-open { padding: 0 6px; }
+  .side-open-label { display: none; }
+}
+@container pane (max-width: 400px) {
+  .chat-head > .folder-chip, .chat-head > .chip.sandbox { display: none; }
+  .open-desktop-btn { display: none; }
 }
