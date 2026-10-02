@@ -693,34 +693,38 @@ export class TurnRunner {
     this.modes.set(p.turnId, { ref: modeRef, sessionId: () => out.sessionId });
     // The first result ends the attempt; whatever follows (background continuations) is `rest`.
     const { emitThinking, flushThinking } = this.thinkingStream(sink, scope);
-    while (!out.result) {
-      const n = await rest.next();
-      if (n.done) break;
-      const ev = n.value;
-      if (!holdsThinking(ev)) flushThinking();
-      switch (ev.kind) {
-        case 'init': out.sessionId = ev.sessionId; if (ev.cwd) out.initCwd = ev.cwd; break;
-        case 'background': out.bgTasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks: ev.tasks, ...this.bgExtra(p.turnId, ev.detail) }); break;
-        case 'continue': break;
-        case 'progress': sink.emit({ type: 'turn_progress', ...scope(), outputTokens: ev.outputTokens, phase: ev.phase }); break;
-        case 'sub_tool_call': sink.emit({ type: 'sub_tool_call', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
-        case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
-        case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
-        case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
-        case 'thinking': emitThinking(ev); break;
-        case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
-        case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
-        case 'rate_limit':
-          out.rateLimit = ev.info;
-          this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) });
-          break;
-        case 'compact': out.compacted = true; break;
-        case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
-        case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
-        case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
+    try {
+      while (!out.result) {
+        const n = await rest.next();
+        if (n.done) break;
+        const ev = n.value;
+        if (!holdsThinking(ev)) flushThinking();
+        switch (ev.kind) {
+          case 'init': out.sessionId = ev.sessionId; if (ev.cwd) out.initCwd = ev.cwd; break;
+          case 'background': out.bgTasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks: ev.tasks, ...this.bgExtra(p.turnId, ev.detail) }); break;
+          case 'continue': break;
+          case 'progress': sink.emit({ type: 'turn_progress', ...scope(), outputTokens: ev.outputTokens, phase: ev.phase }); break;
+          case 'sub_tool_call': sink.emit({ type: 'sub_tool_call', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+          case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
+          case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
+          case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+          case 'thinking': emitThinking(ev); break;
+          case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+          case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
+          case 'rate_limit':
+            out.rateLimit = ev.info;
+            this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) });
+            break;
+          case 'compact': out.compacted = true; break;
+          case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
+          case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
+        }
       }
+    } finally {
+      // also when the engine stream throws: the held tail goes out (redacted), never lost
+      flushThinking();
     }
-    flushThinking();
     return out;
   }
 

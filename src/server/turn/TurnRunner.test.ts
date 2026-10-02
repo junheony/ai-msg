@@ -190,6 +190,20 @@ describe('TurnRunner', () => {
     }
   });
 
+  it('an engine stream that throws mid-thinking still delivers the held tail, redacted', async () => {
+    const eng = new StubEngine(() => (async function* () {
+      yield { kind: 'init', sessionId: 'th2', model: 'm' } as const;
+      yield { kind: 'thinking', text: '' } as const;
+      yield { kind: 'thinking', text: '마지막 생각 sk-ant-api03-AbCdEf0123456789_xyz' } as const;
+      throw new Error('stream broke');
+    })());
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink).catch(() => undefined);
+    const th = (msgsOf(c, 'thinking') as { text: string }[]).map((m) => m.text);
+    expect(th.join('')).toBe('마지막 생각 [redacted]');
+    expect(th.join('')).not.toContain('AbCdEf');
+  });
+
   it('limit on first account → cooldown, move, retry on next; auth failure likewise; third failure ends', async () => {
     const eng = new StubEngine((req, call) => {
       if (call === 0) return [{ kind: 'init', sessionId: 'n1', model: 'm' }, { kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('limit', { sessionId: 'n1' })];
