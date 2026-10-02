@@ -42,6 +42,32 @@ function isRealUser(r: Rec): boolean {
   return r.type === 'user' && !r.isCompactSummary && !r.isSidechain;
 }
 
+/**
+ * A message sent into a running turn (steer) that the CLI folded in at a tool boundary: logged as a
+ * `queued_command` attachment, not a user record, but shown — and counted — as the user's message there.
+ * `source`: the uuid of the input message it came from (a message is shown once even if logged both ways).
+ */
+function queuedPrompt(r: Rec): { content: unknown; source: string | null } | null {
+  if (r.type !== 'attachment' || r.isSidechain) return null;
+  const a = r.attachment;
+  if (!a || typeof a !== 'object') return null;
+  const q = a as Rec;
+  if (q.type !== 'queued_command' || (q.commandMode ?? 'prompt') !== 'prompt' || q.isMeta) return null;
+  return { content: q.prompt, source: typeof q.source_uuid === 'string' && q.source_uuid ? q.source_uuid : null };
+}
+
+/** Input-message ids already shown as user messages (a steer can be logged as a user record and as a queued_command). */
+class SeenPrompts {
+  private ids = new Set<string>();
+  /** false = this id was shown before (skip it). */
+  first(id: string | null): boolean {
+    if (!id) return true;
+    if (this.ids.has(id)) return false;
+    this.ids.add(id);
+    return true;
+  }
+}
+
 function titleFrom(text: string): string | null {
   const first = text.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
   if (!first || first.startsWith('<')) return null;
@@ -137,6 +163,7 @@ class TranscriptBuilder {
   private lastAssistantId: string | null = null;
   /** User messages seen so far (their ordinal `n`; must count exactly as `promptText` does). */
   private userCount = 0;
+  private seen = new SeenPrompts();
   private readonly max: number;
   private readonly maxChars: number;
 
@@ -172,7 +199,12 @@ class TranscriptBuilder {
         return;
       }
       const t = textOfContent(content);
-      if (t) this.push({ kind: 'user', text: t, ts, n: this.userCount++ });
+      if (t && this.seen.first(typeof r.uuid === 'string' ? r.uuid : null)) this.push({ kind: 'user', text: t, ts, n: this.userCount++ });
+      this.lastAssistantId = null;
+    } else if (queuedPrompt(r)) {
+      const q = queuedPrompt(r)!;
+      const t = textOfContent(q.content);
+      if (t && this.seen.first(q.source)) this.push({ kind: 'user', text: t, ts, n: this.userCount++ });
       this.lastAssistantId = null;
     } else if (r.type === 'assistant' && !r.isSidechain) {
       const m = message(r);
@@ -226,12 +258,18 @@ export async function readTranscript(file: string, opts: TranscriptOptions = {})
   return b.result();
 }
 
-/** The text of a user prompt record (what the transcript shows as a user message, counted by `n`), else null. */
-function promptText(r: Rec): string | null {
+/** The text of a user prompt record or folded steer (what the transcript shows as a user message, counted by `n`), else null. */
+function promptText(r: Rec, seen: SeenPrompts): string | null {
+  const q = queuedPrompt(r);
+  if (q) {
+    const t = textOfContent(q.content);
+    return t && seen.first(q.source) ? t : null;
+  }
   if (!isRealUser(r)) return null;
   const content = message(r)?.content;
   if (Array.isArray(content) && content.some((b) => b && typeof b === 'object' && (b as Rec).type === 'tool_result')) return null;
-  return textOfContent(content) || null;
+  const t = textOfContent(content);
+  return t && seen.first(typeof r.uuid === 'string' ? r.uuid : null) ? t : null;
 }
 
 const squash = (t: string) => t.replace(/\s+/g, ' ').trim();
@@ -252,12 +290,13 @@ function branchScanner(n: number, expect?: string): { feed(line: string): boolea
   let count = 0;
   let best: BranchPoint | null = null;
   let done = false;
+  const seen = new SeenPrompts();
   return {
     feed(line) {
       if (done) return true;
       const r = parseLine(line);
       if (!r) return false;
-      const t = promptText(r);
+      const t = promptText(r, seen);
       if (t !== null) {
         const k = count++;
         if (!want || squash(t).includes(want)) {
