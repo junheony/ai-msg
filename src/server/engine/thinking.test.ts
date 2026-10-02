@@ -26,4 +26,9 @@ describe('thinking: transcript', () => {
     expect(parseTranscript(asst([{ type: 'redacted_thinking', data: 'zz' }, { type: 'text', text: 'hi' }]))[0]).toMatchObject({ thinkingRedacted: true });
     expect(parseTranscript(asst([{ type: 'thinking', thinking: '', signature: 's' }]))[0]).toMatchObject({ thinkingRedacted: true });
   });
+  it('an empty thinking block with no signature shows nothing (not "encrypted")', () => {
+    const e = parseTranscript(asst([{ type: 'thinking', thinking: '' }, { type: 'text', text: 'hi' }]))[0];
+    expect(e).not.toHaveProperty('thinkingRedacted');
+    expect(e).not.toHaveProperty('thinking');
+  });
 });
