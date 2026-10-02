@@ -87,6 +87,10 @@ beforeAll(async () => {
     }
     if (req.prompt === HANDOFF_PROMPT) return [{ kind: 'init', sessionId: req.resumeSessionId!, model: 'm' }, okResult(req.resumeSessionId!, `note noTools=${req.noTools === true}`)];
     if (req.prompt === 'continued') return [{ kind: 'init', sessionId: '77777777-7777-4777-8777-777777777777', model: 'm' }, okResult('77777777-7777-4777-8777-777777777777', `noTools=${req.noTools === true}`)];
+    if (req.prompt === 'edited') {
+      const id = req.forkAt ? '88888888-8888-4888-8888-888888888881' : '88888888-8888-4888-8888-888888888880';
+      return [{ kind: 'init', sessionId: id, model: 'm' }, okResult(id, `fork=${req.forkAt ?? 'none'} resume=${req.resumeSessionId ?? 'none'}`)];
+    }
     if (req.prompt === 'throw') throw new Error('engine exploded');
     if (req.prompt === 'hold') await gate;
     const sid = req.resumeSessionId ?? 'sess-1';
@@ -386,6 +390,39 @@ describe('ws', () => {
     expect(meta.prev(NEW)).toBe(SX);
     expect(meta.title(NEW)).toBe('seed (이어서)');
     await vi.waitFor(() => expect(index.projects().flatMap((p) => p.sessions).find((e) => e.sessionId === SX)?.nextSession).toBe(NEW));
+    a.ws.close();
+  });
+
+  it('메시지 편집 갈래: a send with branch forks the parent at the edited message and links the new session in meta', async () => {
+    const SX = '99999999-9999-4999-8999-999999999991';
+    const cwd = await seed(SX, 'branch-from');
+    const file = path.join(base, 'b', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${SX}.jsonl`);
+    const lines = [
+      { type: 'user', uuid: 'u0', parentUuid: null, cwd, message: { role: 'user', content: 'seed' } },
+      { type: 'assistant', uuid: 'a0', parentUuid: 'u0', message: { id: 'm0', role: 'assistant', content: [{ type: 'text', text: '답 0' }] } },
+      { type: 'user', uuid: 'u1', parentUuid: 'a0', message: { role: 'user', content: '두 번째' } },
+      { type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: '답 1' }] } },
+    ].map((r) => JSON.stringify(r)).join('\n') + '\n';
+    await fs.writeFile(file, lines);
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+
+    let done = collect(a.ws, (m) => m.type === 'turn_result');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'edited', branch: { from: SX, n: 1, expect: '두 번째' } }));
+    expect((await done).at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: `fork=a0 resume=${SX}`, sessionId: '88888888-8888-4888-8888-888888888881' });
+    await vi.waitFor(() => expect(meta.branchOf('88888888-8888-4888-8888-888888888881')).toEqual({ parent: SX, n: 1 }));
+    expect(await fs.readFile(file, 'utf8')).toBe(lines);
+
+    // The first message: a fresh session (same cwd), still a version of message 0.
+    done = collect(a.ws, (m) => m.type === 'turn_result');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'edited', branch: { from: SX, n: 0, expect: 'seed' } }));
+    expect((await done).at(-1)).toMatchObject({ ok: true, text: 'fork=none resume=none' });
+    await vi.waitFor(() => expect(meta.branchOf('88888888-8888-4888-8888-888888888880')).toEqual({ parent: SX, n: 0 }));
+
+    // A message that is not in the transcript: refused before any turn, with the pane's clientRef.
+    const err = collect(a.ws, (m) => m.type === 'error');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'edited', clientRef: 'r-x', branch: { from: SX, n: 1, expect: '없는 말' } }));
+    expect((await err).at(-1)).toMatchObject({ type: 'error', clientRef: 'r-x', message: expect.stringContaining('편집할 메시지') });
     a.ws.close();
   });
 

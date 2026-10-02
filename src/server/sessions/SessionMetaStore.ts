@@ -1,12 +1,16 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { BranchLink } from '../../shared/branches';
 import { isPinnableId } from './PinStore';
 
 export const MAX_TITLE_CHARS = 200;
 export const MAX_META_ENTRIES = 5000;
 
-/** `next`: 새 세션으로 이어가기 links, old session id → the session that continues it (present only when non-empty). */
-export type SessionMeta = { titles: Record<string, string>; archived: string[]; next?: Record<string, string> };
+/**
+ * `next`: 새 세션으로 이어가기 links, old session id → the session that continues it (present only when non-empty).
+ * `branches`: 메시지 편집 갈래, branch child → { parent, n } in creation order (present only when non-empty).
+ */
+export type SessionMeta = { titles: Record<string, string>; archived: string[]; next?: Record<string, string>; branches?: Record<string, BranchLink> };
 
 /**
  * deck-only session metadata (`session-meta.json`): custom titles and archived ids. The Claude jsonl and
@@ -17,6 +21,7 @@ export class SessionMetaStore {
   private archivedIds = new Set<string>();
   private nextIds = new Map<string, string>();
   private prevIds = new Map<string, string>();
+  private branchLinks = new Map<string, BranchLink>();
   private writing: Promise<void> = Promise.resolve();
 
   constructor(private readonly file: string) {}
@@ -44,6 +49,29 @@ export class SessionMetaStore {
     if (Array.isArray(o.archived)) for (const id of o.archived) if (isPinnableId(id)) this.archivedIds.add(id);
     const next = o.next && typeof o.next === 'object' ? (o.next as Record<string, unknown>) : {};
     for (const [from, to] of Object.entries(next)) if (isPinnableId(from) && isPinnableId(to) && from !== to) this.setLink(from, to);
+    const branches = o.branches && typeof o.branches === 'object' ? (o.branches as Record<string, unknown>) : {};
+    for (const [child, l] of Object.entries(branches)) {
+      const link = l && typeof l === 'object' ? (l as Record<string, unknown>) : {};
+      if (isPinnableId(child) && isPinnableId(link.parent) && link.parent !== child && Number.isInteger(link.n) && (link.n as number) >= 0) {
+        this.branchLinks.set(child, { parent: link.parent as string, n: link.n as number });
+      }
+    }
+  }
+
+  /** 메시지 편집 갈래: the session `sessionId` was forked from, and at which user message; null = not a branch. */
+  branchOf(sessionId: string): BranchLink | null {
+    return this.branchLinks.get(sessionId) ?? null;
+  }
+
+  /** 메시지 편집 갈래: `child` was forked from `parent` by editing its user message `n`; it takes the parent's deck title. */
+  async branch(child: string, parent: string, n: number): Promise<SessionMeta> {
+    if (child !== parent) {
+      this.branchLinks.delete(child);
+      this.branchLinks.set(child, { parent, n });
+    }
+    if (this.branchLinks.size > MAX_META_ENTRIES) this.branchLinks.delete(this.branchLinks.keys().next().value!);
+    const title = this.titles.get(parent);
+    return this.update(child, title ? { title } : {});
   }
 
   private setLink(from: string, to: string): void {
@@ -83,7 +111,7 @@ export class SessionMetaStore {
   }
 
   snapshot(): SessionMeta {
-    return { titles: Object.fromEntries(this.titles), archived: [...this.archivedIds], ...(this.nextIds.size ? { next: Object.fromEntries(this.nextIds) } : {}) };
+    return { titles: Object.fromEntries(this.titles), archived: [...this.archivedIds], ...(this.nextIds.size ? { next: Object.fromEntries(this.nextIds) } : {}), ...(this.branchLinks.size ? { branches: Object.fromEntries(this.branchLinks) } : {}) };
   }
 
   /** `title`: string = rename, null/'' = back to the transcript's own title, undefined = unchanged. */

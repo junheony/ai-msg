@@ -311,6 +311,7 @@ export function buildOptions(
     // sdk.d.ts Options.effort?: EffortLevel ('low' | 'medium' | 'high' | 'xhigh' | 'max'), "works with adaptive thinking".
     ...(req.effort ? { effort: req.effort } : {}),
     resume: req.resumeSessionId ?? undefined,
+    ...(req.forkAt && req.resumeSessionId ? { forkSession: true, resumeSessionAt: req.forkAt } : {}),
     // ~/.claude/settings.json sets defaultMode "auto"; spec §6 wants ask-every-time — unless the session's mode
     // (picker, plan approval, or 이 세션's "allow all edits") says acceptEdits / plan. Never 'bypassPermissions'.
     permissionMode: req.permissionMode ?? 'default',
@@ -541,14 +542,15 @@ export class ClaudeEngine implements Engine {
   async *runTurn(req: TurnRequest): AsyncIterable<EngineEvent> {
     // Review M2: an interrupt that landed before the turn started must not spawn the CLI at all.
     if (req.signal.aborted) {
-      yield { kind: 'result', sessionId: req.resumeSessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '중단됨', stderr: null, errorKind: null, terminalReason: 'aborted' };
+      yield { kind: 'result', sessionId: req.forkAt ? null : req.resumeSessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '중단됨', stderr: null, errorKind: null, terminalReason: 'aborted' };
       return;
     }
     const abortController = new AbortController();
     const onAbort = () => abortController.abort();
     req.signal.addEventListener('abort', onAbort, { once: true });
     let stderrTail = '';
-    let sessionId: string | null = req.resumeSessionId;
+    // A fork gets its own id from init; the parent's id must never be reported as the turn's session.
+    let sessionId: string | null = req.forkAt ? null : req.resumeSessionId;
     let errorKind: string | null = null;
     let sawResult = false;
     /** Prompt tokens of the main conversation's latest API call (the turn's result carries it as the context size). */

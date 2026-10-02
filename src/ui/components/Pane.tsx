@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Effort, ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import type { ClientMessage } from '../../shared/protocol';
 import type { ProjectEntry } from '../../shared/session-types';
+import { linksOf, versionsAt } from '../../shared/branches';
 import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
 import { Chat } from './Chat';
@@ -58,6 +59,25 @@ export function startHandoff(pane: PaneState, dispatch: (a: Action) => void, sen
   const clientRef = nextClientRef();
   dispatch({ type: 'sent', text: HANDOFF_PROMPT, paneId: pane.id, clientRef, handoff: true });
   send({ type: 'send', sessionId: s.sessionId, cwd: s.cwd, text: HANDOFF_PROMPT, model, ...(effort ? { effort } : {}), handoff: true, clientRef });
+}
+
+/**
+ * 메시지 편집 갈래: `text` replaces user message `n` (shown as `original`) of the pane's Claude session. The pane turns
+ * into the new branch session at once (same cwd, pin and model); the server forks the transcript and the meta links it.
+ */
+export function startBranch(pane: PaneState, n: number, text: string, original: string, dispatch: (a: Action) => void, send: (m: ClientMessage) => void): void {
+  const s = pane.session;
+  if (!s?.sessionId || pane.activeTurnId !== null || pane.awaitingStart) return;
+  const model = paneModel(pane);
+  const effort = paneEffort(pane, model);
+  const clientRef = nextClientRef();
+  dispatch({ type: 'branch_edit', n, text, paneId: pane.id, clientRef });
+  send({
+    type: 'send', sessionId: null, cwd: s.cwd, text, model, ...(effort ? { effort } : {}), engine: 'claude',
+    ...(s.accountPin ? { accountPin: s.accountPin } : {}),
+    branch: { from: s.sessionId, n, ...(original ? { expect: original } : {}) },
+    clientRef,
+  });
 }
 
 /** A session's title in the index (falls back to its id's head). */
@@ -149,6 +169,37 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const canHandoff = !!s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && !busy;
   const projects = app.projects ?? [];
   const entry = s?.sessionId ? projects.flatMap((p) => p.sessions).find((x) => x.sessionId === s.sessionId) : undefined;
+  // 메시지 편집 갈래: Claude sessions with an id; otherwise 편집 puts the text in the composer (the note says why).
+  const canBranch = canHandoff;
+  const editNote = !s?.sessionId ? '아직 저장되지 않은 새 세션이라 입력창에 넣습니다' : s.engine === 'codex' || s.engine === 'gemini' ? 'GPT·Gemini 세션은 대화를 갈라 편집할 수 없어 입력창에 넣습니다' : busy ? '실행 중에는 입력창에 넣습니다' : null;
+  // Stable while the index and the session stay the same, so the memoized transcript does not re-render on every delta.
+  const openRef = useRef(onOpenSession);
+  openRef.current = onOpenSession;
+  const sid = s?.sessionId ?? null;
+  const cwd = s?.cwd ?? '';
+  const versions = useMemo(() => {
+    const all = projects.flatMap((p) => p.sessions);
+    const links = linksOf(all);
+    const known = new Set(all.map((x) => x.sessionId));
+    return (n: number) => {
+      if (!sid) return null;
+      const v = versionsAt(links, sid, n);
+      if (!v) return null;
+      // A version whose session was deleted (휴지통) is skipped; its children still link to it and stay grouped.
+      const own = v.members[v.index]!;
+      const members = v.members.filter((id) => id === own || id === sid || known.has(id));
+      if (members.length < 2) return null;
+      return { index: Math.max(0, members.indexOf(own)), count: members.length, go: (i: number) => { const id = members[i]; if (id && id !== sid) { const t = titleIn(projects, id); openRef.current?.(id, t.cwd ?? cwd, t.title); } } };
+    };
+  }, [projects, sid, cwd]);
+  // A refused edit (message not found, folder gone…) leaves an unsent new session: go back to the original instead.
+  const branchUndo = useRef<{ sessionId: string; cwd: string; title: string } | null>(null);
+  useEffect(() => {
+    const u = branchUndo.current;
+    if (!u || pane.awaitingStart) return;
+    branchUndo.current = null;
+    if (pane.myTurns.length === 0 && pane.session?.sessionId === null) openRef.current?.(u.sessionId, u.cwd, u.title);
+  }, [pane.awaitingStart, pane.myTurns.length, pane.session?.sessionId]);
   const prevId = entry?.prevSession ?? pane.handoffFrom?.sessionId ?? null;
   const link = (id: string | null) => {
     if (!id || !s) return null;
@@ -181,6 +232,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           attachments={pane.attachments}
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
+          onBranch={canBranch ? (n, text, original) => { branchUndo.current = { sessionId: s.sessionId!, cwd: s.cwd, title: s.title }; startBranch(pane, n, text, original, dispatch, send); } : undefined}
+          editNote={editNote}
+          versions={versions}
           onHandoff={canHandoff ? () => startHandoff(pane, dispatch, send) : undefined}
           handoffWriting={pane.handoff !== null}
           prefill={pane.prefill}

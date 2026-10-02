@@ -39,6 +39,11 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     handoff: z.boolean().optional(),
     /** Step 2 (new sessions only): the session this one continues; once it has an id, deck's session meta links the two. */
     handoffFrom: z.string().min(1).max(200).optional(),
+    /**
+     * 메시지 편집 갈래 (new sessions only): `text` replaces user message `n` (TranscriptMessage.n) of Claude session `from`.
+     * `expect` is that message as the device showed it — the server checks it (nearest match) before forking.
+     */
+    branch: z.object({ from: z.string().min(1).max(200), n: z.number().int().min(0).max(1_000_000), expect: z.string().max(200_000).optional() }).optional(),
   }),
   z.object({ type: z.literal('permission_response'), requestId: z.string().min(1), decision: z.enum(['once', 'session', 'deny']) }),
   /** D8: answers keyed by the question text, values are option labels (comma-joined for multiSelect) or free text. */

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SessionActivity } from '../../shared/protocol';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { groupByDate } from '../dateGroups';
+import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 
@@ -134,17 +135,21 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     return null;
   };
 
-  const row = (s: SessionEntry, group: string, project?: string) => {
+  /** `tree`: a 메시지 편집 갈래 tree shown as this one row — a click opens its newest session. `project`: the 최근 view's meta label. */
+  const row = (s: SessionEntry, group: string, tree?: BranchGroup<SessionEntry>, project?: string) => {
     const on = pinSet.has(s.sessionId);
     const key = `${group}:${s.sessionId}`;
     const edit = editing?.id === key ? editing : null;
+    const members = tree?.members ?? [s.sessionId];
+    const openId = tree?.openId ?? s.sessionId;
+    const target = byId.get(openId) ?? s;
     return (
-      <li key={s.sessionId} className={s.sessionId === currentSessionId ? 'active' : ''} title={s.title}
+      <li key={s.sessionId} className={currentSessionId && members.includes(currentSessionId) ? 'active' : ''} title={s.title}
         // The second click of a double-click (rename) must not re-open the session.
-        onClick={(e) => { if (e.detail > 1 || edit) return; onOpen(s.sessionId, s.cwd, s.title); }}
+        onClick={(e) => { if (e.detail > 1 || edit) return; onOpen(target.sessionId, target.cwd, target.title); }}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
         <span className="session-row">
-          {dot(s.sessionId)}
+          {members.map(dot).find((d) => d !== null) ?? null}
           {edit ? (
             <input className="session-rename" aria-label="세션 이름" value={edit.text} autoFocus maxLength={200}
               onChange={(e) => setEditing({ id: key, text: e.target.value })}
@@ -157,7 +162,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           ) : (
             <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(s, key); } : undefined}>{s.title}</span>
           )}
-          <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{project ?? s.account.toUpperCase()}{s.imported ? ' · Codex' : ''} · {ago(s.lastModified)}</span>
+          <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{project ?? s.account.toUpperCase()}{s.imported ? ' · Codex' : ''}{members.length > 1 ? ` · 갈래 ${members.length}` : ''} · {ago(s.lastModified)}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
@@ -183,8 +188,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const searching = fullOn && found?.q !== fullQ;
   const projectName = new Map<string, string>();
   for (const p of projects) for (const s of p.sessions) if (!projectName.has(s.sessionId)) projectName.set(s.sessionId, p.name);
-  const recentList = view === 'recent' ? [...byId.values()].filter(inView).filter(match).sort((a, b) => b.lastModified - a.lastModified).slice(0, MAX_RECENT) : [];
-  const visible = projects.map((p) => ({ p, sessions: p.sessions.filter(inView).slice(0, MAX_SESSIONS).filter(match) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
+  // 메시지 편집 갈래: one row per branch tree (its root, opening the newest version); the tree's other sessions are not listed.
+  // A deleted root (휴지통) just drops out: its children keep their link and group under the oldest one left.
+  const links = linksOf(byId.values());
+  const recentList = view === 'recent' ? groupBranches([...byId.values()].filter(inView), links).filter((g) => match(g.entry)).slice(0, MAX_RECENT).map((g) => ({ ...g, lastModified: g.entry.lastModified })) : [];
+  const visible = projects.map((p) => ({ p, sessions: groupBranches(p.sessions.filter(inView), links).slice(0, MAX_SESSIONS).filter((g) => match(g.entry)) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
@@ -235,7 +243,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       {view === 'recent' && groupByDate(recentList).map((g) => (
         <section key={g.label} className="project date-group" data-testid={`date-group-${g.label}`}>
           <div className="project-head"><span className="project-name">{g.label}</span></div>
-          <ul>{g.items.map((s) => row(s, 'recent', projectName.get(s.sessionId)))}</ul>
+          <ul>{g.items.map((t) => row(t.entry, 'recent', t, projectName.get(t.entry.sessionId)))}</ul>
         </section>
       ))}
       {q && (view === 'recent' ? recentList.length === 0 : visible.length === 0) && pinned.length === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
@@ -255,7 +263,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             </div>
             {!isCollapsed && (
               <>
-                <ul>{shown.map((s) => row(s, p.cwd))}</ul>
+                <ul>{shown.map((g) => row(g.entry, p.cwd, g))}</ul>
                 {hidden > 0 && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>더 보기 ({hidden})</button>}
                 {!q && expanded.has(p.cwd) && sessions.length > FOLD_AT && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>접기</button>}
               </>

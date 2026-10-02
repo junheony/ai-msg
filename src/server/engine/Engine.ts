@@ -165,6 +165,11 @@ export type TurnRequest = {
   account: Account;
   cwd: string;
   resumeSessionId: string | null;
+  /**
+   * 메시지 편집 갈래: fork `resumeSessionId` into a new session that keeps its transcript up to and including
+   * this chain entry (SDK `forkSession` + `resumeSessionAt`). The original transcript is never written.
+   */
+  forkAt?: string;
   model: ClaudeModel;
   /** Reasoning effort → SDK `Options.effort`; absent = the CLI's default for the model. */
   effort?: Effort;

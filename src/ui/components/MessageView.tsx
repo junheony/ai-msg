@@ -1,9 +1,10 @@
-import { createContext, isValidElement, memo, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, isValidElement, memo, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
+import { usePrefs } from '../usePrefs';
 import { SidePanelContext, filePathIn } from '../sidePanel';
 import type { ChatItem, SentFile } from '../state';
 import { CopyButton } from './CopyButton';
@@ -181,8 +182,78 @@ function AttachmentTiles({ files }: { files: SentFile[] }) {
  * Message actions supplied by the chat (a context so MessageView's memo still holds across composer keystrokes).
  * onEdit: put a sent message back in the composer; onRetry: re-send the last prompt (only given while idle).
  */
-export type MessageActions = { onEdit?: (text: string) => void; onRetry?: () => void };
+export type MessageActions = {
+  onEdit?: (text: string) => void;
+  onRetry?: () => void;
+  /** 메시지 편집 갈래: send `text` in place of user message `n` (shown as `original`); absent = 편집 uses onEdit. */
+  onBranch?: (n: number, text: string, original: string) => void;
+  /** Why 편집 uses onEdit (tooltip). */
+  editNote?: string | null;
+  /** `< i/N >` under a user message with several versions. */
+  versions?: (n: number) => { index: number; count: number; go: (i: number) => void } | null;
+  /** Touch screen: Enter adds a newline (send with the button), like the composer. */
+  coarse?: boolean;
+};
 export const MessageActionsContext = createContext<MessageActions>({});
+
+/**
+ * 메시지 편집 갈래: the bubble as an editor. Enter sends (or ⌘Enter only, per 설정 › Enter 동작), Shift+Enter is a
+ * newline, Esc cancels; IME-safe like the composer. Shift+Tab (권한 모드) stays a composer-only key.
+ */
+function InlineEdit({ initial, coarse, onCancel, onSubmit }: { initial: string; coarse: boolean; onCancel: () => void; onSubmit: (text: string) => void }) {
+  const [text, setText] = useState(initial);
+  const [{ sendKey }] = usePrefs();
+  const composing = useRef(false);
+  const ta = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ta.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+  const can = text.trim().length > 0;
+  const submit = () => { if (can) onSubmit(text.trim()); };
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Same rule as the composer: a key that is part of a composition (keyCode 229: Safari's committing Enter) is not ours.
+    if (e.nativeEvent.isComposing || e.keyCode === 229 || composing.current) return;
+    if (e.key === 'Escape') { e.preventDefault(); onCancel(); return; }
+    if (e.key !== 'Enter') return;
+    if (e.metaKey || e.ctrlKey) { e.preventDefault(); submit(); return; }
+    if (e.shiftKey || e.altKey || coarse || sendKey === 'mod-enter') return;
+    e.preventDefault();
+    submit();
+  };
+  return (
+    <div className="msg user editing" data-testid="inline-edit">
+      <textarea
+        ref={ta}
+        className="inline-edit"
+        aria-label="메시지 편집"
+        value={text}
+        rows={Math.min(12, Math.max(2, text.split('\n').length))}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={onKeyDown}
+        onCompositionStart={() => { composing.current = true; }}
+        onCompositionEnd={() => { composing.current = false; }}
+      />
+      <div className="inline-edit-actions">
+        <button type="button" className="btn ghost" onClick={onCancel}>취소</button>
+        <button type="button" className="btn primary" disabled={!can} onClick={submit}>보내기</button>
+      </div>
+    </div>
+  );
+}
+
+/** `< 2/3 >`: switches the pane to another version of this message (a sibling branch session). */
+function VersionSwitcher({ v }: { v: { index: number; count: number; go: (i: number) => void } }) {
+  return (
+    <div className="msg-versions" data-testid="msg-versions">
+      <button type="button" className="msg-act" aria-label="이전 버전" title="이전 버전" disabled={v.index <= 0} onClick={() => v.go(v.index - 1)}>‹</button>
+      <span>{v.index + 1}/{v.count}</span>
+      <button type="button" className="msg-act" aria-label="다음 버전" title="다음 버전" disabled={v.index >= v.count - 1} onClick={() => v.go(v.index + 1)}>›</button>
+    </div>
+  );
+}
 
 /**
  * Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines.
@@ -192,12 +263,26 @@ export const MessageActionsContext = createContext<MessageActions>({});
  */
 export const MessageView = memo(function MessageView({ item, cwd, last = false }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean }) {
   const actions = useContext(MessageActionsContext);
+  const [editing, setEditing] = useState(false);
   if (item.kind === 'user') {
     if (item.text === HANDOFF_PROMPT) return <div className="msg user handoff-req" title={HANDOFF_PROMPT}><pre>인계 메모 요청 (새 세션으로 이어가기)</pre></div>;
     const { text, notices } = parseUserText(item.text);
     const files = item.attachments ?? [];
     const system = notices.length > 0 && <div className="msg system">{notices.map((n, i) => <SystemNotice key={i} n={n} />)}</div>;
     if (!text && !files.length) return system || null;
+    // 메시지 편집 갈래 when the session can fork here; else the composer gets the text (the tooltip says why).
+    const n = item.n;
+    const branch = actions.onBranch && n !== undefined ? actions.onBranch : null;
+    const editTitle = branch ? '편집 — 이 메시지를 고쳐 새 갈래로 다시 보내기' : `편집 — ${actions.editNote ?? (actions.onBranch ? '메시지 위치를 알 수 없어 입력창에 넣습니다' : '입력창에서 고쳐 다시 보내기')}`;
+    const versions = n !== undefined ? (actions.versions?.(n) ?? null) : null;
+    if (editing && branch && n !== undefined) {
+      return (
+        <>
+          {system}
+          <InlineEdit initial={text} coarse={actions.coarse ?? false} onCancel={() => setEditing(false)} onSubmit={(t) => { setEditing(false); branch(n, t, text); }} />
+        </>
+      );
+    }
     return (
       <>
         {system}
@@ -207,10 +292,11 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
           {text && (
             <div className="msg-actions" data-testid="user-actions">
               <CopyButton icon text={text} label="메시지 복사" />
-              {actions.onEdit && <button type="button" className="msg-act" aria-label="편집" title="편집 — 입력창에서 고쳐 다시 보내기" onClick={() => actions.onEdit?.(text)}><EditIcon /></button>}
+              {(branch || actions.onEdit) && <button type="button" className="msg-act" aria-label="편집" title={editTitle} onClick={() => (branch ? setEditing(true) : actions.onEdit?.(text))}><EditIcon /></button>}
             </div>
           )}
         </div>
+        {versions && <VersionSwitcher v={versions} />}
       </>
     );
   }
