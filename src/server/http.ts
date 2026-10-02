@@ -37,7 +37,7 @@ export type HttpDeps = {
   /** Web Push (알림); absent = no /api/push/*. */
   push?: { notifier: PushNotifier; store: SubscriptionStore };
   /** Sessions whose deck and Desktop (home profile) copies diverged; absent = no /api/session-fork. */
-  forks?: Pick<TurnRunner, 'forkStatus' | 'resolveFork'>;
+  forks?: Pick<TurnRunner, 'forkStatus' | 'resolveFork' | 'openInDesktop'>;
 };
 
 /**
@@ -296,6 +296,18 @@ export function createRequestHandler(deps: HttpDeps) {
             json(res, 200, r);
             return;
           }
+        }
+        const openMatch = /^\/api\/sessions\/([^/]+)\/open-in-desktop$/.exec(url.pathname);
+        if (openMatch && req.method === 'POST') {
+          if (!deps.forks) { json(res, 404, { error: 'not found' }); return; }
+          const id = openMatch[1]!;
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) { json(res, 400, { error: '잘못된 세션입니다' }); return; }
+          const r = await deps.forks.openInDesktop(id);
+          if (r.ok) { json(res, 200, { ok: true, url: `claude://resume?session=${id}`, busy: r.busy }); return; }
+          if (r.reason === 'unsupported') { json(res, 400, { error: 'Claude 세션만 Desktop 에서 열 수 있습니다' }); return; }
+          if (r.reason === 'diverged') { json(res, 200, { ok: false, reason: 'diverged' }); return; }
+          json(res, 500, { error: r.error ?? 'Desktop 사본 갱신 실패' });
+          return;
         }
         if (url.pathname === '/api/search' && req.method === 'GET') {
           if (!deps.search) { json(res, 404, { error: 'not found' }); return; }

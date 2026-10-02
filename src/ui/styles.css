@@ -881,3 +881,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   .pulse-dot, .row-dot.bg, .row-dot.running { animation: none; }
 }
+
+/* === open-in-desktop === */
+.open-desktop-btn { white-space: nowrap; }

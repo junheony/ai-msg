@@ -265,6 +265,25 @@ export class TurnRunner {
   }
 
   /**
+   * "Desktop에서 열기": bring the home profile's copy up to date now (the same write-back as after a turn, awaited)
+   * so `claude://resume?session=` finds the current conversation. `busy`: a CLI process of deck's still holds the session.
+   */
+  async openInDesktop(sessionId: string): Promise<{ ok: true; busy: boolean } | { ok: false; reason: 'unsupported' | 'diverged' | 'failed'; error?: string }> {
+    const st = this.deps.store.get(sessionId);
+    if (st && (isCodexState(st) || isGeminiState(st))) return { ok: false, reason: 'unsupported' };
+    const busy = this.active.has(sessionId) || this.live.has(sessionId);
+    const home = this.deps.homeAccount;
+    if (!st || !home || st.account === home) return { ok: true, busy };
+    return this.serialize(sessionId, async () => {
+      const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.deps.projectsRoots[home], ignoreOtherDirs: true });
+      if (r.ok) return { ok: true as const, busy };
+      // The home copy already contains ours: it is the newer one, nothing to write back.
+      if (r.diverged && (await isBytePrefix(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return { ok: true as const, busy };
+      return r.diverged ? { ok: false as const, reason: 'diverged' as const } : { ok: false as const, reason: 'failed' as const, error: r.error };
+    });
+  }
+
+  /**
    * The user's answer to a divergence. `keep: 'deck'` — the home copy (and its `<id>/` dir) is renamed to
    * `*.deck-fork-<ts>` and deck's copy is written there; `keep: 'home'` — the same on deck's side, adopting
    * the home copy. Nothing is deleted. Adopting the home copy needs the deck process gone (it would keep

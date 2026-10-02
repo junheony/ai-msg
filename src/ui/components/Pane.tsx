@@ -5,6 +5,7 @@ import { cardsForPane, engineOf, modelFor, nextQueued, type Action, type AppStat
 import type { UploadFn } from '../upload';
 import { Chat } from './Chat';
 import { ForkMenu } from './ForkMenu';
+import { OpenInDesktop } from './OpenInDesktop';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -81,6 +82,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
   const fork = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && (
     <ForkMenu sessionId={s.sessionId} busy={busy} onResolved={() => send({ type: 'open_session', sessionId: s.sessionId! })} onError={(message) => dispatch({ type: 'show_error', message })} />
   );
+  const desktop = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && (
+    <OpenInDesktop sessionId={s.sessionId} onError={(message) => dispatch({ type: 'show_error', message })} />
+  );
   return (
     <section className={`pane ${active ? 'active' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
       {s ? (
@@ -93,7 +97,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           title={s.title}
           cwd={s.cwd}
           sessionId={s.sessionId}
-          headActions={<>{fork}{close}</>}
+          headActions={<>{desktop}{fork}{close}</>}
           model={model}
           effort={effort}
           engine={pane.engine}

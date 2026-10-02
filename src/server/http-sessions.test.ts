@@ -21,6 +21,9 @@ let dir: string;
 let home: string;
 let index: SessionIndex;
 let changed = 0;
+const ID2 = '22222222-2222-4222-8222-222222222222';
+const ID3 = '33333333-3333-4333-8333-333333333333';
+const openCalls: string[] = [];
 const forkCalls: [string, string][] = [];
 
 beforeAll(async () => {
@@ -44,6 +47,7 @@ beforeAll(async () => {
     commands,
     forks: {
       forkStatus: async (id) => (id === ID1 ? { diverged: true, deckAccount: 'b', homeAccount: 'a' } : null),
+      openInDesktop: async (id) => { openCalls.push(id); return id === ID1 ? { ok: true, busy: true } : id === ID2 ? { ok: false, reason: 'diverged' } : id === ID3 ? { ok: false, reason: 'unsupported' } : { ok: true, busy: false }; },
       resolveFork: async (id, keep) => { forkCalls.push([id, keep]); return keep === 'deck' ? { ok: true, backup: '/x.deck-fork-1' } : { ok: false, error: '실행 중' }; },
     },
   }));
@@ -112,5 +116,16 @@ describe('session endpoints', () => {
     expect((await post('/api/session-fork', { sessionId: ID1, keep: 'both' })).status).toBe(400);
     expect((await post('/api/session-fork', { sessionId: ID1, keep: 'deck' }, {})).status).toBe(401);
     expect(forkCalls).toEqual([[ID1, 'deck'], [ID1, 'home']]);
+  });
+
+  it('/api/sessions/:id/open-in-desktop: url + busy, diverged, non-Claude 400, bad id 400, auth', async () => {
+    const url = (id: string) => `/api/sessions/${id}/open-in-desktop`;
+    expect((await post(url(ID1), {}, {})).status).toBe(401);
+    expect(await (await post(url(ID1), {})).json()).toEqual({ ok: true, url: `claude://resume?session=${ID1}`, busy: true });
+    expect(await (await post(url(ID2), {})).json()).toEqual({ ok: false, reason: 'diverged' });
+    expect((await post(url(ID3), {})).status).toBe(400);
+    expect((await post(url('..%2Fx'), {})).status).toBe(400);
+    expect((await post(url('not-a-uuid'), {})).status).toBe(400);
+    expect(openCalls).toEqual([ID1, ID2, ID3]);
   });
 });

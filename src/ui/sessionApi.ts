@@ -82,3 +82,18 @@ export async function resolveFork(sessionId: string, keep: 'deck' | 'home', fetc
     throw new Error(body.error ?? `사본 맞추기 실패 (${res.status})`);
   }
 }
+
+export type OpenInDesktopResult = { ok: true; url: string; busy: boolean } | { ok: false; reason: 'diverged' };
+
+/** Writes deck's copy back into the Desktop profile and returns the `claude://resume` URL to open. */
+export async function openInDesktop(sessionId: string, fetchFn: typeof fetch = fetch): Promise<OpenInDesktopResult> {
+  let res: Response;
+  try {
+    res = await fetchFn(`/api/sessions/${encodeURIComponent(sessionId)}/open-in-desktop`, { method: 'POST', credentials: 'same-origin' });
+  } catch {
+    throw new Error('Desktop 에서 열기 실패: 네트워크 오류');
+  }
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(body.error ?? `Desktop 에서 열기 실패 (${res.status})`);
+  return body as OpenInDesktopResult;
+}

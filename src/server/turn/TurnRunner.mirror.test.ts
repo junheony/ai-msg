@@ -353,3 +353,32 @@ describe('SessionIndex: which copy of a session wins', () => {
     expect((await c.deps.index.bestCopy(SID, path.join(c.roots.b, DIR), 'b'))?.account).toBe('b');
   });
 });
+
+describe('TurnRunner.openInDesktop', () => {
+  it('writes the deck copy back into A now (older A copy brought up to date)', async () => {
+    const c = await setup();
+    await put(c, 'a', line('one'), NOW - 3_600_000);
+    await put(c, 'b', line('one') + line('deck went on'), NOW - 60_000);
+    await onB(c);
+    expect(await c.runner.openInDesktop(SID)).toEqual({ ok: true, busy: false });
+    expect(await read(fileOf(c, 'a'))).toBe(line('one') + line('deck went on'));
+  });
+
+  it('diverged copies: reported, A untouched', async () => {
+    const c = await setup();
+    await put(c, 'a', line('one') + line('desktop'), NOW - 60_000);
+    await put(c, 'b', line('one') + line('deck'), NOW - 30_000);
+    await onB(c);
+    expect(await c.runner.openInDesktop(SID)).toEqual({ ok: false, reason: 'diverged' });
+    expect(await read(fileOf(c, 'a'))).toBe(line('one') + line('desktop'));
+  });
+
+  it('a session on A itself or unknown to deck needs no write-back; a Codex session is unsupported', async () => {
+    const c = await setup();
+    expect(await c.runner.openInDesktop(SID)).toEqual({ ok: true, busy: false });
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'a', projectDir: path.join(c.roots.a, DIR), lastTurnAtMs: NOW, justCompacted: false, defaultModel: 'opus' });
+    expect(await c.runner.openInDesktop(SID)).toEqual({ ok: true, busy: false });
+    await c.deps.store.set({ sessionId: SID, engine: 'codex', cwd: CWD, lastTurnAtMs: NOW } as never);
+    expect(await c.runner.openInDesktop(SID)).toEqual({ ok: false, reason: 'unsupported' });
+  });
+});
