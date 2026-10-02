@@ -241,6 +241,15 @@ describe('composer queue (ux-state)', () => {
     expect(send.mock.lastCall![0]).toMatchObject({ type: 'send', text: 'urgent' });
   });
 
+  it('Pane (Claude): a steer re-sent after history (replay) is not shown twice when the transcript already has it', () => {
+    const { server, pane } = claudeHarness();
+    const users = () => pane().items.filter((it) => it.kind === 'user').map((it) => (it as { text: string }).text);
+    server({ type: 'steer_delivered', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: 'x1', prompt: { text: 'one', attachments: [] }, replay: true });
+    expect(users()).toEqual(['one']);
+    server({ type: 'steer_delivered', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: 'x2', prompt: { text: 'not logged yet', attachments: [] }, replay: true });
+    expect(users()).toEqual(['one', 'not logged yet']);
+  });
+
   it('Pane (Claude): a steer the socket could not send is an ordinary queue item at once', () => {
     const { send, server, box } = claudeHarness();
     send.mockReturnValueOnce(false);

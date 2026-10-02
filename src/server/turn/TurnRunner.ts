@@ -186,8 +186,11 @@ export class TurnRunner {
   private readonly live = new Map<string, LiveSession>();
   /** The engine input handle of each running Claude turn, by its first turn id (per-task stop). */
   private readonly inputs = new Map<string, LiveInput>();
-  /** Steers written into each running Claude turn's process and not yet seen reaching the model, by its first turn id → steerId. */
-  private readonly steering = new Map<string, Map<string, TurnPrompt>>();
+  /**
+   * Steers of each running Claude turn's process, by its first turn id: `pending` = written, not yet seen reaching
+   * the model (steerId → prompt); `ids` = every steerId ever taken, so each is answered exactly once.
+   */
+  private readonly steering = new Map<string, { pending: Map<string, TurnPrompt>; ids: Set<string> }>();
   /** The live mode of each running Claude turn and the session it is for, by its first turn id. */
   private readonly modes = new Map<string, { ref: ModeRef; sessionId: () => string | null }>();
   /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
@@ -470,12 +473,14 @@ export class TurnRunner {
    * A message typed while Claude turn `turnId` (its first id) runs, written into its process with priority 'next': the
    * CLI folds it in at the next tool boundary, or runs it right after the turn. `steer_delivered` (with `prompt`) is
    * emitted once it reaches the model; `steer_rejected` if the process ends or the turn retries first. Never resent by a
-   * retry or failover. False = cannot go in now (no running Claude process, attachment gone, input closed, retrying).
+   * retry or failover. False = cannot go in now (no running Claude process, a handoff turn, attachment gone, input
+   * closed, retrying). Null = already answered (a repeated steerId, or settled while being written): say nothing more.
    */
-  async steer(turnId: string, s: { steerId: string; text: string; attachments?: string[]; prompt: TurnPrompt }): Promise<boolean> {
+  async steer(turnId: string, s: { steerId: string; text: string; attachments?: string[]; prompt: TurnPrompt }): Promise<boolean | null> {
     const l = this.inputs.get(turnId);
-    const pending = this.steering.get(turnId);
-    if (!l?.steer || !pending || pending.has(s.steerId)) return false;
+    const st = this.steering.get(turnId);
+    if (st?.ids.has(s.steerId)) return null;
+    if (!l?.steer || !st) return false;
     let attachments: Attachment[] = [];
     if (s.attachments?.length) {
       const r = this.deps.attachments?.resolve([...new Set(s.attachments)]) ?? { found: [], missing: s.attachments };
@@ -483,27 +488,32 @@ export class TurnRunner {
       attachments = r.found;
     }
     // Registered before the write: the CLI may echo it back before the write resolves.
-    pending.set(s.steerId, s.prompt);
+    st.ids.add(s.steerId);
+    st.pending.set(s.steerId, s.prompt);
     try {
       if (await l.steer({ text: s.text, attachments }, s.steerId)) return true;
     } catch (err) {
       console.error('deck: steer failed', err instanceof Error ? err.message : err);
     }
-    pending.delete(s.steerId);
-    return false;
+    // Rejected (process ended, retry) or delivered meanwhile: that answer stands.
+    return st.pending.delete(s.steerId) ? false : null;
   }
 
   private steerDelivered(turnId: string, steerId: string, sink: TurnSink, scope: { turnId: string; sessionId: string | null; cwd: string }): void {
-    const pending = this.steering.get(turnId);
+    const pending = this.steering.get(turnId)?.pending;
     const prompt = pending?.get(steerId);
     if (!pending || !prompt) return;
     pending.delete(steerId);
     sink.emit({ type: 'steer_delivered', ...scope, steerId, prompt });
   }
 
-  /** Every steer of `turnId` still waiting goes back to its device (sent after the turn instead). */
+  /**
+   * Every steer of `turnId` still waiting goes back to its device (sent after the turn instead).
+   * Known edge: a steer the CLI already folded in just before an interrupt / crash whose echo never came out is
+   * rejected here too, so the device sends it again after the turn — the model sees it twice. Rarer than losing it.
+   */
   private rejectSteers(turnId: string, sink: TurnSink, scope: { turnId: string; sessionId: string | null; cwd: string }, message: string): void {
-    const pending = this.steering.get(turnId);
+    const pending = this.steering.get(turnId)?.pending;
     if (!pending) return;
     for (const steerId of pending.keys()) sink.emit({ type: 'steer_rejected', ...scope, steerId, message });
     pending.clear();
@@ -1091,7 +1101,8 @@ export class TurnRunner {
         await this.mirrors.get(state.sessionId);
         state = await this.reconcile(state, (m) => early.push(m));
       }
-      this.steering.set(p.turnId, new Map());
+      // A handoff-note turn denies every tool: no tool boundary to fold a steer in at, and it must stay a pure note.
+      if (!p.handoff) this.steering.set(p.turnId, { pending: new Map(), ids: new Set() });
       try {
         end = await this.runClaudeTurn(p, state, sink, enginePrefix, attachments, early, newSessionModel);
       } finally {

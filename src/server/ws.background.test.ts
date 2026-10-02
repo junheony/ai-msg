@@ -162,10 +162,21 @@ describe('ws: sessions held open for background work', () => {
     const want = { type: 'steer_delivered', turnId: t.turnId, sessionId: S, steerId: 'k1', prompt: { text: 'also this', attachments: [] } };
     expect(await a.next('steer_delivered')).toMatchObject(want);
     expect(await b.next('steer_delivered')).toMatchObject(want);
+    // A device opening the session mid-turn gets it again after history (marked replay).
+    const c = await client();
+    await c.next('hello');
+    c.send({ type: 'open_session', sessionId: S });
+    await c.next('history');
+    expect(await c.next('steer_delivered')).toMatchObject({ ...want, replay: true });
+    c.close();
+    // A repeated steerId gets no second answer.
+    a.send({ type: 'steer', turnId: t.turnId, steerId: 'k1', text: 'also this' });
     fake.push({ ...sdk.result('done', S), user_message_uuids: [fake.inputs[0]!.uuid, steer.uuid] });
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     expect(a.got.filter((m) => m.type === 'turn_result')).toHaveLength(1);
+    expect(a.got.filter((m) => m.type === 'steer_rejected' && m.steerId === 'k1')).toHaveLength(0);
+    expect(fake.inputs).toHaveLength(2);
     a.close();
     b.close();
   });

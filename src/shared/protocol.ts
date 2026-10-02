@@ -174,7 +174,7 @@ export type ServerMessage =
    * A steer reached the model, at this point of the transcript (mid-turn after a tool round, or as the start of its own
    * turn right after `turnId`'s result). Every device viewing the session shows `prompt` as the user's message here.
    */
-  | ({ type: 'steer_delivered'; steerId: string; prompt: TurnPrompt } & TurnScope)
+  | ({ type: 'steer_delivered'; steerId: string; prompt: TurnPrompt; /** Re-sent after `history` to a device that opened the session mid-turn (the transcript may already show it). */ replay?: true } & TurnScope)
   /** A steer did not go in (no running Claude turn, process closed, retry/failover): the sending device sends it after the turn. */
   | ({ type: 'steer_rejected'; steerId: string; message: string } & TurnScope)
   | { type: 'error'; turnId: string | null; message: string; clientRef?: string };

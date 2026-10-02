@@ -155,6 +155,13 @@ describe('mapSdkMessage', () => {
     expect(mapSdkMessage(M({ type: 'system', subtype: 'task_notification', task_id: 'k', status: 'completed', output_file: '/tmp/o', summary: 'npm test 끝' }))).toEqual([{ kind: 'task_done', status: 'completed', summary: 'npm test 끝', taskId: 'k', toolUseId: null }]);
   });
 
+  it('a replayed user message (--replay-user-messages) maps to nothing, even when it carries a tool_result', () => {
+    const tr = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u1', content: 'ok' }] };
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, isReplay: true, message: tr }))).toEqual([]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: 'agent', isReplay: true, message: tr }))).toEqual([]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, message: tr }))).toEqual([{ kind: 'tool_result', toolUseId: 'u1', content: 'ok', isError: false }]);
+  });
+
   it('init, text deltas (top-level only), tool calls, tool results, rate limit, compact, result', () => {
     expect(mapSdkMessage(M({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-opus-5-5', cwd: '/private/var/w' }))).toEqual([{ kind: 'init', sessionId: 's', model: 'claude-opus-5-5', cwd: '/private/var/w' }]);
     expect(mapSdkMessage(M({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } } }))).toEqual([{ kind: 'delta', text: 'ok' }]);

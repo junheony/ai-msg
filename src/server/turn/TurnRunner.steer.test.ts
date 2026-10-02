@@ -144,14 +144,14 @@ describe('TurnRunner: steering a running Claude turn', () => {
     expect(of(msgs, 'turn_result')).toHaveLength(1);
   });
 
-  it('no running turn, a duplicate id, or a missing attachment: refused', async () => {
+  it('no running turn or a missing attachment: refused; a repeated id is ignored (null: no second answer)', async () => {
     const { f, msgs, sink, runner } = await setup();
     expect(await runner.steer('nope', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(false);
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => f.inputs.length === 1, 'prompt written');
     f.push(sdk.init('s1'));
     expect(await runner.steer('t1', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(true);
-    expect(await runner.steer('t1', { steerId: 'k1', text: 'again', prompt: prompt('again') })).toBe(false);
+    expect(await runner.steer('t1', { steerId: 'k1', text: 'again', prompt: prompt('again') })).toBeNull();
     expect(await runner.steer('t1', { steerId: 'k2', text: 'file', attachments: ['att_missing'], prompt: prompt('file') })).toBe(false);
     f.push(resultFor('done', [f.inputs[0]!.uuid, f.inputs[1]!.uuid]));
     await done;
@@ -189,6 +189,36 @@ describe('TurnRunner: steering a running Claude turn', () => {
     expect(of(msgs, 'turn_result')).toHaveLength(1);
     expect(of(msgs, 'turn_result')[0]).toMatchObject({ ok: true });
     expect(of(msgs, 'steer_rejected')).toHaveLength(1);
+  });
+
+  it('a steer settled while still being written (process ended meanwhile) is answered once: rejected, and steer() says nothing more', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const g = fakeSdk();
+    const engine = new ClaudeEngine({ queryFn: g.queryFn, readFile: async () => { await gate; return Buffer.from('png'); } });
+    const att = { id: 'att_1', name: 'a.png', mediaType: 'image/png', size: 3, path: '/tmp/a.png', isImage: true, createdAtMs: NOW };
+    const { msgs, sink, ac, runner } = await setup({ engine, attachments: { resolve: () => ({ found: [att], missing: [] }) } as unknown as TurnRunnerDeps['attachments'] });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    await waitFor(() => g.inputs.length === 1, 'prompt written');
+    g.push(sdk.init('s1'));
+    const pending = runner.steer('t1', { steerId: 'k1', text: 'see this', attachments: ['att_1'], prompt: prompt('see this') });
+    ac.abort();
+    await done;
+    expect(of(msgs, 'steer_rejected')).toMatchObject([{ steerId: 'k1' }]);
+    release();
+    expect(await pending).toBeNull();
+    expect(of(msgs, 'steer_rejected')).toHaveLength(1);
+  });
+
+  it('a handoff-note turn (no tools) takes no steers', async () => {
+    const { f, sink, runner } = await setup();
+    const done = runner.run({ turnId: 'h1', cwd: '/w/new', sessionId: null, text: 'write the note', handoff: true }, sink);
+    await waitFor(() => f.inputs.length === 1, 'prompt written');
+    f.push(sdk.init('s1'));
+    expect(await runner.steer('h1', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(false);
+    f.push(resultFor('note', [f.inputs[0]!.uuid]));
+    await done;
+    expect(f.inputs).toHaveLength(1);
   });
 
   it('a Codex turn has no live input: steer is refused', async () => {

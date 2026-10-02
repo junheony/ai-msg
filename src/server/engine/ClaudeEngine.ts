@@ -454,10 +454,11 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
         .map((b) => ({ kind: 'tool_call' as const, toolUseId: String(b.id ?? ''), name: String(b.name ?? ''), input: b.input }));
     }
     case 'user': {
+      // --replay-user-messages echoes what we (or the CLI) already sent; a replayed tool_result must not show twice.
+      if ((m as unknown as Rec).isReplay === true) return [];
       const content = (m.message as unknown as Rec).content;
       if (!Array.isArray(content)) return [];
       if (m.parent_tool_use_id !== null) {
-        if ((m as unknown as Rec).isReplay === true) return [];
         const parentToolUseId = m.parent_tool_use_id;
         return (content as Rec[])
           .filter((b) => b.type === 'tool_result')

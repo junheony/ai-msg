@@ -148,7 +148,7 @@ type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T
  * What a device opening the session mid-turn needs besides the transcript: the latest state of each
  * task (subagent cards), the subagents' tool calls so far (bounded), and the status row's progress.
  */
-type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null };
+type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null; /** Steers delivered in the running segment (the transcript may lag behind them). */ steers: TurnMsg<'steer_delivered'>[] };
 const MAX_REPLAY_SUBS = 500;
 
 type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
@@ -341,6 +341,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (log.subs.length > MAX_REPLAY_SUBS) log.subs.splice(0, log.subs.length - MAX_REPLAY_SUBS);
     } else if (m.type === 'turn_progress') {
       log.progress = m;
+    } else if (m.type === 'steer_delivered') {
+      log.steers.push(m);
+      if (log.steers.length > MAX_REPLAY_SUBS) log.steers.shift();
+    } else if (m.type === 'turn_result') {
+      // The segment's transcript is complete now.
+      log.steers = [];
     }
   };
   /** After `history`: the running turn's tasks, subagent calls, progress and background work, as of now. */
@@ -348,6 +354,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const now = Date.now();
     for (const { msg, at } of t.log.tasks.values()) send(ws, { ...msg, sessionId, ageMs: Math.max(0, now - at) });
     for (const m of t.log.subs) send(ws, { ...m, sessionId });
+    for (const m of t.log.steers) send(ws, { ...m, sessionId, replay: true });
     if (t.current && t.log.progress) send(ws, { ...t.log.progress, sessionId });
     if (t.bg) {
       const elapsed = now - t.bg.at;
@@ -397,7 +404,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [] };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [] };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -553,7 +560,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (draining) { reject(DRAINING_MESSAGE); break; }
           if (!turn || turn.current === null) { reject('실행 중인 턴이 없어 끝난 뒤 보냅니다'); break; }
           void deps.runner.steer(turn.turnId, { steerId: msg.steerId, text: msg.text, ...(msg.attachments ? { attachments: msg.attachments } : {}), prompt: promptOf(msg) })
-            .then((ok) => { if (!ok) reject('지금은 실행 중인 턴에 넣을 수 없어 끝난 뒤 보냅니다'); })
+            .then((ok) => { if (ok === false) reject('지금은 실행 중인 턴에 넣을 수 없어 끝난 뒤 보냅니다'); })
             .catch((err: unknown) => reject(`실행 중인 턴에 넣지 못했습니다: ${errMsg(err)}`));
           break;
         }

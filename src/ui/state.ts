@@ -413,6 +413,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // The sending pane knows it by its queue item; other panes / devices show the server's copy of the prompt.
       const q = pane.queue.find((x) => x.steer === msg.steerId || x.lostSteer === msg.steerId);
       if (!q && !belongs(pane, msg)) return pane;
+      // Re-sent after history: the transcript usually logged it already (as the CLI's queued_command) — shown once.
+      if (!q && msg.replay && pane.items.slice(-20).some((it) => it.kind === 'user' && (it.text === msg.prompt.text || it.text.startsWith(`${msg.prompt.text}\n`)))) return pane;
       const n = nextUserN(pane.items, pane.session);
       const bubble: ChatItem = q
         ? { kind: 'user', text: q.text, ...(q.attachments.length ? { attachments: q.attachments.map(({ id, name, isImage }) => ({ id, name, isImage })) } : {}), ...(n !== undefined ? { n } : {}) }
