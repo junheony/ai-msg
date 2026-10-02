@@ -10,6 +10,7 @@ import { PermissionCard } from './components/PermissionCard';
 import { QuestionCard } from './components/QuestionCard';
 import { Sidebar } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
+import { UsageView } from './components/UsageView';
 import { claimReload, hasDraftText, isNewBuild, shouldAutoReload } from './autoReload';
 import { hydrate, loadSent, loadUi, saveSent, saveUi, snapshotUi } from './persist';
 import { findSession } from './push';
@@ -48,6 +49,7 @@ export function App() {
   latest.current = state;
   const phone = useIsPhone();
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const lastSaved = useRef<string | null>(null);
   useEffect(() => { lastSaved.current = saveUi(snapshotUi(state, { collapsed, drawer }), lastSaved.current); }, [state.panes, state.activePaneId, collapsed, drawer]);
   // Sent files per session (thumbnails after a transcript reload): re-saved only when some pane's sent files change.
@@ -164,13 +166,15 @@ export function App() {
       <header className="topbar">
         {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         <span className="brand"><span className="spark" aria-hidden="true">✳</span>deck</span>
-        <UsagePanel usage={state.usage} current={active.session?.account ?? null} />
+        <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} />
         <div className="topbar-end">
+          <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen(true)} title="토큰 사용량 기록 (주별·일별)">사용량</button>
           {!phone && <button type="button" className="text-btn split" onClick={() => dispatch({ type: 'add_pane' })} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>+ 분할</button>}
           <NotifyMenu />
           <span className={`conn ${state.connected ? 'on' : 'off'}`} title={state.connected ? '연결됨' : '재연결 중…'}>{state.connected ? '연결됨' : '재연결 중…'}</span>
         </div>
       </header>
+      {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
       {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
       {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}
       {(orphanPerms.length > 0 || orphanQs.length > 0) && (

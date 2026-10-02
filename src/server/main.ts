@@ -25,6 +25,7 @@ import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
+import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
 import { ACCOUNTS, GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
@@ -49,6 +50,9 @@ async function main(): Promise<void> {
   // F3: GPT usage from the newest Codex rollouts (Desktop/CLI too), at start and every 60 s.
   const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
   codexUsage.start();
+  // 사용량 view: incremental token usage index over every transcript/rollout; first scan runs in the background.
+  const usageHistory = new UsageIndex({ projectsRoots: cfg.projectsRoots, codexSessionsRoot: cfg.codexSessionsRoot, indexFile: cfg.usageIndexFile });
+  usageHistory.start();
   const attachments = new AttachmentStore(cfg.attachmentsDir);
   await attachments.init();
   attachments.startPurgeTimer();
@@ -94,7 +98,7 @@ async function main(): Promise<void> {
     subject: cfg.vapidSubject ?? (dnsName ? `https://${dnsName}` : 'mailto:deck@localhost.localdomain'),
     titleOf: (sessionId, cwd) => (sessionId ? index.lookup(sessionId)?.title ?? store.codexEntries().find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'deck',
   });
-  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner });
+  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, usageHistory });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
   const ws = attachWebSocket(servers, { build: computeBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments });
@@ -110,7 +114,7 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    ws.close(); usage.stop(); codexUsage.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
+    ws.close(); usage.stop(); codexUsage.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
     setTimeout(() => process.exit(0), 200);
   };
   installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown });

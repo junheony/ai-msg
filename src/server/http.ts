@@ -15,6 +15,7 @@ import { MAX_TITLE_CHARS, type SessionMetaStore } from './sessions/SessionMetaSt
 import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
 import type { SessionIndex } from './sessions/SessionIndex';
 import type { TurnRunner } from './turn/TurnRunner';
+import type { UsageIndex } from './usage/UsageIndex';
 import type { UsageService } from './usage/UsageService';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
@@ -38,7 +39,13 @@ export type HttpDeps = {
   push?: { notifier: PushNotifier; store: SubscriptionStore };
   /** Sessions whose deck and Desktop (home profile) copies diverged; absent = no /api/session-fork. */
   forks?: Pick<TurnRunner, 'forkStatus' | 'resolveFork' | 'openInDesktop'>;
+  /** Token usage history (사용량 view); absent = no /api/usage/history. */
+  usageHistory?: Pick<UsageIndex, 'history' | 'refresh'>;
 };
+
+/** /api/usage/history: how long `refresh=1` waits for the scan before answering with what is indexed so far. */
+const USAGE_REFRESH_WAIT_MS = 15_000;
+const MAX_USAGE_DAYS = 400;
 
 /**
  * Review I8: sent on every response. Only documents are governed by CSP; in dev the page is
@@ -307,6 +314,18 @@ export function createRequestHandler(deps: HttpDeps) {
           if (r.reason === 'unsupported') { json(res, 400, { error: 'Claude 세션만 Desktop 에서 열 수 있습니다' }); return; }
           if (r.reason === 'diverged') { json(res, 200, { ok: false, reason: 'diverged' }); return; }
           json(res, 500, { error: r.error ?? 'Desktop 사본 갱신 실패' });
+          return;
+        }
+        if (url.pathname === '/api/usage/history' && req.method === 'GET') {
+          if (!deps.usageHistory) { json(res, 404, { error: 'not found' }); return; }
+          const n = Number(url.searchParams.get('days') ?? 30);
+          const days = Number.isInteger(n) ? Math.min(MAX_USAGE_DAYS, Math.max(1, n)) : 30;
+          if (url.searchParams.get('refresh') === '1') {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            await Promise.race([deps.usageHistory.refresh(), new Promise<void>((r) => { timer = setTimeout(r, USAGE_REFRESH_WAIT_MS); })]);
+            clearTimeout(timer);
+          }
+          json(res, 200, deps.usageHistory.history(days));
           return;
         }
         if (url.pathname === '/api/search' && req.method === 'GET') {
