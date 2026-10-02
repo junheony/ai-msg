@@ -152,7 +152,7 @@ describe('TurnRunner', () => {
     await c2.deps.store.set({ sessionId: SID, cwd: '/w/one', account: 'a', projectDir: src2, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
     await new TurnRunner(c2.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'go' }, c2.sink);
     expect(eng2.calls[0]?.account).toBe('a');
-    expect(msgsOf(c2, 'turn_notice')[0]).toMatchObject({ turnId: 't', message: expect.stringContaining('세션 이전 실패') });
+    expect(msgsOf(c2, 'turn_notice')[0]).toMatchObject({ turnId: 't', message: expect.stringContaining('B 계정으로 옮기지 못해 A 계정에서 이어가요') });
     expect(msgsOf(c2, 'error')).toEqual([]);
     expect(msgsOf(c2, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'a' } });
   });

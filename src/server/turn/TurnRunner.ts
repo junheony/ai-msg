@@ -19,6 +19,7 @@ import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
+import { forkDivergedAndMove } from '../sessions/SessionFork';
 import { isBytePrefix, moveSession } from '../sessions/SessionMover';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
@@ -75,6 +76,10 @@ export type TurnRunnerDeps = {
   /** While a session is held open for background work: at most one write-back per this many ms (default 20 s). */
   mirrorThrottleMs?: number;
   move?: typeof moveSession;
+  /** A diverged copy in the target profile (not home/protected) is forked aside so the move can go on. */
+  fork?: typeof forkDivergedAndMove;
+  /** The session list changed on disk (a fork was written): rescan done, tell the clients. */
+  onIndexChanged?: () => void;
   findRollout?: typeof findRolloutFile;
   readRateLimits?: typeof readRolloutRateLimits;
   now?: () => number;
@@ -145,6 +150,7 @@ function titleOf(text: string): string {
 
 export class TurnRunner {
   private readonly move: typeof moveSession;
+  private readonly fork: typeof forkDivergedAndMove;
   private readonly now: () => number;
   private readonly maxRetries: number;
   private readonly findRollout: typeof findRolloutFile;
@@ -168,6 +174,7 @@ export class TurnRunner {
 
   constructor(private readonly deps: TurnRunnerDeps) {
     this.move = deps.move ?? moveSession;
+    this.fork = deps.fork ?? forkDivergedAndMove;
     this.now = deps.now ?? (() => Date.now());
     this.maxRetries = deps.maxRetries ?? 2;
     this.findRollout = deps.findRollout ?? findRolloutFile;
@@ -398,15 +405,48 @@ export class TurnRunner {
     return this.gptCooldownUntil;
   }
 
-  private async relocate(state: ClaudeSessionState, to: Account, sink: TurnSink, turnId: string): Promise<ClaudeSessionState | null> {
-    const r = await this.move({ sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] });
+  /**
+   * Moves the session into `to`'s profile. A copy there that went its own way (the same id continued in two
+   * places) is forked aside under a new id and the move retried — except in the home/protected profile (Desktop's),
+   * whose copy is never touched. Notices go through `say` (the caller shows them on the turn).
+   */
+  private async relocate(state: ClaudeSessionState, to: Account, say: (message: string) => void): Promise<ClaudeSessionState | null> {
+    const req = { sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] };
+    let r = await this.move(req);
+    let forked: string | null = null;
+    if (!r.ok && r.diverged) {
+      if (to === this.deps.homeAccount || to === this.deps.protectedAccount) {
+        say(`${LABEL[to]} 계정(Desktop)에 따로 이어진 대화가 있어 그 사본은 그대로 두었어요 — ${LABEL[state.account]} 계정에서 이어가요`);
+        return null;
+      }
+      const f = await this.fork({ ...req, move: this.move });
+      if (f.ok) {
+        r = f.move;
+        console.log(`deck: ${state.sessionId} 의 ${LABEL[to]} 계정 사본이 갈라져 ${f.fork.sessionId} 로 보관 (백업 ${f.backupDir})`);
+        forked = `다른 곳에서 이어진 대화가 있어 '${f.fork.title}'으로 따로 보관하고 ${LABEL[to]} 계정으로 옮겼어요`;
+        if (await this.openElsewhere(state)) forked += ' · 이 대화가 Desktop 이나 CLI 에서도 열려 있는 것 같아요 — 두 곳에서 이어 쓰면 또 갈라져요';
+        await this.deps.index.refresh().then(() => this.deps.onIndexChanged?.(), (err: unknown) => console.error('deck: index refresh after fork failed', err instanceof Error ? err.message : err));
+      } else {
+        console.error(`deck: fork of ${state.sessionId} in ${LABEL[to]} failed (${f.restored ? 'restored' : 'NOT restored'}, backup ${f.backupDir ?? '-'}): ${f.error}`);
+        r = { ok: false, error: f.restored ? f.error : `${f.error} · 백업: ${f.backupDir ?? '없음'}` };
+      }
+    }
     if (!r.ok) {
-      sink.emit({ type: 'turn_notice', turnId, sessionId: state.sessionId, cwd: state.cwd, message: `세션 이전 실패(${r.error}) — ${LABEL[state.account]} 계정 유지` });
+      say(`세션을 ${LABEL[to]} 계정으로 옮기지 못해 ${LABEL[state.account]} 계정에서 이어가요 (${r.error})`);
       return null;
     }
     const next = { ...state, account: to, projectDir: r.targetDir };
     await this.deps.store.set(next);
+    if (forked) say(forked);
     return next;
+  }
+
+  /** deck's copy was written in the last 2 minutes, after deck's last turn, with no deck process holding it. */
+  private async openElsewhere(state: ClaudeSessionState): Promise<boolean> {
+    if (this.live.has(state.sessionId)) return false;
+    const st = await fs.stat(path.join(state.projectDir, `${state.sessionId}.jsonl`)).catch(() => null);
+    if (!st) return false;
+    return Date.now() - st.mtimeMs < 120_000 && st.mtimeMs > (state.lastTurnAtMs ?? 0) + 5_000;
   }
 
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, sink: TurnSink, grants: SessionGrants, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
@@ -794,8 +834,11 @@ export class TurnRunner {
     });
     let account = first.account;
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
+    // Notices before the turn has started would have no turn item to attach to (the UI shows them as an error).
+    const early: string[] = [];
+    const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, message }); };
     if (state && account !== state.account) {
-      const moved = await this.relocate(state, account, sink, p.turnId);
+      const moved = await this.relocate(state, account, (m) => early.push(m));
       if (moved) state = moved;
       else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; }
     }
@@ -805,12 +848,14 @@ export class TurnRunner {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
+        flushEarly();
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null }, errorText: '중단됨' });
         return state;
       }
       const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
       const { model, note } = resolveModel(wantedClaude, sessionDefault, fable);
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, account, model, reason, attempt, engine: 'claude' });
+      flushEarly();
 
       const cur: Cursor = { turnId: p.turnId };
       const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, sink, grants, attachments, cur);
@@ -865,7 +910,8 @@ export class TurnRunner {
         });
         if (cand.account === account || tried.includes(cand.account)) break;
         if (!state) { next = cand; break; }
-        const moved = await this.relocate(state, cand.account, sink, p.turnId);
+        const sid = state.sessionId;
+        const moved = await this.relocate(state, cand.account, (message) => sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: sid, cwd, message }));
         if (moved) { state = moved; next = cand; break; }
         moveRefused = true;
         tried.push(cand.account);

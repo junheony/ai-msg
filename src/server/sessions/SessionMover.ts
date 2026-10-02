@@ -26,7 +26,7 @@ export async function sha256Prefix(file: string, n: number): Promise<string> {
 }
 
 /** Relative paths of every regular file under `dir`. */
-async function listTree(dir: string): Promise<string[]> {
+export async function listTree(dir: string): Promise<string[]> {
   const out: string[] = [];
   for (const e of await fs.readdir(dir, { withFileTypes: true, recursive: true })) {
     if (e.isFile()) out.push(path.relative(dir, path.join(e.parentPath, e.name)));
