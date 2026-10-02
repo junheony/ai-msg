@@ -42,6 +42,43 @@ const engine = (f: ReturnType<typeof fakeSdk>, over: ConstructorParameters<typeo
 afterEach(() => vi.restoreAllMocks());
 
 describe('ClaudeEngine: results that name what they answered (user_message_uuids)', () => {
+  it('a normal turn: the result names the prompt, the input closes right after it', async () => {
+    const f = fakeSdk();
+    const r = reader(engine(f).runTurn(req()));
+    f.push(sdk.init());
+    await r.until('init');
+    f.push(sdk.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
+    expect((await r.rest()).map((e) => e.kind)).toEqual(['delta', 'result']);
+    await tick();
+    expect(f.state.inputClosed).toBe(true);
+  });
+
+  it('a background turn: held open for the task, a follow-up answered by its own uuid, the unnamed continuation closes it once the set is empty', async () => {
+    const f = fakeSdk();
+    let live: LiveInput | null = null;
+    const r = reader(engine(f).runTurn(req({ onLive: (l) => { live = l; } })));
+    f.push(sdk.init());
+    await r.until('init');
+    f.push(sdk.bgLevel([{ id: 'b1', desc: 'explore' }]), sdk.delta('started'), answered('started', [f.inputs[0]!.uuid!]));
+    await r.until('result');
+    await tick();
+    expect(f.state.inputClosed).toBe(false);
+    expect(await live!.send({ text: 'status?', attachments: [] })).toBe(true);
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
+    f.push(sdk.delta('still going'), answered('still going', [f.inputs[1]!.uuid!]));
+    const fu = await r.until('result');
+    expect(fu).toMatchObject({ text: 'still going' });
+    await tick();
+    expect(f.state.inputClosed).toBe(false);
+    f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('found'), sdk.result('found'));
+    await r.until('continue');
+    expect(await r.until('result')).toMatchObject({ text: 'found' });
+    expect(await r.rest()).toEqual([]);
+    await tick();
+    expect(f.state.inputClosed).toBe(true);
+    expect(r.seen.filter((e) => e.kind === 'continue')).toHaveLength(1);
+  });
+
   it('once a result named its answers, an unnamed success (a background continuation) answers nothing: a pending steer keeps the input open', async () => {
     const f = fakeSdk();
     let live: LiveInput | null = null;
