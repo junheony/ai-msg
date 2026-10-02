@@ -210,6 +210,32 @@ describe('메시지 편집 갈래 · sidebar', () => {
     expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
   });
 
+  it('the row menu acts on the version a click opens (the newest) and names it', () => {
+    const onArchive = vi.fn();
+    const onDelete = vi.fn();
+    const onRename = vi.fn();
+    const now = Date.now();
+    const tree = [{ cwd: '/w', name: 'w', pinned: false, sessions: [e('B', '원본 B', now - 120_000, { branch: { parent: 'R', n: 1 } }), e('A', '원본 A', now - 600_000, { branch: { parent: 'R', n: 1 } }), e('R', '원본', now - 3_600_000)] }];
+    render(<Sidebar projects={tree} currentSessionId={null} onOpen={() => {}} onNew={() => {}} onRefresh={() => {}} onArchive={onArchive} onDelete={onDelete} onRename={onRename} />);
+    const row = document.querySelector('.project li')!;
+    expect(row.querySelector('.session-title')?.textContent).toBe('원본');
+    fireEvent.click(screen.getByLabelText('세션 메뉴'));
+    expect(screen.getByTestId('session-menu-which').textContent).toBe('갈래 3/3 · 2분 전 수정');
+    fireEvent.click(screen.getByText('보관'));
+    expect(onArchive).toHaveBeenCalledWith('B', true);
+    fireEvent.click(screen.getByLabelText('세션 메뉴'));
+    fireEvent.click(screen.getByText('삭제…'));
+    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'B' }), '갈래 3/3 · 2분 전 수정');
+    fireEvent.click(screen.getByLabelText('세션 메뉴'));
+    fireEvent.click(screen.getByText('이름 바꾸기'));
+    const box = screen.getByLabelText('세션 이름') as HTMLInputElement;
+    expect(box.value).toBe('원본 B');
+    fireEvent.change(box, { target: { value: '새 이름' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onRename).toHaveBeenCalledWith('B', '새 이름');
+    cleanup();
+  });
+
   it('a deleted root: the remaining versions still group as one row (under the oldest left), in both views', () => {
     const left = [{ cwd: '/w', name: 'w', pinned: false, sessions: projects[0]!.sessions.filter((x) => x.sessionId !== 'R') }];
     for (const view of ['projects', 'recent'] as const) {

@@ -58,8 +58,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** 최근 (one list, date groups) or 프로젝트 (grouped by project); owned by the app when given. Default 프로젝트. */
   view?: SidebarView;
   onViewChange?: (view: SidebarView) => void;
-  /** 삭제 (Claude sessions): the app confirms, moves it to the trash and offers undo. */
-  onDelete?: (s: SessionEntry) => void;
+  /** 삭제 (Claude sessions): the app confirms, moves it to the trash and offers undo. `which` names the branch of a 갈래 row. */
+  onDelete?: (s: SessionEntry, which?: string) => void;
 }) {
   const [localView, setLocalView] = useState<SidebarView>(viewProp ?? 'projects');
   const view = viewProp ?? localView;
@@ -143,6 +143,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const members = tree?.members ?? [s.sessionId];
     const openId = tree?.openId ?? s.sessionId;
     const target = byId.get(openId) ?? s;
+    // The row's menu acts on the session a click opens (the newest version of a 갈래 tree), and says which one it is.
+    const order = members.map((id) => byId.get(id)).filter((x): x is SessionEntry => !!x).sort((a, b) => a.lastModified - b.lastModified);
+    const which = members.length > 1 ? `갈래 ${order.findIndex((x) => x.sessionId === target.sessionId) + 1}/${members.length} · ${ago(target.lastModified)} 수정` : undefined;
     return (
       <li key={s.sessionId} className={currentSessionId && members.includes(currentSessionId) ? 'active' : ''} title={s.title}
         // The second click of a double-click (rename) must not re-open the session.
@@ -155,12 +158,12 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
               onChange={(e) => setEditing({ id: key, text: e.target.value })}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing) return;
-                if (e.key === 'Enter') { e.preventDefault(); commitEdit(s, key); }
+                if (e.key === 'Enter') { e.preventDefault(); commitEdit(target, key); }
                 if (e.key === 'Escape') { e.preventDefault(); setEditing(null); }
               }}
-              onBlur={() => commitEdit(s, key)} onClick={(e) => e.stopPropagation()} />
+              onBlur={() => commitEdit(target, key)} onClick={(e) => e.stopPropagation()} />
           ) : (
-            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(s, key); } : undefined}>{s.title}</span>
+            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}>{s.title}</span>
           )}
           <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{project ?? s.account.toUpperCase()}{s.imported ? ' · Codex' : ''}{members.length > 1 ? ` · 갈래 ${members.length}` : ''} · {ago(s.lastModified)}</span>
           {canEdit && !edit && (
@@ -175,9 +178,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         </span>
         {menu === key && (
           <div className="session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-            {onRename && <button type="button" role="menuitem" onClick={() => startEdit(s, key)}>이름 바꾸기</button>}
-            {onArchive && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(s.sessionId, !s.archived); }}>{s.archived ? '보관 해제' : '보관'}</button>}
-            {canDelete(s) && <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete?.(s); }}>삭제…</button>}
+            {which && <div className="session-menu-which muted" data-testid="session-menu-which">{which}</div>}
+            {onRename && <button type="button" role="menuitem" onClick={() => startEdit(target, key)}>이름 바꾸기</button>}
+            {onArchive && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
+            {canDelete(target) && <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete?.(target, which); }}>삭제…</button>}
           </div>
         )}
       </li>

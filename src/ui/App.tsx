@@ -96,8 +96,8 @@ export function App() {
   useEffect(() => { writeLocal(HIDDEN_KEY, sidebarHidden ? '1' : '0'); }, [sidebarHidden]);
   /** The empty pane's preselected project, by pane (the project it showed before ⌘N / a delete). */
   const [newChatCwd, setNewChatCwd] = useState<Record<string, string>>({});
-  const [confirmDelete, setConfirmDelete] = useState<SessionEntry | null>(null);
-  const [undo, setUndo] = useState<{ trashId: string; title: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ s: SessionEntry; which?: string } | null>(null);
+  const [undo, setUndo] = useState<{ trashId: string; title: string; which?: string } | null>(null);
   useEffect(() => {
     if (!undo) return;
     const t = setTimeout(() => setUndo(null), UNDO_MS);
@@ -285,16 +285,16 @@ export function App() {
     ...state.desktop.filter((d) => !d.archived && !recent.some((s) => s.sessionId === d.sessionId)).map((d) => ({ sessionId: d.sessionId, title: d.title, cwd: d.cwd, project: `${d.project} · Desktop`, lastModified: d.lastModified })),
   ].sort((a, b) => b.lastModified - a.lastModified);
   /** 삭제, step 1: refuse what is running here; otherwise ask. */
-  const askDelete = (s: SessionEntry) => {
+  const askDelete = (s: SessionEntry, which?: string) => {
     const busy = state.panes.some((p) => p.session?.sessionId === s.sessionId && (p.activeTurnId !== null || p.awaitingStart)) || state.activity.some((a) => a.sessionId === s.sessionId && (a.running || a.bg > 0));
     if (busy) { dispatch({ type: 'show_error', message: '실행 중인 대화는 삭제할 수 없어요 — 끝난 뒤 다시 시도하세요' }); return; }
-    setConfirmDelete(s);
+    setConfirmDelete(which ? { s, which } : { s });
   };
-  const doDelete = (s: SessionEntry) => {
+  const doDelete = (s: SessionEntry, which?: string) => {
     setConfirmDelete(null);
     trashSession(s.sessionId).then(({ trashId }) => {
       for (const p of latest.current.panes) if (p.session?.sessionId === s.sessionId) { setNewChatCwd((m) => ({ ...m, [p.id]: s.cwd })); apply({ type: 'clear_pane', paneId: p.id }); }
-      setUndo({ trashId, title: s.title });
+      setUndo({ trashId, title: s.title, ...(which ? { which } : {}) });
     }, showError('삭제 실패'));
   };
   const orphanPerms = orphanCards(state.panes, state.pending);
@@ -322,12 +322,12 @@ export function App() {
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)} onOpenHit={openHit} searchFn={searchTranscripts} />}
       {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
       {confirmDelete && (
-        <ConfirmDialog title="대화 삭제" danger confirmLabel="삭제" onCancel={cancelDelete} onConfirm={() => doDelete(confirmDelete)}
-          message={`“${confirmDelete.title}” 을(를) 목록에서 지울까요? 파일은 휴지통(session-trash)으로 옮겨지고 바로 되돌릴 수 있어요.`} />
+        <ConfirmDialog title="대화 삭제" danger confirmLabel="삭제" onCancel={cancelDelete} onConfirm={() => doDelete(confirmDelete.s, confirmDelete.which)}
+          message={`“${confirmDelete.s.title}”${confirmDelete.which ? ` (${confirmDelete.which})` : ''} 을(를) 목록에서 지울까요? 파일은 휴지통(session-trash)으로 옮겨지고 바로 되돌릴 수 있어요.`} />
       )}
       {undo && (
         <div className="toast" role="status">
-          <span>“{undo.title.length > 40 ? `${undo.title.slice(0, 40)}…` : undo.title}” 삭제됨</span>
+          <span>“{undo.title.length > 40 ? `${undo.title.slice(0, 40)}…` : undo.title}”{undo.which ? ` (${undo.which})` : ''} 삭제됨</span>
           <button type="button" className="text-btn" onClick={() => { const { trashId } = undo; setUndo(null); restoreSession(trashId).catch(showError('되돌리기 실패')); }}>되돌리기</button>
           <button type="button" className="icon-btn" aria-label="닫기" onClick={() => setUndo(null)}>✕</button>
         </div>
