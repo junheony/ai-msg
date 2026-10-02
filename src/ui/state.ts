@@ -33,7 +33,7 @@ export type SentFile = { id: string; name: string; isImage: boolean };
 /** ux-state: a message typed while the pane's turn runs; sent when the turn ends. */
 export type QueueItem = { id: string; text: string; attachments: UploadedAttachment[] };
 
-export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null };
+export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null };
 
 export type PaneState = {
   id: string;
@@ -111,6 +111,7 @@ export type Action =
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
   | { type: 'set_engine'; engine: EngineChoice; paneId?: string }
   | { type: 'set_sandbox'; sandbox: CodexSandbox; paneId?: string }
+  | { type: 'set_account_pin'; pin: Account | null; paneId?: string }
   | { type: 'attach'; attachment: UploadedAttachment; paneId?: string }
   | { type: 'unattach'; id: string; paneId?: string }
   | { type: 'add_pane' }
@@ -253,7 +254,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // PF13: a Claude session is never sent a GPT model and vice versa.
       const model = modelFor(engine, pane.model);
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
-      return { ...pane, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt };
+      return { ...pane, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt };
     }
     case 'turn_started': {
       let p = pane;
@@ -401,6 +402,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'hello':
       return applySettings({ ...state, connected: true, activity: msg.activity ?? state.activity, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
     case 'settings': return applySettings(state, msg.settings);
+    case 'account_pin': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, accountPin: msg.pin } } : p)) };
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
     case 'history': {
@@ -488,6 +490,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model) }));
     case 'set_sandbox': return updatePane(state, action.paneId, (p) => ({ ...p, sandbox: action.sandbox }));
+    case 'set_account_pin': return updatePane(state, action.paneId, (p) => (p.session ? { ...p, session: { ...p.session, accountPin: action.pin } } : p));
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
     case 'add_pane': {

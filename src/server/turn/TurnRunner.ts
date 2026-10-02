@@ -48,6 +48,8 @@ export type TurnParams = {
   sandbox?: CodexSandbox;
   /** Ids from POST /api/attachments (D7). */
   attachments?: string[];
+  /** New Claude sessions only: the account to pin (existing sessions keep their stored pin). */
+  accountPin?: Account | null;
 };
 
 export type TurnRunnerDeps = {
@@ -415,6 +417,21 @@ export class TurnRunner {
   /** Session ids whose process is held open for background work. */
   backgroundSessions(): string[] {
     return [...this.live.keys()];
+  }
+
+  /**
+   * 이 세션은 B 써: pins a Claude session to an account (null = 자동), applied from its next turn (which moves it there).
+   * A session deck has no state for yet (seen only in the index) gets one. False = not a Claude session deck knows.
+   */
+  async setAccountPin(sessionId: string, pin: Account | null): Promise<boolean> {
+    const { store, index } = this.deps;
+    if (!store.get(sessionId)) {
+      const e = index.lookup(sessionId);
+      if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return false;
+      await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL, ...(pin ? { accountPin: pin } : {}) });
+      return true;
+    }
+    return store.setAccountPin(sessionId, pin);
   }
 
   /** D3: set after a Codex limit failure; consulted by chooseEngine for 'auto'. In memory only. */
@@ -863,7 +880,8 @@ export class TurnRunner {
     if (p.model === 'auto' && p.effort === undefined) p = { ...p, effort: AUTO_EFFORT[sessionDefault] };
     const wantedClaude = isClaudeModel(p.model) ? p.model : undefined;
     const wanted = wantedClaude ?? sessionDefault;
-    const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable' };
+    const pin = state ? (state.accountPin ?? null) : (p.accountPin ?? null);
+    const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin };
 
     const first = chooseAccount({
       ...routerBase,
@@ -875,13 +893,17 @@ export class TurnRunner {
     let account = first.account;
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
     const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, message }); };
+    // The badge's pin marker: the account is the pinned one because of the pin.
+    let byPin = first.pinned === true;
     if (state && account !== state.account) {
       const moved = await this.relocate(state, account, (m) => early.push(m));
       if (moved) state = moved;
-      else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; }
+      else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; byPin = false; }
     }
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
     if (state && (await this.openElsewhere(state))) early.push(OPEN_ELSEWHERE_NOTICE);
+    if (pin && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
+    const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];
     const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])], acceptEdits: state?.mode === 'acceptEdits' };
@@ -889,7 +911,7 @@ export class TurnRunner {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
         flushEarly();
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null }, errorText: '중단됨' });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null, ...pinMark() }, errorText: '중단됨' });
         return state;
       }
       const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
@@ -913,12 +935,14 @@ export class TurnRunner {
           ...(grants.rules.length ? { allowRules: [...grants.rules] } : {}),
           ...(grants.dirs.length ? { allowDirs: [...grants.dirs] } : {}),
           ...(grants.acceptEdits ? { mode: 'acceptEdits' as const } : {}),
+          // Taken only by a new entry (a new session's pin); an existing entry keeps its stored pin.
+          ...(pin ? { accountPin: pin } : {}),
         };
         await deps.store.set(state);
       }
 
       const failure = classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
-      const badge = { account, model, reason, usage: res.usage, modelNote: note };
+      const badge = { account, model, reason, usage: res.usage, modelNote: note, ...pinMark() };
       const shownError = displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
@@ -963,6 +987,7 @@ export class TurnRunner {
       sink.emit({ type: 'turn_retry', turnId: p.turnId, sessionId: state?.sessionId ?? sessionId, cwd, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
       reason = `재시도(${why}) · ${next.reason}`;
       account = next.account;
+      byPin = false;
     }
     return state;
   }

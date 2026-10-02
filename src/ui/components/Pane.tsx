@@ -37,7 +37,7 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
   send({
     type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, model,
     ...(effort ? { effort } : {}),
-    ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox } : {}),
+    ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox, ...(s.accountPin ? { accountPin: s.accountPin } : {}) } : {}),
     ...(ids.length ? { attachments: ids } : {}),
     clientRef,
   });
@@ -64,7 +64,7 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
 /** One split-view pane: its own session, items and composer; user actions become `send`/`dispatch` here (D6). */
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, uploadFn }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage'>>;
   active: boolean;
   closable: boolean;
   dispatch: (a: Action) => void;
@@ -135,6 +135,14 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, upl
           onEffort={(e) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id })}
           onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })}
           onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })}
+          accountPin={s.accountPin ?? null}
+          account={s.account}
+          usage={app.usage ?? null}
+          onAccountPin={(pin) => {
+            dispatch({ type: 'set_account_pin', pin, paneId: pane.id });
+            // An existing session's pin lives on the server (applied from its next turn); a new one rides the first send.
+            if (s.sessionId) send({ type: 'set_account_pin', sessionId: s.sessionId, pin });
+          }}
           onAttach={(attachment) => dispatch({ type: 'attach', attachment, paneId: pane.id })}
           onUnattach={(id) => {
             const url = pane.attachments.find((a) => a.id === id)?.previewUrl;

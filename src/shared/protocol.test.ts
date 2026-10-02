@@ -11,6 +11,17 @@ describe('ClientMessageSchema', () => {
     expect(ClientMessageSchema.safeParse({ type: 'refresh_index' }).success).toBe(true);
   });
 
+  it('account pin: send.accountPin (a|b|c|null) and set_account_pin', () => {
+    const base = { type: 'send', sessionId: null, cwd: '/w', text: 'hi' };
+    expect(ClientMessageSchema.safeParse({ ...base, accountPin: 'b' }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...base, accountPin: null }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...base, accountPin: 'gpt' }).success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ type: 'set_account_pin', sessionId: 's', pin: 'a' }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ type: 'set_account_pin', sessionId: 's', pin: null }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ type: 'set_account_pin', sessionId: 's', pin: 'g1' }).success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ type: 'set_account_pin', sessionId: '', pin: 'a' }).success).toBe(false);
+  });
+
   it('send.clientRef is optional, 1..64 chars', () => {
     const base = { type: 'send', sessionId: null, cwd: '/w', text: 'hi' };
     expect(ClientMessageSchema.safeParse({ ...base, clientRef: 'p0-1' }).success).toBe(true);

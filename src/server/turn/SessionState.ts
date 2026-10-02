@@ -26,6 +26,8 @@ export type ClaudeSessionState = SessionBase & {
   allowDirs?: string[];
   /** 이 세션 accepted "allow all edits" (setMode acceptEdits): later turns run in acceptEdits. */
   mode?: 'acceptEdits';
+  /** 이 세션은 B 써: routing always uses this account unless it is unusable. Absent = 자동. Changed only via setAccountPin. */
+  accountPin?: Account;
 };
 
 /** D4: a Codex thread deck created. sessionId = Codex thread id; engine/sandbox never change afterwards (D2, D3). */
@@ -118,7 +120,29 @@ export class SessionStateStore {
     return out;
   }
 
+  /**
+   * The stored pin wins over the one `s` carries (turns hold a state read before the user changed the pin);
+   * only a new entry takes `s.accountPin`. Use setAccountPin to change it.
+   */
   set(s: SessionState): Promise<void> {
+    const prev = this.map.get(s.sessionId);
+    if (prev && !isCodexState(s) && !isGeminiState(s)) {
+      const { accountPin: _drop, ...rest } = s;
+      const pin = !isCodexState(prev) && !isGeminiState(prev) ? prev.accountPin : undefined;
+      s = pin ? { ...rest, accountPin: pin } : rest;
+    }
+    return this.save(s);
+  }
+
+  /** Pins a Claude session to an account (null = 자동). False when there is no Claude state for `id`. */
+  setAccountPin(id: string, pin: Account | null): Promise<boolean> {
+    const prev = this.map.get(id);
+    if (!prev || isCodexState(prev) || isGeminiState(prev)) return Promise.resolve(false);
+    const { accountPin: _drop, ...rest } = prev;
+    return this.save(pin ? { ...rest, accountPin: pin } : rest).then(() => true);
+  }
+
+  private save(s: SessionState): Promise<void> {
     this.map.set(s.sessionId, s);
     const run = this.chain.then(() => this.write());
     this.chain = run.catch(() => {});

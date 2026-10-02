@@ -1,5 +1,6 @@
 import { MODEL_LABEL } from '../../shared/models';
 import type { TurnBadge as Badge } from '../../shared/protocol';
+import { PinIcon } from './AccountPicker';
 
 function k(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -25,7 +26,8 @@ export function TurnBadge({ badge, stopped = false, cacheNote = null }: { badge:
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
   return (
     <div className={`turn-badge${stopped ? ' stopped' : ''}`}>
-      <span className={`acct acct-${badge.account}`} title={`계정 ${badge.account.toUpperCase()}`}>{badge.account.toUpperCase()}</span>
+      <span className={`acct acct-${badge.account}`} title={`계정 ${badge.account.toUpperCase()}${badge.pinned ? ' · 고정' : ''}`}>{badge.account.toUpperCase()}</span>
+      {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
       <span className="tb-model">{MODEL_LABEL[badge.model]}</span>
       {stopped ? (
         <span className="tb-stopped" title={tokens}>중단됨</span>

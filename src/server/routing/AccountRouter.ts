@@ -22,6 +22,8 @@ export type RouterInput = {
   protectedAccount: Account | null;
   needFable: boolean;
   exclude?: Account[];
+  /** 이 세션은 B 써: the session's pinned account (null/absent = 자동). Used unless unusable — even the protected one. */
+  pinned?: Account | null;
 };
 
 export type Candidate = {
@@ -39,6 +41,10 @@ export type RouterDecision = {
   switched: boolean;
   candidates: Candidate[];
   excluded: Partial<Record<Account, string>>;
+  /** The account is the session's pinned one, chosen because of the pin. */
+  pinned?: boolean;
+  /** The pinned account was unusable this turn (e.g. '한도 도달'); `account` is the router's own choice. */
+  pinBlocked?: string;
 };
 
 function hoursUntil(iso: string | null, nowMs: number): number {
@@ -112,7 +118,34 @@ function leastWeekly(input: RouterInput): Account {
   return best?.account ?? 'b';
 }
 
+/** Why the pinned account cannot take this turn (≥95%, cooldown, already failed this turn); null = usable. */
+function pinBlock(input: RouterInput, pin: Account): { why: string; detail: string } | null {
+  if (input.exclude?.includes(pin)) return { why: '이번 턴 실패', detail: '이번 턴 실패' };
+  const cd = input.cooldownUntilMs[pin];
+  if (cd !== undefined && cd > input.nowMs) return { why: '쿨다운 중', detail: `쿨다운(~${hhmm(cd)})` };
+  const u = input.usage.accounts[pin];
+  const fiveHour = u.fiveHour?.usedPct ?? 0;
+  const weekly = u.weekly?.usedPct ?? 0;
+  if (fiveHour >= EXCLUDE_PCT) return { why: '한도 도달', detail: `5h ${fiveHour}%` };
+  if (weekly >= EXCLUDE_PCT) return { why: '한도 도달', detail: `주간 ${weekly}%` };
+  return null;
+}
+
 export function chooseAccount(input: RouterInput): RouterDecision {
+  const pin = input.pinned ?? null;
+  if (pin) {
+    // A pin skips warm-cache and threshold switching (and the protected-account rule: it is the user's explicit choice).
+    const block = pinBlock(input, pin);
+    if (!block) {
+      const { candidates, excluded } = rankCandidates(input);
+      const switched = input.current !== null && input.current !== pin;
+      return { candidates, excluded, account: pin, switched, pinned: true, reason: `고정 ${LABEL[pin]}${switched ? ' 전환' : ''}` };
+    }
+    // Unusable: the router's own choice for this turn only (the pin stays).
+    const d = chooseAccount({ ...input, pinned: null, exclude: [...(input.exclude ?? []), pin] });
+    if (d.account === pin) return { ...d, reason: `고정 ${LABEL[pin]} ${block.detail} · 대안 없음 · ${d.reason}` };
+    return { ...d, pinBlocked: block.why, reason: `고정 ${LABEL[pin]} ${block.detail} → ${d.reason}` };
+  }
   const { candidates, excluded } = rankCandidates(input);
   const best = candidates[0] ?? null;
   const cur = input.current;
