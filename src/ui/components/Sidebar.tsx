@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { SessionActivity } from '../../shared/protocol';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
+import { groupByDate } from '../dateGroups';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 
@@ -10,6 +11,10 @@ const MAX_SESSIONS = 30;
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
 export const SEARCH_MIN_CHARS = 2;
 const SEARCH_DEBOUNCE_MS = 300;
+/** 최근 view: newest sessions across all projects, split by day. */
+const MAX_RECENT = 150;
+
+export type SidebarView = 'recent' | 'projects';
 
 function ago(ms: number, now = Date.now()): string {
   const d = now - ms;
@@ -19,7 +24,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete }: {
   /** 설정 (gear in the footer; ⌘, also opens it — 새 세션 기본 권한 lives there). */
   onOpenSettings?: () => void;
   projects: ProjectEntry[];
@@ -49,7 +54,15 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   activity?: SessionActivity[];
   /** Sessions that finished while not shown: unread dot until opened. */
   unread?: string[];
+  /** 최근 (one list, date groups) or 프로젝트 (grouped by project); owned by the app when given. Default 프로젝트. */
+  view?: SidebarView;
+  onViewChange?: (view: SidebarView) => void;
+  /** 삭제 (Claude sessions): the app confirms, moves it to the trash and offers undo. */
+  onDelete?: (s: SessionEntry) => void;
 }) {
+  const [localView, setLocalView] = useState<SidebarView>(viewProp ?? 'projects');
+  const view = viewProp ?? localView;
+  const setView = (v: SidebarView) => { if (onViewChange) onViewChange(v); else setLocalView(v); };
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState('');
   const [localCollapsed, setLocalCollapsed] = useState<Set<string>>(() => new Set(collapsedProp ?? []));
@@ -70,7 +83,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const q = query.trim().toLowerCase();
   const match = (s: SessionEntry) => !q || s.title.toLowerCase().includes(q);
   const inView = (s: { archived?: boolean }) => (showArchived ? !!s.archived : !s.archived);
-  const canEdit = !!(onRename || onArchive);
+  const canEdit = !!(onRename || onArchive || onDelete);
+  const canDelete = (s: SessionEntry) => !!onDelete && !s.imported && s.engine !== 'codex' && s.engine !== 'gemini' && s.account !== 'gpt';
 
   // 대화 내용 검색: debounced; a stale answer (query changed meanwhile) is dropped.
   const fullQ = query.trim();
@@ -120,7 +134,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     return null;
   };
 
-  const row = (s: SessionEntry, group: string) => {
+  const row = (s: SessionEntry, group: string, project?: string) => {
     const on = pinSet.has(s.sessionId);
     const key = `${group}:${s.sessionId}`;
     const edit = editing?.id === key ? editing : null;
@@ -143,9 +157,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           ) : (
             <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(s, key); } : undefined}>{s.title}</span>
           )}
-          <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{s.account.toUpperCase()}{s.imported ? ' · Codex' : ''} · {ago(s.lastModified)}</span>
+          <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{project ?? s.account.toUpperCase()}{s.imported ? ' · Codex' : ''} · {ago(s.lastModified)}</span>
           {canEdit && !edit && (
-            <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="이름 바꾸기 · 보관" aria-haspopup="menu" aria-expanded={menu === key}
+            <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
           )}
           {onTogglePin && (
@@ -158,6 +172,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <div className="session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
             {onRename && <button type="button" role="menuitem" onClick={() => startEdit(s, key)}>이름 바꾸기</button>}
             {onArchive && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(s.sessionId, !s.archived); }}>{s.archived ? '보관 해제' : '보관'}</button>}
+            {canDelete(s) && <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete?.(s); }}>삭제…</button>}
           </div>
         )}
       </li>
@@ -166,6 +181,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
 
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || inView(s); });
   const searching = fullOn && found?.q !== fullQ;
+  const projectName = new Map<string, string>();
+  for (const p of projects) for (const s of p.sessions) if (!projectName.has(s.sessionId)) projectName.set(s.sessionId, p.name);
+  const recentList = view === 'recent' ? [...byId.values()].filter(inView).filter(match).sort((a, b) => b.lastModified - a.lastModified).slice(0, MAX_RECENT) : [];
   const visible = projects.map((p) => ({ p, sessions: p.sessions.filter(inView).slice(0, MAX_SESSIONS).filter(match) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
   return (
     <aside className="sidebar">
@@ -175,6 +193,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             <FolderIcon /><span>폴더 열기</span>
           </button>
         )}
+        <div className="view-toggle" role="group" aria-label="목록 보기">
+          <button type="button" className={view === 'recent' ? 'on' : ''} aria-pressed={view === 'recent'} onClick={() => setView('recent')} title="최근 대화를 날짜별로">최근</button>
+          <button type="button" className={view === 'projects' ? 'on' : ''} aria-pressed={view === 'projects'} onClick={() => setView('projects')} title="프로젝트별로 묶기">프로젝트</button>
+        </div>
         <span className="grow" />
         {onArchive && (
           <button type="button" className={`text-btn archived-filter ${showArchived ? 'on' : ''}`} aria-pressed={showArchived} onClick={() => setShowArchived((v) => !v)} title={showArchived ? '보관된 세션 보는 중 · 클릭하면 전체' : '보관된 세션만 보기'}>보관됨</button>
@@ -209,9 +231,15 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         </section>
       )}
       {projects.length === 0 && <div className="muted sidebar-empty">세션이 없습니다. ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</div>}
-      {showArchived && !q && visible.length === 0 && pinned.length === 0 && desktopShown.length === 0 && <div className="muted sidebar-empty">보관된 세션이 없습니다.</div>}
-      {q && visible.length === 0 && pinned.length === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
-      {visible.map(({ p, sessions }) => {
+      {showArchived && !q && (view === 'recent' ? recentList.length === 0 : visible.length === 0) && pinned.length === 0 && desktopShown.length === 0 && <div className="muted sidebar-empty">보관된 세션이 없습니다.</div>}
+      {view === 'recent' && groupByDate(recentList).map((g) => (
+        <section key={g.label} className="project date-group" data-testid={`date-group-${g.label}`}>
+          <div className="project-head"><span className="project-name">{g.label}</span></div>
+          <ul>{g.items.map((s) => row(s, 'recent', projectName.get(s.sessionId)))}</ul>
+        </section>
+      ))}
+      {q && (view === 'recent' ? recentList.length === 0 : visible.length === 0) && pinned.length === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
+      {view === 'projects' && visible.map(({ p, sessions }) => {
         const isCollapsed = !q && collapsed.has(p.cwd);
         const showAll = !!q || expanded.has(p.cwd);
         const shown = showAll ? sessions : sessions.slice(0, FOLD_AT);

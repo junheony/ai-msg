@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { claimReload, isNewBuild, loadDraft, saveDraft, shouldAutoReload } from './autoReload';
+import { claimReload, hasDraftText, hasOpenModal, isNewBuild, loadDraft, saveDraft, shouldAutoReload } from './autoReload';
 import { initialState, newPane, type AppState } from './state';
 
 const mem = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) }; };
@@ -16,6 +17,20 @@ describe('shouldAutoReload', () => {
     const run = { ...newPane('p0'), activeTurnId: 't1' };
     expect(shouldAutoReload(safe({ panes: [run] }))).toBe(false);
     expect(shouldAutoReload(safe({ panes: [run, newPane('p1')], activePaneId: 'p1' }))).toBe(true);
+  });
+  it('not while a modal (palette, cheat sheet, confirm) is open', () => {
+    expect(shouldAutoReload({ ...safe(), modalOpen: true })).toBe(false);
+    const root = document.createElement('div');
+    expect(hasOpenModal(root)).toBe(false);
+    root.innerHTML = '<div role="dialog" aria-modal="true"></div>';
+    expect(hasOpenModal(root)).toBe(true);
+  });
+  it('the new-chat start box counts as a draft', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<div class="newchat"><textarea></textarea></div>';
+    expect(hasDraftText(root)).toBe(false);
+    root.querySelector('textarea')!.value = '안녕';
+    expect(hasDraftText(root)).toBe(true);
   });
   it('not with an open permission or question card', () => {
     expect(shouldAutoReload(safe({ pending: [{ requestId: 'r' } as never] }))).toBe(false);

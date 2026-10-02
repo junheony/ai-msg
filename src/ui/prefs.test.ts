@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PREFS, FONT_SCALE, PREFS_KEY, applyPrefs, loadPrefs, parsePrefs, prefsReducer, savePrefs } from './prefs';
+import { DEFAULT_PREFS, FONT_SCALE, PREFS_KEY, applyPrefs, loadPrefs, nextTheme, parsePrefs, prefsReducer, savePrefs } from './prefs';
 
 const mem = (init: Record<string, string> = {}) => {
   const m = new Map(Object.entries(init));
@@ -52,5 +52,13 @@ describe('prefs', () => {
     applyPrefs({ ...DEFAULT_PREFS, theme: 'system' }, root);
     expect(attrs.has('data-theme')).toBe(false);
     expect(props.get('--font-scale')).toBe(String(FONT_SCALE.normal));
+  });
+});
+
+describe('nextTheme', () => {
+  it('cycles 시스템 → 라이트 → 다크 → 시스템', () => {
+    expect(nextTheme('system')).toBe('light');
+    expect(nextTheme('light')).toBe('dark');
+    expect(nextTheme('dark')).toBe('system');
   });
 });

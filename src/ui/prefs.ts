@@ -43,6 +43,11 @@ export function savePrefs(prefs: Prefs, store: Store | null = defaultStore()): v
   try { store?.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* private mode / quota: the pref just won't persist */ }
 }
 
+/** ⌘K 테마 전환: 시스템 → 라이트 → 다크 → 시스템. */
+export function nextTheme(t: Theme): Theme {
+  return t === 'system' ? 'light' : t === 'light' ? 'dark' : 'system';
+}
+
 export type PrefsAction = { type: 'set'; key: keyof Prefs; value: Prefs[keyof Prefs] } | { type: 'reset' };
 
 export function prefsReducer(state: Prefs, action: PrefsAction): Prefs {

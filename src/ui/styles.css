@@ -1097,3 +1097,63 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .plan-card .dot { background: #3b82f6; }
 .plan-body { max-height: 50vh; overflow: auto; margin: 6px 0; }
 .default-perm { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 6px; font-size: 13.5px; color: var(--fg); }
+/* nav-palette: ⌘K palette, dialogs, undo toast, sidebar view toggle, new-chat screen. */
+.sidebar-wrap.hidden { display: none; }
+.palette-open kbd, .palette-hint, .shortcut-list kbd { font-family: var(--mono); font-size: 11px; padding: 1px 5px; border-radius: 4px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); background: transparent; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .35); }
+.palette, .modal { width: 100%; max-width: 600px; display: flex; flex-direction: column; border-radius: 12px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); overflow: hidden; }
+.palette { max-height: 70vh; }
+.palette-input { height: 48px; padding: 0 16px; border: 0; border-bottom: 1px solid var(--line); background: transparent; font-size: 15px; outline: none; }
+.palette-input:focus-visible { outline: none; }
+.palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
+.palette-head { padding: 8px 10px 4px; font-size: 12px; color: var(--faint); }
+.palette-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 14px; }
+.palette-item.on { background: var(--selected); }
+.palette-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+.palette-meta { flex-shrink: 0; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); }
+.palette-snippet { flex: 2; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; color: var(--muted); }
+.palette-snippet mark { background: var(--accent-soft); color: var(--fg); border-radius: 2px; }
+.palette-empty { padding: 14px 10px; }
+.palette-foot { padding: 6px 14px; border-top: 1px solid var(--line); font-size: 12px; }
+.modal { max-width: 440px; padding: 18px 20px; gap: 10px; }
+.modal h2 { margin: 0; font-size: 16px; color: var(--fg-strong); }
+.modal p { margin: 0; color: var(--fg); font-size: 14px; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.shortcut-list { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.shortcut-row { display: flex; align-items: center; gap: 12px; font-size: 14px; }
+.shortcut-row dt { width: 96px; flex-shrink: 0; }
+.shortcut-row dd { margin: 0; color: var(--fg); }
+.toast { position: fixed; z-index: 55; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: 13.5px; }
+.toast > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast .text-btn { color: var(--accent); font-weight: 600; }
+.session-menu button.danger { color: var(--danger); }
+.view-toggle { display: inline-flex; padding: 2px; border-radius: 7px; box-shadow: inset 0 0 0 1px var(--line); }
+.view-toggle button { height: 22px; padding: 0 8px; border-radius: 5px; font-size: 12.5px; color: var(--muted); }
+.view-toggle button.on { background: var(--selected); color: var(--fg); }
+.newchat { flex: 1; min-height: 0; overflow-y: auto; display: flex; justify-content: center; padding: 10vh 20px 24px; }
+.newchat-inner { width: 100%; max-width: 680px; display: flex; flex-direction: column; gap: 18px; }
+.newchat-greeting { margin: 0; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 30px; font-weight: 500; color: var(--fg-strong); font-family: Georgia, "Times New Roman", var(--font); }
+.newchat-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 16px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.newchat-box textarea { border: 0; resize: none; background: transparent; outline: none; font-size: 15.5px; min-height: 64px; }
+.newchat-box textarea:focus-visible { outline: none; }
+.newchat-box:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+.newchat-row { display: flex; align-items: center; gap: 8px; }
+.newchat-row .grow { flex: 1; }
+.newchat-project select { max-width: 260px; height: 30px; padding: 0 8px; border-radius: 7px; border: 0; background: var(--hover); color: var(--fg); font-size: 13.5px; }
+.newchat-recent h2 { margin: 0 0 8px; font-size: 13px; font-weight: 500; }
+.newchat-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.newchat-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; border-radius: 10px; text-align: left; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.newchat-card:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.newchat-card-title { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: 14px; }
+.newchat-card-meta { font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .modal-backdrop { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
+  .palette { max-height: 80vh; }
+  .palette-item, .view-toggle button { min-height: 36px; }
+  .newchat { padding-top: 5vh; }
+  .newchat-greeting { font-size: 24px; }
+  .newchat-cards { grid-template-columns: 1fr; }
+  .newchat-project select { max-width: 60vw; height: var(--phone-tap); }
+  .newchat-box textarea { font-size: 16px; }
+}

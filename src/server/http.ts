@@ -11,6 +11,7 @@ import type { FileLister } from './files';
 import type { PushNotifier } from './push/PushNotifier';
 import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
+import { isTrashId } from './sessions/SessionTrash';
 import { MAX_TITLE_CHARS, type SessionMetaStore } from './sessions/SessionMetaStore';
 import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
 import type { SessionIndex } from './sessions/SessionIndex';
@@ -39,6 +40,8 @@ export type HttpDeps = {
   push?: { notifier: PushNotifier; store: SubscriptionStore };
   /** Sessions whose deck and Desktop (home profile) copies diverged; absent = no /api/session-fork. */
   forks?: Pick<TurnRunner, 'forkStatus' | 'resolveFork' | 'openInDesktop'>;
+  /** 삭제 (move to session-trash) and its undo; absent = no /api/session-trash. */
+  trash?: Pick<TurnRunner, 'trashSession' | 'restoreSession'>;
   /** Token usage history (사용량 view); absent = no /api/usage/history. */
   usageHistory?: Pick<UsageIndex, 'history' | 'refresh'>;
 };
@@ -303,6 +306,19 @@ export function createRequestHandler(deps: HttpDeps) {
             json(res, 200, r);
             return;
           }
+        }
+        if ((url.pathname === '/api/session-trash' || url.pathname === '/api/session-trash/restore') && req.method === 'POST') {
+          if (!deps.trash) { json(res, 404, { error: 'not found' }); return; }
+          let body: { sessionId?: unknown; trashId?: unknown } = {};
+          try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
+          const restore = url.pathname.endsWith('/restore');
+          if (!body || (restore ? !isTrashId(body.trashId) : !isPinnableId(body.sessionId))) { json(res, 400, { error: '잘못된 삭제 요청입니다' }); return; }
+          const r = restore ? await deps.trash.restoreSession(body.trashId as string) : await deps.trash.trashSession(body.sessionId as string);
+          if (!r.ok) { json(res, 409, { error: r.error }); return; }
+          await deps.index.refresh();
+          deps.onIndexChanged?.();
+          json(res, 200, r);
+          return;
         }
         const openMatch = /^\/api\/sessions\/([^/]+)\/open-in-desktop$/.exec(url.pathname);
         if (openMatch && req.method === 'POST') {

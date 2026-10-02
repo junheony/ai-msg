@@ -97,3 +97,24 @@ export async function openInDesktop(sessionId: string, fetchFn: typeof fetch = f
   if (!res.ok) throw new Error(body.error ?? `Desktop 에서 열기 실패 (${res.status})`);
   return body as OpenInDesktopResult;
 }
+
+async function postJson<T>(url: string, body: unknown, fetchFn: typeof fetch, what: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetchFn(url, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {
+    throw new Error(`${what} 실패: 네트워크 오류`);
+  }
+  const out = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(out.error ?? `${what} 실패 (${res.status})`);
+  return out;
+}
+
+/** 삭제: the transcript moves to the profile's session-trash/ (never unlinked); `trashId` undoes it. */
+export function trashSession(sessionId: string, fetchFn: typeof fetch = fetch): Promise<{ trashId: string }> {
+  return postJson('/api/session-trash', { sessionId }, fetchFn, '삭제');
+}
+
+export function restoreSession(trashId: string, fetchFn: typeof fetch = fetch): Promise<{ sessionId: string }> {
+  return postJson('/api/session-trash/restore', { trashId }, fetchFn, '되돌리기');
+}
