@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { parseTranscript } from '../sessions/transcript';
 import { mapSdkMessage } from './ClaudeEngine';
+import { StreamRedactor, redactSecrets } from './redact';
 
 const ev = (event: unknown) => ({ type: 'stream_event', parent_tool_use_id: null, event }) as unknown as SDKMessage;
 const L = (o: unknown) => JSON.stringify(o);
@@ -30,5 +31,58 @@ describe('thinking: transcript', () => {
     const e = parseTranscript(asst([{ type: 'thinking', thinking: '' }, { type: 'text', text: 'hi' }]))[0];
     expect(e).not.toHaveProperty('thinkingRedacted');
     expect(e).not.toHaveProperty('thinking');
+  });
+});
+
+describe('thinking: streaming redaction across chunk boundaries', () => {
+  const SECRETS = [
+    'sk-ant-api03-AbCdEf0123456789_xyz-QRST',
+    'Bearer abcdefgh12345678.ijkl',
+    'api_key="s3cr3tvalue99"',
+    'token: zz9yy8xx7ww6',
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlXzEyMw',
+    'deadbeef0123456789abcdef0123456789abcdef01',
+    'Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2Yz3Ab4Cd',
+  ];
+  const run = (chunks: string[]) => {
+    const r = new StreamRedactor();
+    const out = chunks.map((c) => r.push(c));
+    return { out, joined: out.join('') + r.flush() };
+  };
+
+  it('a secret split at every offset across two deltas never appears in the output', () => {
+    for (const s of SECRETS) {
+      for (const pre of ['', '먼저 확인: ', 'look at ']) {
+        const whole = `${pre}${s} 그리고 계속`;
+        for (let i = 0; i <= whole.length; i++) {
+          const { out, joined } = run([whole.slice(0, i), whole.slice(i)]);
+          expect(joined, `${s} @${i}`).toBe(redactSecrets(whole));
+          expect(joined).not.toContain(s.slice(-8));
+          for (const o of out) expect(o).not.toContain(s.slice(-8));
+        }
+      }
+    }
+  });
+
+  it('random multi-chunk splits: joined output equals redaction of the whole text', () => {
+    const whole = `생각 중… ${SECRETS.join(' 그리고 ')} 끝. 일본語テキストは空白なし`;
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let n = 0; n < 200; n++) {
+      const chunks: string[] = [];
+      for (let i = 0; i < whole.length;) { const k = 1 + Math.floor(rnd() * 12); chunks.push(whole.slice(i, i + k)); i += k; }
+      expect(run(chunks).joined).toBe(redactSecrets(whole));
+    }
+  });
+
+  it('plain prose is emitted promptly (only the unfinished word is held)', () => {
+    const r = new StreamRedactor();
+    expect(r.push('hello wor')).toBe('hello ');
+    expect(r.push('ld, and ')).toBe('world, and ');
+    expect(r.push('日本語のテキスト')).toBe('日本語のテキスト');
+    expect(r.push(' token')).toBe(' ');
+    expect(r.push(' was used')).toBe('token was ');
+    expect(r.flush()).toBe('used');
+    expect(r.flush()).toBe('');
   });
 });

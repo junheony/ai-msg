@@ -12,7 +12,7 @@ import type { GeminiEngine } from '../engine/GeminiEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
-import { displayError, redactSecrets } from '../engine/redact';
+import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
 import { chooseEngine } from '../routing/EngineChoice';
@@ -153,6 +153,11 @@ async function exists(file: string): Promise<boolean> {
 /** Background task detail for the wire: age instead of a start time (the client's clock may differ). */
 function bgInfo(detail: BgTask[] | undefined, now: number): BgTaskInfo[] | undefined {
   return detail?.map((t) => ({ id: t.id, description: t.description, type: t.type, ageMs: Math.max(0, now - t.startedAtMs) }));
+}
+
+/** Events that leave held thinking text held: more thinking, and the meters that tick between its deltas. */
+function holdsThinking(ev: EngineEvent): boolean {
+  return (ev.kind === 'thinking' && !!ev.text && !ev.redacted) || ev.kind === 'progress' || ev.kind === 'rate_limit';
 }
 
 function taskDoneOf(ev: Extract<EngineEvent, { kind: 'task_done' }>) {
@@ -687,10 +692,12 @@ export class TurnRunner {
     const out: Attempt = { result: null, rateLimit: null, sessionId: forkAt ? null : resumeSessionId, compacted: false, initCwd: null, rest, live: null, bgTasks: [] };
     this.modes.set(p.turnId, { ref: modeRef, sessionId: () => out.sessionId });
     // The first result ends the attempt; whatever follows (background continuations) is `rest`.
+    const { emitThinking, flushThinking } = this.thinkingStream(sink, scope);
     while (!out.result) {
       const n = await rest.next();
       if (n.done) break;
       const ev = n.value;
+      if (!holdsThinking(ev)) flushThinking();
       switch (ev.kind) {
         case 'init': out.sessionId = ev.sessionId; if (ev.cwd) out.initCwd = ev.cwd; break;
         case 'background': out.bgTasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks: ev.tasks, ...this.bgExtra(p.turnId, ev.detail) }); break;
@@ -700,7 +707,7 @@ export class TurnRunner {
         case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
         case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
-        case 'thinking': sink.emit({ type: 'thinking', ...scope(), text: redactSecrets(ev.text), ...(ev.redacted ? { redacted: true } : {}) }); break;
+        case 'thinking': emitThinking(ev); break;
         case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
         case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
         case 'rate_limit':
@@ -713,7 +720,28 @@ export class TurnRunner {
         case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
       }
     }
+    flushThinking();
     return out;
+  }
+
+  /**
+   * Thinking deltas redacted as one stream, so a secret split across deltas is still caught: text that
+   * may still be part of a match is held until the next delta, a new block, or any other event.
+   * Never emits an empty chunk for held text (empty = "a block started" to the UI).
+   */
+  private thinkingStream(sink: TurnSink, scope: () => { turnId: string; sessionId: string | null; cwd: string }) {
+    const r = new StreamRedactor();
+    const flushThinking = () => { const text = r.flush(); if (text) sink.emit({ type: 'thinking', ...scope(), text }); };
+    const emitThinking = (ev: Extract<EngineEvent, { kind: 'thinking' }>) => {
+      if (ev.text && !ev.redacted) {
+        const text = r.push(ev.text);
+        if (text) sink.emit({ type: 'thinking', ...scope(), text });
+        return;
+      }
+      flushThinking();
+      sink.emit({ type: 'thinking', ...scope(), text: redactSecrets(ev.text), ...(ev.redacted ? { redacted: true } : {}) });
+    };
+    return { emitThinking, flushThinking };
   }
 
   /**
@@ -774,11 +802,14 @@ export class TurnRunner {
         },
       });
     }
+    const { emitThinking, flushThinking } = this.thinkingStream(sink, scope);
     try {
       for (;;) {
         const next = await a.rest.next();
         if (next.done) break;
         const ev = next.value;
+        // Held thinking text belongs to the segment it streamed in: out before any other event (or a new segment).
+        if (!holdsThinking(ev)) flushThinking();
         // Output with no segment open (e.g. a continuation racing a follow-up) still gets a turn of its own.
         const needSeg = ev.kind === 'delta' || ev.kind === 'tool_call' || ev.kind === 'tool_result' || ev.kind === 'result';
         if ((ev.kind === 'continue' && !seg) || (needSeg && !seg)) openBackground();
@@ -789,7 +820,7 @@ export class TurnRunner {
           case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
           case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
           case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
-          case 'thinking': sink.emit({ type: 'thinking', ...scope(), text: redactSecrets(ev.text), ...(ev.redacted ? { redacted: true } : {}) }); break;
+          case 'thinking': emitThinking(ev); break;
           case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
           case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
@@ -813,6 +844,7 @@ export class TurnRunner {
         }
       }
     } finally {
+      flushThinking();
       this.live.delete(sessionId);
       const s = seg as Seg | null;
       if (s) sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: s.reason, usage: ZERO_USAGE, modelNote: s.modelNote }, errorText: sink.signal.aborted ? '중단됨' : '결과 없이 끝났습니다' });

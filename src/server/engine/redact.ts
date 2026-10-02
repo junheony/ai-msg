@@ -20,6 +20,53 @@ export function redactSecrets(s: string): string {
   return out;
 }
 
+// Chars a token-shaped match can run through without a break (union of the patterns' word classes).
+const RUN_CHAR = /[A-Za-z0-9._~+/=-]/;
+// A text ending in one of these may still become a match once more text arrives: a key/auth word, its
+// separator, or a value shorter than the pattern's minimum.
+const OPENERS: RegExp[] = [
+  /\b(?:Bearer|Basic)\s*[A-Za-z0-9._~+/=-]{0,7}$/i,
+  /\b(?:api[_-]?key|token|secret|password|passwd|authorization|cookie|deck_session)["']?\s*(?:[:=]\s*["']?[^\s"',;]{0,5})?$/i,
+];
+
+/**
+ * Redacts a stream of chunks as if it were one text: a secret split across chunks is still caught.
+ * push() returns the part that can no longer change (redacted); the rest — an unfinished word, a key
+ * word awaiting its value, a match still growing at the end — is held for the next chunk. flush() at
+ * the block's end returns the remainder. Joined output === redactSecrets(whole text).
+ */
+export class StreamRedactor {
+  private pending = '';
+
+  push(chunk: string): string {
+    const buf = this.pending + chunk;
+    const cut = safeCut(buf);
+    this.pending = buf.slice(cut);
+    return cut ? redactSecrets(buf.slice(0, cut)) : '';
+  }
+
+  flush(): string {
+    const rest = this.pending;
+    this.pending = '';
+    return rest ? redactSecrets(rest) : '';
+  }
+}
+
+/** The largest i such that buf[0:i] redacts the same whatever follows. */
+function safeCut(buf: string): number {
+  const spans: [number, number][] = [];
+  for (const re of TOKEN_PATTERNS) for (const m of buf.matchAll(new RegExp(re.source, re.flags))) spans.push([m.index, m.index + m[0].length]);
+  for (let i = buf.length; i > 0; i--) {
+    // never inside a run (a word may grow into a key / hex / long-run match); the end counts as "may continue"
+    if (RUN_CHAR.test(buf[i - 1]!) && (i === buf.length || RUN_CHAR.test(buf[i]!))) continue;
+    if (spans.some(([s, e]) => s < i && (e > i || e === buf.length))) continue;
+    const head = buf.slice(0, i);
+    if (OPENERS.some((re) => re.test(head))) continue;
+    return i;
+  }
+  return 0;
+}
+
 export function tailOf(s: string, max = STDERR_MAX): string {
   return s.length > max ? s.slice(-max) : s;
 }

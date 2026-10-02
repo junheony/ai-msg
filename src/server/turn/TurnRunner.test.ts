@@ -167,6 +167,29 @@ describe('TurnRunner', () => {
     expect((notice as { message: string }).message).toContain('[redacted]');
   });
 
+  it('a secret split across thinking deltas arrives redacted; held text is flushed before the reply, no empty chunks', async () => {
+    const key = 'sk-ant-api03-AbCdEf0123456789_xyzQRST';
+    for (let i = 1; i < key.length; i++) {
+      const eng = new StubEngine(() => [
+        { kind: 'init', sessionId: 'th1', model: 'm' },
+        { kind: 'thinking', text: '' },
+        { kind: 'thinking', text: `키는 ${key.slice(0, i)}` },
+        { kind: 'progress', outputTokens: 3, phase: 'thinking' },
+        { kind: 'thinking', text: `${key.slice(i)} 입니다` },
+        { kind: 'delta', text: 'ok' },
+        okResult('th1'),
+      ]);
+      const c = await ctx(eng);
+      await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+      const th = msgsOf(c, 'thinking') as { text: string }[];
+      expect(th[0]?.text).toBe('');
+      expect(th.slice(1).every((m) => m.text !== '')).toBe(true);
+      expect(th.map((m) => m.text).join('')).toBe('키는 [redacted] 입니다');
+      const order = c.msgs.map((m) => m.type).filter((t) => t === 'thinking' || t === 'delta');
+      expect(order.lastIndexOf('thinking')).toBeLessThan(order.indexOf('delta'));
+    }
+  });
+
   it('limit on first account → cooldown, move, retry on next; auth failure likewise; third failure ends', async () => {
     const eng = new StubEngine((req, call) => {
       if (call === 0) return [{ kind: 'init', sessionId: 'n1', model: 'm' }, { kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('limit', { sessionId: 'n1' })];
