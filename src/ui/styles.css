@@ -891,3 +891,24 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* === open-in-desktop === */
 .open-desktop-btn { white-space: nowrap; }
+
+/* Context gauge (next to the model picker) and its one-line cost hint above the composer */
+.ctx-gauge-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.ctx-gauge { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; cursor: default; }
+.ctx-gauge:hover { background: var(--hover); color: var(--muted); }
+.ctx-gauge svg { flex-shrink: 0; }
+.ctx-track, .ctx-arc { fill: none; stroke-width: 2.4; }
+.ctx-track { stroke: var(--track); }
+.ctx-arc { stroke: var(--muted); stroke-linecap: round; }
+.ctx-gauge.long .ctx-arc { stroke: var(--warn); }
+.ctx-gauge.high .ctx-arc { stroke: var(--danger); }
+.ctx-pop { position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 20; padding: 6px 9px; border-radius: 8px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line); color: var(--fg); font-size: 12px; white-space: nowrap; }
+.ctx-hint { padding: 0 6px 4px; color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-cold { text-decoration: underline dotted color-mix(in srgb, var(--warn) 70%, transparent); text-underline-offset: 3px; cursor: help; }
+.tb-cold b { color: color-mix(in srgb, var(--warn) 80%, var(--fg)); }
+@media (max-width: 720px) {
+  .ctx-gauge { min-height: var(--phone-tap); padding: 0 4px; }
+  .ctx-hint { white-space: normal; }
+  .ctx-pop { white-space: normal; width: max-content; max-width: min(240px, 70vw); }
+}
+@media (max-width: 400px) { .ctx-num { display: none; } }

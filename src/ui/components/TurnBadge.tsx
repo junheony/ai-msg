@@ -20,7 +20,7 @@ export function isStoppedTurn(t: { badge: Badge; error?: string | null; text?: s
 }
 
 /** Turn footer: account tile, model pill, token counts (or "중단됨"), then the routing reason — one muted line. */
-export function TurnBadge({ badge, stopped = false }: { badge: Badge; stopped?: boolean }) {
+export function TurnBadge({ badge, stopped = false, cacheNote = null }: { badge: Badge; stopped?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null }) {
   const u = badge.usage;
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
   return (
@@ -34,7 +34,9 @@ export function TurnBadge({ badge, stopped = false }: { badge: Badge; stopped?: 
           <span>입력 <b>{k(u.inputTokens)}</b></span>
           <span>출력 <b>{k(u.outputTokens)}</b></span>
           <span>캐시 읽기 <b>{k(u.cacheReadTokens)}</b></span>
-          <span>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>
+          {cacheNote
+            ? <span className="tb-cold" title={cacheNote}>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>
+            : <span>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>}
         </span>
       )}
       <span className="reason" title={badge.reason}>{badge.reason}</span>

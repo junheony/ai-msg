@@ -240,6 +240,23 @@ describe('ClaudeEngine.runTurn', () => {
 const img = { id: 'i1', name: 'a.png', mediaType: 'image/png', size: 3, path: '/att/i1-a.png', isImage: true, createdAtMs: 0 };
 const doc = { id: 'd1', name: 'n.md', mediaType: 'application/octet-stream', size: 1, path: '/att/d1-n.md', isImage: false, createdAtMs: 0 };
 
+describe('ClaudeEngine.runTurn — context size', () => {
+  it('the result carries the main conversation\'s last call prompt as context (subagent calls ignored) and the SDK context window', async () => {
+    const u = (input: number, read: number, write: number) => ({ input_tokens: input, cache_read_input_tokens: read, cache_creation_input_tokens: write, output_tokens: 5 });
+    const queryFn = () => (async function* () {
+      yield M({ type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: u(1, 100, 50) } });
+      yield M({ type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: u(2, 150, 10) } });
+      yield M({ type: 'assistant', parent_tool_use_id: 'agent', message: { content: [], usage: u(9, 9000, 9000) } });
+      yield M({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's', usage: u(3, 250, 60), modelUsage: { 'claude-opus-5-5': { contextWindow: 1_000_000 }, 'claude-haiku-4-5': { contextWindow: 200_000 } } });
+    })();
+    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: {} });
+    const events: EngineEvent[] = [];
+    for await (const e of eng.runTurn(req())) events.push(e);
+    const res = events.find((e) => e.kind === 'result');
+    expect(res).toMatchObject({ usage: { inputTokens: 3, cacheReadTokens: 250, cacheCreationTokens: 60, context: { inputTokens: 2, cacheReadTokens: 150, cacheCreationTokens: 10 }, contextWindow: 1_000_000 } });
+  });
+});
+
 async function first(p: string | AsyncIterable<SDKUserMessage>): Promise<SDKUserMessage | string> {
   if (typeof p === 'string') return p;
   for await (const m of p) return m;

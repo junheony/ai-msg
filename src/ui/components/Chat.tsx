@@ -4,12 +4,14 @@ import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, GEMINI_MODELS, GEMINI_SAN
 import type { GeminiStatus } from '../../shared/protocol';
 import type { PermissionDecision, QuestionAnswers, TurnPhase } from '../../shared/turn-types';
 import type { AgentInfo, ChatItem, PaneBackground, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
+import { latestContext } from '../context';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
 import { filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { AttachmentBar } from './AttachmentBar';
+import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
 import { MessageView } from './MessageView';
 import { ModelPicker } from './ModelPicker';
@@ -134,6 +136,7 @@ export function Chat(p: ChatProps) {
   const turnActive = p.activeTurnId !== null;
   const agentCtx = useMemo<AgentCtx>(() => ({ agents, bgLive, active: turnActive }), [agents, bgLive, turnActive]);
   const suggest = useComposerSuggest({ text, setText, textareaRef: taRef, cwd: p.cwd, sessionId: p.sessionId ?? null, commands: effectiveEngine !== 'codex' });
+  const ctx = useMemo(() => latestContext(p.items), [p.items]);
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
   const submit = () => {
@@ -219,6 +222,7 @@ export function Chat(p: ChatProps) {
             {p.bg && <BackgroundPill bg={p.bg} onStopTask={p.onStopTask} onStopAll={() => p.onStopBackground?.(p.bg!.turnId)} />}
           </div>
         )}
+        {!p.busy && <ContextHint info={ctx} />}
         <div className={`composer ${drag ? 'dragover' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop}>
           {suggest.popup}
           <textarea
@@ -254,6 +258,7 @@ export function Chat(p: ChatProps) {
                   </select>
                 </span>
               )}
+              <ContextGauge info={ctx} />
               <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
               {p.activeTurnId && queueing && hasDraft && <button type="button" className="send queue-add" onClick={submit} title="대기열에 추가 (Enter)"><span aria-hidden="true">+</span><span className="sr-only">대기열에 추가</span></button>}
               {p.activeTurnId
