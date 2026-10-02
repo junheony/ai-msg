@@ -19,7 +19,9 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove, collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [] }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], autoApprove = null, onAutoApprove, collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings }: {
+  /** 설정 (gear in the footer; ⌘, also opens it). */
+  onOpenSettings?: () => void;
   projects: ProjectEntry[];
   currentSessionId: string | null;
   onOpen: (sessionId: string, cwd: string, title: string) => void;
@@ -257,13 +259,15 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           {found?.q === fullQ && found.truncated && <div className="muted sidebar-empty">결과 일부만 표시됩니다.</div>}
         </section>
       )}
-      {onAutoApprove && autoApprove !== null && (
+      {((onAutoApprove && autoApprove !== null) || onOpenSettings) && (
         <div className="sidebar-foot">
-          <button type="button" className={`auto-approve-toggle ${autoApprove ? 'on' : ''}`} role="switch" aria-checked={autoApprove} onClick={() => onAutoApprove(!autoApprove)}
+          {onAutoApprove && autoApprove !== null && (          <button type="button" className={`auto-approve-toggle ${autoApprove ? 'on' : ''}`} role="switch" aria-checked={autoApprove} onClick={() => onAutoApprove(!autoApprove)}
             title={autoApprove ? 'Claude 도구 호출을 묻지 않고 허용합니다(감사 로그에 기록). 새 GPT 세션은 작업폴더 쓰기. 클릭하면 매번 묻기로' : '도구 호출마다 권한 카드로 묻습니다. 클릭하면 자동 승인'}>
             <span className="switch-track" aria-hidden="true"><span className="switch-knob" /></span>
             <span>자동 승인 {autoApprove ? '켜짐' : '꺼짐'}</span>
           </button>
+          )}
+          {onOpenSettings && <button type="button" className="icon-btn settings-open" onClick={onOpenSettings} aria-label="설정" title="설정 (⌘,)">⚙</button>}
         </div>
       )}
     </aside>

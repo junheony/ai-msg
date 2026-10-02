@@ -22,9 +22,11 @@ import { MessageActionsContext, MessageView, type MessageActions } from './Messa
 import { ModelPicker } from './ModelPicker';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
+import { DictationButton } from './DictationButton';
 import { QueueChips } from './QueueChips';
 import { ShareMenu } from './ShareMenu';
 import { TodoPanel } from './TodoPanel';
+import { usePrefs } from '../usePrefs';
 
 export type ChatProps = {
   items: ChatItem[];
@@ -197,6 +199,7 @@ export function Chat(p: ChatProps) {
     setText('');
     scroll.attach();
   };
+  const [{ sendKey }] = usePrefs();
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggest.onKeyDown(e)) return;
     // IME: never act on a key that is still part of a composition (Korean/Japanese/Chinese input). keyCode 229 is
@@ -221,7 +224,7 @@ export function Chat(p: ChatProps) {
     }
     if (e.key !== 'Enter') return;
     if (e.metaKey || e.ctrlKey) { e.preventDefault(); submit(); return; }
-    if (e.shiftKey || e.altKey || coarse) return;
+    if (e.shiftKey || e.altKey || coarse || sendKey === 'mod-enter') return;
     e.preventDefault();
     submit();
   };
@@ -290,7 +293,7 @@ export function Chat(p: ChatProps) {
             onCompositionStart={() => { composing.current = true; }}
             onCompositionEnd={() => { composing.current = false; }}
             onPaste={onPaste}
-            placeholder={queueing ? (coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈'}
+            placeholder={queueing ? (coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
             aria-label="메시지"
             rows={1}
           />
@@ -314,6 +317,7 @@ export function Chat(p: ChatProps) {
                   </select>
                 </span>
               )}
+              <DictationButton text={text} onText={setText} />
               <ContextGauge info={ctx} onHandoff={p.onHandoff} />
               {p.onAccountPin && (effectiveEngine === 'claude' || (p.isNew && effectiveEngine === 'auto')) && (
                 <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
