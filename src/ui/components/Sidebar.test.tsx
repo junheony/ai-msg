@@ -232,3 +232,16 @@ describe('Sidebar activity dots', () => {
     expect(dotOf('four')).toBeNull();
   });
 });
+
+describe('Sidebar imported Codex threads', () => {
+  afterEach(cleanup);
+
+  it('marks a Codex app/CLI thread next to the GPT badge and opens it like any session', () => {
+    const onOpen = vi.fn();
+    const e = { sessionId: 'tid', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'from codex', lastModified: Date.now(), sizeBytes: 1, imported: true };
+    render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} />);
+    expect(screen.getByText(/GPT · Codex ·/)).toBeTruthy();
+    fireEvent.click(screen.getByText('from codex'));
+    expect(onOpen).toHaveBeenCalledWith('tid', '/w', 'from codex');
+  });
+});

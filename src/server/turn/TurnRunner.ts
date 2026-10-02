@@ -19,6 +19,7 @@ import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
+import { LIVE_ROLLOUT_NOTICE, rolloutRecentlyActive } from '../sessions/CodexImports';
 import { forkDivergedAndMove } from '../sessions/SessionFork';
 import { isBytePrefix, moveSession } from '../sessions/SessionMover';
 import { projectSlug } from '../sessions/slug';
@@ -665,16 +666,26 @@ export class TurnRunner {
       attachments = r.found;
     }
     let state: SessionState | null = null;
+    let notice: string | null = null;
     if (p.sessionId) {
       state = deps.store.get(p.sessionId);
-      if (!state) {
+      const imported = state ? null : deps.index.codexImport(p.sessionId);
+      if (imported) {
+        // A Codex Desktop / CLI thread: resumed in its own cwd under deck's sandbox; stored as a deck Codex session after this turn.
+        state = {
+          engine: 'codex', sessionId: imported.sessionId, cwd: imported.cwd, lastTurnAtMs: null, justCompacted: false,
+          defaultModel: isCodexModel(p.model) ? p.model : DEFAULT_CODEX_MODEL, sandbox: p.sandbox ?? defaultSandbox(deps.autoApprove?.() ?? false),
+          rolloutFile: imported.file, createdAtMs: this.now(), title: imported.title,
+        };
+        if (await rolloutRecentlyActive(imported.file, this.now())) notice = LIVE_ROLLOUT_NOTICE;
+      } else if (!state) {
         const e = deps.index.lookup(p.sessionId);
         // Codex sessions always have a state entry (D4); a 'gpt' index entry without one is a bug, not a resumable session.
         if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
         state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
       }
     }
-    if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments);
+    if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
     if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${SEAT_LABEL[state.account]}`, attachments);
     // Gemini is explicit only: chooseEngine (자동) never sees it.
     if (!state && p.engine === 'gemini') return this.runGemini(p, null, sink, 'Gemini 지정', attachments);
@@ -697,7 +708,7 @@ export class TurnRunner {
   }
 
   /** D2/D3: one ChatGPT account — no routing, no session move, no retry; sandbox + approval never. */
-  private async runCodex(p: TurnParams, state: CodexSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
+  private async runCodex(p: TurnParams, state: CodexSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[], notice: string | null = null): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     // A per-turn Codex model wins on resume too (like Claude's per-turn model); the session's stored default is kept.
@@ -711,6 +722,7 @@ export class TurnRunner {
     if (!deps.codex) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: 'codex CLI 를 찾을 수 없습니다' }); return; }
     if (sink.signal.aborted) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: '중단됨' }); return; }
     sink.emit({ type: 'turn_started', ...scope(), account: 'gpt', model, reason, attempt: 0, engine: 'codex' });
+    if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     let result: EngineResult | null = null;
     const effort = effortFor(model, p.effort);
     for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, ...(effort ? { effort } : {}), prompt: promptWithFiles(p.text, attachments), imagePaths: attachments.filter((a) => a.isImage).map((a) => a.path), signal: sink.signal })) {

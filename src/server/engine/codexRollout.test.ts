@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { findRolloutFile, latestRolloutRateLimits, newestRolloutFiles, parseCodexTranscript, readCodexTranscript, readRolloutRateLimits, readRolloutRateLimitsAt, rolloutRateLimits, rolloutRateLimitsAt } from './codexRollout';
+import { findRolloutFile, latestRolloutRateLimits, newestRolloutFiles, parseCodexTranscript, readCodexTranscript, readCodexTranscriptTail, readRolloutRateLimits, readRolloutRateLimitsAt, rolloutRateLimits, rolloutRateLimitsAt } from './codexRollout';
 
 const TID = '01a0f2d3-0000-7c92-aeea-000000000001';
 // Shapes observed 2026-09-30 in ~/.codex/sessions/2026/09/30/rollout-…-<thread>.jsonl (texts shortened).
@@ -152,5 +152,29 @@ describe('GPT credits in rate_limits', () => {
     await fs.writeFile(f, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
     const r = await latestRolloutRateLimits(root);
     expect(r?.windows.credits).toEqual({ hasCredits: true, unlimited: false, balance: 12.5 });
+  });
+});
+
+describe('readCodexTranscriptTail', () => {
+  it('reads only the tail (cut first line skipped) and summarises custom tool calls', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-codex-tail-'));
+    const file = path.join(dir, 'rollout.jsonl');
+    const early = { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `early ${'z'.repeat(4000)}` }] } };
+    const late = [
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'patch it' }] } },
+      { type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'c1', name: 'apply_patch', input: '*** Begin Patch' } },
+      { type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'c1', output: 'Success' } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] } },
+    ];
+    const tail = late.map((l) => JSON.stringify(l)).join('\n') + '\n';
+    await fs.writeFile(file, `${JSON.stringify(early)}\n${tail}`);
+    expect(await readCodexTranscriptTail(file, Buffer.byteLength(tail) + 10)).toEqual([
+      { kind: 'user', text: 'patch it', ts: null },
+      { kind: 'assistant', text: '', model: null, toolCalls: [{ id: 'c1', name: 'apply_patch', input: '*** Begin Patch' }], ts: null },
+      { kind: 'tool_result', toolUseId: 'c1', content: 'Success', isError: false, ts: null },
+      { kind: 'assistant', text: 'done', model: null, toolCalls: [], ts: null },
+    ]);
+    expect((await readCodexTranscriptTail(file))[0]).toMatchObject({ kind: 'user', text: expect.stringMatching(/^early/) });
+    await fs.rm(dir, { recursive: true, force: true });
   });
 });

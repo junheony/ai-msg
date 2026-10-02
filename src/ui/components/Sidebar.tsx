@@ -144,7 +144,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           ) : (
             <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(s, key); } : undefined}>{s.title}</span>
           )}
-          <span className="session-meta">{s.account.toUpperCase()} · {ago(s.lastModified)}</span>
+          <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{s.account.toUpperCase()}{s.imported ? ' · Codex' : ''} · {ago(s.lastModified)}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="이름 바꾸기 · 보관" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>

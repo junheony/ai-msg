@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ACCOUNTS, type Account } from '../../shared/accounts';
 import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { findCopies, resolveCopies, type PrefixFn, type SessionCopy } from './copies';
+import { CodexRolloutIndex } from './CodexImports';
 import { recentDesktopSessions } from './DesktopSessions';
 import { isBytePrefix } from './SessionMover';
 import { pathKey } from './slug';
@@ -146,8 +147,15 @@ export class SessionIndex {
     return v;
   };
 
-  /** `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list. */
-  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; meta?: SessionMetaView }) {}
+  private readonly codex: CodexRolloutIndex | null;
+
+  /**
+   * `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list.
+   * `codexRoot`: `~/.codex/sessions` — Codex Desktop / CLI threads listed for import; absent = none.
+   */
+  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; meta?: SessionMetaView }) {
+    this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot) : null;
+  }
 
   /** A deck rename wins over the transcript's title; archived entries carry the flag. Unchanged entries are returned as is. */
   private decorate<T extends { sessionId: string; title: string; archived?: boolean }>(e: T): T {
@@ -187,6 +195,7 @@ export class SessionIndex {
     this.pinned = await readPinned(this.opts.pinnedFile);
     if (this.opts.recentFile) this.recentFolders = await readRecent(this.opts.recentFile);
     this.grouped = this.group(all);
+    if (this.codex) await this.codex.refresh().catch(() => undefined);
     this.desktopList = this.opts.desktopRoot ? (await recentDesktopSessions(this.opts.desktopRoot, (id) => this.lookup(id)).catch(() => [])).map((d) => this.decorate(d)) : [];
   }
 
@@ -230,9 +239,19 @@ export class SessionIndex {
     return this.byId.get(sessionId) ?? null;
   }
 
-  /** Cached grouping of the profile scan; with `extra` (Codex sessions from the state store, D4) a fresh grouping. */
+  /** An external Codex thread (Codex Desktop / CLI rollout) as of the last refresh; null if unknown. */
+  codexImport(threadId: string): SessionEntry | null {
+    return this.codex?.lookup(threadId) ?? null;
+  }
+
+  /**
+   * Cached grouping of the profile scan; with `extra` (Codex sessions from the state store, D4) and/or
+   * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice.
+   */
   projects(extra: SessionEntry[] = []): ProjectEntry[] {
-    return extra.length ? this.group([...this.entries, ...extra]) : this.grouped;
+    const own = new Set(extra.map((e) => e.sessionId));
+    const imports = (this.codex?.list() ?? []).filter((e) => !own.has(e.sessionId));
+    return extra.length || imports.length ? this.group([...this.entries, ...extra, ...imports]) : this.grouped;
   }
 
   sessions(): SessionEntry[] {

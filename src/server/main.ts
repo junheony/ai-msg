@@ -35,7 +35,7 @@ async function main(): Promise<void> {
   // Session rename / 보관 live in deck's own config (never in the Claude jsonl); loaded before the first scan.
   const meta = new SessionMetaStore(path.join(cfg.configDir, 'session-meta.json'));
   await meta.load();
-  const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, meta });
+  const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, meta });
   const store = new SessionStateStore(cfg.stateFile);
   const pins = new PinStore(cfg.pinsFile);
   const settings = new SettingsStore(cfg.settingsFile);
