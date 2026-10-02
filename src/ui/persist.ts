@@ -11,7 +11,11 @@ export const SENT_KEY = 'deck.sent.v1';
 
 export type PersistedSession = { sessionId: string | null; cwd: string; title: string; engine: EngineKind | null };
 /** `autoEffort`: the effort picked while the model is 자동 (null = 자동 too). */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox };
+/**
+ * `handoffFrom` / `prefill`: a pending 새 세션으로 이어가기 — the new session has no id (it exists only once its first
+ * send runs), so the link to its predecessor and the note waiting in the composer live only here until then.
+ */
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -51,13 +55,18 @@ function pane(x: unknown): PersistedPane {
   const d = newPane('');
   if (!isObj(x)) return { session: null, model: d.model, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: d.engine, sandbox: d.sandbox };
   const e = isObj(x.efforts) ? x.efforts : {};
+  const sess = session(x.session);
+  const hf = isObj(x.handoffFrom) ? x.handoffFrom : null;
+  const pending = sess !== null && sess.sessionId === null;
   return {
-    session: session(x.session),
+    session: sess,
     model: isModelChoice(x.model) ? x.model : d.model,
     efforts: { claude: isEffort(e.claude) ? e.claude : DEFAULT_EFFORT.claude, codex: isEffort(e.codex) ? e.codex : DEFAULT_EFFORT.codex, gemini: isEffort(e.gemini) ? e.gemini : DEFAULT_EFFORT.gemini },
     autoEffort: isEffort(x.autoEffort) ? x.autoEffort : null,
     engine: ENGINES.includes(x.engine as EngineChoice) ? (x.engine as EngineChoice) : d.engine,
     sandbox: CODEX_SANDBOXES.includes(x.sandbox as CodexSandbox) ? (x.sandbox as CodexSandbox) : d.sandbox,
+    ...(pending && hf && shortStr(hf.sessionId, 200) && hf.sessionId && shortStr(hf.title, 500) ? { handoffFrom: { sessionId: hf.sessionId, title: hf.title } } : {}),
+    ...(pending && shortStr(x.prefill, 100_000) && x.prefill ? { prefill: x.prefill } : {}),
   };
 }
 
@@ -83,6 +92,8 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
     panes: state.panes.map((p) => ({
       session: p.session ? { sessionId: p.session.sessionId, cwd: p.session.cwd, title: p.session.title, engine: p.session.engine } : null,
       model: p.model, efforts: p.efforts, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
+      ...(p.session && p.session.sessionId === null && p.handoffFrom ? { handoffFrom: p.handoffFrom } : {}),
+      ...(p.session && p.session.sessionId === null && p.prefill ? { prefill: p.prefill } : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
@@ -104,6 +115,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null): AppState {
     ...newPane(`p${i}`),
     session: p.session ? { ...p.session, account: null, sandbox: null } : null,
     model: p.model, efforts: { ...p.efforts }, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
+    handoffFrom: p.handoffFrom ?? null, prefill: p.prefill ?? null,
   }));
   return { ...base, panes, activePaneId: panes[ui.active]?.id ?? panes[0]!.id };
 }

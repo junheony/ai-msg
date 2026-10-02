@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SENT_KEY, UI_KEY, hydrate, loadSent, loadUi, parseUi, saveSent, saveUi, snapshotUi } from './persist';
+import type { ClientMessage } from '../shared/protocol';
+import { sendFromPane } from './components/Pane';
 import { initialState, newPane, reducer, type AppState, type PaneState } from './state';
 
 function memStore(init: Record<string, string> = {}) {
@@ -33,6 +35,32 @@ describe('persist (ux-state)', () => {
     expect(h.panes[1]).toMatchObject({ session: { sessionId: null, cwd: '/x', engine: 'codex' }, engine: 'codex', model: 'gpt-6-sol', sandbox: 'workspace-write' });
     // add_pane after hydration keeps ids unique
     expect(reducer(h, { type: 'add_pane' }).panes.map((p) => p.id)).toEqual(['p0', 'p1', 'p2']);
+  });
+
+  it('a pending handoff (new session, no id yet) survives a reload: the 이전 세션 link and the prefilled note come back and ride the first send', () => {
+    const SID = '11111111-1111-4111-8111-111111111111';
+    const store = memStore();
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: '작업 (이어서)' });
+    s = { ...s, panes: s.panes.map((p) => ({ ...p, handoffFrom: { sessionId: SID, title: '작업' }, prefill: '인계 메모' })) };
+    saveUi(snapshotUi(s, { collapsed: [], drawer: false }), null, store);
+    const h = hydrate(initialState, loadUi(store));
+    expect(h.panes[0]).toMatchObject({ session: { sessionId: null, cwd: '/w' }, handoffFrom: { sessionId: SID, title: '작업' }, prefill: '인계 메모' });
+    const sent: ClientMessage[] = [];
+    sendFromPane(h.panes[0]!, '인계 메모', [], () => {}, (m) => sent.push(m));
+    expect(sent[0]).toMatchObject({ type: 'send', sessionId: null, handoffFrom: SID });
+
+    // After the first send (prefill cleared, id not known yet) the link is still kept for a retry after a reload.
+    const afterSend = reducer(s, { type: 'sent', text: '인계 메모', clientRef: 'r1' });
+    expect(hydrate(initialState, parseUi(snapshotUi(afterSend, { collapsed: [], drawer: false }))).panes[0]).toMatchObject({ handoffFrom: { sessionId: SID }, prefill: null });
+  });
+
+  it('a handoff link is only kept while the session has no id, and bad values are dropped', () => {
+    const SID = '11111111-1111-4111-8111-111111111111';
+    let s = reducer(initialState, { type: 'open', sessionId: 'new1', cwd: '/w', title: 't' });
+    s = { ...s, panes: s.panes.map((p) => ({ ...p, handoffFrom: { sessionId: SID, title: '작업' } })) };
+    expect(snapshotUi(s, { collapsed: [], drawer: false }).panes[0]).not.toHaveProperty('handoffFrom');
+    const ui = parseUi({ v: 1, panes: [{ session: { sessionId: null, cwd: '/w', title: 't', engine: 'claude' }, handoffFrom: { sessionId: 7, title: 'x' }, prefill: 3 }], active: 0, collapsed: [], drawer: false });
+    expect(hydrate(initialState, ui).panes[0]).toMatchObject({ handoffFrom: null, prefill: null });
   });
 
   it('nothing stored, corrupt JSON, wrong shape or an unknown version → null (start fresh)', () => {

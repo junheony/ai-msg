@@ -87,6 +87,10 @@ beforeAll(async () => {
     }
     if (req.prompt === HANDOFF_PROMPT) return [{ kind: 'init', sessionId: req.resumeSessionId!, model: 'm' }, okResult(req.resumeSessionId!, `note noTools=${req.noTools === true}`)];
     if (req.prompt === 'continued') return [{ kind: 'init', sessionId: '77777777-7777-4777-8777-777777777777', model: 'm' }, okResult('77777777-7777-4777-8777-777777777777', `noTools=${req.noTools === true}`)];
+    if (req.prompt === 'continued-later') {
+      // The new session's id is reported only after the gate (the sending socket may be gone by then).
+      return (async function* () { await gate; yield { kind: 'init' as const, sessionId: '77777777-7777-4777-8777-777777777778', model: 'm' }; yield okResult('77777777-7777-4777-8777-777777777778', 'later'); })();
+    }
     if (req.prompt === 'edited') {
       const id = req.forkAt ? '88888888-8888-4888-8888-888888888881' : '88888888-8888-4888-8888-888888888880';
       return [{ kind: 'init', sessionId: id, model: 'm' }, okResult(id, `fork=${req.forkAt ?? 'none'} resume=${req.resumeSessionId ?? 'none'}`)];
@@ -391,6 +395,27 @@ describe('ws', () => {
     expect(meta.title(NEW)).toBe('seed (이어서)');
     await vi.waitFor(() => expect(index.projects().flatMap((p) => p.sessions).find((e) => e.sessionId === SX)?.nextSession).toBe(NEW));
     a.ws.close();
+  });
+
+  it('handoff: a first send that ends without an id links nothing; its retry links once the id arrives, even after the sender disconnected', async () => {
+    const SX = '99999999-9999-4999-8999-999999999992';
+    const cwd = await seed(SX, 'handoff-retry');
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const failed = collect(a.ws, (m) => m.type === 'turn_result');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'throw', handoffFrom: SX }));
+    expect((await failed).at(-1)).toMatchObject({ type: 'turn_result', ok: false, sessionId: null });
+    expect(meta.next(SX)).toBeNull();
+
+    hold();
+    const started = collect(a.ws, (m) => m.type === 'turn_started');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'continued-later', handoffFrom: SX }));
+    await started;
+    a.ws.close();
+    release();
+    const NEW = '77777777-7777-4777-8777-777777777778';
+    await vi.waitFor(() => expect(meta.next(SX)).toBe(NEW));
+    expect(meta.prev(NEW)).toBe(SX);
   });
 
   it('메시지 편집 갈래: a send with branch forks the parent at the edited message and links the new session in meta', async () => {
