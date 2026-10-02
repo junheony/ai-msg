@@ -1,7 +1,9 @@
 import { loadDraft, saveDraft } from '../autoReload';
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
+import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus } from '../../shared/protocol';
+import type { UsageSnapshot } from '../../shared/usage-types';
 import type { PermissionDecision, QuestionAnswers, TurnPhase } from '../../shared/turn-types';
 import type { AgentInfo, ChatItem, PaneBackground, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
 import { latestContext } from '../context';
@@ -10,6 +12,7 @@ import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
 import { filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
+import { AccountPicker } from './AccountPicker';
 import { AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
@@ -68,6 +71,12 @@ export type ChatProps = {
   onSandbox: (s: CodexSandbox) => void;
   onAttach: (a: UploadedAttachment) => void;
   onUnattach: (id: string) => void;
+  /** 이 세션은 B 써 (Claude sessions): the pinned account (null = 자동), the account it runs on, usage for the menu. */
+  accountPin?: Account | null;
+  account?: Seat | null;
+  usage?: UsageSnapshot | null;
+  /** Absent = no account picker. */
+  onAccountPin?: (pin: Account | null) => void;
   /** ux-state: while busy, a submit queues the message (absent = the composer can't send while busy). */
   queue?: QueueItem[];
   queuePaused?: boolean;
@@ -99,6 +108,13 @@ const NO_AGENTS: Record<string, AgentInfo> = {};
 
 export function Chat(p: ChatProps) {
   const [text, setText] = useState(() => loadDraft(p.sessionId));
+  // The pane switched sessions: show that session's draft, not the previous one's. Done during render so the save
+  // effect below never writes the old text under the new id. A new session getting its id (null → id) keeps the text.
+  const [draftId, setDraftId] = useState(p.sessionId);
+  if (draftId !== p.sessionId) {
+    setDraftId(p.sessionId);
+    if (draftId) setText(loadDraft(p.sessionId));
+  }
   useEffect(() => { saveDraft(p.sessionId, text); }, [p.sessionId, text]);
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -259,6 +275,9 @@ export function Chat(p: ChatProps) {
                 </span>
               )}
               <ContextGauge info={ctx} />
+              {p.onAccountPin && (effectiveEngine === 'claude' || (p.isNew && effectiveEngine === 'auto')) && (
+                <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
+              )}
               <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
               {p.activeTurnId && queueing && hasDraft && <button type="button" className="send queue-add" onClick={submit} title="대기열에 추가 (Enter)"><span aria-hidden="true">+</span><span className="sr-only">대기열에 추가</span></button>}
               {p.activeTurnId

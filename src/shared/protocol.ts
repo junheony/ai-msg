@@ -27,6 +27,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     engine: z.enum(['claude', 'codex', 'gemini', 'auto']).optional(),
     /** New Codex / Gemini sessions only (D2). */
     sandbox: z.enum(['read-only', 'workspace-write']).optional(),
+    /** New Claude sessions only: 이 세션은 B 써 (null/absent = 자동). Existing sessions use set_account_pin. */
+    accountPin: z.enum(['a', 'b', 'c']).nullable().optional(),
     attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
     /** Client correlation id: echoed on this send's turn_started and on any error refusing it (which pane sent it). */
     clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional(),
@@ -43,6 +45,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   /** After a reconnect: keep receiving a running turn this tab started (e.g. a new session with no id yet). */
   z.object({ type: z.literal('watch_turn'), turnId: z.string().min(1) }),
   z.object({ type: z.literal('refresh_index') }),
+  /** Pin a Claude session to an account (null = 자동); persisted, applied from the next turn, broadcast as `account_pin`. */
+  z.object({ type: z.literal('set_account_pin'), sessionId: z.string().min(1), pin: z.enum(['a', 'b', 'c']).nullable() }),
   /** 자동 승인 toggle (server-wide, persisted, broadcast to every device as `settings`). */
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean() }),
 ]);
@@ -55,7 +59,7 @@ export type DeckSettings = { autoApprove: boolean };
 /** gemini-cli present, and which accounts have an OAuth file (existence only; the UI shows "로그인 필요" otherwise). */
 export type GeminiStatus = { available: boolean; loggedIn: Record<GeminiAccount, boolean> };
 
-export type TurnBadge = { account: Seat; model: AnyModel; reason: string; usage: TurnUsage; modelNote: string | null };
+export type TurnBadge = { account: Seat; model: AnyModel; reason: string; usage: TurnUsage; modelNote: string | null; /** The account was chosen because the session is pinned to it. */ pinned?: boolean };
 
 /** An attachment as shown in a sent bubble (images load from GET /api/attachments/:id). */
 export type PromptFile = { id: string; name: string; isImage: boolean };
@@ -79,9 +83,11 @@ export type ServerMessage =
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
   | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   | { type: 'settings'; settings: DeckSettings }
+  /** A session's account pin changed (null = 자동). */
+  | { type: 'account_pin'; sessionId: string; pin: Account | null }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[] }
-  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number }
+  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number }
   | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string; /** The user message that started this turn (absent for a background continuation); the sending pane already shows it. */ prompt?: TurnPrompt } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)
   | ({ type: 'tool_call'; toolUseId: string; name: string; input: unknown } & TurnScope)

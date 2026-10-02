@@ -139,3 +139,45 @@ describe('chooseAccount — table', () => {
     });
   }
 });
+
+describe('chooseAccount · 고정 계정 (pinned)', () => {
+  it('pinned and usable: always that account — no warm-cache stickiness, no threshold switching', () => {
+    // Warm on B, but pinned to C (C at 91% weekly is past WEEKLY_SWITCH_PCT, still < 95).
+    const d = chooseAccount(input({ current: 'b', lastTurnAtMs: NOW - 60_000, pinned: 'c' }));
+    expect(d.account).toBe('c');
+    expect(d.switched).toBe(true);
+    expect(d.pinned).toBe(true);
+    expect(d.pinBlocked).toBeUndefined();
+    expect(d.reason).toMatch(/고정 C/);
+    // Already there: stays, even above the 80/85 thresholds that would force a switch when unpinned.
+    const stay = chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, pinned: 'c', usage: snap({ w: 7 }, { w: 3 }, { w: 90, s: 85 }) }));
+    expect(stay).toMatchObject({ account: 'c', switched: false, pinned: true });
+    expect(chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 7 }, { w: 3 }, { w: 90, s: 85 }) })).account).not.toBe('c');
+  });
+
+  it('pinned but unusable (≥95 / cooldown / failed this turn): the router picks for this turn and says why', () => {
+    const limit = chooseAccount(input({ current: 'b', lastTurnAtMs: NOW - 60_000, pinned: 'b', usage: snap({ w: 7 }, { w: 96 }, { w: 20 }) }));
+    expect(limit.account).toBe('a');
+    expect(limit.pinned).toBeUndefined();
+    expect(limit.pinBlocked).toBe('한도 도달');
+    expect(limit.reason).toMatch(/고정 B 주간 96%/);
+    const cool = chooseAccount(input({ current: 'b', pinned: 'b', cooldownUntilMs: { b: NOW + 60_000 }, usage: snap({ w: 7 }, { w: 10 }, { w: 20 }) }));
+    expect(cool.account).not.toBe('b');
+    expect(cool.pinBlocked).toBe('쿨다운 중');
+    const failed = chooseAccount(input({ current: 'b', pinned: 'b', exclude: ['b'], usage: snap({ w: 7 }, { w: 10 }, { w: 20 }) }));
+    expect(failed.account).not.toBe('b');
+    expect(failed.pinBlocked).toBe('이번 턴 실패');
+    // Nothing else usable either: stays on the pinned account, no fallback claimed.
+    const none = chooseAccount(input({ current: 'b', pinned: 'b', usage: snap({ w: 99 }, { w: 96 }, { w: 98 }) }));
+    expect(none.account).toBe('b');
+    expect(none.pinBlocked).toBeUndefined();
+  });
+
+  it('pinning to the protected account (A, Desktop) is honoured — it is the user\'s explicit choice', () => {
+    const d = chooseAccount(input({ current: 'b', lastTurnAtMs: NOW - 60_000, protectedAccount: 'a', pinned: 'a' }));
+    expect(d).toMatchObject({ account: 'a', switched: true, pinned: true });
+    expect(chooseAccount(input({ current: null, protectedAccount: 'a', pinned: 'a' })).account).toBe('a');
+    // Unpinned, a new session never lands on the protected account while others are eligible.
+    expect(chooseAccount(input({ current: null, protectedAccount: 'a' })).account).not.toBe('a');
+  });
+});

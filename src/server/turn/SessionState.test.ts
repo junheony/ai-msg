@@ -18,6 +18,26 @@ describe('SessionStateStore', () => {
     expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
   });
 
+  it('account pin: persisted across reload, kept by later set() calls, cleared with null', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const s = new SessionStateStore(file);
+    await s.load();
+    const base = { sessionId: 'x', cwd: '/w', account: 'b' as const, projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' as const };
+    expect(await s.setAccountPin('x', 'c')).toBe(false);
+    await s.set({ ...base, accountPin: 'a' });
+    expect(s.get('x')).toMatchObject({ accountPin: 'a' });
+    expect(await s.setAccountPin('x', 'c')).toBe(true);
+    // A turn writing a state it read before the change (stale pin, or none) does not undo it.
+    await s.set({ ...base, lastTurnAtMs: 9, accountPin: 'a' });
+    await s.set({ ...base, lastTurnAtMs: 10 });
+    const s2 = new SessionStateStore(file);
+    await s2.load();
+    expect(s2.get('x')).toMatchObject({ lastTurnAtMs: 10, accountPin: 'c' });
+    expect(await s2.setAccountPin('x', null)).toBe(true);
+    expect(s2.get('x')).not.toHaveProperty('accountPin');
+  });
+
   it('concurrent set() calls on different sessions all persist', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
     const file = path.join(dir, 'session-state.json');

@@ -407,6 +407,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.engine ? { engine: msg.engine } : {}),
           ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
           ...(msg.attachments ? { attachments: msg.attachments } : {}),
+          ...(msg.sessionId === null && msg.accountPin ? { accountPin: msg.accountPin } : {}),
         }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
@@ -510,7 +511,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               .catch(() => readTranscript(found.file))
               .then((messages) => {
                 const t = turns.get(busy.get(sessionId) ?? '');
-                send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, messages, ...runningOf(sessionId) });
+                send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, messages, ...runningOf(sessionId) });
                 if (t) replay(ws, t, sessionId);
                 // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
                 void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
@@ -526,6 +527,14 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           void rescanIndex()
             .then(() => broadcast(indexMsg()))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
+          break;
+        case 'set_account_pin':
+          void deps.runner.setAccountPin(msg.sessionId, msg.pin)
+            .then((ok) => {
+              if (ok) broadcast({ type: 'account_pin', sessionId: msg.sessionId, pin: msg.pin });
+              else send(ws, { type: 'error', turnId: null, message: `계정을 고정할 수 없는 세션입니다: ${msg.sessionId}` });
+            })
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `계정 고정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
         case 'set_settings': {
           const store = deps.settings;
