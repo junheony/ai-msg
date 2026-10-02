@@ -109,8 +109,8 @@ describe('readSessionFile', () => {
       await fs.writeFile(path.join(h, f), 'secret');
       expect(await status(read(f, h)), f).toBe(403);
     }
-    await fs.writeFile(path.join(h, '.env.example'), 'A=');
-    expect((await read('.env.example', h)).kind).toBe('text');
+    await fs.writeFile(path.join(h, 'proj', '.env.example'), 'A=');
+    expect((await read('.env.example')).kind).toBe('text');
     // ~ expansion is still contained and deny-listed.
     expect(await status(read('~/.ssh/config', h))).toBe(403);
     // A symlink inside the project pointing at a denied file.
@@ -123,6 +123,28 @@ describe('readSessionFile', () => {
     expect(isDeniedPath('/u/.claude-work/x', '/u')).toBe(true);
     expect(isDeniedPath('/u/code/deck/.claude/worktrees/a/src/x.ts', '/u')).toBe(false);
     expect(isDeniedPath('/u/code/.ssh/x', '/u')).toBe(true);
+  });
+
+  it('isDeniedPath: every home-level dotfile/dotdir and ~/Library; project dotdirs stay readable; history and token files anywhere', () => {
+    for (const f of ['.zsh_history', '.config/deck/token', '.config/anything/x.json', '.vault-token', 'Library/Application Support/Claude/claude_desktop_config.json', 'Library/x']) expect(isDeniedPath(`/u/${f}`, '/u'), f).toBe(true);
+    for (const f of ['code/x/.github/workflows/ci.yml', 'code/x/.gitignore', 'Libraryish/x', 'code/Library/x']) expect(isDeniedPath(`/u/${f}`, '/u'), f).toBe(false);
+    for (const f of ['.bash_history', '.python_history', '.vault-token', 'credentials.tfrc.json', 'service-account-prod.json', 'logins.json', 'key4.db']) expect(isDeniedPath(`/u/code/x/${f}`, '/u'), f).toBe(true);
+  });
+
+  it('with the cwd at ~: deck\'s config dir (denyRoots) and home dotfiles are refused', async () => {
+    const h = await home();
+    const cfg = path.join(h, 'deckcfg');
+    await fs.mkdir(cfg);
+    await fs.writeFile(path.join(cfg, 'vapid.json'), '{}');
+    await fs.writeFile(path.join(h, '.zsh_history'), 'x');
+    await fs.writeFile(path.join(h, 'notes.txt'), 'ok');
+    const read = (file: string) => readSessionFile({ home: h, roots: [h], cwd: h, file, denyRoots: [cfg] });
+    expect(await status(read('deckcfg/vapid.json'))).toBe(403);
+    expect(await status(read('.zsh_history'))).toBe(403);
+    expect((await read('notes.txt')).kind).toBe('text');
+    // Through the lister too.
+    const lister = new FileLister({ home: h, roots: [h], denyRoots: [cfg] });
+    expect(await status(lister.read(h, 'deckcfg/vapid.json'))).toBe(403);
   });
 
   it('size cap, binary detection, images sniffed by content', async () => {

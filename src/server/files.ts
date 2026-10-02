@@ -49,7 +49,8 @@ async function walk(root: string, max: number): Promise<string[]> {
 export class FileLister {
   private cache = new Map<string, { at: number; listing: FileListing }>();
 
-  constructor(private readonly opts: { home: string; roots: string[]; max?: number; now?: () => number }) {}
+  /** `denyRoots`: folders never previewed wherever the cwd is (deck's own config dir: token, VAPID key…). */
+  constructor(private readonly opts: { home: string; roots: string[]; denyRoots?: string[]; max?: number; now?: () => number }) {}
 
   async list(input: string): Promise<FileListing> {
     const cwd = await resolveUnderRoots(input, this.opts.home, this.opts.roots);
@@ -69,7 +70,7 @@ export class FileLister {
 
   /** Side panel: one file of the session folder `cwd` (see readSessionFile). */
   read(cwd: string, file: string): Promise<FilePreview> {
-    return readSessionFile({ home: this.opts.home, roots: this.opts.roots, cwd, file });
+    return readSessionFile({ home: this.opts.home, roots: this.opts.roots, cwd, file, ...(this.opts.denyRoots ? { denyRoots: this.opts.denyRoots } : {}) });
   }
 }
 
@@ -85,12 +86,16 @@ export class FileReadError extends Error {
   constructor(message: string, readonly status: 400 | 403 | 404 | 413 | 415) { super(message); }
 }
 
-/** Home-level dirs holding credentials or other agents' state: never previewed, wherever the cwd is. */
-const DENY_HOME_DIRS = /^(\.claude[^/]*|\.codex|\.ssh|\.gnupg|\.aws|\.azure|\.kube|\.docker|\.gcloud|\.password-store|\.config\/(gh|gcloud|op|hub)|Library\/Keychains)(\/|$)/;
+/**
+ * Directly under home, every dotfile / dotdir (.claude*, .ssh, .config, .zsh_history…) and ~/Library hold credentials,
+ * shell history or other apps' state: never previewed, wherever the cwd is (a cwd of ~ included). Project dotdirs
+ * (`~/code/x/.github`) are not at home level and stay readable.
+ */
+const DENY_HOME_FIRST = (seg: string) => seg.startsWith('.') || seg === 'Library';
 /** Directories (any depth) that are credential stores. */
 const DENY_DIR_SEGMENTS = new Set(['.ssh', '.gnupg', '.aws', '.codex']);
 /** Credential-looking file names (any depth). `.env.example`-style templates stay readable. */
-const DENY_FILE = /^(\.env(\.(?!example$|sample$|template$)[\w.-]+)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|auth\.json|credentials(\.json)?|\.credentials\.json|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|p12|pfx|keystore|jks|kdbx))$/i;
+const DENY_FILE = /^(\.env(\.(?!example$|sample$|template$)[\w.-]+)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|auth\.json|credentials(\.json)?|\.credentials\.json|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|p12|pfx|keystore|jks|kdbx)|\..*_history|\.vault-token|.*\.tfrc\.json|service-account.*\.json|logins\.json|key4\.db)$/i;
 
 /** True when `real` (an absolute real path) must never be previewed. */
 export function isDeniedPath(real: string, home: string): boolean {
@@ -98,7 +103,8 @@ export function isDeniedPath(real: string, home: string): boolean {
   if (DENY_FILE.test(parts.at(-1) ?? '')) return true;
   if (parts.slice(0, -1).some((p) => DENY_DIR_SEGMENTS.has(p))) return true;
   const rel = path.relative(home, real);
-  return !rel.startsWith('..') && !path.isAbsolute(rel) && DENY_HOME_DIRS.test(rel.split(path.sep).join('/'));
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+  return DENY_HOME_FIRST(rel.split(path.sep)[0]!);
 }
 
 const IMAGE_MAGIC: { type: string; test: (b: Buffer) => boolean }[] = [
@@ -114,20 +120,22 @@ const IMAGE_MAGIC: { type: string; test: (b: Buffer) => boolean }[] = [
  * to both the requested and the real path, and the file is opened O_NOFOLLOW so a symlink swapped in after the
  * check is refused. Text (no NUL in the first 8 KiB, valid UTF-8) or a sniffed raster image; anything else 415.
  */
-export async function readSessionFile(opts: { home: string; roots: string[]; cwd: string; file: string; max?: number }): Promise<FilePreview> {
+export async function readSessionFile(opts: { home: string; roots: string[]; cwd: string; file: string; max?: number; denyRoots?: string[] }): Promise<FilePreview> {
   const cwd = await resolveUnderRoots(opts.cwd, opts.home, opts.roots);
   const raw = opts.file.trim();
   if (!raw || raw.includes('\0')) throw new FileReadError('파일 경로가 필요합니다', 400);
   const abs = raw.startsWith('~/') ? path.join(opts.home, raw.slice(2)) : path.resolve(cwd, raw);
   const realHome = await fs.realpath(opts.home).catch(() => opts.home);
-  if (isDeniedPath(abs, opts.home) || isDeniedPath(abs, realHome)) throw new FileReadError('보안상 열 수 없는 파일입니다', 403);
+  const denyRoots = (await Promise.all((opts.denyRoots ?? []).map(async (d) => [d, await fs.realpath(d).catch(() => d)]))).flat();
+  const denied = (p: string, h: string) => isDeniedPath(p, h) || isUnderRoots(p, denyRoots);
+  if (denied(abs, opts.home) || denied(abs, realHome)) throw new FileReadError('보안상 열 수 없는 파일입니다', 403);
   let real: string;
   try { real = await fs.realpath(abs); } catch {
     // Don't confirm whether paths outside the folder exist.
     throw isUnderRoots(abs, [cwd]) ? new FileReadError('파일을 찾을 수 없습니다', 404) : new FileReadError('세션 폴더 안의 파일만 열 수 있습니다', 403);
   }
   if (!isUnderRoots(real, [cwd])) throw new FileReadError('세션 폴더 안의 파일만 열 수 있습니다', 403);
-  if (isDeniedPath(real, realHome)) throw new FileReadError('보안상 열 수 없는 파일입니다', 403);
+  if (denied(real, realHome)) throw new FileReadError('보안상 열 수 없는 파일입니다', 403);
   let fh: import('node:fs/promises').FileHandle;
   try { fh = await fs.open(real, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch { throw new FileReadError('파일을 열 수 없습니다', 404); }
   try {

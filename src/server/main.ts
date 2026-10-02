@@ -1,6 +1,7 @@
 import { computeBuildId } from './buildId';
 import http from 'node:http';
 import os from 'node:os';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AttachmentStore } from './attachments/AttachmentStore';
 import { loadOrCreateToken } from './auth';
@@ -47,7 +48,8 @@ async function main(): Promise<void> {
   await Promise.all([index.refresh({ codexInBackground: true }), store.load(), pins.load(), settings.load(), pushSubs.load()]);
   const commands = new SlashCommandCache();
   const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries()).flatMap((p) => p.sessions) });
-  const files = new FileLister({ home: cfg.home, roots: cfg.cwdRoots });
+  // /api/file never previews deck's own config (token, VAPID key, push subscriptions), even with the cwd at ~.
+  const files = new FileLister({ home: cfg.home, roots: cfg.cwdRoots, denyRoots: [await fs.realpath(cfg.configDir).catch(() => cfg.configDir)] });
   usage.start();
   // F3: GPT usage from the newest Codex rollouts (Desktop/CLI too), at start and every 60 s.
   const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
