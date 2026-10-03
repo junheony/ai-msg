@@ -1,8 +1,23 @@
-# HANDOFF — deck (갱신 2026-10-01, 병합 5건 반영)
+# HANDOFF — deck (갱신 2026-10-04)
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 비공개 저장소(원격 없음).
 
-## 1. 지금 무슨 작업 중인가
+## 0. 최신 상태 (2026-10-04, master `22d9ae8`, 단위 1179 통과, 빌드·재시작 완료)
+최근 병합 4건 — 각각 Fable(critic) + Astra(GPT-6, `deck-run -q gpt - < bundle.md`) 교차 리뷰 후 수정:
+- **engine-badge**: 사이드바·새 대화 카드·⌘K·채팅 헤더에 Claude/GPT 엔진 마크(`EngineMark.tsx`). `codex exec` 스레드도 7일 이내면 목록에 뜸(`CodexImports.ts` `codexExec`).
+- **notice-meta**: Stop 훅 피드백·isMeta·task-notification 줄은 사용자 말풍선이 아니라 접힌 시스템 줄(`transcript.ts` `systemRow`, `turn_system` 이벤트). "다른 곳에서 쓰는 중" 배너는 패널 알림(`notices[]`, 최대 3)으로, 세션 제목·몇 분 전인지 표시(`elsewhereNotice.ts`).
+- **spread-routing**: 기본 라우팅 정책 '고르게 분산'(5h 가장 낮은 안전 계정), 기존 정책은 설정에서. 'down' 카드 들어올리기는 쓰는 창(5h·주간)마다 신선해야(`UsageService.lift`).
+- **refused-send**: 재시작 드레인 중 거절된 메시지·소켓 유실 메시지를 잃지도, 저절로 두 번 보내지도 않는다. 서버 `AcceptedRefs`(`<configDir>/accepted-refs.json`, 세션당 500·7일) + `pendingRefs`, 중복 ref 는 `already_accepted`(버림)/`in_flight`(멈춰 둠) 로 거절. 클라 큐는 sessionStorage `deck.queues.v1`, 상태 기계 설명은 `state.ts` 상단 주석.
+
+서버 재시작: `/tmp/deck-relaunch.sh`(USR2 → 드레인 → `tsx src/server/main.ts`, CLAUDE_CONFIG_DIR=~/.claude-b) 를 `perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' nohup /tmp/deck-relaunch.sh &` 로. /tmp 라 재부팅 시 사라짐.
+
+다음 할 일:
+1. 오래된 워크트리 정리(`.claude/worktrees/{refused,spread,notice,engine,…}`).
+2. 알려진 틈: 다른 deck 상태 저장소의 Codex 스레드가 '자동 실행'으로 보일 수 있음 · 후속 턴 쓰기 실패 시 실패 말풍선 + 앱 배너가 같은 문구로 두 번 · `(갈라진 사본)` 세션 2개(DWF QUANT 62adebb9, Crime Detector 950f92ec)는 사용자가 보관.
+3. 후보: deck 안에서 Astra 자동 자문(설계 먼저 제안).
+4. usage-deck `bin/offload` 버그(다른 세션 소유): `[[ -n "${PROMPT//[[:space:]]/}" ]]` 가 bash 3.2 에서 큰 한글 입력에 2차 시간 → `grep -q '[^[:space:]]'` 로.
+
+## 1. (이력) 2026-10-01 시점
 
 **Plan 2 완료·검증·병합(2026-10-01, `master`)** — 작업 14개 각각 리뷰 → 전 브랜치 최종 리뷰(Fable) 수정 → **독립 검증 통과**(verifier: 단위 337 · 실계정 E2E 12/12 재실행 · 실제 서버 + 헤드리스 브라우저로 UI 6항목 확인). 계획 `docs/superpowers/plans/2026-09-30-deck-plan2.md`, 진행 중 내린 판단 전부 `docs/superpowers/plans/2026-09-30-deck-plan2-rulings.md`.
 Plan 2 로 들어간 것: GPT(ChatGPT Pro) 엔진 — 공식 `codex exec --json` 자식 프로세스, `gpt-6-sol`/`gpt-6-astra`, 샌드박스(읽기 전용 / 작업폴더 쓰기), 롤아웃 파일에서 기록·잔여량 · 엔진 선택(Claude/GPT/자동) · 분할보기 1–4 패널 · 첨부(이미지 → Claude image 블록·Codex `-i`, 그 밖은 경로) · 폰 레이아웃(서랍·단일 패널) · 역할 분배 표시 · AskUserQuestion 답 카드.
