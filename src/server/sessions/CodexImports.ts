@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { SessionEntry } from '../../shared/session-types';
+import { elsewhereNotice } from './elsewhereNotice';
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : null);
@@ -12,6 +13,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Bytes read from a rollout's start to find its meta and first prompt (Desktop prepends ~100 KB of context). */
 const HEAD_BYTES = 2 * 1024 * 1024;
 /** A rollout touched this recently is probably still open in Codex Desktop / CLI. */
+const UNTITLED = '(제목 없음)';
+
 export const LIVE_ROLLOUT_MS = 2 * 60 * 1000;
 /** `codex exec` (automation) threads are listed only while written this recently. */
 export const EXEC_RECENT_MS = 7 * 24 * 60 * 60 * 1000;
@@ -134,7 +137,7 @@ export class CodexRolloutIndex {
       if (prev && prev.lastModified >= f.mtimeMs) continue;
       byId.set(h.threadId, {
         sessionId: h.threadId, account: 'gpt', engine: 'codex', cwd: h.cwd, projectDir: path.dirname(f.file), file: f.file,
-        title: h.title ?? '(제목 없음)', lastModified: f.mtimeMs, sizeBytes: f.size, imported: true,
+        title: h.title ?? UNTITLED, lastModified: f.mtimeMs, sizeBytes: f.size, imported: true,
         ...(h.exec ? { codexExec: true } : {}),
       });
     }
@@ -152,10 +155,18 @@ export class CodexRolloutIndex {
   }
 }
 
-/** Whether a rollout was written within LIVE_ROLLOUT_MS (Codex Desktop / CLI probably has it open). */
-export async function rolloutRecentlyActive(file: string, nowMs = Date.now()): Promise<boolean> {
+/** How long ago a rollout was written, if within LIVE_ROLLOUT_MS (Codex Desktop / CLI probably has it open); else null. */
+export async function rolloutActiveAgeMs(file: string, nowMs = Date.now()): Promise<number | null> {
   const st = await fs.stat(file).catch(() => null);
-  return !!st && nowMs - st.mtimeMs < LIVE_ROLLOUT_MS;
+  return st && nowMs - st.mtimeMs < LIVE_ROLLOUT_MS ? Math.max(0, nowMs - st.mtimeMs) : null;
 }
 
-export const LIVE_ROLLOUT_NOTICE = '이 대화가 최근 2분 안에 Codex 앱/CLI 에서 바뀌었어요 — 아직 열려 있다면 두 곳에서 이어 쓰면 대화가 갈라집니다';
+/** Whether a rollout was written within LIVE_ROLLOUT_MS. */
+export async function rolloutRecentlyActive(file: string, nowMs = Date.now()): Promise<boolean> {
+  return (await rolloutActiveAgeMs(file, nowMs)) !== null;
+}
+
+/** The notice for an imported Codex thread written outside deck `ageMs` ago. */
+export function liveRolloutNotice(title: string | null, ageMs: number): string {
+  return elsewhereNotice({ engine: 'codex', title: title === UNTITLED ? null : title, ageMs });
+}

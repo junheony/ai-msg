@@ -8,7 +8,6 @@ import type { ServerMessage } from '../shared/protocol';
 import { cookieValueFor } from './auth';
 import { StubEngine } from './engine/StubEngine';
 import { createRequestHandler } from './http';
-import { LIVE_ROLLOUT_NOTICE } from './sessions/CodexImports';
 import { SessionIndex } from './sessions/SessionIndex';
 import { CLI_ID, DESKTOP_ID, writeFixtures } from './sessions/codexFixtures';
 import { SessionStateStore } from './turn/SessionState';
@@ -85,7 +84,7 @@ describe('ws: imported Codex threads', () => {
     expect(h).toMatchObject({ sessionId: DESKTOP_ID, cwd: work, account: 'gpt', engine: 'codex', sandbox: 'read-only', runningTurnId: null });
     expect(h.messages.map((m) => m.kind)).toEqual(['user', 'assistant', 'tool_result', 'assistant']);
     expect(h.messages[0]).toMatchObject({ kind: 'user', text: expect.stringContaining('스크린샷의 버그 고쳐줘') });
-    expect(await c.until((m) => m.type === 'turn_notice')).toMatchObject({ sessionId: DESKTOP_ID, message: LIVE_ROLLOUT_NOTICE });
+    expect(await c.until((m) => m.type === 'turn_notice')).toMatchObject({ sessionId: DESKTOP_ID, turnId: '', message: expect.stringMatching(/^「스크린샷의 버그 고쳐줘」 GPT 대화의 기록 파일이 (방금|\d+분 전에) deck 밖\(Codex 앱 또는 Codex CLI\)에서 바뀌었어요\. /) });
     c.ws.close();
   });
 

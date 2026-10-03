@@ -6,6 +6,25 @@ import { MessageView } from './MessageView';
 describe('MessageView', () => {
   afterEach(cleanup);
 
+  it('a Stop-hook item is a muted system row with the feedback collapsed until clicked — not a user bubble', () => {
+    const { container, getByTestId } = render(<MessageView item={{ kind: 'hook', event: 'Stop', text: 'Stop hook feedback:\n[verify] 테스트가 실패합니다' }} />);
+    const row = getByTestId('hook-row');
+    expect(row.classList.contains('system')).toBe(true);
+    expect(container.querySelector('.msg.user')).toBeNull();
+    expect(row.querySelector('summary')?.textContent).toContain('Stop 훅이 이어서 진행시킴');
+    const details = row.querySelector('details')!;
+    expect(details.open).toBe(false);
+    const body = row.querySelector('.sys-body')!;
+    expect(body.textContent).toBe('[verify] 테스트가 실패합니다');
+    fireEvent.click(row.querySelector('summary')!);
+    expect(details.open).toBe(true);
+  });
+
+  it('other hook events get a generic label', () => {
+    const { getByTestId } = render(<MessageView item={{ kind: 'hook', event: 'PreToolUse', text: 'PreToolUse:Bash hook blocking error from command: "x": no' }} />);
+    expect(getByTestId('hook-row').querySelector('summary')?.textContent).toContain('PreToolUse 훅 메시지');
+  });
+
   it('renders markdown images as links, never as <img> (no auto-loading remote URLs)', () => {
     const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'see ![pixel](https://evil.example/p.png?leak=1) here', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
     expect(container.querySelector('img')).toBeNull();

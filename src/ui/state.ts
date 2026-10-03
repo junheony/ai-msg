@@ -12,6 +12,8 @@ export type ToolCallItem = { toolUseId: string; name: string; input: unknown; re
 
 export type ChatItem =
   | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number }
+  /** A hook's message to the model (e.g. a Stop hook made it keep going): a muted row, collapsed. Never counted as a user message. */
+  | { kind: 'hook'; event: string; text: string }
   | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null };
 
 /** A subagent's own tool call, shown in its Agent card (nested subagents' calls are flattened into the top card). */
@@ -89,7 +91,11 @@ export type PaneState = {
   handoffFrom: { sessionId: string; title: string } | null;
   /** Composer text to put in once (the new session's first message, sent only when the user presses Enter). */
   prefill: string | null;
+  /** A note about the session no turn owns (e.g. written outside deck just now): a dismissible bar in this pane, dropped when the pane shows another session. */
+  notice?: PaneNotice | null;
 };
+
+export type PaneNotice = { sessionId: string | null; message: string };
 
 export type AppState = {
   connected: boolean;
@@ -121,7 +127,7 @@ export type AppState = {
 export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notice: null };
 }
 
 export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, activity: [], unread: [] };
@@ -148,6 +154,7 @@ export type Action =
   | { type: 'close_pane'; paneId: string }
   | { type: 'focus_pane'; paneId: string }
   | { type: 'dismiss_error' }
+  | { type: 'dismiss_notice'; paneId?: string }
   | { type: 'set_pins'; pins: string[] }
   | { type: 'show_error'; message: string }
   | { type: 'queue_add'; text: string; paneId?: string; /** Also sent as a steer under this id (전달 대기 until the server answers). */ steerId?: string }
@@ -174,6 +181,7 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   for (const m of messages) {
     if (m.kind === 'user') items.push({ kind: 'user', text: m.text, ...(m.n !== undefined ? { n: m.n } : {}) });
+    else if (m.kind === 'hook') items.push({ kind: 'hook', event: m.event, text: m.text });
     else if (m.kind === 'assistant') {
       const at = m.ts ? Date.parse(m.ts) : NaN;
       const ctx: ContextInfo | null = m.usage ? { usage: m.usage, window: contextWindowOf(m.model), at: Number.isNaN(at) ? null : at, model: m.model, account: null } : null;
@@ -323,7 +331,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // PF13: a Claude session is never sent a GPT model and vice versa.
       const model = modelFor(engine, pane.model);
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
-      return { ...pane, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt };
+      const notice = pane.notice && pane.notice.sessionId !== msg.sessionId ? { notice: null } : {};
+      return { ...pane, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
     }
     case 'turn_started': {
       let p = pane;
@@ -436,9 +445,17 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       if (!msg.tasks.length) return pane.bg ? { ...pane, bg: null } : pane;
       return { ...pane, bg: { turnId: msg.turnId, tasks: msg.tasks, detail: msg.detail ?? [], receivedAt: Date.now(), canStop: msg.canStop === true } };
     }
-    case 'turn_notice':
+    case 'turn_notice': {
       if (!belongs(pane, msg)) return pane;
-      return updateTurn(pane, msg.turnId, (it) => ({ ...it, notes: [...it.notes, msg.message] }));
+      const next = msg.turnId ? updateTurn(pane, msg.turnId, (it) => ({ ...it, notes: [...it.notes, msg.message] })) : pane;
+      if (next !== pane) return next;
+      // No turn item owns it (a notice on opening the session): the pane's own bar, never the app-wide banner.
+      return { ...pane, notice: { sessionId: msg.sessionId ?? pane.session?.sessionId ?? null, message: msg.message } };
+    }
+    case 'turn_hook':
+      if (!belongs(pane, msg)) return pane;
+      // Where the turn's answer stands now: what streamed so far closes, the rest streams after the row.
+      return { ...pane, items: withSteerBubble(pane.items, msg.turnId, { kind: 'hook', event: msg.event, text: msg.text }) };
     case 'turn_result': {
       const mine = pane.myTurns.includes(msg.turnId);
       const myTurns = mine ? pane.myTurns.filter((t) => t !== msg.turnId) : pane.myTurns;
@@ -497,6 +514,7 @@ function afterHandoffNote(pane: PaneState, ok: boolean): PaneState {
     queuePaused: pane.queuePaused || pane.queue.length > 0,
     ...ACTIVITY_RESET,
     handoff: null,
+    notice: null,
     handoffFrom: { sessionId: h.sessionId, title: h.title },
     prefill: handoffFirstMessage(h.title, h.sessionId, note),
   };
@@ -589,16 +607,19 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       const add = finished.filter((sid) => sid !== focused && !state.unread.includes(sid));
       return { ...state, activity: msg.sessions, unread: add.length ? [...state.unread, ...add] : state.unread, panes: mapPanes(state, msg) };
     }
-    case 'turn_notice': {
-      const panes = mapPanes(state, msg);
-      if (panes.some((p, i) => p !== state.panes[i])) return { ...state, panes };
-      // A pane owns this turn but has no item for it: surface the notice globally. Other sessions' notices are ignored.
-      return state.panes.some((p) => belongs(p, msg)) ? { ...state, error: msg.message } : state;
-    }
+    // Pane-scoped: a turn's notes, else the bar of the panes showing that session. Other sessions' notices are ignored.
+    case 'turn_notice': case 'turn_hook':
+      return { ...state, panes: mapPanes(state, msg) };
     case 'turn_result':
       return { ...state, panes: mapPanes(state, msg), pending: state.pending.filter((p) => p.turnId !== msg.turnId), questions: state.questions.filter((q) => q.turnId !== msg.turnId) };
-    case 'error':
+    case 'error': {
+      // About one session (e.g. its history could not be read): the bar of the panes showing it, if any; else app-wide.
+      const sid = msg.sessionId;
+      if (sid && state.panes.some((p) => p.session?.sessionId === sid)) {
+        return { ...state, panes: mapPanes(state, msg).map((p) => (p.session?.sessionId === sid ? { ...p, notice: { sessionId: sid, message: msg.message } } : p)) };
+      }
       return { ...state, panes: mapPanes(state, msg), error: msg.message };
+    }
   }
 }
 
@@ -622,7 +643,7 @@ export function reducer(state: AppState, action: Action): AppState {
       ...p,
       session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
       items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET,
-      handoff: null, handoffFrom: null, prefill: null,
+      handoff: null, handoffFrom: null, prefill: null, notice: null,
     }));
     case 'branch_edit': return updatePane(state, action.paneId, (p) => {
       if (!p.session) return p;
@@ -635,7 +656,7 @@ export function reducer(state: AppState, action: Action): AppState {
         session: { sessionId: null, cwd: p.session.cwd, account: null, title: p.session.title, engine: 'claude', sandbox: null, ...(p.session.accountPin ? { accountPin: p.session.accountPin } : {}), ...(p.session.permissionMode ? { permissionMode: p.session.permissionMode } : {}) },
         items: [...kept, { kind: 'user', text: action.text, n: action.n }],
         activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, queuePaused: p.queuePaused || p.queue.length > 0,
-        ...ACTIVITY_RESET, runStartedAt: Date.now(), handoff: null, handoffFrom: null, prefill: null,
+        ...ACTIVITY_RESET, runStartedAt: Date.now(), handoff: null, handoffFrom: null, prefill: null, notice: null,
       };
     });
     case 'sent': return updatePane(state, action.paneId, (p) => ({
@@ -662,7 +683,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
     case 'clear_pane': return updatePane(state, action.paneId, (p) => ({
       ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET,
-      handoff: null, handoffFrom: null, prefill: null,
+      handoff: null, handoffFrom: null, prefill: null, notice: null,
     }));
     case 'add_pane': {
       if (state.panes.length >= MAX_PANES) return state;
@@ -682,6 +703,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, activePaneId: action.paneId, unread: sid && state.unread.includes(sid) ? state.unread.filter((u) => u !== sid) : state.unread };
     }
     case 'dismiss_error': return { ...state, error: null };
+    case 'dismiss_notice': return updatePane(state, action.paneId, (p) => (p.notice ? { ...p, notice: null } : p));
     case 'set_pins': return { ...state, pins: action.pins };
     case 'show_error': return { ...state, error: action.message };
     case 'queue_add': {

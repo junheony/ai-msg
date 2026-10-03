@@ -23,6 +23,7 @@ export function conversationMarkdown(o: { title: string; items: ChatItem[]; cwd?
       out.push('', '## 사용자', '', ...(text ? [text] : []), ...(files.length ? ['', files.join(' · ')] : []));
       continue;
     }
+    if (it.kind === 'hook') continue;
     const tools = it.toolCalls.map((c) => `- 🔧 ${toolLabel(c)}${c.isError ? ' (오류)' : ''}`);
     if (!it.text && !tools.length && !it.error) continue;
     out.push('', `## ${who}`);

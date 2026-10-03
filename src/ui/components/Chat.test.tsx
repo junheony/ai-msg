@@ -32,6 +32,18 @@ describe('Chat', () => {
     expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();
   });
 
+  it('a pane notice shows as a bar above the transcript; × dismisses it', () => {
+    const onDismissNotice = vi.fn();
+    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { notice: '「x」 대화의 기록 파일이 방금 deck 밖에서 바뀌었어요.', onDismissNotice });
+    const bar = screen.getByTestId('pane-notice');
+    expect(bar.getAttribute('role')).toBe('status');
+    expect(bar.textContent).toContain('deck 밖에서 바뀌었어요');
+    fireEvent.click(within(bar).getByLabelText('알림 닫기'));
+    expect(onDismissNotice).toHaveBeenCalledTimes(1);
+    cleanup();
+    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { notice: null });
+    expect(screen.queryByTestId('pane-notice')).toBeNull();
+  });
 
   it('a failed last turn offers 재시도, which re-sends the same prompt', () => {
     const onSend = renderChat([{ kind: 'user', text: 'first' }, { ...failed, error: null, text: 'fine' }, { kind: 'user', text: 'do the thing' }, failed]);

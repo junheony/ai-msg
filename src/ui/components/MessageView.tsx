@@ -138,6 +138,25 @@ function SystemNotice({ n }: { n: InjectedNotice }) {
   );
 }
 
+/** A hook's message to the model (Claude Code logs it as a user line): one muted row, its text collapsed. */
+function HookRow({ item }: { item: Extract<ChatItem, { kind: 'hook' }> }) {
+  // "Stop hook feedback:\n…": the header line is the label already; the feedback itself is the body.
+  const body = item.text.replace(/^[^\n]*hook (?:feedback|blocking error)[^\n]*:\s*/, '').trim() || item.text;
+  const label = item.event === 'Stop' || item.event === 'SubagentStop' ? `${item.event} 훅이 이어서 진행시킴` : `${item.event} 훅 메시지`;
+  return (
+    <div className="msg system" data-testid="hook-row">
+      <details className="sys-notice hook">
+        <summary>
+          <span className="sys-icon" aria-hidden="true">↻</span>
+          <span className="sys-label">{label}</span>
+          <span className="tool-caret" aria-hidden="true">›</span>
+        </summary>
+        <div className="sys-detail"><pre className="sys-body">{body}</pre></div>
+      </details>
+    </div>
+  );
+}
+
 function extOf(name: string): string {
   const m = /\.([a-z0-9]{1,5})$/i.exec(name);
   return m ? m[1]!.toUpperCase() : '';
@@ -300,6 +319,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
       </>
     );
   }
+  if (item.kind === 'hook') return <HookRow item={item} />;
   const stopped = !!item.badge && !item.streaming && isStoppedTurn({ badge: item.badge, error: item.error, text: item.text });
   const retry = last && !item.streaming ? actions.onRetry : undefined;
   const hasActions = !item.streaming && (!!item.text || !!retry);

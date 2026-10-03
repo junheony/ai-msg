@@ -167,6 +167,16 @@ describe('TurnRunner', () => {
     expect((notice as { message: string }).message).toContain('[redacted]');
   });
 
+  it('a hook event becomes turn_hook on the running turn (redacted), not a user message', async () => {
+    const eng = new StubEngine(() => ok('new3', [{ kind: 'hook', event: 'Stop', text: 'Stop hook feedback:\nsk-ant-abc123def456ghi789jkl 계속' }]));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    const hook = msgsOf(c, 'turn_hook')[0];
+    expect(hook).toMatchObject({ type: 'turn_hook', turnId: 't', event: 'Stop' });
+    expect((hook as { text: string }).text).toContain('[redacted]');
+    expect((hook as { text: string }).text).not.toContain('sk-ant-abc123def456ghi789jkl');
+  });
+
   it('a secret split across thinking deltas arrives redacted; held text is flushed before the reply, no empty chunks', async () => {
     const key = 'sk-ant-api03-AbCdEf0123456789_xyzQRST';
     for (let i = 1; i < key.length; i++) {

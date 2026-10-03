@@ -270,6 +270,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           draftKey={`new:${pane.id}`}
           prevSession={link(prevId)}
           nextSession={link(entry?.nextSession ?? null)}
+          notice={pane.notice && (pane.notice.sessionId === null || pane.notice.sessionId === s.sessionId) ? pane.notice.message : null}
+          onDismissNotice={() => dispatch({ type: 'dismiss_notice', paneId: pane.id })}
           onInterrupt={() => {
             if (!pane.activeTurnId) return;
             // ux-state: stop keeps the queue but pauses it — the next message must not fire into the stop.

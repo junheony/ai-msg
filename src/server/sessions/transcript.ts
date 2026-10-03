@@ -38,8 +38,18 @@ function message(r: Rec): Rec | null {
   return m && typeof m === 'object' ? (m as Rec) : null;
 }
 
+/** A user record the person (or deck) sent: not a compact summary, a subagent's, or harness-injected (`isMeta`). */
 function isRealUser(r: Rec): boolean {
-  return r.type === 'user' && !r.isCompactSummary && !r.isSidechain;
+  return r.type === 'user' && !r.isCompactSummary && !r.isSidechain && !r.isMeta;
+}
+
+/** Claude Code's hook messages: "Stop hook feedback:\n…", "PreToolUse:Bash hook blocking error from command: …". */
+const HOOK_RE = /^([A-Za-z]+)(?::\S*)? hook (?:feedback|blocking error)\b/;
+
+/** A hook's message to the model (e.g. a Stop hook sending it back to work): its event and text, else null. */
+export function hookMessage(text: string): { event: string; text: string } | null {
+  const m = HOOK_RE.exec(text);
+  return m ? { event: m[1]!, text } : null;
 }
 
 /**
@@ -180,7 +190,14 @@ class TranscriptBuilder {
 
   add(r: Rec): void {
     const ts = typeof r.timestamp === 'string' ? r.timestamp : null;
-    if (isRealUser(r)) {
+    if (r.type === 'user' && r.isMeta && !r.isSidechain) {
+      // Harness-injected (skill bodies, caveats, hook feedback): never a user message. Hook feedback is a system row.
+      const hook = hookMessage(textOfContent(message(r)?.content));
+      if (hook) {
+        this.push({ kind: 'hook', event: hook.event, text: hook.text, ts });
+        this.lastAssistantId = null;
+      }
+    } else if (isRealUser(r)) {
       const m = message(r);
       const content = m?.content;
       if (Array.isArray(content) && content.some((b) => b && typeof b === 'object' && (b as Rec).type === 'tool_result')) {

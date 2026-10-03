@@ -59,6 +59,8 @@ export type EngineEvent =
   | { kind: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string; taskId?: string; toolUseId?: string | null; usage?: TaskUsage }
   /** A steer (`LiveInput.steer`) reached the model here: the CLI echoed it back (mid-turn fold, or start of its own turn). */
   | { kind: 'steer_delivered'; id: string }
+  /** A hook's message to the model mid-turn (Claude Code injects it as a synthetic user message), e.g. a Stop hook sending it back to work. */
+  | { kind: 'hook'; event: string; text: string }
   | EngineResult;
 
 /** A user message sent into a still-open Claude process (background work pending). */

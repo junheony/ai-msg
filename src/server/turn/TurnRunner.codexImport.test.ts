@@ -6,7 +6,7 @@ import type { ServerMessage } from '../../shared/protocol';
 import type { CodexEngine, CodexTurnRequest } from '../engine/CodexEngine';
 import type { EngineEvent } from '../engine/Engine';
 import { StubEngine } from '../engine/StubEngine';
-import { LIVE_ROLLOUT_NOTICE } from '../sessions/CodexImports';
+import { liveRolloutNotice } from '../sessions/CodexImports';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { DESKTOP_ID, writeFixtures } from '../sessions/codexFixtures';
 import { UsageService } from '../usage/UsageService';
@@ -73,7 +73,8 @@ describe('TurnRunner: continuing an imported Codex thread', () => {
     const c = await setup({ autoApprove: true });
     await c.runner.run({ turnId: 't1', cwd: work, sessionId: DESKTOP_ID, text: 'go' }, c.sink);
     expect(c.calls[0]).toMatchObject({ resumeThreadId: DESKTOP_ID, sandbox: 'workspace-write' });
-    expect(c.msgs.find((m) => m.type === 'turn_notice')).toMatchObject({ message: LIVE_ROLLOUT_NOTICE, sessionId: DESKTOP_ID });
+    expect(c.msgs.find((m) => m.type === 'turn_notice')).toMatchObject({ message: expect.stringContaining('「스크린샷의 버그 고쳐줘」 GPT 대화의 기록 파일이'), sessionId: DESKTOP_ID });
+    expect((c.msgs.find((m) => m.type === 'turn_notice') as { message: string }).message).toBe(liveRolloutNotice('스크린샷의 버그 고쳐줘', 0));
     expect(c.msgs.find((m) => m.type === 'turn_result')).toMatchObject({ ok: true });
   });
 });

@@ -167,6 +167,14 @@ describe('mapSdkMessage', () => {
     expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, message: tr }))).toEqual([{ kind: 'tool_result', toolUseId: 'u1', content: 'ok', isError: false }]);
   });
 
+  it('hook feedback injected as a top-level user message → a hook event; a subagent copy or a replay maps to nothing', () => {
+    const msg = { role: 'user', content: 'Stop hook feedback:\n[verify] 테스트 실패' };
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, message: msg }))).toEqual([{ kind: 'hook', event: 'Stop', text: 'Stop hook feedback:\n[verify] 테스트 실패' }]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: 'agent', message: msg }))).toEqual([]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, isReplay: true, message: msg }))).toEqual([]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: 'plain text' } }))).toEqual([]);
+  });
+
   it('init, text deltas (top-level only), tool calls, tool results, rate limit, compact, result', () => {
     expect(mapSdkMessage(M({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-opus-5-5', cwd: '/private/var/w' }))).toEqual([{ kind: 'init', sessionId: 's', model: 'claude-opus-5-5', cwd: '/private/var/w' }]);
     expect(mapSdkMessage(M({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } } }))).toEqual([{ kind: 'delta', text: 'ok' }]);

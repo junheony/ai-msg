@@ -20,7 +20,8 @@ import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
-import { LIVE_ROLLOUT_NOTICE, rolloutRecentlyActive } from '../sessions/CodexImports';
+import { liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
+import { elsewhereNotice } from '../sessions/elsewhereNotice';
 import { backupDivergedAndMove } from '../sessions/SessionFork';
 import { isAncestor, moveSession } from '../sessions/SessionMover';
 import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
@@ -105,8 +106,6 @@ export type TurnRunnerDeps = {
 
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
-/** Shown right after turn_started when a copy of the session was just written by something other than deck. */
-export const OPEN_ELSEWHERE_NOTICE = '이 대화가 Desktop/CLI 에서도 열려 있는 것 같아요 — 두 곳에서 이어 쓰면 갈라져요';
 
 /** gemini-cli's quota / 429 errors (TerminalQuotaError, RESOURCE_EXHAUSTED); matched on the CLI's result error only. */
 const GEMINI_LIMIT_RE = /\bRESOURCE_EXHAUSTED\b|exhausted your (daily )?quota|\bQuota exceeded\b|"code"\s*:\s*429\b/i;
@@ -389,7 +388,7 @@ export class TurnRunner {
       if (!st && (!e || e.account === 'gpt' || isGeminiAccount(e.account) || e.imported)) return { ok: false as const, error: 'Claude 대화만 삭제할 수 있습니다' };
       if (this.active.has(sessionId) || this.live.has(sessionId)) return { ok: false as const, error: '실행 중인 대화는 삭제할 수 없습니다 — 끝난 뒤 다시 시도하세요' };
       const base: ClaudeSessionState = st ?? { sessionId, cwd: e!.cwd, account: e!.account as Account, projectDir: e!.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
-      if (await this.openElsewhere(base)) return { ok: false as const, error: '다른 곳(Desktop/CLI)에서 열려 있는 것 같아 삭제하지 않았습니다' };
+      if ((await this.openElsewhere(base)) !== null) return { ok: false as const, error: '다른 곳(Desktop/CLI)에서 열려 있는 것 같아 삭제하지 않았습니다' };
       const copies = await findCopies(this.deps.projectsRoots, sessionId, base.projectDir, base.account).catch(() => []);
       try {
         const r = await moveToTrash({ sessionId, projectDirs: copies.map((c) => c.projectDir), nowMs: this.now() });
@@ -686,16 +685,18 @@ export class TurnRunner {
   /**
    * A copy of the session (deck's or another profile's) was written in the last 2 minutes, after deck's own
    * last turn or write, with no deck process holding it: Desktop or a CLI probably has it open. Stat only.
+   * Returns how long ago the newest such copy was written, else null.
    */
-  private async openElsewhere(state: ClaudeSessionState): Promise<boolean> {
-    if (this.live.has(state.sessionId)) return false;
+  private async openElsewhere(state: ClaudeSessionState): Promise<number | null> {
+    if (this.live.has(state.sessionId)) return null;
     const now = this.now();
     const copies = await findCopies(this.deps.projectsRoots, state.sessionId, state.projectDir, state.account).catch(() => []);
     // A clearly future mtime is clock skew, not a writer.
-    return copies.some((c) => {
+    const ages = copies.filter((c) => {
       const deckAt = Math.max(state.lastTurnAtMs ?? 0, this.deckWroteAt.get(path.resolve(c.file)) ?? 0);
       return now - c.mtimeMs < 120_000 && now - c.mtimeMs > -5_000 && c.mtimeMs > deckAt + 5_000;
-    });
+    }).map((c) => Math.max(0, now - c.mtimeMs));
+    return ages.length ? Math.min(...ages) : null;
   }
 
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, forkAt: string | null, sink: TurnSink, grants: SessionGrants, modeRef: ModeRef, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
@@ -792,6 +793,7 @@ export class TurnRunner {
             break;
           case 'compact': out.compacted = true; break;
           case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          case 'hook': sink.emit({ type: 'turn_hook', ...scope(), event: ev.event, text: redactSecrets(ev.text) }); break;
           case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
           case 'steer_delivered': this.steerDelivered(p.turnId, ev.id, sink, scope()); break;
           case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
@@ -908,6 +910,7 @@ export class TurnRunner {
           case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
           case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          case 'hook': sink.emit({ type: 'turn_hook', ...scope(), event: ev.event, text: redactSecrets(ev.text) }); break;
           // A background task settled while the process waits: the push (PushNotifier) fires here, not only inside the turn.
           case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
           case 'rate_limit': this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}) }); break;
@@ -982,7 +985,8 @@ export class TurnRunner {
           defaultModel: isCodexModel(p.model) ? p.model : DEFAULT_CODEX_MODEL, sandbox: p.sandbox ?? defaultSandbox(this.defaultMode() === 'bypassPermissions'),
           rolloutFile: imported.file, createdAtMs: this.now(), title: imported.title,
         };
-        if (await rolloutRecentlyActive(imported.file, this.now())) notice = LIVE_ROLLOUT_NOTICE;
+        const age = await rolloutActiveAgeMs(imported.file, this.now());
+        if (age !== null) notice = liveRolloutNotice(imported.title, age);
       } else if (!state) {
         const e = deps.index.lookup(p.sessionId);
         // Codex sessions always have a state entry (D4); a 'gpt' index entry without one is a bug, not a resumable session.
@@ -1049,7 +1053,7 @@ export class TurnRunner {
         case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
         case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
         case 'result': result = ev; break;
-        case 'rate_limit': case 'compact': case 'task_done': case 'background': case 'continue': case 'progress': case 'sub_tool_call': case 'sub_tool_result': case 'task_update': break;
+        case 'rate_limit': case 'compact': case 'task_done': case 'background': case 'continue': case 'progress': case 'sub_tool_call': case 'sub_tool_result': case 'task_update': case 'hook': break;
       }
     }
     const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
@@ -1199,7 +1203,8 @@ export class TurnRunner {
       else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; byPin = false; }
     }
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
-    if (state && !forkAt && (await this.openElsewhere(state))) early.push(OPEN_ELSEWHERE_NOTICE);
+    const elsewhereAge = state && !forkAt ? await this.openElsewhere(state) : null;
+    if (state && elsewhereAge !== null) early.push(elsewhereNotice({ engine: 'claude', title: deps.index.lookup(state.sessionId)?.title ?? null, ageMs: elsewhereAge }));
     if (pin && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
     const pinMark = () => (byPin ? { pinned: true } : {});
 

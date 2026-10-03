@@ -151,6 +151,8 @@ export type ServerMessage =
   | { type: 'question_resolved'; requestId: string; answers: QuestionAnswers | null }
   /** Non-terminal note about a running turn (e.g. a refused session move). */
   | ({ type: 'turn_notice'; message: string } & TurnScope)
+  /** A hook sent the model a message mid-turn (e.g. a Stop hook made it keep going): a muted row in the turn. `event`: Stop, PreToolUse… */
+  | ({ type: 'turn_hook'; event: string; text: string } & TurnScope)
   /** A background task (run_in_background Bash, backgrounded agent) settled during the turn; drives a push, the UI ignores it. */
   | ({ type: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string; taskId?: string; toolUseId?: string | null; usage?: TaskUsage } & TurnScope)
   /** Live state of a task (subagent or background command): started, progress, status change. Latest wins per taskId. */
@@ -177,4 +179,4 @@ export type ServerMessage =
   | ({ type: 'steer_delivered'; steerId: string; prompt: TurnPrompt; /** Re-sent after `history` to a device that opened the session mid-turn (the transcript may already show it). */ replay?: true } & TurnScope)
   /** A steer did not go in (no running Claude turn, process closed, retry/failover): the sending device sends it after the turn. */
   | ({ type: 'steer_rejected'; steerId: string; message: string } & TurnScope)
-  | { type: 'error'; turnId: string | null; message: string; clientRef?: string };
+  | { type: 'error'; turnId: string | null; message: string; clientRef?: string; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string };

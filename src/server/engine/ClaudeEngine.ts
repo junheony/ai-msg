@@ -6,7 +6,7 @@ import { accountEnv } from '../../shared/accounts';
 import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage, type TaskStatus, type TaskUpdate, type TaskUsage, type TurnPhase, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
-import { textOfContent } from '../sessions/transcript';
+import { hookMessage, textOfContent } from '../sessions/transcript';
 import { parseQuestions, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
 import type { SlashCommandInfo } from './slashCommands';
@@ -457,6 +457,9 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
       // --replay-user-messages echoes what we (or the CLI) already sent; a replayed tool_result must not show twice.
       if ((m as unknown as Rec).isReplay === true) return [];
       const content = (m.message as unknown as Rec).content;
+      // A hook's synthetic message (Stop hook feedback…): a system row in the turn, never a user message.
+      const hook = m.parent_tool_use_id === null ? hookMessage(textOfContent(content)) : null;
+      if (hook) return [{ kind: 'hook', ...hook }];
       if (!Array.isArray(content)) return [];
       if (m.parent_tool_use_id !== null) {
         const parentToolUseId = m.parent_tool_use_id;

@@ -13,7 +13,7 @@ import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
 import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
-import { LIVE_ROLLOUT_NOTICE, rolloutRecentlyActive } from './sessions/CodexImports';
+import { liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
@@ -615,10 +615,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: defaultSandbox(deps.settings?.get().autoApprove ?? false), messages, ...runningOf(sessionId) });
               const t = turns.get(busy.get(sessionId) ?? '');
               if (t) replay(ws, t, sessionId);
-              if (await rolloutRecentlyActive(imported.file)) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: LIVE_ROLLOUT_NOTICE });
+              const age = await rolloutActiveAgeMs(imported.file);
+              if (age !== null) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: liveRolloutNotice(imported.title, age) });
               return;
             }
-            if (!entry) { send(ws, { type: 'error', turnId: null, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
+            if (!entry) { send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
             view(ws, sessionId);
             // PF5: `st` is narrowed to a Claude state (or null) by the Codex return above.
             const found = entry;
@@ -633,8 +634,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
                 // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
                 void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
               })
-              .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
-          })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
+              .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
+          })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
           break;
         }
         case 'close_session':
@@ -649,19 +650,19 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           void deps.runner.setAccountPin(msg.sessionId, msg.pin)
             .then((ok) => {
               if (ok) broadcast({ type: 'account_pin', sessionId: msg.sessionId, pin: msg.pin });
-              else send(ws, { type: 'error', turnId: null, message: `계정을 고정할 수 없는 세션입니다: ${msg.sessionId}` });
+              else send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `계정을 고정할 수 없는 세션입니다: ${msg.sessionId}` });
             })
-            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `계정 고정을 저장하지 못했습니다: ${errMsg(err)}` }));
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `계정 고정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
         case 'set_permission_mode':
           void deps.runner.setPermissionMode(msg.sessionId, msg.mode)
             .then((ok) => {
-              if (!ok) { send(ws, { type: 'error', turnId: null, message: `권한 모드를 바꿀 수 없는 세션입니다: ${msg.sessionId}` }); return; }
+              if (!ok) { send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `권한 모드를 바꿀 수 없는 세션입니다: ${msg.sessionId}` }); return; }
               broadcast({ type: 'permission_mode', sessionId: msg.sessionId, mode: msg.mode });
               // 모두 자동 승인 also lets through this session's cards already waiting (a plan still needs its own choice).
               if (msg.mode === 'bypassPermissions') for (const m of broker.pending()) if (m.sessionId === msg.sessionId && m.toolName !== 'ExitPlanMode') broker.resolve(m.requestId, 'once');
             })
-            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `권한 모드를 저장하지 못했습니다: ${errMsg(err)}` }));
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `권한 모드를 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
         case 'set_settings': {
           const store = deps.settings;

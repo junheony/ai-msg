@@ -10,7 +10,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { moveSession } from '../sessions/SessionMover';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState } from './SessionState';
-import { OPEN_ELSEWHERE_NOTICE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const SID = '22222222-2222-4222-8222-222222222222';
@@ -64,6 +64,8 @@ async function setup(): Promise<Ctx> {
 
 const fileOf = (c: Ctx, a: Account, dir = DIR) => path.join(c.roots[a], dir, `${SID}.jsonl`);
 const read = (f: string) => fs.readFile(f, 'utf8');
+/** The concurrent-open warning (TurnRunner's elsewhereNotice for Claude). */
+const ELSEWHERE = 'deck 밖(Claude Desktop 또는 Claude CLI)에서 바뀌었어요';
 const notices = (c: Ctx) => c.msgs.filter((m): m is Extract<ServerMessage, { type: 'turn_notice' }> => m.type === 'turn_notice').map((m) => m.message);
 
 async function put(c: Ctx, a: Account, content: string, mtimeMs?: number, dir = DIR) {
@@ -461,7 +463,7 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
     expect(c.eng.calls[0]).toMatchObject({ account: 'b' });
     const started = c.msgs.findIndex((m) => m.type === 'turn_started');
     expect(c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes('B 계정에 따로 이어진 사본이 있어 백업해 두고'))).toBeGreaterThan(started);
-    expect(c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message === OPEN_ELSEWHERE_NOTICE)).toBeGreaterThan(started);
+    expect(c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes(ELSEWHERE))).toBeGreaterThan(started);
   });
 
   it('adopts the target copy when it simply extends ours (no fork, no backup)', async () => {
@@ -492,8 +494,13 @@ describe('TurnRunner: concurrent-open warning', () => {
     await onB(c);
     await turn(c, SID);
     const started = c.msgs.findIndex((m) => m.type === 'turn_started');
-    const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message === OPEN_ELSEWHERE_NOTICE);
+    const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes(ELSEWHERE));
     expect(i).toBeGreaterThan(started);
+    // Says when (A's copy: 30 s ago), what goes wrong and what to do.
+    const msg = (c.msgs[i] as Extract<ServerMessage, { type: 'turn_notice' }>).message;
+    expect(msg).toContain('방금 deck 밖');
+    expect(msg).toContain('한 곳에서만 이어 쓰세요');
+    expect(msg).toContain('두 갈래로 나뉩니다');
     expect(c.msgs.filter((m) => m.type === 'turn_result').every((m) => m.type === 'turn_result' && m.ok)).toBe(true);
   });
 
@@ -503,7 +510,7 @@ describe('TurnRunner: concurrent-open warning', () => {
     await put(c, 'a', line('one'), NOW - 3_600_000);
     await onB(c);
     await turn(c, SID);
-    expect(notices(c)).not.toContain(OPEN_ELSEWHERE_NOTICE);
+    expect(notices(c).some((m) => m.includes(ELSEWHERE))).toBe(false);
 
   });
 
@@ -518,7 +525,7 @@ describe('TurnRunner: concurrent-open warning', () => {
     await r.run({ turnId: 't3', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
     await r.mirrorsSettled();
     expect(c.eng.calls).toHaveLength(2);
-    expect(notices(c)).not.toContain(OPEN_ELSEWHERE_NOTICE);
+    expect(notices(c).some((m) => m.includes(ELSEWHERE))).toBe(false);
   });
 
   it('a copy deck itself just refreshed (pulling the longer one in) does not count as another writer', async () => {
@@ -531,7 +538,7 @@ describe('TurnRunner: concurrent-open warning', () => {
     await r.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
     await r.mirrorsSettled();
     expect(c.seen[0]).toBe(line('one') + line('Desktop, long ago'));
-    expect(notices(c)).not.toContain(OPEN_ELSEWHERE_NOTICE);
+    expect(notices(c).some((m) => m.includes(ELSEWHERE))).toBe(false);
   });
 });
 

@@ -114,6 +114,9 @@ export type ChatProps = {
   /** 새 세션으로 이어가기 links: the session this one continues / continues in. */
   prevSession?: { title: string; open: () => void } | null;
   nextSession?: { title: string; open: () => void } | null;
+  /** A note about this session no turn owns (e.g. it was just written outside deck): a dismissible bar above the transcript. */
+  notice?: string | null;
+  onDismissNotice?: () => void;
 };
 
 const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
@@ -342,6 +345,12 @@ export function Chat(p: ChatProps) {
         {!p.isNew && <ShareMenu title={p.title} items={p.items} cwd={p.cwd} sessionId={p.sessionId} assistant={p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : 'Claude'} />}
         {p.headActions}
       </div>
+      {p.notice && (
+        <div className="pane-notice" role="status" data-testid="pane-notice">
+          <span className="pane-notice-text">{p.notice}</span>
+          {p.onDismissNotice && <button type="button" className="pane-notice-close" aria-label="알림 닫기" title="닫기" onClick={p.onDismissNotice}>×</button>}
+        </div>
+      )}
       <div className="chat-body" ref={bodyRef}>
         {p.prevSession && <button type="button" className="session-link prev" data-testid="handoff-prev" onClick={p.prevSession.open} title={p.prevSession.title}>← 이전 세션 · {p.prevSession.title}</button>}
         <AgentContext.Provider value={agentCtx}>
