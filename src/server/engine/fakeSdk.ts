@@ -61,6 +61,8 @@ export const sdk = {
   taskDone: (id: string) => ({ type: 'system', subtype: 'task_notification', task_id: id, status: 'completed', output_file: '/tmp/o', summary: 'done', session_id: 's1' }),
   /** The CLI's injected notification turn opener (origin task-notification). */
   notifyUser: () => ({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: '<task-notification>done</task-notification>' }, origin: { kind: 'task-notification' }, session_id: 's1' }),
+  /** The result the CLI writes for a notification it queues without asking the model (shouldQuery:false — e.g. the orphaned-agent notice on resume): no uuids, no turns, zero usage. */
+  notifyNoopResult: () => ({ type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, session_id: 's1', usage: { input_tokens: 0, output_tokens: 0 }, origin: { kind: 'task-notification' } }),
   /** Main-conversation stream events (token meter / phase). */
   messageStart: () => ({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: {} } }),
   blockStart: (type: 'text' | 'thinking' | 'tool_use') => ({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', index: 0, content_block: { type } } }),

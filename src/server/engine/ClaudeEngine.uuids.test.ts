@@ -118,6 +118,20 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
     expect(await r.rest()).toEqual([]);
   });
 
+  it('resume: the result of a notification the CLI queued without asking the model (orphaned agent) is not our turn — the prompt is still answered in this process', async () => {
+    const f = fakeSdk();
+    const r = reader(engine(f).runTurn(req({ resumeSessionId: 's1' })));
+    f.push(sdk.init());
+    await r.until('init');
+    // On resume the CLI reports the agent the previous process left running, as its own non-querying turn, before our prompt.
+    f.push(sdk.notifyUser(), sdk.notifyNoopResult(), sdk.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
+    const rest = await r.rest();
+    expect(r.seen.filter((e) => e.kind === 'result')).toEqual([expect.objectContaining({ ok: true, text: 'ok' })]);
+    expect(rest.map((e) => e.kind)).toEqual(['system', 'delta', 'result']);
+    await tick();
+    expect(f.state.inputClosed).toBe(true);
+  });
+
   it('a result naming none of our messages is warned about and attributed like an unnamed one — the process is not held until bgMaxMs', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const f = fakeSdk();
