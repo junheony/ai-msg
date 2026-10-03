@@ -14,7 +14,6 @@
 다음 할 일:
 1. 알려진 틈: 다른 deck 상태 저장소의 Codex 스레드가 '자동 실행'으로 보일 수 있음 · `(갈라진 사본)` 세션 2개(DWF QUANT 62adebb9, Crime Detector 950f92ec)는 사용자가 보관.
 2. 후보: deck 안에서 Astra 자동 자문(설계 먼저 제안).
-3. usage-deck `bin/offload` 버그(다른 세션 소유): `[[ -n "${PROMPT//[[:space:]]/}" ]]` 가 bash 3.2 에서 큰 한글 입력에 2차 시간 → `grep -q '[^[:space:]]'` 로.
 
 ## 1. (이력) 2026-10-01 시점
 
