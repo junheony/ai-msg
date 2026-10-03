@@ -291,6 +291,18 @@ function isActivity(m: SDKMessage): boolean {
   return r.parent_tool_use_id === null && r.isReplay !== true;
 }
 
+/**
+ * The result of a CLI-originated command the model never ran on: origin set and not 'human', no user_message_uuid(s),
+ * num_turns 0. Success or error, it is the CLI's own turn, never an answer to anything deck wrote.
+ */
+function isInjectedNoopResult(m: SDKMessage): boolean {
+  if (m.type !== 'result') return false;
+  const r = m as unknown as Rec;
+  const kind = r.origin && typeof r.origin === 'object' ? (r.origin as Rec).kind : undefined;
+  const named = (Array.isArray(r.user_message_uuids) && r.user_message_uuids.length > 0) || typeof r.user_message_uuid === 'string';
+  return typeof kind === 'string' && kind !== 'human' && !named && r.num_turns === 0;
+}
+
 /** Background waiting caps: total wait after the first result, and how long an emptied set may stay idle. */
 export const BG_MAX_MS = 2 * 60 * 60_000;
 export const BG_GRACE_MS = 60_000;
@@ -645,6 +657,17 @@ export class ClaudeEngine implements Engine {
       if (!this.steer || req.noTools) delete live.steer;
       req.onLive?.(live);
       for await (const m of stream) {
+        // The CLI's own non-querying turn (a notification queued shouldQuery:false — e.g. the orphaned-agent notice it
+        // injects on resume) still writes a result: no uuids, no model turn, origin not ours. It answers nothing we wrote
+        // and is no turn of ours — counting it closed the input before our prompt ran. With nothing of ours unanswered
+        // (idle after our result: e.g. an agent hand-back) it can steal no answer, so it goes through as a normal result —
+        // closing the continuation segment its notification opened and running the close check.
+        // A failed one (setup error) is the CLI's, not our prompt's: logged, never shown as our turn's failure.
+        if (isInjectedNoopResult(m) && unanswered.length > 0) {
+          const r = m as unknown as Rec;
+          if (r.subtype !== 'success' || r.is_error === true) console.warn(`deck: CLI-injected turn failed (not ours): ${[r.subtype, ...(Array.isArray(r.errors) ? r.errors : [])].join(': ')}`);
+          continue;
+        }
         if (bg.apply(m)) {
           const tasks = bg.tasks();
           const detail = bg.detail();

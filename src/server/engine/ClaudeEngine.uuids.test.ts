@@ -118,6 +118,56 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
     expect(await r.rest()).toEqual([]);
   });
 
+  it('resume: the result of a notification the CLI queued without asking the model (orphaned agent) is not our turn — the prompt is still answered in this process', async () => {
+    const f = fakeSdk();
+    const r = reader(engine(f).runTurn(req({ resumeSessionId: 's1' })));
+    f.push(sdk.init());
+    await r.until('init');
+    // On resume the CLI reports the agent the previous process left running, as its own non-querying turn, before our prompt.
+    f.push(sdk.notifyUser(), sdk.notifyNoopResult(), sdk.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
+    const rest = await r.rest();
+    expect(r.seen.filter((e) => e.kind === 'result')).toEqual([expect.objectContaining({ ok: true, text: 'ok' })]);
+    expect(rest.map((e) => e.kind)).toEqual(['system', 'delta', 'result']);
+    await tick();
+    expect(f.state.inputClosed).toBe(true);
+  });
+
+  it('an injected no-query turn that failed (error result, num_turns 0) while our prompt is pending is logged, not taken as our answer — the prompt still runs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = fakeSdk();
+      const r = reader(engine(f).runTurn(req({ resumeSessionId: 's1' })));
+      f.push(sdk.init());
+      await r.until('init');
+      f.push(sdk.notifyUser(), { ...sdk.notifyNoopResult(), subtype: 'error_during_execution', is_error: true, errors: ['boom'] }, sdk.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
+      await r.rest();
+      expect(r.seen.filter((e) => e.kind === 'result')).toEqual([expect.objectContaining({ ok: true, text: 'ok' })]);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('boom'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('idle with the background set emptied: a no-query notification the CLI injects closes its segment with a result and lets the process end', async () => {
+    const f = fakeSdk();
+    const r = reader(engine(f, { bgGraceMs: 30 }).runTurn(req()));
+    f.push(sdk.init());
+    await r.until('init');
+    f.push(sdk.bgLevel([{ id: 'b1', desc: 'agent' }]), answered('started', [f.inputs[0]!.uuid!]));
+    await r.until('result');
+    await tick();
+    expect(f.state.inputClosed).toBe(false);
+    // The agent hands back: its notification is queued shouldQuery:false, and nothing follows.
+    f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.notifyNoopResult());
+    const restP = r.rest();
+    await new Promise((res) => setTimeout(res, 200));
+    expect(f.state.inputClosed).toBe(true);
+    const rest = await restP;
+    // The notification shows in the continuation segment, which the result closes.
+    expect(rest.map((e) => e.kind)).toEqual(['background', 'continue', 'system', 'result']);
+    expect(rest.at(-1)).toMatchObject({ ok: true });
+  });
+
   it('a result naming none of our messages is warned about and attributed like an unnamed one — the process is not held until bgMaxMs', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const f = fakeSdk();
