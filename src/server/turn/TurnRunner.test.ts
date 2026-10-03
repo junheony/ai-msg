@@ -115,7 +115,14 @@ describe('TurnRunner', () => {
     const e = await ctx(new StubEngine(() => ok('new3')), {}, down);
     await new TurnRunner(e.deps).run({ turnId: 't3', cwd: '/w/new', sessionId: null, text: 'hi', accountPin: 'b' }, e.sink);
     expect(msgsOf(e, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'b' } });
-    expect(down.snapshot().accounts.b).toMatchObject({ status: 'ok', weekly: { usedPct: 3 } });
+    // Routing now takes b; the UI still shows b's real setup_needed (down) status.
+    expect(down.routingSnapshot().accounts.b).toMatchObject({ status: 'ok', weekly: { usedPct: 3 } });
+    expect(down.snapshot().accounts.b.status).toBe('down');
+    // An unpinned new session now routes to b (lowest 5h among safe: a 13 protected, b 2, c weekly 91 ≥ 85).
+    const eng4 = new StubEngine(() => ok('new4'));
+    const f = await ctx(eng4, {}, down);
+    await new TurnRunner(f.deps).run({ turnId: 't4', cwd: '/w/new', sessionId: null, text: 'hi' }, f.sink);
+    expect(eng4.calls[0]).toMatchObject({ account: 'b' });
   });
 
   it('new session in a symlinked cwd: projectDir comes from the CLI-reported (real) cwd', async () => {

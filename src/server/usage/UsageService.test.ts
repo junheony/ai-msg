@@ -126,7 +126,7 @@ describe('UsageService', () => {
     expect(s.snapshot().accounts.a.weekly?.usedPct).toBe(7);
   });
 
-  it('a fresh successful deck turn overrides a setup_needed card (down) for 30 min, then the card wins again', async () => {
+  it('a fresh successful deck turn lifts a setup_needed card (down) for routing only, for 30 min; the UI keeps the real status', async () => {
     let nowMs = Date.parse('2026-09-30T12:30:00Z');
     const expired = structuredClone(LIVE);
     // usage-deck's own token expired: setup_needed, last-known rows still on the card.
@@ -134,18 +134,22 @@ describe('UsageService', () => {
     const s = svc(async () => ({ ok: true, json: async () => expired }), () => new Date(nowMs));
     await s.pollOnce();
     expect(s.snapshot().accounts.a.status).toBe('down');
+    expect(s.routingSnapshot()).toBe(s.snapshot()); // nothing to lift yet
     const seen: string[] = [];
     s.onChange((snap) => seen.push(snap.accounts.a.status));
     s.noteTurnOk('a');
-    expect(seen).toEqual(['ok']);
-    expect(s.snapshot().accounts.a).toMatchObject({ status: 'ok', weekly: { usedPct: 7 } });
-    expect(s.snapshot().accounts.b.status).toBe('stale'); // other cards untouched
+    expect(seen).toEqual([]); // nothing published: the re-login signal stays on screen
+    expect(s.snapshot().accounts.a).toMatchObject({ status: 'down', weekly: { usedPct: 7 } });
+    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', weekly: { usedPct: 7 } });
+    expect(s.routingSnapshot().accounts.b).toBe(s.snapshot().accounts.b); // other cards untouched
     nowMs += 29 * 60_000;
     await s.pollOnce();
-    expect(s.snapshot().accounts.a.status).toBe('ok');
+    expect(s.snapshot().accounts.a.status).toBe('down');
+    expect(s.routingSnapshot().accounts.a.status).toBe('ok');
+    expect(seen.every((x) => x === 'down')).toBe(true);
     nowMs += 2 * 60_000; // 31 min after the turn
     await s.pollOnce();
-    expect(s.snapshot().accounts.a.status).toBe('down');
+    expect(s.routingSnapshot().accounts.a.status).toBe('down');
   });
 
   it('noteTurnOk leaves ok/stale cards alone and does not invent numbers for an empty card', async () => {
@@ -154,10 +158,11 @@ describe('UsageService', () => {
     const s = svc(async () => ({ ok: true, json: async () => empty }));
     await s.pollOnce();
     s.noteTurnOk('b');
-    expect(s.snapshot().accounts.b.status).toBe('stale');
+    expect(s.routingSnapshot().accounts.b.status).toBe('stale');
     s.noteTurnOk('a');
-    // Not down any more, but with no weekly value the router still leaves it out ('주간 사용률 없음').
-    expect(s.snapshot().accounts.a).toMatchObject({ status: 'ok', weekly: null });
+    expect(s.snapshot().accounts.a.status).toBe('down');
+    // Not down for routing any more, but with no weekly value the router still leaves it out ('주간 사용률 없음').
+    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', weekly: null });
   });
 
   it('start() polls on an interval and stop() halts it', async () => {

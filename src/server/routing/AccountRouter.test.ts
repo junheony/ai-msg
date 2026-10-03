@@ -252,12 +252,39 @@ describe('chooseAccount · 고르게 분산 (balance)', () => {
     expect(warm.reason).toMatch(/캐시 따뜻함/);
   });
 
-  it('forced switches and pins are the same under both policies', () => {
+  it('forced switches pick the target by the balance order (drain keeps the drain order)', () => {
+    // A over 5h 80 → forced off. B resets in 5h (drain's pick), C has the lower 5h (balance's pick).
     const usage = snap({ s: 81, w: 10 }, { s: 30, w: 1, resetH: 5 }, { s: 10, w: 50, resetH: 150 });
     const forced = { current: 'a' as const, lastTurnAtMs: NOW - 60_000, usage };
-    expect(chooseAccount(bal(forced))).toMatchObject({ account: chooseAccount(input(forced)).account, switched: true });
+    expect(chooseAccount(bal(forced))).toMatchObject({ account: 'c', switched: true });
+    expect(chooseAccount(bal(forced)).reason).toMatch(/문턱 초과.* → C 전환/);
+    expect(chooseAccount(input(forced))).toMatchObject({ account: 'b', switched: true });
+    // Weekly ≥85 forces the switch the same way.
+    const weekly = { current: 'a' as const, lastTurnAtMs: NOW - 60_000, usage: snap({ s: 10, w: 86 }, { s: 30, w: 1, resetH: 5 }, { s: 10, w: 50, resetH: 150 }) };
+    expect(chooseAccount(bal(weekly)).account).toBe('c');
+    expect(chooseAccount(input(weekly)).account).toBe('b');
+  });
+
+  it('forced switches never take the protected account while another is safe; pins still override', () => {
+    // B forced (5h 82); A protected with the lowest 5h; C safe → C.
+    const usage = snap({ s: 0, w: 0 }, { s: 82, w: 10 }, { s: 40, w: 50 });
+    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage }))).toMatchObject({ account: 'c', switched: true });
+    // C not safe either (weekly 88) and B still usable → stay on B, not A.
+    const noSafe = snap({ s: 0, w: 0 }, { s: 82, w: 10 }, { s: 0, w: 88 });
+    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage: noSafe }))).toMatchObject({ account: 'b', switched: false });
+    // B unusable (≥95) and C gone (cooldown): only the protected account is left → A.
+    const onlyA = snap({ s: 0, w: 0 }, { s: 96, w: 10 }, { s: 0, w: 10 });
+    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { c: NOW + 60_000 }, usage: onlyA })).account).toBe('a');
+    // A pin wins over the forced switch.
+    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'b', usage }))).toMatchObject({ account: 'b', pinned: true });
     const pinned = { current: 'b' as const, lastTurnAtMs: NOW - 60_000, pinned: 'a' as const, usage: reported() };
     expect(chooseAccount(bal(pinned))).toMatchObject({ account: 'a', pinned: true });
+  });
+
+  it('warm sessions stay put under balance, even when C is far lower', () => {
+    const warm = chooseAccount(bal({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 54 * 60_000, usage: reported() }));
+    expect(warm).toMatchObject({ account: 'a', switched: false });
+    expect(chooseAccount(bal({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 55 * 60_000, usage: reported() })).account).toBe('c');
   });
 });
 

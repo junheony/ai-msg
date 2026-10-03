@@ -1004,7 +1004,7 @@ export class TurnRunner {
     if (!state && p.engine === 'gemini') return this.runGemini(p, null, sink, 'Gemini 지정', attachments);
     if (!state) {
       const pick = chooseEngine({
-        choice: p.engine ?? 'claude', usage: deps.usage.snapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
+        choice: p.engine ?? 'claude', usage: deps.usage.routingSnapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
         gptCooldownUntilMs: this.gptCooldownUntil, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount,
       });
       if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason, attachments);
@@ -1012,7 +1012,7 @@ export class TurnRunner {
       const enginePrefix = p.engine && p.engine !== 'claude' ? pick.reason : null;
       if (p.model === 'auto') {
         // 자동: decided once, here, for the new session; later turns keep it as the session default (prompt cache).
-        const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.snapshot(), nowMs: this.now(), cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount });
+        const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.routingSnapshot(), nowMs: this.now(), cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount });
         return this.runClaude({ ...p, model: auto.model, effort: p.effort ?? auto.effort }, null, sink, enginePrefix ? `${enginePrefix} · ${auto.reason}` : auto.reason, attachments, auto.model);
       }
       return this.runClaude(p, null, sink, enginePrefix, attachments);
@@ -1174,7 +1174,7 @@ export class TurnRunner {
     const pin = state ? (state.accountPin ?? (forkAt ? p.accountPin : null) ?? null) : (p.accountPin ?? null);
     const shownId = () => (forkAt ? null : (state?.sessionId ?? null));
     const done = () => (forkAt ? null : state);
-    const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance' };
+    const routerBase = { usage: deps.usage.routingSnapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance' };
 
     // An unpinned edit-fork runs on the parent's own account (it is not moved for a branch) unless that account is
     // unusable; a pinned one routes like any turn of the session, copying the parent to the pinned account.
@@ -1292,7 +1292,7 @@ export class TurnRunner {
       for (;;) {
         const cand = chooseAccount({
           ...routerBase,
-          usage: deps.usage.snapshot(),
+          usage: deps.usage.routingSnapshot(),
           nowMs: this.now(),
           current: account,
           lastTurnAtMs: null,

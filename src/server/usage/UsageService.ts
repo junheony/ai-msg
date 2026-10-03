@@ -96,8 +96,22 @@ export class UsageService {
     this.snap = emptySnapshot(this.now());
   }
 
+  /** What the UI shows: the real card status (a setup_needed card stays 'down', so the re-login signal is kept). */
   snapshot(): UsageSnapshot {
     return this.snap;
+  }
+
+  /**
+   * What routing sees: `snapshot()` with `down` Claude cards lifted to 'ok' while deck completed a turn on that
+   * account within TURN_OK_TRUST_MS (see `lift`). Never published — the UI keeps the real status.
+   */
+  routingSnapshot(): UsageSnapshot {
+    let accounts: UsageSnapshot['accounts'] | null = null;
+    for (const a of ACCOUNTS) {
+      const u = this.lift(a, this.snap.accounts[a]);
+      if (u !== this.snap.accounts[a]) (accounts ??= { ...this.snap.accounts })[a] = u;
+    }
+    return accounts ? { ...this.snap, accounts } : this.snap;
   }
 
   onChange(cb: (s: UsageSnapshot) => void): () => void {
@@ -137,7 +151,7 @@ export class UsageService {
 
   /**
    * A `down` Claude card (usage-deck's own token expired: setup_needed) while deck itself completed a turn on that
-   * account within TURN_OK_TRUST_MS: the account works, so it is not 'down' for routing. Numbers are not invented —
+   * account within TURN_OK_TRUST_MS: the account works, so it is not 'down' for routing (routingSnapshot only). Numbers are not invented —
    * the card's last-known rows (or a turn observation) stay; no weekly value still keeps it out of routing.
    */
   private lift(account: Account, u: AccountUsage): AccountUsage {
@@ -167,7 +181,7 @@ export class UsageService {
       if (!res.ok) throw new Error(`deck HTTP not ok`);
       const parsed = parseDeckCards(await res.json());
       const accounts = { ...parsed.accounts };
-      for (const a of ACCOUNTS) accounts[a] = this.lift(a, this.overlay(a, accounts[a]));
+      for (const a of ACCOUNTS) accounts[a] = this.overlay(a, accounts[a]);
       this.publish({ generatedAt: this.now().toISOString(), deckReachable: true, accounts, gpt: this.withCredits(this.overlay('gpt', parsed.gpt)) });
     } catch {
       // Spec §8: deck unreachable → keep last values, show them as stale.
@@ -214,11 +228,8 @@ export class UsageService {
     else this.publish({ ...this.snap, generatedAt, accounts: { ...this.snap.accounts, [seat]: next } });
   }
 
-  /** deck just completed a turn on `account` (result ok): see `lift`. */
+  /** deck just completed a turn on `account` (result ok): affects `routingSnapshot` only (see `lift`); nothing is published. */
   noteTurnOk(account: Account, atMs: number = this.now().getTime()): void {
     this.turnOkAt.set(account, Math.max(atMs, this.turnOkAt.get(account) ?? 0));
-    const cur = this.snap.accounts[account];
-    const next = this.lift(account, cur);
-    if (next !== cur) this.publish({ ...this.snap, generatedAt: this.now().toISOString(), accounts: { ...this.snap.accounts, [account]: next } });
   }
 }

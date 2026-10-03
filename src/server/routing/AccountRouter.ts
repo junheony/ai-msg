@@ -234,9 +234,9 @@ export function chooseAccount(input: RouterInput): RouterDecision {
   if (force) {
     // Only move to an account that would not itself be forced off next turn (no ping-pong, no wasted cache rewrite).
     // The protected account (spec §4.1: last candidate) is only taken when the current one is unusable.
-    // Forced switches pick by the drain order under either policy (unchanged).
-    const byDrain = [...candidates].sort(drainOrder);
-    const roomy = byDrain.find((c) => {
+    // The target follows the policy: 고르게 분산 → the balance order (safe, lowest 5h first); drain → the drain order.
+    const ordered = (input.policy ?? 'balance') === 'drain' ? [...candidates].sort(drainOrder) : candidates;
+    const roomy = ordered.find((c) => {
       if (c.account === cur || c.protected) return false;
       const u = input.usage.accounts[c.account];
       return (u.fiveHour?.usedPct ?? 0) < FIVE_HOUR_SWITCH_PCT && c.weeklyPct < WEEKLY_SWITCH_PCT;
@@ -244,7 +244,7 @@ export function chooseAccount(input: RouterInput): RouterDecision {
     if (roomy) return { ...base, account: roomy.account, switched: true, reason: `${force} → ${LABEL[roomy.account]} 전환` };
     // Current is unusable (≥95 or cooling down): any eligible alternative beats staying (protected sorts last).
     const hard = inCooldown || fiveHour >= EXCLUDE_PCT || weekly >= EXCLUDE_PCT;
-    const alt = hard ? byDrain.find((c) => c.account !== cur) : undefined;
+    const alt = hard ? ordered.find((c) => c.account !== cur) : undefined;
     if (alt) return { ...base, account: alt.account, switched: true, reason: `${force} → ${LABEL[alt.account]} 전환(여유 있는 대안 없음)` };
     return { ...base, account: cur, switched: false, reason: `${force} · 여유 있는 대안 없음 · ${LABEL[cur]} 유지` };
   }
