@@ -34,6 +34,21 @@ export type PendingQuestion = Omit<Extract<ServerMessage, { type: 'question_requ
 export type UploadedAttachment = { id: string; name: string; size: number; isImage: boolean; /** ux-state: object URL of the local file, composer thumbnail only (never persisted). */ previewUrl?: string };
 /** An attachment as shown in a sent bubble; images load from GET /api/attachments/:id. */
 export type SentFile = { id: string; name: string; isImage: boolean };
+/*
+ * Queue state machine (messages are never dropped unless they provably went in):
+ *   queued ──send──▶ awaitingSend (sent; waits for turn_started under its clientRef)
+ *     turn_started            → gone from the queue (it is a bubble now)
+ *     error 'draining'        → back at the head, restart 'hold' (after other held items): the old server only refuses
+ *     error (other)           → back at the head, paused (the user decides)
+ *     socket died (hello)     → back at the head, restart 'hello' + maybeSent: it may have gone in
+ *   restart 'hold'  ──hello──▶ 'hello' (a session to check) or 'go' (a new session: nothing to check)
+ *   restart 'hello' ──history──▶ dropped if the server lists its clientRef in acceptedRefs (older server: the text at or
+ *     after its ordinal), else 'go'
+ *   restart 'go'    → sent alone even if the queue is paused (keepPaused: the rest stays paused)
+ *   open_session error / 이어서 보내기 → restart cleared, an ordinary (paused) item
+ * Leaving the session parks held items under its id (or `__new__:<cwd>` for a new session) until it is opened again.
+ */
+
 /** ux-state: a message typed while the pane's turn runs; sent when the turn ends. */
 export type QueueItem = {
   id: string; text: string; attachments: UploadedAttachment[];
@@ -52,7 +67,12 @@ export type QueueItem = {
    * Dropped if the history has that message there. A send refused with code 'draining' never has this (it did not go in).
    */
   maybeSent?: number;
+  /** The clientRef it was last sent with: re-sent under the same ref, and dropped if the server's acceptedRefs has it. */
+  ref?: string;
 };
+
+/** The parked bucket of a session that has no id yet (its held messages come back into the next new session in that folder). */
+export const parkKey = (sessionId: string | null, cwd: string) => sessionId ?? `__new__:${cwd}`;
 
 /** Held messages `go` picks are released: they go out by themselves, one by one, without unpausing the rest. */
 function release(queue: QueueItem[], go: (q: QueueItem) => boolean): QueueItem[] {
@@ -62,8 +82,15 @@ function release(queue: QueueItem[], go: (q: QueueItem) => boolean): QueueItem[]
 /** The pane leaves the session its held messages were meant for: they stay, as ordinary (paused) queue items. */
 const unhold = (queue: QueueItem[]): QueueItem[] => queue.map(({ restart: _r, maybeSent: _m, ...q }) => q);
 
-/** The user message `text` is (or opens) a transcript user text: the server appends path lines / an image marker after what was typed. */
-const sameUserText = (it: ChatItem, text: string) => it.kind === 'user' && (it.text === text || it.text.startsWith(`${text}\n`));
+/**
+ * The user message `text` is (or opens) a transcript user text: the server appends path lines / an image marker after what
+ * was typed (an attachment-only send has '' as its text: only the `첨부 파일:` lines are in the transcript).
+ */
+const sameUserText = (it: ChatItem, text: string) => {
+  if (it.kind !== 'user') return false;
+  const typed = it.text.replace(/(^|\n\n)첨부 파일: [\s\S]*$/, '');
+  return typed === text || it.text === text || it.text.startsWith(`${text}\n`);
+};
 
 /**
  * A send that got no turn_started back goes into the queue again, at the head, and its bubble (if nothing came after it)
@@ -79,8 +106,11 @@ function requeue(pane: PaneState, back: NonNullable<PaneState['awaitingSend']>, 
     : how === 'draining' ? { restart: 'hold' }
     : how === 'lost' && sid && back.n !== undefined ? { restart: 'hello', maybeSent: back.n }
     : null;
-  const item: QueueItem = { id: nextQueueId(), text: back.text, attachments: back.attachments.map((f) => ({ ...f, size: 0 })), ...mark };
-  return { ...pane, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: [item, ...pane.queue], queuePaused: mark ? pane.queuePaused : true };
+  const item: QueueItem = { id: nextQueueId(), text: back.text, attachments: back.attachments.map((f) => ({ ...f, size: 0 })), ...mark, ...(pane.awaitingRef ? { ref: pane.awaitingRef } : {}) };
+  // A second draining refusal goes after the messages already held, so they keep their order.
+  const at = how === 'draining' ? pane.queue.filter((q) => q.restart).length : 0;
+  const queue = [...pane.queue.slice(0, at), item, ...pane.queue.slice(at)];
+  return { ...pane, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, queue, queuePaused: mark ? pane.queuePaused : true };
 }
 
 /** Steer-flagged items back to ordinary (paused) queue items: their answer was lost, so they may or may not have gone in. */
@@ -170,7 +200,9 @@ export type AppState = {
   /** Sessions whose turn finished while no focused pane showed them; cleared when opened. */
   unread: string[];
   /** Messages held for a restart whose pane left their session (opened another, cleared, closed): back, paused, when it is opened again. */
-  parked: Record<string, QueueItem[]>;
+  parked: Record<string, { cwd: string; queue: QueueItem[] }>;
+  /** The server's hello arrived on this socket (false from a disconnect until then): the queue runner waits for it. */
+  ready: boolean;
 };
 
 export const MAX_PANES = 5;
@@ -179,7 +211,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {} };
+export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -187,6 +219,8 @@ export type Action =
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
   /** 메시지 편집 갈래: the pane becomes a new session holding its history before user message `n`, then `text` (the send is under way). */
   | { type: 'branch_edit'; n: number; text: string; paneId?: string; clientRef?: string }
+  /** A refused edit goes back to its original session: the new pane's whole queue (the edited text first) goes with it. */
+  | { type: 'branch_undo'; sessionId: string; paneId?: string }
   | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean; /** A message released after a restart: the queue's pause stays for the rest. */ keepPaused?: boolean }
   | { type: 'set_model'; model: ModelChoice; paneId?: string }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
@@ -386,9 +420,14 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // PF13: a Claude session is never sent a GPT model and vice versa.
       const model = modelFor(engine, pane.model);
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
-      // A send that may have gone in is dropped if the transcript has it as the user message it would have been (by ordinal,
-      // so sending the same text twice keeps the second); the rest held back by the restart go out now.
-      const went = (q: QueueItem) => q.maybeSent !== undefined && items.some((it) => it.kind === 'user' && it.n === q.maybeSent && sameUserText(it, q.text));
+      // A send that may have gone in is dropped if the server lists its clientRef as accepted (a lost steer: its id). An
+      // older server sends no list: then by its text at or after the ordinal it would have had (the transcript may count
+      // other records as user messages too). The rest held back by the restart go out now.
+      const accepted = msg.acceptedRefs ? new Set(msg.acceptedRefs) : null;
+      const went = (q: QueueItem) => accepted
+        ? (q.maybeSent !== undefined && !!q.ref && accepted.has(q.ref)) || (!!q.lostSteer && accepted.has(q.lostSteer))
+        : q.maybeSent !== undefined && items.some((it) => it.kind === 'user' && it.n !== undefined && it.n >= q.maybeSent! && sameUserText(it, q.text));
+      for (const q of pane.queue) if (went(q)) console.warn('deck: queued message already went in — not sent again:', q.text);
       const kept = pane.queue.filter((q) => !went(q)).map(({ maybeSent: _m, ...q }) => q);
       const sent = kept.some((q) => q.id === pane.queueSendNow) ? {} : { queueSendNow: null };
       const notice = pane.notices?.some((n) => n.sessionId !== msg.sessionId) ? { notices: pane.notices.filter((n) => n.sessionId === msg.sessionId) } : {};
@@ -535,6 +574,11 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       return pane.handoff?.turnId === msg.turnId ? afterHandoffNote(done, msg.ok) : done;
     }
     case 'error': {
+      // A ref-less error while messages wait for their session's history (its open_session failed?): they stop waiting —
+      // ordinary queue items, paused, so nothing hangs on a history that never comes.
+      if (msg.turnId === null && msg.clientRef === undefined && pane.queue.some((q) => q.restart === 'hello')) {
+        pane = { ...pane, queue: pane.queue.map(({ restart, maybeSent, ...q }) => (restart === 'hello' ? q : { ...q, ...(restart ? { restart } : {}), ...(maybeSent !== undefined ? { maybeSent } : {}) })), queuePaused: true };
+      }
       const withItem = msg.turnId ? updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, error: it.error ?? msg.message })) : pane;
       // Review I6: an error that names the running turn ends it, or the composer stays locked on 중단.
       const activeTurnId = msg.turnId !== null && msg.turnId === pane.activeTurnId ? null : withItem.activeTurnId;
@@ -549,8 +593,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // A refused or failed handoff-note send leaves the pane where it is.
       const handoff = pane.handoff && ((msg.clientRef !== undefined && msg.clientRef === pane.handoff.ref) || (msg.turnId !== null && msg.turnId === pane.handoff.turnId)) ? { handoff: null } : {};
       if (!ends) return { ...withItem, activeTurnId, ...stop, ...handoff };
-      // Refused before its turn started: the message goes back into the queue (requeue).
-      const back = msg.turnId === null && pane.awaitingRef !== null ? pane.awaitingSend : null;
+      // Refused before its turn started (an older server names the turn it never started): back into the queue (requeue).
+      const back = (msg.turnId === null || !pane.myTurns.includes(msg.turnId)) && pane.awaitingRef !== null ? pane.awaitingSend : null;
       if (!back) return { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0, ...idle, ...handoff };
       return { ...requeue(withItem, back, msg.code === 'draining' ? 'draining' : 'refused'), activeTurnId, ...idle, ...handoff };
     }
@@ -625,7 +669,7 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
     case 'hello':
-      return applySettings({ ...state, connected: true, activity: msg.activity ?? state.activity, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
+      return applySettings({ ...state, connected: true, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
     case 'settings': return applySettings(state, msg.settings);
     // A mode the user picked before the id arrived wins: it is on its way to the server.
     case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && !p.session.permissionModePending ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
@@ -691,15 +735,28 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
 
 /**
  * The pane is about to leave its session: messages held for a restart (or maybe lost with a socket) are kept with that
- * session, plain and paused, until it is opened again. A new session has no id to keep them by: the error bar shows them.
+ * session, plain and paused, until it is opened again. A new session has no id: they wait for the next new session in
+ * that folder (`parkKey`), and the error bar says so.
  */
 function park(state: AppState, paneId: string | undefined): AppState {
   const p = state.panes.find((x) => x.id === (paneId ?? state.activePaneId));
-  const held = p ? p.queue.filter((q) => q.restart || q.maybeSent !== undefined) : [];
-  if (!held.length) return state;
-  const sid = p!.session?.sessionId;
-  if (!sid) return { ...state, error: `보내지 못한 메시지 ${held.length}개 (새 세션을 떠나 큐에서 빠졌습니다): ${held.map((q) => q.text || '첨부만').join(' / ')}` };
-  return { ...state, parked: { ...state.parked, [sid]: [...(state.parked[sid] ?? []), ...held.map(({ restart: _r, ...q }) => q)] } };
+  const s = p?.session;
+  if (!p || !s || !p.queue.length) return state;
+  const isHeld = (q: QueueItem) => !!q.restart || q.maybeSent !== undefined;
+  const held = p.queue.filter(isHeld);
+  // The rest of the queue (typed for this session, never sent) is let go with the session — never silently.
+  const dropped = p.queue.filter((q) => !isHeld(q));
+  const texts = (qs: QueueItem[]) => qs.map((q) => q.text || '첨부만').join(' / ');
+  if (dropped.length) console.warn('deck: queued messages dropped with their session:', dropped.map((q) => q.text));
+  const notes = [
+    ...(held.length && !s.sessionId ? [`보내지 못한 메시지 ${held.length}개는 이 폴더에서 새 세션을 열면 큐로 돌아옵니다: ${texts(held)}`] : []),
+    ...(dropped.length ? [`큐에서 빠진 메시지 ${dropped.length}개: ${texts(dropped)}`] : []),
+  ];
+  const error = notes.length ? { error: notes.join(' · ') } : {};
+  if (!held.length) return { ...state, ...error };
+  const key = parkKey(s.sessionId, s.cwd);
+  const parked = { ...state.parked, [key]: { cwd: s.cwd, queue: [...(state.parked[key]?.queue ?? []), ...held.map(({ restart: _r, ...q }) => q)] } };
+  return { ...state, parked, ...error };
 }
 
 function updatePane(state: AppState, paneId: string | undefined, fn: (p: PaneState) => PaneState): AppState {
@@ -716,19 +773,28 @@ export function reducer(state: AppState, action: Action): AppState {
       const records = action.sentFiles;
       return { ...next, panes: next.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, items: restoreSentFiles(p.items, records) } : p)) };
     }
-    case 'connected': return { ...state, connected: action.value };
+    case 'connected': return { ...state, connected: action.value, ...(action.value ? {} : { ready: false }) };
     // Prompts stay: they belong to their own session and the card says which (review I3).
     case 'open': {
       const s = park(state, action.paneId);
-      // Messages kept with this session (park) come back, paused.
-      const back = action.sessionId ? s.parked[action.sessionId] : undefined;
-      const { [action.sessionId ?? '']: _back, ...parked } = s.parked;
+      // Messages kept with this session (park; a new session: with its folder) come back, paused.
+      const key = parkKey(action.sessionId, action.cwd);
+      const back = s.parked[key]?.queue;
+      const { [key]: _back, ...parked } = s.parked;
       return updatePane({ ...s, parked: back ? parked : s.parked, unread: action.sessionId ? s.unread.filter((u) => u !== action.sessionId) : s.unread }, action.paneId, (p) => ({
         ...p,
         session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
         items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [], queue: back ?? [], queuePaused: !!back, queueSendNow: null, ...ACTIVITY_RESET,
         handoff: null, handoffFrom: null, prefill: null, notices: [],
       }));
+    }
+    case 'branch_undo': {
+      const p = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
+      if (!p?.session || p.session.sessionId !== null || p.myTurns.length || !p.queue.length) return state;
+      // Parked with the original session, ahead of what was parked there: the `open` that follows restores it, paused.
+      const was = state.parked[action.sessionId]?.queue ?? [];
+      const parked = { ...state.parked, [action.sessionId]: { cwd: p.session.cwd, queue: [...unhold(p.queue), ...was] } };
+      return updatePane({ ...state, parked }, p.id, (x) => ({ ...x, queue: [], queueSendNow: null }));
     }
     case 'branch_edit': return updatePane(state, action.paneId, (p) => {
       if (!p.session) return p;
@@ -811,7 +877,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...p, queue: [head, ...p.queue.filter((q) => q !== item)], queueSendNow: item.id };
     });
     case 'queue_pause': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: true }));
-    case 'queue_resume': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: false }));
+    // 이어서 보내기: messages still waiting for a reconnect / history go as ordinary ones (the user says so).
+    case 'queue_resume': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: false, queue: p.queue.map((q) => (q.restart === 'hold' || q.restart === 'hello' ? unhold([q])[0]! : q)) }));
     case 'steer_lost': return updatePane(state, action.paneId, (p) => {
       if (action.unsent) return { ...p, queue: p.queue.map(({ steer, ...q }) => (steer === action.steerId ? q : { ...q, ...(steer ? { steer } : {}) })) };
       return unsteer(p, (id) => id === action.steerId);

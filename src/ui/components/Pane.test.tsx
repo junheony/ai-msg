@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { useReducer } from 'react';
-import { Pane } from './Pane';
+import { Pane, useQueueRunner } from './Pane';
 import type { ClientMessage, ServerMessage } from '../../shared/protocol';
 import { initialState, newPane, reducer, type Action, type AppState, type PaneState } from '../state';
 
@@ -125,5 +125,59 @@ describe('Pane (D6)', () => {
     expect(p0.queryByText('reply-to-second')).toBeNull();
     expect(p1.getByText('reply-to-second')).toBeTruthy();
     expect(p1.queryByText('reply-to-first')).toBeNull();
+  });
+
+  describe('useQueueRunner', () => {
+    const hello = { type: 'hello', usage: { generatedAt: 'x', deckReachable: true, accounts: {} }, projects: [], running: [], codex: { available: false } } as unknown as ServerMessage;
+    const history: ServerMessage = { type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: [{ kind: 'user', text: 'old', ts: null, n: 0 }] };
+    const harness = (start: AppState) => {
+      const send = vi.fn<(m: ClientMessage) => void>();
+      let out: (a: Action) => void = () => {};
+      let state = start;
+      function Harness() {
+        const [s, dispatch] = useReducer(reducer, start);
+        out = dispatch;
+        state = s;
+        useQueueRunner(s.panes, s.ready, dispatch, send);
+        return null;
+      }
+      render(<Harness />);
+      const sends = (text: string) => send.mock.calls.filter(([m]) => m.type === 'send' && m.text === text).map(([m]) => m);
+      return { send, sends, act: (a: Action) => act(() => out(a)), server: (msg: ServerMessage) => act(() => out({ type: 'server', msg })), state: () => state };
+    };
+
+    it('a held message released after a restart goes out exactly once, under its old clientRef, and keeps the rest paused', () => {
+      let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+      s = reducer(s, { type: 'server', msg: hello });
+      s = reducer(s, { type: 'server', msg: history });
+      s = reducer(s, { type: 'queue_add', text: 'later' });
+      s = reducer(s, { type: 'sent', text: 'mine', clientRef: 'r1' });
+      s = reducer(s, { type: 'server', msg: { type: 'error', turnId: null, message: 'draining', clientRef: 'r1', code: 'draining' } });
+      s = reducer(s, { type: 'queue_pause' });
+      s = reducer(s, { type: 'connected', value: false });
+      const h = harness(s);
+      h.act({ type: 'connected', value: true });
+      h.server(hello);
+      expect(h.send).not.toHaveBeenCalled(); // waits for the history
+      h.server(history);
+      expect(h.sends('mine')).toEqual([expect.objectContaining({ clientRef: 'r1' })]);
+      h.server({ type: 'turn_started', turnId: 't1', sessionId: 's1', cwd: '/w', clientRef: 'r1' } as ServerMessage);
+      h.server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null });
+      h.server(history);
+      expect(h.sends('mine')).toHaveLength(1);
+      expect(h.sends('later')).toEqual([]);
+      expect(h.state().panes[0]!.queuePaused).toBe(true);
+    });
+
+    it('M2: nothing goes out between the socket opening and its hello (the hello would requeue it)', () => {
+      let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+      s = reducer(s, { type: 'queue_add', text: 'next' });
+      const h = harness(s);
+      h.act({ type: 'connected', value: true });
+      expect(h.send).not.toHaveBeenCalled();
+      h.server(hello);
+      expect(h.sends('next')).toHaveLength(1);
+      expect(h.state().panes[0]!.awaitingStart).toBe(true);
+    });
   });
 });

@@ -784,7 +784,7 @@ describe('message queue (ux-state)', () => {
       let s = refusedSend('draining');
       s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
       expect(pane(s).queue).toEqual([]);
-      expect(s.parked.s1!.map((q) => q.text)).toEqual(['mine']);
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine']);
       s = reducer(s, { type: 'clear_pane' });
       s = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
       expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['mine', undefined]]);
@@ -792,18 +792,25 @@ describe('message queue (ux-state)', () => {
       expect(s.parked).toEqual({});
     });
 
-    it('held items of a new session (no id to keep them by) are shown in the error bar when the pane is cleared', () => {
+    it('L3: held items of a new session are kept with its folder (attachments too) and come back into the next new session there', () => {
       let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'new' });
-      s = reducer(s, { type: 'sent', text: 'first', clientRef: 'r1' });
+      s = reducer(s, { type: 'sent', text: 'first', clientRef: 'r1', attachments: [{ id: 'a1', name: 'f.txt', isImage: false }] });
       s = play([{ type: 'error', turnId: null, message: DRAIN, clientRef: 'r1', code: 'draining' }], s);
       s = reducer(s, { type: 'clear_pane' });
       expect(s.error).toContain('first');
+      expect(s.parked['__new__:/w']!.queue.map((q) => [q.text, q.attachments.map((a) => a.id)])).toEqual([['first', ['a1']]]);
+      s = reducer(s, { type: 'open', sessionId: null, cwd: '/other', title: 'new' });
+      expect(pane(s).queue).toEqual([]);
+      s = reducer(s, { type: 'open', sessionId: null, cwd: '/w', title: 'new' });
+      expect(pane(s).queue.map((q) => [q.text, q.attachments.map((a) => a.id), q.ref])).toEqual([['first', ['a1'], 'r1']]);
+      expect(pane(s).queuePaused).toBe(true);
+      expect(s.parked).toEqual({});
     });
 
     it('closing a pane parks its held items too', () => {
       let s = reducer(refusedSend('draining'), { type: 'add_pane' });
       s = reducer(s, { type: 'close_pane', paneId: 'p0' });
-      expect(s.parked.s1!.map((q) => q.text)).toEqual(['mine']);
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine']);
     });
 
     // LOW: a refused fork keeps its text; a hold is released by the next history even without a reconnect.
@@ -861,6 +868,105 @@ describe('message queue (ux-state)', () => {
       expect(nextQueued(pane(s))).toBeNull();
       s = play([hello, history(['first'])], s);
       expect(nextQueued(pane(s))?.text).toBe('steer me');
+    });
+
+    // Round 2 (adversarial review).
+    const historyWith = (messages: { text: string; n: number }[], acceptedRefs?: string[]): ServerMessage => ({ type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: messages.map((m) => ({ kind: 'user' as const, ts: null, ...m })), ...(acceptedRefs ? { acceptedRefs } : {}) });
+
+    it('H1: a refused branch_edit goes back to the original session with the edited text and the held items, paused', () => {
+      let s = refusedSend('draining');
+      s = { ...s, panes: [{ ...pane(s), items: [{ kind: 'user', text: 'old', n: 0 }] }] };
+      s = reducer(s, { type: 'branch_edit', n: 0, text: 'edited', clientRef: 'b1' });
+      s = play([{ type: 'error', turnId: null, message: DRAIN, clientRef: 'b1', code: 'draining' }], s);
+      s = reducer(s, { type: 'branch_undo', sessionId: 's1' });
+      s = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['edited', 'mine', 'later']);
+      expect(pane(s).queue.every((q) => !q.restart)).toBe(true);
+      expect(pane(s).queuePaused).toBe(true);
+      expect(s.parked).toEqual({});
+      expect(nextQueued(pane(s))).toBeNull();
+    });
+
+    it('M1: acceptedRefs decides — dropped only if its clientRef is listed, even with a task-notification interleaved', () => {
+      // A <task-notification> record counted as a user message: '계속' sits one past the ordinal it was sent at.
+      let s = lostSend('계속', ['old']);
+      expect(pane(s).queue[0]).toMatchObject({ text: '계속', maybeSent: 1, ref: 'r1' });
+      const transcript = [{ text: 'old', n: 0 }, { text: '<task-notification>done</task-notification>', n: 1 }, { text: '계속', n: 2 }];
+      expect(pane(play([historyWith(transcript, ['r1'])], s)).queue).toEqual([]);
+      // not listed: it did not go in (the same text at that spot is an earlier message) — sent again, under the same ref
+      const kept = play([historyWith(transcript, ['other'])], s);
+      expect(pane(kept).queue.map((q) => [q.text, q.ref])).toEqual([['계속', 'r1']]);
+      expect(nextQueued(pane(kept))?.ref).toBe('r1');
+    });
+
+    it('M1 fallback (no acceptedRefs): the text anywhere at or after the ordinal, after a task-notification', () => {
+      const s = lostSend('계속', ['old']);
+      expect(pane(play([historyWith([{ text: 'old', n: 0 }, { text: '<task-notification>x</task-notification>', n: 1 }, { text: '계속', n: 2 }])], s)).queue).toEqual([]);
+      expect(pane(play([historyWith([{ text: '계속', n: 0 }, { text: 'old', n: 1 }])], s)).queue.map((q) => q.text)).toEqual(['계속']);
+    });
+
+    it('M1 fallback: an attachment-only send (the server rewrote its empty text to the file lines) is recognised', () => {
+      let s = play([history(['old'])], openedOn('s1'));
+      s = reducer(s, { type: 'sent', text: '', attachments: [file], clientRef: 'r1' });
+      s = play([hello], s);
+      expect(pane(s).queue.map((q) => [q.text, q.maybeSent])).toEqual([['', 1]]);
+      s = play([historyWith([{ text: 'old', n: 0 }, { text: '\n\n첨부 파일: /tmp/x.png', n: 1 }])], s);
+      expect(pane(s).queue).toEqual([]);
+    });
+
+    it('M1: a draining refusal is never dropped, even if acceptedRefs lists something', () => {
+      let s = refusedSend('draining');
+      s = play([hello, historyWith([{ text: 'old', n: 0 }, { text: 'mine', n: 1 }], ['r1'])], s);
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['mine', 'later']);
+    });
+
+    it('M1: a lost steer the server lists as accepted is dropped', () => {
+      let s = running();
+      s = reducer(s, { type: 'queue_add', text: 'maybe-in', steerId: 'k2' });
+      s = result(s, 't1', true);
+      s = play([hello, historyWith([{ text: 'first', n: 0 }], ['r1', 'k2'])], s);
+      expect(pane(s).queue).toEqual([]);
+    });
+
+    it('M2: the queue runner\'s ready flag is set by hello only, and cleared by a disconnect', () => {
+      let s = reducer(initialState, { type: 'connected', value: true });
+      expect(s.ready).toBe(false);
+      s = play([hello], s);
+      expect(s.ready).toBe(true);
+      s = reducer(s, { type: 'connected', value: false });
+      expect(s.ready).toBe(false);
+    });
+
+    it('L1: messages waiting for a history that fails (open_session error) become ordinary paused items; 이어서 보내기 releases holds', () => {
+      let s = lostSend('계속', ['old']);
+      s = play([{ type: 'error', turnId: null, message: '세션을 찾을 수 없습니다: s1' }], s);
+      expect(pane(s).queue.map((q) => [q.text, q.restart, q.maybeSent])).toEqual([['계속', undefined, undefined]]);
+      expect(pane(s).queuePaused).toBe(true);
+      let d = refusedSend('draining');
+      expect(pane(d).queue[0]!.restart).toBe('hold');
+      d = reducer(d, { type: 'queue_resume' });
+      expect(pane(d).queue[0]!.restart).toBeUndefined();
+      expect(nextQueued(pane(d))?.text).toBe('mine');
+    });
+
+    it('L2: a refusal naming a turn that never started (older server) still requeues the send', () => {
+      let s = play([history(['old'])], openedOn('s1'));
+      s = reducer(s, { type: 'sent', text: 'mine', clientRef: 'r1' });
+      s = play([{ type: 'error', turnId: 'never', message: '실행 실패', clientRef: 'r1' }], s);
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['mine']);
+    });
+
+    it('L4: two draining refusals in a row keep their order', () => {
+      let s = refusedSend('draining');
+      s = reducer(s, { type: 'sent', text: 'second', clientRef: 'r2' });
+      s = play([{ type: 'error', turnId: null, message: DRAIN, clientRef: 'r2', code: 'draining' }], s);
+      expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['mine', 'hold'], ['second', 'hold'], ['later', undefined]]);
+    });
+
+    it('opening another session lets ordinary queued items go — never silently (the error bar names them)', () => {
+      let s = reducer(openedOn('s1'), { type: 'queue_add', text: 'typed' });
+      s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
+      expect(s.error).toContain('typed');
     });
   });
 

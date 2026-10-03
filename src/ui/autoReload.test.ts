@@ -18,6 +18,9 @@ describe('shouldAutoReload', () => {
     expect(shouldAutoReload(safe({ panes: [run] }))).toBe(false);
     expect(shouldAutoReload(safe({ panes: [run, newPane('p1')], activePaneId: 'p1' }))).toBe(true);
   });
+  it('M3: not while any pane waits for its send\'s turn_started', () => {
+    expect(shouldAutoReload(safe({ panes: [newPane('p0'), { ...newPane('p1'), awaitingStart: true }] }))).toBe(false);
+  });
   it('not while a modal (palette, cheat sheet, confirm) is open', () => {
     expect(shouldAutoReload({ ...safe(), modalOpen: true })).toBe(false);
     const root = document.createElement('div');

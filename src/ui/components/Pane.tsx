@@ -32,14 +32,14 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
   return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
 }
 
-/** Sends `text` (+ attachments) as the pane's next turn: `sent` for the reducer, `send` for the server. */
-export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: (m: ClientMessage) => void, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false): void {
+/** Sends `text` (+ attachments) as the pane's next turn: `sent` for the reducer, `send` for the server. `ref`: a queued message's earlier clientRef (kept, so the server's acceptedRefs can tell whether it went in). */
+export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: (m: ClientMessage) => void, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string): void {
   const s = pane.session;
   if (!s) return;
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
   const ids = attachments.map((a) => a.id);
-  const clientRef = nextClientRef();
+  const clientRef = ref ?? nextClientRef();
   dispatch({ type: 'sent', text, paneId: pane.id, attachments: attachments.map((a) => ({ id: a.id, name: a.name, isImage: a.isImage })), clientRef, ...(keepPaused ? { keepPaused } : {}) });
   send({
     type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, model,
@@ -122,7 +122,7 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
       if (!next || fired.current.has(next.id)) continue;
       fired.current.add(next.id);
       dispatch({ type: 'queue_remove', id: next.id, paneId: p.id });
-      sendFromPane(p, next.text, next.attachments, dispatch, send, defaultMode, next.restart === 'go');
+      sendFromPane(p, next.text, next.attachments, dispatch, send, defaultMode, next.restart === 'go', next.ref);
     }
   });
 }
@@ -227,7 +227,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     const u = branchUndo.current;
     if (!u || pane.awaitingStart) return;
     branchUndo.current = null;
-    if (pane.myTurns.length === 0 && pane.session?.sessionId === null) openRef.current?.(u.sessionId, u.cwd, u.title);
+    if (pane.myTurns.length === 0 && pane.session?.sessionId === null) {
+      // The edited text (queued again, paused) and the rest of the queue go back with it.
+      dispatch({ type: 'branch_undo', sessionId: u.sessionId, paneId: pane.id });
+      openRef.current?.(u.sessionId, u.cwd, u.title);
+    }
   }, [pane.awaitingStart, pane.myTurns.length, pane.session?.sessionId]);
   const prevId = entry?.prevSession ?? pane.handoffFrom?.sessionId ?? null;
   const link = (id: string | null) => {

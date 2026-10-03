@@ -179,6 +179,8 @@ describe('메시지 편집 갈래 · version switcher', () => {
     dispatch({ type: 'server', msg: { type: 'error', turnId: null, message: '편집할 메시지를 기록에서 찾지 못해', clientRef: ref } });
     rerender(ui(s.panes[0]!));
     expect(onOpenSession).toHaveBeenCalledWith('R', '/w', '원본');
+    // H1: the edited text goes back with it (the open that follows restores it, paused)
+    expect(s.parked.R!.queue.map((q) => q.text)).toEqual(['첫 질문']);
   });
 });
 

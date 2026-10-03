@@ -104,7 +104,7 @@ describe('persist (ux-state)', () => {
     expect(nextQueued(ready.panes[0]!)?.text).toBe('held'); // even though the rest stays paused
   });
 
-  it('a restored queue never auto-sends into a session it was not typed for: id-less sessions come back paused, a moved session\'s queue is parked, bad items are dropped', () => {
+  it('a restored queue never auto-sends into a session it was not typed for: id-less sessions come back paused, a moved session\'s queue is parked (an id-less one with its folder), bad items are dropped', () => {
     const F = '22222222-2222-4222-8222-222222222222';
     const ui = parseUi({ v: 1, active: 0, collapsed: [], drawer: false, panes: [
       { session: { sessionId: null, cwd: '/w', title: 'n', engine: 'claude' } },
@@ -123,9 +123,38 @@ describe('persist (ux-state)', () => {
     expect(h.panes[1]!.queue).toEqual([]);
     expect(h.panes[2]!.queue.map((x) => [x.text, x.attachments.map((a) => a.id)])).toEqual([['ok', [F]]]);
     expect(h.panes[2]!.queuePaused).toBe(false);
-    expect(h.parked.s9!.map((x) => [x.text, x.restart, x.maybeSent])).toEqual([['moved', undefined, 4]]);
-    // parked messages are kept across a reload too
-    expect(parseQueues(snapshotQueues(h))!.queues.find((x) => x.pane === null)).toMatchObject({ sessionId: 's9', queue: [{ text: 'moved' }] });
+    expect(h.parked.s9!.cwd).toBe('/w');
+    expect(h.parked.s9!.queue.map((x) => [x.text, x.restart, x.maybeSent])).toEqual([['moved', undefined, 4]]);
+    expect(h.parked['__new__:/x']!.queue.map((x) => x.text)).toEqual(['orphan']);
+    // parked messages are kept across a reload too, with their real folder (L6)
+    const again = parseQueues(snapshotQueues(h))!.queues.filter((x) => x.pane === null);
+    expect(again).toHaveLength(2);
+    expect(again).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sessionId: 's9', cwd: '/w', queue: [expect.objectContaining({ text: 'moved' })] }),
+      expect.objectContaining({ sessionId: null, cwd: '/x', queue: [expect.objectContaining({ text: 'orphan' })] }),
+    ]));
+    // the id-less one comes back into the next new session in that folder, paused
+    const opened = reducer(hydrate(initialState, null, parseQueues(snapshotQueues(h))), { type: 'open', sessionId: null, cwd: '/x', title: 'n' });
+    expect(opened.panes[0]).toMatchObject({ queuePaused: true, queue: [expect.objectContaining({ text: 'orphan' })] });
+    expect(opened.parked['__new__:/x']).toBeUndefined();
+  });
+
+  it('M1 + M3: a send lost with the socket, saved as of the hello before an auto-reload, is still recognised by its ref after a server restart and the reload', () => {
+    const tab = memStore();
+    const hello = { type: 'hello', usage: { generatedAt: 'x', deckReachable: true, accounts: {} }, projects: [], running: [], codex: { available: false } } as never;
+    let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+    s = reducer(s, { type: 'server', msg: { type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: [{ kind: 'user', text: 'old', ts: null, n: 0 }] } });
+    s = reducer(s, { type: 'sent', text: 'went in', clientRef: 'tab-7' });
+    // App's auto-reload: the reducer's view after this hello is saved synchronously, then the page reloads.
+    saveQueues(snapshotQueues(reducer(s, { type: 'server', msg: hello })), null, tab);
+    const ui = parseUi({ v: 1, active: 0, collapsed: [], drawer: false, panes: [{ session: { sessionId: 's1', cwd: '/w', title: 't', engine: 'claude' } }] });
+    let r = hydrate(initialState, ui, loadQueues(tab));
+    expect(r.panes[0]!.queue.map((q) => [q.text, q.ref, q.maybeSent])).toEqual([['went in', 'tab-7', 1]]);
+    r = reducer(r, { type: 'server', msg: hello });
+    expect(nextQueued(r.panes[0]!)).toBeNull();
+    // the restarted server still knows the ref (AcceptedRefs is on disk)
+    r = reducer(r, { type: 'server', msg: { type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: [{ kind: 'user', text: 'old', ts: null, n: 0 }], acceptedRefs: ['tab-7'] } });
+    expect(r.panes[0]!.queue).toEqual([]);
   });
 
   it('M4: a queue write that fails (quota) removes the stored copy, so an older queue never comes back and sends again', () => {

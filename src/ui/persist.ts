@@ -1,7 +1,7 @@
 import { isAccount, type Account } from '../shared/accounts';
 import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { ATTACHMENT_ID, MAX_ATTACHMENTS_PER_TURN } from '../shared/protocol';
-import { MAX_PANES, newPane, nextQueueId, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
+import { MAX_PANES, newPane, nextQueueId, parkKey, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
 
 /**
  * ux-state: UI state that survives a reload (localStorage, per browser — phone and desktop are independent).
@@ -130,12 +130,14 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
 export const QUEUE_KEY = 'deck.queues.v1';
 /**
  * A queued message (QueueItem minus its per-page id): `restart` = held back by a restarting server, sent after the reconnect;
- * `maybeSent` = may have gone in as that user message (QueueItem); `lostSteer` = a steer whose answer was lost.
+ * `maybeSent` = may have gone in as that user message (QueueItem); `lostSteer` = a steer whose answer was lost; `ref` = the
+ * clientRef it was sent with (checked against the server's acceptedRefs).
  */
-export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; maybeSent?: number; lostSteer?: string };
+export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; maybeSent?: number; lostSteer?: string; ref?: string };
 /**
  * A pane's queue, kept with its session so it only ever comes back into that session: `pane` = the pane it sat in
- * (null = parked: its pane left the session). The server may restart (and the page reload) before it goes out.
+ * (null = parked: its pane left the session; a parked new session's comes back into the next new session in `cwd`).
+ * The server may restart (and the page reload) before it goes out.
  */
 export type PersistedQueue = { pane: number | null; sessionId: string | null; cwd: string; queue: PersistedQueueItem[]; paused?: true };
 export type PersistedQueues = { v: 1; queues: PersistedQueue[] };
@@ -160,6 +162,7 @@ function queueItem(x: unknown): PersistedQueueItem | null {
     ...(x.restart === true ? { restart: true as const } : {}),
     ...(Number.isInteger(x.maybeSent) && (x.maybeSent as number) >= 0 ? { maybeSent: x.maybeSent as number } : {}),
     ...(shortStr(x.lostSteer, 64) && x.lostSteer ? { lostSteer: x.lostSteer } : {}),
+    ...(shortStr(x.ref, 64) && x.ref ? { ref: x.ref } : {}),
   };
 }
 
@@ -169,7 +172,7 @@ export function parseQueues(raw: unknown): PersistedQueues | null {
     if (!isObj(x) || !shortStr(x.cwd, 4096) || !x.cwd.startsWith('/') || !Array.isArray(x.queue)) return [];
     const sessionId = x.sessionId === null ? null : shortStr(x.sessionId, 200) && x.sessionId ? x.sessionId : undefined;
     const pane = Number.isInteger(x.pane) && (x.pane as number) >= 0 && (x.pane as number) < MAX_PANES ? (x.pane as number) : null;
-    if (sessionId === undefined || (sessionId === null && pane === null)) return [];
+    if (sessionId === undefined) return [];
     const queue = x.queue.slice(0, MAX_QUEUE).map(queueItem).filter((q): q is PersistedQueueItem => !!q);
     return queue.length ? [{ pane, sessionId, cwd: x.cwd, queue, ...(x.paused === true ? { paused: true as const } : {}) }] : [];
   });
@@ -188,6 +191,7 @@ function persistQueue(queue: QueueItem[]): PersistedQueueItem[] {
     ...(q.restart ? { restart: true as const } : {}),
     ...(q.maybeSent !== undefined ? { maybeSent: q.maybeSent } : {}),
     ...(q.steer || q.lostSteer ? { lostSteer: (q.steer ?? q.lostSteer)! } : {}),
+    ...(q.ref ? { ref: q.ref } : {}),
   }));
 }
 
@@ -195,7 +199,7 @@ export function snapshotQueues(state: AppState): PersistedQueues {
   const panes = state.panes.flatMap((p, i): PersistedQueue[] => (p.session && p.queue.length
     ? [{ pane: i, sessionId: p.session.sessionId, cwd: p.session.cwd, queue: persistQueue(p.queue), ...(p.queuePaused || p.queue.some((q) => q.steer) ? { paused: true as const } : {}) }]
     : []));
-  const parked = Object.entries(state.parked).map(([sessionId, q]): PersistedQueue => ({ pane: null, sessionId, cwd: '/', queue: persistQueue(q), paused: true }));
+  const parked = Object.entries(state.parked).map(([key, b]): PersistedQueue => ({ pane: null, sessionId: key === parkKey(null, b.cwd) ? null : key, cwd: b.cwd, queue: persistQueue(b.queue), paused: true }));
   return { v: 1, queues: [...panes, ...parked] };
 }
 
@@ -210,7 +214,8 @@ export function saveQueues(q: PersistedQueues, last: string | null = null, store
   try {
     store?.setItem(QUEUE_KEY, json);
     return json;
-  } catch {
+  } catch (err) {
+    console.warn('deck: queued messages could not be saved for a reload', err);
     try { store?.removeItem(QUEUE_KEY); } catch { /* storage unavailable */ }
     return null;
   }
@@ -219,7 +224,7 @@ export function saveQueues(q: PersistedQueues, last: string | null = null, store
 /**
  * Stored queues back into the panes still showing their session (fresh ids: they are per page). A message held for the
  * restart waits for this page's first reconnect; an id-less session's queue (its first send may have made the session)
- * waits for the user. A queue whose pane shows something else now is parked with its session (or dropped if it has no id).
+ * waits for the user. A queue whose pane shows something else now is parked with its session (no id: with its folder).
  */
 function withQueues(state: AppState, stored: PersistedQueues | null): AppState {
   if (!stored?.queues.length) return state;
@@ -233,8 +238,9 @@ function withQueues(state: AppState, stored: PersistedQueues | null): AppState {
     if (at >= 0) {
       filled.add(at);
       panes[at] = { ...panes[at]!, queue: fresh(q.sessionId !== null), queuePaused: q.paused === true || q.sessionId === null };
-    } else if (q.sessionId) {
-      parked[q.sessionId] = [...(parked[q.sessionId] ?? []), ...fresh(false)];
+    } else {
+      const key = parkKey(q.sessionId, q.cwd);
+      parked[key] = { cwd: q.cwd, queue: [...(parked[key]?.queue ?? []), ...fresh(false)] };
     }
   }
   return { ...state, panes, parked };

@@ -109,7 +109,12 @@ export function App() {
   useEffect(() => { lastSaved.current = saveUi(snapshotUi(state, { collapsed, drawer }), lastSaved.current); }, [state.panes, state.activePaneId, collapsed, drawer]);
   // Queued messages: per tab (sessionStorage), so another tab of this browser never sends them.
   const lastQueues = useRef<string | null>(null);
-  useEffect(() => { lastQueues.current = saveQueues(snapshotQueues(state), lastQueues.current); }, [state.panes, state.parked]);
+  useEffect(() => {
+    const queued = snapshotQueues(state);
+    lastQueues.current = saveQueues(queued, lastQueues.current);
+    const n = queued.queues.reduce((k, q) => k + q.queue.length, 0);
+    if (lastQueues.current === null && n > 0) dispatch({ type: 'show_error', message: `대기 중인 메시지 ${n}개를 저장하지 못했습니다 — 새로고침하면 사라집니다: ${queued.queues.flatMap((q) => q.queue.map((i) => i.text || '첨부만')).join(' / ')}` });
+  }, [state.panes, state.parked]);
   // Sent files per session (thumbnails after a transcript reload): re-saved only when some pane's sent files change.
   const sentSig = state.panes.map((p) => `${p.session?.sessionId ?? ''}:${p.items.filter((it) => it.kind === 'user' && it.attachments?.length).length}`).join('|');
   useEffect(() => { saveSent(latest.current.panes); }, [sentSig]);
@@ -130,7 +135,12 @@ export function App() {
         if (firstBuild.current === undefined) firstBuild.current = build;
         else if (isNewBuild(firstBuild.current, build)) {
           const next = reducer(latest.current, { type: 'server', msg });
-          if (shouldAutoReload({ draftText: hasDraftText(), modalOpen: hasOpenModal(), state: next }) && claimReload(build!)) { location.reload(); return; }
+          if (shouldAutoReload({ draftText: hasDraftText(), modalOpen: hasOpenModal(), state: next }) && claimReload(build!)) {
+            // The save effect never runs before the reload: the queues as of this hello are stored now.
+            lastQueues.current = saveQueues(snapshotQueues(next), lastQueues.current);
+            location.reload();
+            return;
+          }
           setNewBuild(true);
         }
         const panes = latest.current.panes;
@@ -143,7 +153,8 @@ export function App() {
     return () => sock.current?.close();
   }, [authed]);
 
-  useQueueRunner(state.panes, state.connected, dispatch, (m) => sock.current?.send(m), state.defaultPermMode);
+  // Only once this socket's hello is in: a send between onopen and hello would be requeued by that hello.
+  useQueueRunner(state.panes, state.ready, dispatch, (m) => sock.current?.send(m), state.defaultPermMode);
   useTabTitle(state.activity.some((a) => a.running) || state.panes.some((p) => p.activeTurnId !== null));
   // PWA: a notification click opens deck at /?session=<id> or, with deck already open, posts the id here.
   const [openReq, setOpenReq] = useState<string | null>(() => new URLSearchParams(window.location.search).get('session'));

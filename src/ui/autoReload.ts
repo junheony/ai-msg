@@ -6,7 +6,8 @@ export type ReloadSafety = { draftText: boolean; /** A modal (⌘K palette, 사�
 /** Reload now only when it cannot lose or interrupt anything; otherwise the caller shows the "새 버전" pill. */
 export function shouldAutoReload({ draftText, modalOpen = false, state }: ReloadSafety): boolean {
   if (draftText || modalOpen) return false;
-  if (state.panes.some((p) => p.attachments.length > 0)) return false;
+  // A send waiting for its turn_started: the hello that follows the reload decides whether it went in, not a blind reload.
+  if (state.panes.some((p) => p.attachments.length > 0 || p.awaitingStart)) return false;
   const focused = state.panes.find((p) => p.id === state.activePaneId) ?? state.panes[0];
   if (focused?.activeTurnId) return false;
   return state.pending.length === 0 && state.questions.length === 0;
