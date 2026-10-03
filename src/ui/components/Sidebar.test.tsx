@@ -134,10 +134,9 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
     expect([...titles].sort()).toEqual(['Fix login', 'Pinned desktop', 'Write docs', 'first', 'second']);
     const pinnedTitles = [...screen.getByTestId('pinned-group').querySelectorAll('.session-title')].map((e) => e.textContent);
     expect(pinnedTitles).toEqual(['first', 'Pinned desktop']);
-    const today = screen.getByTestId('date-group-오늘');
-    expect(today.textContent).toContain('harness · Desktop');
-    // a Desktop-only row can be pinned too
-    const docs = [...today.querySelectorAll('li')].find((li) => li.textContent?.includes('Write docs'))!;
+    // a Desktop-only row sits in its date group (which one depends on the clock), labelled, and can be pinned too
+    const docs = [...document.querySelectorAll('.date-group li')].find((li) => li.textContent?.includes('Write docs'))!;
+    expect(docs.textContent).toContain('harness · Desktop');
     fireEvent.click(docs.querySelector('button[aria-label="고정"]')!);
     expect(onTogglePin).toHaveBeenCalledWith('d2', true);
   });
