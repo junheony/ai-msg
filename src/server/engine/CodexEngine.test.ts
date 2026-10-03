@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { Readable, Writable } from 'node:stream';
+import { PassThrough, Readable, Writable } from 'node:stream';
 import { CodexEngine, CodexEventMapper, MIN_CODEX_VERSION, codexArgs, resolveCodexBin, type ChildLike, type CodexTurnRequest } from './CodexEngine';
 import type { EngineEvent } from './Engine';
 
@@ -225,6 +225,59 @@ describe('CodexEngine', () => {
       expect(text).toContain('ChatGPT 데스크톱 앱');
       expect(text).not.toContain('codex 종료 코드');
       expect(text).not.toContain('중단');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('thread writer lock: stderr that arrives after the child "exit" event is still classified (exit → stderr chunk → end)', async () => {
+    const tid = '019f2d6c-a49f-7aa0-a2b5-38f75f3e7b6b';
+    const em = new EventEmitter();
+    const stderr = new PassThrough();
+    const stdout = new PassThrough();
+    const child = {
+      stdout, stderr, stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
+      once: (ev: 'exit' | 'error', cb: (...args: unknown[]) => void) => em.once(ev, cb),
+      kill: () => true,
+    } as unknown as ChildLike;
+    const engine = new CodexEngine('/opt/codex', { baseEnv: {}, spawnFn: () => child });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      setTimeout(() => {
+        stdout.end();
+        em.emit('exit', 1, null);
+        setTimeout(() => { stderr.write(`Error: thread ${tid} already has an active writer (code -32600)\n`); stderr.end(); }, 20);
+      }, 0);
+      const ev = await drain(engine.runTurn(req({ resumeThreadId: tid })));
+      const r = ev.at(-1);
+      expect(r).toMatchObject({ kind: 'result', ok: false, errorKind: 'thread_locked' });
+      expect(r && r.kind === 'result' ? r.errorText ?? '' : '').toContain('ChatGPT 데스크톱 앱');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('early-stop cleanup is bounded: a child that survives SIGKILL is logged, not waited on forever', async () => {
+    const em = new EventEmitter();
+    const killed: string[] = [];
+    let sent = false;
+    const child = {
+      pid: 4242,
+      stdout: new Readable({ read() { if (!sent) { sent = true; this.push('{"type":"thread.started","thread_id":"t"}\n'); } } }),
+      stderr: Readable.from([]), stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
+      once: (ev: 'exit' | 'error', cb: (...args: unknown[]) => void) => em.once(ev, cb),
+      kill: (sig?: NodeJS.Signals | number) => { killed.push(String(sig)); return true; },
+    } as unknown as ChildLike;
+    const engine = new CodexEngine('/opt/codex', { baseEnv: {}, spawnFn: () => child, killGraceMs: 20 });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const t0 = Date.now();
+      for await (const _ev of engine.runTurn(req())) {
+        break;
+      }
+      expect(Date.now() - t0).toBeLessThan(1000);
+      expect(killed).toEqual(['SIGTERM', 'SIGKILL']);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('codex pid 4242 did not exit after SIGKILL'));
     } finally {
       warnSpy.mockRestore();
     }

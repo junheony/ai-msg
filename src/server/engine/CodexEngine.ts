@@ -31,7 +31,10 @@ export type CodexTurnRequest = {
  * The slice of ChildProcess the engine uses; tests hand in a fake. `once` is declared as
  * per-event overloads (PF9) so both a real `ChildProcess` and the test fake satisfy it.
  */
+const STDERR_DRAIN_MS = 1000;
+
 export type ChildLike = Pick<ChildProcess, 'stdout' | 'stderr' | 'stdin' | 'kill'> & {
+  pid?: number;
   once(event: 'exit', cb: (code: number | null) => void): unknown;
   once(event: 'error', cb: (err: Error) => void): unknown;
 };
@@ -220,6 +223,11 @@ export class CodexEngine {
     const child = this.spawnFn(this.bin, codexArgs(req), { cwd: req.cwd, env: codexEnv(this.baseEnv) });
     let stderrTail = '';
     child.stderr?.on('data', (chunk: Buffer | string) => { stderrTail = (stderrTail + String(chunk)).slice(-STDERR_MAX); });
+    // 'exit' can fire before the last stderr chunk is read; classification waits (bounded) for the stream to end.
+    const stderrEnded = new Promise<void>((resolve) => {
+      if (!child.stderr) { resolve(); return; }
+      for (const ev of ['end', 'close', 'error']) child.stderr.once(ev, () => resolve());
+    });
     // EPIPE on stdin (child died early) must not crash the server.
     child.stdin?.on('error', () => {});
     // Review finding 3: whether the child has already exited when we stop watching it — if the
@@ -259,6 +267,9 @@ export class CodexEngine {
         }
       }
       const code = await exit;
+      let stderrTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([stderrEnded, new Promise<void>((r) => { stderrTimer = setTimeout(r, STDERR_DRAIN_MS); stderrTimer.unref?.(); })]);
+      clearTimeout(stderrTimer);
       if (!mapper.sawResult) {
         const aborted = req.signal.aborted;
         const r = mapper.result(false, ZERO_USAGE, aborted ? '중단됨' : spawnError !== null ? `codex 실행 실패: ${spawnError}` : `codex 종료 코드 ${code ?? '?'}`);
@@ -275,7 +286,7 @@ export class CodexEngine {
         const gone = (ms: number) => Promise.race([exit.then(() => true), new Promise<false>((r) => { setTimeout(() => r(false), ms).unref?.(); })]);
         if (!(await gone(this.killGraceMs))) {
           child.kill('SIGKILL');
-          await gone(this.killGraceMs);
+          if (!(await gone(this.killGraceMs))) console.warn(`deck: codex pid ${child.pid ?? '?'} did not exit after SIGKILL`);
         }
       }
     }
