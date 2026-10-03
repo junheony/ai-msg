@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const ACCEPTED_REFS_MAX = 200;
-export const ACCEPTED_REFS_TTL_MS = 24 * 60 * 60 * 1000;
+import { ACCEPTED_REFS_MAX, ACCEPTED_REFS_TTL_MS } from '../../shared/protocol';
+
+export { ACCEPTED_REFS_MAX, ACCEPTED_REFS_TTL_MS };
 
 type Entry = { ref: string; at: number };
 
@@ -10,7 +11,12 @@ type Entry = { ref: string; at: number };
  * The client refs (send clientRef / steer steerId) each session accepted — a turn started for it, or the steer went in —
  * so a device whose socket died before the answer can tell whether its message went in (`history.acceptedRefs`).
  * Bounded (last ACCEPTED_REFS_MAX per session, ACCEPTED_REFS_TTL_MS) and written synchronously: it must survive the
- * drain restart, which is exactly when such answers get lost.
+ * drain restart, which is exactly when such answers get lost. The server also refuses a send / steer whose ref is listed
+ * (`already_accepted`), so a resent copy never runs twice.
+ *
+ * Trade-off: a send is recorded at its turn_started, before the CLI has written it to the transcript. If the process dies
+ * right then, the message counts as gone in although the transcript lacks it — the device drops its copy instead of
+ * sending it twice; the user sees it missing and sends it again. A double send was judged worse than that.
  */
 export class AcceptedRefs {
   private map = new Map<string, Entry[]>();
@@ -34,6 +40,10 @@ export class AcceptedRefs {
     this.map.set(sessionId, list.slice(-ACCEPTED_REFS_MAX));
     this.prune();
     this.save();
+  }
+
+  has(sessionId: string, ref: string): boolean {
+    return this.list(sessionId).includes(ref);
   }
 
   list(sessionId: string): string[] {

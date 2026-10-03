@@ -9,6 +9,7 @@ import { cookieValueFor } from './auth';
 import { ClaudeEngine, type QueryFn } from './engine/ClaudeEngine';
 import { fakeSdk, sdk } from './engine/fakeSdk';
 import { createRequestHandler } from './http';
+import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SettingsStore } from './settings';
@@ -47,7 +48,7 @@ beforeAll(async () => {
   const settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, acceptedRefs: new AcceptedRefs(null) });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -169,18 +170,77 @@ describe('ws: sessions held open for background work', () => {
     await c.next('history');
     expect(await c.next('steer_delivered')).toMatchObject({ ...want, replay: true });
     c.close();
-    // A repeated steerId gets no second answer.
+    // A repeated steerId is refused as already in (D) and never reaches the process again.
     a.send({ type: 'steer', turnId: t.turnId, steerId: 'k1', text: 'also this' });
+    expect(await a.next('steer_rejected', (m) => m.steerId === 'k1')).toMatchObject({ code: 'already_accepted' });
     fake.push({ ...sdk.result('done', S), user_message_uuids: [fake.inputs[0]!.uuid, steer.uuid] });
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     expect(a.got.filter((m) => m.type === 'turn_result')).toHaveLength(1);
-    expect(a.got.filter((m) => m.type === 'steer_rejected' && m.steerId === 'k1')).toHaveLength(0);
+    expect(a.got.filter((m) => m.type === 'steer_rejected' && m.steerId === 'k1')).toHaveLength(1);
     expect(fake.inputs).toHaveLength(2);
     a.close();
     b.close();
   });
 
+  it('A: a steer handed to the process but never delivered is pending, not accepted — after the process dies it is in neither list', async () => {
+    const S = '66666666-6666-4666-8666-666666666666';
+    const cwd = await seed(S, 'steer2');
+    fake = fakeSdk();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'g1' });
+    const t = await a.next('turn_started');
+    fake.push(sdk.init(S));
+    await vi.waitFor(() => expect(fake.inputs).toHaveLength(1));
+    a.send({ type: 'steer', turnId: t.turnId, steerId: 'k2', text: 'late' });
+    await vi.waitFor(() => expect(fake.inputs).toHaveLength(2));
+    const b = await client();
+    await b.next('hello');
+    b.send({ type: 'open_session', sessionId: S });
+    const h = await b.next('history');
+    expect(h).toMatchObject({ acceptedRefs: ['g1'] });
+    expect(h.pendingRefs).toEqual(['k2']);
+    // While pending, a resend of the steer is refused too (C/D): it may still go in.
+    b.send({ type: 'steer', turnId: t.turnId, steerId: 'k2', text: 'late' });
+    expect(await b.next('steer_rejected', (m) => m.steerId === 'k2')).toMatchObject({ code: 'already_accepted' });
+    b.close();
+    fake.end();
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+    const c = await client();
+    await c.next('hello');
+    c.send({ type: 'open_session', sessionId: S });
+    const h2 = await c.next('history');
+    expect(h2.acceptedRefs).toEqual(['g1']);
+    expect(h2.pendingRefs).toEqual([]);
+    c.close();
+  });
+
+  it('D: a send whose clientRef the session already accepted is refused with already_accepted and never runs again; a follow-up is recorded at its turn_started', async () => {
+    const S = '77777777-7777-4777-8777-777777777777';
+    const cwd = await seed(S, 'dedupe');
+    fake = fakeSdk();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'd1' });
+    const t = await a.next('turn_started');
+    fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'd1' });
+    expect(await a.next('error', (m) => m.clientRef === 'd1')).toMatchObject({ turnId: null, code: 'already_accepted' });
+    a.send({ type: 'send', sessionId: S, cwd, text: 'more', clientRef: 'd2' });
+    await a.next('turn_started', (m) => m.clientRef === 'd2');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'more', clientRef: 'd2' });
+    expect(await a.next('error', (m) => m.clientRef === 'd2')).toMatchObject({ code: 'already_accepted' });
+    a.send({ type: 'open_session', sessionId: S });
+    expect((await a.next('history')).acceptedRefs).toEqual(['d1', 'd2']);
+    expect(fake.inputs).toHaveLength(2);
+    a.send({ type: 'interrupt', turnId: t.turnId });
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+  });
   it('interrupting a follow-up stops the whole process; drain refuses new sends and counts held turns', async () => {
     const S = '44444444-4444-4444-8444-444444444444';
     const cwd = await seed(S, 'bg2');
@@ -210,4 +270,5 @@ describe('ws: sessions held open for background work', () => {
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
   });
+
 });

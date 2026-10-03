@@ -132,7 +132,7 @@ export type WsDeps = {
   /** 새 세션으로 이어가기: a new session sent with `handoffFrom` is linked to that session (and titled) here once it has an id. */
   meta?: Pick<SessionMetaStore, 'link' | 'branch'>;
   /** The send clientRefs / steer ids each session accepted (survives a restart); rides `history` as `acceptedRefs`. */
-  acceptedRefs?: Pick<AcceptedRefs, 'add' | 'list'>;
+  acceptedRefs?: Pick<AcceptedRefs, 'add' | 'has' | 'list'>;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -154,7 +154,7 @@ type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T
 type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null; /** Steers delivered in the running segment (the transcript may lag behind them). */ steers: TurnMsg<'steer_delivered'>[] };
 const MAX_REPLAY_SUBS = 500;
 
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[] };
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string> };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -345,6 +345,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     } else if (m.type === 'turn_progress') {
       log.progress = m;
     } else if (m.type === 'steer_delivered') {
+      // The steer is in the process's input now: accepted (not when runner.steer resolved — the process may end first).
+      const sid = m.sessionId ?? turn.sessionId;
+      if (sid) deps.acceptedRefs?.add(sid, m.steerId);
+      turn.pendingRefs.delete(m.steerId);
       log.steers.push(m);
       if (log.steers.length > MAX_REPLAY_SUBS) log.steers.shift();
     } else if (m.type === 'turn_result') {
@@ -366,6 +370,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
   };
 
+  /** The session took this ref already (recorded) or is taking it (handed to its running process). */
+  const isAccepted = (sessionId: string, ref: string) => !!deps.acceptedRefs?.has(sessionId, ref) || !!turns.get(busy.get(sessionId) ?? '')?.pendingRefs.has(ref);
+
   const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
     const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
@@ -373,6 +380,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
+    // Idempotency: a send this session already took (or is taking) under this ref — a resent queue copy, a duplicated tab — runs once.
+    if (msg.sessionId && msg.clientRef && isAccepted(msg.sessionId, msg.clientRef)) {
+      send(ws, { type: 'error', turnId: null, message: '이미 들어간 메시지라 다시 보내지 않았습니다', code: 'already_accepted', ...ref });
+      return;
+    }
     if (msg.handoff && msg.sessionId) {
       const st = deps.store.get(msg.sessionId);
       if (msg.engine === 'codex' || msg.engine === 'gemini' || (st && (isCodexState(st) || isGeminiState(st))) || (!st && !deps.index.lookup(msg.sessionId) && deps.index.codexImport(msg.sessionId))) {
@@ -396,7 +408,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         ...(msg.model ? { model: msg.model } : {}),
         ...(msg.clientRef ? { clientRef: msg.clientRef } : {}),
       });
-      if (joined) { if (msg.clientRef) deps.acceptedRefs?.add(msg.sessionId, msg.clientRef); return; }
+      // Accepted once its turn_started comes (the sink's alias branch): that is when the process takes it in.
+      if (joined) { if (msg.clientRef) base.pendingRefs.add(msg.clientRef); return; }
       aliases.delete(followId);
       prompts.delete(followId);
       // The turn already sent its result and the process is only closing (no background work to join):
@@ -407,7 +420,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [] };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []) };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -429,6 +442,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const accepted = (sessionId: string | null) => {
       if (!unrecorded || !sessionId) return;
       deps.acceptedRefs?.add(sessionId, unrecorded);
+      turn.pendingRefs.delete(unrecorded);
       unrecorded = null;
     };
     const sink: TurnSink = {
@@ -440,7 +454,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           // Every device viewing the session gets the prompt with each start (retries included); the sending pane skips it.
           const prompt = prompts.get(m.turnId);
           const withPrompt = prompt ? { ...m, prompt } : m;
-          if (m.turnId !== turnId) { aliases.set(m.turnId, turnId); emitTurn(turn, withPrompt); broadcastActivity(); return; }
+          if (m.turnId !== turnId) {
+            // A follow-up's start: the process took its message in now.
+            const sid = m.sessionId ?? turn.sessionId;
+            if (m.clientRef && sid) { deps.acceptedRefs?.add(sid, m.clientRef); turn.pendingRefs.delete(m.clientRef); }
+            aliases.set(m.turnId, turnId); emitTurn(turn, withPrompt); broadcastActivity(); return;
+          }
           started = true;
           accepted(m.sessionId ?? turn.sessionId);
           emitTurn(turn, { ...withPrompt, ...ref });
@@ -448,6 +467,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           return;
         }
         record(turn, m);
+        // A new session's ref, once it has an id. Today's client never asks (a new session is not deduped: no history to
+        // open); kept so a later client that does finds it.
         if (m.type === 'turn_result' && started) accepted(m.sessionId);
         if (m.type === 'turn_result' && m.turnId === turn.current) { turn.current = null; turn.log.progress = null; }
         if (m.type === 'turn_background') turn.bg = m.tasks.length ? { msg: m, at: Date.now() } : null;
@@ -570,11 +591,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const turn = turns.get(baseOf(msg.turnId));
           const reject = (message: string, code?: RefusalCode) => send(ws, { type: 'steer_rejected', turnId: msg.turnId, sessionId: turn?.sessionId ?? null, cwd: turn?.cwd ?? '', steerId: msg.steerId, message, ...(code ? { code } : {}) });
           if (draining) { reject(DRAINING_MESSAGE, 'draining'); break; }
+          if (turn?.sessionId && isAccepted(turn.sessionId, msg.steerId)) { reject('이미 들어간 메시지라 다시 보내지 않았습니다', 'already_accepted'); break; }
           if (!turn || turn.current === null) { reject('실행 중인 턴이 없어 끝난 뒤 보냅니다'); break; }
           void deps.runner.steer(turn.turnId, { steerId: msg.steerId, text: msg.text, ...(msg.attachments ? { attachments: msg.attachments } : {}), prompt: promptOf(msg) })
             .then((ok) => {
+              // Recorded as accepted at steer_delivered (record()); until then it is pending.
               if (ok === false) reject('지금은 실행 중인 턴에 넣을 수 없어 끝난 뒤 보냅니다');
-              else if (turn.sessionId) deps.acceptedRefs?.add(turn.sessionId, msg.steerId);
+              else if (ok === true && turns.has(turn.turnId)) turn.pendingRefs.add(msg.steerId);
             })
             .catch((err: unknown) => reject(`실행 중인 턴에 넣지 못했습니다: ${errMsg(err)}`));
           break;
@@ -598,7 +621,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const runningOf = (sid: string) => {
             const t = turns.get(busy.get(sid) ?? '');
             const current = t?.current ?? null;
-            return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid) } : {}) };
+            return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [] } : {}) };
           };
           void (async () => {
             // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
