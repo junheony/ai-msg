@@ -10,9 +10,9 @@ describe('SettingsStore', () => {
     const file = path.join(dir, 'sub', 'settings.json');
     const s = new SettingsStore(file);
     await s.load();
-    expect(s.get()).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions' });
-    expect(await s.set({ autoApprove: false })).toEqual({ autoApprove: false, defaultPermissionMode: 'default' });
-    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({ autoApprove: false, defaultPermissionMode: 'default' });
+    expect(s.get()).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance' });
+    expect(await s.set({ autoApprove: false })).toEqual({ autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' });
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({ autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' });
     expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
     const again = new SettingsStore(file);
     await again.load();
@@ -28,14 +28,34 @@ describe('SettingsStore', () => {
     await fs.writeFile(file, JSON.stringify({ autoApprove: false }));
     const s = new SettingsStore(file);
     await s.load();
-    expect(s.get()).toEqual({ autoApprove: false, defaultPermissionMode: 'default' });
+    expect(s.get()).toEqual({ autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' });
     await fs.writeFile(file, JSON.stringify({ autoApprove: true }));
     await s.load();
     expect(s.get().defaultPermissionMode).toBe('bypassPermissions');
-    expect(await s.set({ defaultPermissionMode: 'plan' })).toEqual({ autoApprove: false, defaultPermissionMode: 'plan' });
-    expect(await s.set({ defaultPermissionMode: 'bypassPermissions' })).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions' });
-    await fs.writeFile(file, JSON.stringify({ autoApprove: true, defaultPermissionMode: 'acceptEdits' }));
+    expect(await s.set({ defaultPermissionMode: 'plan' })).toEqual({ autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'balance' });
+    expect(await s.set({ defaultPermissionMode: 'bypassPermissions' })).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance' });
+    await fs.writeFile(file, JSON.stringify({ autoApprove: true, defaultPermissionMode: 'acceptEdits', routingPolicy: 'balance' }));
     await s.load();
-    expect(s.get()).toEqual({ autoApprove: false, defaultPermissionMode: 'acceptEdits' });
+    expect(s.get()).toEqual({ autoApprove: false, defaultPermissionMode: 'acceptEdits', routingPolicy: 'balance' });
+  });
+
+  it('routingPolicy: defaults to balance, round-trips drain through the file, ignores junk, survives other changes', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-set-'));
+    const file = path.join(dir, 'settings.json');
+    const s = new SettingsStore(file);
+    await s.load();
+    expect(s.get().routingPolicy).toBe('balance');
+    expect(await s.set({ routingPolicy: 'drain' })).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'drain' });
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).routingPolicy).toBe('drain');
+    // Another setting changed later keeps the policy.
+    expect((await s.set({ defaultPermissionMode: 'plan' })).routingPolicy).toBe('drain');
+    const again = new SettingsStore(file);
+    await again.load();
+    expect(again.get()).toEqual({ autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain' });
+    // And the policy change keeps the permission mode.
+    expect(await again.set({ routingPolicy: 'balance' })).toEqual({ autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'balance' });
+    await fs.writeFile(file, JSON.stringify({ defaultPermissionMode: 'plan', routingPolicy: 'spread-evenly' }));
+    await again.load();
+    expect(again.get().routingPolicy).toBe('balance');
   });
 });

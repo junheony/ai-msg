@@ -92,6 +92,32 @@ describe('TurnRunner', () => {
     expect(c.deps.usage.snapshot().accounts.b.fiveHour?.usedPct).toBe(9);
   });
 
+  it('자동 routing policy: balance by default, drain from the setting; one route log line; a good turn lifts a down card', async () => {
+    // b: 5h 20 / weekly 3 (resets in 84h); c: 5h 0 / weekly 70 (resets in 36h) → balance picks c, drain picks b.
+    const usage = await usageWith([13, 7, 0], [20, 3, 4], [0, 70, 27]);
+    const lines: string[] = [];
+    const eng = new StubEngine(() => ok('new1'));
+    const c = await ctx(eng, { routeLog: (l) => lines.push(l) }, usage);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ account: 'c' });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ reason: '새 세션 · 분산: 5h C 0% < B 20%' });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^deck: route 새 세션 → C \(새 세션 · 분산: 5h C 0% < B 20%\) · 후보 /);
+    const eng2 = new StubEngine(() => ok('new2'));
+    const d = await ctx(eng2, { routingPolicy: () => 'drain' }, usage);
+    await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, d.sink);
+    expect(eng2.calls[0]).toMatchObject({ account: 'b' });
+    // setup_needed card for b (down) — deck's own successful turn on b lifts it for routing.
+    const down = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main', 13, 7, 0, 154), { ...card('claude:second', 2, 3, 4, 84), status: 'setup_needed' }, card('claude:third', 0, 91, 27, 36)] }) }), now: () => new Date(NOW) });
+    await down.pollOnce();
+    expect(down.snapshot().accounts.b.status).toBe('down');
+    // Pinned to b, so the turn runs there even though routing would skip a down card.
+    const e = await ctx(new StubEngine(() => ok('new3')), {}, down);
+    await new TurnRunner(e.deps).run({ turnId: 't3', cwd: '/w/new', sessionId: null, text: 'hi', accountPin: 'b' }, e.sink);
+    expect(msgsOf(e, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'b' } });
+    expect(down.snapshot().accounts.b).toMatchObject({ status: 'ok', weekly: { usedPct: 3 } });
+  });
+
   it('new session in a symlinked cwd: projectDir comes from the CLI-reported (real) cwd', async () => {
     let c!: Ctx;
     const eng = new StubEngine(async (req) => {

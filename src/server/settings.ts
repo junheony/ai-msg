@@ -1,19 +1,23 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isPermMode, permModeFromAutoApprove, type PermMode } from '../shared/permission';
-import type { DeckSettings } from '../shared/protocol';
+import { ROUTING_POLICIES, type DeckSettings, type RoutingPolicy } from '../shared/protocol';
 
-/** 자동 승인 (new sessions in 모두 자동 승인) unless the user turned it off. */
-export const DEFAULT_SETTINGS: DeckSettings = { autoApprove: true, defaultPermissionMode: 'bypassPermissions' };
+/** 자동 승인 (new sessions in 모두 자동 승인) unless the user turned it off; 자동 routing spreads load (고르게 분산). */
+export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance' };
 
-/** Both fields from one source: `defaultPermissionMode` wins; a lone legacy `autoApprove` maps to bypass / default. */
-function normalize(mode: PermMode): DeckSettings {
-  return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode };
+/** Both permission fields from one source: `defaultPermissionMode` wins; a lone legacy `autoApprove` maps to bypass / default. */
+function normalize(mode: PermMode, routingPolicy: RoutingPolicy): Required<DeckSettings> {
+  return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode, routingPolicy };
+}
+
+function isRoutingPolicy(v: unknown): v is RoutingPolicy {
+  return (ROUTING_POLICIES as readonly unknown[]).includes(v);
 }
 
 /** Server-wide settings (`settings.json`), shared by every device. A missing or corrupt file = defaults. */
 export class SettingsStore {
-  private current: DeckSettings = { ...DEFAULT_SETTINGS };
+  private current: Required<DeckSettings> = { ...DEFAULT_SETTINGS };
   private writing: Promise<void> = Promise.resolve();
 
   constructor(private readonly file: string) {}
@@ -28,16 +32,16 @@ export class SettingsStore {
     const r = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
     // Migration: a file from before per-session modes has only autoApprove.
     const mode = isPermMode(r.defaultPermissionMode) ? r.defaultPermissionMode : typeof r.autoApprove === 'boolean' ? permModeFromAutoApprove(r.autoApprove) : DEFAULT_SETTINGS.defaultPermissionMode;
-    this.current = normalize(mode);
+    this.current = normalize(mode, isRoutingPolicy(r.routingPolicy) ? r.routingPolicy : DEFAULT_SETTINGS.routingPolicy);
   }
 
-  get(): DeckSettings {
+  get(): Required<DeckSettings> {
     return this.current;
   }
 
-  async set(patch: Partial<DeckSettings>): Promise<DeckSettings> {
+  async set(patch: Partial<DeckSettings>): Promise<Required<DeckSettings>> {
     const mode = patch.defaultPermissionMode ?? (patch.autoApprove !== undefined ? permModeFromAutoApprove(patch.autoApprove) : this.current.defaultPermissionMode);
-    const next = normalize(mode);
+    const next = normalize(mode, patch.routingPolicy ?? this.current.routingPolicy);
     this.current = next;
     this.writing = this.writing.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });

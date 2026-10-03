@@ -3,7 +3,7 @@ import path from 'node:path';
 import { GEMINI_ACCOUNTS, SEAT_LABEL, isGeminiAccount, type Account, type GeminiAccount } from '../../shared/accounts';
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
-import type { ServerMessage, TurnPrompt } from '../../shared/protocol';
+import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
 import { appendAudit, hashInput } from '../audit';
@@ -13,7 +13,7 @@ import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
-import { chooseAccount } from '../routing/AccountRouter';
+import { chooseAccount, routeLogLine } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
 import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
@@ -83,6 +83,10 @@ export type TurnRunnerDeps = {
   auditFile: string;
   /** The mode for new sessions and sessions with no stored mode (read per turn / per new GPT session); absent = 'default'. */
   defaultPermissionMode?: () => PermMode;
+  /** 자동 routing policy (DeckSettings.routingPolicy, read per turn); absent = 'balance'. */
+  routingPolicy?: () => RoutingPolicy;
+  /** One line per routed Claude turn (main: console.log); absent = not logged. */
+  routeLog?: (line: string) => void;
   /** A session's mode changed during a turn (approved plan, 이 세션's "allow all edits") or via setPermissionMode. */
   onPermissionMode?: (sessionId: string, mode: PermMode) => void;
   projectsRoots: Record<Account, string>;
@@ -1170,7 +1174,7 @@ export class TurnRunner {
     const pin = state ? (state.accountPin ?? (forkAt ? p.accountPin : null) ?? null) : (p.accountPin ?? null);
     const shownId = () => (forkAt ? null : (state?.sessionId ?? null));
     const done = () => (forkAt ? null : state);
-    const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin };
+    const routerBase = { usage: deps.usage.snapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance' };
 
     // An unpinned edit-fork runs on the parent's own account (it is not moved for a branch) unless that account is
     // unusable; a pinned one routes like any turn of the session, copying the parent to the pinned account.
@@ -1205,6 +1209,7 @@ export class TurnRunner {
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
     const elsewhereAge = state && !forkAt ? await this.openElsewhere(state) : null;
     if (state && elsewhereAge !== null) early.push(elsewhereNotice({ engine: 'claude', title: deps.index.lookup(state.sessionId)?.title ?? null, ageMs: elsewhereAge }));
+    deps.routeLog?.(routeLogLine(state?.sessionId ?? null, { ...first, account, reason }));
     if (pin && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
@@ -1258,6 +1263,8 @@ export class TurnRunner {
         forkAt = null;
       }
 
+      // The account works for deck even if its usage-deck card says setup_needed (down).
+      if (res.ok) deps.usage.noteTurnOk(account);
       const failure = classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
       const badge = { account, model, reason, usage: res.usage, modelNote: note, ...pinMark() };
       const shownError = displayError(res.errorText, res.stderr);

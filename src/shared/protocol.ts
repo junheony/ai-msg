@@ -78,7 +78,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * Server-wide settings (persisted, broadcast to every device as `settings`). `defaultPermissionMode` = the mode new
    * sessions start in; `autoApprove` is the legacy switch (true = bypassPermissions, false = default).
    */
-  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional() }),
+  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional() }),
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
@@ -87,7 +87,14 @@ export type ClientMessage = z.infer<typeof ClientMessageSchema>;
  * Server-wide settings. defaultPermissionMode: the mode new Claude sessions (and sessions deck has no mode for) start in.
  * autoApprove mirrors `defaultPermissionMode === 'bypassPermissions'` (legacy 자동 승인; new GPT sessions default to workspace-write).
  */
-export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMode };
+export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMode; /** Absent from older servers (= 'balance'). */ routingPolicy?: RoutingPolicy };
+
+/**
+ * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;
+ * 'drain' (리셋 임박 먼저 소진) = the account whose weekly quota resets soonest, relative to what is left.
+ */
+export const ROUTING_POLICIES = ['balance', 'drain'] as const;
+export type RoutingPolicy = (typeof ROUTING_POLICIES)[number];
 
 /** gemini-cli present, and which accounts have an OAuth file (existence only; the UI shows "로그인 필요" otherwise). */
 export type GeminiStatus = { available: boolean; loggedIn: Record<GeminiAccount, boolean> };

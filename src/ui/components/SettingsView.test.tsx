@@ -19,3 +19,20 @@ describe('SettingsView 권한', () => {
     expect(onMode).toHaveBeenCalledWith('plan');
   });
 });
+
+describe('SettingsView 자동 계정 선택', () => {
+  afterEach(cleanup);
+
+  it('two options (고르게 분산 / 리셋 임박 먼저 소진): shows the server value and sends a change; hidden until the server says', () => {
+    const onPolicy = vi.fn();
+    const { rerender } = render(<SettingsView build={null} routingPolicy={null} onRoutingPolicy={onPolicy} onOpenUsage={noop} onClose={noop} />);
+    expect(screen.queryByRole('group', { name: '자동 계정 선택' })).toBeNull();
+    rerender(<SettingsView build={null} routingPolicy="balance" onRoutingPolicy={onPolicy} onOpenUsage={noop} onClose={noop} />);
+    const balance = screen.getByRole('button', { name: '고르게 분산' });
+    const drain = screen.getByRole('button', { name: '리셋 임박 먼저 소진' });
+    expect(balance.getAttribute('aria-pressed')).toBe('true');
+    expect(drain.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(drain);
+    expect(onPolicy).toHaveBeenCalledWith('drain');
+  });
+});

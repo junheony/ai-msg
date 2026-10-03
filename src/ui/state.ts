@@ -1,6 +1,6 @@
 import type { Account, Seat } from '../shared/accounts';
 import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import type { DeckSettings, GeminiStatus, ServerMessage, SessionActivity, TurnBadge, TurnPrompt } from '../shared/protocol';
+import type { DeckSettings, GeminiStatus, RoutingPolicy, ServerMessage, SessionActivity, TurnBadge, TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -121,6 +121,8 @@ export type AppState = {
   autoApprove: boolean | null;
   /** The mode new sessions start in (server setting); null until the server says. */
   defaultPermMode: PermMode | null;
+  /** 자동 routing policy (server setting); null until the server says. */
+  routingPolicy: RoutingPolicy | null;
   /** Sessions with a turn running or background work, on any device (sidebar dots, tab title). */
   activity: SessionActivity[];
   /** Sessions whose turn finished while no focused pane showed them; cleared when opened. */
@@ -133,7 +135,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, activity: [], unread: [] };
+export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [] };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -554,6 +556,7 @@ export function paneMode(pane: PaneState, defaultMode: PermMode | null): PermMod
 function applySettings(state: AppState, settings: DeckSettings | undefined): AppState {
   if (!settings) return state;
   if (settings.defaultPermissionMode !== state.defaultPermMode) state = { ...state, defaultPermMode: settings.defaultPermissionMode };
+  if ((settings.routingPolicy ?? 'balance') !== state.routingPolicy) state = { ...state, routingPolicy: settings.routingPolicy ?? 'balance' };
   if (settings.autoApprove === state.autoApprove) return state;
   const from = defaultSandbox(state.autoApprove ?? false);
   const to = defaultSandbox(settings.autoApprove);

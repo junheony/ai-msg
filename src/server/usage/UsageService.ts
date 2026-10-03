@@ -9,6 +9,8 @@ export type FetchLike = (
 ) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
 
 export const GPT_CARD_ID = 'codex';
+/** How long a successful deck turn on a Claude account outweighs a `down` (e.g. setup_needed) card for routing. */
+export const TURN_OK_TRUST_MS = 30 * 60_000;
 
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -77,6 +79,8 @@ export class UsageService {
   private turnObs = new Map<UsageSeat, { w: TurnWindows; atMs: number }>();
   /** Newest GPT credits reading; the usage-deck card has none, so it outlives the window overlay. */
   private gptCredits: { c: GptCredits; atMs: number } | null = null;
+  /** When deck last completed a turn on each Claude account (see noteTurnOk). */
+  private turnOkAt = new Map<Account, number>();
   private readonly url: string;
   private readonly fetchFn: FetchLike;
   private readonly intervalMs: number;
@@ -131,6 +135,18 @@ export class UsageService {
     return u;
   }
 
+  /**
+   * A `down` Claude card (usage-deck's own token expired: setup_needed) while deck itself completed a turn on that
+   * account within TURN_OK_TRUST_MS: the account works, so it is not 'down' for routing. Numbers are not invented —
+   * the card's last-known rows (or a turn observation) stay; no weekly value still keeps it out of routing.
+   */
+  private lift(account: Account, u: AccountUsage): AccountUsage {
+    const at = this.turnOkAt.get(account);
+    if (u.status !== 'down' || at === undefined) return u;
+    if (this.now().getTime() - at >= TURN_OK_TRUST_MS) { this.turnOkAt.delete(account); return u; }
+    return { ...u, status: 'ok' };
+  }
+
   private withCredits(u: AccountUsage): AccountUsage {
     return this.gptCredits ? { ...u, credits: this.gptCredits.c } : u;
   }
@@ -151,7 +167,7 @@ export class UsageService {
       if (!res.ok) throw new Error(`deck HTTP not ok`);
       const parsed = parseDeckCards(await res.json());
       const accounts = { ...parsed.accounts };
-      for (const a of ACCOUNTS) accounts[a] = this.overlay(a, accounts[a]);
+      for (const a of ACCOUNTS) accounts[a] = this.lift(a, this.overlay(a, accounts[a]));
       this.publish({ generatedAt: this.now().toISOString(), deckReachable: true, accounts, gpt: this.withCredits(this.overlay('gpt', parsed.gpt)) });
     } catch {
       // Spec §8: deck unreachable → keep last values, show them as stale.
@@ -196,5 +212,13 @@ export class UsageService {
     const generatedAt = this.now().toISOString();
     if (seat === 'gpt') this.publish({ ...this.snap, generatedAt, gpt: next });
     else this.publish({ ...this.snap, generatedAt, accounts: { ...this.snap.accounts, [seat]: next } });
+  }
+
+  /** deck just completed a turn on `account` (result ok): see `lift`. */
+  noteTurnOk(account: Account, atMs: number = this.now().getTime()): void {
+    this.turnOkAt.set(account, Math.max(atMs, this.turnOkAt.get(account) ?? 0));
+    const cur = this.snap.accounts[account];
+    const next = this.lift(account, cur);
+    if (next !== cur) this.publish({ ...this.snap, generatedAt: this.now().toISOString(), accounts: { ...this.snap.accounts, [account]: next } });
   }
 }

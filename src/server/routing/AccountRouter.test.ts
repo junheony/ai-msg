@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Account } from '../../shared/accounts';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
-import { chooseAccount, rankCandidates, type RouterInput } from './AccountRouter';
+import { chooseAccount, rankCandidates, routeLogLine, type RouterInput } from './AccountRouter';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const H = 3_600_000;
@@ -35,6 +35,8 @@ function input(over: Partial<RouterInput>): RouterInput {
     cooldownUntilMs: {},
     protectedAccount: null,
     needFable: false,
+    // The tables below pin the old "리셋 임박 먼저 소진" policy: they are the proof it is unchanged.
+    policy: 'drain',
     ...over,
   };
 }
@@ -179,5 +181,94 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
     expect(chooseAccount(input({ current: null, protectedAccount: 'a', pinned: 'a' })).account).toBe('a');
     // Unpinned, a new session never lands on the protected account while others are eligible.
     expect(chooseAccount(input({ current: null, protectedAccount: 'a' })).account).not.toBe('a');
+  });
+});
+
+describe('chooseAccount · 고르게 분산 (balance)', () => {
+  // The reported case: B resets in ~18h with 78% left, C in ~138h with 100% left. Drain sends everything to B.
+  const reported = () => snap({ s: 30, w: 40, resetH: 100 }, { s: 10, w: 22, resetH: 18 }, { s: 0, w: 0, resetH: 138 });
+  const bal = (over: Partial<RouterInput>) => input({ policy: 'balance', ...over });
+
+  it('is the default when no policy is given', () => {
+    const { policy: _p, ...noPolicy } = input({ protectedAccount: 'a', usage: reported() });
+    expect(chooseAccount(noPolicy).account).toBe('c');
+  });
+
+  it('new session → lowest 5h among safe candidates, and says why', () => {
+    const d = chooseAccount(bal({ protectedAccount: 'a', usage: reported() }));
+    expect(d.account).toBe('c');
+    expect(d.reason).toBe('새 세션 · 분산: 5h C 0% < B 10%');
+    // The same input under drain still drains B (resets soonest).
+    expect(chooseAccount(input({ protectedAccount: 'a', usage: reported() })).account).toBe('b');
+  });
+
+  it('5h within 5 points → lower weekly wins, then the reset-urgency score', () => {
+    const w = chooseAccount(bal({ usage: snap({ s: 50, w: 10 }, { s: 4, w: 30, resetH: 5 }, { s: 8, w: 20, resetH: 150 }) }));
+    expect(w.account).toBe('c');
+    expect(w.reason).toMatch(/주간 C 20% < B 30%/);
+    // 5h and weekly both tied: the account whose weekly resets sooner (higher score) wins.
+    const s = chooseAccount(bal({ usage: snap({ s: 50, w: 10 }, { s: 6, w: 20, resetH: 150 }, { s: 3, w: 20, resetH: 10 }) }));
+    expect(s.account).toBe('c');
+    const s2 = chooseAccount(bal({ usage: snap({ s: 50, w: 10 }, { s: 3, w: 20, resetH: 10 }, { s: 6, w: 20, resetH: 150 }) }));
+    expect(s2.account).toBe('b');
+    // More than 5 points apart: 5h decides even against a much lower weekly.
+    expect(chooseAccount(bal({ usage: snap({ s: 50, w: 10 }, { s: 2, w: 60 }, { s: 8, w: 0 }) })).account).toBe('b');
+  });
+
+  it('skips candidates past the force thresholds', () => {
+    // B has the lowest 5h but is past the weekly 85 threshold; C is past the 5h 80 threshold.
+    const d = chooseAccount(bal({ usage: snap({ s: 40, w: 10 }, { s: 0, w: 90 }, { s: 85, w: 0 }) }));
+    expect(d.account).toBe('a');
+  });
+
+  it('protected account stays last even with the lowest 5h', () => {
+    const { candidates } = rankCandidates(bal({ protectedAccount: 'a', usage: snap({ s: 0, w: 0 }, { s: 40, w: 50 }, { s: 20, w: 60 }) }));
+    expect(candidates.map((c) => c.account)).toEqual(['c', 'b', 'a']);
+    expect(chooseAccount(bal({ protectedAccount: 'a', usage: snap({ s: 0, w: 0 }, { s: 40, w: 50 }, { s: 20, w: 60 }) })).account).toBe('c');
+  });
+
+  it('nothing safe → falls back to the drain ordering', () => {
+    // A protected; B over 5h 80; C over weekly 85 → no safe candidate.
+    const usage = snap({ s: 0, w: 0 }, { s: 82, w: 10, resetH: 150 }, { s: 0, w: 88, resetH: 10 });
+    const b = chooseAccount(bal({ protectedAccount: 'a', usage }));
+    const d = chooseAccount(input({ protectedAccount: 'a', usage }));
+    expect(b.account).toBe(d.account);
+    expect(rankCandidates(bal({ protectedAccount: 'a', usage })).candidates.map((c) => c.account))
+      .toEqual(rankCandidates(input({ protectedAccount: 'a', usage })).candidates.map((c) => c.account));
+    expect(b.reason).toMatch(/안전한 후보 없음/);
+  });
+
+  it('cold session re-routes by the balance policy; a warm one stays', () => {
+    const usage = reported();
+    const cold = chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage }));
+    expect(cold).toMatchObject({ account: 'c', switched: true });
+    expect(cold.reason).toMatch(/캐시 식음\(120분 경과\) → C · 분산: 5h C 0% < B 10%/);
+    const compacted = chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, justCompacted: true, usage }));
+    expect(compacted.account).toBe('c');
+    const first = chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: null, usage }));
+    expect(first.account).toBe('c');
+    const warm = chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 10 * 60_000, usage }));
+    expect(warm).toMatchObject({ account: 'b', switched: false });
+    expect(warm.reason).toMatch(/캐시 따뜻함/);
+  });
+
+  it('forced switches and pins are the same under both policies', () => {
+    const usage = snap({ s: 81, w: 10 }, { s: 30, w: 1, resetH: 5 }, { s: 10, w: 50, resetH: 150 });
+    const forced = { current: 'a' as const, lastTurnAtMs: NOW - 60_000, usage };
+    expect(chooseAccount(bal(forced))).toMatchObject({ account: chooseAccount(input(forced)).account, switched: true });
+    const pinned = { current: 'b' as const, lastTurnAtMs: NOW - 60_000, pinned: 'a' as const, usage: reported() };
+    expect(chooseAccount(bal(pinned))).toMatchObject({ account: 'a', pinned: true });
+  });
+});
+
+describe('routeLogLine', () => {
+  it('one line: short session id, account, reason, candidates and exclusions', () => {
+    const d = chooseAccount(input({ policy: 'balance', protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ s: 0, w: 0 }, { s: 10, w: 22, resetH: 18 }, { s: 0, w: 0, resetH: 138 }) }));
+    const line = routeLogLine('0123456789abcdef', d);
+    expect(line).toMatch(/^deck: route 01234567 → C \(새 세션 · 분산: 5h C 0% < B 10%\)/);
+    expect(line).toMatch(/후보 C 5h 0% · 주간 0%, B 5h 10% · 주간 22%/);
+    expect(line).toMatch(/제외 A 쿨다운/);
+    expect(line).not.toMatch(/\n/);
+    expect(routeLogLine(null, d)).toMatch(/^deck: route 새 세션 → C/);
   });
 });

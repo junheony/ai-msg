@@ -85,6 +85,8 @@ async function main(): Promise<void> {
     protectedAccount: cfg.protectedAccount,
     auditFile: cfg.auditFile,
     defaultPermissionMode: () => settings.get().defaultPermissionMode,
+    routingPolicy: () => settings.get().routingPolicy,
+    routeLog: (line) => console.log(line),
     onPermissionMode: (sessionId, mode) => notifyPermissionMode(sessionId, mode),
     projectsRoots: cfg.projectsRoots,
     homeAccount: HOME_ACCOUNT,

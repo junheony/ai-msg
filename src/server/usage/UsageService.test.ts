@@ -126,6 +126,40 @@ describe('UsageService', () => {
     expect(s.snapshot().accounts.a.weekly?.usedPct).toBe(7);
   });
 
+  it('a fresh successful deck turn overrides a setup_needed card (down) for 30 min, then the card wins again', async () => {
+    let nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const expired = structuredClone(LIVE);
+    // usage-deck's own token expired: setup_needed, last-known rows still on the card.
+    expired.cards[0] = { ...expired.cards[0]!, status: 'setup_needed' };
+    const s = svc(async () => ({ ok: true, json: async () => expired }), () => new Date(nowMs));
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.status).toBe('down');
+    const seen: string[] = [];
+    s.onChange((snap) => seen.push(snap.accounts.a.status));
+    s.noteTurnOk('a');
+    expect(seen).toEqual(['ok']);
+    expect(s.snapshot().accounts.a).toMatchObject({ status: 'ok', weekly: { usedPct: 7 } });
+    expect(s.snapshot().accounts.b.status).toBe('stale'); // other cards untouched
+    nowMs += 29 * 60_000;
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.status).toBe('ok');
+    nowMs += 2 * 60_000; // 31 min after the turn
+    await s.pollOnce();
+    expect(s.snapshot().accounts.a.status).toBe('down');
+  });
+
+  it('noteTurnOk leaves ok/stale cards alone and does not invent numbers for an empty card', async () => {
+    const empty = structuredClone(LIVE);
+    empty.cards[0] = { id: 'claude:main', status: 'setup_needed', rows: [] } as never;
+    const s = svc(async () => ({ ok: true, json: async () => empty }));
+    await s.pollOnce();
+    s.noteTurnOk('b');
+    expect(s.snapshot().accounts.b.status).toBe('stale');
+    s.noteTurnOk('a');
+    // Not down any more, but with no weekly value the router still leaves it out ('주간 사용률 없음').
+    expect(s.snapshot().accounts.a).toMatchObject({ status: 'ok', weekly: null });
+  });
+
   it('start() polls on an interval and stop() halts it', async () => {
     vi.useFakeTimers();
     const fetchFn = vi.fn(async () => ({ ok: true, json: async () => LIVE }));

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { usePrefs } from '../usePrefs';
 import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
 import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, type PermMode } from '../../shared/permission';
+import type { RoutingPolicy } from '../../shared/protocol';
 import { NotifyMenu } from './NotifyMenu';
 
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
@@ -18,11 +19,14 @@ function Seg<T extends string>({ label, value, options, onPick }: { label: strin
   );
 }
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, onOpenUsage, onClose }: {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, onOpenUsage, onClose }: {
   build: string | null;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
   onDefaultPermMode?: (m: PermMode) => void;
+  /** How 자동 picks an account (server setting; null = not known yet). */
+  routingPolicy?: RoutingPolicy | null;
+  onRoutingPolicy?: (p: RoutingPolicy) => void;
   onOpenUsage: () => void;
   onClose: () => void;
 }) {
@@ -69,6 +73,12 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
         </section>
         <section aria-label="계정·사용량">
           <h3>계정 · 사용량</h3>
+          {onRoutingPolicy && routingPolicy !== null && (
+            <>
+              <Seg<RoutingPolicy> label="자동 계정 선택" value={routingPolicy} onPick={onRoutingPolicy} options={[['balance', '고르게 분산'], ['drain', '리셋 임박 먼저 소진']]} />
+              <p className="muted">고르게 분산: 5시간 사용량이 가장 낮은 계정으로 (비슷하면 주간이 낮은 쪽). 리셋 임박 먼저 소진: 주간 한도가 곧 리셋되는 계정부터. 대화 중인 세션은 캐시 때문에 그대로 두고, 새 세션과 오래 쉰 세션에만 적용됩니다.</p>
+            </>
+          )}
           <div className="settings-row"><span>토큰 사용량 기록 (주별·일별)</span><button type="button" className="btn ghost" onClick={() => { onClose(); onOpenUsage(); }}>사용량 보기</button></div>
           <p className="muted">계정별 5시간·주간 한도는 화면 상단 사용량 표시에서 확인합니다 (읽기 전용).</p>
         </section>
