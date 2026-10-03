@@ -15,8 +15,8 @@ describe('NewChat', () => {
       { sessionId: 'g', account: 'gpt', engine: 'codex', cwd: '/w', projectDir: '', file: '', title: 'codex one', lastModified: 1, sizeBytes: 1 },
     ];
     render(<NewChat projects={[{ cwd: '/w', name: 'w', pinned: true, sessions }] as unknown as ProjectEntry[]} onStart={vi.fn()} onOpenSession={vi.fn()} now={10} />);
-    expect(screen.getByText('claude one').querySelector('.engine-mark')?.getAttribute('aria-label')).toBe('Claude');
-    expect(screen.getByText('codex one').querySelector('.engine-mark')?.getAttribute('aria-label')).toBe('Codex (GPT)');
+    expect(screen.getByText('claude one').querySelector('.engine-mark')?.getAttribute('title')).toBe('Claude');
+    expect(screen.getByText('codex one').querySelector('.engine-mark')?.getAttribute('title')).toBe('Codex (GPT)');
   });
 
   it('the ↑ button opens an empty new session when nothing is typed', () => {

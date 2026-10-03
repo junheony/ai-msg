@@ -18,6 +18,21 @@ function renderChat(items: ChatItem[], busy = false, onSend = vi.fn(), extra: Pa
 describe('Chat', () => {
   afterEach(cleanup);
 
+  it('pane header: engine mark (role=img) only once the engine is known — no Claude flash on an opening Codex thread', () => {
+    renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: null });
+    expect(document.querySelector('.chat-title .engine-mark')).toBeNull();
+    cleanup();
+    renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'codex' });
+    expect(screen.getByRole('img', { name: 'Codex (GPT)' }).closest('.chat-title')).not.toBeNull();
+    cleanup();
+    renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude' });
+    expect(screen.getByRole('img', { name: 'Claude' }).closest('.chat-title')).not.toBeNull();
+    cleanup();
+    renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude', isNew: true });
+    expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();
+  });
+
+
   it('a failed last turn offers 재시도, which re-sends the same prompt', () => {
     const onSend = renderChat([{ kind: 'user', text: 'first' }, { ...failed, error: null, text: 'fine' }, { kind: 'user', text: 'do the thing' }, failed]);
     fireEvent.click(screen.getByText('재시도'));

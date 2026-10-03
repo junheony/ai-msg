@@ -483,6 +483,33 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect((c.deps.engine as StubEngine).calls).toHaveLength(0);
   });
 
+  it('a new codex thread is recorded at init, so its `codex exec` rollout never shows as an import mid-turn', async () => {
+    const tid = '01a0f2d3-0000-7c92-aeea-0000000000f1';
+    const c = await ctx(new StubEngine(async () => []), { findRollout: async () => null, readRateLimits: async () => null });
+    const work = path.join(c.base, 'work');
+    const root = path.join(c.base, 'codex-root');
+    await fs.mkdir(work);
+    await fs.mkdir(path.join(root, '2026', '10', '04'), { recursive: true });
+    // What `codex exec --json` writes while deck's first turn runs.
+    await fs.writeFile(path.join(root, '2026', '10', '04', `rollout-2026-10-04T00-00-00-${tid}.jsonl`),
+      [{ type: 'session_meta', payload: { id: tid, cwd: work, originator: 'codex_exec', source: 'exec', thread_source: 'user' } }, { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi deck' }] } }].map((l) => JSON.stringify(l)).join('\n') + '\n');
+    const index = new SessionIndex({ roots: c.roots, pinnedFile: path.join(c.base, 'p2.json'), codexRoot: root });
+    let midTurn: { sessionId: string; imported?: boolean; codexExec?: boolean }[] = [];
+    c.deps.codex = {
+      async *runTurn() {
+        yield { kind: 'init', sessionId: tid, model: 'gpt-6-sol' };
+        await index.refresh();
+        midTurn = index.projects(c.deps.store.codexEntries()).flatMap((p) => p.sessions).filter((e) => e.sessionId === tid);
+        yield* codexOk(tid).slice(1);
+      },
+    };
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: work, sessionId: null, text: 'hi deck', engine: 'codex' }, c.sink);
+    expect(midTurn).toHaveLength(1);
+    expect(midTurn[0]?.imported).toBeUndefined();
+    expect(midTurn[0]?.codexExec).toBeUndefined();
+    expect(c.deps.store.get(tid)).toMatchObject({ engine: 'codex', cwd: work, title: 'hi deck', createdAtMs: NOW, lastTurnAtMs: NOW });
+  });
+
   it('resuming a codex session honours a per-turn Codex model; the badge shows it; the stored default is unchanged', async () => {
     const codex = fakeCodex((req) => codexOk(req.resumeThreadId ?? 'x'));
     const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });

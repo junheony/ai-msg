@@ -223,7 +223,7 @@ describe('Sidebar rename / archive / 대화 내용 검색', () => {
   });
 
   it('full-text search: debounced, highlighted snippet, archived-session hits hidden, click opens the hit', async () => {
-    const hit = (sessionId: string, snippet: string, matchStart: number) => ({ sessionId, title: `T ${sessionId}`, cwd: '/w', account: 'b', engine: 'claude', lastModified: Date.now(), role: 'assistant' as const, snippet, matchStart, matchLength: 5 });
+    const hit = (sessionId: string, snippet: string, matchStart: number) => ({ sessionId, title: `T ${sessionId}`, cwd: '/w', account: 'b', engine: 'claude' as const, lastModified: Date.now(), role: 'assistant' as const, snippet, matchStart, matchLength: 5 });
     const searchFn = vi.fn(async (q: string) => ({ hits: [hit('s1', '…fix the flaky test…', 9), hit('s3', 'flaky old', 0), hit('zz', 'other flaky', 6)], truncated: q === 'flaky' }));
     const onOpenHit = vi.fn();
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenHit={onOpenHit} searchFn={searchFn} onArchive={noop} />);
@@ -269,7 +269,7 @@ describe('Sidebar imported Codex threads', () => {
     const e = { sessionId: 'tid', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'from codex', lastModified: Date.now(), sizeBytes: 1, imported: true };
     render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} />);
     const li = screen.getByText('from codex').closest('li')!;
-    expect(li.querySelector('.session-title .engine-mark.codex')?.getAttribute('aria-label')).toBe('Codex (GPT)');
+    expect(li.querySelector('.session-title .engine-mark.codex')?.getAttribute('title')).toBe('Codex (GPT)');
     expect(li.querySelector('.session-meta')?.textContent).toBe('방금');
     fireEvent.click(screen.getByText('from codex'));
     expect(onOpen).toHaveBeenCalledWith('tid', '/w', 'from codex');
@@ -292,9 +292,11 @@ describe('Sidebar engine marks', () => {
 
   it('puts a Claude / Codex mark before the title in the 프로젝트 view; the Claude row keeps its account letter', () => {
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
-    expect(markOf('claude chat')?.getAttribute('aria-label')).toBe('Claude');
     expect(markOf('claude chat')?.getAttribute('title')).toBe('Claude');
-    expect(markOf('codex chat')?.getAttribute('aria-label')).toBe('Codex (GPT)');
+    expect(markOf('codex chat')?.getAttribute('title')).toBe('Codex (GPT)');
+    // Dense list: the row's text already identifies it, so the mark stays out of the accessibility tree.
+    expect(markOf('claude chat')?.getAttribute('aria-hidden')).toBe('true');
+    expect(markOf('claude chat')?.hasAttribute('role')).toBe(false);
     // Inside the truncating title (first child), so the ellipsis never hides it and the row does not grow.
     const title = screen.getByText('claude chat');
     expect(title.classList.contains('session-title')).toBe(true);
@@ -315,13 +317,14 @@ describe('Sidebar engine marks', () => {
     expect(screen.getByText('claude chat').closest('li')!.querySelector('.session-row > .row-dot.running')).not.toBeNull();
   });
 
-  it('marks 대화 내용 search hits by engine', async () => {
-    const hit = (id: string, engine: string) => ({ sessionId: id, title: `hit ${id}`, cwd: '/w', account: 'a', engine, lastModified: Date.now(), role: 'assistant' as const, snippet: 'abc', matchStart: 0, matchLength: 2 });
-    const searchFn = vi.fn(async () => ({ hits: [hit('h1', 'claude'), hit('h2', 'codex')], truncated: false }));
+  it('marks 대화 내용 search hits by engine; Gemini gets none', async () => {
+    const hit = (id: string, engine: 'claude' | 'codex' | 'gemini') => ({ sessionId: id, title: `hit ${id}`, cwd: '/w', account: 'a', engine, lastModified: Date.now(), role: 'assistant' as const, snippet: 'abc', matchStart: 0, matchLength: 2 });
+    const searchFn = vi.fn(async () => ({ hits: [hit('h1', 'claude'), hit('h2', 'codex'), hit('h3', 'gemini')], truncated: false }));
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenHit={noop} searchFn={searchFn} />);
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'ab' } });
     await waitFor(() => expect(screen.getByText('hit h2')).toBeTruthy());
-    expect(screen.getByText('hit h1').querySelector('.engine-mark')?.getAttribute('aria-label')).toBe('Claude');
-    expect(screen.getByText('hit h2').querySelector('.engine-mark')?.getAttribute('aria-label')).toBe('Codex (GPT)');
+    expect(screen.getByText('hit h1').querySelector('.engine-mark')?.getAttribute('title')).toBe('Claude');
+    expect(screen.getByText('hit h2').querySelector('.engine-mark')?.getAttribute('title')).toBe('Codex (GPT)');
+    expect(screen.getByText('hit h3').querySelector('.engine-mark')).toBeNull();
   });
 });

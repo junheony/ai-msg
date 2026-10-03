@@ -132,7 +132,7 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
             <div className="newchat-cards">
               {recent.map(({ s, name }) => (
                 <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => onOpenSession(s.sessionId, s.cwd, s.title)}>
-                  <span className="newchat-card-title"><EngineMark engine={engineOf(s)} />{s.title}</span>
+                  <span className="newchat-card-title"><EngineMark engine={engineOf(s)} decorative />{s.title}</span>
                   <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
                 </button>
               ))}

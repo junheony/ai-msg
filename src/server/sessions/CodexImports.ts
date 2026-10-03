@@ -34,9 +34,9 @@ function titleOf(text: string): string | null {
 /**
  * Streams the first HEAD_BYTES of a rollout: `session_meta` (thread id, cwd) and the first real user prompt.
  * Null for sub-agent threads (Codex Desktop spawns hundreds; they are not conversations) and unusable files.
- * `codex exec` runs are returned with `exec: true`.
+ * `codex exec` runs are returned with `exec: true`; `stopAtExec` returns those right after the meta line (no prompt scan).
  */
-export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES): Promise<RolloutHead | null> {
+export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES, opts: { stopAtExec?: boolean } = {}): Promise<RolloutHead | null> {
   const stream = createReadStream(file, { encoding: 'utf8', start: 0, end: maxBytes - 1 });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   let meta: { threadId: string; cwd: string; exec?: true } | null = null;
@@ -54,6 +54,7 @@ export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES): Prom
         if (!id || !UUID.test(id) || typeof p.cwd !== 'string' || !p.cwd.startsWith('/')) return null;
         if (p.thread_source === 'subagent' || (p.source !== undefined && typeof p.source !== 'string')) return null;
         meta = { threadId: id, cwd: p.cwd, ...(p.source === 'exec' || p.originator === 'codex_exec' ? { exec: true as const } : {}) };
+        if (opts.stopAtExec && meta.exec) break;
         continue;
       }
       if (r.type === 'response_item' && p.type === 'message' && p.role === 'user' && Array.isArray(p.content)) {
@@ -120,9 +121,11 @@ export class CodexRolloutIndex {
     for (const f of files) {
       live.add(f.file);
       let cached = this.heads.get(f.file);
-      // A head without a prompt yet (thread just started) is retried once the file grows.
+      // A head without a prompt yet (thread just started) is retried once the file grows (a write makes an old exec one recent).
       if (!cached || f.size < cached.size || (cached.head && !cached.head.title && f.size !== cached.size)) {
-        cached = { size: f.size, head: await this.readHead(f.file).catch(() => null) };
+        // An exec rollout already too old to list needs only its meta line, not the 2 MB prompt scan.
+        const old = nowMs - f.mtimeMs > EXEC_RECENT_MS;
+        cached = { size: f.size, head: await this.readHead(f.file, HEAD_BYTES, old ? { stopAtExec: true } : {}).catch(() => null) };
         this.heads.set(f.file, cached);
       }
       const h = cached.head;

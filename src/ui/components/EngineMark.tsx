@@ -17,12 +17,16 @@ export function engineOf(s: { engine?: EngineKind | null; account?: Seat }): Eng
 
 /**
  * The engine mark before a session's title (the usage cards' marks): Claude ✳ in its color, the OpenAI blossom for Codex.
- * No text content (the ✳ is drawn by CSS), so the title's text and truncation stay as they were. Gemini has no mark.
+ * No text content (the ✳ is drawn by CSS), so the title's text and truncation stay as they were. Gemini (or anything
+ * else) has no mark. `decorative`: dense lists whose row already says what it is — hidden from assistive tech, tooltip kept.
  */
-export function EngineMark({ engine }: { engine: EngineKind }) {
-  if (engine === 'codex') {
-    return <span className="engine-mark codex" role="img" aria-label="Codex (GPT)" title="Codex (GPT)"><OpenAIMark className="engine-mark-svg" /></span>;
-  }
-  if (engine === 'claude') return <span className="engine-mark claude" role="img" aria-label="Claude" title="Claude" />;
-  return null;
+export function EngineMark({ engine, decorative = false }: { engine: EngineKind; decorative?: boolean }) {
+  if (engine !== 'codex' && engine !== 'claude') return null;
+  const label = engine === 'codex' ? 'Codex (GPT)' : 'Claude';
+  const a11y = decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label };
+  return (
+    <span className={`engine-mark ${engine}`} title={label} {...a11y}>
+      {engine === 'codex' && <OpenAIMark className="engine-mark-svg" />}
+    </span>
+  );
 }

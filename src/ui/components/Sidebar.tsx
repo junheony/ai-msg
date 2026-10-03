@@ -175,7 +175,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
               }}
               onBlur={() => commitEdit(target, key)} onClick={(e) => e.stopPropagation()} />
           ) : (
-            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}><EngineMark engine={engine} />{target.title}</span>
+            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}><EngineMark engine={engine} decorative />{target.title}</span>
           )}
           <span className="session-meta" {...(s.imported ? { title: s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project ?? (engine === 'codex' ? null : s.account.toUpperCase()), s.codexExec ? '자동 실행' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
           {canEdit && !edit && (
@@ -210,7 +210,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       <li key={d.sessionId} className={d.sessionId === currentSessionId ? 'active' : ''} title={`${d.title}\n${d.cwd}`} onClick={() => onOpen(d.sessionId, d.cwd, d.title)}>
         <span className="session-row">
           {dot(d.sessionId)}
-          <span className="session-title"><EngineMark engine="claude" />{d.title}</span>
+          <span className="session-title"><EngineMark engine="claude" decorative />{d.title}</span>
           <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {ago(d.lastModified)}</span>
           {onTogglePin && (
             <>
@@ -325,7 +325,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {hitsShown.map((h, i) => (
               <li key={`${h.sessionId}-${i}`} className="search-hit" title={`${h.title}\n${h.cwd}`} onClick={() => onOpenHit?.(h)}>
                 <span className="session-row">
-                  <span className="session-title"><EngineMark engine={h.engine === 'codex' ? 'codex' : 'claude'} />{h.title}</span>
+                  <span className="session-title"><EngineMark engine={h.engine} decorative />{h.title}</span>
                   <span className="session-meta">{h.role === 'user' ? '나' : h.engine === 'codex' ? 'GPT' : 'Claude'} · {ago(h.lastModified)}</span>
                 </span>
                 <span className="search-snippet">

@@ -92,10 +92,10 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenHit, se
               <li key={it.key} id={`palette-${i}`} role="option" aria-selected={i === cur} className={`palette-item ${i === cur ? 'on' : ''}`}
                 onMouseMove={() => { if (i !== cur) setSel(i); }} onClick={() => run(it)}>
                 {it.kind === 'action' && <><span className="palette-title">{it.a.label}</span>{it.a.hint && <kbd className="palette-hint">{it.a.hint}</kbd>}</>}
-                {it.kind === 'session' && <><span className="palette-title"><EngineMark engine={it.s.engine ?? 'claude'} />{it.s.title}</span><span className="palette-meta">{it.s.project}</span></>}
+                {it.kind === 'session' && <><span className="palette-title"><EngineMark engine={it.s.engine ?? 'claude'} decorative />{it.s.title}</span><span className="palette-meta">{it.s.project}</span></>}
                 {it.kind === 'hit' && (
                   <>
-                    <span className="palette-title"><EngineMark engine={it.h.engine === 'codex' ? 'codex' : 'claude'} />{it.h.title}</span>
+                    <span className="palette-title"><EngineMark engine={it.h.engine} decorative />{it.h.title}</span>
                     <span className="palette-snippet">{it.h.snippet.slice(0, it.h.matchStart)}<mark>{it.h.snippet.slice(it.h.matchStart, it.h.matchStart + it.h.matchLength)}</mark>{it.h.snippet.slice(it.h.matchStart + it.h.matchLength)}</span>
                   </>
                 )}

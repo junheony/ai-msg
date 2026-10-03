@@ -1,10 +1,12 @@
+import type { EngineKind } from '../shared/models';
+
 /** Mirrors server/sessions/search.ts SearchHit (the UI bundle does not import server code). */
 export interface SearchHit {
   sessionId: string;
   title: string;
   cwd: string;
   account: string;
-  engine: string;
+  engine: EngineKind;
   lastModified: number;
   role: 'user' | 'assistant';
   snippet: string;

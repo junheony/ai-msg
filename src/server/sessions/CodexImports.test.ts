@@ -82,27 +82,44 @@ describe('CodexRolloutIndex', () => {
     const dir = path.join(root, '2026', '10', '03');
     await fs.mkdir(dir, { recursive: true });
     const id = (n: string) => `01a0f2d3-0000-7c92-aeea-0000000000${n}`;
+    const NOW = Date.now();
+    const DAY = 86_400_000;
     const write = async (n: string, cwd: string, extra: Record<string, unknown>, ageMs: number) => {
       const f = path.join(dir, `rollout-2026-10-03T10-00-${n}-${id(n)}.jsonl`);
       await fs.writeFile(f, jsonl([meta(id(n), cwd, { originator: 'codex_exec', source: 'exec', ...extra }), user('run lane')]));
       const t = new Date(NOW - ageMs);
       await fs.utimes(f, t, t);
+      return f;
     };
-    const NOW = Date.now();
-    const DAY = 86_400_000;
     await write('e1', work, {}, DAY);
-    await write('e2', work, {}, 8 * DAY);
+    const old = await write('e2', work, {}, 8 * DAY);
     await write('e3', path.join(work, 'gone'), {}, DAY);
     await write('e4', work, { thread_source: 'subagent' }, DAY);
-    const idx = new CodexRolloutIndex(root, readRolloutHead, () => NOW);
+    let now = NOW;
+    const reads: { file: string; stopAtExec: boolean }[] = [];
+    const idx = new CodexRolloutIndex(root, async (f, max, o) => { reads.push({ file: f, stopAtExec: !!o?.stopAtExec }); return readRolloutHead(f, max, o); }, () => now);
     await idx.refresh();
     expect(idx.list().map((e) => e.sessionId)).toEqual([id('e1')]);
     expect(idx.lookup(id('e1'))).toMatchObject({ account: 'gpt', engine: 'codex', imported: true, codexExec: true, title: 'run lane' });
+    // The already-too-old exec rollout is read only up to its meta line, and not again on the next scan.
+    expect(reads.filter((r) => r.file === old)).toEqual([{ file: old, stopAtExec: true }]);
+    await idx.refresh();
+    expect(reads.filter((r) => r.file === old)).toHaveLength(1);
 
-    // Seven days later the same thread has aged out.
-    const later = new CodexRolloutIndex(root, readRolloutHead, () => NOW + 7 * DAY);
-    await later.refresh();
-    expect(later.list()).toEqual([]);
+    // Same index, seven days later: the thread has aged out (heads stay cached).
+    const before = reads.length;
+    now += 7 * DAY;
+    await idx.refresh();
+    expect(idx.list()).toEqual([]);
+    expect(reads.length).toBe(before);
+  });
+
+  it('stopAtExec: returns an exec head right after its meta line; other heads still get their prompt', async () => {
+    const f = path.join(base, 'exec.jsonl');
+    await fs.writeFile(f, jsonl([meta(CLI_ID, work, { originator: 'codex_exec', source: 'exec' }), user('run lane')]));
+    expect(await readRolloutHead(f, undefined, { stopAtExec: true })).toEqual({ threadId: CLI_ID, cwd: work, title: null, exec: true });
+    const { cli } = await writeFixtures(root, work);
+    expect((await readRolloutHead(cli, undefined, { stopAtExec: true }))?.title).toBe('List the files');
   });
 
   it('non-exec threads carry no codexExec flag', async () => {

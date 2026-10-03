@@ -1030,9 +1030,20 @@ export class TurnRunner {
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     let result: EngineResult | null = null;
     const effort = effortFor(model, p.effort);
+    const createdAtMs = state?.createdAtMs ?? this.now();
     for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, ...(effort ? { effort } : {}), prompt: promptWithFiles(p.text, attachments), imagePaths: attachments.filter((a) => a.isImage).map((a) => a.path), signal: sink.signal })) {
       switch (ev.kind) {
-        case 'init': sessionId = ev.sessionId; break;
+        case 'init':
+          sessionId = ev.sessionId;
+          // A new thread is recorded as soon as the CLI names it: its rollout is a `codex exec` one, and the
+          // import list (자동 실행) must not show deck's own thread while this first turn is still running.
+          if (!state && !deps.store.get(sessionId)) {
+            await deps.store.set({
+              engine: 'codex', sessionId, cwd, lastTurnAtMs: null, justCompacted: false, defaultModel: model, sandbox,
+              rolloutFile: null, createdAtMs, title: titleOf(p.text),
+            }).catch((err: unknown) => console.error('deck: recording the new Codex thread failed', err instanceof Error ? err.message : err));
+          }
+          break;
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
         case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
         case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
@@ -1046,7 +1057,7 @@ export class TurnRunner {
       const rolloutFile = state?.rolloutFile ?? (await this.findRollout(deps.codexSessionsRoot, sessionId).catch(() => null));
       const next: CodexSessionState = {
         engine: 'codex', sessionId, cwd, lastTurnAtMs: res.ok ? this.now() : (state?.lastTurnAtMs ?? null), justCompacted: false,
-        defaultModel: state?.defaultModel ?? model, sandbox, rolloutFile, createdAtMs: state?.createdAtMs ?? this.now(), title: state?.title ?? titleOf(p.text),
+        defaultModel: state?.defaultModel ?? model, sandbox, rolloutFile, createdAtMs, title: state?.title ?? titleOf(p.text),
       };
       await deps.store.set(next);
       // D5: the rollout's token_count.rate_limits is the only per-turn GPT usage signal.
