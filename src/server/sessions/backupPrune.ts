@@ -4,6 +4,12 @@ import path from 'node:path';
 const DAY_MS = 86_400_000;
 
 /**
+ * A backup holding the only copy of turns deck overwrote (a diverged B/C copy replaced on relocate) carries this
+ * file: pruning never removes it — only the user does.
+ */
+export const KEEP_MARKER = 'DECK-KEEP.txt';
+
+/**
  * Every dir under a profile's config dir that holds deck-named, dated entries: fork backups (SessionFork)
  * and the 삭제 trash (SessionTrash). Both are pruned after the same retention.
  */
@@ -27,8 +33,8 @@ export function backupStampMs(name: string): number | null {
 
 /**
  * Deletes the directories directly under `backupRoot` that deck created (name pattern above, a real
- * directory — never a symlink or file) and whose stamp is older than `retentionDays`. Nothing else is
- * touched. Returns the removed paths.
+ * directory — never a symlink or file) and whose stamp is older than `retentionDays`, unless it holds
+ * `KEEP_MARKER`. Nothing else is touched. Returns the removed paths.
  */
 export async function pruneSessionBackups(backupRoot: string, retentionDays: number, nowMs: number = Date.now()): Promise<string[]> {
   const entries = await fs.readdir(backupRoot, { withFileTypes: true }).catch(() => []);
@@ -40,6 +46,7 @@ export async function pruneSessionBackups(backupRoot: string, retentionDays: num
     const p = path.join(backupRoot, e.name);
     const st = await fs.lstat(p).catch(() => null);
     if (!st?.isDirectory()) continue;
+    if (await fs.lstat(path.join(p, KEEP_MARKER)).then(() => true, () => false)) continue;
     await fs.rm(p, { recursive: true, force: true });
     removed.push(p);
   }

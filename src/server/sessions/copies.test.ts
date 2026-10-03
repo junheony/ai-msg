@@ -71,4 +71,13 @@ describe('copies on disk (default ancestor check and timestamps)', () => {
     expect(r?.heads).toHaveLength(2);
     expect(r?.best).toBe(deck);
   });
+
+  it('lastConversationAt finds the line before a very long trailing line (spanning many read chunks)', async () => {
+    const big = `${JSON.stringify({ type: 'artifact-autoreact-ledger', blob: 'x'.repeat(300_000) })}\n`;
+    const f = await write('long.jsonl', conv('u1', '2026-10-01T00:00:00Z') + conv('u2', '2026-10-01T00:07:00Z') + big, 1_000);
+    expect(await lastConversationAt(f.file)).toBe(Date.parse('2026-10-01T00:07:00Z'));
+    const g = await write('long2.jsonl', `${JSON.stringify({ uuid: 'u3', timestamp: '2026-10-01T00:09:00Z', blob: 'y'.repeat(300_000) })}\n`, 1_000);
+    expect(await lastConversationAt(g.file)).toBe(Date.parse('2026-10-01T00:09:00Z'));
+  });
 });
+

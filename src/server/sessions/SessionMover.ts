@@ -96,6 +96,19 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
+type FileStamp = { size: number; mtimeMs: number; hash: string };
+
+/** Size, mtime and sha256 of a file; null when it does not exist. */
+async function fileStamp(file: string): Promise<FileStamp | null> {
+  const st = await fs.stat(file).catch(() => null);
+  if (!st) return null;
+  return { size: st.size, mtimeMs: st.mtimeMs, hash: await sha256File(file) };
+}
+
+function sameStamp(a: FileStamp | null, b: FileStamp | null): boolean {
+  return a === b || (!!a && !!b && a.size === b.size && a.mtimeMs === b.mtimeMs && a.hash === b.hash);
+}
+
 /** True when every byte of `prefixFile` equals the start of `fullFile`. */
 export async function isBytePrefix(prefixFile: string, fullFile: string): Promise<boolean> {
   const [a, b] = await Promise.all([fs.open(prefixFile, 'r'), fs.open(fullFile, 'r')]);
@@ -121,6 +134,8 @@ export async function isBytePrefix(prefixFile: string, fullFile: string): Promis
  * metadata, e.g. `artifact-autoreact-ledger`, to a session it has open) or a line that does not parse at all.
  */
 export function isMetaLine(line: string): boolean {
+  // Without the key text there is no uuid field (whether or not the line parses): no need to parse it.
+  if (!line.includes('"uuid"')) return true;
   try {
     const o: unknown = JSON.parse(line);
     return !o || typeof o !== 'object' || Array.isArray(o) || (o as Record<string, unknown>).uuid === undefined;
@@ -151,31 +166,46 @@ async function commonPrefixLength(a: string, b: string): Promise<number> {
   }
 }
 
+/** A line worth keeping on write-back: a JSON object without a `uuid` (an unparsable line is not propagated). */
+function isPropagatableMeta(line: string): boolean {
+  try {
+    const o: unknown = JSON.parse(line);
+    return !!o && typeof o === 'object' && !Array.isArray(o) && (o as Record<string, unknown>).uuid === undefined;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Whether transcript `x` is an ancestor of transcript `y`: x = (a common prefix ending at a line break) + tail,
- * where every tail line is a metadata line (`isMetaLine`). Null = not an ancestor (a conversation line of x's own
- * is missing from y: diverged). Otherwise the complete tail lines (empty = x is a plain byte-prefix of y); an
- * unterminated last line is accepted but not returned.
+ * where every tail line is complete (newline-terminated) and a metadata line (`isMetaLine`). Null = not an
+ * ancestor: x has a conversation line of its own (diverged), or an unterminated last line past the common prefix
+ * (a writer mid-line — it may be a turn; decide later). Otherwise the tail lines to keep on write-back: JSON objects
+ * without a `uuid` (unparsable lines count as metadata for the decision but are not returned). An empty result is
+ * also what a plain byte-prefix gives. Streams x's tail and stops at the first conversation line.
  */
 export async function ancestorTail(x: string, y: string): Promise<string[] | null> {
   const n = await commonPrefixLength(x, y);
   const size = (await fs.stat(x)).size;
   if (n >= size) return [];
   const start = await lastLineEnd(x, n);
-  const fh = await fs.open(x, 'r');
-  let text: string;
-  try {
-    const buf = Buffer.alloc(size - start);
-    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
-    text = buf.subarray(0, bytesRead).toString('utf8');
-  } finally {
-    await fh.close();
+  const keep: string[] = [];
+  let carry: Buffer[] = [];
+  for await (const chunk of createReadStream(x, { start, end: size - 1 }) as AsyncIterable<Buffer>) {
+    let from = 0;
+    for (let i = chunk.indexOf(0x0a); i >= 0; i = chunk.indexOf(0x0a, from)) {
+      const piece = chunk.subarray(from, i);
+      const line = (carry.length ? Buffer.concat([...carry, piece]) : piece).toString('utf8');
+      carry = [];
+      from = i + 1;
+      if (!line) continue;
+      if (!isMetaLine(line)) return null;
+      if (isPropagatableMeta(line)) keep.push(line);
+    }
+    if (from < chunk.length) carry.push(chunk.subarray(from));
   }
-  const lines = text.split('\n');
-  const partial = lines.pop()!;
-  if (partial && !isMetaLine(partial)) return null;
-  for (const l of lines) if (l && !isMetaLine(l)) return null;
-  return lines.filter((l) => l);
+  // Bytes after the last line break: an unfinished line is never taken for metadata.
+  return carry.length ? null : keep;
 }
 
 /** `ancestorTail(x, y) !== null`. */
@@ -260,9 +290,12 @@ async function moveOnce(opts: MoveOptions): Promise<MoveResult> {
     // Sessions are append-only: an older copy is a byte-prefix of the snapshot — or that plus metadata lines Claude
     // Desktop appended (no conversation of its own). Anything else diverged. The metadata is kept: appended to the
     // staged copy (lines the snapshot already has are not repeated), and the target must not change before the commit.
-    let targetHash: string | null = null;
-    if (await exists(targetFile)) {
+    // The target as it is now (absent = null); the decision is made on these bytes and they must still be there at
+    // the commit — a writer (Desktop) appending meanwhile aborts this round instead of losing its line.
+    const targetBefore = await fileStamp(targetFile);
+    if (targetBefore) {
       const tail = await ancestorTail(targetFile, tmpFile);
+      if ((await fileStamp(targetFile))?.hash !== targetBefore.hash) throw new Error('대상 사본이 복사 중 바뀜');
       if (!tail) {
         diverged = true;
         throw new Error('대상 세션이 따로 진행됨(원본의 앞부분이 아님) — 덮어쓰지 않음');
@@ -272,7 +305,6 @@ async function moveOnce(opts: MoveOptions): Promise<MoveResult> {
         const have = new Set(body.toString('utf8').split('\n'));
         const extra = tail.filter((l) => !have.has(l));
         if (extra.length) {
-          targetHash = await sha256File(targetFile);
           if (createHash('sha256').update(body).digest('hex') !== snap.hash) throw new Error('복사본 검증 실패(jsonl 해시 불일치)');
           const out = Buffer.concat([body, Buffer.from(`${extra.join('\n')}\n`)]);
           await fs.writeFile(tmpFile, out);
@@ -312,7 +344,7 @@ async function moveOnce(opts: MoveOptions): Promise<MoveResult> {
 
     // Everything staged and verified; the source's first N bytes must still be the snapshot we copied.
     if ((await sha256Prefix(srcFile, snap.size)) !== snap.hash) throw new Error('원본이 복사 중 바뀜');
-    if (targetHash && (await sha256File(targetFile)) !== targetHash) throw new Error('대상 사본이 복사 중 바뀜');
+    if (!sameStamp(await fileStamp(targetFile), targetBefore)) throw new Error('대상 사본이 복사 중 바뀜');
 
     // Commit: companions first, jsonl LAST (the final rename is the commit point).
     if (hasCompanions) {

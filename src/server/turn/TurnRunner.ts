@@ -199,7 +199,7 @@ export class TurnRunner {
   private readonly mirrors = new Map<string, Promise<void>>();
   /** Notices already shown, `${sessionId}\0${message}` — a lasting divergence is told once, not every turn. */
   private readonly noted = new Set<string>();
-  /** Home write-back failures already logged, `${sessionId}\0${reason}` — logged once per process. */
+  /** Home write-back failures already logged, `${sessionId}\0${reason}` — logged once, until a write-back of that session succeeds. */
   private readonly writeBackLogged = new Set<string>();
   /** When each session's last write-back was started (wall clock), and a trailing one due while throttled. */
   private readonly mirrorAt = new Map<string, number>();
@@ -415,7 +415,11 @@ export class TurnRunner {
     if (!st || isCodexState(st) || isGeminiState(st) || st.account === home) return;
     // Only the same-named dir is refreshed: a stale copy under an older dir spelling must not block it (nor is it touched).
     const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.deps.projectsRoots[home], ignoreOtherDirs: true });
-    if (r.ok) return;
+    if (r.ok) {
+      // A later failure (of any reason) is news again.
+      for (const k of [...this.writeBackLogged]) if (k.startsWith(`${sessionId}\0`)) this.writeBackLogged.delete(k);
+      return;
+    }
     // The home copy already contains ours (Desktop went on, deck added nothing): the next turn pulls it in.
     if (r.diverged && (await isAncestor(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return;
     // Once per process for a given session and reason: a lasting state would otherwise log on every turn.
@@ -443,8 +447,16 @@ export class TurnRunner {
       if (copies[0]?.projectDir !== state.projectDir || copies.length < 2) return state;
       const r = (await resolveCopies(copies, undefined, { home: this.deps.homeAccount }))!;
       if (r.heads.length > 1) {
-        const others = r.heads.filter((h) => h !== r.best).map((h) => LABEL[h.account]).join('·');
-        const message = `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근 대화가 있는 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${others} 계정 사본은 그대로 둡니다 (머리글의 '갈라짐' 메뉴에서 맞출 수 있습니다)`;
+        // Desktop's (home/protected) copy is never overwritten; a B/C copy is, once the session moves there (relocate backs it up first).
+        const others = r.heads.filter((h) => h !== r.best).map((h) => h.account);
+        const kept = others.filter((a) => a === this.deps.homeAccount || a === this.deps.protectedAccount);
+        const replaced = others.filter((a) => !kept.includes(a));
+        const names = (as: Account[]) => as.map((a) => LABEL[a]).join('·');
+        const parts = [
+          ...(kept.length ? [`${names(kept)} 계정 사본은 덮어쓰지 않아요 (머리글의 '갈라짐' 메뉴에서 맞출 수 있습니다)`] : []),
+          ...(replaced.length ? [`${names(replaced)} 계정 사본은 그 계정으로 옮길 때 백업해 두고 덮어써요`] : []),
+        ];
+        const message = `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근 대화가 있는 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${parts.join(', ')}`;
         if (this.firstNote(state.sessionId, message)) say(message);
       }
       if (r.best.projectDir === state.projectDir) return state;
@@ -636,7 +648,7 @@ export class TurnRunner {
       if (f.ok) {
         r = f.move;
         console.log(`deck: ${state.sessionId} 의 ${LABEL[to]} 계정 사본이 갈라져 백업(${f.backupDir}) 뒤 덮어씀`);
-        replaced = `${LABEL[to]} 계정에 따로 이어진 사본이 있어 백업해 두고 이 대화로 덮어썼어요`;
+        replaced = `${LABEL[to]} 계정에 따로 이어진 사본이 있어 백업해 두고 이 대화로 덮어썼어요 (백업: ${f.backupDir} — 자동 정리되지 않아요)`;
         if (f.keptAside.length) {
           console.error(`deck: ${state.sessionId} 의 옮겨 둔 원래 사본이 백업 뒤에 바뀌어 지우지 않음: ${f.keptAside.join(', ')}`);
           replaced += ' (옮기는 사이 바뀐 원래 사본은 지우지 않고 남겨 두었어요)';

@@ -2,6 +2,9 @@ export type Account = 'a' | 'b' | 'c';
 
 export const ACCOUNTS: readonly Account[] = ['a', 'b', 'c'];
 
+/** The profile Claude Desktop reads and writes (~/.claude): deck mirrors sessions it ran on B/C back there. */
+export const HOME_ACCOUNT: Account = 'a';
+
 /** usage-deck card ids (spec §3, claude-pick). */
 export const CARD_ID: Record<Account, string> = {
   a: 'claude:main',

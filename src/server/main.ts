@@ -29,7 +29,7 @@ import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
-import { ACCOUNTS, GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
+import { ACCOUNTS, GEMINI_ACCOUNTS, HOME_ACCOUNT, type GeminiAccount } from '../shared/accounts';
 import type { PermMode } from '../shared/permission';
 
 async function main(): Promise<void> {
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   // Session rename / 보관 live in deck's own config (never in the Claude jsonl); loaded before the first scan.
   const meta = new SessionMetaStore(path.join(cfg.configDir, 'session-meta.json'));
   await meta.load();
-  const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, meta, home: 'a' });
+  const index = new SessionIndex({ roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, meta, home: HOME_ACCOUNT });
   const store = new SessionStateStore(cfg.stateFile);
   const pins = new PinStore(cfg.pinsFile);
   const settings = new SettingsStore(cfg.settingsFile);
@@ -87,8 +87,7 @@ async function main(): Promise<void> {
     defaultPermissionMode: () => settings.get().defaultPermissionMode,
     onPermissionMode: (sessionId, mode) => notifyPermissionMode(sessionId, mode),
     projectsRoots: cfg.projectsRoots,
-    // Claude Desktop reads/writes A (~/.claude): deck mirrors sessions it ran on B/C back there.
-    homeAccount: 'a',
+    homeAccount: HOME_ACCOUNT,
     onIndexChanged: () => notifyIndex(),
   });
 

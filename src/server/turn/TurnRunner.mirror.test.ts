@@ -167,6 +167,10 @@ describe('TurnRunner: home (A) write-back', () => {
     const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes('갈라졌습니다') && m.message.includes('A 계정 사본으로 이어가고'));
     expect(started).toBeGreaterThanOrEqual(0);
     expect(i).toBeGreaterThan(started);
+    // B's copy is not promised to stay as is: a later move to B backs it up and overwrites it.
+    const msg = (c.msgs[i] as Extract<ServerMessage, { type: 'turn_notice' }>).message;
+    expect(msg).not.toContain('그대로 둡니다');
+    expect(msg).toContain('B 계정 사본은 그 계정으로 옮길 때 백업해 두고 덮어써요');
     expect(notices(c).some((m) => m.includes('Desktop 에서'))).toBe(false);
   });
 
@@ -423,6 +427,8 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
     const started = c.msgs.findIndex((m) => m.type === 'turn_started');
     const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes('백업해 두고') && m.message.includes('B 계정'));
     expect(i).toBeGreaterThan(started);
+    // The notice says where the backup is (it is the only copy of the overwritten turns).
+    expect(notices(c).some((m) => m.includes(path.join(c.base, 'session-backups', backups[0]!)))).toBe(true);
     expect(notices(c).some((m) => m.includes('옮기지 못해') || m.includes('갈라진 사본'))).toBe(false);
 
     // A (Desktop's profile) is never overwritten: the write-back still refuses.
@@ -573,6 +579,17 @@ describe('TurnRunner: Claude Desktop metadata on the A copy', () => {
       await turn(c, SID, 't3');
       expect(c.eng.calls).toHaveLength(3);
       expect(err.mock.calls.filter((a) => String(a[0]).includes('home write-back'))).toHaveLength(1);
+
+      // A successful write-back clears it: the same failure later is logged again.
+      await put(c, 'a', await read(fileOf(c, 'b')));
+      await turn(c, SID, 't4');
+      expect(await read(fileOf(c, 'a'))).toBe(await read(fileOf(c, 'b')));
+      const now = await read(fileOf(c, 'b'));
+      await put(c, 'a', now + line('desktop again'));
+      await put(c, 'b', now + line('deck again'));
+      await turn(c, SID, 't5');
+      expect(c.eng.calls.at(-1)).toMatchObject({ account: 'b' });
+      expect(err.mock.calls.filter((a) => String(a[0]).includes('home write-back'))).toHaveLength(2);
     } finally {
       err.mockRestore();
     }

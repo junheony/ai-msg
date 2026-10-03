@@ -30,22 +30,24 @@ export async function lastConversationAt(file: string): Promise<number> {
   try {
     const CHUNK = 1 << 16;
     let end = (await fh.stat()).size;
-    let carry = Buffer.alloc(0);
+    // Bytes after the chunk being read, up to the next line break already seen: kept as pieces (newest-last read
+    // = earliest in the file) and joined once, so one very long line costs O(length), not O(length²).
+    let carry: Buffer[] = [];
     while (end > 0) {
       const start = Math.max(0, end - CHUNK);
       const buf = Buffer.alloc(end - start);
       const { bytesRead } = await fh.read(buf, 0, buf.length, start);
-      const data = Buffer.concat([buf.subarray(0, bytesRead), carry]);
-      // Only lines known to be whole: past the first line break unless this chunk starts the file.
-      const cut = start === 0 ? 0 : data.indexOf(0x0a) + 1;
+      const chunk = buf.subarray(0, bytesRead);
       end = start;
-      if (start > 0 && cut === 0) { carry = data; continue; }
-      const lines = data.subarray(cut).toString('utf8').split('\n');
+      // Only lines known to be whole: past the first line break unless this chunk starts the file.
+      const cut = start === 0 ? 0 : chunk.indexOf(0x0a) + 1;
+      if (start > 0 && cut === 0) { carry.push(chunk); continue; }
+      const lines = Buffer.concat([chunk.subarray(cut), ...carry.reverse()]).toString('utf8').split('\n');
       for (let i = lines.length - 1; i >= 0; i--) {
         const t = conversationAt(lines[i]!);
         if (t !== null) return t;
       }
-      carry = data.subarray(0, cut);
+      carry = [chunk.subarray(0, cut)];
     }
     return -Infinity;
   } finally {

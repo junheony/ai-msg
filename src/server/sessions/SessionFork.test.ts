@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FORK_SUFFIX, backupDivergedAndMove, forkDivergedAndMove } from './SessionFork';
+import { KEEP_MARKER } from './backupPrune';
 import { scanProfile } from './SessionIndex';
 import { moveSession, sha256File } from './SessionMover';
 import { readHead } from './transcript';
@@ -206,6 +207,8 @@ describe('backupDivergedAndMove', () => {
     expect(path.dirname(r.backupDir)).toBe(path.join(f.base, 'b', 'session-backups'));
     expect(await fs.readFile(path.join(r.backupDir, `${ID}.jsonl`), 'utf8')).toBe(dstText);
     expect(await tree(path.join(r.backupDir, ID))).toEqual(dstComp);
+    // It holds the only copy of the overwritten turns: marked so backup pruning never removes it.
+    expect(await fs.stat(path.join(r.backupDir, KEEP_MARKER)).then(() => true)).toBe(true);
     // The target now is the source; only this session's files are in the dir (nothing staged left behind).
     expect(await fs.readFile(f.dstFile, 'utf8')).toBe(await fs.readFile(f.srcFile, 'utf8'));
     expect((await fs.readdir(f.dstDir)).sort()).toEqual([ID, `${ID}.jsonl`]);
@@ -219,6 +222,15 @@ describe('backupDivergedAndMove', () => {
     const old = new Date(Date.now() - 10 * 60_000);
     await fs.utimes(f.dstFile, old, old);
     expect(await backupDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot] })).toMatchObject({ ok: false, error: '대상 사본이 갈라지지 않음' });
+  });
+});
+
+describe('forkDivergedAndMove backups', () => {
+  it('stay prunable (the fork keeps the turns)', async () => {
+    const f = await fixture();
+    const r = await forkDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot], newId: NEW });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(await fs.stat(path.join(r.backupDir, KEEP_MARKER)).catch(() => null)).toBeNull();
   });
 });
 

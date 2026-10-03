@@ -272,7 +272,8 @@ describe('moveSession', () => {
     it('ancestorTail: common prefix + uuid-less (or unparsable) tail = ancestor; a tail line with a uuid = not', async () => {
       const shared = conv('u1') + conv('u2');
       const f = await pair(shared + meta(1) + 'not json\n', shared + conv('u3'));
-      expect(await ancestorTail(f.tFile, f.srcFile)).toEqual([meta(1).trimEnd(), 'not json']);
+      // An unparsable (but complete) line counts as metadata for the decision, but is not one to propagate.
+      expect(await ancestorTail(f.tFile, f.srcFile)).toEqual([meta(1).trimEnd()]);
       expect(await isAncestor(f.tFile, f.srcFile)).toBe(true);
       // The other way round: the source has a conversation line the target lacks.
       expect(await isAncestor(f.srcFile, f.tFile)).toBe(false);
@@ -298,6 +299,55 @@ describe('moveSession', () => {
       expect(await moveSession({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot })).toMatchObject({ ok: true });
       expect(await fs.readFile(f.tFile, 'utf8')).toBe(source + conv('u4-deck') + meta(1) + meta(2));
     });
+
+    it('a truncated last line (Desktop mid-write) is never metadata: the target is diverged and untouched', async () => {
+      const shared = conv('u1');
+      const target = `${shared}{"type":"user","uuid":"A-ONLY","message":{"role":"user","content":"half`;
+      const f = await pair(target, shared + conv('B-ONLY'));
+      expect(await ancestorTail(f.tFile, f.srcFile)).toBeNull();
+      const r = await moveSession({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot });
+      expect(r).toMatchObject({ ok: false, diverged: true });
+      expect(await fs.readFile(f.tFile, 'utf8')).toBe(target);
+      // Also when the cut-off part has no uuid yet.
+      await fs.writeFile(f.tFile, `${shared}{"type":"artifact-auto`);
+      expect(await ancestorTail(f.tFile, f.srcFile)).toBeNull();
+    });
+
+    it('an unparsable complete line counts for the decision but is not written back', async () => {
+      const shared = conv('u1');
+      const source = shared + conv('u2-deck');
+      const f = await pair(shared + meta(1) + 'garbage {\n' + meta(2), source);
+      expect(await moveSession({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot })).toMatchObject({ ok: true });
+      expect(await fs.readFile(f.tFile, 'utf8')).toBe(source + meta(1) + meta(2));
+    });
+
+    it('a uuid line far before a long tail ends the check early (the rest is not needed)', async () => {
+      const shared = conv('u1');
+      const f = await pair(shared + conv('u2-desktop') + meta(1).repeat(20_000), shared + conv('u2-deck'));
+      expect(await ancestorTail(f.tFile, f.srcFile)).toBeNull();
+    });
+
+    for (const kind of ['metadata tail', 'plain prefix'] as const) {
+      it(`aborts when the target changes between the decision and the commit (${kind})`, async () => {
+        const shared = conv('u1');
+        const target = kind === 'plain prefix' ? shared : shared + meta(1);
+        const f = await pair(target, shared + conv('u2-deck'));
+        const real = fs.readdir.bind(fs) as (...a: unknown[]) => Promise<unknown>;
+        // Companions are listed after the decision and before the commit: Desktop appends to the target there.
+        const spy = vi.spyOn(fs, 'readdir').mockImplementation((async (...args: unknown[]) => {
+          if (String(args[0]) === path.join(f.srcDir, ID)) await fs.appendFile(f.tFile, conv('u2-desktop'));
+          return real(...args);
+        }) as typeof fs.readdir);
+        try {
+          const r = await moveSession({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot });
+          expect(r).toMatchObject({ ok: false, error: expect.stringContaining('대상 사본이 복사 중 바뀜') });
+        } finally {
+          spy.mockRestore();
+        }
+        expect(await fs.readFile(f.tFile, 'utf8')).toBe(target + conv('u2-desktop'));
+        expect((await fs.readdir(path.dirname(f.tFile))).filter((n) => n.includes('deck-tmp'))).toEqual([]);
+      });
+    }
 
     it('metadata lines the source already has are not appended twice', async () => {
       const shared = conv('u1');

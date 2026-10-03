@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { isAncestor, isBytePrefix, listTree, moveSession, sha256File, type MoveResult } from './SessionMover';
+import { KEEP_MARKER } from './backupPrune';
 import { readHead } from './transcript';
 
 export const FORK_SUFFIX = '(갈라진 사본)';
@@ -98,8 +99,9 @@ export async function forkDivergedAndMove(opts: DivergedOpts): Promise<ForkResul
 
 /**
  * The same as forkDivergedAndMove without step 2: the diverged target copy is backed up to
- * `<configDir>/session-backups/<stamp>-<id>/` (verified, pruned like every session backup) and then
- * overwritten by the source — no "(갈라진 사본)" session is written. Same refusals and restore on failure.
+ * `<configDir>/session-backups/<stamp>-<id>/` (verified) and then overwritten by the source — no "(갈라진 사본)"
+ * session is written. The backup is then the only copy of the target's own turns, so it is marked
+ * (`KEEP_MARKER`) and never pruned. Same refusals and restore on failure.
  */
 export function backupDivergedAndMove(opts: Omit<DivergedOpts, 'newId'>): Promise<ReplaceResult> {
   return divergedAndMove(opts, false);
@@ -153,6 +155,9 @@ async function divergedAndMove(opts: DivergedOpts, makeFork: boolean): Promise<R
     }
     bFile = path.join(backupDir, `${id}.jsonl`);
     bComp = path.join(backupDir, id);
+    if (!makeFork) {
+      await fs.writeFile(path.join(backupDir, KEEP_MARKER), `deck 이 ${targetDir} 의 갈라진 사본(${id})을 덮어쓰기 전에 백업했습니다. 이 사본에만 있는 대화가 있을 수 있어 자동 정리에서 빠집니다.\n`, { flag: 'wx' });
+    }
     await fs.copyFile(tFile, bFile, FS.COPYFILE_EXCL);
     if (!(await sameFile(tFile, bFile))) throw new Error('백업 검증 실패(jsonl)');
     if (hadComp) {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { backupStampMs, pruneSessionBackups } from './backupPrune';
+import { KEEP_MARKER, backupStampMs, pruneSessionBackups } from './backupPrune';
 
 const ID = '66666666-6666-4666-8666-666666666666';
 const NOW = new Date(2026, 9, 2, 12, 0, 0).getTime();
@@ -36,5 +36,14 @@ describe('pruneSessionBackups', () => {
     // A shorter retention takes the fresher one too; a missing root is fine.
     expect(await pruneSessionBackups(root, 1, NOW)).toEqual([fresh]);
     expect(await pruneSessionBackups(path.join(root, 'nope'), 30, NOW)).toEqual([]);
+  });
+
+  it('never prunes a backup marked to keep (the only copy of overwritten turns)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-bkprune-'));
+    const kept = path.join(root, `20260801-090000-${ID}`);
+    await fs.mkdir(kept);
+    await fs.writeFile(path.join(kept, KEEP_MARKER), 'x');
+    expect(await pruneSessionBackups(root, 30, NOW)).toEqual([]);
+    expect(await fs.stat(kept).then(() => true)).toBe(true);
   });
 });
