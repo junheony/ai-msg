@@ -73,7 +73,7 @@ describe('Chat', () => {
     expect(onEngine).toHaveBeenCalledWith('auto');
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
     fireEvent.click(screen.getByTestId('model-picker'));
-    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'workspace-write', model: 'gpt-6-astra' });
     expect(screen.getByText(/샌드박스: 작업폴더 쓰기/)).toBeTruthy();
@@ -107,7 +107,7 @@ describe('Chat', () => {
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, engine: 'codex', sessionEngine: 'claude', model: 'gpt-6-sol' });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
     fireEvent.click(screen.getByTestId('model-picker'));
-    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
     expect(screen.queryByText(/샌드박스:/)).toBeNull();
   });
 

@@ -41,11 +41,11 @@ describe('ModelPicker', () => {
 
   it('auto engine: Claude and GPT sections with headers', () => {
     setup({ models: [...CLAUDE_MODELS, ...CODEX_MODELS], model: 'gpt-6-sol', effort: 'medium' });
-    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6-Sol · 중간');
+    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol · 중간');
     fireEvent.click(screen.getByTestId('model-picker'));
     const menu = within(screen.getByTestId('model-menu'));
     expect(menu.getByText('Claude')).toBeTruthy();
-    expect(within(menu.getByRole('group', { name: 'GPT' })).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['GPT-6-Sol', 'GPT-6-Astra']);
+    expect(within(menu.getByRole('group', { name: 'GPT' })).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['GPT-6.1-Sol', 'GPT-6-Astra']);
   });
 
   it('자동: listed first, label without effort while effort is 자동, and an effort 자동 button reporting null', () => {
