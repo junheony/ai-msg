@@ -15,6 +15,7 @@ import { PinStore } from './sessions/PinStore';
 import { SettingsStore } from './settings';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
+import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
@@ -108,7 +109,7 @@ beforeAll(async () => {
   settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2, meta });
+  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2, meta, acceptedRefs: new AcceptedRefs(null) });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -318,6 +319,23 @@ describe('ws', () => {
     expect(msgs.find((m) => m.type === 'error')).toBeUndefined();
     expect(msgs.find((m) => m.type === 'turn_started')).toMatchObject({ sessionId: SX, clientRef: 'p0-2' });
     expect(msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok' });
+    a.ws.close();
+  });
+
+  it('a started send\'s clientRef is recorded for its session and rides history.acceptedRefs (M1: dedupe after a lost answer)', async () => {
+    const SX = 'abababab-abab-4bab-8bab-abababababab';
+    const cwd = await seed(SX, 'accepted');
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const h0 = collect(a.ws, (m) => m.type === 'history');
+    a.ws.send(JSON.stringify({ type: 'open_session', sessionId: SX }));
+    expect((await h0).at(-1)).toMatchObject({ type: 'history', acceptedRefs: [] });
+    const done = collect(a.ws, (m) => m.type === 'turn_result');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: SX, cwd, text: 'went in', clientRef: 'acc-1' }));
+    await done;
+    const h1 = collect(a.ws, (m) => m.type === 'history');
+    a.ws.send(JSON.stringify({ type: 'open_session', sessionId: SX }));
+    expect((await h1).at(-1)).toMatchObject({ type: 'history', acceptedRefs: ['acc-1'] });
     a.ws.close();
   });
 

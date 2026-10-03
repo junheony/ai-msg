@@ -20,6 +20,7 @@ import { loadOrCreateVapid } from './push/vapid';
 import { PinStore } from './sessions/PinStore';
 import { pruneRootsOf, startBackupPruning } from './sessions/backupPrune';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
+import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { TranscriptSearch } from './sessions/search';
 import { SettingsStore } from './settings';
 import { SessionIndex } from './sessions/SessionIndex';
@@ -108,7 +109,7 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { build: computeBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments, meta });
+  const ws = attachWebSocket(servers, { build: computeBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')) });
   notifyIndex = () => ws.broadcastIndex();
   index.onChange = () => notifyIndex();
   notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });

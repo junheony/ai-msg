@@ -8,6 +8,7 @@ import { defaultSandbox } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
+import type { AcceptedRefs } from './sessions/AcceptedRefs';
 import { DirError, resolveUnderRoots } from './dirs';
 import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
 import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
@@ -130,6 +131,8 @@ export type WsDeps = {
   attachments?: { resolve(ids: string[]): { found: { id: string; name: string; isImage: boolean }[] } };
   /** 새 세션으로 이어가기: a new session sent with `handoffFrom` is linked to that session (and titled) here once it has an id. */
   meta?: Pick<SessionMetaStore, 'link' | 'branch'>;
+  /** The send clientRefs / steer ids each session accepted (survives a restart); rides `history` as `acceptedRefs`. */
+  acceptedRefs?: Pick<AcceptedRefs, 'add' | 'list'>;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -393,7 +396,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         ...(msg.model ? { model: msg.model } : {}),
         ...(msg.clientRef ? { clientRef: msg.clientRef } : {}),
       });
-      if (joined) return;
+      if (joined) { if (msg.clientRef) deps.acceptedRefs?.add(msg.sessionId, msg.clientRef); return; }
       aliases.delete(followId);
       prompts.delete(followId);
       // The turn already sent its result and the process is only closing (no background work to join):
@@ -421,6 +424,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       for (const d of turn.afterRelease.splice(0)) if (clients.has(d.ws)) startTurn(d.ws, d.msg);
     };
     let started = false;
+    /** This send's clientRef, until it is recorded as accepted under its session id (a new session's comes with its result). */
+    let unrecorded = msg.clientRef ?? null;
+    const accepted = (sessionId: string | null) => {
+      if (!unrecorded || !sessionId) return;
+      deps.acceptedRefs?.add(sessionId, unrecorded);
+      unrecorded = null;
+    };
     const sink: TurnSink = {
       emit: (m) => {
         if (m.type === 'turn_started') {
@@ -432,11 +442,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const withPrompt = prompt ? { ...m, prompt } : m;
           if (m.turnId !== turnId) { aliases.set(m.turnId, turnId); emitTurn(turn, withPrompt); broadcastActivity(); return; }
           started = true;
+          accepted(m.sessionId ?? turn.sessionId);
           emitTurn(turn, { ...withPrompt, ...ref });
           broadcastActivity();
           return;
         }
         record(turn, m);
+        if (m.type === 'turn_result' && started) accepted(m.sessionId);
         if (m.type === 'turn_result' && m.turnId === turn.current) { turn.current = null; turn.log.progress = null; }
         if (m.type === 'turn_background') turn.bg = m.tasks.length ? { msg: m, at: Date.now() } : null;
         if (m.type === 'turn_result' || m.type === 'turn_background') queueMicrotask(broadcastActivity);
@@ -508,7 +520,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         // Review I6: a rejected run still ends the turn for the UI.
         console.error('deck: turn failed', err);
         // Failed before its turn_started: the sending pane is still waiting and only its clientRef can release it.
-        if (!started && msg.clientRef) send(ws, { type: 'error', turnId, message: displayError(errMsg(err), null) ?? '실행 실패', ...ref });
+        if (!started && msg.clientRef) send(ws, { type: 'error', turnId: null, message: displayError(errMsg(err), null) ?? '실행 실패', ...ref });
         emitTurn(turn, { type: 'turn_result', turnId, sessionId: turn.sessionId, cwd: turn.cwd, ok: false, text: '', badge: null, errorText: displayError(errMsg(err), null) });
       } finally {
         release();
@@ -560,7 +572,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (draining) { reject(DRAINING_MESSAGE, 'draining'); break; }
           if (!turn || turn.current === null) { reject('실행 중인 턴이 없어 끝난 뒤 보냅니다'); break; }
           void deps.runner.steer(turn.turnId, { steerId: msg.steerId, text: msg.text, ...(msg.attachments ? { attachments: msg.attachments } : {}), prompt: promptOf(msg) })
-            .then((ok) => { if (ok === false) reject('지금은 실행 중인 턴에 넣을 수 없어 끝난 뒤 보냅니다'); })
+            .then((ok) => {
+              if (ok === false) reject('지금은 실행 중인 턴에 넣을 수 없어 끝난 뒤 보냅니다');
+              else if (turn.sessionId) deps.acceptedRefs?.add(turn.sessionId, msg.steerId);
+            })
             .catch((err: unknown) => reject(`실행 중인 턴에 넣지 못했습니다: ${errMsg(err)}`));
           break;
         }
@@ -583,7 +598,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const runningOf = (sid: string) => {
             const t = turns.get(busy.get(sid) ?? '');
             const current = t?.current ?? null;
-            return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}) };
+            return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid) } : {}) };
           };
           void (async () => {
             // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
