@@ -48,6 +48,16 @@ export type QueueItem = {
   restart?: 'hold' | 'hello';
 };
 
+/**
+ * Messages the restarting server refused, released (`restart` dropped) where `go` says so: the head goes out like 지금 전송,
+ * even if the queue is paused for another reason (it was sent once already; only the restart held it back).
+ */
+function release(pane: PaneState, queue: QueueItem[], go: (q: QueueItem) => boolean): PaneState {
+  const head = queue[0];
+  const out = queue.map((q) => { if (!go(q)) return q; const { restart: _r, ...rest } = q; return rest; });
+  return { ...pane, queue: out, ...(head && go(head) && !pane.queueSendNow ? { queueSendNow: head.id } : {}) };
+}
+
 /** The user message `text` is (or opens) a transcript user text: the server appends path lines / an image marker after what was typed. */
 const sameUserText = (it: ChatItem, text: string) => it.kind === 'user' && (it.text === text || it.text.startsWith(`${text}\n`));
 
@@ -330,9 +340,10 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const bg = msg.activity && !(act && act.bg > 0) ? null : pane.bg;
       const run = activeTurnId ? { runStartedAt: pane.runStartedAt ?? (act?.running ? Date.now() - act.forMs : Date.now()) } : { runStartedAt: null, progress: null };
       // Messages refused by the restarting server may go out now: in a new session (no history to check) at once, else after its history.
-      const queue = pane.queue.some((q) => q.restart === 'hold') ? pane.queue.map(({ restart, ...q }) => (restart === 'hold' && !sid ? q : { ...q, ...(restart ? { restart: 'hello' as const } : {}) })) : pane.queue;
+      const held = pane.queue.map((q) => (q.restart === 'hold' && sid ? { ...q, restart: 'hello' as const } : q));
+      const next = release({ ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, bg, ...run }, held, (q) => q.restart === 'hold');
       // Steers in flight across a reconnect: their answer went to the old socket, so they may have gone in — queued again, paused.
-      return unsteer({ ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, bg, queue, ...run }, () => true);
+      return unsteer(next, () => true);
     }
     case 'activity': {
       const sid = pane.session?.sessionId;
@@ -351,11 +362,10 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
       // After a reconnect, a message the restarting server refused goes out — unless the transcript ends with it (it went in after all).
       const lastUser = items.findLast((it) => it.kind === 'user');
-      const queue = pane.queue.some((q) => q.restart === 'hello')
-        ? pane.queue.flatMap(({ restart, ...q }) => (restart !== 'hello' ? [{ ...q, ...(restart ? { restart } : {}) }] : lastUser && sameUserText(lastUser, q.text) ? [] : [q]))
-        : pane.queue;
+      const kept = pane.queue.filter((q) => !(q.restart === 'hello' && lastUser && sameUserText(lastUser, q.text)));
+      const sent = kept.length === pane.queue.length ? {} : { queueSendNow: kept.some((q) => q.id === pane.queueSendNow) ? pane.queueSendNow : null };
       const notice = pane.notices?.some((n) => n.sessionId !== msg.sessionId) ? { notices: pane.notices.filter((n) => n.sessionId === msg.sessionId) } : {};
-      return { ...pane, queue, session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
+      return { ...release({ ...pane, ...sent }, kept, (q) => q.restart === 'hello'), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
     }
     case 'turn_started': {
       let p = pane;

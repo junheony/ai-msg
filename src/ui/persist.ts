@@ -1,6 +1,7 @@
 import { isAccount, type Account } from '../shared/accounts';
 import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import { MAX_PANES, newPane, type AppState, type ChatItem, type PaneState, type SentFile, type SentRecord } from './state';
+import { ATTACHMENT_ID, MAX_ATTACHMENTS_PER_TURN } from '../shared/protocol';
+import { MAX_PANES, newPane, nextQueueId, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
 
 /**
  * ux-state: UI state that survives a reload (localStorage, per browser — phone and desktop are independent).
@@ -17,7 +18,16 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
  * send runs), so the link to its predecessor and the note waiting in the composer live only here until then.
  * `accountPin`: likewise the pin an id-less session sends with its first turn (an existing session's pin is the server's).
  */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account };
+/**
+ * A queued message (QueueItem minus its per-page id): `restart` = refused by a restarting server, sent after the reconnect;
+ * `lostSteer` = a steer whose answer was lost (dropped if the server replays it as delivered).
+ */
+export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; lostSteer?: string };
+/**
+ * `queue` / `queuePaused`: the pane's queued messages — the server may restart (and the page reload) before they go out.
+ * They are kept with the pane's session, so they only ever come back into that session.
+ */
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; queue?: PersistedQueueItem[]; queuePaused?: true };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -53,6 +63,18 @@ function session(x: unknown): PersistedSession | null {
   return { sessionId, cwd: x.cwd, title, engine };
 }
 
+const MAX_QUEUE = 50;
+
+function queueItem(x: unknown): PersistedQueueItem | null {
+  if (!isObj(x) || !shortStr(x.text, 200_000) || !Array.isArray(x.attachments)) return null;
+  const attachments = x.attachments.slice(0, MAX_ATTACHMENTS_PER_TURN).flatMap((a): UploadedAttachment[] => {
+    if (!isObj(a) || !shortStr(a.id, 64) || !ATTACHMENT_ID.test(a.id) || !shortStr(a.name, 300)) return [];
+    return [{ id: a.id, name: a.name, size: typeof a.size === 'number' && a.size >= 0 ? a.size : 0, isImage: a.isImage === true }];
+  });
+  if (!x.text && !attachments.length) return null;
+  return { text: x.text, attachments, ...(x.restart === true ? { restart: true as const } : {}), ...(shortStr(x.lostSteer, 64) && x.lostSteer ? { lostSteer: x.lostSteer } : {}) };
+}
+
 function pane(x: unknown): PersistedPane {
   const d = newPane('');
   if (!isObj(x)) return { session: null, model: d.model, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: d.engine, sandbox: d.sandbox };
@@ -70,7 +92,16 @@ function pane(x: unknown): PersistedPane {
     ...(pending && hf && shortStr(hf.sessionId, 200) && hf.sessionId && shortStr(hf.title, 500) ? { handoffFrom: { sessionId: hf.sessionId, title: hf.title } } : {}),
     ...(pending && shortStr(x.prefill, 100_000) && x.prefill ? { prefill: x.prefill } : {}),
     ...(pending && isAccount(x.accountPin) ? { accountPin: x.accountPin } : {}),
+    ...queueOf(x, sess),
   };
+}
+
+/** A queue only with a session to go to; an id-less one (its first send may have made the session) waits for the user. */
+function queueOf(x: Record<string, unknown>, sess: PersistedSession | null): Pick<PersistedPane, 'queue' | 'queuePaused'> {
+  const items = sess && Array.isArray(x.queue) ? x.queue.slice(0, MAX_QUEUE).map(queueItem).filter((q): q is PersistedQueueItem => !!q) : [];
+  if (!items.length) return {};
+  const queue = sess!.sessionId === null ? items.map(({ restart: _r, ...q }) => q) : items;
+  return { queue, ...(x.queuePaused === true || sess!.sessionId === null ? { queuePaused: true as const } : {}) };
 }
 
 /** Validates (and migrates) whatever is stored; null = nothing usable, start fresh. */
@@ -98,11 +129,23 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
       ...(p.session && p.session.sessionId === null && p.handoffFrom ? { handoffFrom: p.handoffFrom } : {}),
       ...(p.session && p.session.sessionId === null && p.prefill ? { prefill: p.prefill } : {}),
       ...(p.session && p.session.sessionId === null && p.session.accountPin ? { accountPin: p.session.accountPin } : {}),
+      ...(p.session && p.queue.length ? snapshotQueue(p.queue, p.queuePaused) : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
     drawer: extra.drawer,
   };
+}
+
+/** A steer still in flight comes back as a lost one (its answer goes to this page's socket), so the queue waits for the user. */
+function snapshotQueue(queue: QueueItem[], paused: boolean): Pick<PersistedPane, 'queue' | 'queuePaused'> {
+  const items = queue.map((q): PersistedQueueItem => ({
+    text: q.text,
+    attachments: q.attachments.map(({ id, name, size, isImage }) => ({ id, name, size, isImage })),
+    ...(q.restart ? { restart: true as const } : {}),
+    ...(q.steer || q.lostSteer ? { lostSteer: (q.steer ?? q.lostSteer)! } : {}),
+  }));
+  return { queue: items, ...(paused || queue.some((q) => q.steer) ? { queuePaused: true as const } : {}) };
 }
 
 /** Writes only when the serialized value changed; returns what is stored now (feed it back as `last`). */
@@ -120,6 +163,9 @@ export function hydrate(base: AppState, ui: PersistedUi | null): AppState {
     session: p.session ? { ...p.session, account: null, sandbox: null, ...(p.accountPin ? { accountPin: p.accountPin } : {}) } : null,
     model: p.model, efforts: { ...p.efforts }, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
     handoffFrom: p.handoffFrom ?? null, prefill: p.prefill ?? null,
+    // Fresh ids (they are per page); a message held for the restart waits for this page's first reconnect.
+    queue: (p.queue ?? []).map(({ restart, ...q }): QueueItem => ({ ...q, id: nextQueueId(), ...(restart ? { restart: 'hold' as const } : {}) })),
+    queuePaused: p.queuePaused === true,
   }));
   return { ...base, panes, activePaneId: panes[ui.active]?.id ?? panes[0]!.id };
 }
