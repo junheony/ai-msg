@@ -24,10 +24,13 @@ describe('readRolloutHead', () => {
     expect(await readRolloutHead(cli)).toEqual({ threadId: CLI_ID, cwd: work, title: 'List the files' });
   });
 
-  it('null for `codex exec` automation rollouts', async () => {
+  it('marks `codex exec` automation rollouts with exec: true', async () => {
     const f = path.join(base, 'exec.jsonl');
-    await fs.writeFile(f, jsonl([meta(CLI_ID, work, { originator: 'codex_exec', source: 'exec' }), user('automated')]));
-    expect(await readRolloutHead(f)).toBeNull();
+    await fs.writeFile(f, jsonl([meta(CLI_ID, work, { originator: 'codex_exec', source: 'exec' }), user('<environment_context>…'), user('You are the 3D asset lane\nmore')]));
+    expect(await readRolloutHead(f)).toEqual({ threadId: CLI_ID, cwd: work, title: 'You are the 3D asset lane', exec: true });
+    const g = path.join(base, 'exec2.jsonl');
+    await fs.writeFile(g, jsonl([meta(CLI_ID, work, { originator: 'codex_exec' }), user('x')]));
+    expect((await readRolloutHead(g))?.exec).toBe(true);
   });
 
   it('takes the prompt after either Desktop request heading', async () => {
@@ -73,6 +76,40 @@ describe('CodexRolloutIndex', () => {
     await idx.refresh();
     expect(reads).toBe(first);
     expect(idx.lookup(DESKTOP_ID)?.lastModified).toBe(later.getTime());
+  });
+
+  it('lists `codex exec` threads written within 7 days (codexExec), not older ones, not gone folders, not sub-agents', async () => {
+    const dir = path.join(root, '2026', '10', '03');
+    await fs.mkdir(dir, { recursive: true });
+    const id = (n: string) => `01a0f2d3-0000-7c92-aeea-0000000000${n}`;
+    const write = async (n: string, cwd: string, extra: Record<string, unknown>, ageMs: number) => {
+      const f = path.join(dir, `rollout-2026-10-03T10-00-${n}-${id(n)}.jsonl`);
+      await fs.writeFile(f, jsonl([meta(id(n), cwd, { originator: 'codex_exec', source: 'exec', ...extra }), user('run lane')]));
+      const t = new Date(NOW - ageMs);
+      await fs.utimes(f, t, t);
+    };
+    const NOW = Date.now();
+    const DAY = 86_400_000;
+    await write('e1', work, {}, DAY);
+    await write('e2', work, {}, 8 * DAY);
+    await write('e3', path.join(work, 'gone'), {}, DAY);
+    await write('e4', work, { thread_source: 'subagent' }, DAY);
+    const idx = new CodexRolloutIndex(root, readRolloutHead, () => NOW);
+    await idx.refresh();
+    expect(idx.list().map((e) => e.sessionId)).toEqual([id('e1')]);
+    expect(idx.lookup(id('e1'))).toMatchObject({ account: 'gpt', engine: 'codex', imported: true, codexExec: true, title: 'run lane' });
+
+    // Seven days later the same thread has aged out.
+    const later = new CodexRolloutIndex(root, readRolloutHead, () => NOW + 7 * DAY);
+    await later.refresh();
+    expect(later.list()).toEqual([]);
+  });
+
+  it('non-exec threads carry no codexExec flag', async () => {
+    await writeFixtures(root, work);
+    const idx = new CodexRolloutIndex(root);
+    await idx.refresh();
+    expect(idx.list().every((e) => !('codexExec' in e))).toBe(true);
   });
 
   it('missing root → empty', async () => {

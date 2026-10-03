@@ -13,8 +13,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HEAD_BYTES = 2 * 1024 * 1024;
 /** A rollout touched this recently is probably still open in Codex Desktop / CLI. */
 export const LIVE_ROLLOUT_MS = 2 * 60 * 1000;
+/** `codex exec` (automation) threads are listed only while written this recently. */
+export const EXEC_RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type RolloutHead = { threadId: string; cwd: string; title: string | null };
+/** `exec`: a non-interactive `codex exec` run (listed only while recent, tagged 자동 실행). */
+export type RolloutHead = { threadId: string; cwd: string; title: string | null; exec?: true };
 
 /** Codex Desktop wraps attachments as `# Files mentioned by the user: … ## My request[ for Codex]:` then the prompt. */
 const REQUEST_MARK = /^## My request[^\n]*:[ \t]*$/m;
@@ -30,12 +33,13 @@ function titleOf(text: string): string | null {
 
 /**
  * Streams the first HEAD_BYTES of a rollout: `session_meta` (thread id, cwd) and the first real user prompt.
- * Null for sub-agent and `codex exec` automation threads (Codex Desktop spawns hundreds; they are not conversations) and unusable files.
+ * Null for sub-agent threads (Codex Desktop spawns hundreds; they are not conversations) and unusable files.
+ * `codex exec` runs are returned with `exec: true`.
  */
 export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES): Promise<RolloutHead | null> {
   const stream = createReadStream(file, { encoding: 'utf8', start: 0, end: maxBytes - 1 });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-  let meta: { threadId: string; cwd: string } | null = null;
+  let meta: { threadId: string; cwd: string; exec?: true } | null = null;
   let title: string | null = null;
   try {
     for await (const line of rl) {
@@ -49,9 +53,7 @@ export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES): Prom
         const id = typeof p.id === 'string' ? p.id : null;
         if (!id || !UUID.test(id) || typeof p.cwd !== 'string' || !p.cwd.startsWith('/')) return null;
         if (p.thread_source === 'subagent' || (p.source !== undefined && typeof p.source !== 'string')) return null;
-        // `codex exec` automation runs (non-interactive) are not conversations to continue.
-        if (p.source === 'exec' || p.originator === 'codex_exec') return null;
-        meta = { threadId: id, cwd: p.cwd };
+        meta = { threadId: id, cwd: p.cwd, ...(p.source === 'exec' || p.originator === 'codex_exec' ? { exec: true as const } : {}) };
         continue;
       }
       if (r.type === 'response_item' && p.type === 'message' && p.role === 'user' && Array.isArray(p.content)) {
@@ -101,9 +103,10 @@ export class CodexRolloutIndex {
   private entries: SessionEntry[] = [];
   private byId = new Map<string, SessionEntry>();
 
-  constructor(private readonly root: string, private readonly readHead: typeof readRolloutHead = readRolloutHead) {}
+  constructor(private readonly root: string, private readonly readHead: typeof readRolloutHead = readRolloutHead, private readonly now: () => number = Date.now) {}
 
   async refresh(): Promise<void> {
+    const nowMs = this.now();
     const files = await rolloutFiles(this.root);
     const live = new Set<string>();
     const byId = new Map<string, SessionEntry>();
@@ -123,12 +126,13 @@ export class CodexRolloutIndex {
         this.heads.set(f.file, cached);
       }
       const h = cached.head;
-      if (!h || !(await cwdExists(h.cwd))) continue;
+      if (!h || (h.exec && nowMs - f.mtimeMs > EXEC_RECENT_MS) || !(await cwdExists(h.cwd))) continue;
       const prev = byId.get(h.threadId);
       if (prev && prev.lastModified >= f.mtimeMs) continue;
       byId.set(h.threadId, {
         sessionId: h.threadId, account: 'gpt', engine: 'codex', cwd: h.cwd, projectDir: path.dirname(f.file), file: f.file,
         title: h.title ?? '(제목 없음)', lastModified: f.mtimeMs, sizeBytes: f.size, imported: true,
+        ...(h.exec ? { codexExec: true } : {}),
       });
     }
     for (const k of this.heads.keys()) if (!live.has(k)) this.heads.delete(k);

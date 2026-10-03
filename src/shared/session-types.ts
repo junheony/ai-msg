@@ -21,6 +21,8 @@ export type SessionEntry = {
   archived?: boolean;
   /** A Codex Desktop / CLI thread read from ~/.codex/sessions that deck has not run yet (becomes a deck Codex session on the first turn). */
   imported?: boolean;
+  /** An imported thread from a non-interactive `codex exec` run (shown with a 자동 실행 tag). */
+  codexExec?: boolean;
   /** 새 세션으로 이어가기 (session-meta.json): the session this one continued from / was continued in. */
   prevSession?: string;
   nextSession?: string;
