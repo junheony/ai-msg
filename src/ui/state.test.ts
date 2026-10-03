@@ -637,6 +637,108 @@ describe('message queue (ux-state)', () => {
     expect(pane(reducer(f, { type: 'open', sessionId: 's2', cwd: '/w', title: 't' })).queue).toEqual([]);
   });
 
+  describe('a send refused before its turn started', () => {
+    const DRAIN = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
+    const hello: ServerMessage = { type: 'hello', usage, projects: [], running: [], codex: { available: false } };
+    const history = (texts: string[]): ServerMessage => ({ type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: texts.map((text, n) => ({ kind: 'user' as const, text, ts: null, n })) });
+    const file = { id: '11111111-1111-4111-8111-111111111111', name: 'x.png', isImage: true };
+    const refusedSend = (code?: 'draining') => {
+      let s = play([history(['old'])], openedOn('s1'));
+      s = reducer(s, { type: 'queue_add', text: 'later' });
+      s = reducer(s, { type: 'sent', text: 'mine', attachments: [file], clientRef: 'r1' });
+      return play([{ type: 'error', turnId: null, message: code ? DRAIN : '세션이 실행 중입니다', clientRef: 'r1', ...(code ? { code } : {}) }], s);
+    };
+
+    it('takes the bubble back and puts the message (with its files) at the head of the queue; the error still shows', () => {
+      const s = refusedSend();
+      expect(pane(s).items.map((it) => it.kind === 'user' && it.text)).toEqual(['old']);
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['mine', 'later']);
+      expect(pane(s).queue[0]!.attachments).toMatchObject([{ id: file.id, name: 'x.png', isImage: true }]);
+      expect(pane(s).awaitingStart).toBe(false);
+      expect(s.error).toBe('세션이 실행 중입니다');
+    });
+
+    it('any other reason: queued paused, nothing goes out by itself (not even after a reconnect)', () => {
+      let s = refusedSend();
+      expect(pane(s).queuePaused).toBe(true);
+      expect(nextQueued(pane(s))).toBeNull();
+      s = play([hello, history(['old'])], s);
+      expect(nextQueued(pane(s))).toBeNull();
+    });
+
+    it('a bubble something came after stays; another pane\'s refusal changes nothing here', () => {
+      let s = reducer(openedOn('s1'), { type: 'sent', text: 'mine', clientRef: 'r1' });
+      s = { ...s, panes: [{ ...pane(s), items: [...pane(s).items, { kind: 'user', text: 'other device' }] }] };
+      s = play([{ type: 'error', turnId: null, message: 'x', clientRef: 'r1' }], s);
+      expect(pane(s).items.map((it) => it.kind === 'user' && it.text)).toEqual(['mine', 'other device']);
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['mine']);
+      const o = play([{ type: 'error', turnId: null, message: 'x', clientRef: 'zz' }], reducer(openedOn('s1'), { type: 'sent', text: 'mine', clientRef: 'r1' }));
+      expect(pane(o).queue).toEqual([]);
+      expect(pane(o).items).toHaveLength(1);
+    });
+
+    it('a handoff-note send refused is not queued (its text is server-side)', () => {
+      let s = play([history(['old'])], openedOn('s1'));
+      s = reducer(s, { type: 'sent', text: HANDOFF_PROMPT, clientRef: 'h1', handoff: true });
+      s = play([{ type: 'error', turnId: null, message: DRAIN, clientRef: 'h1', code: 'draining' }], s);
+      expect(pane(s).queue).toEqual([]);
+    });
+
+    it('draining: held until the reconnect, then sent once the history shows it did not go in — not paused', () => {
+      let s = refusedSend('draining');
+      expect(pane(s).queuePaused).toBe(false);
+      expect(nextQueued(pane(s))).toBeNull(); // the old server would only refuse it again
+      s = play([hello], s);
+      expect(nextQueued(pane(s))).toBeNull(); // waits for the session's history
+      s = play([history(['old'])], s);
+      expect(nextQueued(pane(s))?.text).toBe('mine');
+    });
+
+    it('draining: dropped if the history shows it went in after all', () => {
+      let s = refusedSend('draining');
+      s = play([hello, history(['old', 'mine'])], s);
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['later']);
+    });
+
+    it('draining in a new session (no id, no history): sent right after the reconnect', () => {
+      let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'new' });
+      s = reducer(s, { type: 'sent', text: 'first', clientRef: 'r1' });
+      s = play([{ type: 'error', turnId: null, message: DRAIN, clientRef: 'r1', code: 'draining' }], s);
+      expect(pane(s).items).toEqual([]);
+      expect(nextQueued(pane(s))).toBeNull();
+      s = play([hello], s);
+      expect(nextQueued(pane(s))?.text).toBe('first');
+    });
+
+    it('draining refused again after a reconnect: a fresh item, held for the next reconnect', () => {
+      let s = refusedSend('draining');
+      s = play([hello, history(['old'])], s);
+      const first = nextQueued(pane(s))!;
+      s = reducer(s, { type: 'queue_remove', id: first.id });
+      s = reducer(s, { type: 'sent', text: first.text, attachments: [file], clientRef: 'r2' });
+      s = play([{ type: 'error', turnId: null, message: DRAIN, clientRef: 'r2', code: 'draining' }], s);
+      expect(pane(s).queue[0]!.id).not.toBe(first.id);
+      expect(nextQueued(pane(s))).toBeNull();
+    });
+
+    it('지금 전송 sends a held item at once', () => {
+      let s = refusedSend('draining');
+      s = reducer(s, { type: 'queue_send_now', id: pane(s).queue[0]!.id });
+      expect(nextQueued(pane(s))?.text).toBe('mine');
+    });
+
+    it('a steer refused while draining is held, then sent after the reconnect', () => {
+      let s = running();
+      s = reducer(s, { type: 'queue_add', text: 'steer me', steerId: 'k1' });
+      s = play([{ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: 'k1', message: DRAIN, code: 'draining' }], s);
+      s = result(s, 't1', true);
+      expect(pane(s).queue[0]!.steer).toBeUndefined();
+      expect(nextQueued(pane(s))).toBeNull();
+      s = play([hello, history(['first'])], s);
+      expect(nextQueued(pane(s))?.text).toBe('steer me');
+    });
+  });
+
   it('a successful turn leaves the queue running', () => {
     let s = reducer(running(), { type: 'queue_add', text: 'second' });
     s = result(s, 't1', true);

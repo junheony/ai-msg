@@ -48,6 +48,7 @@ export function QueueChips({ queue, paused, onEdit, onRemove, onClear, onResume,
                 {q.attachments.length > 0 && <span className="queue-att" aria-hidden="true">📎{q.attachments.length}</span>}
                 {q.text || '첨부만'}
                 {q.steer && <span className="queue-steer" title="실행 중인 턴에 보냈습니다 — 다음 도구 실행이 끝나면 전달됩니다"> · 전달 대기</span>}
+                {q.restart && <span className="queue-steer" title="서버가 재시작 중이라 보내지 못했습니다 — 다시 연결되면 자동으로 보냅니다"> · 재시작 뒤 전송</span>}
               </button>
             )}
             {onSendNow && editing !== q.id && (
