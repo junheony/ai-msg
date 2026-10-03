@@ -56,6 +56,16 @@ describe('Sidebar pins (F2)', () => {
     expect(onTogglePin).toHaveBeenLastCalledWith('s1', false);
   });
 
+  it('프로젝트 view: each session once — pinned rows leave their project list (as in 최근)', () => {
+    const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="projects" pins={['s1', 's3']} onTogglePin={noop} />);
+    const pinnedTitles = [...screen.getByTestId('pinned-group').querySelectorAll('.session-title')].map((e) => e.textContent);
+    expect(pinnedTitles).toEqual(['first', 'third']);
+    const listed = [...container.querySelectorAll('section.project:not([data-testid]) .session-title')].map((e) => e.textContent);
+    expect(listed).toEqual(['second']);
+    // The project whose only session is pinned keeps its header (+ 새 세션).
+    expect(screen.getByRole('button', { name: 'two 새 세션' })).toBeTruthy();
+  });
+
   it('clicking a pinned row opens its session', () => {
     const onOpen = vi.fn();
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} pins={['s3']} onTogglePin={noop} />);
@@ -192,11 +202,13 @@ describe('Sidebar rename / archive / 대화 내용 검색', () => {
     expect(screen.queryByRole('menu')).toBeNull();
 
     fireEvent.click(screen.getByText('보관됨'));
-    expect(titles()).toEqual(['Old', 'Old']);
-    fireEvent.click(screen.getAllByLabelText('세션 메뉴')[1]!);
+    // Pinned: listed once, under 고정됨 (not again under its project).
+    expect(titles()).toEqual(['Old']);
+    expect(screen.getByTestId('pinned-group').textContent).toContain('Old');
+    fireEvent.click(screen.getAllByLabelText('세션 메뉴')[0]!);
     fireEvent.click(screen.getByRole('menuitem', { name: '보관 해제' }));
     expect(onArchive).toHaveBeenLastCalledWith('s3', false);
-    fireEvent.click(screen.getAllByLabelText('세션 메뉴')[1]!);
+    fireEvent.click(screen.getAllByLabelText('세션 메뉴')[0]!);
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
   });

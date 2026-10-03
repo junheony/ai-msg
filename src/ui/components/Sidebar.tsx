@@ -244,7 +244,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         ...desktopShown.map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified })),
       ].sort((a, b) => b.lastModified - a.lastModified).slice(0, MAX_RECENT)
     : [];
-  const visible = projects.map((p) => ({ p, sessions: groupBranches(p.sessions.filter(inView), links).slice(0, MAX_SESSIONS).filter((g) => match(g.entry)) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
+  // 프로젝트: the same — what 고정됨 shows is not listed again under its project.
+  const visible = projects.map((p) => ({ p, sessions: groupBranches(p.sessions.filter(inView), links).filter((g) => !pinSet.has(g.entry.sessionId)).slice(0, MAX_SESSIONS).filter((g) => match(g.entry)) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
