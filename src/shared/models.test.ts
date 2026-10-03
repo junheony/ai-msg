@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CODEX_CLI_MODEL, CODEX_MODELS, MODEL_INFO, codexModelFromCli, DEFAULT_CODEX_MODEL, MODEL_LABEL, SANDBOX_LABEL, isCodexModel } from './models';
+import { CODEX_CLI_MODEL, CODEX_MODELS, MODEL_INFO, DEFAULT_CODEX_MODEL, MODEL_LABEL, SANDBOX_LABEL, isCodexModel } from './models';
 
 describe('codex models (D1)', () => {
   it('only sol and astra; sol is the default; luna/terra/5.5/gpt-5.6-sol are not models', () => {
@@ -12,13 +12,9 @@ describe('codex models (D1)', () => {
     expect(SANDBOX_LABEL['read-only']).toBe('읽기 전용');
   });
 
-  it('Sol goes to the CLI as gpt-6.1-sol; either slug maps back to the deck id', () => {
+  it('Sol goes to the CLI as gpt-6.1-sol; the deck id stays gpt-6-sol', () => {
     expect(CODEX_CLI_MODEL).toEqual({ 'gpt-6-sol': 'gpt-6.1-sol', 'gpt-6-astra': 'gpt-6-astra' });
     expect(MODEL_INFO['gpt-6-sol'].name).toBe('GPT-6.1-Sol');
-    expect(codexModelFromCli('gpt-6.1-sol')).toBe('gpt-6-sol');
-    expect(codexModelFromCli('gpt-6-sol')).toBe('gpt-6-sol');
-    expect(codexModelFromCli('gpt-6-astra')).toBe('gpt-6-astra');
-    expect(codexModelFromCli('gpt-5.5')).toBeNull();
     expect(isCodexModel('gpt-6.1-sol')).toBe(false);
   });
 });

@@ -16,11 +16,6 @@ export const CODEX_MODELS: readonly CodexModel[] = ['gpt-6-sol', 'gpt-6-astra'];
 export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6-sol';
 /** The `-m` value codex gets for each deck id. */
 export const CODEX_CLI_MODEL: Record<CodexModel, string> = { 'gpt-6-sol': 'gpt-6.1-sol', 'gpt-6-astra': 'gpt-6-astra' };
-/** A model slug the CLI recorded/reported (or a deck id) back to a deck id; Sol 6 and 6.1 both map to 'gpt-6-sol'. */
-export function codexModelFromCli(slug: unknown): CodexModel | null {
-  if (slug === 'gpt-6.1-sol' || slug === 'gpt-6-sol') return 'gpt-6-sol';
-  return slug === 'gpt-6-astra' ? 'gpt-6-astra' : null;
-}
 
 /**
  * Gemini (explicit engine only, never chosen by 자동). gemini-cli 0.62 has no Gemini 4.0 id; deck sends the CLI's
