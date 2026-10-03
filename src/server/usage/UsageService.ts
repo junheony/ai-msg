@@ -77,7 +77,8 @@ export class UsageService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<(s: UsageSnapshot) => void>();
   /** Per-turn windows and when they were observed; kept until the deck has a newer reading. */
-  private turnObs = new Map<UsageSeat, { w: TurnWindows; atMs: number }>();
+  /** `fiveAt`/`weekAt`: when that window itself was last observed (a partial observation keeps the other's time). */
+  private turnObs = new Map<UsageSeat, { w: TurnWindows; atMs: number; fiveAt?: number; weekAt?: number }>();
   /** Newest GPT credits reading; the usage-deck card has none, so it outlives the window overlay. */
   private gptCredits: { c: GptCredits; atMs: number } | null = null;
   /** When deck last completed a turn on each Claude account (see noteTurnOk). */
@@ -154,9 +155,13 @@ export class UsageService {
    * A `down` Claude card (usage-deck's own token expired: setup_needed) while deck itself completed a turn on that
    * account within TURN_OK_TRUST_MS: the account works, so it is not 'down' for routing (routingSnapshot only).
    * Numbers are not invented, and old ones are not trusted: usage-deck back-fills setup_needed cards with the
-   * last-good rows indefinitely, and 'ok' skips the router's stale gate. So the lift needs fresh 5h/weekly numbers —
-   * the card's own fetchedAt or a turn observation within STALE_MAX_MS — and Fable (never refreshed by a turn) is
-   * kept only when the card itself is fresh. No weekly value still keeps it out of routing.
+   * last-good rows indefinitely, and 'ok' skips the router's stale gate. So the lift needs every 5h/weekly number
+   * the lifted card would carry to be fresh — the card's own fetchedAt, or that window's own turn observation, within
+   * STALE_MAX_MS (a fresh 5h-only observation does not vouch for a days-old weekly). A missing window is fine: no
+   * weekly value still keeps it out of routing. Fable (never refreshed by a turn) is kept only when the card is fresh.
+   * How often this fires: Claude's rate_limit_event arrives every turn and normally carries both unifiedWindows
+   * (five_hour and seven_day; see the deck-core plan's live capture), so a successful turn usually lifts the card for
+   * ~STALE_MAX_MS. An event with only five_hour would not lift it (conservative).
    */
   private lift(account: Account, u: AccountUsage): AccountUsage {
     const at = this.turnOkAt.get(account);
@@ -165,8 +170,14 @@ export class UsageService {
     if (nowMs - at >= TURN_OK_TRUST_MS) { this.turnOkAt.delete(account); return u; }
     const fresh = (t: number) => !Number.isNaN(t) && nowMs - t <= STALE_MAX_MS;
     const cardFresh = fresh(u.fetchedAt ? parseIsoUtc(u.fetchedAt) : Number.NaN);
-    const obsAt = this.turnObs.get(account)?.atMs;
-    if (!cardFresh && !(obsAt !== undefined && fresh(obsAt))) return u;
+    if (!cardFresh) {
+      const obs = this.turnObs.get(account);
+      // `u` is already overlaid: a window present in the observation is the value the lifted card uses.
+      const ok = (v: unknown, fromObs: boolean, at: number | undefined) => (fromObs ? at !== undefined && fresh(at) : v === null);
+      const fiveObs = !!obs?.w.fiveHour, weekObs = !!obs?.w.weekly;
+      if (!fiveObs && !weekObs) return u; // nothing fresh at all
+      if (!ok(u.fiveHour, fiveObs, obs?.fiveAt) || !ok(u.weekly, weekObs, obs?.weekAt)) return u;
+    }
     return { ...u, status: 'ok', fable: cardFresh ? u.fable : null };
   }
 
@@ -228,7 +239,7 @@ export class UsageService {
     if (seat === 'gpt' && w.credits && (!this.gptCredits || observedAtMs >= this.gptCredits.atMs)) this.gptCredits = { c: w.credits, atMs: observedAtMs };
     const merged: TurnWindows = { ...prev?.w, ...(w.fiveHour ? { fiveHour: w.fiveHour } : {}), ...(w.weekly ? { weekly: w.weekly } : {}) };
     const atMs = Math.max(observedAtMs, prev?.atMs ?? 0);
-    this.turnObs.set(seat, { w: merged, atMs });
+    this.turnObs.set(seat, { w: merged, atMs, fiveAt: w.fiveHour ? observedAtMs : prev?.fiveAt, weekAt: w.weekly ? observedAtMs : prev?.weekAt });
     const cur = this.seatOf(this.snap, seat);
     let next: AccountUsage = { ...cur, fiveHour: w.fiveHour ?? cur.fiveHour, weekly: w.weekly ?? cur.weekly };
     if (seat === 'gpt') next = this.withCredits({ ...next, status: this.obsStatus(merged), fetchedAt: new Date(atMs).toISOString() });

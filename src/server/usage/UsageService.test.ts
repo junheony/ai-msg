@@ -194,6 +194,39 @@ describe('UsageService', () => {
     expect(rank(true).excluded.a).toBe('Fable 값 없음');
       });
 
+  it('a lift needs each window it would use to be fresh: a fresh 5h-only observation does not vouch for an old weekly', async () => {
+    const setup = async (nowIso: string) => {
+      const nowMs = Date.parse(nowIso);
+      const expired = structuredClone(LIVE);
+      expired.cards[0] = { ...expired.cards[0]!, status: 'setup_needed' }; // fetchedAt 12:27:01
+      const s = svc(async () => ({ ok: true, json: async () => expired }), () => new Date(nowMs));
+      await s.pollOnce();
+      return { s, nowMs };
+    };
+    // (1) Card 3h old; weekly observed 3h ago, then a fresh 5h-only observation → not lifted.
+    const one = await setup('2026-09-30T15:30:00Z');
+    one.s.applyTurn('a', { weekly: { usedPct: 93, resetsAt: null } }, one.nowMs - 3 * 3_600_000);
+    one.s.applyTurn('a', { fiveHour: { usedPct: 4, resetsAt: null } }, one.nowMs);
+    one.s.noteTurnOk('a');
+    expect(one.s.routingSnapshot().accounts.a.status).toBe('down');
+    // A card 5h value with only a fresh weekly observation is just as old → not lifted either.
+    const half = await setup('2026-09-30T15:30:00Z');
+    half.s.applyTurn('a', { weekly: { usedPct: 20, resetsAt: null } }, half.nowMs);
+    half.s.noteTurnOk('a');
+    expect(half.s.routingSnapshot().accounts.a.status).toBe('down');
+    // (2) Fresh weekly and fresh 5h observations (one event or two) → lifted, Fable dropped.
+    const two = await setup('2026-09-30T15:30:00Z');
+    two.s.applyTurn('a', { weekly: { usedPct: 20, resetsAt: null } }, two.nowMs - 60_000);
+    two.s.applyTurn('a', { fiveHour: { usedPct: 4, resetsAt: null } }, two.nowMs);
+    two.s.noteTurnOk('a');
+    expect(two.s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fiveHour: { usedPct: 4 }, weekly: { usedPct: 20 }, fable: null });
+    // (3) Card itself fresh → lifted as before, even with an old observation on top.
+    const three = await setup('2026-09-30T12:30:00Z');
+    three.s.applyTurn('a', { weekly: { usedPct: 8, resetsAt: null } }, three.nowMs - 3 * 3_600_000);
+    three.s.noteTurnOk('a');
+    expect(three.s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fable: { usedPct: 0 } });
+  });
+
   it('start() polls on an interval and stop() halts it', async () => {
     vi.useFakeTimers();
     const fetchFn = vi.fn(async () => ({ ok: true, json: async () => LIVE }));
