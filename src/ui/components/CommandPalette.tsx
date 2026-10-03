@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { fuzzyFilter } from '../fuzzy';
 import type { SearchHit } from '../sessionApi';
+import type { EngineKind } from '../../shared/models';
+import { EngineMark } from './EngineMark';
 
-export type PaletteSession = { sessionId: string; title: string; cwd: string; project: string; lastModified: number };
+export type PaletteSession = { sessionId: string; title: string; cwd: string; project: string; lastModified: number; engine?: EngineKind };
 export type PaletteAction = { id: string; label: string; hint?: string; run: () => void };
 
 const RECENT_EMPTY = 8;
@@ -90,10 +92,10 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenHit, se
               <li key={it.key} id={`palette-${i}`} role="option" aria-selected={i === cur} className={`palette-item ${i === cur ? 'on' : ''}`}
                 onMouseMove={() => { if (i !== cur) setSel(i); }} onClick={() => run(it)}>
                 {it.kind === 'action' && <><span className="palette-title">{it.a.label}</span>{it.a.hint && <kbd className="palette-hint">{it.a.hint}</kbd>}</>}
-                {it.kind === 'session' && <><span className="palette-title">{it.s.title}</span><span className="palette-meta">{it.s.project}</span></>}
+                {it.kind === 'session' && <><span className="palette-title"><EngineMark engine={it.s.engine ?? 'claude'} />{it.s.title}</span><span className="palette-meta">{it.s.project}</span></>}
                 {it.kind === 'hit' && (
                   <>
-                    <span className="palette-title">{it.h.title}</span>
+                    <span className="palette-title"><EngineMark engine={it.h.engine === 'codex' ? 'codex' : 'claude'} />{it.h.title}</span>
                     <span className="palette-snippet">{it.h.snippet.slice(0, it.h.matchStart)}<mark>{it.h.snippet.slice(it.h.matchStart, it.h.matchStart + it.h.matchLength)}</mark>{it.h.snippet.slice(it.h.matchStart + it.h.matchLength)}</span>
                   </>
                 )}

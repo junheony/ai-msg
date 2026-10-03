@@ -9,6 +9,16 @@ const projects = [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] as unkno
 describe('NewChat', () => {
   afterEach(cleanup);
 
+  it('최근 대화 cards carry the engine mark before the title', () => {
+    const sessions = [
+      { sessionId: 'c', account: 'a', cwd: '/w', projectDir: '/p', file: '/f', title: 'claude one', lastModified: 2, sizeBytes: 1 },
+      { sessionId: 'g', account: 'gpt', engine: 'codex', cwd: '/w', projectDir: '', file: '', title: 'codex one', lastModified: 1, sizeBytes: 1 },
+    ];
+    render(<NewChat projects={[{ cwd: '/w', name: 'w', pinned: true, sessions }] as unknown as ProjectEntry[]} onStart={vi.fn()} onOpenSession={vi.fn()} now={10} />);
+    expect(screen.getByText('claude one').querySelector('.engine-mark')?.getAttribute('aria-label')).toBe('Claude');
+    expect(screen.getByText('codex one').querySelector('.engine-mark')?.getAttribute('aria-label')).toBe('Codex (GPT)');
+  });
+
   it('the ↑ button opens an empty new session when nothing is typed', () => {
     const onStart = vi.fn();
     render(<NewChat projects={projects} onStart={onStart} />);

@@ -5,6 +5,7 @@ import { groupByDate } from '../dateGroups';
 import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
+import { EngineMark, engineOf } from './EngineMark';
 
 /** Sessions shown per project before "더 보기". */
 export const FOLD_AT = 5;
@@ -155,6 +156,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const target = byId.get(openId) ?? s;
     // The row's menu acts on the session a click opens (the newest version of a 갈래 tree), and says which one it is.
     const order = members.map((id) => byId.get(id)).filter((x): x is SessionEntry => !!x).sort((a, b) => a.lastModified - b.lastModified);
+    const engine = engineOf(target);
     const which = members.length > 1 ? `갈래 ${order.findIndex((x) => x.sessionId === target.sessionId) + 1}/${members.length} · ${ago(target.lastModified)} 수정` : undefined;
     return (
       <li key={s.sessionId} className={currentSessionId && members.includes(currentSessionId) ? 'active' : ''} title={target.title}
@@ -173,9 +175,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
               }}
               onBlur={() => commitEdit(target, key)} onClick={(e) => e.stopPropagation()} />
           ) : (
-            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}>{target.title}</span>
+            <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}><EngineMark engine={engine} />{target.title}</span>
           )}
-          <span className="session-meta" {...(s.imported ? { title: 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{project ?? s.account.toUpperCase()}{s.imported ? ' · Codex' : ''}{members.length > 1 ? ` · 갈래 ${members.length}` : ''} · {ago(s.lastModified)}</span>
+          <span className="session-meta" {...(s.imported ? { title: s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project ?? (engine === 'codex' ? null : s.account.toUpperCase()), s.codexExec ? '자동 실행' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
@@ -208,7 +210,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       <li key={d.sessionId} className={d.sessionId === currentSessionId ? 'active' : ''} title={`${d.title}\n${d.cwd}`} onClick={() => onOpen(d.sessionId, d.cwd, d.title)}>
         <span className="session-row">
           {dot(d.sessionId)}
-          <span className="session-title">{d.title}</span>
+          <span className="session-title"><EngineMark engine="claude" />{d.title}</span>
           <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {ago(d.lastModified)}</span>
           {onTogglePin && (
             <>
@@ -323,7 +325,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {hitsShown.map((h, i) => (
               <li key={`${h.sessionId}-${i}`} className="search-hit" title={`${h.title}\n${h.cwd}`} onClick={() => onOpenHit?.(h)}>
                 <span className="session-row">
-                  <span className="session-title">{h.title}</span>
+                  <span className="session-title"><EngineMark engine={h.engine === 'codex' ? 'codex' : 'claude'} />{h.title}</span>
                   <span className="session-meta">{h.role === 'user' ? '나' : h.engine === 'codex' ? 'GPT' : 'Claude'} · {ago(h.lastModified)}</span>
                 </span>
                 <span className="search-snippet">

@@ -3,6 +3,7 @@ import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
+import { EngineMark, engineOf } from './EngineMark';
 import { touchEnterIsNewline } from './Chat';
 
 const RECENT_CARDS = 4;
@@ -131,7 +132,7 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
             <div className="newchat-cards">
               {recent.map(({ s, name }) => (
                 <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => onOpenSession(s.sessionId, s.cwd, s.title)}>
-                  <span className="newchat-card-title">{s.title}</span>
+                  <span className="newchat-card-title"><EngineMark engine={engineOf(s)} />{s.title}</span>
                   <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
                 </button>
               ))}

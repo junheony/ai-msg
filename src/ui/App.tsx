@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSS
 import type { ClientMessage } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import { CommandPalette, type PaletteAction, type PaletteSession } from './components/CommandPalette';
+import { engineOf } from './components/EngineMark';
 import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
 import { Login } from './components/Login';
 import { NotifyMenu } from './components/NotifyMenu';
@@ -281,7 +282,7 @@ export function App() {
     { id: 'help', label: '단축키 보기', hint: `${mod}/`, run: () => setHelpOpen(true) },
   ];
   const paletteSessions: PaletteSession[] = [
-    ...recent.map((s) => ({ sessionId: s.sessionId, title: s.title, cwd: s.cwd, project: s.project, lastModified: s.lastModified })),
+    ...recent.map((s) => ({ sessionId: s.sessionId, title: s.title, cwd: s.cwd, project: s.project, lastModified: s.lastModified, engine: engineOf(s) })),
     ...state.desktop.filter((d) => !d.archived && !recent.some((s) => s.sessionId === d.sessionId)).map((d) => ({ sessionId: d.sessionId, title: d.title, cwd: d.cwd, project: `${d.project} · Desktop`, lastModified: d.lastModified })),
   ].sort((a, b) => b.lastModified - a.lastModified);
   /** 삭제, step 1: refuse what is running here; otherwise ask. */

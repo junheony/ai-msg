@@ -264,12 +264,64 @@ describe('Sidebar activity dots', () => {
 describe('Sidebar imported Codex threads', () => {
   afterEach(cleanup);
 
-  it('marks a Codex app/CLI thread next to the GPT badge and opens it like any session', () => {
+  it('marks a Codex app/CLI thread with the Codex mark (no redundant meta text) and opens it like any session', () => {
     const onOpen = vi.fn();
     const e = { sessionId: 'tid', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'from codex', lastModified: Date.now(), sizeBytes: 1, imported: true };
     render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} />);
-    expect(screen.getByText(/GPT · Codex ·/)).toBeTruthy();
+    const li = screen.getByText('from codex').closest('li')!;
+    expect(li.querySelector('.session-title .engine-mark.codex')?.getAttribute('aria-label')).toBe('Codex (GPT)');
+    expect(li.querySelector('.session-meta')?.textContent).toBe('방금');
     fireEvent.click(screen.getByText('from codex'));
     expect(onOpen).toHaveBeenCalledWith('tid', '/w', 'from codex');
+  });
+
+  it('tags a `codex exec` thread 자동 실행 in the meta', () => {
+    const e = { sessionId: 'x1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'You are the 3D asset lane', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true, codexExec: true };
+    const { container } = render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(container.querySelector('.session-meta')?.textContent).toBe('자동 실행 · 2분 전');
+    expect(container.querySelector('.engine-mark.codex')).not.toBeNull();
+  });
+});
+
+describe('Sidebar engine marks', () => {
+  afterEach(cleanup);
+  const claude = { sessionId: 'c1', account: 'a' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 'claude chat', lastModified: stamp(), sizeBytes: 1 };
+  const codex = { sessionId: 'g1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '', file: '', title: 'codex chat', lastModified: stamp(), sizeBytes: 1 };
+  const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [claude, codex] }];
+  const markOf = (title: string) => screen.getByText(title).closest('li')!.querySelector('.engine-mark');
+
+  it('puts a Claude / Codex mark before the title in the 프로젝트 view; the Claude row keeps its account letter', () => {
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(markOf('claude chat')?.getAttribute('aria-label')).toBe('Claude');
+    expect(markOf('claude chat')?.getAttribute('title')).toBe('Claude');
+    expect(markOf('codex chat')?.getAttribute('aria-label')).toBe('Codex (GPT)');
+    // Inside the truncating title (first child), so the ellipsis never hides it and the row does not grow.
+    const title = screen.getByText('claude chat');
+    expect(title.classList.contains('session-title')).toBe(true);
+    expect(title.firstElementChild?.classList.contains('engine-mark')).toBe(true);
+    expect(title.textContent).toBe('claude chat');
+    expect(screen.getByText('claude chat').closest('li')!.querySelector('.session-meta')?.textContent?.startsWith('A · ')).toBe(true);
+  });
+
+  it('marks rows in 최근, 고정됨 and Desktop rows, next to an unchanged unread / running dot', () => {
+    const desktop = [{ sessionId: 'd1', account: 'a' as const, title: 'desk chat', cwd: '/d', project: 'd', lastModified: stamp() }];
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" pins={['c1']} onTogglePin={noop}
+      desktop={desktop} unread={['g1']} activity={[{ sessionId: 'c1', cwd: '/w', turnId: 't', running: true, bg: 0, forMs: 0 }]} />);
+    expect(screen.getByTestId('pinned-group').querySelector('.engine-mark.claude')).not.toBeNull();
+    expect(markOf('codex chat')?.classList.contains('codex')).toBe(true);
+    expect(markOf('desk chat')?.classList.contains('claude')).toBe(true);
+    const codexRow = screen.getByText('codex chat').closest('li')!;
+    expect(codexRow.querySelector('.session-row > .row-dot.unread')).not.toBeNull();
+    expect(screen.getByText('claude chat').closest('li')!.querySelector('.session-row > .row-dot.running')).not.toBeNull();
+  });
+
+  it('marks 대화 내용 search hits by engine', async () => {
+    const hit = (id: string, engine: string) => ({ sessionId: id, title: `hit ${id}`, cwd: '/w', account: 'a', engine, lastModified: Date.now(), role: 'assistant' as const, snippet: 'abc', matchStart: 0, matchLength: 2 });
+    const searchFn = vi.fn(async () => ({ hits: [hit('h1', 'claude'), hit('h2', 'codex')], truncated: false }));
+    render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenHit={noop} searchFn={searchFn} />);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'ab' } });
+    await waitFor(() => expect(screen.getByText('hit h2')).toBeTruthy());
+    expect(screen.getByText('hit h1').querySelector('.engine-mark')?.getAttribute('aria-label')).toBe('Claude');
+    expect(screen.getByText('hit h2').querySelector('.engine-mark')?.getAttribute('aria-label')).toBe('Codex (GPT)');
   });
 });

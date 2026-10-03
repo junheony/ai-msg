@@ -430,6 +430,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-id { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 24px; line-height: 1; flex-shrink: 0; }
 .usage-mark.claude { color: var(--accent); font-size: calc(13px * var(--font-scale, 1)); font-weight: 700; }
 .usage-mark.gpt { width: 14px; height: 14px; flex-shrink: 0; color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
+/* Engine mark at the start of a session title (sidebar, 최근 대화 cards, ⌘K, pane header): inline inside the truncating
+   title, so it never wraps or adds height and the ellipsis only eats the text after it. Same marks as the usage cards. */
+.engine-mark { display: inline-block; width: 1em; height: 1em; margin-right: .4em; vertical-align: -.14em; line-height: 1; text-align: center; flex-shrink: 0; }
+.engine-mark.claude::before { content: '✳'; color: var(--accent); font-weight: 700; font-size: .92em; }
+.engine-mark.codex { color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
+.engine-mark-svg { display: block; width: 100%; height: 100%; }
 .usage-letter { font-size: calc(15px * var(--font-scale, 1)); font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
 .usage-card.gpt .usage-letter { font-size: calc(11.5px * var(--font-scale, 1)); letter-spacing: .5px; color: var(--fg); }
 .usage-card.current .usage-letter { color: var(--accent); }
