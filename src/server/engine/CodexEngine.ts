@@ -267,11 +267,14 @@ export class CodexEngine {
         }
       }
       const code = await exit;
-      let stderrTimer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([stderrEnded, new Promise<void>((r) => { stderrTimer = setTimeout(r, STDERR_DRAIN_MS); stderrTimer.unref?.(); })]);
-      clearTimeout(stderrTimer);
       if (!mapper.sawResult) {
         const aborted = req.signal.aborted;
+        // Only a failure is classified from stderr; a grandchild holding the pipe must not delay every normal turn end.
+        if (!aborted) {
+          let stderrTimer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([stderrEnded, new Promise<void>((r) => { stderrTimer = setTimeout(r, STDERR_DRAIN_MS); stderrTimer.unref?.(); })]);
+          clearTimeout(stderrTimer);
+        }
         const r = mapper.result(false, ZERO_USAGE, aborted ? '중단됨' : spawnError !== null ? `codex 실행 실패: ${spawnError}` : `codex 종료 코드 ${code ?? '?'}`);
         yield aborted ? { ...r, stderr: stderrTail || null, terminalReason: 'aborted' } : failed(r);
       }
