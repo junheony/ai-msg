@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,7 +23,11 @@ function card(id: string, s: number, w: number, f: number, resetH: number) {
     { label: 'Session (5h)', used: s, resetsAt }, { label: 'Weekly (7d)', used: w, resetsAt }, { label: 'Fable (7d)', used: f, resetsAt } ] };
 }
 
-const line = (text: string) => JSON.stringify({ type: 'user', cwd: CWD, message: { role: 'user', content: text } }) + '\n';
+const TS = '2026-09-30T12:00:00.000Z';
+/** A conversation line (it has a uuid, like every real user/assistant entry). */
+const line = (text: string, timestamp = TS) => JSON.stringify({ type: 'user', uuid: `u-${text}`, timestamp, cwd: CWD, message: { role: 'user', content: text } }) + '\n';
+/** Metadata Claude Desktop appends to a session it has open: no uuid, no timestamp. */
+const meta = (n: number) => JSON.stringify({ type: 'artifact-autoreact-ledger', ledger: [n] }) + '\n';
 
 type Ctx = { base: string; roots: Record<Account, string>; deps: TurnRunnerDeps; runner: TurnRunner; eng: StubEngine; msgs: ServerMessage[]; sink: TurnSink; seen: string[] };
 
@@ -48,7 +52,7 @@ async function setup(): Promise<Ctx> {
     return [{ kind: 'init', sessionId: sid, model: 'm', cwd: CWD }, okResult(sid)];
   });
   const deps: TurnRunnerDeps = {
-    engine: eng, usage, index: new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') }), store,
+    engine: eng, usage, index: new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), home: 'a' }), store,
     cooldownDir: path.join(base, 'cooldown'), protectedAccount: 'a', auditFile: path.join(base, 'audit.log'),
     projectsRoots: roots, codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'),
     homeAccount: 'a', now: () => NOW, maxRetries: 0,
@@ -147,15 +151,16 @@ describe('TurnRunner: home (A) write-back', () => {
     expect(notices(c)).toEqual([]);
   });
 
-  it('truly diverged with A newer: continues from A, tells the user, leaves the B copy untouched', async () => {
+  it('truly diverged with A newer (by its last conversation timestamp, not mtime): continues from A, tells the user, leaves the B copy untouched', async () => {
     const c = await setup();
-    const deckCopy = line('one') + line('deck went on');
-    await put(c, 'b', deckCopy, NOW - 3_600_000);
-    await put(c, 'a', line('one') + line('desktop went on'), NOW - 60_000);
+    const deckCopy = line('one') + line('deck went on', '2026-09-30T12:01:00.000Z');
+    const desktop = line('one') + line('desktop went on', '2026-09-30T12:05:00.000Z');
+    await put(c, 'b', deckCopy, NOW - 60_000);
+    await put(c, 'a', desktop, NOW - 3_600_000);
     await onB(c);
     await turn(c, SID);
     expect(c.eng.calls[0]).toMatchObject({ account: 'a' });
-    expect(c.seen[0]).toBe(line('one') + line('desktop went on'));
+    expect(c.seen[0]).toBe(desktop);
     expect(await read(fileOf(c, 'b'))).toBe(deckCopy);
     // A turn note after turn_started, not an error banner before it.
     const started = c.msgs.findIndex((m) => m.type === 'turn_started');
@@ -345,7 +350,7 @@ describe('TurnRunner: resolving a session that diverged between deck and Desktop
 });
 
 describe('SessionIndex: which copy of a session wins', () => {
-  it('prefers the copy that contains the others over a newer prefix; diverged → newest; bestCopy follows suit', async () => {
+  it('prefers the copy that contains the others over a newer prefix; diverged with equal timestamps → the deck (non-home) copy; bestCopy follows suit', async () => {
     const c = await setup();
     await put(c, 'a', line('one') + line('two'), NOW - 3_600_000);
     await put(c, 'b', line('one'), NOW - 60_000);
@@ -389,47 +394,43 @@ describe('TurnRunner.openInDesktop', () => {
 });
 
 describe('TurnRunner: a diverged copy in the routing target', () => {
-  it('is forked aside under a new id (listed, clients told) and the session moves; A stays untouched', async () => {
+  it('is backed up to session-backups and overwritten with ours — no "(갈라진 사본)" session; A stays untouched', async () => {
     const c = await setup();
-    let indexChanged = 0;
-    const runner = new TurnRunner({ ...c.deps, onIndexChanged: () => { indexChanged++; } });
     const shared = line('one');
     const bCopy = shared + line('went on in deck on B');
     const aCopy = shared + line('went on in Desktop');
+    const cCopy = shared + line('went on in the CLI on C');
     await put(c, 'a', aCopy, NOW - 7_200_000);
     await put(c, 'b', bCopy, NOW - 3_600_000);
-    await put(c, 'c', shared + line('went on in the CLI on C'), NOW - 60_000);
+    await put(c, 'c', cCopy, NOW - 60_000);
     // Deck last ran it on C, long ago: routing wants B (C's weekly is at 91%).
     await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
-    await runner.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
-    await runner.mirrorsSettled();
+    await turn(c, SID);
 
     expect(c.eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: SID });
-    expect(c.seen[0]).toBe(shared + line('went on in the CLI on C'));
+    expect(c.seen[0]).toBe(cCopy);
     expect((c.deps.store.get(SID) as ClaudeSessionState).account).toBe('b');
-    const forks = (await fs.readdir(path.join(c.roots.b, DIR))).filter((n) => n.endsWith('.jsonl') && n !== `${SID}.jsonl`);
-    expect(forks).toHaveLength(1);
-    const forkId = forks[0]!.replace(/\.jsonl$/, '');
-    const forkText = await read(path.join(c.roots.b, DIR, forks[0]!));
-    expect(forkText.startsWith(bCopy)).toBe(true); // these lines carry no sessionId: kept verbatim
-    expect(c.deps.index.lookup(forkId)).toMatchObject({ account: 'b', title: 'one (갈라진 사본)' });
-    expect(indexChanged).toBe(1);
+    // No forked session: the B dir holds only this session.
+    expect((await fs.readdir(path.join(c.roots.b, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
+    expect((await read(fileOf(c, 'b'))).startsWith(cCopy)).toBe(true);
+    await c.deps.index.refresh();
+    expect(c.deps.index.sessions().some((e) => e.title.includes('갈라진 사본'))).toBe(false);
+    // The old B copy is kept in the backups (pruned like every session backup).
     const backups = await fs.readdir(path.join(c.base, 'session-backups'));
     expect(backups).toHaveLength(1);
     expect(await read(path.join(c.base, 'session-backups', backups[0]!, `${SID}.jsonl`))).toBe(bCopy);
 
-    // The notice is informative and comes after turn_started (a turn note, not an error banner).
     const started = c.msgs.findIndex((m) => m.type === 'turn_started');
-    const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes("'one (갈라진 사본)'으로 따로 보관하고 B 계정으로 옮겼어요"));
+    const i = c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes('백업해 두고') && m.message.includes('B 계정'));
     expect(i).toBeGreaterThan(started);
-    expect(notices(c).some((m) => m.includes('옮기지 못해'))).toBe(false);
+    expect(notices(c).some((m) => m.includes('옮기지 못해') || m.includes('갈라진 사본'))).toBe(false);
 
-    // A (Desktop's profile) is never forked or overwritten: the write-back still refuses.
+    // A (Desktop's profile) is never overwritten: the write-back still refuses.
     expect(await read(fileOf(c, 'a'))).toBe(aCopy);
     expect((await fs.readdir(path.join(c.roots.a, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
   });
 
-  it('a failed fork keeps the current account with a plain notice; the target copy is restored', async () => {
+  it('a failed overwrite keeps the current account with a plain notice; the target copy is restored', async () => {
     const c = await setup();
     const bCopy = line('one') + line('went on in deck on B');
     await put(c, 'b', bCopy, NOW - 3_600_000);
@@ -453,7 +454,7 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
     await turn(c, SID);
     expect(c.eng.calls[0]).toMatchObject({ account: 'b' });
     const started = c.msgs.findIndex((m) => m.type === 'turn_started');
-    expect(c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes('B 계정으로 옮겼어요'))).toBeGreaterThan(started);
+    expect(c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message.includes('B 계정에 따로 이어진 사본이 있어 백업해 두고'))).toBeGreaterThan(started);
     expect(c.msgs.findIndex((m) => m.type === 'turn_notice' && m.message === OPEN_ELSEWHERE_NOTICE)).toBeGreaterThan(started);
   });
 
@@ -527,3 +528,54 @@ describe('TurnRunner: concurrent-open warning', () => {
     expect(notices(c)).not.toContain(OPEN_ELSEWHERE_NOTICE);
   });
 });
+
+describe('TurnRunner: Claude Desktop metadata on the A copy', () => {
+  it('is not divergence: the write-back keeps it, no notice, and deck\'s last turn stays the shown/resumed copy', async () => {
+    const c = await setup();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await put(c, 'b', line('one'), NOW - 3_600_000);
+      // Desktop has the session open: it appended its ledger to A (newer mtime, no turn of its own).
+      await put(c, 'a', line('one') + meta(1), NOW - 1_000);
+      await onB(c);
+      await turn(c, SID);
+      expect(c.eng.calls[0]).toMatchObject({ account: 'b' });
+      const b1 = await read(fileOf(c, 'b'));
+      expect(b1).toBe(line('one') + line('deck turn 0 on b'));
+      expect(await read(fileOf(c, 'a'))).toBe(b1 + meta(1));
+
+      // Desktop appends again; the next turn still continues from B (the user's last message is not lost).
+      await fs.appendFile(fileOf(c, 'a'), meta(2));
+      await fs.utimes(fileOf(c, 'a'), (NOW + 1_000) / 1000, (NOW + 1_000) / 1000);
+      expect((await c.deps.index.bestCopy(SID, path.join(c.roots.b, DIR), 'b'))?.account).toBe('b');
+      await turn(c, SID, 't2');
+      expect(c.eng.calls[1]).toMatchObject({ account: 'b' });
+      expect(c.seen[1]).toBe(b1);
+      const b2 = await read(fileOf(c, 'b'));
+      expect(await read(fileOf(c, 'a'))).toBe(b2 + meta(1) + meta(2));
+      expect(await c.runner.forkStatus(SID)).toMatchObject({ diverged: false });
+      expect(notices(c).filter((m) => m.includes('갈라졌습니다') || m.includes('갈라진 사본'))).toEqual([]);
+      expect(err.mock.calls.filter((a) => String(a[0]).includes('write-back'))).toEqual([]);
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  it('a write-back failure is logged once per session and reason, not on every turn', async () => {
+    const c = await setup();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await put(c, 'a', line('one') + line('desktop went on'), NOW - 3_600_000);
+      await put(c, 'b', line('one') + line('deck went on'), NOW - 60_000);
+      await onB(c);
+      await turn(c, SID);
+      await turn(c, SID, 't2');
+      await turn(c, SID, 't3');
+      expect(c.eng.calls).toHaveLength(3);
+      expect(err.mock.calls.filter((a) => String(a[0]).includes('home write-back'))).toHaveLength(1);
+    } finally {
+      err.mockRestore();
+    }
+  });
+});
+

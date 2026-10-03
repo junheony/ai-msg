@@ -6,7 +6,7 @@ import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry } from '
 import { findCopies, resolveCopies, type PrefixFn, type SessionCopy } from './copies';
 import { CodexRolloutIndex } from './CodexImports';
 import { recentDesktopSessions } from './DesktopSessions';
-import { isBytePrefix } from './SessionMover';
+import { isAncestor } from './SessionMover';
 import { pathKey } from './slug';
 import { readHead } from './transcript';
 
@@ -136,13 +136,13 @@ export class SessionIndex {
   private recentFolders: string[] = [];
   private recentWrite: Promise<void> = Promise.resolve();
   private desktopList: DesktopSession[] = [];
-  /** Byte-prefix answers by (file, size, mtime) pair: a rescan does not re-read unchanged transcripts. */
+  /** Ancestor answers (byte-prefix, or that plus Desktop's metadata lines) by (file, size, mtime) pair: a rescan does not re-read unchanged transcripts. */
   private prefixCache = new Map<string, boolean>();
   private readonly cachedPrefix: PrefixFn = async (a, b) => {
     const key = `${a.file}\0${a.size}\0${a.mtimeMs}\0${b.file}\0${b.size}\0${b.mtimeMs}`;
     const hit = this.prefixCache.get(key);
     if (hit !== undefined) return hit;
-    const v = a.size <= b.size && (await isBytePrefix(a.file, b.file).catch(() => false));
+    const v = await isAncestor(a.file, b.file).catch(() => false);
     if (this.prefixCache.size > 2000) this.prefixCache.clear();
     this.prefixCache.set(key, v);
     return v;
@@ -153,8 +153,9 @@ export class SessionIndex {
   /**
    * `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list.
    * `codexRoot`: `~/.codex/sessions` — Codex Desktop / CLI threads listed for import; absent = none.
+   * `home`: Claude Desktop's profile — between truly diverged copies with equal timestamps, deck's copy wins.
    */
-  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; meta?: SessionMetaView }) {
+  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; meta?: SessionMetaView; home?: Account | null }) {
     this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot) : null;
   }
 
@@ -197,14 +198,14 @@ export class SessionIndex {
   async refresh(opts: { codexInBackground?: boolean } = {}): Promise<void> {
     const all = (await Promise.all(ACCOUNTS.map((a) => scanProfile(a, this.opts.roots[a])))).flat();
     this.entries = all;
-    // The same id in several profiles/dirs: the copy containing the others wins; truly diverged → newest.
+    // The same id in several profiles/dirs: the copy containing the others wins; truly diverged → latest conversation timestamp.
     const byId = new Map<string, SessionEntry[]>();
     for (const e of all) byId.set(e.sessionId, [...(byId.get(e.sessionId) ?? []), e]);
     this.byId = new Map();
     for (const [id, list] of byId) {
       if (list.length === 1) { this.byId.set(id, list[0]!); continue; }
-      const stamped = list.sort((x, y) => y.lastModified - x.lastModified).map((e) => ({ e, file: e.file, size: e.sizeBytes, mtimeMs: e.lastModified }));
-      this.byId.set(id, (await resolveCopies(stamped, this.cachedPrefix))!.best.e);
+      const stamped = list.sort((x, y) => y.lastModified - x.lastModified).map((e) => ({ e, file: e.file, size: e.sizeBytes, mtimeMs: e.lastModified, account: e.account }));
+      this.byId.set(id, (await resolveCopies(stamped, this.cachedPrefix, { home: this.opts.home }))!.best.e);
     }
     this.pinned = await readPinned(this.opts.pinnedFile);
     if (this.opts.recentFile) this.recentFolders = await readRecent(this.opts.recentFile);
@@ -247,10 +248,11 @@ export class SessionIndex {
 
   /**
    * The copy of a Claude session to show/resume, starting from the one deck last used (`projectDir`):
-   * a superset copy in another profile (e.g. Claude Desktop continued it on A) wins; truly diverged → newest.
+   * a superset copy in another profile (e.g. Claude Desktop continued it on A) wins; truly diverged → latest
+   * conversation timestamp (see resolveCopies).
    */
   async bestCopy(sessionId: string, projectDir: string, account: Account): Promise<SessionCopy | null> {
-    return (await resolveCopies(await findCopies(this.opts.roots, sessionId, projectDir, account), this.cachedPrefix))?.best ?? null;
+    return (await resolveCopies(await findCopies(this.opts.roots, sessionId, projectDir, account), this.cachedPrefix, { home: this.opts.home }))?.best ?? null;
   }
 
   lookup(sessionId: string): SessionEntry | null {

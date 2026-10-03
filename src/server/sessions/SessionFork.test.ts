@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { FORK_SUFFIX, forkDivergedAndMove } from './SessionFork';
+import { FORK_SUFFIX, backupDivergedAndMove, forkDivergedAndMove } from './SessionFork';
 import { scanProfile } from './SessionIndex';
 import { moveSession, sha256File } from './SessionMover';
 import { readHead } from './transcript';
@@ -10,7 +10,7 @@ import { readHead } from './transcript';
 const ID = '66666666-6666-4666-8666-666666666666';
 const NEW = '77777777-7777-4777-8777-777777777777';
 const line = (o: object) => `${JSON.stringify(o)}\n`;
-const user = (text: string) => line({ type: 'user', cwd: '/w/one', sessionId: ID, message: { role: 'user', content: text } });
+const user = (text: string) => line({ type: 'user', uuid: `u-${text}`, cwd: '/w/one', sessionId: ID, message: { role: 'user', content: text } });
 
 async function fixture() {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-fork-'));
@@ -192,3 +192,33 @@ describe('forkDivergedAndMove', () => {
     expect((await fs.readdir(f.dstDir)).sort()).toEqual([ID, `${ID}.jsonl`]);
   });
 });
+
+describe('backupDivergedAndMove', () => {
+  it('backs the diverged target up to session-backups, then overwrites it with the source — no forked session', async () => {
+    const f = await fixture();
+    const dstText = await fs.readFile(f.dstFile, 'utf8');
+    const dstComp = await tree(path.join(f.dstDir, ID));
+    const srcBefore = await tree(f.srcDir);
+    const r = await backupDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot] });
+    expect(r).toMatchObject({ ok: true, keptAside: [] });
+    if (!r.ok) return;
+    expect('fork' in r).toBe(false);
+    expect(path.dirname(r.backupDir)).toBe(path.join(f.base, 'b', 'session-backups'));
+    expect(await fs.readFile(path.join(r.backupDir, `${ID}.jsonl`), 'utf8')).toBe(dstText);
+    expect(await tree(path.join(r.backupDir, ID))).toEqual(dstComp);
+    // The target now is the source; only this session's files are in the dir (nothing staged left behind).
+    expect(await fs.readFile(f.dstFile, 'utf8')).toBe(await fs.readFile(f.srcFile, 'utf8'));
+    expect((await fs.readdir(f.dstDir)).sort()).toEqual([ID, `${ID}.jsonl`]);
+    expect(await tree(f.srcDir)).toEqual(srcBefore);
+  });
+
+  it('refuses the home/protected profile and a target that is not diverged', async () => {
+    const f = await fixture();
+    expect(await backupDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.dstRoot] })).toMatchObject({ ok: false, error: expect.stringContaining('보호 계정') });
+    await fs.writeFile(f.dstFile, user('first question'));
+    const old = new Date(Date.now() - 10 * 60_000);
+    await fs.utimes(f.dstFile, old, old);
+    expect(await backupDivergedAndMove({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot, refuseProjectsRoots: [f.homeRoot] })).toMatchObject({ ok: false, error: '대상 사본이 갈라지지 않음' });
+  });
+});
+

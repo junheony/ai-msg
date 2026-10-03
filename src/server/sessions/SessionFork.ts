@@ -3,18 +3,27 @@ import { constants as FS } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { isBytePrefix, listTree, moveSession, sha256File, type MoveResult } from './SessionMover';
+import { isAncestor, isBytePrefix, listTree, moveSession, sha256File, type MoveResult } from './SessionMover';
 import { readHead } from './transcript';
 
 export const FORK_SUFFIX = '(갈라진 사본)';
 
-export type ForkResult =
+export type ReplaceResult =
   | {
-    ok: true; move: Extract<MoveResult, { ok: true }>; fork: { sessionId: string; title: string; file: string }; backupDir: string;
+    ok: true; move: Extract<MoveResult, { ok: true }>; backupDir: string;
     /** Set-aside copies that changed after the backup (something still wrote them): kept, not deleted. */
     keptAside: string[];
   }
   | { ok: false; error: string; restored: boolean; backupDir: string | null };
+
+export type ForkResult =
+  | (Extract<ReplaceResult, { ok: true }> & { fork: { sessionId: string; title: string; file: string } })
+  | Extract<ReplaceResult, { ok: false }>;
+
+type DivergedOpts = {
+  sessionId: string; sourceProjectDir: string; targetProjectsRoot: string; refuseProjectsRoots: string[];
+  move?: typeof moveSession; backupRoot?: string; quietMs?: number; nowMs?: number; newId?: string;
+};
 
 async function exists(p: string): Promise<boolean> {
   return fs.lstat(p).then(() => true, () => false);
@@ -83,10 +92,20 @@ function rewriteSessionId(text: string, oldId: string, newId: string): string {
  * not diverged) is refused — the caller adopts it. `refuseProjectsRoots`: profiles never forked in
  * (the home/protected one, Desktop's) — refused before anything is read.
  */
-export async function forkDivergedAndMove(opts: {
-  sessionId: string; sourceProjectDir: string; targetProjectsRoot: string; refuseProjectsRoots: string[];
-  move?: typeof moveSession; backupRoot?: string; quietMs?: number; nowMs?: number; newId?: string;
-}): Promise<ForkResult> {
+export async function forkDivergedAndMove(opts: DivergedOpts): Promise<ForkResult> {
+  return (await divergedAndMove(opts, true)) as ForkResult;
+}
+
+/**
+ * The same as forkDivergedAndMove without step 2: the diverged target copy is backed up to
+ * `<configDir>/session-backups/<stamp>-<id>/` (verified, pruned like every session backup) and then
+ * overwritten by the source — no "(갈라진 사본)" session is written. Same refusals and restore on failure.
+ */
+export function backupDivergedAndMove(opts: Omit<DivergedOpts, 'newId'>): Promise<ReplaceResult> {
+  return divergedAndMove(opts, false);
+}
+
+async function divergedAndMove(opts: DivergedOpts, makeFork: boolean): Promise<ReplaceResult | ForkResult> {
   const id = opts.sessionId;
   const move = opts.move ?? moveSession;
   const nowMs = opts.nowMs ?? Date.now();
@@ -115,9 +134,9 @@ export async function forkDivergedAndMove(opts: {
     const st = await fs.stat(tFile);
     if (nowMs - st.mtimeMs < (opts.quietMs ?? 120_000)) throw new Error('대상 사본이 방금 전에도 바뀌어 다른 곳(Desktop/CLI)에서 열려 있는 것 같음');
     const sFile = path.join(opts.sourceProjectDir, `${id}.jsonl`);
-    if (await isBytePrefix(tFile, sFile)) throw new Error('대상 사본이 갈라지지 않음');
-    if (await isBytePrefix(sFile, tFile)) throw new Error('대상 사본이 더 최신(원본이 그 앞부분)');
-    for (const p of [nFile, nComp, nFileTmp, nCompTmp, stagedFile, stagedComp]) if (await exists(p)) throw new Error(`이미 있음: ${p}`);
+    if (await isAncestor(tFile, sFile)) throw new Error('대상 사본이 갈라지지 않음');
+    if (await isAncestor(sFile, tFile)) throw new Error('대상 사본이 더 최신(원본이 그 앞부분)');
+    for (const p of makeFork ? [nFile, nComp, nFileTmp, nCompTmp, stagedFile, stagedComp] : [stagedFile, stagedComp]) if (await exists(p)) throw new Error(`이미 있음: ${p}`);
     hadComp = await exists(tComp);
 
     // 1. Backup, verified before anything is touched.
@@ -141,27 +160,31 @@ export async function forkDivergedAndMove(opts: {
       if (!(await sameTree(tComp, bComp))) throw new Error('백업 검증 실패(동반 폴더)');
     }
 
-    // 2. The fork, built from the (stable) backup. A custom-title record is appended so it wins over any earlier one.
-    const title = `${(await readHead(bFile)).title ?? '(제목 없음)'} ${FORK_SUFFIX}`;
-    let text = rewriteSessionId(await fs.readFile(bFile, 'utf8'), id, newId);
-    if (text.length && !text.endsWith('\n')) text += '\n';
-    text += `${JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: newId })}\n`;
-    const want = createHash('sha256').update(text).digest('hex');
-    created.push(nFileTmp);
-    await fs.writeFile(nFileTmp, text, { flag: 'wx', mode: st.mode & 0o777 });
-    if ((await sha256File(nFileTmp)) !== want) throw new Error('갈라진 사본 검증 실패(jsonl)');
-    created.push(nCompTmp);
-    if (hadComp) {
-      await fs.cp(bComp, nCompTmp, { recursive: true, errorOnExist: true, force: false });
-      if (!(await sameTree(bComp, nCompTmp))) throw new Error('갈라진 사본 검증 실패(동반 폴더)');
-    } else {
-      await fs.mkdir(nCompTmp);
+    // 2. (forkDivergedAndMove only) The fork, built from the (stable) backup. A custom-title record is appended so it wins over any earlier one.
+    let fork: { sessionId: string; title: string; file: string } | null = null;
+    if (makeFork) {
+      const title = `${(await readHead(bFile)).title ?? '(제목 없음)'} ${FORK_SUFFIX}`;
+      let text = rewriteSessionId(await fs.readFile(bFile, 'utf8'), id, newId);
+      if (text.length && !text.endsWith('\n')) text += '\n';
+      text += `${JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: newId })}\n`;
+      const want = createHash('sha256').update(text).digest('hex');
+      created.push(nFileTmp);
+      await fs.writeFile(nFileTmp, text, { flag: 'wx', mode: st.mode & 0o777 });
+      if ((await sha256File(nFileTmp)) !== want) throw new Error('갈라진 사본 검증 실패(jsonl)');
+      created.push(nCompTmp);
+      if (hadComp) {
+        await fs.cp(bComp, nCompTmp, { recursive: true, errorOnExist: true, force: false });
+        if (!(await sameTree(bComp, nCompTmp))) throw new Error('갈라진 사본 검증 실패(동반 폴더)');
+      } else {
+        await fs.mkdir(nCompTmp);
+      }
+      await fs.writeFile(path.join(nCompTmp, 'custom-title.json'), JSON.stringify({ customTitle: title }));
+      created.push(nComp);
+      await fs.rename(nCompTmp, nComp);
+      created.push(nFile);
+      await fs.rename(nFileTmp, nFile);
+      fork = { sessionId: newId, title, file: nFile };
     }
-    await fs.writeFile(path.join(nCompTmp, 'custom-title.json'), JSON.stringify({ customTitle: title }));
-    created.push(nComp);
-    await fs.rename(nCompTmp, nComp);
-    created.push(nFile);
-    await fs.rename(nFileTmp, nFile);
 
     // 3. Set the original aside; it must still be exactly what was backed up.
     touched = true;
@@ -183,7 +206,7 @@ export async function forkDivergedAndMove(opts: {
       if (await sameTree(stagedComp, bComp).catch(() => false)) await fs.rm(stagedComp, { recursive: true, force: true }).catch(() => undefined);
       else if (await exists(stagedComp)) keptAside.push(stagedComp);
     }
-    return { ok: true, move: r, fork: { sessionId: newId, title, file: nFile }, backupDir, keptAside };
+    return { ok: true, move: r, ...(fork ? { fork } : {}), backupDir, keptAside };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     const restored = await restore().catch(() => false);

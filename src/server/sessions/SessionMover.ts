@@ -116,6 +116,73 @@ export async function isBytePrefix(prefixFile: string, fullFile: string): Promis
   }
 }
 
+/**
+ * A transcript line that is not a conversation entry: a JSON object without a `uuid` (Claude Desktop appends such
+ * metadata, e.g. `artifact-autoreact-ledger`, to a session it has open) or a line that does not parse at all.
+ */
+export function isMetaLine(line: string): boolean {
+  try {
+    const o: unknown = JSON.parse(line);
+    return !o || typeof o !== 'object' || Array.isArray(o) || (o as Record<string, unknown>).uuid === undefined;
+  } catch {
+    return true;
+  }
+}
+
+/** Length of the common byte prefix of two files. */
+async function commonPrefixLength(a: string, b: string): Promise<number> {
+  const [fa, fb] = await Promise.all([fs.open(a, 'r'), fs.open(b, 'r')]);
+  try {
+    const [sa, sb] = await Promise.all([fa.stat(), fb.stat()]);
+    const max = Math.min(sa.size, sb.size);
+    const CHUNK = 1 << 20;
+    const ba = Buffer.alloc(CHUNK);
+    const bb = Buffer.alloc(CHUNK);
+    for (let pos = 0; pos < max; pos += CHUNK) {
+      const n = Math.min(CHUNK, max - pos);
+      const [ra, rb] = await Promise.all([fa.read(ba, 0, n, pos), fb.read(bb, 0, n, pos)]);
+      const m = Math.min(ra.bytesRead, rb.bytesRead);
+      for (let i = 0; i < m; i++) if (ba[i] !== bb[i]) return pos + i;
+      if (m < n) return pos + m;
+    }
+    return max;
+  } finally {
+    await Promise.all([fa.close(), fb.close()]);
+  }
+}
+
+/**
+ * Whether transcript `x` is an ancestor of transcript `y`: x = (a common prefix ending at a line break) + tail,
+ * where every tail line is a metadata line (`isMetaLine`). Null = not an ancestor (a conversation line of x's own
+ * is missing from y: diverged). Otherwise the complete tail lines (empty = x is a plain byte-prefix of y); an
+ * unterminated last line is accepted but not returned.
+ */
+export async function ancestorTail(x: string, y: string): Promise<string[] | null> {
+  const n = await commonPrefixLength(x, y);
+  const size = (await fs.stat(x)).size;
+  if (n >= size) return [];
+  const start = await lastLineEnd(x, n);
+  const fh = await fs.open(x, 'r');
+  let text: string;
+  try {
+    const buf = Buffer.alloc(size - start);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+    text = buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await fh.close();
+  }
+  const lines = text.split('\n');
+  const partial = lines.pop()!;
+  if (partial && !isMetaLine(partial)) return null;
+  for (const l of lines) if (l && !isMetaLine(l)) return null;
+  return lines.filter((l) => l);
+}
+
+/** `ancestorTail(x, y) !== null`. */
+export async function isAncestor(x: string, y: string): Promise<boolean> {
+  return (await ancestorTail(x, y)) !== null;
+}
+
 /** Project dirs under `projectsRoot` (other than `targetDir`) that already hold `<id>.jsonl`. */
 async function findDuplicates(projectsRoot: string, sessionId: string, targetDir: string): Promise<string[]> {
   let names: string[];
@@ -190,10 +257,28 @@ async function moveOnce(opts: MoveOptions): Promise<MoveResult> {
     const snap = await snapshotCopy(srcFile, tmpFile);
     if (!snap) throw new Error('복사본 검증 실패(jsonl 해시 불일치)');
 
-    // Sessions are append-only: an older copy is always a byte-prefix of the snapshot. Anything else diverged.
-    if ((await exists(targetFile)) && !(await isBytePrefix(targetFile, tmpFile))) {
-      diverged = true;
-      throw new Error('대상 세션이 따로 진행됨(원본의 앞부분이 아님) — 덮어쓰지 않음');
+    // Sessions are append-only: an older copy is a byte-prefix of the snapshot — or that plus metadata lines Claude
+    // Desktop appended (no conversation of its own). Anything else diverged. The metadata is kept: appended to the
+    // staged copy (lines the snapshot already has are not repeated), and the target must not change before the commit.
+    let targetHash: string | null = null;
+    if (await exists(targetFile)) {
+      const tail = await ancestorTail(targetFile, tmpFile);
+      if (!tail) {
+        diverged = true;
+        throw new Error('대상 세션이 따로 진행됨(원본의 앞부분이 아님) — 덮어쓰지 않음');
+      }
+      if (tail.length) {
+        const body = await fs.readFile(tmpFile);
+        const have = new Set(body.toString('utf8').split('\n'));
+        const extra = tail.filter((l) => !have.has(l));
+        if (extra.length) {
+          targetHash = await sha256File(targetFile);
+          if (createHash('sha256').update(body).digest('hex') !== snap.hash) throw new Error('복사본 검증 실패(jsonl 해시 불일치)');
+          const out = Buffer.concat([body, Buffer.from(`${extra.join('\n')}\n`)]);
+          await fs.writeFile(tmpFile, out);
+          if ((await sha256File(tmpFile)) !== createHash('sha256').update(out).digest('hex')) throw new Error('복사본 검증 실패(메타데이터 덧붙이기)');
+        }
+      }
     }
 
     // Stage 2: companions, each a snapshot (source wins; files only on the target are merged in so nothing
@@ -227,6 +312,7 @@ async function moveOnce(opts: MoveOptions): Promise<MoveResult> {
 
     // Everything staged and verified; the source's first N bytes must still be the snapshot we copied.
     if ((await sha256Prefix(srcFile, snap.size)) !== snap.hash) throw new Error('원본이 복사 중 바뀜');
+    if (targetHash && (await sha256File(targetFile)) !== targetHash) throw new Error('대상 사본이 복사 중 바뀜');
 
     // Commit: companions first, jsonl LAST (the final rename is the commit point).
     if (hasCompanions) {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { moveSession, sha256File, sha256Prefix, snapshotCopy } from './SessionMover';
+import { ancestorTail, isAncestor, moveSession, sha256File, sha256Prefix, snapshotCopy } from './SessionMover';
 
 const ID = '44444444-4444-4444-8444-444444444444';
 
@@ -78,7 +78,7 @@ describe('moveSession', () => {
     const { srcDir, dstRoot } = await fixture();
     const tDir = path.join(dstRoot, '-Users-x-proj');
     await fs.mkdir(path.join(tDir, ID), { recursive: true });
-    await fs.writeFile(path.join(tDir, `${ID}.jsonl`), 'old\n');
+    await fs.writeFile(path.join(tDir, `${ID}.jsonl`), '{"type":"user","uuid":"u-old"}\n');
     await fs.writeFile(path.join(tDir, ID, 'keep.txt'), 'k');
     const snap = await snapshot(tDir);
     const r = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: dstRoot });
@@ -254,5 +254,66 @@ describe('moveSession', () => {
     const bad = await moveSession({ sessionId: ID, sourceProjectDir: srcDir, targetProjectsRoot: fileAsRoot });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.error.length).toBeGreaterThan(0);
+  });
+
+  describe('a target ahead only by uuid-less metadata lines (Claude Desktop)', () => {
+    const conv = (uuid: string, ts = '2026-10-01T00:00:00.000Z') => `${JSON.stringify({ type: 'user', uuid, timestamp: ts, message: { role: 'user', content: uuid } })}\n`;
+    const meta = (n: number) => `${JSON.stringify({ type: 'artifact-autoreact-ledger', entries: [n] })}\n`;
+
+    async function pair(target: string, source: string) {
+      const { srcDir, dstRoot } = await fixture();
+      await fs.writeFile(path.join(srcDir, `${ID}.jsonl`), source);
+      const tDir = path.join(dstRoot, '-Users-x-proj');
+      await fs.mkdir(tDir, { recursive: true });
+      await fs.writeFile(path.join(tDir, `${ID}.jsonl`), target);
+      return { srcDir, dstRoot, srcFile: path.join(srcDir, `${ID}.jsonl`), tFile: path.join(tDir, `${ID}.jsonl`) };
+    }
+
+    it('ancestorTail: common prefix + uuid-less (or unparsable) tail = ancestor; a tail line with a uuid = not', async () => {
+      const shared = conv('u1') + conv('u2');
+      const f = await pair(shared + meta(1) + 'not json\n', shared + conv('u3'));
+      expect(await ancestorTail(f.tFile, f.srcFile)).toEqual([meta(1).trimEnd(), 'not json']);
+      expect(await isAncestor(f.tFile, f.srcFile)).toBe(true);
+      // The other way round: the source has a conversation line the target lacks.
+      expect(await isAncestor(f.srcFile, f.tFile)).toBe(false);
+      await fs.writeFile(f.tFile, shared + meta(1) + conv('u9'));
+      expect(await ancestorTail(f.tFile, f.srcFile)).toBeNull();
+      // A plain byte-prefix has an empty tail.
+      await fs.writeFile(f.tFile, conv('u1'));
+      expect(await ancestorTail(f.tFile, f.srcFile)).toEqual([]);
+    });
+
+    it('is not divergence: the source is written, then the target\'s metadata tail is appended', async () => {
+      const shared = conv('u1') + conv('u2');
+      const source = shared + conv('u3-deck');
+      const f = await pair(shared + meta(1) + meta(2), source);
+      const srcBefore = await sha256File(f.srcFile);
+      const r = await moveSession({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot });
+      expect(r).toMatchObject({ ok: true });
+      expect(await fs.readFile(f.tFile, 'utf8')).toBe(source + meta(1) + meta(2));
+      expect(await sha256File(f.srcFile)).toBe(srcBefore);
+      expect((await fs.readdir(path.dirname(f.tFile))).filter((n) => n.includes('deck-tmp'))).toEqual([]);
+      // The next write-back (deck went on) keeps the metadata once more, without duplicating it.
+      await fs.appendFile(f.srcFile, conv('u4-deck'));
+      expect(await moveSession({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot })).toMatchObject({ ok: true });
+      expect(await fs.readFile(f.tFile, 'utf8')).toBe(source + conv('u4-deck') + meta(1) + meta(2));
+    });
+
+    it('metadata lines the source already has are not appended twice', async () => {
+      const shared = conv('u1');
+      const source = shared + conv('u2') + meta(1);
+      const f = await pair(shared + meta(1), source);
+      expect(await moveSession({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot })).toMatchObject({ ok: true });
+      expect(await fs.readFile(f.tFile, 'utf8')).toBe(source);
+    });
+
+    it('a target that also has a conversation line of its own is still diverged and untouched', async () => {
+      const shared = conv('u1');
+      const target = shared + meta(1) + conv('u2-desktop');
+      const f = await pair(target, shared + conv('u2-deck'));
+      const r = await moveSession({ sessionId: ID, sourceProjectDir: f.srcDir, targetProjectsRoot: f.dstRoot });
+      expect(r).toMatchObject({ ok: false, diverged: true });
+      expect(await fs.readFile(f.tFile, 'utf8')).toBe(target);
+    });
   });
 });

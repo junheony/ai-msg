@@ -21,8 +21,8 @@ import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
 import { LIVE_ROLLOUT_NOTICE, rolloutRecentlyActive } from '../sessions/CodexImports';
-import { forkDivergedAndMove } from '../sessions/SessionFork';
-import { isBytePrefix, moveSession } from '../sessions/SessionMover';
+import { backupDivergedAndMove } from '../sessions/SessionFork';
+import { isAncestor, moveSession } from '../sessions/SessionMover';
 import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
@@ -93,8 +93,8 @@ export type TurnRunnerDeps = {
   /** While a session is held open for background work: at most one write-back per this many ms (default 20 s). */
   mirrorThrottleMs?: number;
   move?: typeof moveSession;
-  /** A diverged copy in the target profile (not home/protected) is forked aside so the move can go on. */
-  fork?: typeof forkDivergedAndMove;
+  /** A diverged copy in the target profile (not home/protected) is backed up and overwritten so the move can go on. */
+  replaceDiverged?: typeof backupDivergedAndMove;
   /** The session list changed on disk (a fork was written): rescan done, tell the clients. */
   onIndexChanged?: () => void;
   findRollout?: typeof findRolloutFile;
@@ -176,7 +176,7 @@ function titleOf(text: string): string {
 
 export class TurnRunner {
   private readonly move: typeof moveSession;
-  private readonly fork: typeof forkDivergedAndMove;
+  private readonly replaceDiverged: typeof backupDivergedAndMove;
   private readonly now: () => number;
   private readonly maxRetries: number;
   private readonly findRollout: typeof findRolloutFile;
@@ -199,6 +199,8 @@ export class TurnRunner {
   private readonly mirrors = new Map<string, Promise<void>>();
   /** Notices already shown, `${sessionId}\0${message}` — a lasting divergence is told once, not every turn. */
   private readonly noted = new Set<string>();
+  /** Home write-back failures already logged, `${sessionId}\0${reason}` — logged once per process. */
+  private readonly writeBackLogged = new Set<string>();
   /** When each session's last write-back was started (wall clock), and a trailing one due while throttled. */
   private readonly mirrorAt = new Map<string, number>();
   private readonly mirrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -217,7 +219,7 @@ export class TurnRunner {
       if (r.ok) this.deckWroteAt.set(path.resolve(r.targetFile), this.now());
       return r;
     };
-    this.fork = deps.fork ?? forkDivergedAndMove;
+    this.replaceDiverged = deps.replaceDiverged ?? backupDivergedAndMove;
     this.now = deps.now ?? (() => Date.now());
     this.maxRetries = deps.maxRetries ?? 2;
     this.findRollout = deps.findRollout ?? findRolloutFile;
@@ -316,7 +318,7 @@ export class TurnRunner {
     const pair = await this.forkPair(sessionId);
     if (!pair) return null;
     const both = (await exists(pair.deckFile)) && (await exists(pair.homeFile));
-    const diverged = both && !(await isBytePrefix(pair.homeFile, pair.deckFile)) && !(await isBytePrefix(pair.deckFile, pair.homeFile));
+    const diverged = both && !(await isAncestor(pair.homeFile, pair.deckFile)) && !(await isAncestor(pair.deckFile, pair.homeFile));
     return { diverged, deckAccount: pair.st.account, homeAccount: pair.home };
   }
 
@@ -334,7 +336,7 @@ export class TurnRunner {
       const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.deps.projectsRoots[home], ignoreOtherDirs: true });
       if (r.ok) return { ok: true as const, busy };
       // The home copy already contains ours: it is the newer one, nothing to write back.
-      if (r.diverged && (await isBytePrefix(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return { ok: true as const, busy };
+      if (r.diverged && (await isAncestor(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return { ok: true as const, busy };
       return r.diverged ? { ok: false as const, reason: 'diverged' as const } : { ok: false as const, reason: 'failed' as const, error: r.error };
     });
   }
@@ -415,8 +417,13 @@ export class TurnRunner {
     const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.deps.projectsRoots[home], ignoreOtherDirs: true });
     if (r.ok) return;
     // The home copy already contains ours (Desktop went on, deck added nothing): the next turn pulls it in.
-    if (r.diverged && (await isBytePrefix(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return;
-    console.error(`deck: home write-back of ${sessionId} to ${LABEL[home]} failed: ${r.error}`);
+    if (r.diverged && (await isAncestor(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return;
+    // Once per process for a given session and reason: a lasting state would otherwise log on every turn.
+    const logKey = `${sessionId}\0${r.diverged ? 'diverged' : r.error}`;
+    if (!this.writeBackLogged.has(logKey)) {
+      this.writeBackLogged.add(logKey);
+      console.error(`deck: home write-back of ${sessionId} to ${LABEL[home]} failed: ${r.error}`);
+    }
     this.noteOnce(sink, turnId, st, r.diverged
       ? `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — ${LABEL[home]} 계정 사본은 덮어쓰지 않았습니다 (머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다)`
       : `${LABEL[home]} 계정 사본 갱신 실패(${r.error}) — 대화는 계속됩니다`);
@@ -426,17 +433,18 @@ export class TurnRunner {
    * Before a turn: the same session may have moved on in another profile (Claude Desktop on A).
    * A copy that contains ours is pulled into the profile deck last used (so routing is unchanged);
    * if that copy cannot be written, the session follows it instead. Truly diverged copies are never
-   * merged or overwritten: the newest (mtime) is used and the user is told.
+   * merged or overwritten: the one with the latest conversation timestamp is used (a tie → deck's, not the
+   * home copy) and the user is told.
    */
   private async reconcile(state: ClaudeSessionState, say: (message: string) => void): Promise<ClaudeSessionState> {
     try {
       const copies = await findCopies(this.deps.projectsRoots, state.sessionId, state.projectDir, state.account);
       // No copy where deck left it: nothing to compare against (locateProjectDir / the engine handle that).
       if (copies[0]?.projectDir !== state.projectDir || copies.length < 2) return state;
-      const r = (await resolveCopies(copies))!;
+      const r = (await resolveCopies(copies, undefined, { home: this.deps.homeAccount }))!;
       if (r.heads.length > 1) {
         const others = r.heads.filter((h) => h !== r.best).map((h) => LABEL[h.account]).join('·');
-        const message = `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근에 바뀐 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${others} 계정 사본은 그대로 둡니다 (머리글의 '갈라짐' 메뉴에서 맞출 수 있습니다)`;
+        const message = `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근 대화가 있는 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${others} 계정 사본은 그대로 둡니다 (머리글의 '갈라짐' 메뉴에서 맞출 수 있습니다)`;
         if (this.firstNote(state.sessionId, message)) say(message);
       }
       if (r.best.projectDir === state.projectDir) return state;
@@ -602,17 +610,18 @@ export class TurnRunner {
 
   /**
    * Moves the session into `to`'s profile. A copy there that went its own way (the same id continued in two
-   * places) is forked aside under a new id and the move retried — except in the home/protected profile (Desktop's),
-   * whose copy is never touched. Notices go through `say` (the caller shows them on the turn).
+   * places) is backed up to that profile's `session-backups/` and overwritten with ours (the copy reconcile chose),
+   * then the move is retried — except in the home/protected profile (Desktop's), whose copy is never touched.
+   * Notices go through `say` (the caller shows them on the turn).
    */
   private async relocate(state: ClaudeSessionState, to: Account, say: (message: string) => void): Promise<ClaudeSessionState | null> {
     const req = { sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] };
     let r = await this.move(req);
-    let forked: string | null = null;
+    let replaced: string | null = null;
     if (!r.ok && r.diverged) {
       // The target copy merely extends ours (it is ahead, not diverged): continue from it, as openInDesktop does.
       const targetDir = path.join(this.deps.projectsRoots[to], path.basename(state.projectDir));
-      if (await isBytePrefix(path.join(state.projectDir, `${state.sessionId}.jsonl`), path.join(targetDir, `${state.sessionId}.jsonl`)).catch(() => false)) {
+      if (await isAncestor(path.join(state.projectDir, `${state.sessionId}.jsonl`), path.join(targetDir, `${state.sessionId}.jsonl`)).catch(() => false)) {
         const next = { ...state, account: to, projectDir: targetDir };
         await this.deps.store.set(next);
         say('다른 계정에 더 최신 대화가 있어 그걸로 이어가요');
@@ -623,18 +632,17 @@ export class TurnRunner {
         return null;
       }
       const refuse = [this.deps.homeAccount, this.deps.protectedAccount].filter((a): a is Account => !!a).map((a) => this.deps.projectsRoots[a]);
-      const f = await this.fork({ ...req, refuseProjectsRoots: refuse, move: this.move });
+      const f = await this.replaceDiverged({ ...req, refuseProjectsRoots: refuse, move: this.move });
       if (f.ok) {
         r = f.move;
-        console.log(`deck: ${state.sessionId} 의 ${LABEL[to]} 계정 사본이 갈라져 ${f.fork.sessionId} 로 보관 (백업 ${f.backupDir})`);
-        forked = `다른 곳에서 이어진 대화가 있어 '${f.fork.title}'으로 따로 보관하고 ${LABEL[to]} 계정으로 옮겼어요`;
+        console.log(`deck: ${state.sessionId} 의 ${LABEL[to]} 계정 사본이 갈라져 백업(${f.backupDir}) 뒤 덮어씀`);
+        replaced = `${LABEL[to]} 계정에 따로 이어진 사본이 있어 백업해 두고 이 대화로 덮어썼어요`;
         if (f.keptAside.length) {
           console.error(`deck: ${state.sessionId} 의 옮겨 둔 원래 사본이 백업 뒤에 바뀌어 지우지 않음: ${f.keptAside.join(', ')}`);
-          forked += ' (옮기는 사이 바뀐 원래 사본은 지우지 않고 남겨 두었어요)';
+          replaced += ' (옮기는 사이 바뀐 원래 사본은 지우지 않고 남겨 두었어요)';
         }
-        await this.deps.index.refresh().then(() => this.deps.onIndexChanged?.(), (err: unknown) => console.error('deck: index refresh after fork failed', err instanceof Error ? err.message : err));
       } else {
-        console.error(`deck: fork of ${state.sessionId} in ${LABEL[to]} failed (${f.restored ? 'restored' : 'NOT restored'}, backup ${f.backupDir ?? '-'}): ${f.error}`);
+        console.error(`deck: replacing the diverged copy of ${state.sessionId} in ${LABEL[to]} failed (${f.restored ? 'restored' : 'NOT restored'}, backup ${f.backupDir ?? '-'}): ${f.error}`);
         r = { ok: false, error: f.restored ? f.error : `${f.error} · 백업: ${f.backupDir ?? '없음'}` };
       }
     }
@@ -644,7 +652,7 @@ export class TurnRunner {
     }
     const next = { ...state, account: to, projectDir: r.targetDir };
     await this.deps.store.set(next);
-    if (forked) say(forked);
+    if (replaced) say(replaced);
     return next;
   }
 

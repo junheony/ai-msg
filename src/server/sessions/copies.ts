@@ -1,15 +1,57 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ACCOUNTS, type Account } from '../../shared/accounts';
-import { isBytePrefix } from './SessionMover';
+import { isAncestor } from './SessionMover';
 
 /** One profile's copy of a session transcript. */
 export type SessionCopy = { account: Account; projectDir: string; file: string; size: number; mtimeMs: number };
 
-type Stamped = { file: string; size: number; mtimeMs: number };
+type Stamped = { file: string; size: number; mtimeMs: number; account?: string };
 export type PrefixFn = (prefix: Stamped, full: Stamped) => Promise<boolean>;
 
-const plainPrefix: PrefixFn = (a, b) => isBytePrefix(a.file, b.file);
+/** `prefix` is older than `full`: a byte-prefix of it, possibly plus Claude Desktop's uuid-less metadata lines. */
+const ancestorPrefix: PrefixFn = (a, b) => isAncestor(a.file, b.file);
+
+/** The `timestamp` (ms) of a conversation line (one with a `uuid`); null for anything else. */
+function conversationAt(line: string): number | null {
+  try {
+    const o = JSON.parse(line) as Record<string, unknown> | null;
+    if (!o || typeof o !== 'object' || o.uuid === undefined || typeof o.timestamp !== 'string') return null;
+    const t = Date.parse(o.timestamp);
+    return Number.isFinite(t) ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/** When the last conversation line of a transcript was written (its `timestamp`); -Infinity = none. Reads from the end. */
+export async function lastConversationAt(file: string): Promise<number> {
+  const fh = await fs.open(file, 'r');
+  try {
+    const CHUNK = 1 << 16;
+    let end = (await fh.stat()).size;
+    let carry = Buffer.alloc(0);
+    while (end > 0) {
+      const start = Math.max(0, end - CHUNK);
+      const buf = Buffer.alloc(end - start);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+      const data = Buffer.concat([buf.subarray(0, bytesRead), carry]);
+      // Only lines known to be whole: past the first line break unless this chunk starts the file.
+      const cut = start === 0 ? 0 : data.indexOf(0x0a) + 1;
+      end = start;
+      if (start > 0 && cut === 0) { carry = data; continue; }
+      const lines = data.subarray(cut).toString('utf8').split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const t = conversationAt(lines[i]!);
+        if (t !== null) return t;
+      }
+      carry = data.subarray(0, cut);
+    }
+    return -Infinity;
+  } finally {
+    await fh.close();
+  }
+}
 
 /**
  * The copies `claude --resume` would use: in each profile, `<id>.jsonl` in the directory named like
@@ -33,12 +75,18 @@ export async function findCopies(roots: Record<Account, string>, sessionId: stri
 }
 
 /**
- * Which copy wins. Transcripts are append-only, so a copy that is a byte-prefix of another is just
- * older: the longest one in a prefix chain wins (on a tie the earlier-listed copy). `heads` are the
- * copies no other copy contains; more than one = truly diverged, and then the latest mtime wins
- * (the caller tells the user; nothing is overwritten).
+ * Which copy wins. Transcripts are append-only, so a copy that is an ancestor of another (a byte-prefix, possibly
+ * plus Claude Desktop's metadata lines) is just older: the longest one in a chain wins (on a tie the earlier-listed
+ * copy). `heads` are the copies no other copy contains; more than one = truly diverged, and then the copy whose last
+ * conversation line has the latest `timestamp` wins — on a tie the one not in `home` (deck's B/C copy has the turns
+ * the user sent from deck), then the earlier-listed. Never mtime: Desktop touches its copy without adding turns.
+ * The caller tells the user; nothing is overwritten.
  */
-export async function resolveCopies<T extends Stamped>(copies: T[], prefix: PrefixFn = plainPrefix): Promise<{ best: T; heads: T[] } | null> {
+export async function resolveCopies<T extends Stamped>(
+  copies: T[],
+  prefix: PrefixFn = ancestorPrefix,
+  opts: { home?: string | null; lastAt?: (file: string) => Promise<number> } = {},
+): Promise<{ best: T; heads: T[] } | null> {
   let heads: T[] = [];
   for (const c of copies) {
     let dominated = false;
@@ -49,6 +97,17 @@ export async function resolveCopies<T extends Stamped>(copies: T[], prefix: Pref
     heads = [...kept, c];
   }
   if (!heads.length) return null;
-  const best = heads.length === 1 ? heads[0]! : heads.reduce((x, y) => (y.mtimeMs > x.mtimeMs ? y : x));
-  return { best, heads };
+  if (heads.length === 1) return { best: heads[0]!, heads };
+  const lastAt = opts.lastAt ?? lastConversationAt;
+  const at = await Promise.all(heads.map((h) => lastAt(h.file).catch(() => -Infinity)));
+  const order = heads.map((h, i) => i).sort((i, j) => {
+    const x = heads[i]!;
+    const y = heads[j]!;
+    const byTime = at[j]! - at[i]!;
+    if (byTime && !Number.isNaN(byTime)) return byTime;
+    const homeX = opts.home != null && x.account === opts.home ? 1 : 0;
+    const homeY = opts.home != null && y.account === opts.home ? 1 : 0;
+    return homeX - homeY || copies.indexOf(x) - copies.indexOf(y);
+  });
+  return { best: heads[order[0]!]!, heads };
 }

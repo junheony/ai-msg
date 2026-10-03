@@ -676,7 +676,7 @@ describe('ws', () => {
     const bFile = path.join(base, 'b', dirName, `${SID}.jsonl`);
     const aDir = path.join(base, 'a', dirName);
     await fs.mkdir(aDir, { recursive: true });
-    await fs.writeFile(path.join(aDir, `${SID}.jsonl`), (await fs.readFile(bFile, 'utf8')) + JSON.stringify({ type: 'user', cwd, message: { role: 'user', content: 'from desktop' } }) + '\n');
+    await fs.writeFile(path.join(aDir, `${SID}.jsonl`), (await fs.readFile(bFile, 'utf8')) + JSON.stringify({ type: 'user', uuid: 'u-desktop', cwd, message: { role: 'user', content: 'from desktop' } }) + '\n');
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
     await collect(ws, (m) => m.type === 'hello');
     const p = collect(ws, (m) => m.type === 'history');
