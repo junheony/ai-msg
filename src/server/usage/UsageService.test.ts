@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { UsageService, parseDeckState, parseDeckCards } from './UsageService';
 import { remainingPct } from '../../shared/usage-types';
+import { rankCandidates } from '../routing/AccountRouter';
 
 const LIVE = {
   generatedAt: '2026-09-30T12:27:02.000Z',
@@ -127,7 +128,7 @@ describe('UsageService', () => {
   });
 
   it('a fresh successful deck turn lifts a setup_needed card (down) for routing only, for 30 min; the UI keeps the real status', async () => {
-    let nowMs = Date.parse('2026-09-30T12:30:00Z');
+    let nowMs = Date.parse('2026-09-30T12:30:00Z'); // card fetchedAt 12:27:01 → fresh
     const expired = structuredClone(LIVE);
     // usage-deck's own token expired: setup_needed, last-known rows still on the card.
     expired.cards[0] = { ...expired.cards[0]!, status: 'setup_needed' };
@@ -140,13 +141,22 @@ describe('UsageService', () => {
     s.noteTurnOk('a');
     expect(seen).toEqual([]); // nothing published: the re-login signal stays on screen
     expect(s.snapshot().accounts.a).toMatchObject({ status: 'down', weekly: { usedPct: 7 } });
-    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', weekly: { usedPct: 7 } });
+    // Card fresh: lifted with all its rows, Fable included.
+    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', weekly: { usedPct: 7 }, fable: { usedPct: 0 } });
     expect(s.routingSnapshot().accounts.b).toBe(s.snapshot().accounts.b); // other cards untouched
-    nowMs += 29 * 60_000;
+    nowMs += 20 * 60_000;
     await s.pollOnce();
     expect(s.snapshot().accounts.a.status).toBe('down');
-    expect(s.routingSnapshot().accounts.a.status).toBe('ok');
+    // The back-filled rows are now 23 min old and no turn observed them: not lifted (the router keeps excluding it).
+    expect(s.routingSnapshot().accounts.a.status).toBe('down');
+    // A fresh turn observation makes 5h/weekly current again; Fable is never refreshed by a turn → dropped.
+    s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 9, resetsAt: null } });
+    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fiveHour: { usedPct: 20 }, weekly: { usedPct: 9 }, fable: null });
+    expect(s.snapshot().accounts.a.status).toBe('down');
     expect(seen.every((x) => x === 'down')).toBe(true);
+    nowMs += 9 * 60_000; // 29 min after the turn, observation 9 min old
+    await s.pollOnce();
+    expect(s.routingSnapshot().accounts.a.status).toBe('ok');
     nowMs += 2 * 60_000; // 31 min after the turn
     await s.pollOnce();
     expect(s.routingSnapshot().accounts.a.status).toBe('down');
@@ -160,10 +170,29 @@ describe('UsageService', () => {
     s.noteTurnOk('b');
     expect(s.routingSnapshot().accounts.b.status).toBe('stale');
     s.noteTurnOk('a');
+    // No fetchedAt and no observation: nothing fresh to route on, stays down.
+    expect(s.routingSnapshot().accounts.a.status).toBe('down');
+    // An observation with only 5h: lifted, but with no weekly value the router still leaves it out ('주간 사용률 없음').
+    s.applyTurn('a', { fiveHour: { usedPct: 5, resetsAt: null } });
     expect(s.snapshot().accounts.a.status).toBe('down');
-    // Not down for routing any more, but with no weekly value the router still leaves it out ('주간 사용률 없음').
-    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', weekly: null });
+    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', weekly: null, fable: null });
   });
+
+  it('routing on a lifted card: Fable only from a fresh card (needFable excludes otherwise); nothing fresh → excluded', async () => {
+    const nowMs = Date.parse('2026-09-30T12:50:00Z'); // card fetchedAt 12:27:01 → 23 min old
+    const expired = structuredClone(LIVE);
+    expired.cards[0] = { ...expired.cards[0]!, status: 'setup_needed' };
+    const s = svc(async () => ({ ok: true, json: async () => expired }), () => new Date(nowMs));
+    await s.pollOnce();
+    s.noteTurnOk('a');
+    const rank = (needFable: boolean) => rankCandidates({ current: null, usage: s.routingSnapshot(), nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: {}, protectedAccount: null, needFable });
+    // No fresh observation: still down for routing.
+    expect(rank(false).excluded.a).toBe('잔여량 정보 없음');
+    s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 9, resetsAt: null } });
+    expect(rank(false).candidates.map((c) => c.account)).toContain('a');
+    // The card's Fable 0% is 23 min old and frozen: not trusted for a Fable turn.
+    expect(rank(true).excluded.a).toBe('Fable 값 없음');
+      });
 
   it('start() polls on an interval and stop() halts it', async () => {
     vi.useFakeTimers();

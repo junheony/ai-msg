@@ -1,5 +1,6 @@
 import { ACCOUNTS, CARD_ID, type Account, type UsageSeat } from '../../shared/accounts';
 import { emptyAccountUsage, emptySnapshot, parseIsoUtc, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { STALE_MAX_MS } from '../routing/AccountRouter';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits };
 
@@ -151,14 +152,22 @@ export class UsageService {
 
   /**
    * A `down` Claude card (usage-deck's own token expired: setup_needed) while deck itself completed a turn on that
-   * account within TURN_OK_TRUST_MS: the account works, so it is not 'down' for routing (routingSnapshot only). Numbers are not invented —
-   * the card's last-known rows (or a turn observation) stay; no weekly value still keeps it out of routing.
+   * account within TURN_OK_TRUST_MS: the account works, so it is not 'down' for routing (routingSnapshot only).
+   * Numbers are not invented, and old ones are not trusted: usage-deck back-fills setup_needed cards with the
+   * last-good rows indefinitely, and 'ok' skips the router's stale gate. So the lift needs fresh 5h/weekly numbers —
+   * the card's own fetchedAt or a turn observation within STALE_MAX_MS — and Fable (never refreshed by a turn) is
+   * kept only when the card itself is fresh. No weekly value still keeps it out of routing.
    */
   private lift(account: Account, u: AccountUsage): AccountUsage {
     const at = this.turnOkAt.get(account);
     if (u.status !== 'down' || at === undefined) return u;
-    if (this.now().getTime() - at >= TURN_OK_TRUST_MS) { this.turnOkAt.delete(account); return u; }
-    return { ...u, status: 'ok' };
+    const nowMs = this.now().getTime();
+    if (nowMs - at >= TURN_OK_TRUST_MS) { this.turnOkAt.delete(account); return u; }
+    const fresh = (t: number) => !Number.isNaN(t) && nowMs - t <= STALE_MAX_MS;
+    const cardFresh = fresh(u.fetchedAt ? parseIsoUtc(u.fetchedAt) : Number.NaN);
+    const obsAt = this.turnObs.get(account)?.atMs;
+    if (!cardFresh && !(obsAt !== undefined && fresh(obsAt))) return u;
+    return { ...u, status: 'ok', fable: cardFresh ? u.fable : null };
   }
 
   private withCredits(u: AccountUsage): AccountUsage {

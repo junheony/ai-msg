@@ -6,7 +6,7 @@ import { chooseAccount, rankCandidates, routeLogLine, type RouterInput } from '.
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const H = 3_600_000;
 
-type Spec = { s?: number; w?: number; f?: number | null; status?: AccountUsage['status']; age?: number; resetH?: number };
+type Spec = { s?: number | null; w?: number; f?: number | null; status?: AccountUsage['status']; age?: number; resetH?: number };
 
 function acct(spec: Spec): AccountUsage {
   const status = spec.status ?? 'ok';
@@ -15,7 +15,7 @@ function acct(spec: Spec): AccountUsage {
   return {
     status,
     fetchedAt,
-    fiveHour: spec.s === undefined ? { usedPct: 10, resetsAt } : { usedPct: spec.s, resetsAt },
+    fiveHour: spec.s === null ? null : spec.s === undefined ? { usedPct: 10, resetsAt } : { usedPct: spec.s, resetsAt },
     weekly: spec.w === undefined ? null : { usedPct: spec.w, resetsAt },
     fable: spec.f === null ? null : { usedPct: spec.f ?? 0, resetsAt },
   };
@@ -23,6 +23,12 @@ function acct(spec: Spec): AccountUsage {
 
 function snap(a: Spec, b: Spec, c: Spec, reachable = true): UsageSnapshot {
   return { generatedAt: new Date(NOW).toISOString(), deckReachable: reachable, accounts: { a: acct(a), b: acct(b), c: acct(c) } };
+}
+
+/** The production default: no policy given (= 'balance'), everything else as `input`. */
+function dflt(over: Partial<RouterInput>): RouterInput {
+  const { policy: _p, ...rest } = input(over);
+  return rest;
 }
 
 function input(over: Partial<RouterInput>): RouterInput {
@@ -285,6 +291,47 @@ describe('chooseAccount · 고르게 분산 (balance)', () => {
     const warm = chooseAccount(bal({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 54 * 60_000, usage: reported() }));
     expect(warm).toMatchObject({ account: 'a', switched: false });
     expect(chooseAccount(bal({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 55 * 60_000, usage: reported() })).account).toBe('c');
+  });
+});
+
+describe('chooseAccount · default policy (no policy given = balance)', () => {
+  it('new session spreads to C when C has the lowest 5h; protected A last', () => {
+    const usage = snap({ s: 0, w: 0 }, { s: 30, w: 20 }, { s: 5, w: 40 });
+    expect(chooseAccount(dflt({ protectedAccount: 'a', usage }))).toMatchObject({ account: 'c', switched: false });
+    expect(rankCandidates(dflt({ protectedAccount: 'a', usage })).candidates.map((c) => c.account)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('warm session stays; forced switch goes by balance order', () => {
+    const usage = snap({ s: 81, w: 10 }, { s: 30, w: 1, resetH: 5 }, { s: 10, w: 50, resetH: 150 });
+    expect(chooseAccount(dflt({ current: 'b', lastTurnAtMs: NOW - 10 * 60_000, usage }))).toMatchObject({ account: 'b', switched: false });
+    expect(chooseAccount(dflt({ current: 'a', lastTurnAtMs: NOW - 60_000, usage }))).toMatchObject({ account: 'c', switched: true });
+  });
+
+  it('cold session: hysteresis — a marginal 5h difference does not move it, a large one does', () => {
+    // On B (safe), C lower by exactly 5 points → stays.
+    const near = chooseAccount(dflt({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ s: 0, w: 0 }, { s: 20, w: 30 }, { s: 15, w: 10 }) }));
+    expect(near).toMatchObject({ account: 'b', switched: false });
+    expect(near.reason).toMatch(/현재 계정이 최적/);
+    // C lower by 6 points → moves.
+    expect(chooseAccount(dflt({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ s: 0, w: 0 }, { s: 21, w: 30 }, { s: 15, w: 10 }) })))
+      .toMatchObject({ account: 'c', switched: true });
+    // Current is the protected account (never "safe") → no hysteresis: a 2-point win still moves it off A.
+    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ s: 18, w: 0 }, { s: 20, w: 30 }, { s: 16, w: 10 }) })).account).toBe('c');
+    // Drain keeps its old cold-cache rule (no hysteresis).
+    expect(chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 2 * H })).account).toBe('b');
+  });
+
+  it('a missing 5h row is unknown, not 0%: ranked after known values, still a safe candidate', () => {
+    const usage = snap({ s: 0, w: 0 }, { s: 40, w: 30 }, { s: null, w: 10 });
+    const { candidates } = rankCandidates(dflt({ protectedAccount: 'a', usage }));
+    expect(candidates.map((c) => c.account)).toEqual(['b', 'c', 'a']);
+    expect(candidates.find((c) => c.account === 'c')?.fiveHourKnown).toBe(false);
+    const d = chooseAccount(dflt({ protectedAccount: 'a', usage }));
+    expect(d.account).toBe('b');
+    expect(d.reason).toMatch(/C 5h 값 없음/);
+    expect(routeLogLine(null, d)).toMatch(/C 5h \? · 주간 10%/);
+    // Unknown 5h but the only safe account: picked over the protected one and over unsafe ones.
+    expect(chooseAccount(dflt({ protectedAccount: 'a', usage: snap({ s: 0, w: 0 }, { s: 85, w: 30 }, { s: null, w: 10 }) })).account).toBe('c');
   });
 });
 

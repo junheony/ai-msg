@@ -34,7 +34,10 @@ export type RouterInput = {
 export type Candidate = {
   account: Account;
   score: number;
+  /** 0 when the card has no 5h row (see fiveHourKnown). */
   fiveHourPct: number;
+  /** False when the card has no 5h row: 고르게 분산 ranks it after every account with a known 5h. */
+  fiveHourKnown: boolean;
   weeklyPct: number;
   hoursToReset: number;
   stale: boolean;
@@ -97,6 +100,7 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
       account,
       score: (100 - weekly) / Math.max(hoursToReset, 1),
       fiveHourPct: fiveHour,
+      fiveHourKnown: typeof u.fiveHour?.usedPct === 'number',
       weeklyPct: weekly,
       hoursToReset,
       stale: u.status === 'stale',
@@ -123,11 +127,12 @@ function isSafe(c: Candidate): boolean {
 
 /**
  * 고르게 분산: safe candidates first, lowest 5h first; 5h within BALANCE_TIE_PCT of the lowest is a tie, broken by
- * the lower weekly, then the drain order (score). The rest follow in drain order, so with no safe candidate this
+ * the lower weekly, then the drain order (score). Safe candidates with no 5h row follow (unknown is not 0%, so it
+ * never wins over a known value), in drain order. The rest follow in drain order, so with no safe candidate this
  * is exactly the drain ranking (and the protected account stays last).
  */
 function balanceOrder(drainSorted: Candidate[]): Candidate[] {
-  const pool = drainSorted.filter(isSafe);
+  const pool = drainSorted.filter((c) => isSafe(c) && c.fiveHourKnown);
   const out: Candidate[] = [];
   while (pool.length > 0) {
     const low = Math.min(...pool.map((c) => c.fiveHourPct));
@@ -136,18 +141,24 @@ function balanceOrder(drainSorted: Candidate[]): Candidate[] {
     out.push(pick);
     pool.splice(pool.indexOf(pick), 1);
   }
-  return [...out, ...drainSorted.filter((c) => !isSafe(c))];
+  return [...out, ...drainSorted.filter((c) => isSafe(c) && !c.fiveHourKnown), ...drainSorted.filter((c) => !isSafe(c))];
+}
+
+/** A candidate's 5h for reasons and logs: '?' when the card has no 5h row. */
+function pct5(c: Candidate): string {
+  return c.fiveHourKnown ? `${c.fiveHourPct}%` : '?';
 }
 
 /** Why `cands[0]` (safe) won under 고르게 분산, against the runner-up. */
 function balanceWhy(cands: Candidate[]): string {
   const [b, n] = cands as [Candidate, Candidate | undefined];
   const B = LABEL[b.account];
-  if (!n) return `분산: 5h ${B} ${b.fiveHourPct}% · 유일한 후보`;
+  if (!n) return `분산: 5h ${B} ${pct5(b)} · 유일한 후보`;
   const N = LABEL[n.account];
-  if (!isSafe(n)) return `분산: 5h ${B} ${b.fiveHourPct}% · ${N} ${n.protected ? '보호 계정' : '문턱 근접'}`;
-  if (n.fiveHourPct - b.fiveHourPct > BALANCE_TIE_PCT) return `분산: 5h ${B} ${b.fiveHourPct}% < ${N} ${n.fiveHourPct}%`;
-  if (b.weeklyPct < n.weeklyPct) return `분산: 5h 비슷(${B} ${b.fiveHourPct}% · ${N} ${n.fiveHourPct}%) · 주간 ${B} ${b.weeklyPct}% < ${N} ${n.weeklyPct}%`;
+  if (!isSafe(n)) return `분산: 5h ${B} ${pct5(b)} · ${N} ${n.protected ? '보호 계정' : '문턱 근접'}`;
+  if (b.fiveHourKnown && !n.fiveHourKnown) return `분산: 5h ${B} ${pct5(b)} · ${N} 5h 값 없음`;
+  if (n.fiveHourPct - b.fiveHourPct > BALANCE_TIE_PCT) return `분산: 5h ${B} ${pct5(b)} < ${N} ${pct5(n)}`;
+  if (b.weeklyPct < n.weeklyPct) return `분산: 5h 비슷(${B} ${pct5(b)} · ${N} ${pct5(n)}) · 주간 ${B} ${b.weeklyPct}% < ${N} ${n.weeklyPct}%`;
   return `분산: 5h·주간 비슷 · 리셋 임박 ${B}`;
 }
 
@@ -161,7 +172,7 @@ function bestWhy(input: RouterInput, cands: Candidate[]): string {
 
 /** The server log line for a routed turn: decision, candidates and exclusions (usage numbers only, no secrets). */
 export function routeLogLine(sessionId: string | null, d: RouterDecision): string {
-  const cands = d.candidates.map((c) => `${LABEL[c.account]}${c.protected ? '(보호)' : ''} 5h ${c.fiveHourPct}% · 주간 ${c.weeklyPct}%`).join(', ');
+  const cands = d.candidates.map((c) => `${LABEL[c.account]}${c.protected ? '(보호)' : ''} 5h ${pct5(c)} · 주간 ${c.weeklyPct}%`).join(', ');
   const ex = ACCOUNTS.filter((a) => d.excluded[a]).map((a) => `${LABEL[a]} ${d.excluded[a]}`).join(', ');
   return `deck: route ${sessionId ? sessionId.slice(0, 8) : '새 세션'} → ${LABEL[d.account]} (${d.reason})${cands ? ` · 후보 ${cands}` : ''}${ex ? ` · 제외 ${ex}` : ''}`;
 }
@@ -252,12 +263,17 @@ export function chooseAccount(input: RouterInput): RouterDecision {
   const sinceLast = input.lastTurnAtMs === null ? null : input.nowMs - input.lastTurnAtMs;
   const coldWhy = input.justCompacted ? '방금 압축' : sinceLast === null ? '첫 턴' : sinceLast >= WARM_MS ? `${Math.round(sinceLast / 60_000)}분 경과` : null;
   // A `down` current card does not block the cold-cache move: nothing is lost by moving when the cache is cold.
-  if (coldWhy && best && best.account !== cur) {
+  // 고르게 분산 hysteresis: 5h moves a lot, so a cold session on a safe account only moves for a clear win
+  // (more than BALANCE_TIE_PCT lower, both known) — not B→C→B on every idle hour, each one a relocate().
+  const curCand = candidates.find((c) => c.account === cur);
+  const marginal = (input.policy ?? 'balance') === 'balance' && !!best && !!curCand && isSafe(curCand) &&
+    !(best.fiveHourKnown && curCand.fiveHourKnown && best.fiveHourPct + BALANCE_TIE_PCT < curCand.fiveHourPct);
+  if (coldWhy && best && best.account !== cur && !marginal) {
     return { ...base, account: best.account, switched: true, reason: `캐시 식음(${coldWhy}) → ${LABEL[best.account]} · ${bestWhy(input, candidates)}` };
   }
   if (cu.status === 'down') return { ...base, account: cur, switched: false, reason: `잔여량 정보 없음 · ${LABEL[cur]} 유지` };
   if (coldWhy) {
-    const why = best ? '현재 계정이 최적' : '자격 있는 대안 없음';
+    const why = best ? (best.account !== cur ? `현재 계정이 최적(5h 차이 ${BALANCE_TIE_PCT}%p 이내)` : '현재 계정이 최적') : '자격 있는 대안 없음';
     return { ...base, account: cur, switched: false, reason: `캐시 식음(${coldWhy}) · ${why} · ${LABEL[cur]} 유지` };
   }
   // Deliberate for now (review M1): a warm session stays put even on the protected account; it only
