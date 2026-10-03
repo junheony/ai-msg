@@ -956,6 +956,7 @@ describe('message queue (ux-state)', () => {
       s = play([{ type: 'error', turnId: null, message: '세션을 찾을 수 없습니다: s1', sessionId: 's1' }], s);
       expect(pane(s).queue.map((q) => [q.text, q.restart, q.maybeSent])).toEqual([['계속', undefined, undefined]]);
       expect(pane(s).queuePaused).toBe(true);
+      expect(pane(s).notices?.map((n) => n.message)).toEqual(['세션을 찾을 수 없습니다: s1']);
       let d = refusedSend('draining');
       expect(pane(d).queue[0]!.restart).toBe('hold');
       d = reducer(d, { type: 'queue_resume' });
@@ -1003,8 +1004,8 @@ describe('message queue (ux-state)', () => {
     it('D: already_accepted ends the wait without requeueing, takes the extra bubble back and shows no error', () => {
       let s = play([history(['old'])], openedOn('s1'));
       s = reducer(s, { type: 'sent', text: 'again', clientRef: 'r1' });
-      s = play([{ type: 'error', turnId: null, message: '이미 들어간 메시지라 다시 보내지 않았습니다', clientRef: 'r1', code: 'already_accepted' }], s);
-      expect(pane(s)).toMatchObject({ awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: [], queuePaused: false });
+      s = play([{ type: 'error', turnId: null, message: '이미 들어간 메시지라 다시 보내지 않았습니다', clientRef: 'r1', code: 'already_accepted', sessionId: 's1' }], s);
+      expect(pane(s)).toMatchObject({ awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: [], queuePaused: false, notices: [] });
       expect(pane(s).items.map((it) => it.kind === 'user' && it.text)).toEqual(['old']);
       expect(s.error).toBeNull();
     });
