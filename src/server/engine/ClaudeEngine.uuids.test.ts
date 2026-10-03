@@ -132,13 +132,20 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
     expect(f.state.inputClosed).toBe(true);
   });
 
-  it('an injected no-query turn that failed (error result, num_turns 0) is not skipped: it is handled as an error result', async () => {
-    const f = fakeSdk();
-    const r = reader(engine(f).runTurn(req({ resumeSessionId: 's1' })));
-    f.push(sdk.init());
-    await r.until('init');
-    f.push(sdk.notifyUser(), { ...sdk.notifyNoopResult(), subtype: 'error_during_execution', is_error: true, errors: ['boom'] }, answered('ok', [f.inputs[0]!.uuid!]));
-    expect(await r.until('result')).toMatchObject({ ok: false });
+  it('an injected no-query turn that failed (error result, num_turns 0) while our prompt is pending is logged, not taken as our answer — the prompt still runs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = fakeSdk();
+      const r = reader(engine(f).runTurn(req({ resumeSessionId: 's1' })));
+      f.push(sdk.init());
+      await r.until('init');
+      f.push(sdk.notifyUser(), { ...sdk.notifyNoopResult(), subtype: 'error_during_execution', is_error: true, errors: ['boom'] }, sdk.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
+      await r.rest();
+      expect(r.seen.filter((e) => e.kind === 'result')).toEqual([expect.objectContaining({ ok: true, text: 'ok' })]);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('boom'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('idle with the background set emptied: a no-query notification the CLI injects closes its segment with a result and lets the process end', async () => {
