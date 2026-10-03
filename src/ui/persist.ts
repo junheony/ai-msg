@@ -18,16 +18,7 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
  * send runs), so the link to its predecessor and the note waiting in the composer live only here until then.
  * `accountPin`: likewise the pin an id-less session sends with its first turn (an existing session's pin is the server's).
  */
-/**
- * A queued message (QueueItem minus its per-page id): `restart` = refused by a restarting server, sent after the reconnect;
- * `lostSteer` = a steer whose answer was lost (dropped if the server replays it as delivered).
- */
-export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; lostSteer?: string };
-/**
- * `queue` / `queuePaused`: the pane's queued messages — the server may restart (and the page reload) before they go out.
- * They are kept with the pane's session, so they only ever come back into that session.
- */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; queue?: PersistedQueueItem[]; queuePaused?: true };
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -63,18 +54,6 @@ function session(x: unknown): PersistedSession | null {
   return { sessionId, cwd: x.cwd, title, engine };
 }
 
-const MAX_QUEUE = 50;
-
-function queueItem(x: unknown): PersistedQueueItem | null {
-  if (!isObj(x) || !shortStr(x.text, 200_000) || !Array.isArray(x.attachments)) return null;
-  const attachments = x.attachments.slice(0, MAX_ATTACHMENTS_PER_TURN).flatMap((a): UploadedAttachment[] => {
-    if (!isObj(a) || !shortStr(a.id, 64) || !ATTACHMENT_ID.test(a.id) || !shortStr(a.name, 300)) return [];
-    return [{ id: a.id, name: a.name, size: typeof a.size === 'number' && a.size >= 0 ? a.size : 0, isImage: a.isImage === true }];
-  });
-  if (!x.text && !attachments.length) return null;
-  return { text: x.text, attachments, ...(x.restart === true ? { restart: true as const } : {}), ...(shortStr(x.lostSteer, 64) && x.lostSteer ? { lostSteer: x.lostSteer } : {}) };
-}
-
 function pane(x: unknown): PersistedPane {
   const d = newPane('');
   if (!isObj(x)) return { session: null, model: d.model, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: d.engine, sandbox: d.sandbox };
@@ -92,16 +71,7 @@ function pane(x: unknown): PersistedPane {
     ...(pending && hf && shortStr(hf.sessionId, 200) && hf.sessionId && shortStr(hf.title, 500) ? { handoffFrom: { sessionId: hf.sessionId, title: hf.title } } : {}),
     ...(pending && shortStr(x.prefill, 100_000) && x.prefill ? { prefill: x.prefill } : {}),
     ...(pending && isAccount(x.accountPin) ? { accountPin: x.accountPin } : {}),
-    ...queueOf(x, sess),
   };
-}
-
-/** A queue only with a session to go to; an id-less one (its first send may have made the session) waits for the user. */
-function queueOf(x: Record<string, unknown>, sess: PersistedSession | null): Pick<PersistedPane, 'queue' | 'queuePaused'> {
-  const items = sess && Array.isArray(x.queue) ? x.queue.slice(0, MAX_QUEUE).map(queueItem).filter((q): q is PersistedQueueItem => !!q) : [];
-  if (!items.length) return {};
-  const queue = sess!.sessionId === null ? items.map(({ restart: _r, ...q }) => q) : items;
-  return { queue, ...(x.queuePaused === true || sess!.sessionId === null ? { queuePaused: true as const } : {}) };
 }
 
 /** Validates (and migrates) whatever is stored; null = nothing usable, start fresh. */
@@ -129,23 +99,11 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
       ...(p.session && p.session.sessionId === null && p.handoffFrom ? { handoffFrom: p.handoffFrom } : {}),
       ...(p.session && p.session.sessionId === null && p.prefill ? { prefill: p.prefill } : {}),
       ...(p.session && p.session.sessionId === null && p.session.accountPin ? { accountPin: p.session.accountPin } : {}),
-      ...(p.session && p.queue.length ? snapshotQueue(p.queue, p.queuePaused) : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
     drawer: extra.drawer,
   };
-}
-
-/** A steer still in flight comes back as a lost one (its answer goes to this page's socket), so the queue waits for the user. */
-function snapshotQueue(queue: QueueItem[], paused: boolean): Pick<PersistedPane, 'queue' | 'queuePaused'> {
-  const items = queue.map((q): PersistedQueueItem => ({
-    text: q.text,
-    attachments: q.attachments.map(({ id, name, size, isImage }) => ({ id, name, size, isImage })),
-    ...(q.restart ? { restart: true as const } : {}),
-    ...(q.steer || q.lostSteer ? { lostSteer: (q.steer ?? q.lostSteer)! } : {}),
-  }));
-  return { queue: items, ...(paused || queue.some((q) => q.steer) ? { queuePaused: true as const } : {}) };
 }
 
 /** Writes only when the serialized value changed; returns what is stored now (feed it back as `last`). */
@@ -156,18 +114,130 @@ export function saveUi(ui: PersistedUi, last: string | null = null, store: Store
 }
 
 /** The app's start state: panes (sessions, pickers) restored; the sessions themselves are re-opened on `hello`. */
-export function hydrate(base: AppState, ui: PersistedUi | null): AppState {
-  if (!ui) return base;
+export function hydrate(base: AppState, ui: PersistedUi | null, queues: PersistedQueues | null = null): AppState {
+  if (!ui) return withQueues(base, queues);
   const panes: PaneState[] = ui.panes.map((p, i) => ({
     ...newPane(`p${i}`),
     session: p.session ? { ...p.session, account: null, sandbox: null, ...(p.accountPin ? { accountPin: p.accountPin } : {}) } : null,
     model: p.model, efforts: { ...p.efforts }, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
     handoffFrom: p.handoffFrom ?? null, prefill: p.prefill ?? null,
-    // Fresh ids (they are per page); a message held for the restart waits for this page's first reconnect.
-    queue: (p.queue ?? []).map(({ restart, ...q }): QueueItem => ({ ...q, id: nextQueueId(), ...(restart ? { restart: 'hold' as const } : {}) })),
-    queuePaused: p.queuePaused === true,
   }));
-  return { ...base, panes, activePaneId: panes[ui.active]?.id ?? panes[0]!.id };
+  return withQueues({ ...base, panes, activePaneId: panes[ui.active]?.id ?? panes[0]!.id }, queues);
+}
+
+// --- queued messages (sessionStorage: per tab, so two tabs never send each other's queue) ---
+
+export const QUEUE_KEY = 'deck.queues.v1';
+/**
+ * A queued message (QueueItem minus its per-page id): `restart` = held back by a restarting server, sent after the reconnect;
+ * `maybeSent` = may have gone in as that user message (QueueItem); `lostSteer` = a steer whose answer was lost.
+ */
+export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; maybeSent?: number; lostSteer?: string };
+/**
+ * A pane's queue, kept with its session so it only ever comes back into that session: `pane` = the pane it sat in
+ * (null = parked: its pane left the session). The server may restart (and the page reload) before it goes out.
+ */
+export type PersistedQueue = { pane: number | null; sessionId: string | null; cwd: string; queue: PersistedQueueItem[]; paused?: true };
+export type PersistedQueues = { v: 1; queues: PersistedQueue[] };
+
+type QueueStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
+function tabStorage(): QueueStore | null {
+  try { return typeof sessionStorage === 'undefined' ? null : sessionStorage; } catch { return null; }
+}
+
+const MAX_QUEUE = 50;
+
+function queueItem(x: unknown): PersistedQueueItem | null {
+  if (!isObj(x) || !shortStr(x.text, 200_000) || !Array.isArray(x.attachments)) return null;
+  const attachments = x.attachments.slice(0, MAX_ATTACHMENTS_PER_TURN).flatMap((a): UploadedAttachment[] => {
+    if (!isObj(a) || !shortStr(a.id, 64) || !ATTACHMENT_ID.test(a.id) || !shortStr(a.name, 300)) return [];
+    return [{ id: a.id, name: a.name, size: typeof a.size === 'number' && a.size >= 0 ? a.size : 0, isImage: a.isImage === true }];
+  });
+  if (!x.text && !attachments.length) return null;
+  return {
+    text: x.text, attachments,
+    ...(x.restart === true ? { restart: true as const } : {}),
+    ...(Number.isInteger(x.maybeSent) && (x.maybeSent as number) >= 0 ? { maybeSent: x.maybeSent as number } : {}),
+    ...(shortStr(x.lostSteer, 64) && x.lostSteer ? { lostSteer: x.lostSteer } : {}),
+  };
+}
+
+export function parseQueues(raw: unknown): PersistedQueues | null {
+  if (!isObj(raw) || raw.v !== 1 || !Array.isArray(raw.queues)) return null;
+  const queues = raw.queues.slice(0, 100).flatMap((x): PersistedQueue[] => {
+    if (!isObj(x) || !shortStr(x.cwd, 4096) || !x.cwd.startsWith('/') || !Array.isArray(x.queue)) return [];
+    const sessionId = x.sessionId === null ? null : shortStr(x.sessionId, 200) && x.sessionId ? x.sessionId : undefined;
+    const pane = Number.isInteger(x.pane) && (x.pane as number) >= 0 && (x.pane as number) < MAX_PANES ? (x.pane as number) : null;
+    if (sessionId === undefined || (sessionId === null && pane === null)) return [];
+    const queue = x.queue.slice(0, MAX_QUEUE).map(queueItem).filter((q): q is PersistedQueueItem => !!q);
+    return queue.length ? [{ pane, sessionId, cwd: x.cwd, queue, ...(x.paused === true ? { paused: true as const } : {}) }] : [];
+  });
+  return { v: 1, queues };
+}
+
+export function loadQueues(store: QueueStore | null = tabStorage()): PersistedQueues | null {
+  return parseQueues(readJson(QUEUE_KEY, store));
+}
+
+/** A steer still in flight comes back as a lost one (its answer goes to this page's socket), so the queue waits for the user. */
+function persistQueue(queue: QueueItem[]): PersistedQueueItem[] {
+  return queue.map((q) => ({
+    text: q.text,
+    attachments: q.attachments.map(({ id, name, size, isImage }) => ({ id, name, size, isImage })),
+    ...(q.restart ? { restart: true as const } : {}),
+    ...(q.maybeSent !== undefined ? { maybeSent: q.maybeSent } : {}),
+    ...(q.steer || q.lostSteer ? { lostSteer: (q.steer ?? q.lostSteer)! } : {}),
+  }));
+}
+
+export function snapshotQueues(state: AppState): PersistedQueues {
+  const panes = state.panes.flatMap((p, i): PersistedQueue[] => (p.session && p.queue.length
+    ? [{ pane: i, sessionId: p.session.sessionId, cwd: p.session.cwd, queue: persistQueue(p.queue), ...(p.queuePaused || p.queue.some((q) => q.steer) ? { paused: true as const } : {}) }]
+    : []));
+  const parked = Object.entries(state.parked).map(([sessionId, q]): PersistedQueue => ({ pane: null, sessionId, cwd: '/', queue: persistQueue(q), paused: true }));
+  return { v: 1, queues: [...panes, ...parked] };
+}
+
+/**
+ * Writes only when the serialized value changed; returns what is stored now (feed it back as `last`). A failed write
+ * (quota) removes the stored copy instead — an older queue must never come back after a reload and send again what
+ * already went out — and returns null, so the next change tries again.
+ */
+export function saveQueues(q: PersistedQueues, last: string | null = null, store: QueueStore | null = tabStorage()): string | null {
+  const json = JSON.stringify(q);
+  if (json === last) return last;
+  try {
+    store?.setItem(QUEUE_KEY, json);
+    return json;
+  } catch {
+    try { store?.removeItem(QUEUE_KEY); } catch { /* storage unavailable */ }
+    return null;
+  }
+}
+
+/**
+ * Stored queues back into the panes still showing their session (fresh ids: they are per page). A message held for the
+ * restart waits for this page's first reconnect; an id-less session's queue (its first send may have made the session)
+ * waits for the user. A queue whose pane shows something else now is parked with its session (or dropped if it has no id).
+ */
+function withQueues(state: AppState, stored: PersistedQueues | null): AppState {
+  if (!stored?.queues.length) return state;
+  const panes = state.panes.slice();
+  const filled = new Set<number>();
+  const parked = { ...state.parked };
+  const shows = (i: number, q: PersistedQueue) => !filled.has(i) && panes[i]?.session?.sessionId === q.sessionId && panes[i]!.session!.cwd === q.cwd;
+  for (const q of stored.queues) {
+    const at = q.pane !== null && shows(q.pane, q) ? q.pane : q.pane !== null ? panes.findIndex((_, i) => shows(i, q)) : -1;
+    const fresh = (keepHold: boolean) => q.queue.map(({ restart, ...item }): QueueItem => ({ ...item, id: nextQueueId(), ...(restart && keepHold ? { restart: 'hold' as const } : {}) }));
+    if (at >= 0) {
+      filled.add(at);
+      panes[at] = { ...panes[at]!, queue: fresh(q.sessionId !== null), queuePaused: q.paused === true || q.sessionId === null };
+    } else if (q.sessionId) {
+      parked[q.sessionId] = [...(parked[q.sessionId] ?? []), ...fresh(false)];
+    }
+  }
+  return { ...state, panes, parked };
 }
 
 // --- sent attachments per session (thumbnails for reloaded transcripts) ---

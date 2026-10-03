@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SENT_KEY, UI_KEY, hydrate, loadSent, loadUi, parseUi, saveSent, saveUi, snapshotUi } from './persist';
+import { QUEUE_KEY, SENT_KEY, UI_KEY, hydrate, loadQueues, loadSent, loadUi, parseQueues, parseUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import type { ClientMessage } from '../shared/protocol';
 import { sendFromPane } from './components/Pane';
 import { initialState, newPane, nextQueued, reducer, type AppState, type PaneState } from './state';
@@ -7,7 +7,7 @@ import { initialState, newPane, nextQueued, reducer, type AppState, type PaneSta
 function memStore(init: Record<string, string> = {}) {
   const m = new Map(Object.entries(init));
   let writes = 0;
-  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { writes++; m.set(k, v); }, raw: m, writes: () => writes };
+  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { writes++; m.set(k, v); }, removeItem: (k: string) => { m.delete(k); }, raw: m, writes: () => writes };
 }
 
 const twoPanes = (): AppState => {
@@ -72,9 +72,10 @@ describe('persist (ux-state)', () => {
     expect(hydrate(initialState, bad).panes[0]!.session).not.toHaveProperty('accountPin');
   });
 
-  it('a pane\'s queue survives a reload: text and files, paused flag, the restart hold; fresh ids; steers come back as lost steers', () => {
+  it('a pane\'s queue survives a reload (tab storage, not the shared one): files, paused flag, the restart hold; fresh ids; steers come back as lost steers', () => {
     const F = '22222222-2222-4222-8222-222222222222';
     const store = memStore();
+    const tab = memStore();
     let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
     s = reducer(s, { type: 'sent', text: 'held', attachments: [{ id: F, name: 'a.png', isImage: true }], clientRef: 'r1' });
     s = reducer(s, { type: 'server', msg: { type: 'error', turnId: null, message: 'restart', clientRef: 'r1', code: 'draining' } });
@@ -83,8 +84,12 @@ describe('persist (ux-state)', () => {
     s = reducer(s, { type: 'queue_add', text: 'steer', steerId: 'k1' });
     const before = s.panes[0]!.queue.map((q) => q.id);
     saveUi(snapshotUi(s, { collapsed: [], drawer: false }), null, store);
-    expect(store.raw.get(UI_KEY)).not.toContain('blob:x');
-    const p = hydrate(initialState, loadUi(store)).panes[0]!;
+    saveQueues(snapshotQueues(s), null, tab);
+    // M3: tabs share localStorage — the queue lives only in this tab's sessionStorage
+    expect(store.raw.get(UI_KEY)).not.toContain('held');
+    expect(tab.raw.get(QUEUE_KEY)).not.toContain('blob:x');
+    expect(hydrate(initialState, loadUi(store)).panes[0]!.queue).toEqual([]); // another tab: nothing to send
+    const p = hydrate(initialState, loadUi(store), loadQueues(tab)).panes[0]!;
     expect(p.queue.map((q) => [q.text, q.attachments.map((a) => a.name), q.restart, q.lostSteer])).toEqual([
       ['held', ['a.png'], 'hold', undefined],
       ['plain', ['b.txt'], undefined, undefined],
@@ -99,19 +104,41 @@ describe('persist (ux-state)', () => {
     expect(nextQueued(ready.panes[0]!)?.text).toBe('held'); // even though the rest stays paused
   });
 
-  it('a restored queue never auto-sends into a session it was not typed for: id-less sessions come back paused, bad items are dropped', () => {
+  it('a restored queue never auto-sends into a session it was not typed for: id-less sessions come back paused, a moved session\'s queue is parked, bad items are dropped', () => {
     const F = '22222222-2222-4222-8222-222222222222';
     const ui = parseUi({ v: 1, active: 0, collapsed: [], drawer: false, panes: [
-      { session: { sessionId: null, cwd: '/w', title: 'n', engine: 'claude' }, queue: [{ text: 'first', attachments: [], restart: true }] },
-      { session: null, queue: [{ text: 'orphan', attachments: [] }] },
-      { session: { sessionId: 's1', cwd: '/w', title: 't', engine: 'claude' }, queue: [{ text: 7 }, { text: 'ok', attachments: [{ id: '../etc', name: 'x' }, { id: F, name: 'f', size: 3, isImage: false }] }, 'junk'] },
+      { session: { sessionId: null, cwd: '/w', title: 'n', engine: 'claude' } },
+      { session: null },
+      { session: { sessionId: 's1', cwd: '/w', title: 't', engine: 'claude' } },
     ] });
-    const h = hydrate(initialState, ui);
+    const q = parseQueues({ v: 1, queues: [
+      { pane: 0, sessionId: null, cwd: '/w', queue: [{ text: 'first', attachments: [], restart: true }] },
+      { pane: 1, sessionId: null, cwd: '/x', queue: [{ text: 'orphan', attachments: [] }] },
+      { pane: 0, sessionId: 's1', cwd: '/w', queue: [{ text: 7 }, { text: 'ok', attachments: [{ id: '../etc', name: 'x' }, { id: F, name: 'f', size: 3, isImage: false }] }, 'junk'] },
+      { pane: 2, sessionId: 's9', cwd: '/w', queue: [{ text: 'moved', attachments: [], restart: true, maybeSent: 4 }] },
+    ] });
+    const h = hydrate(initialState, ui, q);
     expect(h.panes[0]).toMatchObject({ queuePaused: true });
-    expect(h.panes[0]!.queue.map((q) => [q.text, q.restart])).toEqual([['first', undefined]]);
+    expect(h.panes[0]!.queue.map((x) => [x.text, x.restart])).toEqual([['first', undefined]]);
     expect(h.panes[1]!.queue).toEqual([]);
-    expect(h.panes[2]!.queue.map((q) => [q.text, q.attachments.map((a) => a.id)])).toEqual([['ok', [F]]]);
+    expect(h.panes[2]!.queue.map((x) => [x.text, x.attachments.map((a) => a.id)])).toEqual([['ok', [F]]]);
     expect(h.panes[2]!.queuePaused).toBe(false);
+    expect(h.parked.s9!.map((x) => [x.text, x.restart, x.maybeSent])).toEqual([['moved', undefined, 4]]);
+    // parked messages are kept across a reload too
+    expect(parseQueues(snapshotQueues(h))!.queues.find((x) => x.pane === null)).toMatchObject({ sessionId: 's9', queue: [{ text: 'moved' }] });
+  });
+
+  it('M4: a queue write that fails (quota) removes the stored copy, so an older queue never comes back and sends again', () => {
+    const tab = memStore();
+    let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+    s = reducer(s, { type: 'queue_add', text: 'old' });
+    const last = saveQueues(snapshotQueues(s), null, tab);
+    expect(loadQueues(tab)!.queues).toHaveLength(1);
+    s = reducer(s, { type: 'queue_remove', id: s.panes[0]!.queue[0]!.id });
+    s = reducer(s, { type: 'queue_add', text: 'x'.repeat(10) });
+    const full = { ...tab, setItem: () => { throw new Error('QuotaExceededError'); } };
+    expect(saveQueues(snapshotQueues(s), last, full)).toBeNull(); // tried again on the next change
+    expect(loadQueues(tab)).toBeNull();
   });
 
   it('a handoff link is only kept while the session has no id, and bad values are dropped', () => {

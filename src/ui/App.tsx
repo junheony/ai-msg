@@ -17,7 +17,7 @@ import { Sidebar, type SidebarView } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
 import { UsageView } from './components/UsageView';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
-import { hydrate, loadSent, loadUi, saveSent, saveUi, snapshotUi } from './persist';
+import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type UploadedAttachment } from './state';
 import { isMacPlatform, isTypingTarget, matchShortcut, type ShortcutId } from './shortcuts';
@@ -66,7 +66,7 @@ export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   // ux-state: panes, pickers, folded sidebar groups and the drawer come back after a reload (persist.ts).
   const saved = useMemo(() => loadUi(), []);
-  const [state, dispatch] = useReducer(reducer, saved, (ui) => hydrate(initialState, ui));
+  const [state, dispatch] = useReducer(reducer, saved, (ui) => hydrate(initialState, ui, loadQueues()));
   const [collapsed, setCollapsed] = useState<string[]>(() => saved?.collapsed ?? []);
   const firstBuild = useRef<string | null | undefined>(undefined);
   const [newBuild, setNewBuild] = useState(false);
@@ -107,6 +107,9 @@ export function App() {
   const onShortcut = useRef<(id: ShortcutId) => void>(() => {});
   const lastSaved = useRef<string | null>(null);
   useEffect(() => { lastSaved.current = saveUi(snapshotUi(state, { collapsed, drawer }), lastSaved.current); }, [state.panes, state.activePaneId, collapsed, drawer]);
+  // Queued messages: per tab (sessionStorage), so another tab of this browser never sends them.
+  const lastQueues = useRef<string | null>(null);
+  useEffect(() => { lastQueues.current = saveQueues(snapshotQueues(state), lastQueues.current); }, [state.panes, state.parked]);
   // Sent files per session (thumbnails after a transcript reload): re-saved only when some pane's sent files change.
   const sentSig = state.panes.map((p) => `${p.session?.sessionId ?? ''}:${p.items.filter((it) => it.kind === 'user' && it.attachments?.length).length}`).join('|');
   useEffect(() => { saveSent(latest.current.panes); }, [sentSig]);
