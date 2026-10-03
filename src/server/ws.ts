@@ -5,7 +5,7 @@ import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount } from '../shared/accounts';
 import { defaultSandbox } from '../shared/models';
-import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import { DirError, resolveUnderRoots } from './dirs';
@@ -369,7 +369,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (msg.sessionId) view(ws, msg.sessionId);
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
-    if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, ...ref }); return; }
+    if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
     if (msg.handoff && msg.sessionId) {
       const st = deps.store.get(msg.sessionId);
       if (msg.engine === 'codex' || msg.engine === 'gemini' || (st && (isCodexState(st) || isGeminiState(st))) || (!st && !deps.index.lookup(msg.sessionId) && deps.index.codexImport(msg.sessionId))) {
@@ -556,8 +556,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'steer': {
           // Into the running Claude turn's process; refused (the device sends it after the turn) when there is none.
           const turn = turns.get(baseOf(msg.turnId));
-          const reject = (message: string) => send(ws, { type: 'steer_rejected', turnId: msg.turnId, sessionId: turn?.sessionId ?? null, cwd: turn?.cwd ?? '', steerId: msg.steerId, message });
-          if (draining) { reject(DRAINING_MESSAGE); break; }
+          const reject = (message: string, code?: RefusalCode) => send(ws, { type: 'steer_rejected', turnId: msg.turnId, sessionId: turn?.sessionId ?? null, cwd: turn?.cwd ?? '', steerId: msg.steerId, message, ...(code ? { code } : {}) });
+          if (draining) { reject(DRAINING_MESSAGE, 'draining'); break; }
           if (!turn || turn.current === null) { reject('실행 중인 턴이 없어 끝난 뒤 보냅니다'); break; }
           void deps.runner.steer(turn.turnId, { steerId: msg.steerId, text: msg.text, ...(msg.attachments ? { attachments: msg.attachments } : {}), prompt: promptOf(msg) })
             .then((ok) => { if (ok === false) reject('지금은 실행 중인 턴에 넣을 수 없어 끝난 뒤 보냅니다'); })
@@ -685,7 +685,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     drain() {
       if (draining) return;
       draining = true;
-      broadcast({ type: 'error', turnId: null, message: DRAINING_MESSAGE });
+      broadcast({ type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining' });
     },
     activeTurns: () => turns.size,
     abortAll() {

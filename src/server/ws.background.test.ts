@@ -197,9 +197,12 @@ describe('ws: sessions held open for background work', () => {
     a.send({ type: 'send', sessionId: S, cwd, text: 'next', clientRef: 'r2' });
     const fu = await a.next('turn_started', (m) => m.clientRef === 'r2');
     wsApi.drain();
-    expect(await a.next('error', (m) => m.message === DRAINING_MESSAGE)).toMatchObject({ turnId: null });
+    expect(await a.next('error', (m) => m.message === DRAINING_MESSAGE)).toMatchObject({ turnId: null, code: 'draining' });
     a.send({ type: 'send', sessionId: null, cwd, text: 'new', clientRef: 'r3' });
-    expect(await a.next('error', (m) => m.clientRef === 'r3')).toMatchObject({ message: DRAINING_MESSAGE });
+    expect(await a.next('error', (m) => m.clientRef === 'r3')).toMatchObject({ message: DRAINING_MESSAGE, code: 'draining' });
+    // A steer refused while draining says why, so the device sends it again after the restart.
+    a.send({ type: 'steer', turnId: fu.turnId, steerId: 'k9', text: 'more' });
+    expect(await a.next('steer_rejected', (m) => m.steerId === 'k9')).toMatchObject({ message: DRAINING_MESSAGE, code: 'draining' });
 
     a.send({ type: 'interrupt', turnId: fu.turnId });
     expect(await a.next('turn_background', (m) => m.tasks.length === 0)).toMatchObject({ turnId: fu.turnId });
