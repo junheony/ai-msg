@@ -20,8 +20,13 @@ export function isStoppedTurn(t: { badge: Badge; error?: string | null; text?: s
   return !!t.error && !(t.text ?? '').trim() && u.outputTokens === 0;
 }
 
-/** Turn footer: account tile, model pill, token counts (or "중단됨"), then the routing reason — one muted line. */
-export function TurnBadge({ badge, stopped = false, cacheNote = null }: { badge: Badge; stopped?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null }) {
+/** A stopped turn that ended on a real error (not an interrupt): its footer says "실패" rather than "중단됨". */
+export function isFailedTurn(t: { error?: string | null }): boolean {
+  return !!t.error && !ABORT_ERROR.test(t.error);
+}
+
+/** Turn footer: account tile, model pill, token counts (or "중단됨" / "실패"), then the routing reason — one muted line. */
+export function TurnBadge({ badge, stopped = false, failed = false, cacheNote = null }: { badge: Badge; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null }) {
   const u = badge.usage;
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
   return (
@@ -30,7 +35,7 @@ export function TurnBadge({ badge, stopped = false, cacheNote = null }: { badge:
       {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
       <span className="tb-model">{MODEL_LABEL[badge.model]}</span>
       {stopped ? (
-        <span className="tb-stopped" title={tokens}>중단됨</span>
+        <span className="tb-stopped" title={tokens}>{failed ? '실패' : '중단됨'}</span>
       ) : (
         <span className="tb-tokens">
           <span>입력 <b>{k(u.inputTokens)}</b></span>

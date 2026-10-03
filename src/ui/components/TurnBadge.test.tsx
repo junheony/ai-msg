@@ -46,6 +46,15 @@ describe('TurnBadge stopped rendering', () => {
     expect(container.querySelector('.tb-stopped')).not.toBeNull();
   });
 
+  it('a turn that failed before any output (not an interrupt) says 실패, not 중단됨, and keeps its error line', () => {
+    const msg = '이 GPT 스레드를 다른 프로그램이 쓰고 있어 deck 에서 이어갈 수 없습니다';
+    const { container } = render(<MessageView item={turn(mk(0, 0), { error: msg })} />);
+    expect(container.querySelector('.tb-stopped')?.textContent).toBe('실패');
+    expect(container.querySelector('.error')?.textContent).toContain(msg);
+    cleanup();
+    expect(render(<MessageView item={turn(mk(0, 0), { error: '중단됨' })} />).container.querySelector('.tb-stopped')?.textContent).toBe('중단됨');
+  });
+
   it('a real error keeps its error line; a normal turn shows token counts', () => {
     const e = render(<MessageView item={turn(mk(0, 0), { error: '엔진이 결과 없이 종료했습니다' })} />);
     expect(e.container.querySelector('.error')?.textContent).toContain('엔진이 결과 없이');
