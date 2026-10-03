@@ -42,24 +42,46 @@ export type QueueItem = {
   /** A steer whose answer never came (reconnect, timeout): queued (paused) again, but dropped if the server later confirms it went in. */
   lostSteer?: string;
   /**
-   * Refused because the server was restarting: 'hold' = wait for the next reconnect (the old server would only refuse it
-   * again); 'hello' = reconnected, sent once the session's history shows it did not go in (dropped if it did).
+   * Held back by a restarting server: 'hold' = wait for the next reconnect (the old server would only refuse it again);
+   * 'hello' = reconnected, waits for the session's history; 'go' = checked, goes out by itself even if the queue is paused
+   * (it was sent once already) — alone: the rest of the queue keeps its pause.
    */
-  restart?: 'hold' | 'hello';
+  restart?: 'hold' | 'hello' | 'go';
+  /**
+   * Sent, but no answer came (the socket died): it may have gone in as the session's user message number `maybeSent`.
+   * Dropped if the history has that message there. A send refused with code 'draining' never has this (it did not go in).
+   */
+  maybeSent?: number;
 };
 
-/**
- * Messages the restarting server refused, released (`restart` dropped) where `go` says so: the head goes out like 지금 전송,
- * even if the queue is paused for another reason (it was sent once already; only the restart held it back).
- */
-function release(pane: PaneState, queue: QueueItem[], go: (q: QueueItem) => boolean): PaneState {
-  const head = queue[0];
-  const out = queue.map((q) => { if (!go(q)) return q; const { restart: _r, ...rest } = q; return rest; });
-  return { ...pane, queue: out, ...(head && go(head) && !pane.queueSendNow ? { queueSendNow: head.id } : {}) };
+/** Held messages `go` picks are released: they go out by themselves, one by one, without unpausing the rest. */
+function release(queue: QueueItem[], go: (q: QueueItem) => boolean): QueueItem[] {
+  return queue.map((q) => (go(q) ? { ...q, restart: 'go' as const } : q));
 }
+
+/** The pane leaves the session its held messages were meant for: they stay, as ordinary (paused) queue items. */
+const unhold = (queue: QueueItem[]): QueueItem[] => queue.map(({ restart: _r, maybeSent: _m, ...q }) => q);
 
 /** The user message `text` is (or opens) a transcript user text: the server appends path lines / an image marker after what was typed. */
 const sameUserText = (it: ChatItem, text: string) => it.kind === 'user' && (it.text === text || it.text.startsWith(`${text}\n`));
+
+/**
+ * A send that got no turn_started back goes into the queue again, at the head, and its bubble (if nothing came after it)
+ * is taken back — so it is never lost. `how`: 'refused' = it did not go in ('draining': held, sent after the reconnect;
+ * else paused); 'lost' = the socket died first, so it may have gone in: checked against the history by its ordinal, or
+ * paused when that cannot be told (no ordinal, a new session, a branch).
+ */
+function requeue(pane: PaneState, back: NonNullable<PaneState['awaitingSend']>, how: 'draining' | 'refused' | 'lost'): PaneState {
+  const last = pane.items[pane.items.length - 1];
+  const items = last?.kind === 'user' && last.text === back.text ? pane.items.slice(0, -1) : pane.items;
+  const sid = pane.session?.sessionId;
+  const mark: Pick<QueueItem, 'restart' | 'maybeSent'> | null = back.branch ? null
+    : how === 'draining' ? { restart: 'hold' }
+    : how === 'lost' && sid && back.n !== undefined ? { restart: 'hello', maybeSent: back.n }
+    : null;
+  const item: QueueItem = { id: nextQueueId(), text: back.text, attachments: back.attachments.map((f) => ({ ...f, size: 0 })), ...mark };
+  return { ...pane, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: [item, ...pane.queue], queuePaused: mark ? pane.queuePaused : true };
+}
 
 /** Steer-flagged items back to ordinary (paused) queue items: their answer was lost, so they may or may not have gone in. */
 function unsteer(pane: PaneState, which: (steerId: string) => boolean): PaneState {
@@ -82,7 +104,7 @@ export type PaneState = {
   /** The `send.clientRef` of that pending send; null for a send made without one (legacy matching). */
   awaitingRef: string | null;
   /** What that pending send carried (not for a handoff note): queued again if the server refuses it before its turn starts. */
-  awaitingSend: { text: string; attachments: SentFile[] } | null;
+  awaitingSend: { text: string; attachments: SentFile[]; /** the user-message ordinal it gets (nextUserN) */ n?: number; /** 메시지 편집 갈래: re-sent only by the user */ branch?: true } | null;
   model: ModelChoice;
   /** Reasoning effort per engine, so switching Claude ↔ GPT keeps each side's pick. */
   efforts: Record<EngineKind, Effort>;
@@ -147,6 +169,8 @@ export type AppState = {
   activity: SessionActivity[];
   /** Sessions whose turn finished while no focused pane showed them; cleared when opened. */
   unread: string[];
+  /** Messages held for a restart whose pane left their session (opened another, cleared, closed): back, paused, when it is opened again. */
+  parked: Record<string, QueueItem[]>;
 };
 
 export const MAX_PANES = 5;
@@ -155,7 +179,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [] };
+export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {} };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -163,7 +187,7 @@ export type Action =
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
   /** 메시지 편집 갈래: the pane becomes a new session holding its history before user message `n`, then `text` (the send is under way). */
   | { type: 'branch_edit'; n: number; text: string; paneId?: string; clientRef?: string }
-  | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean }
+  | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean; /** A message released after a restart: the queue's pause stays for the rest. */ keepPaused?: boolean }
   | { type: 'set_model'; model: ModelChoice; paneId?: string }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
@@ -339,9 +363,11 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // An empty turn_background missed while disconnected must not leave the pill lingering.
       const bg = msg.activity && !(act && act.bg > 0) ? null : pane.bg;
       const run = activeTurnId ? { runStartedAt: pane.runStartedAt ?? (act?.running ? Date.now() - act.forMs : Date.now()) } : { runStartedAt: null, progress: null };
+      // A send whose answer went down with the old socket: queued again (it may have gone in — the history tells).
+      const base = pane.awaitingStart && pane.awaitingRef !== null && pane.awaitingSend ? requeue({ ...pane, items }, pane.awaitingSend, 'lost') : { ...pane, items };
       // Messages refused by the restarting server may go out now: in a new session (no history to check) at once, else after its history.
-      const held = pane.queue.map((q) => (q.restart === 'hold' && sid ? { ...q, restart: 'hello' as const } : q));
-      const next = release({ ...pane, activeTurnId, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, bg, ...run }, held, (q) => q.restart === 'hold');
+      const held = base.queue.map((q) => (q.restart === 'hold' && sid ? { ...q, restart: 'hello' as const } : q));
+      const next: PaneState = { ...base, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, bg, ...run, queue: release(held, (q) => q.restart === 'hold') };
       // Steers in flight across a reconnect: their answer went to the old socket, so they may have gone in — queued again, paused.
       return unsteer(next, () => true);
     }
@@ -360,12 +386,13 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // PF13: a Claude session is never sent a GPT model and vice versa.
       const model = modelFor(engine, pane.model);
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
-      // After a reconnect, a message the restarting server refused goes out — unless the transcript ends with it (it went in after all).
-      const lastUser = items.findLast((it) => it.kind === 'user');
-      const kept = pane.queue.filter((q) => !(q.restart === 'hello' && lastUser && sameUserText(lastUser, q.text)));
-      const sent = kept.length === pane.queue.length ? {} : { queueSendNow: kept.some((q) => q.id === pane.queueSendNow) ? pane.queueSendNow : null };
+      // A send that may have gone in is dropped if the transcript has it as the user message it would have been (by ordinal,
+      // so sending the same text twice keeps the second); the rest held back by the restart go out now.
+      const went = (q: QueueItem) => q.maybeSent !== undefined && items.some((it) => it.kind === 'user' && it.n === q.maybeSent && sameUserText(it, q.text));
+      const kept = pane.queue.filter((q) => !went(q)).map(({ maybeSent: _m, ...q }) => q);
+      const sent = kept.some((q) => q.id === pane.queueSendNow) ? {} : { queueSendNow: null };
       const notice = pane.notices?.some((n) => n.sessionId !== msg.sessionId) ? { notices: pane.notices.filter((n) => n.sessionId === msg.sessionId) } : {};
-      return { ...release({ ...pane, ...sent }, kept, (q) => q.restart === 'hello'), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
+      return { ...pane, ...sent, queue: release(kept, (q) => q.restart === 'hello' || q.restart === 'hold'), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
     }
     case 'turn_started': {
       let p = pane;
@@ -522,15 +549,10 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       // A refused or failed handoff-note send leaves the pane where it is.
       const handoff = pane.handoff && ((msg.clientRef !== undefined && msg.clientRef === pane.handoff.ref) || (msg.turnId !== null && msg.turnId === pane.handoff.turnId)) ? { handoff: null } : {};
       if (!ends) return { ...withItem, activeTurnId, ...stop, ...handoff };
-      // The message never left this device's hands: its bubble (if nothing came after it) goes back into the queue, at the head,
-      // so it is never lost. Refused by a restarting server it goes out by itself after the reconnect; otherwise it waits (paused).
+      // Refused before its turn started: the message goes back into the queue (requeue).
       const back = msg.turnId === null && pane.awaitingRef !== null ? pane.awaitingSend : null;
       if (!back) return { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0, ...idle, ...handoff };
-      const draining = msg.code === 'draining';
-      const last = withItem.items[withItem.items.length - 1];
-      const items = last?.kind === 'user' && last.text === back.text ? withItem.items.slice(0, -1) : withItem.items;
-      const item: QueueItem = { id: nextQueueId(), text: back.text, attachments: back.attachments.map((f) => ({ ...f, size: 0 })), ...(draining ? { restart: 'hold' as const } : {}) };
-      return { ...withItem, items, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: [item, ...withItem.queue], queuePaused: draining ? withItem.queuePaused : true, ...idle, ...handoff };
+      return { ...requeue(withItem, back, msg.code === 'draining' ? 'draining' : 'refused'), activeTurnId, ...idle, ...handoff };
     }
     default:
       return pane;
@@ -553,8 +575,8 @@ function afterHandoffNote(pane: PaneState, ok: boolean): PaneState {
     session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null, ...(pane.session?.accountPin ? { accountPin: pane.session.accountPin } : {}), ...(pane.session?.permissionMode ? { permissionMode: pane.session.permissionMode } : {}) },
     engine: 'claude',
     items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [],
-    // Messages queued meanwhile stay, paused: they were meant for the old session.
-    queuePaused: pane.queuePaused || pane.queue.length > 0,
+    // Messages queued meanwhile stay, paused (none held for a restart any more): they were meant for the old session.
+    queue: unhold(pane.queue), queuePaused: pane.queuePaused || pane.queue.length > 0,
     ...ACTIVITY_RESET,
     handoff: null,
     notices: [],
@@ -667,6 +689,19 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
   }
 }
 
+/**
+ * The pane is about to leave its session: messages held for a restart (or maybe lost with a socket) are kept with that
+ * session, plain and paused, until it is opened again. A new session has no id to keep them by: the error bar shows them.
+ */
+function park(state: AppState, paneId: string | undefined): AppState {
+  const p = state.panes.find((x) => x.id === (paneId ?? state.activePaneId));
+  const held = p ? p.queue.filter((q) => q.restart || q.maybeSent !== undefined) : [];
+  if (!held.length) return state;
+  const sid = p!.session?.sessionId;
+  if (!sid) return { ...state, error: `보내지 못한 메시지 ${held.length}개 (새 세션을 떠나 큐에서 빠졌습니다): ${held.map((q) => q.text || '첨부만').join(' / ')}` };
+  return { ...state, parked: { ...state.parked, [sid]: [...(state.parked[sid] ?? []), ...held.map(({ restart: _r, ...q }) => q)] } };
+}
+
 function updatePane(state: AppState, paneId: string | undefined, fn: (p: PaneState) => PaneState): AppState {
   const id = paneId ?? state.activePaneId;
   return { ...state, panes: state.panes.map((p) => (p.id === id ? fn(p) : p)) };
@@ -683,12 +718,18 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'connected': return { ...state, connected: action.value };
     // Prompts stay: they belong to their own session and the card says which (review I3).
-    case 'open': return updatePane({ ...state, unread: action.sessionId ? state.unread.filter((u) => u !== action.sessionId) : state.unread }, action.paneId, (p) => ({
-      ...p,
-      session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
-      items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET,
-      handoff: null, handoffFrom: null, prefill: null, notices: [],
-    }));
+    case 'open': {
+      const s = park(state, action.paneId);
+      // Messages kept with this session (park) come back, paused.
+      const back = action.sessionId ? s.parked[action.sessionId] : undefined;
+      const { [action.sessionId ?? '']: _back, ...parked } = s.parked;
+      return updatePane({ ...s, parked: back ? parked : s.parked, unread: action.sessionId ? s.unread.filter((u) => u !== action.sessionId) : s.unread }, action.paneId, (p) => ({
+        ...p,
+        session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
+        items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [], queue: back ?? [], queuePaused: !!back, queueSendNow: null, ...ACTIVITY_RESET,
+        handoff: null, handoffFrom: null, prefill: null, notices: [],
+      }));
+    }
     case 'branch_edit': return updatePane(state, action.paneId, (p) => {
       if (!p.session) return p;
       const at = p.items.findIndex((it) => it.kind === 'user' && it.n === action.n);
@@ -699,17 +740,22 @@ export function reducer(state: AppState, action: Action): AppState {
         // The server forks in the parent's mode; the pane shows that mode until the fork's own arrives.
         session: { sessionId: null, cwd: p.session.cwd, account: null, title: p.session.title, engine: 'claude', sandbox: null, ...(p.session.accountPin ? { accountPin: p.session.accountPin } : {}), ...(p.session.permissionMode ? { permissionMode: p.session.permissionMode } : {}) },
         items: [...kept, { kind: 'user', text: action.text, n: action.n }],
-        activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: null, queuePaused: p.queuePaused || p.queue.length > 0,
+        // A refused fork keeps its text (paused in the queue); messages queued or held for the parent stay, paused.
+        activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: { text: action.text, attachments: [], branch: true },
+        queue: unhold(p.queue), queuePaused: p.queuePaused || p.queue.length > 0,
         ...ACTIVITY_RESET, runStartedAt: Date.now(), handoff: null, handoffFrom: null, prefill: null, notices: [],
       };
     });
-    case 'sent': return updatePane(state, action.paneId, (p) => ({
-      ...p,
-      items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(nextUserN(p.items, p.session)) }],
-      awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [] }, attachments: [], queuePaused: false, prefill: null,
-      ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
-      ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
-    }));
+    case 'sent': return updatePane(state, action.paneId, (p) => {
+      const n = nextUserN(p.items, p.session);
+      return {
+        ...p,
+        items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(n) }],
+        awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [], ...withN(n) }, attachments: [], queuePaused: action.keepPaused ? p.queuePaused : false, prefill: null,
+        ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
+        ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
+      };
+    });
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
     case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
@@ -725,7 +771,7 @@ export function reducer(state: AppState, action: Action): AppState {
     });
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
-    case 'clear_pane': return updatePane(state, action.paneId, (p) => ({
+    case 'clear_pane': return updatePane(park(state, action.paneId), action.paneId, (p) => ({
       ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET,
       handoff: null, handoffFrom: null, prefill: null, notices: [],
     }));
@@ -738,7 +784,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'close_pane': {
       if (state.panes.length <= 1) return state;
       const panes = state.panes.filter((p) => p.id !== action.paneId);
-      return { ...state, panes, activePaneId: state.activePaneId === action.paneId ? panes[0]!.id : state.activePaneId };
+      return { ...park(state, action.paneId), panes, activePaneId: state.activePaneId === action.paneId ? panes[0]!.id : state.activePaneId };
     }
     case 'focus_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
@@ -761,7 +807,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const item = p.queue.find((q) => q.id === action.id);
       if (!item) return p;
       // A message held for the server's restart goes now if the user says so.
-      const { restart: _held, ...head } = item;
+      const { restart: _held, maybeSent: _m, ...head } = item;
       return { ...p, queue: [head, ...p.queue.filter((q) => q !== item)], queueSendNow: item.id };
     });
     case 'queue_pause': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: true }));
@@ -819,6 +865,8 @@ export function nextQueued(pane: PaneState): QueueItem | null {
   // 지금 전송 goes out even though the interrupt it caused paused the queue; its send unpauses the rest.
   const now = pane.queueSendNow ? pane.queue.find((q) => q.id === pane.queueSendNow) : undefined;
   if (now && !now.steer) return now;
+  // Released after a restart: it goes out even if the queue is paused (its send keeps the pause for the rest).
+  if (pane.queue[0]?.restart === 'go' && !pane.queue.some((q) => q.steer)) return pane.queue[0];
   if (pane.queuePaused) return null;
   // A message the restarting server refused heads the queue until the reconnect (and the history check) lets it go.
   if (pane.queue[0]?.restart) return null;
