@@ -12,7 +12,7 @@ import { EditIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
 import { RoleBadge } from './RoleBadge';
 import { ToolCalls } from './ToolCallView';
-import { TurnBadge, isStoppedTurn } from './TurnBadge';
+import { TurnBadge, isFailedTurn, isStoppedTurn } from './TurnBadge';
 
 /** Plain text of a rendered markdown subtree (code blocks arrive as nested elements). */
 function textOf(node: ReactNode): string {
@@ -341,7 +341,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
               {retry && <button type="button" className="msg-act" aria-label="재시도" title="재시도" onClick={retry}><RetryIcon /></button>}
             </div>
           )}
-          {item.badge && <TurnBadge badge={item.badge} stopped={stopped} cacheNote={item.cacheNote ?? null} />}
+          {item.badge && <TurnBadge badge={item.badge} stopped={stopped} failed={stopped && isFailedTurn(item)} cacheNote={item.cacheNote ?? null} />}
           <RoleBadge roles={roleSummary(item.toolCalls)} />
         </div>
       )}

@@ -6,7 +6,7 @@ import { codexEnv } from '../../shared/accounts';
 import type { CodexModel, CodexSandbox, Effort } from '../../shared/models';
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import type { EngineEvent, EngineResult } from './Engine';
-import { STDERR_MAX } from './redact';
+import { STDERR_MAX, redactSecrets } from './redact';
 
 type Rec = Record<string, unknown>;
 
@@ -67,6 +67,20 @@ function usageOf(u: unknown): TurnUsage {
   const cached = n('cached_input_tokens');
   return { inputTokens: Math.max(0, n('input_tokens') - cached), outputTokens: n('output_tokens'), cacheReadTokens: cached, cacheCreationTokens: n('cache_write_input_tokens') };
 }
+
+/**
+ * codex-cli takes a per-thread writer lock (~/.codex/thread-writer-locks/<id>.lock). The ChatGPT desktop
+ * app's `codex app-server` holds it for every thread it has loaded, for as long as it runs (observed
+ * 2026-10-03: held since app start, idle threads included), so `codex exec resume` exits 1 with this text.
+ * Retrying does not help; deck never touches another app's process.
+ */
+const THREAD_LOCKED_RE = /already has an active writer/;
+export const THREAD_LOCKED_MESSAGE =
+  '이 GPT 스레드를 다른 프로그램이 쓰고 있어 deck 에서 이어갈 수 없습니다 — 보통 ChatGPT 데스크톱 앱(Codex)이 이 스레드를 열어 두고 있을 때입니다(/goal 자동 진행 포함). ' +
+  '데스크톱 앱에서 이어가거나, 데스크톱 앱을 종료(⌘Q)한 뒤 재시도하세요.';
+
+/** SIGTERM → SIGKILL grace for a codex child deck stops (abort, or the consumer stopped iterating). */
+const KILL_GRACE_MS = 5000;
 
 /** PF16: recurring codex-cli config noise (`item.type==='error'`) — logged server-side, never shown as a turn notice. */
 const CONFIG_NOISE_RE = /unrecognized configuration setting|is deprecated/;
@@ -179,10 +193,12 @@ export class CodexEventMapper {
 export class CodexEngine {
   private readonly spawnFn: SpawnFn;
   private readonly baseEnv: NodeJS.ProcessEnv;
+  private readonly killGraceMs: number;
 
-  constructor(readonly bin: string, opts: { spawnFn?: SpawnFn; baseEnv?: NodeJS.ProcessEnv } = {}) {
+  constructor(readonly bin: string, opts: { spawnFn?: SpawnFn; baseEnv?: NodeJS.ProcessEnv; killGraceMs?: number } = {}) {
     this.spawnFn = opts.spawnFn ?? ((b, args, o) => nodeSpawn(b, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'] }));
     this.baseEnv = opts.baseEnv ?? process.env;
+    this.killGraceMs = opts.killGraceMs ?? KILL_GRACE_MS;
   }
 
   async *runTurn(req: CodexTurnRequest): AsyncIterable<EngineEvent> {
@@ -219,8 +235,14 @@ export class CodexEngine {
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     const onAbort = () => {
       child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      killTimer = setTimeout(() => child.kill('SIGKILL'), this.killGraceMs);
       killTimer.unref?.();
+    };
+    // A failure caused by another process holding the thread's writer lock: a plain Korean message, not a stderr dump.
+    const failed = (r: EngineResult): EngineResult => {
+      if (!THREAD_LOCKED_RE.test(`${r.errorText ?? ''}\n${stderrTail}`)) return { ...r, stderr: stderrTail || null };
+      console.warn('deck: codex thread is locked by another writer:', redactSecrets(stderrTail.trim()));
+      return { ...r, errorText: THREAD_LOCKED_MESSAGE, errorKind: 'thread_locked', stderr: null, terminalReason: null };
     };
     req.signal.addEventListener('abort', onAbort, { once: true });
     // An abort that landed while spawning (before the listener existed) must still kill the child.
@@ -233,20 +255,29 @@ export class CodexEngine {
           if (!line.trim()) continue;
           let parsed: unknown;
           try { parsed = JSON.parse(line); } catch { continue; }
-          for (const ev of mapper.map(parsed)) yield ev.kind === 'result' && !ev.ok ? { ...ev, stderr: stderrTail || null } : ev;
+          for (const ev of mapper.map(parsed)) yield ev.kind === 'result' && !ev.ok ? failed(ev) : ev;
         }
       }
       const code = await exit;
       if (!mapper.sawResult) {
         const aborted = req.signal.aborted;
-        yield { ...mapper.result(false, ZERO_USAGE, aborted ? '중단됨' : spawnError !== null ? `codex 실행 실패: ${spawnError}` : `codex 종료 코드 ${code ?? '?'}`), stderr: stderrTail || null, terminalReason: aborted ? 'aborted' : null };
+        const r = mapper.result(false, ZERO_USAGE, aborted ? '중단됨' : spawnError !== null ? `codex 실행 실패: ${spawnError}` : `codex 종료 코드 ${code ?? '?'}`);
+        yield aborted ? { ...r, stderr: stderrTail || null, terminalReason: 'aborted' } : failed(r);
       }
     } finally {
       req.signal.removeEventListener('abort', onAbort);
       if (killTimer) clearTimeout(killTimer);
       // The consumer stopped iterating (break/throw) before the child exited on its own — don't
-      // leave it running.
-      if (!exited) child.kill('SIGTERM');
+      // leave it running, and don't return until it is gone: a resume of the same thread started
+      // while it is still shutting down would hit its writer lock ("already has an active writer").
+      if (!exited) {
+        child.kill('SIGTERM');
+        const gone = (ms: number) => Promise.race([exit.then(() => true), new Promise<false>((r) => { setTimeout(() => r(false), ms).unref?.(); })]);
+        if (!(await gone(this.killGraceMs))) {
+          child.kill('SIGKILL');
+          await gone(this.killGraceMs);
+        }
+      }
     }
   }
 }
