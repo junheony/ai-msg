@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { codexEnv } from '../../shared/accounts';
-import type { CodexModel, CodexSandbox, Effort } from '../../shared/models';
+import { CODEX_CLI_MODEL, type CodexModel, type CodexSandbox, type Effort } from '../../shared/models';
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import type { EngineEvent, EngineResult } from './Engine';
 import { STDERR_MAX } from './redact';
@@ -48,7 +48,7 @@ export type SpawnFn = (bin: string, args: string[], opts: { cwd: string; env: Re
 export function codexArgs(req: Pick<CodexTurnRequest, 'cwd' | 'resumeThreadId' | 'model' | 'sandbox' | 'imagePaths' | 'effort'>): string[] {
   const images = (req.imagePaths ?? []).flatMap((p) => ['-i', p]);
   const common = [
-    '--json', '--skip-git-repo-check', '-m', req.model,
+    '--json', '--skip-git-repo-check', '-m', CODEX_CLI_MODEL[req.model],
     '-c', `sandbox_mode="${req.sandbox}"`,
     '-c', 'approval_policy="never"',
     '-c', 'sandbox_workspace_write.network_access=false',

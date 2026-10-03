@@ -32,7 +32,7 @@ function mapAll(lines: string[], resume: string | null = null): EngineEvent[] {
 describe('codexArgs', () => {
   it('new thread: exec -C cwd, images before flags, sandbox/approval overrides, stdin prompt', () => {
     expect(codexArgs({ cwd: '/w', resumeThreadId: null, model: 'gpt-6-sol', sandbox: 'read-only', imagePaths: ['/a.png'] })).toEqual([
-      'exec', '-C', '/w', '-i', '/a.png', '--json', '--skip-git-repo-check', '-m', 'gpt-6-sol',
+      'exec', '-C', '/w', '-i', '/a.png', '--json', '--skip-git-repo-check', '-m', 'gpt-6.1-sol',
       '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=false', '-',
     ]);
   });

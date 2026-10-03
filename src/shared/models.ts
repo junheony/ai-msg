@@ -6,13 +6,21 @@ export const CLAUDE_MODELS: readonly ClaudeModel[] = ['sonnet', 'opus', 'fable']
 export const DEFAULT_MODEL: ClaudeModel = 'opus';
 
 /**
- * D1: GPT models are gpt-6-sol (default) and gpt-6-astra. gpt-6-sol needs codex-cli >= 0.159
- * (0.146 was rejected with HTTP 400 "not supported when using Codex with a ChatGPT account").
+ * D1: GPT models are Sol (default) and Astra. The deck id 'gpt-6-sol' is persisted (localStorage, session settings,
+ * protocol enum) so it stays; the CLI gets CODEX_CLI_MODEL's slug (Sol = gpt-6.1-sol, codex-cli 0.159.2 models_cache).
+ * Sol needs codex-cli >= 0.159 (0.146 was rejected with HTTP 400 "not supported when using Codex with a ChatGPT account").
  * Never luna, terra, gpt-5.x.
  */
 export type CodexModel = 'gpt-6-sol' | 'gpt-6-astra';
 export const CODEX_MODELS: readonly CodexModel[] = ['gpt-6-sol', 'gpt-6-astra'];
 export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6-sol';
+/** The `-m` value codex gets for each deck id. */
+export const CODEX_CLI_MODEL: Record<CodexModel, string> = { 'gpt-6-sol': 'gpt-6.1-sol', 'gpt-6-astra': 'gpt-6-astra' };
+/** A model slug the CLI recorded/reported (or a deck id) back to a deck id; Sol 6 and 6.1 both map to 'gpt-6-sol'. */
+export function codexModelFromCli(slug: unknown): CodexModel | null {
+  if (slug === 'gpt-6.1-sol' || slug === 'gpt-6-sol') return 'gpt-6-sol';
+  return slug === 'gpt-6-astra' ? 'gpt-6-astra' : null;
+}
 
 /**
  * Gemini (explicit engine only, never chosen by 자동). gemini-cli 0.62 has no Gemini 4.0 id; deck sends the CLI's
@@ -37,7 +45,7 @@ export const MODEL_INFO: Record<AnyModel, { name: string; description: string }>
   opus: { name: 'Opus 5.5', description: '복잡한 작업과 일상 작업 모두에' },
   sonnet: { name: 'Sonnet 5.5', description: '간단한 작업에 가장 효율적' },
   fable: { name: 'Fable 5.1', description: '가장 어려운 문제용 · 주간 80% 넘으면 Opus 로' },
-  'gpt-6-sol': { name: 'GPT-6-Sol', description: '코딩과 일상 작업의 주력 모델' },
+  'gpt-6-sol': { name: 'GPT-6.1-Sol', description: '코딩과 일상 작업의 주력 모델' },
   'gpt-6-astra': { name: 'GPT-6-Astra', description: '가장 까다로운 작업용 최상위 모델' },
   'gemini-pro': { name: 'Gemini Pro', description: 'gemini-cli 의 pro 별칭 · 서버가 현재 Pro 모델로 연결' },
   'gemini-flash': { name: 'Gemini Flash', description: 'gemini-cli 의 flash 별칭 · 빠르고 가벼운 작업용' },
