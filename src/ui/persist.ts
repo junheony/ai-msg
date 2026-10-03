@@ -131,9 +131,10 @@ export const QUEUE_KEY = 'deck.queues.v1';
 /**
  * A queued message (QueueItem minus its per-page id): `restart` = held back by a restarting server, sent after the reconnect;
  * `maybeSent` = may have gone in as that user message (QueueItem); `lostSteer` = a steer whose answer was lost; `ref` = the
- * clientRef it was sent with (checked against the server's acceptedRefs).
+ * clientRef it was sent with (checked against the server's acceptedRefs); `at` = when it was sent (ms); `kept` = came back
+ * from a parked bucket (QueueItem).
  */
-export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; maybeSent?: number; lostSteer?: string; ref?: string };
+export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; maybeSent?: number; lostSteer?: string; ref?: string; at?: number; kept?: true };
 /**
  * A pane's queue, kept with its session so it only ever comes back into that session: `pane` = the pane it sat in
  * (null = parked: its pane left the session; a parked new session's comes back into the next new session in `cwd`).
@@ -163,6 +164,8 @@ function queueItem(x: unknown): PersistedQueueItem | null {
     ...(Number.isInteger(x.maybeSent) && (x.maybeSent as number) >= 0 ? { maybeSent: x.maybeSent as number } : {}),
     ...(shortStr(x.lostSteer, 64) && x.lostSteer ? { lostSteer: x.lostSteer } : {}),
     ...(shortStr(x.ref, 64) && x.ref ? { ref: x.ref } : {}),
+    ...(typeof x.at === 'number' && Number.isFinite(x.at) && x.at > 0 ? { at: x.at } : {}),
+    ...(x.kept === true ? { kept: true as const } : {}),
   };
 }
 
@@ -192,13 +195,35 @@ function persistQueue(queue: QueueItem[]): PersistedQueueItem[] {
     ...(q.maybeSent !== undefined ? { maybeSent: q.maybeSent } : {}),
     ...(q.steer || q.lostSteer ? { lostSteer: (q.steer ?? q.lostSteer)! } : {}),
     ...(q.ref ? { ref: q.ref } : {}),
+    ...(q.at !== undefined ? { at: q.at } : {}),
+    ...(q.kept ? { kept: true as const } : {}),
   }));
 }
 
+/**
+ * A send still waiting for its turn_started (a reload, or the page going away, before the answer): saved at the head of
+ * its queue like one whose socket died — checked against the history after the reload. Without a session id or an
+ * ordinal it cannot be checked: a plain item, and the queue waits for the user.
+ */
+function awaiting(p: PaneState): { item: PersistedQueueItem; checkable: boolean } | null {
+  const a = p.awaitingSend;
+  if (!p.awaitingStart || !p.awaitingRef || !a) return null;
+  const checkable = !!p.session?.sessionId && a.n !== undefined && !a.branch;
+  const item: PersistedQueueItem = {
+    text: a.text, attachments: a.attachments.map(({ id, name, isImage }) => ({ id, name, size: 0, isImage })),
+    ...(checkable ? { restart: true as const, maybeSent: a.n! } : {}),
+    ref: p.awaitingRef, ...(a.at !== undefined ? { at: a.at } : {}),
+  };
+  return { item, checkable };
+}
+
 export function snapshotQueues(state: AppState): PersistedQueues {
-  const panes = state.panes.flatMap((p, i): PersistedQueue[] => (p.session && p.queue.length
-    ? [{ pane: i, sessionId: p.session.sessionId, cwd: p.session.cwd, queue: persistQueue(p.queue), ...(p.queuePaused || p.queue.some((q) => q.steer) ? { paused: true as const } : {}) }]
-    : []));
+  const panes = state.panes.flatMap((p, i): PersistedQueue[] => {
+    const head = awaiting(p);
+    if (!p.session || (!p.queue.length && !head)) return [];
+    const paused = p.queuePaused || p.queue.some((q) => q.steer) || (!!head && !head.checkable);
+    return [{ pane: i, sessionId: p.session.sessionId, cwd: p.session.cwd, queue: [...(head ? [head.item] : []), ...persistQueue(p.queue)], ...(paused ? { paused: true as const } : {}) }];
+  });
   const parked = Object.entries(state.parked).map(([key, b]): PersistedQueue => ({ pane: null, sessionId: key === parkKey(null, b.cwd) ? null : key, cwd: b.cwd, queue: persistQueue(b.queue), paused: true }));
   return { v: 1, queues: [...panes, ...parked] };
 }

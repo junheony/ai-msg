@@ -157,6 +157,34 @@ describe('persist (ux-state)', () => {
     expect(r.panes[0]!.queue).toEqual([]);
   });
 
+  it('E: a send still waiting for its turn_started is saved at the head of its queue as maybe-sent (ref, ordinal, send time) and checked after the reload', () => {
+    const tab = memStore();
+    let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+    s = reducer(s, { type: 'server', msg: { type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: [{ kind: 'user', text: 'old', ts: null, n: 0 }] } });
+    s = reducer(s, { type: 'queue_add', text: 'next' });
+    s = reducer(s, { type: 'sent', text: 'in flight', clientRef: 'r5' });
+    const saved = snapshotQueues(s).queues[0]!;
+    expect(saved.queue.map((q) => [q.text, q.restart, q.maybeSent, q.ref])).toEqual([['in flight', true, 1, 'r5'], ['next', undefined, undefined, undefined]]);
+    expect(saved.queue[0]!.at).toEqual(expect.any(Number));
+    expect(saved.paused).toBeUndefined();
+    saveQueues(snapshotQueues(s), null, tab);
+    const ui = parseUi({ v: 1, active: 0, collapsed: [], drawer: false, panes: [{ session: { sessionId: 's1', cwd: '/w', title: 't', engine: 'claude' } }] });
+    const r = hydrate(initialState, ui, loadQueues(tab));
+    expect(r.panes[0]!.queue[0]).toMatchObject({ text: 'in flight', restart: 'hold', maybeSent: 1, ref: 'r5', at: saved.queue[0]!.at });
+    // a new session's pending send cannot be checked: a plain item, the queue saved paused
+    let n = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    n = reducer(n, { type: 'sent', text: 'first', clientRef: 'r6' });
+    expect(snapshotQueues(n).queues[0]).toMatchObject({ sessionId: null, paused: true, queue: [{ text: 'first', ref: 'r6' }] });
+    expect(snapshotQueues(n).queues[0]!.queue[0]).not.toHaveProperty('restart');
+  });
+
+  it('F: kept and the send time survive a reload; bad values are dropped', () => {
+    const q = parseQueues({ v: 1, queues: [{ pane: 0, sessionId: 's1', cwd: '/w', queue: [{ text: 'a', attachments: [], kept: true, at: 123 }, { text: 'b', attachments: [], kept: 'yes', at: 'x' }] }] });
+    expect(q!.queues[0]!.queue).toEqual([{ text: 'a', attachments: [], kept: true, at: 123 }, { text: 'b', attachments: [] }]);
+    const ui = parseUi({ v: 1, active: 0, collapsed: [], drawer: false, panes: [{ session: { sessionId: 's1', cwd: '/w', title: 't', engine: 'claude' } }] });
+    expect(snapshotQueues(hydrate(initialState, ui, q)).queues[0]!.queue[0]).toEqual({ text: 'a', attachments: [], kept: true, at: 123 });
+  });
+
   it('M4: a queue write that fails (quota) removes the stored copy, so an older queue never comes back and sends again', () => {
     const tab = memStore();
     let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });

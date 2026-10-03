@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HANDOFF_PROMPT, handoffFirstMessage } from '../shared/handoff';
 import { nextPermMode } from '../shared/permission';
-import type { ServerMessage } from '../shared/protocol';
+import { ACCEPTED_REFS_TTL_MS, type ServerMessage } from '../shared/protocol';
 import { MAX_PANES, answersFor, engineOf, fromTranscript, modelFor, initialState, nextQueued, nextUserN, paneMode, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
@@ -768,15 +768,28 @@ describe('message queue (ux-state)', () => {
       expect(nextQueued(pane(s))).toBeNull();
     });
 
-    it('a held item does not follow the pane into the 이어서 session', () => {
+    it('G: a held item does not follow the pane into the 이어서 session — it is parked with the old one; plain ones follow, paused', () => {
       let s = refusedSend('draining');
       s = reducer(s, { type: 'sent', text: HANDOFF_PROMPT, clientRef: 'h1', handoff: true });
       s = started(s, 'th', 'h1');
       s = play([{ type: 'turn_result', turnId: 'th', sessionId: 's1', cwd: '/w', ok: true, text: 'note', badge: null, errorText: null }], s);
       expect(pane(s).session?.sessionId).toBeNull();
+      expect(s.parked.s1!.queue.map((q) => [q.text, q.restart, q.ref])).toEqual([['mine', undefined, 'r1']]);
       s = play([hello], s);
-      expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['mine', undefined], ['later', undefined]]);
+      expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['later', undefined]]);
+      expect(pane(s).queuePaused).toBe(true);
       expect(nextQueued(pane(s))).toBeNull();
+    });
+
+    it('G: branch_edit parks held items (restart, maybeSent, lost steer, kept) with the parent; only plain ones follow, paused', () => {
+      let s = lostSend('lost', ['old']);
+      s = reducer(s, { type: 'queue_add', text: 'plain' });
+      s = { ...s, panes: [{ ...pane(s), queue: [...pane(s).queue, { id: 'x1', text: 'steer', attachments: [], lostSteer: 'k1' }, { id: 'x2', text: 'back', attachments: [], kept: true }] }] };
+      s = reducer(s, { type: 'branch_edit', n: 0, text: 'edited', clientRef: 'b1' });
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['lost', 'steer', 'back']);
+      expect(s.parked.s1!.queue[0]).toMatchObject({ maybeSent: 1, ref: 'r1' });
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['plain']);
+      expect(pane(s).queuePaused).toBe(true);
     });
 
     // M6: opening another session / clearing / closing the pane never silently drops held items.
@@ -880,7 +893,8 @@ describe('message queue (ux-state)', () => {
       s = play([{ type: 'error', turnId: null, message: DRAIN, clientRef: 'b1', code: 'draining' }], s);
       s = reducer(s, { type: 'branch_undo', sessionId: 's1' });
       s = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
-      expect(pane(s).queue.map((q) => q.text)).toEqual(['edited', 'mine', 'later']);
+      // 'mine' (held) was parked with s1 at the fork; what followed the fork goes back ahead of it.
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['edited', 'later', 'mine']);
       expect(pane(s).queue.every((q) => !q.restart)).toBe(true);
       expect(pane(s).queuePaused).toBe(true);
       expect(s.parked).toEqual({});
@@ -939,7 +953,7 @@ describe('message queue (ux-state)', () => {
 
     it('L1: messages waiting for a history that fails (open_session error) become ordinary paused items; 이어서 보내기 releases holds', () => {
       let s = lostSend('계속', ['old']);
-      s = play([{ type: 'error', turnId: null, message: '세션을 찾을 수 없습니다: s1' }], s);
+      s = play([{ type: 'error', turnId: null, message: '세션을 찾을 수 없습니다: s1', sessionId: 's1' }], s);
       expect(pane(s).queue.map((q) => [q.text, q.restart, q.maybeSent])).toEqual([['계속', undefined, undefined]]);
       expect(pane(s).queuePaused).toBe(true);
       let d = refusedSend('draining');
@@ -947,6 +961,90 @@ describe('message queue (ux-state)', () => {
       d = reducer(d, { type: 'queue_resume' });
       expect(pane(d).queue[0]!.restart).toBeUndefined();
       expect(nextQueued(pane(d))?.text).toBe('mine');
+    });
+
+    it('H: the drain broadcast and another session\'s open_session error do not stop messages waiting for this history', () => {
+      let s = lostSend('계속', ['old']);
+      s = play([{ type: 'error', turnId: null, message: DRAIN, code: 'draining' }], s);
+      s = play([{ type: 'error', turnId: null, message: '세션을 찾을 수 없습니다: s9', sessionId: 's9' }], s);
+      s = play([{ type: 'error', turnId: null, message: '형식 오류' }], s);
+      expect(pane(s).queue.map((q) => [q.text, q.restart, q.maybeSent])).toEqual([['계속', 'hello', 1]]);
+      s = play([historyWith([{ text: 'old', n: 0 }], [])], s);
+      expect(nextQueued(pane(s))?.text).toBe('계속');
+    });
+
+    // Round 3.
+    it('B: a lost send too old for the server\'s acceptedRefs (or without a send time) is not sent again: paused, with a banner', () => {
+      const old = Date.now() - ACCEPTED_REFS_TTL_MS + 30 * 60_000; // within the last hour of the server's memory
+      for (const at of [old, undefined]) {
+        let s = lostSend('계속', ['old']);
+        s = { ...s, panes: [{ ...pane(s), queue: pane(s).queue.map(({ at: _a, ...q }) => ({ ...q, ...(at !== undefined ? { at } : {}) })) }] };
+        s = play([historyWith([{ text: 'old', n: 0 }], [])], s);
+        expect(pane(s).queue.map((q) => [q.text, q.restart, q.maybeSent, q.ref])).toEqual([['계속', undefined, undefined, 'r1']]);
+        expect(pane(s).queuePaused).toBe(true);
+        expect(nextQueued(pane(s))).toBeNull();
+        expect(s.error).toBe('이미 들어갔을 수 있어 멈춰 둔 메시지: 계속');
+      }
+      // A fresh one is sent again (it carries its send time).
+      const fresh = play([historyWith([{ text: 'old', n: 0 }], [])], lostSend('계속', ['old']));
+      expect(nextQueued(pane(fresh))?.text).toBe('계속');
+      expect(fresh.error).toBeNull();
+    });
+
+    it('C: a lost send the server is injecting right now (pendingRefs) is never sent by itself', () => {
+      let s = lostSend('계속', ['old']);
+      s = play([{ ...historyWith([{ text: 'old', n: 0 }], []), pendingRefs: ['r1'] } as ServerMessage], s);
+      expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['계속', undefined]]);
+      expect(pane(s).queuePaused).toBe(true);
+      expect(nextQueued(pane(s))).toBeNull();
+      expect(s.error).toContain('계속');
+    });
+
+    it('D: already_accepted ends the wait without requeueing, takes the extra bubble back and shows no error', () => {
+      let s = play([history(['old'])], openedOn('s1'));
+      s = reducer(s, { type: 'sent', text: 'again', clientRef: 'r1' });
+      s = play([{ type: 'error', turnId: null, message: '이미 들어간 메시지라 다시 보내지 않았습니다', clientRef: 'r1', code: 'already_accepted' }], s);
+      expect(pane(s)).toMatchObject({ awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: [], queuePaused: false });
+      expect(pane(s).items.map((it) => it.kind === 'user' && it.text)).toEqual(['old']);
+      expect(s.error).toBeNull();
+    });
+
+    it('D: a steer refused as already_accepted is dropped from the queue', () => {
+      let s = running();
+      s = reducer(s, { type: 'queue_add', text: 'in already', steerId: 'k1' });
+      s = play([{ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: 'k1', message: 'x', code: 'already_accepted' }], s);
+      expect(pane(s).queue).toEqual([]);
+    });
+
+    it('B: a send and a steer carry their send time; a lost one keeps it', () => {
+      let s = reducer(play([history(['old'])], openedOn('s1')), { type: 'sent', text: 'm', clientRef: 'r1' });
+      expect(pane(s).awaitingSend?.at).toEqual(expect.any(Number));
+      s = play([hello], s);
+      expect(pane(s).queue[0]!.at).toEqual(expect.any(Number));
+      let t = reducer(running(), { type: 'queue_add', text: 'st', steerId: 'k1' });
+      const at = pane(t).queue[0]!.at;
+      expect(at).toEqual(expect.any(Number));
+      t = reducer(t, { type: 'steer_lost', steerId: 'k1' });
+      expect(pane(t).queue[0]).toMatchObject({ lostSteer: 'k1', at });
+    });
+
+    it('F: items back from a parked bucket are kept — leaving the session again parks them instead of dropping them', () => {
+      let s = refusedSend('draining');
+      s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
+      s = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+      expect(pane(s).queue.map((q) => [q.text, q.kept])).toEqual([['mine', true]]);
+      s = reducer(reducer(s, { type: 'dismiss_error' }), { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine']);
+      expect(s.error).toBeNull();
+    });
+
+    it('I: opening the session the pane already shows keeps its queue and pending send', () => {
+      let s = refusedSend('draining');
+      s = reducer(s, { type: 'sent', text: 'waiting', clientRef: 'r2', keepPaused: true });
+      s = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+      expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['mine', 'hold'], ['later', undefined]]);
+      expect(pane(s)).toMatchObject({ awaitingStart: true, awaitingRef: 'r2' });
+      expect(s.parked).toEqual({});
     });
 
     it('L2: a refusal naming a turn that never started (older server) still requeues the send', () => {
