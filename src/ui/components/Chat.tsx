@@ -137,6 +137,38 @@ function useCoarsePointer(): boolean {
   return coarse;
 }
 
+/**
+ * On a touch device, is the on-screen keyboard up right now? An iPad (or a phone) with a hardware keyboard reports
+ * a coarse pointer too, but shows no soft keyboard, so the visual viewport keeps its full height. We track the tallest
+ * viewport seen at the current width (an orientation/split change resets it) and call the keyboard "up" when the
+ * viewport is clearly shorter than that. No visualViewport → assume a soft keyboard (the old behaviour).
+ */
+let vvWidth = 0;
+let vvMax = 0;
+function trackViewport(): void {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  if (!vv) return;
+  const w = Math.round(vv.width * vv.scale);
+  if (w !== vvWidth) { vvWidth = w; vvMax = 0; }
+  vvMax = Math.max(vvMax, vv.height);
+}
+if (typeof window !== 'undefined' && window.visualViewport) {
+  trackViewport();
+  window.visualViewport.addEventListener('resize', trackViewport);
+}
+export function softKeyboardUp(): boolean {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  if (!vv) return true;
+  trackViewport();
+  return vvMax > 0 && vv.height < vvMax * 0.8;
+}
+
+/** Enter = newline right now? (a touch screen with its on-screen keyboard up). Read at keydown time. */
+export function touchEnterIsNewline(): boolean {
+  const coarse = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(COARSE_QUERY).matches;
+  return coarse && softKeyboardUp();
+}
+
 const NO_AGENTS: Record<string, AgentInfo> = {};
 
 /** The header badge's compact form when the pane is narrow (CSS swaps them; the badge never clips mid-glyph). */
@@ -280,7 +312,9 @@ export function Chat(p: ChatProps) {
     }
     if (e.key !== 'Enter') return;
     if (e.metaKey || e.ctrlKey) { e.preventDefault(); submit(); return; }
-    if (e.shiftKey || e.altKey || coarse || sendKey === 'mod-enter') return;
+    // Touch screens: Enter is a newline while the on-screen keyboard is up (send with the button); with a hardware
+    // keyboard (iPad + Magic Keyboard, a phone with a BT keyboard) Enter sends like on a computer.
+    if (e.shiftKey || e.altKey || (coarse && softKeyboardUp()) || sendKey === 'mod-enter') return;
     e.preventDefault();
     submit();
   };

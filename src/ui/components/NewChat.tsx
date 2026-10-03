@@ -3,6 +3,7 @@ import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
+import { touchEnterIsNewline } from './Chat';
 
 const RECENT_CARDS = 4;
 
@@ -101,7 +102,7 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
               onPaste={(e) => { const files = filesFrom(e.clipboardData); if (files.length) { e.preventDefault(); void addFiles(files); } }}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); start(); }
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (!e.shiftKey && !e.altKey && !touchEnterIsNewline()))) { e.preventDefault(); start(); }
               }} />
             {(attachments.length > 0 || uploading > 0 || error) && (
               <div className="newchat-files"><AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} /></div>

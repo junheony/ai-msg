@@ -169,6 +169,27 @@ describe('Composer keyboard (Desktop)', () => {
     }
   });
 
+  it('on a touch screen with a hardware keyboard (no soft keyboard shrinking the viewport) Enter sends', () => {
+    const mm = window.matchMedia;
+    const vv = { width: 1024, scale: 1, height: 1300, addEventListener: () => {}, removeEventListener: () => {} };
+    window.matchMedia = ((q: string) => ({ matches: q.includes('coarse'), media: q, addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof window.matchMedia;
+    Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
+    try {
+      const onSend = renderChat([]);
+      type('hi');
+      expect(fireEvent.keyDown(box(), { key: 'Enter' })).toBe(false);
+      expect(onSend).toHaveBeenCalledWith('hi');
+      // The on-screen keyboard comes up (the viewport shrinks): Enter is a newline again.
+      vv.height = 700;
+      type('more');
+      expect(fireEvent.keyDown(box(), { key: 'Enter' })).toBe(true);
+      expect(onSend).toHaveBeenCalledTimes(1);
+    } finally {
+      window.matchMedia = mm;
+      Reflect.deleteProperty(window, 'visualViewport');
+    }
+  });
+
   it('Esc interrupts a running turn; while busy Enter queues; ArrowUp in an empty composer recalls the last message', () => {
     const onInterrupt = vi.fn();
     const onQueue = vi.fn();
