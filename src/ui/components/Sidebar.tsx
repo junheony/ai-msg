@@ -122,8 +122,18 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const pinSet = new Set(pins);
   const byId = new Map<string, SessionEntry>();
   for (const p of projects) for (const s of p.sessions) byId.set(s.sessionId, s);
-  const pinned = pins.map((id) => byId.get(id)).filter((s): s is SessionEntry => !!s && inView(s) && match(s));
-  const desktopShown = desktop.filter((d) => inView(d)).filter((d) => !q || d.title.toLowerCase().includes(q) || d.project.toLowerCase().includes(q));
+  const desktopById = new Map(desktop.map((d) => [d.sessionId, d]));
+  const dMatch = (d: DesktopSession) => !q || d.title.toLowerCase().includes(q) || d.project.toLowerCase().includes(q);
+  // 고정됨 holds deck sessions and Desktop-only ones alike; each session is listed once — pinned rows leave the lists below.
+  type PinnedItem = { kind: 'session'; s: SessionEntry } | { kind: 'desktop'; d: DesktopSession };
+  const pinned = pins.flatMap((id): PinnedItem[] => {
+    const s = byId.get(id);
+    if (s) return inView(s) && match(s) ? [{ kind: 'session', s }] : [];
+    const d = desktopById.get(id);
+    return d && inView(d) && dMatch(d) ? [{ kind: 'desktop', d }] : [];
+  });
+  // A Desktop session whose folder deck already lists shows there; the Desktop list only carries the rest.
+  const desktopShown = desktop.filter((d) => !byId.has(d.sessionId) && !pinSet.has(d.sessionId) && inView(d) && dMatch(d));
 
   const actById = new Map(activity.map((a) => [a.sessionId, a]));
   const unreadSet = new Set(unread);
@@ -190,6 +200,35 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     );
   };
 
+  /** A Claude Desktop session outside deck's projects: opens like any session; the only action is 고정. */
+  const desktopRow = (d: DesktopSession, group: string) => {
+    const on = pinSet.has(d.sessionId);
+    const key = `${group}:${d.sessionId}`;
+    return (
+      <li key={d.sessionId} className={d.sessionId === currentSessionId ? 'active' : ''} title={`${d.title}\n${d.cwd}`} onClick={() => onOpen(d.sessionId, d.cwd, d.title)}>
+        <span className="session-row">
+          {dot(d.sessionId)}
+          <span className="session-title">{d.title}</span>
+          <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {ago(d.lastModified)}</span>
+          {onTogglePin && (
+            <>
+              <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="고정" aria-haspopup="menu" aria-expanded={menu === key}
+                onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
+              <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(d.sessionId, !on); }}>
+                <PinIcon filled={on} />
+              </button>
+            </>
+          )}
+        </span>
+        {menu === key && onTogglePin && (
+          <div className="session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+            <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(d.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>
+          </div>
+        )}
+      </li>
+    );
+  };
+
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || inView(s); });
   const searching = fullOn && found?.q !== fullQ;
   const projectName = new Map<string, string>();
@@ -197,7 +236,14 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // 메시지 편집 갈래: one row per branch tree (its root, opening the newest version); the tree's other sessions are not listed.
   // A deleted root (휴지통) just drops out: its children keep their link and group under the oldest one left.
   const links = linksOf(byId.values());
-  const recentList = view === 'recent' ? groupBranches([...byId.values()].filter(inView), links).filter((g) => match(g.entry)).slice(0, MAX_RECENT).map((g) => ({ ...g, lastModified: g.entry.lastModified })) : [];
+  // 최근: deck sessions and Desktop-only sessions in one date-split list, minus what 고정됨 already shows.
+  type RecentItem = { kind: 'session'; g: BranchGroup<SessionEntry>; lastModified: number } | { kind: 'desktop'; d: DesktopSession; lastModified: number };
+  const recentList: RecentItem[] = view === 'recent'
+    ? [
+        ...groupBranches([...byId.values()].filter(inView), links).filter((g) => match(g.entry) && !pinSet.has(g.entry.sessionId)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
+        ...desktopShown.map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified })),
+      ].sort((a, b) => b.lastModified - a.lastModified).slice(0, MAX_RECENT)
+    : [];
   const visible = projects.map((p) => ({ p, sessions: groupBranches(p.sessions.filter(inView), links).slice(0, MAX_SESSIONS).filter((g) => match(g.entry)) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
   return (
     <aside className="sidebar">
@@ -225,23 +271,13 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       {pinned.length > 0 && (
         <section className="project pinned-group" data-testid="pinned-group">
           <div className="project-head"><span className="project-name">고정됨</span></div>
-          <ul>{pinned.map((s) => row(s, 'pinned'))}</ul>
+          <ul>{pinned.map((it) => (it.kind === 'session' ? row(it.s, 'pinned') : desktopRow(it.d, 'pinned')))}</ul>
         </section>
       )}
-      {desktopShown.length > 0 && (
+      {view === 'projects' && desktopShown.length > 0 && (
         <section className="project desktop-group" data-testid="desktop-group">
           <div className="project-head"><span className="project-name">최근 Desktop 세션</span></div>
-          <ul>
-            {desktopShown.map((d) => (
-              <li key={d.sessionId} className={d.sessionId === currentSessionId ? 'active' : ''} title={`${d.title}\n${d.cwd}`} onClick={() => onOpen(d.sessionId, d.cwd, d.title)}>
-                <span className="session-row">
-                  {dot(d.sessionId)}
-                  <span className="session-title">{d.title}</span>
-                  <span className="session-meta">{d.project} · {ago(d.lastModified)}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
+          <ul>{desktopShown.map((d) => desktopRow(d, 'desktop'))}</ul>
         </section>
       )}
       {projects.length === 0 && <div className="muted sidebar-empty">세션이 없습니다. ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</div>}
@@ -249,10 +285,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       {view === 'recent' && groupByDate(recentList).map((g) => (
         <section key={g.label} className="project date-group" data-testid={`date-group-${g.label}`}>
           <div className="project-head"><span className="project-name">{g.label}</span></div>
-          <ul>{g.items.map((t) => row(t.entry, 'recent', t, projectName.get(t.entry.sessionId)))}</ul>
+          <ul>{g.items.map((t) => (t.kind === 'session' ? row(t.g.entry, 'recent', t.g, projectName.get(t.g.entry.sessionId)) : desktopRow(t.d, 'recent')))}</ul>
         </section>
       ))}
-      {q && (view === 'recent' ? recentList.length === 0 : visible.length === 0) && pinned.length === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
+      {q && (view === 'recent' ? recentList.length === 0 : visible.length === 0 && desktopShown.length === 0) && pinned.length === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
       {view === 'projects' && visible.map(({ p, sessions }) => {
         const isCollapsed = !q && collapsed.has(p.cwd);
         const showAll = !!q || expanded.has(p.cwd);

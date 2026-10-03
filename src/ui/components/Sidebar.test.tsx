@@ -112,6 +112,36 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
     expect(screen.getByText('Write docs')).toBeTruthy();
   });
 
+  it('최근 view: each session once — pinned rows leave the date groups, Desktop sessions merge into them, no separate Desktop section', () => {
+    const s = (id: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd: '/w/one', projectDir: '/p', file: '/f', title, lastModified: Date.now() - 60_000, sizeBytes: 1 });
+    const projects = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', 'first'), s('s2', 'second'), s('d1', 'Fix login')] }];
+    const onTogglePin = vi.fn();
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" pins={['s1', 'd3']} onTogglePin={onTogglePin}
+      desktop={[d(1, 'Fix login', 'one'), d(2, 'Write docs', 'harness'), d(3, 'Pinned desktop', 'x')]} />);
+    expect(screen.queryByTestId('desktop-group')).toBeNull();
+    const titles = [...document.querySelectorAll('.session-title')].map((e) => e.textContent);
+    // every title exactly once
+    expect([...titles].sort()).toEqual(['Fix login', 'Pinned desktop', 'Write docs', 'first', 'second']);
+    const pinnedTitles = [...screen.getByTestId('pinned-group').querySelectorAll('.session-title')].map((e) => e.textContent);
+    expect(pinnedTitles).toEqual(['first', 'Pinned desktop']);
+    const today = screen.getByTestId('date-group-오늘');
+    expect(today.textContent).toContain('harness · Desktop');
+    // a Desktop-only row can be pinned too
+    const docs = [...today.querySelectorAll('li')].find((li) => li.textContent?.includes('Write docs'))!;
+    fireEvent.click(docs.querySelector('button[aria-label="고정"]')!);
+    expect(onTogglePin).toHaveBeenCalledWith('d2', true);
+  });
+
+  it('프로젝트 view: the Desktop section skips sessions a project already lists', () => {
+    const s = { sessionId: 'd1', account: 'a' as const, cwd: '/w/deck', projectDir: '/p', file: '/f', title: 'Fix login', lastModified: Date.now(), sizeBytes: 1 };
+    render(<Sidebar projects={[{ cwd: '/w/deck', name: 'deck', pinned: true, sessions: [s] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop}
+      desktop={[d(1, 'Fix login', 'deck'), d(2, 'Write docs', 'harness')]} />);
+    const group = screen.getByTestId('desktop-group');
+    expect(group.textContent).not.toContain('Fix login');
+    expect(group.textContent).toContain('Write docs');
+    expect(screen.getAllByText('Fix login')).toHaveLength(1);
+  });
+
   it('no Desktop sessions → no section', () => {
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     expect(screen.queryByTestId('desktop-group')).toBeNull();
