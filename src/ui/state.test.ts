@@ -111,15 +111,15 @@ describe('reducer', () => {
     expect(pane(s).items[1]).toMatchObject({ kind: 'assistant', text: 'a', toolCalls: [{ toolUseId: 'tu', result: 'file' }] });
   });
 
-  it('fromTranscript turns a hook entry into a hook row between the two assistant replies', () => {
+  it('fromTranscript turns a system entry into a system row between the two assistant replies', () => {
     const items = fromTranscript([
       { kind: 'user', text: 'q', ts: null, n: 0 },
       { kind: 'assistant', text: 'a', model: 'claude-opus-5-5', toolCalls: [], ts: null },
-      { kind: 'hook', event: 'Stop', text: 'Stop hook feedback:\nmore', ts: null },
+      { kind: 'system', source: 'Stop', label: 'Stop 훅이 이어서 진행시킴', text: 'Stop hook feedback:\nmore', ts: null },
       { kind: 'assistant', text: 'b', model: 'claude-opus-5-5', toolCalls: [], ts: null },
     ]);
-    expect(items.map((it) => it.kind)).toEqual(['user', 'assistant', 'hook', 'assistant']);
-    expect(items[2]).toEqual({ kind: 'hook', event: 'Stop', text: 'Stop hook feedback:\nmore' });
+    expect(items.map((it) => it.kind)).toEqual(['user', 'assistant', 'system', 'assistant']);
+    expect(items[2]).toEqual({ kind: 'system', source: 'Stop', label: 'Stop 훅이 이어서 진행시킴', text: 'Stop hook feedback:\nmore' });
     expect(nextUserN(items, null)).toBe(1);
   });
 
@@ -463,13 +463,13 @@ describe('panes (D6)', () => {
       let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 'one' });
       const other = play([notice('tq', 'elsewhere')], s);
       expect(other.error).toBeNull();
-      expect(pane(other).notice).toBeNull();
+      expect(pane(other).notices).toEqual([]);
       const owned = play([notice('tq', 's1')], s);
       expect(owned.error).toBeNull();
-      expect(pane(owned).notice).toEqual({ sessionId: 's1', message: '세션 이동 거부' });
+      expect(pane(owned).notices).toEqual([{ sessionId: 's1', message: '세션 이동 거부', level: 'notice' }]);
       s = play([started('t1', 's1', '/w'), notice('t1', 's1')], s);
       expect(s.error).toBeNull();
-      expect(pane(s).notice).toBeNull();
+      expect(pane(s).notices).toEqual([]);
       expect(pane(s).items[0]).toMatchObject({ notes: ['세션 이동 거부'] });
     });
 
@@ -483,15 +483,15 @@ describe('panes (D6)', () => {
       s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
       s = play([notice], s);
       expect(s.error).toBeNull();
-      expect(s.panes[0]!.notice?.message).toContain('deck 밖');
-      expect(s.panes[1]!.notice).toBeNull();
+      expect(s.panes[0]!.notices?.[0]?.message).toContain('deck 밖');
+      expect(s.panes[1]!.notices).toEqual([]);
       // Same session's history keeps it; another session's history (or opening another) clears it.
       const hist = (sessionId: string): ServerMessage => ({ type: 'history', sessionId, cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [] });
-      expect(play([hist('s1')], s).panes[0]!.notice).not.toBeNull();
+      expect(play([hist('s1')], s).panes[0]!.notices).toHaveLength(1);
       const opened = reducer(reducer(s, { type: 'focus_pane', paneId: p0!.id }), { type: 'open', sessionId: 's3', cwd: '/w', title: 'three' });
-      expect(opened.panes[0]!.notice).toBeNull();
-      const dismissed = reducer(s, { type: 'dismiss_notice', paneId: p0!.id });
-      expect(dismissed.panes[0]!.notice).toBeNull();
+      expect(opened.panes[0]!.notices).toEqual([]);
+      const dismissed = reducer(s, { type: 'dismiss_notice', paneId: p0!.id, message: s.panes[0]!.notices![0]!.message });
+      expect(dismissed.panes[0]!.notices).toEqual([]);
       expect(dismissed.error).toBeNull();
     });
 
@@ -499,26 +499,39 @@ describe('panes (D6)', () => {
       const s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 'one' });
       const scoped = play([{ type: 'error', turnId: null, message: '기록을 읽지 못했습니다', sessionId: 's1' }], s);
       expect(scoped.error).toBeNull();
-      expect(pane(scoped).notice).toEqual({ sessionId: 's1', message: '기록을 읽지 못했습니다' });
+      expect(pane(scoped).notices).toEqual([{ sessionId: 's1', message: '기록을 읽지 못했습니다', level: 'error' }]);
       expect(play([{ type: 'error', turnId: null, message: 'x', sessionId: 'gone' }], s).error).toBe('x');
       expect(play([{ type: 'error', turnId: null, message: 'y' }], s).error).toBe('y');
     });
 
-    it('turn_hook closes the streamed part, shows the hook row, and streams the continuation after it; ordinals ignore it', () => {
+    it('a notice and an error both stay (newest 3, a repeat moves to the end); dismissing one keeps the rest', () => {
+      const s0 = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 'one' });
+      const n = (message: string): ServerMessage => ({ type: 'turn_notice', turnId: '', sessionId: 's1', cwd: '/w', message });
+      const e = (message: string): ServerMessage => ({ type: 'error', turnId: null, message, sessionId: 's1' });
+      let s = play([n('알림'), e('오류')], s0);
+      expect(pane(s).notices?.map((x) => [x.message, x.level])).toEqual([['알림', 'notice'], ['오류', 'error']]);
+      s = play([n('둘'), n('셋'), n('알림')], s);
+      expect(pane(s).notices?.map((x) => x.message)).toEqual(['둘', '셋', '알림']);
+      s = reducer(s, { type: 'dismiss_notice', paneId: pane(s).id, message: '셋' });
+      expect(pane(s).notices?.map((x) => x.message)).toEqual(['둘', '알림']);
+      expect(pane(reducer(s, { type: 'dismiss_notice', paneId: pane(s).id })).notices).toEqual([]);
+    });
+
+    it('turn_system closes the streamed part, shows the system row, and streams the continuation after it; ordinals ignore it', () => {
       let s = play([{ type: 'history', sessionId: 's1', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [{ kind: 'user', text: 'q', ts: null, n: 0 }] }], openedOn('s1'));
       s = play([
         started('t1', 's1', '/w'),
         { type: 'delta', turnId: 't1', sessionId: 's1', cwd: '/w', text: '끝났어요' },
-        { type: 'turn_hook', turnId: 't1', sessionId: 's1', cwd: '/w', event: 'Stop', text: 'Stop hook feedback:\n테스트 실패' },
+        { type: 'turn_system', turnId: 't1', sessionId: 's1', cwd: '/w', source: 'Stop', label: 'Stop 훅이 이어서 진행시킴', text: 'Stop hook feedback:\n테스트 실패' },
         { type: 'delta', turnId: 't1', sessionId: 's1', cwd: '/w', text: '다시 고칩니다' },
       ], s);
       const items = pane(s).items;
-      expect(items.map((it) => it.kind)).toEqual(['user', 'assistant', 'hook', 'assistant']);
+      expect(items.map((it) => it.kind)).toEqual(['user', 'assistant', 'system', 'assistant']);
       expect(items[1]).toMatchObject({ text: '끝났어요', streaming: false });
-      expect(items[2]).toEqual({ kind: 'hook', event: 'Stop', text: 'Stop hook feedback:\n테스트 실패' });
+      expect(items[2]).toEqual({ kind: 'system', source: 'Stop', label: 'Stop 훅이 이어서 진행시킴', text: 'Stop hook feedback:\n테스트 실패' });
       expect(items[3]).toMatchObject({ turnId: 't1', text: '다시 고칩니다', streaming: true });
       expect(nextUserN(items, pane(s).session)).toBe(1);
-      expect(play([{ type: 'turn_hook', turnId: 'tx', sessionId: 'other', cwd: '/w', event: 'Stop', text: 'x' }], s).panes[0]!.items).toBe(items);
+      expect(play([{ type: 'turn_system', turnId: 'tx', sessionId: 'other', cwd: '/w', source: 'peer', label: '다른 세션의 메시지', text: 'x' }], s).panes[0]!.items).toBe(items);
     });
 
     it('M3: answersFor clips keys to 2000 and values to 4000 chars', () => {

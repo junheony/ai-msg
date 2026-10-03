@@ -32,16 +32,19 @@ describe('Chat', () => {
     expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();
   });
 
-  it('a pane notice shows as a bar above the transcript; × dismisses it', () => {
+  it('pane bars: a notice is a status bar, an error an alert bar; both show; × dismisses that one', () => {
     const onDismissNotice = vi.fn();
-    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { notice: '「x」 대화의 기록 파일이 방금 deck 밖에서 바뀌었어요.', onDismissNotice });
-    const bar = screen.getByTestId('pane-notice');
-    expect(bar.getAttribute('role')).toBe('status');
-    expect(bar.textContent).toContain('deck 밖에서 바뀌었어요');
-    fireEvent.click(within(bar).getByLabelText('알림 닫기'));
-    expect(onDismissNotice).toHaveBeenCalledTimes(1);
+    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { notices: [{ message: '「x」 대화의 기록 파일이 방금 deck 밖에서 바뀌었어요.', level: 'notice' }, { message: '기록을 읽지 못했습니다', level: 'error' }], onDismissNotice });
+    const bars = screen.getAllByTestId('pane-notice');
+    expect(bars).toHaveLength(2);
+    expect(bars[0]!.getAttribute('role')).toBe('status');
+    expect(bars[0]!.classList.contains('notice')).toBe(true);
+    expect(bars[1]!.getAttribute('role')).toBe('alert');
+    expect(bars[1]!.classList.contains('error')).toBe(true);
+    fireEvent.click(within(bars[1]!).getByLabelText('알림 닫기'));
+    expect(onDismissNotice).toHaveBeenCalledWith('기록을 읽지 못했습니다');
     cleanup();
-    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { notice: null });
+    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { notices: [] });
     expect(screen.queryByTestId('pane-notice')).toBeNull();
   });
 

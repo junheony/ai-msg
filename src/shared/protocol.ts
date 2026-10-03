@@ -152,7 +152,7 @@ export type ServerMessage =
   /** Non-terminal note about a running turn (e.g. a refused session move). */
   | ({ type: 'turn_notice'; message: string } & TurnScope)
   /** A hook sent the model a message mid-turn (e.g. a Stop hook made it keep going): a muted row in the turn. `event`: Stop, PreToolUse… */
-  | ({ type: 'turn_hook'; event: string; text: string } & TurnScope)
+  | ({ type: 'turn_system'; source: string; label: string; text: string } & TurnScope)
   /** A background task (run_in_background Bash, backgrounded agent) settled during the turn; drives a push, the UI ignores it. */
   | ({ type: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string; taskId?: string; toolUseId?: string | null; usage?: TaskUsage } & TurnScope)
   /** Live state of a task (subagent or background command): started, progress, status change. Latest wins per taskId. */

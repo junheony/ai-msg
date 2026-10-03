@@ -64,7 +64,9 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: [] });
     const after: EngineEvent[] = [];
     for (let e = await r.next(); e && e.kind !== 'result'; e = await r.next()) after.push(e);
-    expect(after.map((e) => e.kind)).toEqual(['continue', 'delta']);
+    // The CLI's task-notification user message is a system row (as in the transcript), not a user message.
+    expect(after.map((e) => e.kind)).toEqual(['continue', 'system', 'delta']);
+    expect(after[1]).toMatchObject({ kind: 'system', source: 'task' });
     expect(after[0]).toEqual({ kind: 'continue', cause: 'background' });
     expect(r.seen.at(-1)).toMatchObject({ kind: 'result', text: 'found it' });
     expect(await r.rest()).toEqual([]);
@@ -88,7 +90,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     // Still a live task → still open; settling it ends the process after its continuation.
     f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.result('done'));
     const rest = await r.rest();
-    expect(rest.map((e) => e.kind)).toEqual(['background', 'continue', 'result']);
+    expect(rest.map((e) => e.kind)).toEqual(['background', 'continue', 'system', 'result']);
     await new Promise((res) => setTimeout(res, 0));
     expect(f.state.inputClosed).toBe(true);
     expect(await live!.send({ text: 'late', attachments: [] })).toBe(false);
@@ -136,6 +138,6 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     await r.until('result');
     f.push(sdk.taskDone('t1'), sdk.notifyUser(), sdk.delta('d'), sdk.result('d'));
     const rest = await r.rest();
-    expect(rest.map((e) => e.kind)).toEqual(['background', 'task_done', 'continue', 'delta', 'result']);
+    expect(rest.map((e) => e.kind)).toEqual(['background', 'task_done', 'continue', 'system', 'delta', 'result']);
   });
 });

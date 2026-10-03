@@ -167,12 +167,18 @@ describe('mapSdkMessage', () => {
     expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, message: tr }))).toEqual([{ kind: 'tool_result', toolUseId: 'u1', content: 'ok', isError: false }]);
   });
 
-  it('hook feedback injected as a top-level user message → a hook event; a subagent copy or a replay maps to nothing', () => {
+  it('a synthetic / meta top-level user message → a system event (hook, peer, task); context-only ones and replays → nothing', () => {
     const msg = { role: 'user', content: 'Stop hook feedback:\n[verify] 테스트 실패' };
-    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, message: msg }))).toEqual([{ kind: 'hook', event: 'Stop', text: 'Stop hook feedback:\n[verify] 테스트 실패' }]);
-    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: 'agent', message: msg }))).toEqual([]);
-    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, isReplay: true, message: msg }))).toEqual([]);
-    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: 'plain text' } }))).toEqual([]);
+    const stop = [{ kind: 'system', source: 'Stop', label: 'Stop 훅이 이어서 진행시킴', text: 'Stop hook feedback:\n[verify] 테스트 실패' }];
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, isSynthetic: true, message: msg }))).toEqual(stop);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, isMeta: true, message: msg }))).toEqual(stop);
+    // Unflagged text is not harness-injected; a subagent copy and a replay never show.
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, message: msg }))).toEqual([]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: 'agent', isSynthetic: true, message: msg }))).toEqual([]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, isSynthetic: true, isReplay: true, message: msg }))).toEqual([]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, isSynthetic: true, origin: { kind: 'peer', from: 'a1' }, message: { role: 'user', content: 'Another Claude session sent a message: hi' } }))).toMatchObject([{ kind: 'system', source: 'peer', label: '다른 세션의 메시지' }]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification><status>failed</status><summary>빌드</summary></task-notification>' } }))).toEqual([{ kind: 'system', source: 'task', label: '백그라운드 작업 실패', text: '빌드' }]);
+    expect(mapSdkMessage(M({ type: 'user', parent_tool_use_id: null, isSynthetic: true, message: { role: 'user', content: 'Base directory for this skill: /x' } }))).toEqual([]);
   });
 
   it('init, text deltas (top-level only), tool calls, tool results, rate limit, compact, result', () => {

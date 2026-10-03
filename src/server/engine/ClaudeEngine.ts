@@ -6,7 +6,7 @@ import { accountEnv } from '../../shared/accounts';
 import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage, type TaskStatus, type TaskUpdate, type TaskUsage, type TurnPhase, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
-import { hookMessage, textOfContent } from '../sessions/transcript';
+import { systemRow, textOfContent } from '../sessions/transcript';
 import { parseQuestions, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type RateLimitSignal, type TurnRequest } from './Engine';
 import { STDERR_MAX } from './redact';
 import type { SlashCommandInfo } from './slashCommands';
@@ -457,9 +457,10 @@ export function mapSdkMessage(m: SDKMessage): EngineEvent[] {
       // --replay-user-messages echoes what we (or the CLI) already sent; a replayed tool_result must not show twice.
       if ((m as unknown as Rec).isReplay === true) return [];
       const content = (m.message as unknown as Rec).content;
-      // A hook's synthetic message (Stop hook feedback…): a system row in the turn, never a user message.
-      const hook = m.parent_tool_use_id === null ? hookMessage(textOfContent(content)) : null;
-      if (hook) return [{ kind: 'hook', ...hook }];
+      // A message the harness injected (hook feedback, peer message, task notification…; isSynthetic / isMeta / origin):
+      // a system row in the turn, never a user message — or nothing, if it is context for the model only.
+      const sys = m.parent_tool_use_id === null && !(Array.isArray(content) && content.some((b) => (b as Rec)?.type === 'tool_result')) ? systemRow(m as unknown as Rec, textOfContent(content)) : null;
+      if (sys) return sys === 'hide' ? [] : [{ kind: 'system', ...sys }];
       if (!Array.isArray(content)) return [];
       if (m.parent_tool_use_id !== null) {
         const parentToolUseId = m.parent_tool_use_id;

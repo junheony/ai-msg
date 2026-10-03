@@ -33,14 +33,21 @@ export function textOfContent(content: unknown): string {
   return parts.join('\n');
 }
 
+const hasToolResult = (content: unknown) => Array.isArray(content) && content.some((b) => b && typeof b === 'object' && (b as Rec).type === 'tool_result');
+
 function message(r: Rec): Rec | null {
   const m = r.message;
   return m && typeof m === 'object' ? (m as Rec) : null;
 }
 
-/** A user record the person (or deck) sent: not a compact summary, a subagent's, or harness-injected (`isMeta`). */
+const originKind = (r: Rec): string | null => {
+  const o = r.origin;
+  return o && typeof o === 'object' && typeof (o as Rec).kind === 'string' ? ((o as Rec).kind as string) : null;
+};
+
+/** A user record the person (or deck) sent: not a compact summary, a subagent's, harness-injected (`isMeta`) or a task notification. */
 function isRealUser(r: Rec): boolean {
-  return r.type === 'user' && !r.isCompactSummary && !r.isSidechain && !r.isMeta;
+  return r.type === 'user' && !r.isCompactSummary && !r.isSidechain && !r.isMeta && originKind(r) !== 'task-notification';
 }
 
 /** Claude Code's hook messages: "Stop hook feedback:\n…", "PreToolUse:Bash hook blocking error from command: …". */
@@ -50,6 +57,45 @@ const HOOK_RE = /^([A-Za-z]+)(?::\S*)? hook (?:feedback|blocking error)\b/;
 export function hookMessage(text: string): { event: string; text: string } | null {
   const m = HOOK_RE.exec(text);
   return m ? { event: m[1]!, text } : null;
+}
+
+/** A harness-injected message shown as a collapsed system row: what kind (hook event, peer, task…), its label, its text. */
+export type SystemRow = { source: string; label: string; text: string };
+
+/** Injected context for the model only (skill bodies, caveats, image paths, retries): never shown. */
+const HIDDEN_META_RE = /^(?:<local-command-caveat>|<system-reminder>|Base directory for this skill|\[Image:|Continue from where you left off\.|\(Re-invocation of |Skill \/\S+ was loaded earlier|The previous response failed to produce a valid tool call)/;
+const GOAL_RE = /^(?:Goal check-in:|A session-scoped Stop hook is now active)/;
+const SYSTEM_ROW_MAX = 8000;
+
+const TASK_LABEL: Record<string, string> = { completed: '백그라운드 작업 완료', failed: '백그라운드 작업 실패', killed: '백그라운드 작업 중단됨', stopped: '백그라운드 작업 중단됨' };
+const tag = (text: string, name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim() ?? '';
+
+function row(source: string, label: string, text: string): SystemRow {
+  const t = redactSecrets(text);
+  return { source, label, text: t.length > SYSTEM_ROW_MAX ? `${t.slice(0, SYSTEM_ROW_MAX)}\n…[잘림: 원래 ${t.length}자]` : t };
+}
+
+/**
+ * A user-role record the harness wrote, not the person: a system row, 'hide' (context for the model only), or null (a real
+ * message). Works on jsonl records (`isMeta`, `origin`, `turnOrigin`, `turnCompanion`) and SDK messages (`isSynthetic`, `origin`).
+ * Callers skip tool_result records.
+ */
+export function systemRow(r: Rec, text: string): SystemRow | 'hide' | null {
+  const origin = originKind(r);
+  if (origin === 'task-notification') {
+    const status = tag(text, 'status').toLowerCase();
+    const event = tag(text, 'event');
+    const body = [tag(text, 'summary'), tag(text, 'result'), event].filter(Boolean).join('\n\n');
+    return row('task', TASK_LABEL[status] ?? (event && !tag(text, 'task-type') ? '모니터 이벤트' : '백그라운드 작업 알림'), body || text);
+  }
+  if (r.isMeta !== true && r.isSynthetic !== true) return null;
+  if (r.turnCompanion === true || HIDDEN_META_RE.test(text) || (text.startsWith('<command-message>') && text.includes('<skill-format>true'))) return 'hide';
+  const hook = hookMessage(text);
+  if (hook) return row(hook.event, hook.event === 'Stop' || hook.event === 'SubagentStop' ? `${hook.event} 훅이 이어서 진행시킴` : `${hook.event} 훅 메시지`, text);
+  if (origin === 'peer') return row('peer', '다른 세션의 메시지', text);
+  if (r.turnOrigin === 'scheduled') return row('scheduled', '예약 작업', text);
+  if (GOAL_RE.test(text)) return row('goal', '목표 확인', text);
+  return text.trim() ? row('auto', '자동 메시지', text) : 'hide';
 }
 
 /**
@@ -190,11 +236,11 @@ class TranscriptBuilder {
 
   add(r: Rec): void {
     const ts = typeof r.timestamp === 'string' ? r.timestamp : null;
-    if (r.type === 'user' && r.isMeta && !r.isSidechain) {
-      // Harness-injected (skill bodies, caveats, hook feedback): never a user message. Hook feedback is a system row.
-      const hook = hookMessage(textOfContent(message(r)?.content));
-      if (hook) {
-        this.push({ kind: 'hook', event: hook.event, text: hook.text, ts });
+    const sys = r.type === 'user' && !r.isSidechain && !r.isCompactSummary && !hasToolResult(message(r)?.content) ? systemRow(r, textOfContent(message(r)?.content)) : null;
+    if (sys) {
+      // Harness-injected (hook feedback, peer messages, task notifications…): never a user message, so not counted.
+      if (sys !== 'hide') {
+        this.push({ kind: 'system', ...sys, ts });
         this.lastAssistantId = null;
       }
     } else if (isRealUser(r)) {

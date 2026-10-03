@@ -138,17 +138,18 @@ function SystemNotice({ n }: { n: InjectedNotice }) {
   );
 }
 
-/** A hook's message to the model (Claude Code logs it as a user line): one muted row, its text collapsed. */
-function HookRow({ item }: { item: Extract<ChatItem, { kind: 'hook' }> }) {
+const SYSTEM_ICON: Record<string, string> = { peer: '✉', scheduled: '⏰', goal: '◎', task: '✓', auto: '·' };
+
+/** A message the harness injected as a user line (hook feedback, another session's message, a task notification…): one muted row, its text collapsed. */
+function SystemRow({ item }: { item: Extract<ChatItem, { kind: 'system' }> }) {
   // "Stop hook feedback:\n…": the header line is the label already; the feedback itself is the body.
-  const body = item.text.replace(/^[^\n]*hook (?:feedback|blocking error)[^\n]*:\s*/, '').trim() || item.text;
-  const label = item.event === 'Stop' || item.event === 'SubagentStop' ? `${item.event} 훅이 이어서 진행시킴` : `${item.event} 훅 메시지`;
+  const body = item.text.replace(/^[^\n]*?hook (?:feedback|blocking error)[^:\n]*:\s*/, '').trim() || item.text;
   return (
-    <div className="msg system" data-testid="hook-row">
-      <details className="sys-notice hook">
+    <div className="msg system" data-testid="system-row" data-source={item.source}>
+      <details className="sys-notice injected">
         <summary>
-          <span className="sys-icon" aria-hidden="true">↻</span>
-          <span className="sys-label">{label}</span>
+          <span className="sys-icon" aria-hidden="true">{SYSTEM_ICON[item.source] ?? '↻'}</span>
+          <span className="sys-label">{item.label}</span>
           <span className="tool-caret" aria-hidden="true">›</span>
         </summary>
         <div className="sys-detail"><pre className="sys-body">{body}</pre></div>
@@ -319,7 +320,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
       </>
     );
   }
-  if (item.kind === 'hook') return <HookRow item={item} />;
+  if (item.kind === 'system') return <SystemRow item={item} />;
   const stopped = !!item.badge && !item.streaming && isStoppedTurn({ badge: item.badge, error: item.error, text: item.text });
   const retry = last && !item.streaming ? actions.onRetry : undefined;
   const hasActions = !item.streaming && (!!item.text || !!retry);

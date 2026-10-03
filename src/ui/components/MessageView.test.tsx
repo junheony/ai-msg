@@ -7,22 +7,30 @@ describe('MessageView', () => {
   afterEach(cleanup);
 
   it('a Stop-hook item is a muted system row with the feedback collapsed until clicked — not a user bubble', () => {
-    const { container, getByTestId } = render(<MessageView item={{ kind: 'hook', event: 'Stop', text: 'Stop hook feedback:\n[verify] 테스트가 실패합니다' }} />);
-    const row = getByTestId('hook-row');
+    const { container, getByTestId } = render(<MessageView item={{ kind: 'system', source: 'Stop', label: 'Stop 훅이 이어서 진행시킴', text: 'Stop hook feedback:\n[verify] 테스트가 실패합니다' }} />);
+    const row = getByTestId('system-row');
     expect(row.classList.contains('system')).toBe(true);
     expect(container.querySelector('.msg.user')).toBeNull();
     expect(row.querySelector('summary')?.textContent).toContain('Stop 훅이 이어서 진행시킴');
     const details = row.querySelector('details')!;
     expect(details.open).toBe(false);
-    const body = row.querySelector('.sys-body')!;
-    expect(body.textContent).toBe('[verify] 테스트가 실패합니다');
+    expect(row.querySelector('.sys-body')!.textContent).toBe('[verify] 테스트가 실패합니다');
     fireEvent.click(row.querySelector('summary')!);
     expect(details.open).toBe(true);
   });
 
-  it('other hook events get a generic label', () => {
-    const { getByTestId } = render(<MessageView item={{ kind: 'hook', event: 'PreToolUse', text: 'PreToolUse:Bash hook blocking error from command: "x": no' }} />);
-    expect(getByTestId('hook-row').querySelector('summary')?.textContent).toContain('PreToolUse 훅 메시지');
+  it('strips only the hook header, not the colons inside the message', () => {
+    const { getByTestId } = render(<MessageView item={{ kind: 'system', source: 'PreToolUse', label: 'PreToolUse 훅 메시지', text: 'PreToolUse:Bash hook blocking error from command: "x": denied' }} />);
+    const row = getByTestId('system-row');
+    expect(row.querySelector('summary')?.textContent).toContain('PreToolUse 훅 메시지');
+    expect(row.querySelector('.sys-body')!.textContent).toBe('"x": denied');
+  });
+
+  it("another session's message keeps its whole text as the collapsed body", () => {
+    const text = 'Another Claude session sent a message:\n<agent-message from="a1">보고: 끝</agent-message>';
+    const { getByTestId } = render(<MessageView item={{ kind: 'system', source: 'peer', label: '다른 세션의 메시지', text }} />);
+    expect(getByTestId('system-row').querySelector('summary')?.textContent).toContain('다른 세션의 메시지');
+    expect(getByTestId('system-row').querySelector('.sys-body')!.textContent).toBe(text);
   });
 
   it('renders markdown images as links, never as <img> (no auto-loading remote URLs)', () => {

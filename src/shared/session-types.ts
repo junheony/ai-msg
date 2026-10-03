@@ -53,4 +53,4 @@ export type TranscriptMessage =
   | { kind: 'assistant'; text: string; model: string | null; toolCalls: { id: string; name: string; input: unknown }[]; ts: string | null; /** Claude transcripts: the turn's thinking text, and whether an encrypted (redacted) block was in it. */ thinking?: string; thinkingRedacted?: boolean; /** The API call's prompt tokens (Claude transcripts): restores the context gauge. */ usage?: ContextUsage }
   | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean; ts: string | null; /** content was cut to the size cap */ truncated?: boolean }
   /** A hook's message to the model (Claude Code logs it as an `isMeta` user line), e.g. a Stop hook sending it back to work. `event`: Stop, PreToolUse… */
-  | { kind: 'hook'; event: string; text: string; ts: string | null };
+  | { kind: 'system'; source: string; label: string; text: string; ts: string | null };
