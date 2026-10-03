@@ -479,6 +479,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           turn.pendingRefs.delete(m.clientRef);
           const sid = m.sessionId ?? turn.sessionId;
           if (sid) deps.acceptedRefs?.remove(sid, m.clientRef);
+          // A follow-up whose turn_started went out: its failed turn_result already shows the error in the chat, so this
+          // one only takes the ref back (a second, app-wide banner with the same text would just repeat it).
+          if (m.turnId !== null && aliases.has(m.turnId)) return;
         }
         // A new session's ref, once it has an id. Today's client never asks (a new session is not deduped: no history to
         // open); kept so a later client that does finds it.

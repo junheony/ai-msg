@@ -251,21 +251,31 @@ describe('ws: sessions held open for background work', () => {
     const S = '77777777-7777-4777-8777-777777777777';
     const cwd = await seed(S, 'dedupe');
     fake = fakeSdk();
+    let sink: Parameters<TurnRunner['run']>[1] | null = null;
+    const run = runner.run.bind(runner);
+    const spy = vi.spyOn(runner, 'run').mockImplementation((p, s) => { sink = s; return run(p, s); });
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'd1' });
     const t = await a.next('turn_started');
+    spy.mockRestore();
     fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', S));
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'd1' });
     expect(await a.next('error', (m) => m.clientRef === 'd1')).toMatchObject({ turnId: null, code: 'already_accepted' });
     a.send({ type: 'send', sessionId: S, cwd, text: 'more', clientRef: 'd2' });
-    await a.next('turn_started', (m) => m.clientRef === 'd2');
+    const fu = await a.next('turn_started', (m) => m.clientRef === 'd2');
     a.send({ type: 'send', sessionId: S, cwd, text: 'more', clientRef: 'd2' });
     expect(await a.next('error', (m) => m.clientRef === 'd2')).toMatchObject({ code: 'already_accepted' });
     a.send({ type: 'open_session', sessionId: S });
     expect((await a.next('history')).acceptedRefs).toEqual(['d1', 'd2']);
     expect(fake.inputs).toHaveLength(2);
+    // The follow-up's write failing after its turn_started: the ref is taken back, and no second (app-wide) error goes out —
+    // its failed turn_result is the one place the user sees it.
+    sink!.emit({ type: 'error', turnId: fu.turnId, message: '메시지를 보내지 못했습니다', clientRef: 'd2' });
+    a.send({ type: 'open_session', sessionId: S });
+    expect((await a.next('history')).acceptedRefs).toEqual(['d1']);
+    expect(a.got.some((m) => m.type === 'error' && m.message === '메시지를 보내지 못했습니다')).toBe(false);
     a.send({ type: 'interrupt', turnId: t.turnId });
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
