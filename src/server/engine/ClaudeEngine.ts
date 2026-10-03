@@ -291,10 +291,14 @@ function isActivity(m: SDKMessage): boolean {
   return r.parent_tool_use_id === null && r.isReplay !== true;
 }
 
-/** A result for a CLI-originated command the model never ran on: origin set and not 'human', no user_message_uuid(s), num_turns 0. */
+/**
+ * A successful result for a CLI-originated command the model never ran on: origin set and not 'human', no
+ * user_message_uuid(s), num_turns 0. An error result is not one — a failure must still reach the caller.
+ */
 function isInjectedNoopResult(m: SDKMessage): boolean {
   if (m.type !== 'result') return false;
   const r = m as unknown as Rec;
+  if (r.subtype !== 'success' || r.is_error === true) return false;
   const kind = r.origin && typeof r.origin === 'object' ? (r.origin as Rec).kind : undefined;
   const named = (Array.isArray(r.user_message_uuids) && r.user_message_uuids.length > 0) || typeof r.user_message_uuid === 'string';
   return typeof kind === 'string' && kind !== 'human' && !named && r.num_turns === 0;
@@ -656,8 +660,10 @@ export class ClaudeEngine implements Engine {
       for await (const m of stream) {
         // The CLI's own non-querying turn (a notification queued shouldQuery:false — e.g. the orphaned-agent notice it
         // injects on resume) still writes a result: no uuids, no model turn, origin not ours. It answers nothing we wrote
-        // and is no turn of ours — counting it closed the input before our prompt ran.
-        if (isInjectedNoopResult(m)) continue;
+        // and is no turn of ours — counting it closed the input before our prompt ran. With nothing of ours unanswered
+        // (idle after our result: e.g. an agent hand-back) it can steal no answer, so it goes through as a normal result —
+        // closing the continuation segment its notification opened and running the close check.
+        if (isInjectedNoopResult(m) && unanswered.length > 0) continue;
         if (bg.apply(m)) {
           const tasks = bg.tasks();
           const detail = bg.detail();
