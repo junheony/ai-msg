@@ -42,6 +42,27 @@ export class AcceptedRefs {
     this.save();
   }
 
+  /** Taken back: the message was not delivered after all (e.g. a follow-up whose write failed after its turn_started). */
+  remove(sessionId: string, ref: string): void {
+    const list = this.map.get(sessionId);
+    if (!list?.some((e) => e.ref === ref)) return;
+    const kept = list.filter((e) => e.ref !== ref);
+    if (kept.length) this.map.set(sessionId, kept);
+    else this.map.delete(sessionId);
+    this.save();
+  }
+
+  /**
+   * The oldest kept ref's time, when the cap may have pushed older ones out (the list is full; not tracked further, so it
+   * holds across a restart): a ref sent before it is not known either way. Undefined while nothing can have been evicted.
+   */
+  since(sessionId: string): number | undefined {
+    const list = this.map.get(sessionId) ?? [];
+    if (list.length < ACCEPTED_REFS_MAX) return undefined;
+    const cut = this.now() - ACCEPTED_REFS_TTL_MS;
+    return list.find((e) => e.at >= cut)?.at;
+  }
+
   has(sessionId: string, ref: string): boolean {
     return this.list(sessionId).includes(ref);
   }

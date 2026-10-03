@@ -1017,6 +1017,44 @@ describe('message queue (ux-state)', () => {
       expect(pane(s).queue).toEqual([]);
     });
 
+    // Round 4.
+    it('in_flight: a send or steer the server is taking right now under its ref is kept — plain, paused, with its ref, and a banner', () => {
+      const IN = '아직 처리 중인 메시지 — 멈춰 둠';
+      let s = reducer(play([history(['old'])], openedOn('s1')), { type: 'sent', text: 'again', clientRef: 'r1' });
+      s = play([{ type: 'error', turnId: null, message: IN, clientRef: 'r1', code: 'in_flight' }], s);
+      expect(pane(s).queue.map((q) => [q.text, q.ref, q.restart, q.maybeSent])).toEqual([['again', 'r1', undefined, undefined]]);
+      expect(pane(s)).toMatchObject({ awaitingStart: false, awaitingRef: null, queuePaused: true });
+      expect(nextQueued(pane(s))).toBeNull();
+      expect(s.error).toBe(IN);
+      let t = reducer(running(), { type: 'queue_add', text: 'st', steerId: 'k1' });
+      t = play([{ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: 'k1', message: IN, code: 'in_flight' }], t);
+      expect(pane(t).queue.map((q) => [q.text, q.steer, q.lostSteer])).toEqual([['st', undefined, 'k1']]);
+      expect(pane(t).queuePaused).toBe(true);
+      expect(nextQueued(pane(t))).toBeNull();
+      expect(t.error).toBe(IN);
+    });
+
+    it('acceptedRefsSince: a lost send from before the oldest ref the server\'s cap kept is in doubt — paused, not resent', () => {
+      let s = lostSend('계속', ['old']);
+      const at = pane(s).queue[0]!.at!;
+      s = play([{ ...historyWith([{ text: 'old', n: 0 }], []), acceptedRefsSince: at + 2 * 3_600_000 } as ServerMessage], s);
+      expect(pane(s).queue.map((q) => [q.text, q.restart, q.ref])).toEqual([['계속', undefined, 'r1']]);
+      expect(pane(s).queuePaused).toBe(true);
+      expect(nextQueued(pane(s))).toBeNull();
+      expect(s.error).toContain('계속');
+      // Sent after it: the list can tell — sent again.
+      const fresh = play([{ ...historyWith([{ text: 'old', n: 0 }], []), acceptedRefsSince: at - 2 * 3_600_000 } as ServerMessage], lostSend('계속', ['old']));
+      expect(nextQueued(pane(fresh))?.text).toBe('계속');
+    });
+
+    it('turn_started echoing the ref of a queued copy drops the copy: it is that very message, gone in', () => {
+      let s = reducer(play([history(['old'])], openedOn('s1')), { type: 'sent', text: 'again', clientRef: 'r1' });
+      s = play([{ type: 'error', turnId: null, message: 'x', clientRef: 'r1', code: 'in_flight' }], s);
+      s = reducer(s, { type: 'queue_add', text: 'other' });
+      s = play([{ type: 'turn_started', turnId: 't9', sessionId: 's1', cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0, clientRef: 'r1', prompt: { text: 'again', attachments: [] } }], s);
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['other']);
+    });
+
     it('B: a send and a steer carry their send time; a lost one keeps it', () => {
       let s = reducer(play([history(['old'])], openedOn('s1')), { type: 'sent', text: 'm', clientRef: 'r1' });
       expect(pane(s).awaitingSend?.at).toEqual(expect.any(Number));

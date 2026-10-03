@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
 import type { ServerMessage } from '../../shared/protocol';
+import type { Attachment, AttachmentStore } from '../attachments/AttachmentStore';
 import { ClaudeEngine } from '../engine/ClaudeEngine';
 import { fakeSdk, sdk } from '../engine/fakeSdk';
 import { SessionIndex } from '../sessions/SessionIndex';
@@ -13,7 +14,7 @@ import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 
-async function setup() {
+async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments'>> & { readFile?: (p: string) => Promise<Buffer> } = {}) {
   const f = fakeSdk();
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trbg-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
@@ -22,7 +23,7 @@ async function setup() {
   await store.load();
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
   const deps: TurnRunnerDeps = {
-    engine: new ClaudeEngine({ queryFn: f.queryFn, readFile: async () => Buffer.from('') }),
+    engine: new ClaudeEngine({ queryFn: f.queryFn, readFile: over.readFile ?? (async () => Buffer.from('')) }),
     usage,
     index: new SessionIndex({ roots, pinnedFile: path.join(base, 'projects.json') }),
     store,
@@ -31,7 +32,7 @@ async function setup() {
     auditFile: path.join(base, 'audit.log'),
     projectsRoots: roots,
     codex: null,
-    attachments: null,
+    attachments: over.attachments ?? null,
     codexSessionsRoot: path.join(base, 'codex-sessions'),
     now: () => NOW,
     maxRetries: 0,
@@ -127,6 +128,23 @@ describe('TurnRunner: background work after the turn result', () => {
     expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 't1:bg1', ok: false, errorText: '중단됨' });
     expect(of(msgs, 'error')).toEqual([expect.objectContaining({ turnId: 'f1', clientRef: 'r9' })]);
     expect(runner.backgroundSessions()).toEqual([]);
+  });
+
+  it('a follow-up that could not be written after its turn_started also sends an error with its clientRef (its accepted ref is taken back)', async () => {
+    const img: Attachment = { id: 'i1', name: 'a.png', mediaType: 'image/png', size: 1, path: '/gone/a.png', isImage: true, createdAtMs: 0 };
+    const attachments = { resolve: () => ({ found: [img], missing: [] }) } as unknown as AttachmentStore;
+    const { f, msgs, sink, runner } = await setup({ attachments, readFile: async () => { throw new Error('gone'); } });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    expect(runner.followUp('s1', { turnId: 'f1', text: 'look', attachments: ['i1'], clientRef: 'r1' })).toBe(true);
+    await waitFor(() => of(msgs, 'error').length === 1, 'refusal');
+    expect(of(msgs, 'turn_started').at(-1)).toMatchObject({ turnId: 'f1', clientRef: 'r1' });
+    expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 'f1', ok: false, errorText: '메시지를 보내지 못했습니다' });
+    expect(of(msgs, 'error')[0]).toMatchObject({ turnId: 'f1', clientRef: 'r1', message: '메시지를 보내지 못했습니다' });
+    f.push(sdk.bgLevel([]));
+    f.end();
+    await done;
   });
 
   it('no background work: no follow-up channel, nothing after the result', async () => {

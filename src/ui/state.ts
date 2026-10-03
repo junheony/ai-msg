@@ -40,6 +40,8 @@ export type SentFile = { id: string; name: string; isImage: boolean };
  *     turn_started            → gone from the queue (it is a bubble now)
  *     error 'draining'        → back at the head, restart 'hold' (after other held items): the old server only refuses
  *     error 'already_accepted' → dropped: the server has this ref already (a resent copy), so it never runs twice
+ *     error 'in_flight'       → back at the head, paused, with its ref (banner): going in under this ref right now, may still fail
+ *     turn_started of its ref → a queued copy of it is dropped (it went in)
  *     error (other)           → back at the head, paused (the user decides)
  *     socket died (hello)     → back at the head, restart 'hello' + maybeSent (+ `at`, when it was sent): it may have gone in
  *     page reload             → saved like a lost one (snapshotQueues), so a reload never loses it either
@@ -101,19 +103,23 @@ function parkHeld(parked: AppState['parked'], sessionId: string, cwd: string, qu
   return { parked: { ...parked, [sessionId]: { cwd, queue: [...(parked[sessionId]?.queue ?? []), ...held.map(({ restart: _r, ...q }) => q)] } }, queue: queue.filter((q) => !isHeld(q)) };
 }
 
-/** Sent longer ago than this: the server's acceptedRefs may have forgotten it (an hour of slack for clock skew). */
-const STALE_MS = ACCEPTED_REFS_TTL_MS - 3_600_000;
+/** Slack for the device's and the server's clocks disagreeing. */
+const SKEW_MS = 3_600_000;
+/** Sent longer ago than this: the server's acceptedRefs may have forgotten it. */
+const STALE_MS = ACCEPTED_REFS_TTL_MS - SKEW_MS;
 
 /**
  * Messages the history cannot clear for resending: not listed as accepted, but going in right now (pendingRefs), or a
- * maybe-sent one too old for the server's list to tell (or without a send time). They wait for the user. An older server
+ * maybe-sent one too old for the server's list to tell (or without a send time, or from before the oldest ref the cap left
+ * it: `acceptedRefsSince`). They wait for the user. An older server
  * (no acceptedRefs) is checked by text instead.
  */
 function inDoubt(msg: Extract<ServerMessage, { type: 'history' }>, now: number): (q: QueueItem) => boolean {
   if (!msg.acceptedRefs) return () => false;
   const accepted = new Set(msg.acceptedRefs);
   const pending = new Set(msg.pendingRefs ?? []);
-  return (q) => !(q.ref && accepted.has(q.ref)) && ((!!q.ref && pending.has(q.ref)) || (q.maybeSent !== undefined && (q.at === undefined || now - q.at > STALE_MS)));
+  const since = msg.acceptedRefsSince;
+  return (q) => !(q.ref && accepted.has(q.ref)) && ((!!q.ref && pending.has(q.ref)) || (q.maybeSent !== undefined && (q.at === undefined || now - q.at > STALE_MS || (since !== undefined && q.at < since + SKEW_MS))));
 }
 
 /**
@@ -482,6 +488,9 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       }
       if (p.handoff && p.handoff.turnId === null && msg.clientRef !== undefined && msg.clientRef === p.handoff.ref) p = { ...p, handoff: { ...p.handoff, turnId: msg.turnId } };
       if (!belongs(p, msg)) return p;
+      // A queued copy of this very message (kept paused after a reload, an in_flight refusal): it went in — not sent again.
+      const dup = msg.clientRef !== undefined ? p.queue.find((q) => q.ref === msg.clientRef && !q.steer) : undefined;
+      if (dup) p = { ...p, queue: p.queue.filter((q) => q !== dup), ...(p.queueSendNow === dup.id ? { queueSendNow: null } : {}) };
       const last = p.items.findLastIndex((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
       // Another device's (or pane's) message: its bubble goes before the turn's answer. The sending pane shows it already ('sent').
       const echo = msg.prompt && !p.myTurns.includes(msg.turnId) ? [promptItem(msg.prompt, nextUserN(p.items, p.session))] : [];
@@ -576,6 +585,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
         console.warn('deck: steer already went in — not sent again:', q.text);
         return { ...pane, queue: pane.queue.filter((x) => x !== q), ...(pane.queueSendNow === q.id ? { queueSendNow: null } : {}) };
       }
+      // Going in right now under this id (another tab's copy, a retry): it may still fail — kept, paused, never resent by itself.
+      if (msg.code === 'in_flight') return unsteer(pane, (id) => id === msg.steerId);
       return { ...pane, queue: pane.queue.map(({ steer, ...q }) => (steer === msg.steerId ? { ...q, ...(msg.code === 'draining' ? { restart: 'hold' as const } : {}) } : { ...q, ...(steer ? { steer } : {}) })) };
     case 'turn_retry':
       if (!belongs(pane, msg)) return pane;
@@ -760,8 +771,10 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     }
     case 'thinking': case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
     case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result':
-    case 'steer_delivered': case 'steer_rejected':
-      return { ...state, panes: mapPanes(state, msg) };
+    case 'steer_delivered': case 'steer_rejected': {
+      const kept = msg.type === 'steer_rejected' && msg.code === 'in_flight' && state.panes.some((p) => p.queue.some((q) => q.steer === msg.steerId));
+      return { ...state, panes: mapPanes(state, msg), ...(kept ? { error: msg.message } : {}) };
+    }
     case 'activity': {
       // A turn that finished while no focused pane showed its session leaves an unread dot.
       const focused = state.panes.find((p) => p.id === state.activePaneId)?.session?.sessionId ?? null;

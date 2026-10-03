@@ -33,6 +33,22 @@ describe('AcceptedRefs', () => {
     expect(a.list(S)).toEqual([]);
   });
 
+  it('since: the oldest kept ref\'s time once the cap may have evicted older ones (also after a restart); remove takes a ref back', async () => {
+    const file = path.join(await tmp(), 'accepted-refs.json');
+    let t = 1_000_000;
+    const a = new AcceptedRefs(file, () => t);
+    for (let i = 0; i < ACCEPTED_REFS_MAX - 1; i++) { a.add(S, `r${i}`); t += 1; }
+    expect(a.since(S)).toBeUndefined();
+    a.add(S, 'last'); t += 1;
+    a.add(S, 'over');
+    expect(a.since(S)).toBe(1_000_001);
+    expect(new AcceptedRefs(file, () => t).since(S)).toBe(1_000_001);
+    a.remove(S, 'over');
+    expect(a.has(S, 'over')).toBe(false);
+    expect(new AcceptedRefs(file, () => t).has(S, 'over')).toBe(false);
+    expect(a.since(S)).toBeUndefined();
+  });
+
   it('a missing or corrupt file starts empty', async () => {
     const dir = await tmp();
     await fs.writeFile(path.join(dir, 'bad.json'), '{not json');

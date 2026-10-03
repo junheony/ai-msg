@@ -129,7 +129,7 @@ export type ServerMessage =
   | { type: 'account_pin'; sessionId: string; pin: Account | null }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[] }
-  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[] }
+  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number }
   | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string; /** The user message that started this turn (absent for a background continuation); the sending pane already shows it. */ prompt?: TurnPrompt } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)
   /** Claude thinking content so far (chunks; empty text = a block started); `redacted` = an encrypted block. */
@@ -191,8 +191,9 @@ export type ServerMessage =
 /**
  * 'draining': the server is about to restart (USR2) — the device sends the refused message again once it reconnects.
  * 'already_accepted': the session took a send / steer under this ref already — the device drops its copy.
+ * 'in_flight': the session is taking this ref right now (not recorded yet; it may still fail) — the device keeps its copy, paused.
  */
-export type RefusalCode = 'draining' | 'already_accepted';
+export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight';
 
 /** How long / how many accepted refs the server keeps per session (`history.acceptedRefs`). */
 export const ACCEPTED_REFS_TTL_MS = 7 * 24 * 60 * 60 * 1000;

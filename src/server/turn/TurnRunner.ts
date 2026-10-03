@@ -859,14 +859,18 @@ export class TurnRunner {
       const note = isClaudeModel(f.model) && f.model !== model ? '백그라운드 대기 중인 프로세스의 모델 유지' : null;
       open(f.turnId, '백그라운드 대기 중 이어 보냄', note, f.clientRef);
       const turnId = f.turnId;
+      // Its turn_started recorded the ref as accepted: an error carrying it takes that back (ws), so a resent copy goes in.
+      const failed = (errorText: string) => {
+        seg = null;
+        sink.emit({ type: 'turn_result', turnId, sessionId, cwd, ok: false, text: '', badge: null, errorText });
+        if (f.clientRef) sink.emit({ type: 'error', turnId, message: errorText, clientRef: f.clientRef });
+      };
       void (a.live?.send({ text: f.text, attachments }) ?? Promise.resolve(false)).then((ok) => {
         if (ok || seg?.turnId !== turnId) return;
-        seg = null;
-        sink.emit({ type: 'turn_result', turnId, sessionId, cwd, ok: false, text: '', badge: null, errorText: '세션 프로세스가 방금 끝나 보내지 못했습니다 — 다시 보내 주세요' });
+        failed('세션 프로세스가 방금 끝나 보내지 못했습니다 — 다시 보내 주세요');
       }, () => {
         if (seg?.turnId !== turnId) return;
-        seg = null;
-        sink.emit({ type: 'turn_result', turnId, sessionId, cwd, ok: false, text: '', badge: null, errorText: '메시지를 보내지 못했습니다' });
+        failed('메시지를 보내지 못했습니다');
       });
     };
     const saveState = async (ok: boolean) => {

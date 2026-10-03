@@ -28,6 +28,7 @@ let base: string;
 let work: string;
 let store: SessionStateStore;
 let index: SessionIndex;
+let runner: TurnRunner;
 /** Each test installs its own fake CLI process. */
 let fake = fakeSdk();
 const queryFn: QueryFn = (p) => fake.queryFn(p);
@@ -42,7 +43,7 @@ beforeAll(async () => {
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const runner = new TurnRunner({ attachments: null, engine: new ClaudeEngine({ queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  runner = new TurnRunner({ attachments: null, engine: new ClaudeEngine({ queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex') });
   const pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
   const settings = new SettingsStore(path.join(base, 'settings.json'));
@@ -201,9 +202,9 @@ describe('ws: sessions held open for background work', () => {
     const h = await b.next('history');
     expect(h).toMatchObject({ acceptedRefs: ['g1'] });
     expect(h.pendingRefs).toEqual(['k2']);
-    // While pending, a resend of the steer is refused too (C/D): it may still go in.
+    // While pending, a resend of the steer is refused too, as in_flight: it may still go in — or fail, so the device keeps it.
     b.send({ type: 'steer', turnId: t.turnId, steerId: 'k2', text: 'late' });
-    expect(await b.next('steer_rejected', (m) => m.steerId === 'k2')).toMatchObject({ code: 'already_accepted' });
+    expect(await b.next('steer_rejected', (m) => m.steerId === 'k2')).toMatchObject({ code: 'in_flight', message: '아직 처리 중인 메시지 — 멈춰 둠' });
     b.close();
     fake.end();
     await a.next('turn_result', (m) => m.turnId === t.turnId);
@@ -216,6 +217,34 @@ describe('ws: sessions held open for background work', () => {
     expect(h2.acceptedRefs).toEqual(['g1']);
     expect(h2.pendingRefs).toEqual([]);
     c.close();
+  });
+
+  it('a steer the runner rejects (retry, process gone) is no longer pending; an error carrying a clientRef takes back its accepted ref', async () => {
+    const S = '67676767-6767-4767-8767-676767676767';
+    const cwd = await seed(S, 'steer3');
+    fake = fakeSdk();
+    let sink: Parameters<TurnRunner['run']>[1] | null = null;
+    const run = runner.run.bind(runner);
+    const spy = vi.spyOn(runner, 'run').mockImplementation((p, s) => { sink = s; return run(p, s); });
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'g3' });
+    const t = await a.next('turn_started');
+    spy.mockRestore();
+    fake.push(sdk.init(S));
+    await vi.waitFor(() => expect(fake.inputs).toHaveLength(1));
+    a.send({ type: 'steer', turnId: t.turnId, steerId: 'k3', text: 'late' });
+    await vi.waitFor(() => expect(fake.inputs).toHaveLength(2));
+    // What the runner sends for a steer a retry dropped, and for a follow-up it could not write after its turn_started.
+    sink!.emit({ type: 'steer_rejected', turnId: t.turnId, sessionId: S, cwd, steerId: 'k3', message: '재시도 중이라 턴이 끝난 뒤 보냅니다' });
+    sink!.emit({ type: 'error', turnId: t.turnId, message: '메시지를 보내지 못했습니다', clientRef: 'g3' });
+    a.send({ type: 'open_session', sessionId: S });
+    const h = await a.next('history');
+    expect(h.pendingRefs).toEqual([]);
+    expect(h.acceptedRefs).toEqual([]);
+    fake.end();
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
   });
 
   it('D: a send whose clientRef the session already accepted is refused with already_accepted and never runs again; a follow-up is recorded at its turn_started', async () => {
