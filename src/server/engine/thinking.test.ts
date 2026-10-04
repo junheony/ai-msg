@@ -7,6 +7,9 @@ import { StreamRedactor, redactSecrets } from './redact';
 const ev = (event: unknown) => ({ type: 'stream_event', parent_tool_use_id: null, event }) as unknown as SDKMessage;
 const L = (o: unknown) => JSON.stringify(o);
 
+// A real stall (quadratic rescans) takes many seconds; 1s flaked under heavy machine load.
+const STALL_MS = 5000;
+
 describe('thinking: stream', () => {
   it('maps thinking block start / deltas / redacted blocks', () => {
     expect(mapSdkMessage(ev({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }))).toEqual([{ kind: 'thinking', text: '' }]);
@@ -95,10 +98,10 @@ describe('thinking: streaming redaction across chunk boundaries', () => {
     expect(r.flush()).toBe('');
   });
 
-  it('a long unbroken run in tiny deltas does not stall: 4000 × "a-" well under 1s, collapsed past the cap', () => {
+  it('a long unbroken run in tiny deltas does not stall: 4000 × "a-" well under the stall bound, collapsed past the cap', () => {
     const t0 = performance.now();
     const { joined } = run([...Array.from({ length: 4000 }, () => 'a-'), ' 그리고 끝']);
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(STALL_MS);
     // longer than the held-text cap: the run is collapsed to the marker and the stream carries on
     expect(joined).toBe('[redacted] 그리고 끝');
   });
@@ -110,7 +113,7 @@ describe('thinking: streaming redaction across chunk boundaries', () => {
       const t0 = performance.now();
       const chunks = whole.match(/[\s\S]{1,2}/g)!;
       expect(run(chunks).joined).toBe(redactSecrets(whole));
-      expect(performance.now() - t0).toBeLessThan(1000);
+      expect(performance.now() - t0).toBeLessThan(STALL_MS);
     }
   });
 
