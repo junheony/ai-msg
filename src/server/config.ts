@@ -30,6 +30,8 @@ export type DeckConfig = {
   geminiBin: string | null;
   /** `$CODEX_HOME/sessions` (rollout files; read-only for deck). */
   codexSessionsRoot: string;
+  /** `$CODEX_HOME/archived_sessions` (threads archived in Codex; read-only for deck, listed under 보관됨). */
+  codexArchivedRoot: string;
   /** D7: private attachment dir (0700) under the config dir. */
   attachmentsDir: string;
   /** F1: folders opened with 폴더 열기 (newest first, max 20). */
@@ -121,6 +123,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     codexBin: resolveCodexBin(env, home),
     geminiBin: resolveGeminiBin(env, home),
     codexSessionsRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),
+    codexArchivedRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'archived_sessions'),
     attachmentsDir: path.join(configDir, 'attachments'),
     recentFoldersFile: path.join(configDir, 'recent-folders.json'),
     pinsFile: path.join(configDir, 'pins.json'),

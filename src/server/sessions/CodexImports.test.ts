@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { CodexRolloutIndex, readRolloutHead, rolloutRecentlyActive } from './CodexImports';
+import { CODEX_ARCHIVED_NOTICE, CWD_MISSING_NOTICE, CodexRolloutIndex, importBlockReason, readRolloutHead, rolloutRecentlyActive } from './CodexImports';
 import { SessionIndex } from './SessionIndex';
 import { CLI_ID, DESKTOP_ID, GONE_ID, SUB_ID, assistant, jsonl, meta, user, writeFixtures } from './codexFixtures';
 
@@ -55,17 +55,18 @@ describe('readRolloutHead', () => {
 });
 
 describe('CodexRolloutIndex', () => {
-  it('lists user threads whose folder exists, as gpt/codex entries; heads are read once per file', async () => {
+  it('lists user threads as gpt/codex entries (a gone folder flagged cwdMissing, sub-agents left out); heads are read once per file', async () => {
     const { desktop } = await writeFixtures(root, work);
     let reads = 0;
     const idx = new CodexRolloutIndex(root, async (f) => { reads++; return readRolloutHead(f); });
     await idx.refresh();
     const list = idx.list().sort((a, b) => a.sessionId.localeCompare(b.sessionId));
-    expect(list.map((e) => e.sessionId)).toEqual([DESKTOP_ID, CLI_ID]);
+    expect(list.map((e) => e.sessionId)).toEqual([DESKTOP_ID, CLI_ID, GONE_ID]);
     expect(list[0]).toMatchObject({ account: 'gpt', engine: 'codex', cwd: work, file: desktop, projectDir: path.dirname(desktop), title: '스크린샷의 버그 고쳐줘', imported: true });
+    expect(list[0]).not.toHaveProperty('cwdMissing');
     expect(idx.lookup(CLI_ID)?.title).toBe('List the files');
     expect(idx.lookup(SUB_ID)).toBeNull();
-    expect(idx.lookup(GONE_ID)).toBeNull();
+    expect(idx.lookup(GONE_ID)).toMatchObject({ cwd: path.join(work, 'deleted-temp-dir'), title: 'hi', cwdMissing: true });
     const first = reads;
     expect(first).toBe(5);
 
@@ -78,48 +79,66 @@ describe('CodexRolloutIndex', () => {
     expect(idx.lookup(DESKTOP_ID)?.lastModified).toBe(later.getTime());
   });
 
-  it('lists `codex exec` threads written within 7 days (codexExec), not older ones, not gone folders, not sub-agents', async () => {
+  it('lists `codex exec` threads of any age (codexExec), gone folders too, not sub-agents', async () => {
     const dir = path.join(root, '2026', '10', '03');
     await fs.mkdir(dir, { recursive: true });
     const id = (n: string) => `01a0f2d3-0000-7c92-aeea-0000000000${n}`;
-    const NOW = Date.now();
     const DAY = 86_400_000;
     const write = async (n: string, cwd: string, extra: Record<string, unknown>, ageMs: number) => {
       const f = path.join(dir, `rollout-2026-10-03T10-00-${n}-${id(n)}.jsonl`);
       await fs.writeFile(f, jsonl([meta(id(n), cwd, { originator: 'codex_exec', source: 'exec', ...extra }), user('run lane')]));
-      const t = new Date(NOW - ageMs);
+      const t = new Date(Date.now() - ageMs);
       await fs.utimes(f, t, t);
       return f;
     };
     await write('e1', work, {}, DAY);
-    const old = await write('e2', work, {}, 8 * DAY);
+    await write('e2', work, {}, 90 * DAY);
     await write('e3', path.join(work, 'gone'), {}, DAY);
     await write('e4', work, { thread_source: 'subagent' }, DAY);
-    let now = NOW;
-    const reads: { file: string; stopAtExec: boolean }[] = [];
-    const idx = new CodexRolloutIndex(root, async (f, max, o) => { reads.push({ file: f, stopAtExec: !!o?.stopAtExec }); return readRolloutHead(f, max, o); }, () => now);
+    const idx = new CodexRolloutIndex(root);
     await idx.refresh();
-    expect(idx.list().map((e) => e.sessionId)).toEqual([id('e1')]);
-    expect(idx.lookup(id('e1'))).toMatchObject({ account: 'gpt', engine: 'codex', imported: true, codexExec: true, title: 'run lane' });
-    // The already-too-old exec rollout is read only up to its meta line, and not again on the next scan.
-    expect(reads.filter((r) => r.file === old)).toEqual([{ file: old, stopAtExec: true }]);
-    await idx.refresh();
-    expect(reads.filter((r) => r.file === old)).toHaveLength(1);
-
-    // Same index, seven days later: the thread has aged out (heads stay cached).
-    const before = reads.length;
-    now += 7 * DAY;
-    await idx.refresh();
-    expect(idx.list()).toEqual([]);
-    expect(reads.length).toBe(before);
+    expect(idx.list().map((e) => e.sessionId).sort()).toEqual([id('e1'), id('e2'), id('e3')]);
+    expect(idx.lookup(id('e2'))).toMatchObject({ account: 'gpt', engine: 'codex', imported: true, codexExec: true, title: 'run lane' });
+    expect(idx.lookup(id('e3'))).toMatchObject({ codexExec: true, cwdMissing: true });
   });
 
-  it('stopAtExec: returns an exec head right after its meta line; other heads still get their prompt', async () => {
-    const f = path.join(base, 'exec.jsonl');
-    await fs.writeFile(f, jsonl([meta(CLI_ID, work, { originator: 'codex_exec', source: 'exec' }), user('run lane')]));
-    expect(await readRolloutHead(f, undefined, { stopAtExec: true })).toEqual({ threadId: CLI_ID, cwd: work, title: null, exec: true });
+  it('lists archived_sessions (flat) as archived + codexArchived; the newest copy of a thread wins', async () => {
     const { cli } = await writeFixtures(root, work);
-    expect((await readRolloutHead(cli, undefined, { stopAtExec: true }))?.title).toBe('List the files');
+    const arch = path.join(base, 'archived_sessions');
+    await fs.mkdir(arch);
+    const AID = '01a0f2d3-0000-7c92-aeea-0000000000a1';
+    const af = path.join(arch, `rollout-2026-09-01T10-00-00-${AID}.jsonl`);
+    await fs.writeFile(af, jsonl([meta(AID, work), user('old idea')]));
+    await fs.writeFile(path.join(arch, `rollout-2026-09-01T11-00-00-${SUB_ID}.jsonl`), jsonl([meta(SUB_ID, work, { thread_source: 'subagent' }), user('x')]));
+    const idx = new CodexRolloutIndex(root, undefined, arch);
+    await idx.refresh();
+    expect(idx.lookup(AID)).toMatchObject({ title: 'old idea', file: af, imported: true, archived: true, codexArchived: true });
+    expect(idx.lookup(CLI_ID)).not.toHaveProperty('codexArchived');
+    expect(idx.lookup(SUB_ID)).toBeNull();
+    // The same thread in both dirs (moved mid-scan): the more recently written copy is listed.
+    const dup = path.join(arch, path.basename(cli));
+    await fs.copyFile(cli, dup);
+    const later = new Date(Date.now() + 60_000);
+    await fs.utimes(dup, later, later);
+    await idx.refresh();
+    expect(idx.lookup(CLI_ID)).toMatchObject({ file: dup, codexArchived: true });
+  });
+
+  it('overlapping refreshes share the scan: each head is read once', async () => {
+    await writeFixtures(root, work);
+    const reads = new Map<string, number>();
+    const idx = new CodexRolloutIndex(root, async (f) => { reads.set(f, (reads.get(f) ?? 0) + 1); return readRolloutHead(f); });
+    await Promise.all([idx.refresh(), idx.refresh(), idx.refresh()]);
+    expect([...reads.values()].every((n) => n === 1)).toBe(true);
+    expect(reads.size).toBe(5);
+    expect(idx.list()).toHaveLength(3);
+  });
+
+  it('importBlockReason: archived in Codex or folder gone → the Korean reason; otherwise null', async () => {
+    expect(await importBlockReason({ cwd: work })).toBeNull();
+    expect(await importBlockReason({ cwd: path.join(work, 'gone') })).toBe(CWD_MISSING_NOTICE);
+    expect(CWD_MISSING_NOTICE).toBe('폴더가 없어 이어서 보낼 수 없음');
+    expect(await importBlockReason({ cwd: work, codexArchived: true })).toBe(CODEX_ARCHIVED_NOTICE);
   });
 
   it('non-exec threads carry no codexExec flag', async () => {
@@ -149,6 +168,28 @@ describe('SessionIndex with codexRoot', () => {
     const own = { sessionId: CLI_ID, account: 'gpt' as const, engine: 'codex' as const, cwd: work, projectDir: '', file: '', title: 'deck title', lastModified: 1, sizeBytes: 0 };
     const sessions = index.projects([own]).find((p) => p.cwd === work)!.sessions;
     expect(sessions.filter((s) => s.sessionId === CLI_ID)).toEqual([own]);
+  });
+});
+
+describe('SessionIndex with codexArchivedRoot', () => {
+  it('Codex-archived threads stay archived through the deck meta overlay; threads outside pinned projects get their own group', async () => {
+    await writeFixtures(root, work);
+    const arch = path.join(base, 'archived_sessions');
+    const other = path.join(base, 'Desktop');
+    await fs.mkdir(arch);
+    await fs.mkdir(other);
+    const AID = '01a0f2d3-0000-7c92-aeea-0000000000a1';
+    await fs.writeFile(path.join(arch, `rollout-2026-09-01T10-00-00-${AID}.jsonl`), jsonl([meta(AID, other), user('old idea')]));
+    const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
+    await fs.writeFile(path.join(base, 'p.json'), JSON.stringify([{ cwd: work, name: 'work' }]));
+    const meta0 = { title: () => null, isArchived: () => false };
+    const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root, codexArchivedRoot: arch, meta: meta0 });
+    await index.refresh();
+    const projects = index.projects();
+    expect(projects[0]).toMatchObject({ cwd: work, pinned: true });
+    const desk = projects.find((p) => p.cwd === other);
+    expect(desk).toMatchObject({ name: 'Desktop', pinned: false });
+    expect(desk?.sessions[0]).toMatchObject({ sessionId: AID, archived: true, codexArchived: true });
   });
 });
 

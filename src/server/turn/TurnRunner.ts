@@ -20,7 +20,7 @@ import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
-import { liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
+import { importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
 import { elsewhereNotice } from '../sessions/elsewhereNotice';
 import { backupDivergedAndMove } from '../sessions/SessionFork';
 import { isAncestor, moveSession } from '../sessions/SessionMover';
@@ -987,6 +987,9 @@ export class TurnRunner {
       state = deps.store.get(p.sessionId);
       const imported = state ? null : deps.index.codexImport(p.sessionId);
       if (imported) {
+        // Folder gone (codex cannot spawn there) or archived in Codex (resume by id is not assured): view only.
+        const blocked = await importBlockReason(imported);
+        if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
         // A Codex Desktop / CLI thread: resumed in its own cwd under deck's sandbox; stored as a deck Codex session after this turn.
         state = {
           engine: 'codex', sessionId: imported.sessionId, cwd: imported.cwd, lastTurnAtMs: null, justCompacted: false,

@@ -14,7 +14,7 @@ import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
 import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
-import { liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
+import { importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
@@ -673,6 +673,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               if (t) replay(ws, t, sessionId);
               const age = await rolloutActiveAgeMs(imported.file);
               if (age !== null) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: liveRolloutNotice(imported.title, age) });
+              // View only (folder gone / archived in Codex): said up front, not only when a send is refused.
+              const blocked = await importBlockReason(imported);
+              if (blocked) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: blocked });
               return;
             }
             if (!entry) { send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }

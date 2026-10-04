@@ -12,14 +12,18 @@ const ROLLOUT = /^rollout-.*\.jsonl$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Bytes read from a rollout's start to find its meta and first prompt (Desktop prepends ~100 KB of context). */
 const HEAD_BYTES = 2 * 1024 * 1024;
-/** A rollout touched this recently is probably still open in Codex Desktop / CLI. */
 const UNTITLED = '(제목 없음)';
+/** Heads read in parallel on a cold scan (~1200 rollouts at first start). */
+const READ_CONCURRENCY = 8;
 
+/** A rollout touched this recently is probably still open in Codex Desktop / CLI. */
 export const LIVE_ROLLOUT_MS = 2 * 60 * 1000;
-/** `codex exec` (automation) threads are listed only while written this recently. */
-export const EXEC_RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** `exec`: a non-interactive `codex exec` run (listed only while recent, tagged 자동 실행). */
+/** Why an imported thread can be viewed but not continued from deck. */
+export const CWD_MISSING_NOTICE = '폴더가 없어 이어서 보낼 수 없음';
+export const CODEX_ARCHIVED_NOTICE = 'Codex 에서 보관한 대화라 이어서 보낼 수 없음 — Codex 앱에서 보관 해제하면 이어갈 수 있습니다';
+
+/** `exec`: a non-interactive `codex exec` run (tagged 자동 실행). */
 export type RolloutHead = { threadId: string; cwd: string; title: string | null; exec?: true };
 
 /** Codex Desktop wraps attachments as `# Files mentioned by the user: … ## My request[ for Codex]:` then the prompt. */
@@ -37,9 +41,9 @@ function titleOf(text: string): string | null {
 /**
  * Streams the first HEAD_BYTES of a rollout: `session_meta` (thread id, cwd) and the first real user prompt.
  * Null for sub-agent threads (Codex Desktop spawns hundreds; they are not conversations) and unusable files.
- * `codex exec` runs are returned with `exec: true`; `stopAtExec` returns those right after the meta line (no prompt scan).
+ * `codex exec` runs are returned with `exec: true`.
  */
-export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES, opts: { stopAtExec?: boolean } = {}): Promise<RolloutHead | null> {
+export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES): Promise<RolloutHead | null> {
   const stream = createReadStream(file, { encoding: 'utf8', start: 0, end: maxBytes - 1 });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   let meta: { threadId: string; cwd: string; exec?: true } | null = null;
@@ -57,7 +61,6 @@ export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES, opts:
         if (!id || !UUID.test(id) || typeof p.cwd !== 'string' || !p.cwd.startsWith('/')) return null;
         if (p.thread_source === 'subagent' || (p.source !== undefined && typeof p.source !== 'string')) return null;
         meta = { threadId: id, cwd: p.cwd, ...(p.source === 'exec' || p.originator === 'codex_exec' ? { exec: true as const } : {}) };
-        if (opts.stopAtExec && meta.exec) break;
         continue;
       }
       if (r.type === 'response_item' && p.type === 'message' && p.role === 'user' && Array.isArray(p.content)) {
@@ -79,69 +82,87 @@ export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES, opts:
   return meta ? { ...meta, title } : null;
 }
 
-async function rolloutFiles(root: string): Promise<{ file: string; mtimeMs: number; size: number }[]> {
+type RolloutFile = { file: string; mtimeMs: number; size: number };
+
+/** The rollout files directly in `dir`, stat'ed in parallel. */
+async function rolloutsIn(dir: string): Promise<RolloutFile[]> {
+  const names = (await fs.readdir(dir).catch(() => [] as string[])).filter((n) => ROLLOUT.test(n));
+  const stats = await Promise.all(names.map((n) => fs.stat(path.join(dir, n)).catch(() => null)));
+  return names.flatMap((n, i) => { const st = stats[i]; return st?.isFile() ? [{ file: path.join(dir, n), mtimeMs: st.mtimeMs, size: st.size }] : []; });
+}
+
+/** `sessions/YYYY/MM/DD/rollout-*.jsonl`. */
+async function rolloutFiles(root: string): Promise<RolloutFile[]> {
   const subdirs = async (p: string) => (await fs.readdir(p, { withFileTypes: true }).catch(() => [])).filter((d) => d.isDirectory()).map((d) => path.join(p, d.name));
-  const out: { file: string; mtimeMs: number; size: number }[] = [];
-  for (const y of await subdirs(root)) {
-    for (const m of await subdirs(y)) {
-      for (const d of await subdirs(m)) {
-        for (const name of await fs.readdir(d).catch(() => [] as string[])) {
-          if (!ROLLOUT.test(name)) continue;
-          const file = path.join(d, name);
-          const st = await fs.stat(file).catch(() => null);
-          if (st?.isFile()) out.push({ file, mtimeMs: st.mtimeMs, size: st.size });
-        }
-      }
-    }
-  }
-  return out;
+  const days: string[] = [];
+  for (const y of await subdirs(root)) for (const m of await subdirs(y)) days.push(...(await subdirs(m)));
+  return (await Promise.all(days.map(rolloutsIn))).flat();
 }
 
 /**
- * Codex Desktop / CLI threads under `~/.codex/sessions` (read-only), as Codex sidebar entries.
- * A rollout's head never changes once written, so it is read once per file and kept while the file
- * does not shrink; a rescan only stats. Nothing else under `~/.codex` is ever opened.
+ * Codex Desktop / CLI threads under `~/.codex/sessions` and `~/.codex/archived_sessions` (flat; listed as
+ * 보관됨), read-only, as Codex sidebar entries. Every user thread is listed — `codex exec` runs (자동 실행)
+ * and threads whose folder is gone (view only) included; sub-agent threads are not (they are not conversations).
+ * A rollout's head never changes once written, so it is read once per file and kept while the file does not
+ * shrink; a rescan only stats. Nothing else under `~/.codex` is ever opened.
  */
 export class CodexRolloutIndex {
   private heads = new Map<string, { size: number; head: RolloutHead | null }>();
   private entries: SessionEntry[] = [];
   private byId = new Map<string, SessionEntry>();
+  private running: Promise<void> | null = null;
+  private again: Promise<void> | null = null;
 
-  constructor(private readonly root: string, private readonly readHead: typeof readRolloutHead = readRolloutHead, private readonly now: () => number = Date.now) {}
+  constructor(private readonly root: string, private readonly readHead: typeof readRolloutHead = readRolloutHead, private readonly archivedRoot: string | null = null) {}
 
-  async refresh(): Promise<void> {
-    const nowMs = this.now();
-    const files = await rolloutFiles(this.root);
-    const live = new Set<string>();
-    const byId = new Map<string, SessionEntry>();
-    // Threads whose folder is gone (e.g. temp dirs of scripted `codex exec` runs) cannot be continued.
+  /** Overlapping calls share one scan, plus at most one more after it (a write since may need it). */
+  refresh(): Promise<void> {
+    if (!this.running) {
+      this.running = this.scan().finally(() => { this.running = null; });
+      return this.running;
+    }
+    return (this.again ??= this.running.then(() => { this.again = null; return this.refresh(); }));
+  }
+
+  private async scan(): Promise<void> {
+    const [live, archived] = await Promise.all([rolloutFiles(this.root), this.archivedRoot ? rolloutsIn(this.archivedRoot) : Promise.resolve([])]);
+    const files = [...live.map((f) => ({ ...f, archived: false })), ...archived.map((f) => ({ ...f, archived: true }))];
+    // A head without a prompt yet (thread just started) is retried once the file grows.
+    const stale = files.filter((f) => {
+      const c = this.heads.get(f.file);
+      return !c || f.size < c.size || (c.head && !c.head.title && f.size !== c.size);
+    });
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, stale.length) }, async () => {
+      while (next < stale.length) {
+        const f = stale[next++]!;
+        this.heads.set(f.file, { size: f.size, head: await this.readHead(f.file, HEAD_BYTES).catch(() => null) });
+      }
+    }));
     const dirOk = new Map<string, Promise<boolean>>();
     const cwdExists = (cwd: string) => {
       let v = dirOk.get(cwd);
       if (!v) { v = fs.stat(cwd).then((st) => st.isDirectory(), () => false); dirOk.set(cwd, v); }
       return v;
     };
+    const byId = new Map<string, SessionEntry>();
     for (const f of files) {
-      live.add(f.file);
-      let cached = this.heads.get(f.file);
-      // A head without a prompt yet (thread just started) is retried once the file grows (a write makes an old exec one recent).
-      if (!cached || f.size < cached.size || (cached.head && !cached.head.title && f.size !== cached.size)) {
-        // An exec rollout already too old to list needs only its meta line, not the 2 MB prompt scan.
-        const old = nowMs - f.mtimeMs > EXEC_RECENT_MS;
-        cached = { size: f.size, head: await this.readHead(f.file, HEAD_BYTES, old ? { stopAtExec: true } : {}).catch(() => null) };
-        this.heads.set(f.file, cached);
-      }
-      const h = cached.head;
-      if (!h || (h.exec && nowMs - f.mtimeMs > EXEC_RECENT_MS) || !(await cwdExists(h.cwd))) continue;
+      const h = this.heads.get(f.file)?.head;
+      if (!h) continue;
       const prev = byId.get(h.threadId);
       if (prev && prev.lastModified >= f.mtimeMs) continue;
+      // Threads whose folder is gone (e.g. temp dirs of scripted `codex exec` runs) can be read, not continued.
+      const gone = !(await cwdExists(h.cwd));
       byId.set(h.threadId, {
         sessionId: h.threadId, account: 'gpt', engine: 'codex', cwd: h.cwd, projectDir: path.dirname(f.file), file: f.file,
         title: h.title ?? UNTITLED, lastModified: f.mtimeMs, sizeBytes: f.size, imported: true,
         ...(h.exec ? { codexExec: true } : {}),
+        ...(f.archived ? { archived: true, codexArchived: true } : {}),
+        ...(gone ? { cwdMissing: true } : {}),
       });
     }
-    for (const k of this.heads.keys()) if (!live.has(k)) this.heads.delete(k);
+    const seen = new Set(files.map((f) => f.file));
+    for (const k of this.heads.keys()) if (!seen.has(k)) this.heads.delete(k);
     this.byId = byId;
     this.entries = [...byId.values()];
   }
@@ -153,6 +174,13 @@ export class CodexRolloutIndex {
   lookup(threadId: string): SessionEntry | null {
     return this.byId.get(threadId) ?? null;
   }
+}
+
+/** Why deck cannot continue an imported thread (checked live: a folder may come back), or null if it can. */
+export async function importBlockReason(e: Pick<SessionEntry, 'cwd' | 'codexArchived'>): Promise<string | null> {
+  if (e.codexArchived) return CODEX_ARCHIVED_NOTICE;
+  const ok = await fs.stat(e.cwd).then((st) => st.isDirectory(), () => false);
+  return ok ? null : CWD_MISSING_NOTICE;
 }
 
 /** How long ago a rollout was written, if within LIVE_ROLLOUT_MS (Codex Desktop / CLI probably has it open); else null. */

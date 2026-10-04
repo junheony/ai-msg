@@ -153,18 +153,19 @@ export class SessionIndex {
   /**
    * `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list.
    * `codexRoot`: `~/.codex/sessions` — Codex Desktop / CLI threads listed for import; absent = none.
+   * `codexArchivedRoot`: `~/.codex/archived_sessions` — threads archived in Codex, listed under 보관됨.
    * `home`: Claude Desktop's profile — between truly diverged copies with equal timestamps, deck's copy wins.
    */
-  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; meta?: SessionMetaView; home?: Account | null }) {
-    this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot) : null;
+  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; codexArchivedRoot?: string; meta?: SessionMetaView; home?: Account | null }) {
+    this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot, undefined, opts.codexArchivedRoot ?? null) : null;
   }
 
-  /** A deck rename wins over the transcript's title; archived entries carry the flag. Unchanged entries are returned as is. */
-  private decorate<T extends { sessionId: string; title: string; archived?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink }>(e: T): T {
+  /** A deck rename wins over the transcript's title; archived entries (deck's or Codex's) carry the flag. Unchanged entries are returned as is. */
+  private decorate<T extends { sessionId: string; title: string; archived?: boolean; codexArchived?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink }>(e: T): T {
     const meta = this.opts.meta;
     if (!meta) return e;
     const title = meta.title(e.sessionId);
-    const archived = meta.isArchived(e.sessionId);
+    const archived = meta.isArchived(e.sessionId) || !!e.codexArchived;
     const prev = meta.prev?.(e.sessionId) ?? null;
     const next = meta.next?.(e.sessionId) ?? null;
     const branch = meta.branchOf?.(e.sessionId) ?? null;
