@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { EngineMark, engineOf } from './EngineMark';
 import { touchEnterIsNewline } from './Chat';
+import { useAutoGrow } from '../useAutoGrow';
 
 const RECENT_CARDS = 4;
 
@@ -63,12 +64,7 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
   const t = now ?? Date.now();
 
   // Auto-grow: the card follows the text up to the CSS max-height, then the textarea scrolls.
-  useLayoutEffect(() => {
-    const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    if (ta.scrollHeight) ta.style.height = `${ta.scrollHeight}px`;
-  }, [text]);
+  useAutoGrow(taRef, text);
   // Unsent picks: their local previews are released with the screen (a sent turn shows the server copy).
   const unsent = useRef(attachments);
   unsent.current = attachments;

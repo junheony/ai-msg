@@ -25,8 +25,9 @@ import { useIsPhone } from './useIsPhone';
 import { usePrefs } from './usePrefs';
 import { nextTheme } from './prefs';
 import { createSocket } from './ws';
+import { composerOf, focusComposer, routeContext, shouldRouteKey } from './composerFocus';
+import { tabTitle } from './tabTitle';
 
-const TITLE = 'deck';
 const VIEW_KEY = 'deck.sidebarView';
 const HIDDEN_KEY = 'deck.sidebarHidden';
 const UNDO_MS = 10_000;
@@ -45,21 +46,22 @@ function recentSessions(projects: { name: string; sessions: SessionEntry[] }[]):
   for (const p of projects) for (const s of p.sessions) if (!s.archived && !seen.has(s.sessionId)) seen.set(s.sessionId, { ...s, project: p.name });
   return [...seen.values()].sort((a, b) => b.lastModified - a.lastModified);
 }
-/** Tab title: "● deck" while any turn runs; "✓ deck" when one finished while the tab was hidden, until it is shown. */
-function useTabTitle(running: boolean) {
+/** Tab title: "● <chat> — deck" while any turn runs; "✓ …" when one finished while the tab was hidden, until it is shown. */
+function useTabTitle(running: boolean, chat: string | null) {
   const was = useRef(running);
+  const [done, setDone] = useState(false);
   useEffect(() => {
     const finished = was.current && !running;
     was.current = running;
-    if (running) document.title = `● ${TITLE}`;
-    else if (finished && document.hidden) document.title = `✓ ${TITLE}`;
-    else if (!document.hidden || document.title.startsWith('●')) document.title = TITLE;
+    if (running) setDone(false);
+    else if (finished && document.hidden) setDone(true);
   }, [running]);
   useEffect(() => {
-    const onVis = () => { if (!document.hidden && document.title.startsWith('✓')) document.title = TITLE; };
+    const onVis = () => { if (!document.hidden) setDone(false); };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
+  useEffect(() => { document.title = tabTitle(running ? '●' : done ? '✓' : null, chat); }, [running, done, chat]);
 }
 
 export function App() {
@@ -157,7 +159,20 @@ export function App() {
 
   // Only once this socket's hello is in: a send between onopen and hello would be requeued by that hello.
   useQueueRunner(state.panes, state.ready, dispatch, (m) => sock.current?.send(m), state.defaultPermMode);
-  useTabTitle(state.activity.some((a) => a.running) || state.panes.some((p) => p.activeTurnId !== null));
+  useTabTitle(state.activity.some((a) => a.running) || state.panes.some((p) => p.activeTurnId !== null), state.panes.find((p) => p.id === state.activePaneId)?.session?.title ?? null);
+  // Composer focus after opening a chat / 새 채팅 / a pane switch: run after the commit so the pane's textarea exists.
+  // No pane id: whichever pane is active then (a new split's id is only known after the reducer).
+  const [focusReq, setFocusReq] = useState<{ paneId: string | null; n: number } | null>(null);
+  const requestFocus = (paneId: string | null = null) => setFocusReq((r) => ({ paneId, n: (r?.n ?? 0) + 1 }));
+  useEffect(() => { if (focusReq) focusComposer(focusReq.paneId ?? latest.current.activePaneId); }, [focusReq]);
+  useEffect(() => { if (authed) requestFocus(); }, [authed]);
+  // A file dropped outside the chat pane (sidebar, top bar) must never make the browser navigate to it.
+  useEffect(() => {
+    const guard = (e: DragEvent) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); };
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    return () => { window.removeEventListener('dragover', guard); window.removeEventListener('drop', guard); };
+  }, []);
   // PWA: a notification click opens deck at /?session=<id> or, with deck already open, posts the id here.
   const [openReq, setOpenReq] = useState<string | null>(() => new URLSearchParams(window.location.search).get('session'));
   const openById = useRef<(sessionId: string) => boolean>(() => false);
@@ -188,7 +203,12 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       const id = matchShortcut(e, { mac: MAC, typing: isTypingTarget(e.target) });
-      if (!id) return;
+      if (!id) {
+        // Type-to-compose: the key lands in the focused pane's composer (focus moves before the key's default action).
+        const ta = shouldRouteKey(e, routeContext(e.target)) ? composerOf(latest.current.activePaneId) : null;
+        if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); }
+        return;
+      }
       if (hasOpenModal() && id !== 'palette' && id !== 'help' && id !== 'settings') return;
       e.preventDefault();
       onShortcut.current(id);
@@ -238,10 +258,11 @@ export function App() {
     apply({ type: 'open', sessionId, cwd, title, paneId });
     if (sessionId) send({ type: 'open_session', sessionId });
     setDrawer(false);
+    requestFocus(paneId);
   };
   openById.current = (sessionId) => {
     const pane = state.panes.find((p) => p.session?.sessionId === sessionId);
-    if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); return true; }
+    if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); requestFocus(pane.id); return true; }
     const hit = findSession(state.projects, state.desktop, sessionId);
     if (!hit) return false;
     openIn(active.id, sessionId, hit.cwd, hit.title);
@@ -257,6 +278,7 @@ export function App() {
     if (pane?.session) apply({ type: 'clear_pane', paneId });
     dispatch({ type: 'focus_pane', paneId });
     setDrawer(false);
+    requestFocus(paneId);
   };
   const startChat = (paneId: string, cwd: string, name: string, text: string, attachments: UploadedAttachment[] = []) => {
     openIn(paneId, null, cwd, `${name} · 새 세션`);
@@ -276,7 +298,7 @@ export function App() {
     if (next.sessionId !== active.session?.sessionId) openIn(active.id, next.sessionId, next.cwd, next.title);
   };
   const toggleSidebar = () => { if (phone) setDrawer((d) => !d); else setSidebarHidden((h) => !h); };
-  const addPane = () => { if (!phone) dispatch({ type: 'add_pane' }); };
+  const addPane = () => { if (!phone) { dispatch({ type: 'add_pane' }); requestFocus(); } };
   onShortcut.current = (id) => {
     if (id === 'palette') { setHelpOpen(false); setPaletteOpen((o) => !o); }
     else if (id === 'help') { setPaletteOpen(false); setHelpOpen((o) => !o); }
@@ -407,11 +429,11 @@ export function App() {
         <div className="panes" data-count={phone ? 1 : state.panes.length} style={{ '--cols': phone ? 1 : state.panes.length } as CSSProperties}>
           {phone && state.panes.length > 1 && (
             <div className="pane-switch">
-              {state.panes.map((p, i) => <button type="button" key={p.id} className={p.id === active.id ? 'on' : ''} onClick={() => dispatch({ type: 'focus_pane', paneId: p.id })}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
+              {state.panes.map((p, i) => <button type="button" key={p.id} className={p.id === active.id ? 'on' : ''} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
             </div>
           )}
           {(phone ? [active] : state.panes).map((p) => (
-            <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => apply({ type: 'close_pane', paneId: p.id })} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+            <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
               onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} />
           ))}
         </div>

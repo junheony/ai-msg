@@ -181,3 +181,43 @@ describe('Pane (D6)', () => {
     });
   });
 });
+
+describe('Pane: Esc stops the running turn from anywhere in the pane', () => {
+  afterEach(() => { cleanup(); document.body.innerHTML = ''; });
+  const running: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null }, activeTurnId: 't1' };
+  const mount = (active = true) => {
+    const send = vi.fn();
+    render(<Pane pane={running} app={{ pending: [], questions: [], codexAvailable: false }} active={active} closable={false} dispatch={() => {}} send={send} onClose={() => {}} />);
+    return send;
+  };
+
+  it('Esc with nothing focused interrupts the active pane\'s turn (once)', () => {
+    const send = mount();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({ type: 'interrupt', turnId: 't1' });
+  });
+
+  it('the composer\'s own Esc is not doubled', () => {
+    const send = mount();
+    fireEvent.keyDown(screen.getByLabelText('메시지'), { key: 'Escape' });
+    expect(send.mock.calls.filter((c) => (c[0] as ClientMessage).type === 'interrupt')).toHaveLength(1);
+  });
+
+  it('an open menu / dialog takes the Esc first; a field being edited keeps it; an inactive pane ignores it', () => {
+    const send = mount();
+    const menu = document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    document.body.append(menu);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    menu.remove();
+    const input = document.createElement('input');
+    document.body.append(input);
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(send).not.toHaveBeenCalled();
+    cleanup();
+    const send2 = mount(false);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(send2).not.toHaveBeenCalled();
+  });
+});

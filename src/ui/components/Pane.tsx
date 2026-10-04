@@ -13,6 +13,8 @@ import { NewChat } from './NewChat';
 import { OpenInDesktop } from './OpenInDesktop';
 import { SidePanel } from './SidePanel';
 import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
+import { hasOpenPopup } from '../composerFocus';
+import { isTypingTarget } from '../shortcuts';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -164,6 +166,30 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [side, active]);
+  // Stop: ux-state — the queue stays but pauses, so the next message does not fire into the stop.
+  const interrupt = () => {
+    if (!pane.activeTurnId) return;
+    if (pane.queue.length) dispatch({ type: 'queue_pause', paneId: pane.id });
+    send({ type: 'interrupt', turnId: pane.activeTurnId });
+  };
+  const interruptRef = useRef(interrupt);
+  interruptRef.current = interrupt;
+  // Esc stops the running turn from anywhere in the pane (the composer handles its own Esc). Capture phase, so an open
+  // menu / dialog / palette is still on screen and gets the Esc instead; the side panel closes first; a field being
+  // edited (rename, 메시지 편집) keeps its Esc.
+  const turnId = pane.activeTurnId;
+  useEffect(() => {
+    if (!turnId || side) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+      if (hasOpenPopup() || isTypingTarget(e.target)) return;
+      if (!active && !sectionRef.current?.contains(document.activeElement)) return;
+      e.preventDefault();
+      interruptRef.current();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [turnId, side, active]);
   const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
     const box = sectionRef.current?.getBoundingClientRect();
     if (!box) return;
@@ -277,12 +303,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           notices={pane.notices?.filter((n) => n.sessionId === null || n.sessionId === s.sessionId)}
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
           readOnly={entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : null}
-          onInterrupt={() => {
-            if (!pane.activeTurnId) return;
-            // ux-state: stop keeps the queue but pauses it — the next message must not fire into the stop.
-            if (pane.queue.length) dispatch({ type: 'queue_pause', paneId: pane.id });
-            send({ type: 'interrupt', turnId: pane.activeTurnId });
-          }}
+          onInterrupt={interrupt}
           onStopBackground={(turnId) => send({ type: 'interrupt', turnId })}
           onStopTask={(taskId) => { if (pane.bg) send({ type: 'stop_task', turnId: pane.bg.turnId, taskId }); }}
           runStartedAt={pane.runStartedAt}
