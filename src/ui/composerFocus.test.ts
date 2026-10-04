@@ -1,34 +1,34 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { canTakeFocus, composerOf, focusComposer, routeContext, shouldRouteKey } from './composerFocus';
+import { canTakeFocus, composerOf, focusComposer, routeContext, routeKey } from './composerFocus';
 
 const key = (k: string, mods: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean; isComposing: boolean; keyCode: number; defaultPrevented: boolean }> = {}) =>
   ({ key: k, metaKey: false, ctrlKey: false, altKey: false, ...mods });
-const idle = { typing: false, popupOpen: false, interactive: false };
+const idle = { typing: false, popupOpen: false };
 
-describe('shouldRouteKey (type-to-compose)', () => {
-  it('routes printable keys when nothing editable has focus', () => {
-    for (const k of ['a', 'Z', '1', '?', '한', '😀']) expect(shouldRouteKey(key(k), idle)).toBe(true);
+describe('routeKey (type-to-compose)', () => {
+  it('printable ASCII is typed into the composer', () => {
+    for (const k of ['a', 'Z', '1', '?', '~']) expect(routeKey(key(k), idle)).toBe('type');
   });
-  it('ignores non-printable keys', () => {
-    for (const k of ['Enter', 'Tab', 'Escape', 'ArrowUp', 'F5', 'Dead', 'Process', 'Shift', 'Backspace']) expect(shouldRouteKey(key(k), idle)).toBe(false);
+  it('IME / non-ASCII keys only move focus (swallowed), so a composition never garbles', () => {
+    for (const k of ['ㅎ', '한', 'é', '😀', 'Process']) expect(routeKey(key(k), idle)).toBe('focus');
+    expect(routeKey(key('a', { isComposing: true }), idle)).toBe('focus');
+    expect(routeKey(key('Unidentified', { keyCode: 229 }), idle)).toBe('focus');
   });
-  it('ignores ⌘ / Ctrl / Alt and IME composition', () => {
-    expect(shouldRouteKey(key('k', { metaKey: true }), idle)).toBe(false);
-    expect(shouldRouteKey(key('k', { ctrlKey: true }), idle)).toBe(false);
-    expect(shouldRouteKey(key('k', { altKey: true }), idle)).toBe(false);
-    expect(shouldRouteKey(key('a', { isComposing: true }), idle)).toBe(false);
-    expect(shouldRouteKey(key('a', { keyCode: 229 }), idle)).toBe(false);
-    expect(shouldRouteKey(key('a', { defaultPrevented: true }), idle)).toBe(false);
+  it('Space keeps its page behaviour (scroll / press the focused button); non-printable keys are left alone', () => {
+    for (const k of [' ', 'Enter', 'Tab', 'Escape', 'ArrowUp', 'F5', 'Dead', 'Shift', 'Backspace']) expect(routeKey(key(k), idle)).toBeNull();
+  });
+  it('ignores ⌘ / Ctrl / Alt and handled keys', () => {
+    expect(routeKey(key('k', { metaKey: true }), idle)).toBeNull();
+    expect(routeKey(key('k', { ctrlKey: true }), idle)).toBeNull();
+    expect(routeKey(key('k', { altKey: true }), idle)).toBeNull();
+    expect(routeKey(key('ㅎ', { altKey: true }), idle)).toBeNull();
+    expect(routeKey(key('a', { defaultPrevented: true }), idle)).toBeNull();
   });
   it('ignores keys while typing elsewhere or with a palette / menu / dialog open', () => {
-    expect(shouldRouteKey(key('a'), { ...idle, typing: true })).toBe(false);
-    expect(shouldRouteKey(key('a'), { ...idle, popupOpen: true })).toBe(false);
-  });
-  it('a space on a focused button presses it; a letter still routes', () => {
-    expect(shouldRouteKey(key(' '), { ...idle, interactive: true })).toBe(false);
-    expect(shouldRouteKey(key(' '), idle)).toBe(true);
-    expect(shouldRouteKey(key('a'), { ...idle, interactive: true })).toBe(true);
+    expect(routeKey(key('a'), { ...idle, typing: true })).toBeNull();
+    expect(routeKey(key('ㅎ', { keyCode: 229 }), { ...idle, typing: true })).toBeNull();
+    expect(routeKey(key('a'), { ...idle, popupOpen: true })).toBeNull();
   });
 });
 
@@ -36,8 +36,8 @@ describe('composer focus', () => {
   afterEach(() => { document.body.innerHTML = ''; });
   const setup = () => {
     document.body.innerHTML = `
-      <section data-testid="pane-p1"><div class="composer"><textarea id="c1">draft</textarea></div><textarea id="edit"></textarea><button id="b">x</button></section>
-      <section data-testid="pane-p2"><div class="newchat"><textarea id="c2"></textarea></div></section>`;
+      <section data-pane="p1"><div class="composer"><textarea id="c1">draft</textarea></div><textarea id="edit"></textarea><button id="b">x</button></section>
+      <section data-pane="p2"><div class="newchat"><textarea id="c2"></textarea></div></section>`;
     return (id: string) => document.getElementById(id) as HTMLTextAreaElement;
   };
 
@@ -63,9 +63,12 @@ describe('composer focus', () => {
     expect(canTakeFocus()).toBe(false);
     expect(focusComposer('p1', { fine: true })).toBe(false);
     expect(document.activeElement).toBe($('edit'));
-    // From another composer or a button: fine.
+    // Another pane's composer keeps its caret; the target composer itself, or a button just clicked: fine.
     $('c2').focus();
-    expect(canTakeFocus()).toBe(true);
+    expect(canTakeFocus()).toBe(false);
+    expect(focusComposer('p1', { fine: true })).toBe(false);
+    expect(document.activeElement).toBe($('c2'));
+    expect(canTakeFocus(document, $('c2'))).toBe(true);
     $('b').focus();
     expect(canTakeFocus()).toBe(true);
     const menu = document.createElement('div');
@@ -79,10 +82,9 @@ describe('composer focus', () => {
     expect(focusComposer('p1', { fine: true })).toBe(false);
   });
 
-  it('routeContext reads typing / popups / buttons from the DOM', () => {
+  it('routeContext reads typing / popups from the DOM', () => {
     const $ = setup();
-    expect(routeContext(document.body)).toEqual({ typing: false, popupOpen: false, interactive: false });
+    expect(routeContext(document.body)).toEqual({ typing: false, popupOpen: false });
     expect(routeContext($('edit')).typing).toBe(true);
-    expect(routeContext($('b')).interactive).toBe(true);
   });
 });

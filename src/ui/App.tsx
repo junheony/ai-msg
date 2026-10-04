@@ -25,7 +25,7 @@ import { useIsPhone } from './useIsPhone';
 import { usePrefs } from './usePrefs';
 import { nextTheme } from './prefs';
 import { createSocket } from './ws';
-import { composerOf, focusComposer, routeContext, shouldRouteKey } from './composerFocus';
+import { composerOf, focusComposer, routeContext, routeKey } from './composerFocus';
 import { tabTitle } from './tabTitle';
 
 const VIEW_KEY = 'deck.sidebarView';
@@ -205,8 +205,13 @@ export function App() {
       const id = matchShortcut(e, { mac: MAC, typing: isTypingTarget(e.target) });
       if (!id) {
         // Type-to-compose: the key lands in the focused pane's composer (focus moves before the key's default action).
-        const ta = shouldRouteKey(e, routeContext(e.target)) ? composerOf(latest.current.activePaneId) : null;
-        if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); }
+        // An IME key only moves focus (and is swallowed) so the composition never garbles.
+        const how = routeKey(e, routeContext(e.target));
+        const ta = how ? composerOf(latest.current.activePaneId) : null;
+        if (!ta) return;
+        if (how === 'focus') e.preventDefault();
+        ta.focus({ preventScroll: true });
+        ta.setSelectionRange(ta.value.length, ta.value.length);
         return;
       }
       if (hasOpenModal() && id !== 'palette' && id !== 'help' && id !== 'settings') return;

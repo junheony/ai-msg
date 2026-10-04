@@ -220,6 +220,48 @@ describe('Pane: Esc stops the running turn from anywhere in the pane', () => {
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(send2).not.toHaveBeenCalled();
   });
+
+  it('Esc that cancels a pin drag (swallowed in the capture phase, like pinOrder) does not stop the turn', () => {
+    const send = mount();
+    const drag = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); } };
+    window.addEventListener('keydown', drag, true); // added at drag start, after the pane mounted
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    window.removeEventListener('keydown', drag, true);
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('Esc that closes the usage popover (or the phone drawer) does not stop the turn, even when its handler removes it first', () => {
+    const send = mount();
+    const pop = document.createElement('div');
+    pop.setAttribute('role', 'tooltip');
+    document.body.append(pop);
+    // the popover's own handler runs before the pane's bubble listener and takes it off screen without preventDefault
+    const close = (e: KeyboardEvent) => { if (e.key === 'Escape') pop.remove(); };
+    document.addEventListener('keydown', close);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    document.removeEventListener('keydown', close);
+    expect(send).not.toHaveBeenCalled();
+    const drawer = document.createElement('div');
+    drawer.className = 'sidebar-wrap drawer open';
+    document.body.append(drawer);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    drawer.remove();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('focus outside the pane (top bar, sidebar) keeps Esc away from the turn', () => {
+    const send = mount();
+    const btn = document.createElement('button');
+    document.body.append(btn);
+    btn.focus();
+    fireEvent.keyDown(btn, { key: 'Escape' });
+    expect(send).not.toHaveBeenCalled();
+    (screen.getByTestId('pane-p1').querySelector('button') as HTMLButtonElement).focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('Pane: chat title menu uses the sidebar actions', () => {

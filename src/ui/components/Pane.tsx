@@ -35,6 +35,9 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
   return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
 }
 
+/** Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the folder picker. */
+const ESC_OWNERS = '[role="tooltip"], .sidebar-wrap.drawer.open, .folder-picker';
+
 /** Sends `text` (+ attachments) as the pane's next turn: `sent` for the reducer, `send` for the server. `ref`: a queued message's earlier clientRef (kept, so the server's acceptedRefs can tell whether it went in). */
 export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: (m: ClientMessage) => void, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string): void {
   const s = pane.session;
@@ -185,21 +188,28 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   };
   const interruptRef = useRef(interrupt);
   interruptRef.current = interrupt;
-  // Esc stops the running turn from anywhere in the pane (the composer handles its own Esc). Capture phase, so an open
-  // menu / dialog / palette is still on screen and gets the Esc instead; the side panel closes first; a field being
-  // edited (rename, 메시지 편집) keeps its Esc.
+  // Esc stops the running turn from anywhere in the pane (the composer handles its own Esc). Whatever else owns the
+  // Esc goes first: the capture phase only notes whether something was open (a menu / dialog / palette / popover /
+  // the phone drawer, still on screen before its own handler closes it); the stop happens in the bubble phase, so a
+  // handler that took the Esc (preventDefault, or a pin drag swallowing it in capture) wins. A field being edited
+  // keeps its Esc; focus must be in this pane, or nowhere (then only the active pane stops).
   const turnId = pane.activeTurnId;
   useEffect(() => {
     if (!turnId || side) return;
+    let owned = false;
+    const note = (e: KeyboardEvent) => { if (e.key === 'Escape') owned = hasOpenPopup() || document.querySelector(ESC_OWNERS) !== null; };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
-      if (hasOpenPopup() || isTypingTarget(e.target)) return;
-      if (!active && !sectionRef.current?.contains(document.activeElement)) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || owned) return;
+      if (isTypingTarget(e.target)) return;
+      const a = document.activeElement;
+      const nowhere = a === null || a === document.body;
+      if (nowhere ? !active : !sectionRef.current?.contains(a)) return;
       e.preventDefault();
       interruptRef.current();
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', note, true);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', note, true); window.removeEventListener('keydown', onKey); };
   }, [turnId, side, active]);
   const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
     const box = sectionRef.current?.getBoundingClientRect();
@@ -289,7 +299,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     return { title: id === pane.handoffFrom?.sessionId && !t.cwd ? pane.handoffFrom.title : t.title, open: () => onOpenSession?.(id, t.cwd ?? s.cwd, t.title) };
   };
   return (
-    <section ref={sectionRef} className={`pane ${active ? 'active' : ''}${side && s ? ' with-side' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
+    <section ref={sectionRef} className={`pane ${active ? 'active' : ''}${side && s ? ' with-side' : ''}`} data-testid={`pane-${pane.id}`} data-pane={pane.id} onMouseDownCapture={focus} onFocusCapture={focus}>
       <SidePanelContext.Provider value={s ? openSide : null}>
       {s ? (
         <Chat

@@ -148,6 +148,28 @@ function mockMatchMedia(initialPhone: boolean) {
   return { setPhone: (v: boolean) => act(() => { matches = v; listeners.forEach((cb) => cb()); }) };
 }
 
+describe('App type-to-compose', () => {
+  beforeEach(() => { localStorage.clear(); sock.frames = []; sock.onMessage = null; vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 }))); });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  it('ASCII lands in the active composer; a Korean / IME key only moves focus and is swallowed; Space is left to the page', async () => {
+    await boot();
+    openSession('one');
+    const ta = within(lastPane()).getByLabelText('메시지');
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(fireEvent.keyDown(document.body, { key: ' ' })).toBe(true);
+    expect(document.activeElement).not.toBe(ta);
+    expect(fireEvent.keyDown(document.body, { key: 'a' })).toBe(true); // default kept: the browser types it into the composer
+    expect(document.activeElement).toBe(ta);
+    ta.blur();
+    expect(fireEvent.keyDown(document.body, { key: 'Process', keyCode: 229 })).toBe(false);
+    expect(document.activeElement).toBe(ta);
+    ta.blur();
+    expect(fireEvent.keyDown(document.body, { key: 'ㅎ' })).toBe(false);
+    expect(document.activeElement).toBe(ta);
+  });
+});
+
 describe('App phone layout (D10)', () => {
   beforeEach(() => {
     localStorage.clear(); // ux-state: the app restores its layout from localStorage
