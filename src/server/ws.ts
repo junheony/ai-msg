@@ -14,7 +14,7 @@ import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
 import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
-import { importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
+import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
@@ -511,8 +511,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     };
     void (async () => {
       try {
-        // Review M8: the working directory must exist before a CLI is started in it.
-        if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
+        // Review M8: the working directory must exist before a CLI is started in it (an existing session: same words as importBlockReason).
+        if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: msg.sessionId ? `${CWD_MISSING_NOTICE}: ${msg.cwd}` : `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
         // F1: a new session may only start inside the home dir (realpath, so a symlink cannot escape it).
         // The checked real path is the one used (review fix 3): a symlink swapped after the check cannot redirect the run.
         let runCwd = msg.cwd;

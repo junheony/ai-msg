@@ -276,6 +276,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           nextSession={link(entry?.nextSession ?? null)}
           notices={pane.notices?.filter((n) => n.sessionId === null || n.sessionId === s.sessionId)}
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
+          readOnly={entry?.imported ? (entry.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : null) : null}
           onInterrupt={() => {
             if (!pane.activeTurnId) return;
             // ux-state: stop keeps the queue but pauses it — the next message must not fire into the stop.

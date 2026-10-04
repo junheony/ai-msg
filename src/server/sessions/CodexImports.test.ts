@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { CODEX_ARCHIVED_NOTICE, CWD_MISSING_NOTICE, CodexRolloutIndex, importBlockReason, readRolloutHead, rolloutRecentlyActive } from './CodexImports';
+import { CODEX_ARCHIVED_NOTICE, CWD_MISSING_NOTICE, CodexRolloutIndex, importBlockReason, isDeckTestCwd, readRolloutHead, rolloutRecentlyActive } from './CodexImports';
 import { SessionIndex } from './SessionIndex';
 import { CLI_ID, DESKTOP_ID, GONE_ID, SUB_ID, assistant, jsonl, meta, user, writeFixtures } from './codexFixtures';
 
@@ -134,9 +134,34 @@ describe('CodexRolloutIndex', () => {
     expect(idx.list()).toHaveLength(3);
   });
 
+  it('leaves out deck e2e threads (deck-e2e* under a temp root), not other temp-dir threads', async () => {
+    const dir = path.join(root, '2026', '10', '04');
+    await fs.mkdir(dir, { recursive: true });
+    const E2E = '01a0f2d3-0000-7c92-aeea-0000000000e9';
+    const TMP = '01a0f2d3-0000-7c92-aeea-0000000000e8';
+    await fs.writeFile(path.join(dir, `rollout-a-${E2E}.jsonl`), jsonl([meta(E2E, path.join(os.tmpdir(), 'deck-e2e-work-AbC123')), user('e2e')]));
+    await fs.writeFile(path.join(dir, `rollout-b-${TMP}.jsonl`), jsonl([meta(TMP, '/private/tmp'), user('scratch')]));
+    const idx = new CodexRolloutIndex(root);
+    await idx.refresh();
+    expect(idx.lookup(E2E)).toBeNull();
+    expect(idx.lookup(TMP)).toMatchObject({ title: 'scratch' });
+  });
+
+  it('isDeckTestCwd: deck-e2e top folder under /tmp, /private/tmp, os.tmpdir() or macOS /var/folders/*/*/T only', () => {
+    expect(isDeckTestCwd('/private/var/folders/wd/rsjb4x016t5_5fk_j20mcqn40000gn/T/deck-e2e-work-COgPpj')).toBe(true);
+    expect(isDeckTestCwd('/var/folders/wd/x/T/deck-e2e-perm-work-1/sub')).toBe(true);
+    expect(isDeckTestCwd('/tmp/deck-e2e-work-1')).toBe(true);
+    expect(isDeckTestCwd('/private/tmp/deck-e2e-cfg-1')).toBe(true);
+    expect(isDeckTestCwd(path.join(os.tmpdir(), 'deck-e2e-work-z'))).toBe(true);
+    expect(isDeckTestCwd('/private/tmp')).toBe(false);
+    expect(isDeckTestCwd('/tmp/other/deck-e2e-work-1')).toBe(false);
+    expect(isDeckTestCwd('/private/var/folders/wd/x/T/codex-scratch')).toBe(false);
+    expect(isDeckTestCwd('/Users/max/deck-e2e-work-1')).toBe(false);
+  });
+
   it('importBlockReason: archived in Codex or folder gone → the Korean reason; otherwise null', async () => {
     expect(await importBlockReason({ cwd: work })).toBeNull();
-    expect(await importBlockReason({ cwd: path.join(work, 'gone') })).toBe(CWD_MISSING_NOTICE);
+    expect(await importBlockReason({ cwd: path.join(work, 'gone') })).toBe(`${CWD_MISSING_NOTICE}: ${path.join(work, 'gone')}`);
     expect(CWD_MISSING_NOTICE).toBe('폴더가 없어 이어서 보낼 수 없음');
     expect(await importBlockReason({ cwd: work, codexArchived: true })).toBe(CODEX_ARCHIVED_NOTICE);
   });

@@ -260,3 +260,16 @@ describe('Chat · handoff prefill vs. an edited draft', () => {
     expect(box().value).toBe('');
   });
 });
+
+describe('Chat readOnly', () => {
+  afterEach(cleanup);
+  it('disables the composer and shows the reason in place of the placeholder; Enter sends nothing', () => {
+    const onSend = renderChat([], false, vi.fn(), { readOnly: '보관된 Codex 대화라 읽기만 할 수 있어요' });
+    const box = screen.getByLabelText('메시지') as HTMLTextAreaElement;
+    expect(box.disabled).toBe(true);
+    expect(box.placeholder).toBe('보관된 Codex 대화라 읽기만 할 수 있어요');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onSend).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: '보내기' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});

@@ -117,6 +117,8 @@ export type ChatProps = {
   /** Notes / errors about this session no turn owns (e.g. it was just written outside deck): dismissible bars above the transcript. */
   notices?: { message: string; level: 'notice' | 'error' }[];
   onDismissNotice?: (message: string) => void;
+  /** View-only session (e.g. an imported Codex thread whose folder is gone): the composer is disabled and shows this reason. */
+  readOnly?: string | null;
 };
 
 const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
@@ -240,7 +242,7 @@ export function Chat(p: ChatProps) {
   const queueing = p.busy && !!p.onQueue;
   /** A running Claude turn takes a message at its next tool boundary (Codex / Gemini: after the turn). */
   const steering = queueing && !!p.activeTurnId && p.sessionEngine === 'claude';
-  const canSend = hasDraft && (!p.busy || queueing);
+  const canSend = hasDraft && !p.readOnly && (!p.busy || queueing);
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
   const agents = p.agents ?? NO_AGENTS;
   const bgLive = !!p.bg;
@@ -394,7 +396,8 @@ export function Chat(p: ChatProps) {
             onCompositionStart={() => { composing.current = true; }}
             onCompositionEnd={() => { composing.current = false; }}
             onPaste={onPaste}
-            placeholder={queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
+            disabled={!!p.readOnly}
+            placeholder={p.readOnly ? p.readOnly : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
             aria-label="메시지"
             rows={1}
             // Not a form field: keeps iOS from showing its AutoFill (password/card/address) bar above the keyboard.

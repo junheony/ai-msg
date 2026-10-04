@@ -114,12 +114,13 @@ describe('ws: imported Codex threads', () => {
     await c.until((m) => m.type === 'hello');
     c.ws.send(JSON.stringify({ type: 'open_session', sessionId: GONE_ID }));
     expect(await c.until((m) => m.type === 'history')).toMatchObject({ sessionId: GONE_ID, engine: 'codex' });
-    expect(await c.until((m) => m.type === 'turn_notice' && m.message === CWD_MISSING_NOTICE)).toMatchObject({ sessionId: GONE_ID, turnId: '' });
-    // The send's own cwd check (M8) refuses the missing folder; a send naming another, existing folder is refused by the runner.
+    const gone = `${CWD_MISSING_NOTICE}: ${path.join(work, 'deleted-temp-dir')}`;
+    expect(await c.until((m) => m.type === 'turn_notice' && m.message === gone)).toMatchObject({ sessionId: GONE_ID, turnId: '' });
+    // Same words from the send's own cwd check (M8) and, for a send naming another (existing) folder, from the runner.
     c.ws.send(JSON.stringify({ type: 'send', sessionId: GONE_ID, cwd: path.join(work, 'deleted-temp-dir'), text: 'x', clientRef: 'gone' }));
-    expect(await c.until((m) => m.type === 'error')).toMatchObject({ clientRef: 'gone', message: expect.stringContaining('작업 폴더가 없습니다') });
+    expect(await c.until((m) => m.type === 'error')).toMatchObject({ clientRef: 'gone', message: gone });
     c.ws.send(JSON.stringify({ type: 'send', sessionId: GONE_ID, cwd: work, text: 'x', clientRef: 'gone2' }));
-    expect(await c.until((m) => m.type === 'error' && m.message === CWD_MISSING_NOTICE)).toBeTruthy();
+    expect(await c.until((m) => m.type === 'error' && m.message === gone)).toBeTruthy();
     expect(c.got.some((m) => m.type === 'turn_started')).toBe(false);
     c.ws.close();
   });

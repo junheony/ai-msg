@@ -1,5 +1,6 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { SessionEntry } from '../../shared/session-types';
@@ -25,6 +26,16 @@ export const CODEX_ARCHIVED_NOTICE = 'Codex 에서 보관한 대화라 이어서
 
 /** `exec`: a non-interactive `codex exec` run (tagged 자동 실행). */
 export type RolloutHead = { threadId: string; cwd: string; title: string | null; exec?: true };
+
+/** Temp roots deck's e2e harness (tests/e2e) creates its `deck-e2e-*` work dirs under. */
+const TMP_ROOTS = [...new Set(['/tmp', '/private/tmp', os.tmpdir(), (() => { try { return realpathSync(os.tmpdir()); } catch { return os.tmpdir(); } })()].map((r) => r.replace(/\/+$/, '')))];
+const MAC_TMP = /^(?:\/private)?\/var\/folders\/[^/]+\/[^/]+\/T\/(.*)$/;
+
+/** A thread deck's own e2e tests started (cwd in a temp dir whose top folder is `deck-e2e…`): not the user's, never listed. */
+export function isDeckTestCwd(cwd: string): boolean {
+  const rest = MAC_TMP.exec(cwd)?.[1] ?? TMP_ROOTS.map((r) => (cwd.startsWith(`${r}/`) ? cwd.slice(r.length + 1) : null)).find((x) => x !== null);
+  return rest != null && rest.split('/')[0]!.startsWith('deck-e2e');
+}
 
 /** Codex Desktop wraps attachments as `# Files mentioned by the user: … ## My request[ for Codex]:` then the prompt. */
 const REQUEST_MARK = /^## My request[^\n]*:[ \t]*$/m;
@@ -102,7 +113,8 @@ async function rolloutFiles(root: string): Promise<RolloutFile[]> {
 /**
  * Codex Desktop / CLI threads under `~/.codex/sessions` and `~/.codex/archived_sessions` (flat; listed as
  * 보관됨), read-only, as Codex sidebar entries. Every user thread is listed — `codex exec` runs (자동 실행)
- * and threads whose folder is gone (view only) included; sub-agent threads are not (they are not conversations).
+ * and threads whose folder is gone (view only) included; sub-agent threads are not (they are not conversations),
+ * nor deck's own e2e runs (isDeckTestCwd).
  * A rollout's head never changes once written, so it is read once per file and kept while the file does not
  * shrink; a rescan only stats. Nothing else under `~/.codex` is ever opened.
  */
@@ -148,7 +160,7 @@ export class CodexRolloutIndex {
     const byId = new Map<string, SessionEntry>();
     for (const f of files) {
       const h = this.heads.get(f.file)?.head;
-      if (!h) continue;
+      if (!h || isDeckTestCwd(h.cwd)) continue;
       const prev = byId.get(h.threadId);
       if (prev && prev.lastModified >= f.mtimeMs) continue;
       // Threads whose folder is gone (e.g. temp dirs of scripted `codex exec` runs) can be read, not continued.
@@ -180,7 +192,7 @@ export class CodexRolloutIndex {
 export async function importBlockReason(e: Pick<SessionEntry, 'cwd' | 'codexArchived'>): Promise<string | null> {
   if (e.codexArchived) return CODEX_ARCHIVED_NOTICE;
   const ok = await fs.stat(e.cwd).then((st) => st.isDirectory(), () => false);
-  return ok ? null : CWD_MISSING_NOTICE;
+  return ok ? null : `${CWD_MISSING_NOTICE}: ${e.cwd}`;
 }
 
 /** How long ago a rollout was written, if within LIVE_ROLLOUT_MS (Codex Desktop / CLI probably has it open); else null. */
