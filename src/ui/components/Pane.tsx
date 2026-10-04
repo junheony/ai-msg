@@ -199,7 +199,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     let owned = false;
     const note = (e: KeyboardEvent) => { if (e.key === 'Escape') owned = hasOpenPopup() || document.querySelector(ESC_OWNERS) !== null; };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || owned) return;
+      // A held Esc: the first press closes a popup, its auto-repeats must not then stop the turn.
+      if (e.key !== 'Escape' || e.repeat || e.defaultPrevented || e.isComposing || owned) return;
       if (isTypingTarget(e.target)) return;
       const a = document.activeElement;
       const nowhere = a === null || a === document.body;

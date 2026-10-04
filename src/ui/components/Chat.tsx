@@ -387,6 +387,11 @@ export function Chat(p: ChatProps) {
   const onDragLeave = (e: DragEvent<HTMLElement>) => {
     if (!hasFiles(e)) return;
     dragDepth.current = Math.max(0, dragDepth.current - 1);
+    // A child removed mid-drag (a streaming message re-rendering) never sends its leave, so the count can stay up;
+    // the pointer actually leaving the pane's box always ends the overlay.
+    const r = e.currentTarget.getBoundingClientRect();
+    const outside = r.width > 0 && (e.clientX <= r.left || e.clientX >= r.right || e.clientY <= r.top || e.clientY >= r.bottom);
+    if (outside) dragDepth.current = 0;
     if (dragDepth.current === 0) setDrag(false);
   };
   const onDrop = (e: DragEvent<HTMLElement>) => {
