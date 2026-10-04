@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Chat, type ChatProps } from './Chat';
 import { MessageView } from './MessageView';
 import { ToolCallView } from './ToolCallView';
-import { ShareMenu, sessionLink } from './ShareMenu';
+import { useState } from 'react';
+import { useShareActions, sessionLink, type ShareOpts } from './ShareMenu';
 import { copyText } from '../clipboard';
 import type { ChatItem } from '../state';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
@@ -96,7 +97,21 @@ describe('message actions', () => {
   });
 });
 
-describe('ShareMenu', () => {
+
+/** Minimal menu over useShareActions (the real one lives in the chat header's ⋯ menu). */
+function ShareMenu(opts: ShareOpts) {
+  const [open, setOpen] = useState(false);
+  const { actions, done } = useShareActions(opts, () => setOpen(false));
+  return (
+    <div>
+      <button type="button" aria-label="공유" onClick={() => setOpen((o) => !o)} />
+      {done && <span role="status">{done}</span>}
+      {open && <div role="menu">{actions.map((a) => <button key={a.key} type="button" role="menuitem" disabled={a.disabled} onClick={a.run}>{a.label}</button>)}</div>}
+    </div>
+  );
+}
+
+describe('useShareActions', () => {
   const items: ChatItem[] = [{ kind: 'user', text: '질문' }, reply('답변')];
 
   it('대화 복사 copies the conversation markdown; 링크 복사 copies the deck link', async () => {

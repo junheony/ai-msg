@@ -1099,13 +1099,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 
 /* Session 공유 menu (header, top-right). */
-.share { position: relative; display: inline-flex; align-items: center; }
-.share-pop { position: fixed; z-index: 40; overflow-y: auto; min-width: 200px; max-width: calc(100vw - 16px); padding: 4px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
-.share-item { text-align: left; padding: 8px 10px; border-radius: 8px; color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); white-space: nowrap; }
-.share-item:hover:not(:disabled) { background: var(--hover); }
-.share-item:disabled { color: var(--faint); }
 .share-toast { position: absolute; right: 0; top: calc(100% + 6px); z-index: 41; padding: 4px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); color: var(--fg); font-size: calc(12.5px * var(--font-scale, 1)); white-space: nowrap; pointer-events: none; }
-@media (max-width: 720px) { .share-item { min-height: var(--phone-tap); } }
 
 /* === 설정 (SettingsView) === */
 :root[data-width="wide"] { --read-width: 1040px; }
@@ -1518,7 +1512,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* === chat header (Claude parity) ===
    Title centred with the folder as a small second line, chips (권한 / 샌드박스) quietly on the left, the pane's
    buttons and ⋯ on the right. Equal side tracks keep the title on the pane's centre line. */
-.chat-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr); grid-template-areas: "chips main end"; align-items: center; column-gap: 10px; height: 54px; padding: 0 8px 0 12px; }
+.chat-head { display: grid; grid-template-columns: minmax(min-content, 1fr) minmax(0, auto) minmax(min-content, 1fr); grid-template-areas: "chips main end"; align-items: center; column-gap: 10px; height: 54px; padding: 0 8px 0 12px; }
 .chat-head-main { grid-area: main; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; max-width: min(620px, 58cqi); text-align: center; line-height: 1.2; }
 .chat-head-main > .chat-title-wrap { max-width: 100%; }
 .chat-head-main .chat-title { justify-content: center; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; }
@@ -1661,10 +1655,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .sidebar li.active { --row-tint: var(--selected); }
   .sidebar .row-end { display: flex; align-items: center; gap: 4px; position: absolute; top: 0; bottom: 0; right: 0; max-width: 72%; padding: 0 6px 0 30px; border-radius: 0 9px 9px 0; background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); opacity: 0; pointer-events: none; transition: opacity .12s ease; }
   .sidebar .row-end .session-meta { min-width: 0; max-width: none; flex: 0 1 auto; }
-  .sidebar li:hover .row-end, .sidebar li:focus-within .row-end, .sidebar li:has(.row-more-btn[aria-expanded="true"]) .row-end { opacity: 1; pointer-events: auto; }
+  .sidebar li:hover .row-end, .sidebar li:has(:focus-visible) .row-end, .sidebar li:has(.row-more-btn[aria-expanded="true"]) .row-end { opacity: 1; pointer-events: auto; }
   .sidebar li:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--hover); }
   .sidebar li.active:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--selected); }
   .pinned-group ul.pin-reordering .row-end { opacity: 0 !important; }
+  .sidebar li:has(.session-rename) .row-end { display: none; }
 }
 @media (max-width: 1100px), (hover: none) {
   .sidebar li { padding-top: 7px; padding-bottom: 7px; }
