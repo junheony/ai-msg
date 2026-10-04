@@ -160,8 +160,6 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .sidebar { width: 268px; overflow-y: auto; border-right: 1px solid var(--line); padding: 8px 8px 24px; background: var(--sidebar); display: flex; flex-direction: column; gap: 1px; }
 .sidebar-head { display: flex; align-items: center; gap: 2px; padding: 0 0 6px; }
 .sidebar-head .grow { flex: 1; }
-.sidebar-new { display: flex; align-items: center; gap: 8px; height: 34px; margin: 0 0 6px; padding: 0 9px; border-radius: 8px; color: var(--fg-strong); font-size: calc(13.5px * var(--font-scale, 1)); font-weight: 550; flex-shrink: 0; }
-.sidebar-new:hover { background: var(--hover); }
 .session-menu button[aria-disabled="true"] { opacity: .6; cursor: default; }
 .session-menu .menu-note { display: block; max-width: 220px; margin-top: 2px; font-size: calc(11.5px * var(--font-scale, 1)); line-height: 1.35; color: var(--muted); white-space: normal; }
 .session-menu button[aria-disabled="true"]:hover { background: transparent; }
@@ -874,7 +872,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* No bottom padding here: the transcript and the sidebar list run to the screen edge, and the composer / sidebar foot
    keep themselves above the home indicator (see "bottom edge" at the end). */
 .app { box-sizing: border-box; padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0); }
-.sidebar-wrap.drawer { padding-top: env(safe-area-inset-top, 0); box-sizing: border-box; }
+/* The status-bar strip (the top inset) is painted the top bar's colour, so clock / battery sit on the bar itself
+   instead of on a band of page colour above it. Full width: it also covers the side insets in landscape. */
+.app::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: env(safe-area-inset-top, 0); background: var(--sidebar); pointer-events: none; }
+.sidebar-wrap.drawer { padding-top: env(safe-area-inset-top, 0); box-sizing: border-box; background: var(--sidebar); }
 .notify { position: relative; }
 .notify-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 280px; max-width: calc(100vw - 16px); padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); }
 .notify-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 6px; border-radius: 8px; text-align: left; }
@@ -1098,13 +1099,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 
 /* Session 공유 menu (header, top-right). */
-.share { position: relative; display: inline-flex; align-items: center; }
-.share-pop { position: fixed; z-index: 40; overflow-y: auto; min-width: 200px; max-width: calc(100vw - 16px); padding: 4px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
-.share-item { text-align: left; padding: 8px 10px; border-radius: 8px; color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); white-space: nowrap; }
-.share-item:hover:not(:disabled) { background: var(--hover); }
-.share-item:disabled { color: var(--faint); }
 .share-toast { position: absolute; right: 0; top: calc(100% + 6px); z-index: 41; padding: 4px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); color: var(--fg); font-size: calc(12.5px * var(--font-scale, 1)); white-space: nowrap; pointer-events: none; }
-@media (max-width: 720px) { .share-item { min-height: var(--phone-tap); } }
 
 /* === 설정 (SettingsView) === */
 :root[data-width="wide"] { --read-width: 1040px; }
@@ -1125,8 +1120,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @keyframes dictate-pulse { 50% { opacity: .45; } }
 @media (max-width: 720px) { .seg button { height: var(--phone-tap); } .settings-backdrop { padding: 0; align-items: stretch; } .settings { max-height: 100%; border-radius: 0; width: 100%; } }
 .sidebar-foot { display: flex; align-items: center; gap: 4px; }
-.sidebar-foot .settings-open { margin-left: auto; font-size: calc(16px * var(--font-scale, 1)); }
-@media (max-width: 720px) { .settings-open { width: var(--phone-tap); height: var(--phone-tap); } }
 /* Thinking disclosure (collapsed above the reply). */
 .thinking, .thinking-line { margin: 0 0 10px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
 .thinking > summary { cursor: pointer; user-select: none; width: fit-content; }
@@ -1276,8 +1269,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .side-pick { display: flex; flex-direction: column; gap: 8px; padding: 16px; font-size: calc(13px * var(--font-scale, 1)); }
 .side-pick input { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: calc(13px * var(--font-scale, 1)); }
 .side-pick .btn { align-self: flex-start; }
-.icon-btn.side-open { width: auto; padding: 0 8px; font-size: calc(12.5px * var(--font-scale, 1)); }
-.icon-btn.side-open[aria-pressed="true"] { color: var(--fg-strong); background: var(--selected); }
 .code-actions { display: inline-flex; align-items: center; gap: 2px; }
 .file-link { display: inline; padding: 0; font: inherit; color: inherit; text-align: inherit; cursor: pointer; text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
 .file-link:hover { color: var(--accent); }
@@ -1302,13 +1293,14 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-sum { display: none; }
 
 
-/* Sidebar rows on phone + tablet: title on line 1, meta on line 2, the buttons span both lines at the end. */
-@media (max-width: 1100px) {
+/* Sidebar rows on phone + tablet, and on any touch screen (no hover to reveal the meta): title on line 1, meta on
+   line 2, the buttons span both lines at the end. */
+@media (max-width: 1100px), (hover: none) {
   .session-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 2px; }
   .session-row > .session-title, .session-row > .session-rename { grid-column: 1; grid-row: 1; }
-  .sidebar .session-row > .session-meta { grid-column: 1; grid-row: 2; max-width: none; line-height: 1.35; }
-  .session-row > .row-more-btn { grid-column: 2; grid-row: 1 / span 2; }
-  .session-row > .pin-btn { grid-column: 3; grid-row: 1 / span 2; }
+  .sidebar .session-row .session-meta { grid-column: 1; grid-row: 2; max-width: none; line-height: 1.35; }
+  .session-row .row-more-btn { grid-column: 2; grid-row: 1 / span 2; }
+  .session-row .pin-btn { grid-column: 3; grid-row: 1 / span 2; }
   .sidebar li { padding-top: 5px; padding-bottom: 5px; }
 }
 /* Touch: no hover to reveal them, so only a compact ⋯ stays (고정 is in its menu); a pinned row keeps its pin. */
@@ -1347,9 +1339,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
    (the composer's permission picker shows the mode; bypass stays as a warning). */
 @media (max-width: 720px) {
   .chat-head { gap: 6px; }
-  .chat-head > .folder-chip { max-width: 28%; min-width: 5.5em; }
-  .chat-head > .chip.sandbox { flex-shrink: 0; max-width: 35%; }
-  .chat-head > .chip.perm-acceptEdits, .chat-head > .chip.perm-plan { display: none; }
+  .chat-head-chips > .chip.sandbox { flex-shrink: 0; max-width: 35%; }
+  .chat-head-chips > .chip.perm-acceptEdits, .chat-head-chips > .chip.perm-plan { display: none; }
 }
 
 /* Tablet / unfolded inner screen: one-line top bar, a font-scale-aware sidebar that can be folded away (☰). */
@@ -1365,7 +1356,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .usage-loading { order: 2; flex: 1 1 auto; padding: 0; }
   .topbar-end .conn { padding: 0 6px; font-size: 0; gap: 0; }
   .sidebar { width: min(380px, max(280px, 32vw, calc(255px * var(--font-scale, 1)))); }
-  .chat-head > .folder-chip { max-width: 25%; }
 }
 /* Unfolded and touch: tap targets a step up from desktop's 26–30px, still denser than the phone's 44px. */
 @media (min-width: 721px) and (max-width: 1100px) and (pointer: coarse) {
@@ -1395,14 +1385,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Pane header: the title sizes to its text (no dead gap before the chips) and ellipsizes; the folder chip gives way
    first. The permission badge never shrinks or clips — a narrow pane swaps it for its compact form instead. */
 .pane { container: pane / inline-size; }
-.chat-head > .chat-title-wrap { flex: 0 1 auto; min-width: 0; }
+.chat-head-main > .chat-title-wrap { flex: 0 1 auto; min-width: 0; }
 .chat-title-wrap > .chat-title { min-width: 0; max-width: 100%; }
 .chat-title > span:first-child { min-width: 2.5em; }
-.chat-head > .folder-chip { flex: 0 6 auto; min-width: 3.5em; }
-.chat-head > .chip.perm-badge { flex: 0 0 auto; max-width: none; overflow: visible; gap: 4px; box-shadow: none; border-width: 1px; line-height: 1; }
+.chat-head-chips > .chip.perm-badge { flex: 0 0 auto; max-width: none; overflow: visible; gap: 4px; box-shadow: none; border-width: 1px; line-height: 1; }
 .perm-badge-icon { flex-shrink: 0; }
 .perm-badge-short { display: none; }
-.icon-btn.side-open { gap: 4px; }
 /* Queue row: 지금 전송 (interrupt + send this one first). */
 .queue-now { flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border-radius: 999px; color: var(--accent); font-size: calc(12px * var(--font-scale, 1)); font-weight: 600; white-space: nowrap; }
 .queue-now:hover { background: var(--accent-soft); }
@@ -1415,17 +1403,14 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 @container pane (max-width: 560px) {
   .chat-head { gap: 4px; padding-left: 10px; }
-  .chat-head > .folder-chip { max-width: 7em; }
-  .chat-head > .chip.perm-acceptEdits, .chat-head > .chip.perm-plan { display: none; }
-  .chat-head > .chip.sandbox { flex-shrink: 1; min-width: 3em; max-width: 35%; }
-  .icon-btn.side-open { padding: 0 6px; }
-  .side-open-label { display: none; }
+  .chat-head-chips > .chip.perm-acceptEdits, .chat-head-chips > .chip.perm-plan { display: none; }
+  .chat-head-chips > .chip.sandbox { flex-shrink: 1; min-width: 3em; max-width: 35%; }
   .turn-status .status-arg, .status-tools, .status-unit, .turn-status .status-stop { display: none; }
   .bg-pill-long { display: none; }
   .bg-pill { padding: 0 10px 0 9px; gap: 6px; }
 }
 @container pane (max-width: 480px) {
-  .chat-head > .chip.perm-badge { padding: 0 6px; }
+  .chat-head-chips > .chip.perm-badge { padding: 0 6px; }
   .perm-badge-full { display: none; }
   .perm-badge-short { display: inline; }
   .ctx-num { display: none; }
@@ -1434,28 +1419,29 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .queue-now { padding: 0; width: 26px; justify-content: center; }
 }
 @container pane (max-width: 400px) {
-  .chat-head > .folder-chip, .chat-head > .chip.sandbox { display: none; }
+  .chat-head-chips > .chip.sandbox { display: none; }
   .open-desktop-btn { display: none; }
 }
 @container pane (max-width: 360px) {
-  .composer-actions .icon-btn.dictate { display: none; }
-  .chat-head > .chip.perm-bypassPermissions .perm-badge-short { display: none; }
-  .chat-head > .chip.perm-bypassPermissions { padding: 0 5px; }
+  .composer-send .icon-btn.dictate { display: none; }
+  .chat-head-chips > .chip.perm-bypassPermissions .perm-badge-short { display: none; }
+  .chat-head-chips > .chip.perm-bypassPermissions { padding: 0 5px; }
 }
 
 /* Composer toolbar: one row, never wraps. When it is tight the pickers truncate in priority order —
    the model label first, then the account, then the permission mode (flex-shrink weights 100 / 10 / 1). */
 .composer-actions > * { flex-shrink: 0; }
 .composer-actions > .model-picker { flex: 0 100 auto; min-width: 2.8em; }
-.composer-actions > .model-picker.account-picker { flex: 0 10 auto; min-width: 2.4em; }
-.composer-actions > .pick { flex: 0 1 auto; min-width: 3.6em; }
+.composer-actions > .composer-sec { flex: 0 10 auto; min-width: 0; }
+.composer-sec > .model-picker.account-picker { flex: 0 10 auto; min-width: 2.4em; }
+.composer-actions > .pick, .composer-sec > .pick { flex: 0 1 auto; min-width: 3.6em; }
 .composer-actions .mp-button { width: 100%; }
 .composer-actions > .model-picker:not(.account-picker) .mp-button { justify-content: flex-start; }
 /* Narrow composer (split column, cover screen): the account keeps its seat letter, the model drops its effort, the
    pickers tighten their padding — so the labels that remain read whole instead of as "Op…". */
 @container pane (max-width: 480px) {
   .composer-actions .mp-label-extra { display: none; }
-  .composer-actions > .model-picker.account-picker { min-width: 0; }
+  .composer-sec > .model-picker.account-picker { min-width: 0; }
   /* the queue button takes a seat: the mic yields it (dictation is still on the keyboard) */
   .composer-row:has(.queue-add) .dictate { display: none; }
   .composer-actions .pick .perm-full { display: none; }
@@ -1502,10 +1488,193 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Sidebar foot sits on the screen edge like Claude's: the list fades out under it (no rule line), its fade lets taps
    through to the rows beneath, and its button stays above the home indicator. */
 .sidebar { --sidebar-end: 24px; }
-.sidebar-foot { bottom: calc(-1 * var(--sidebar-end)); margin-bottom: calc(-1 * var(--sidebar-end)); padding: 14px 10px max(10px, env(safe-area-inset-bottom, 0px)); border-top: 0; background: linear-gradient(to bottom, transparent, var(--sidebar) 14px); pointer-events: none; }
+.sidebar-foot { bottom: calc(-1 * var(--sidebar-end)); margin-bottom: calc(-1 * var(--sidebar-end)); padding: 28px 10px max(12px, env(safe-area-inset-bottom, 0px)); border-top: 0; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--sidebar) 85%, transparent) 20px, var(--sidebar) 34px); pointer-events: none; }
 .sidebar-foot > * { pointer-events: auto; }
-.sidebar-foot .settings-open { width: 34px; height: 34px; border-radius: 50%; font-variant-emoji: text; color: var(--muted); }
-.sidebar-foot .settings-open:hover { background: var(--hover); color: var(--fg); }
-@media (pointer: coarse) { .sidebar-foot .settings-open { width: var(--phone-tap); height: var(--phone-tap); } }
+/* Claude's bottom corners: the avatar (설정 및 계정 menu) left, the floating 새 세션 pill right. */
+.sidebar-foot { justify-content: space-between; gap: 8px; }
+.foot-menu-wrap { position: relative; display: inline-flex; }
+.sidebar-avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--panel); color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--line-strong), 0 2px 8px rgba(0, 0, 0, .18); font-size: calc(14px * var(--font-scale, 1)); font-weight: 600; letter-spacing: .01em; transition: background .15s, box-shadow .15s; }
+.sidebar-avatar:hover, .sidebar-avatar[aria-expanded="true"] { background: var(--bubble); }
+.sidebar-avatar:focus-visible, .sidebar-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sidebar-new { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 16px 0 13px; border-radius: 999px; background: var(--btn-primary-bg); color: var(--btn-primary-fg); box-shadow: 0 4px 16px rgba(0, 0, 0, .28); font-size: calc(14px * var(--font-scale, 1)); font-weight: 560; white-space: nowrap; transition: transform .15s ease, box-shadow .15s ease, filter .15s; }
+.sidebar-new:hover { filter: brightness(.94); box-shadow: 0 6px 20px rgba(0, 0, 0, .32); }
+.sidebar-new:active { transform: scale(.97); }
+:root[data-theme="light"] .sidebar-new, :root[data-theme="light"] .sidebar-avatar { box-shadow: 0 3px 12px rgba(0, 0, 0, .12), inset 0 0 0 1px var(--line); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .sidebar-new, :root:not([data-theme="dark"]) .sidebar-avatar { box-shadow: 0 3px 12px rgba(0, 0, 0, .12), inset 0 0 0 1px var(--line); } }
+.session-menu.foot-menu { left: 0; right: auto; top: auto; bottom: calc(100% + 8px); min-width: 210px; }
+.foot-menu button { display: flex; align-items: center; gap: 12px; }
+.foot-menu kbd { margin-left: auto; color: var(--faint); font: inherit; font-size: calc(11.5px * var(--font-scale, 1)); }
+.foot-menu-head { padding: 6px 9px 7px; margin-bottom: 3px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; }
+@media (pointer: coarse) { .sidebar-avatar { width: var(--phone-tap); height: var(--phone-tap); } .sidebar-new { height: var(--phone-tap); padding: 0 18px 0 15px; } }
 /* Touch on a wide screen (iPad landscape): the same 40px rows as the unfolded/tablet range; phones use --phone-tap. */
 @media (pointer: coarse) and (min-width: 1101px) { .sidebar li { min-height: 40px; } }
+
+/* === chat header (Claude parity) ===
+   Title centred with the folder as a small second line, chips (권한 / 샌드박스) quietly on the left, the pane's
+   buttons and ⋯ on the right. Equal side tracks keep the title on the pane's centre line. */
+.chat-head { display: grid; grid-template-columns: minmax(min-content, 1fr) minmax(0, auto) minmax(min-content, 1fr); grid-template-areas: "chips main end"; align-items: center; column-gap: 10px; height: 54px; padding: 0 8px 0 12px; }
+.chat-head-main { grid-area: main; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; max-width: min(620px, 58cqi); text-align: center; line-height: 1.2; }
+.chat-head-main > .chat-title-wrap { max-width: 100%; }
+.chat-head-main .chat-title { justify-content: center; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; }
+.chat-head-main button.chat-title { margin-left: 0; padding: 2px 8px; border-radius: 8px; }
+.chat-head-main .chat-title .caret { opacity: 0; transition: opacity .15s; }
+.chat-head-main button.chat-title:hover .caret, .chat-head-main button.chat-title:focus-visible .caret, .chat-head-main button.chat-title[aria-expanded="true"] .caret { opacity: 1; }
+.chat-head-main .chat-title-input { margin-left: 0; text-align: center; }
+.chat-head-main .session-menu.chat-title-menu { left: 50%; transform: translateX(-50%); }
+.folder-chip.chat-subtitle { max-width: 100%; height: auto; padding: 0 8px; margin-top: 1px; background: none; box-shadow: none; border-radius: 0; line-height: 1.25; font-size: calc(11.5px * var(--font-scale, 1)); color: var(--muted); }
+.chat-head-chips { grid-area: chips; display: flex; align-items: center; gap: 6px; min-width: 0; justify-self: start; }
+.chat-head-end { grid-area: end; display: flex; align-items: center; gap: 2px; justify-self: end; min-width: 0; }
+.chat-head-end > .chat-more-wrap { position: relative; display: inline-flex; margin-left: 4px; }
+.icon-btn.chat-more { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
+.icon-btn.chat-more:hover, .icon-btn.chat-more[aria-expanded="true"] { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.session-menu.chat-more-menu { right: 0; left: auto; top: calc(100% + 6px); min-width: 220px; }
+.session-menu .menu-sep { height: 1px; margin: 4px 6px; background: var(--line); flex-shrink: 0; }
+/* 모두 자동 승인 stays on screen as a warning, but small and outlined rather than a loud block. */
+.chat-head-chips > .chip.perm-badge { height: 22px; padding: 0 8px; border-radius: 999px; border-color: color-mix(in srgb, currentColor 45%, transparent); background: transparent; font-size: calc(11.5px * var(--font-scale, 1)); font-weight: 500; }
+.chat-head-chips > .chip.sandbox { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (pointer: coarse) { .icon-btn.chat-more { width: 40px; height: 40px; } }
+@media (max-width: 720px) {
+  .chat-head { height: 52px; column-gap: 6px; padding: 0 4px 0 10px; }
+  .icon-btn.chat-more { width: var(--phone-tap); height: var(--phone-tap); box-shadow: none; }
+}
+/* Narrow split panes (not the phone, which keeps the centred title): one left-aligned row that truncates. */
+@media (min-width: 721px) {
+  @container pane (max-width: 520px) {
+    .chat-head { display: flex; gap: 6px; padding-left: 10px; }
+    .chat-head-main { flex: 0 1 auto; align-items: flex-start; max-width: none; text-align: left; }
+    .chat-head-main .chat-title { justify-content: flex-start; }
+    .chat-head-main button.chat-title { margin-left: -8px; }
+    .chat-head-main .chat-title-input { margin-left: -6px; text-align: left; }
+    .chat-head-main .session-menu.chat-title-menu { left: -6px; transform: none; }
+    .folder-chip.chat-subtitle { padding: 0; }
+    .chat-head-chips { flex: 0 0 auto; }
+    .chat-head-end { margin-left: auto; flex: none; }
+  }
+}
+
+/* === composer controls (Claude parity) ===
+   Round pills: [+] and the model pill (model + effort) on the left, deck's 계정 · 권한 as one quieter pill beside it,
+   the context gauge, mic and a round send/stop on the right. */
+.composer-row { gap: 6px; padding: 4px 10px 10px; }
+.composer-actions { justify-content: flex-start; gap: 6px; }
+.attach { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: calc(20px * var(--font-scale, 1)); transition: background .15s, box-shadow .15s; }
+.attach:hover, .attach.open { background: var(--hover); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 28%, transparent); }
+.composer-actions > .model-picker:not(.account-picker) .mp-button { height: 34px; padding: 0 14px; border-radius: 999px; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.composer-actions > .model-picker:not(.account-picker) .mp-button:hover, .composer-actions > .model-picker:not(.account-picker) .mp-button.open { background: var(--hover); }
+.composer-actions .mp-label-extra { color: var(--muted); }
+.composer-actions > .model-picker:not(.account-picker) .mp-caret { display: none; }
+.composer-sec { display: inline-flex; align-items: center; gap: 0; height: 34px; padding: 0 2px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); }
+.composer-sec .mp-button, .composer-sec .pick { height: 30px; border-radius: 999px; font-size: calc(12.5px * var(--font-scale, 1)); }
+.composer-sec .mp-button { padding: 0 10px; }
+.composer-sec .pick { padding: 0 20px 0 10px; }
+.composer-sec > * + * { position: relative; }
+.composer-sec > * + *::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 1px; background: var(--line-strong); pointer-events: none; }
+.composer-sec:empty { display: none; }
+.composer-send { gap: 6px; }
+.composer-send .icon-btn.dictate { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); background: var(--hover); }
+.composer-send .icon-btn.dictate:hover { background: var(--selected); }
+.composer-send .icon-btn.dictate.on { color: var(--danger); background: var(--danger-soft); }
+.send, .queue-add { width: 34px; height: 34px; margin-left: 0; }
+.send:disabled { background: color-mix(in srgb, var(--accent) 38%, var(--bg)); color: color-mix(in srgb, #fff 70%, transparent); }
+:root[data-theme="light"] .send:disabled { background: color-mix(in srgb, var(--accent) 35%, var(--bg)); color: #fff; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .send:disabled { background: color-mix(in srgb, var(--accent) 35%, var(--bg)); color: #fff; } }
+.attach:focus-visible, .send:focus-visible, .composer-send .icon-btn.dictate:focus-visible, .composer-actions .mp-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .attach, .send, .queue-add, .composer-send .icon-btn.dictate { width: 40px; height: 40px; }
+  .composer-actions > .model-picker:not(.account-picker) .mp-button, .composer-sec { height: 40px; }
+  .composer-sec .mp-button, .composer-sec .pick { height: 36px; }
+}
+@media (max-width: 720px) {
+  .attach, .send, .queue-add, .composer-send .icon-btn.dictate { width: var(--phone-tap); height: var(--phone-tap); }
+  .composer-actions > .model-picker:not(.account-picker) .mp-button, .composer-sec { height: var(--phone-tap); }
+  .composer-sec .mp-button, .composer-sec .pick { height: 40px; }
+  .composer-row { padding: 2px 6px 6px; gap: 4px; }
+  .composer-actions { gap: 4px; }
+}
+@container pane (max-width: 480px) {
+  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 10px; }
+  .composer-sec .pick { padding: 0 16px 0 7px; }
+  .composer-sec .mp-button { padding: 0 7px; }
+  .composer-actions { gap: 4px; }
+}
+@container pane (max-width: 360px) {
+  .composer-sec .pick { padding: 0 6px; }
+  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 8px; }
+}
+/* The new-chat card's model picker is the same pill. */
+.newchat-actions .model-picker:not(.account-picker) .mp-button { height: 34px; padding: 0 14px; border-radius: 999px; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.newchat-actions .model-picker:not(.account-picker) .mp-button:hover, .newchat-actions .model-picker:not(.account-picker) .mp-button.open { background: var(--hover); }
+.newchat-actions .mp-label-extra { color: var(--muted); }
+.newchat-actions .model-picker:not(.account-picker) .mp-caret { display: none; }
+@media (pointer: coarse) { .newchat-actions .model-picker:not(.account-picker) .mp-button { height: 40px; } }
+@media (max-width: 720px) { .newchat-actions .model-picker:not(.account-picker) .mp-button { height: var(--phone-tap); } }
+/* The model pill keeps its name and the 계정 · 권한 pill gives way first (it truncates, the model never reads "Opu…"). */
+.composer-actions > .model-picker:not(.account-picker) { flex: 0 1 auto; min-width: min-content; }
+.composer-actions > .model-picker:not(.account-picker) .mp-label { overflow: visible; }
+.composer-actions > .composer-sec { flex: 0 100 auto; overflow: hidden; }
+/* Inside the 계정 · 권한 pill the account keeps its seat letter; the permission label is what truncates. */
+.composer-sec { min-width: 0; }
+.composer-sec > .model-picker.account-picker { flex: 0 0 auto; min-width: min-content; }
+.composer-sec > .model-picker.account-picker .mp-label { overflow: visible; }
+.composer-sec > .pick { flex: 0 1 auto; min-width: 0; }
+@media (max-width: 720px) {
+  .composer-send { gap: 3px; }
+  .composer-send .ctx-gauge { padding: 0 2px; }
+}
+@container pane (max-width: 480px) {
+  .composer-sec .pick { padding: 0 15px 0 7px; }
+  .composer-sec .pick::after { right: 5px; }
+  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 11px; }
+}
+/* Phone-narrow: the pill outline already says "tap me", so the carets give their room to the labels. */
+@container pane (max-width: 420px) {
+  .composer-sec .pick { padding: 0 9px; }
+  .composer-sec .pick::after { display: none; }
+  .composer-sec .mp-caret { display: none; }
+  .composer-sec .mp-button { padding: 0 9px; }
+}
+
+/* === sidebar rows (Claude parity) ===
+   Roomier rows: a bigger title led by its engine mark, and the meta (project · account · time) a quiet second voice.
+   With a mouse the meta waits for hover / keyboard focus, so a title reads whole; on touch it stays on line 2.
+   The running / unread dots keep their seat in the left padding. */
+.sidebar li { min-height: 36px; padding: 6px 6px 6px 22px; border-radius: 9px; font-size: calc(15px * var(--font-scale, 1)); }
+@media (pointer: coarse) { .sidebar li { min-height: 40px; } }
+.sidebar .session-title { line-height: 1.35; letter-spacing: -.005em; }
+.sidebar .session-title .engine-mark { width: 1.05em; margin-right: .5em; opacity: .9; }
+.sidebar li.active .session-title .engine-mark { opacity: 1; }
+.sidebar .session-meta { color: var(--faint); font-size: calc(12px * var(--font-scale, 1)); }
+.sidebar li.active .session-meta { color: var(--muted); }
+/* The trailing group (meta · ⋯ · pin). By default its children sit in the row as before (display: contents). */
+.row-end { display: contents; }
+/* With a mouse on a wide sidebar it is an overlay at the row's end: hidden until hover / keyboard focus / its menu is
+   open, and fading in over the title's tail (the row's own tint, opaque) so the title keeps its full width. */
+@media (hover: hover) and (min-width: 1101px) {
+  .sidebar li { --row-tint: transparent; }
+  .sidebar li:hover { --row-tint: var(--hover); }
+  .sidebar li.active { --row-tint: var(--selected); }
+  .sidebar .row-end { display: flex; align-items: center; gap: 4px; position: absolute; top: 0; bottom: 0; right: 0; max-width: 72%; padding: 0 6px 0 30px; border-radius: 0 9px 9px 0; background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+  .sidebar .row-end .session-meta { min-width: 0; max-width: none; flex: 0 1 auto; }
+  .sidebar li:hover .row-end, .sidebar li:has(:focus-visible) .row-end, .sidebar li:has(.row-more-btn[aria-expanded="true"]) .row-end { opacity: 1; pointer-events: auto; }
+  .sidebar li:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--hover); }
+  .sidebar li.active:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--selected); }
+  .pinned-group ul.pin-reordering .row-end { opacity: 0 !important; }
+  .sidebar li:has(.session-rename) .row-end { display: none; }
+}
+@media (max-width: 1100px), (hover: none) {
+  .sidebar li { padding-top: 7px; padding-bottom: 7px; }
+  .sidebar .session-row .session-meta { margin-top: 1px; padding-left: calc(23px * var(--font-scale, 1)); } /* under the title text, past the engine mark */
+}
+@media (hover: none) and (min-width: 1101px) { .sidebar li { min-height: 44px; } }
+@media (max-width: 720px) {
+  .sidebar li { min-height: var(--phone-tap); font-size: calc(16px * var(--font-scale, 1)); }
+  .sidebar .session-meta { font-size: calc(12.5px * var(--font-scale, 1)); }
+  .sidebar .session-row .session-meta { padding-left: calc(25px * var(--font-scale, 1)); }
+}
+@media (prefers-reduced-motion: reduce) { .sidebar .row-end { transition: none !important; } }
+/* A narrow split column gets the phone's tighter spacing too. */
+@container pane (max-width: 420px) {
+  .composer-send { gap: 3px; }
+  .composer-send .ctx-gauge { padding: 0 2px; }
+  .composer-row { padding-left: 8px; padding-right: 8px; gap: 4px; }
+}

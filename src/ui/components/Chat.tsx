@@ -26,7 +26,7 @@ import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
 import { DictationButton } from './DictationButton';
 import { QueueChips } from './QueueChips';
-import { ShareMenu } from './ShareMenu';
+import { useShareActions } from './ShareMenu';
 import { TodoPanel } from './TodoPanel';
 import { usePrefs } from '../usePrefs';
 import { BlockedDeleteItem, MenuList } from './SessionMenu';
@@ -45,8 +45,10 @@ export type ChatProps = {
   cwd?: string;
   /** For `/` command suggestions (null while the session is new). */
   sessionId?: string | null;
-  /** Right-aligned header buttons (the pane's close button). */
+  /** Right-aligned header buttons (갈라짐, Desktop에서 열기, the pane's close button), before the ⋯ menu. */
   headActions?: ReactNode;
+  /** Extra ⋯ menu items from the pane (파일 열기 / 파일 패널 닫기). */
+  headMenu?: { label: string; run: () => void }[];
   model: ModelChoice;
   /** Reasoning effort for `model`'s engine; null = 자동 (model 자동 only). */
   effort: Effort | null;
@@ -328,6 +330,23 @@ export function Chat(p: ChatProps) {
     if (t !== p.title) p.titleMenu?.onRename?.(t || null);
   };
   const tm = p.titleMenu;
+  const showAccount = !!p.onAccountPin && (effectiveEngine === 'claude' || (!!p.isNew && effectiveEngine === 'auto'));
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => { setMoreOpen(false); }, [p.sessionId]);
+  const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : 'Claude' }, () => setMoreOpen(false));
+  const shareActions = p.isNew ? [] : share.actions;
+  /** 이름 바꾸기 / 고정 / 보관 — the same in the title menu and the ⋯ menu; 삭제 comes last in both. */
+  const sessionItems = (close: () => void) => tm && (
+    <>
+      {tm.onRename && <button type="button" role="menuitem" onClick={() => { close(); setRenaming(p.title); }}>이름 바꾸기</button>}
+      {tm.onTogglePin && <button type="button" role="menuitem" onClick={() => { close(); tm.onTogglePin?.(); }}>{tm.pinned ? '고정 해제' : '맨 위에 고정'}</button>}
+      {tm.onArchive && <button type="button" role="menuitem" onClick={() => { close(); tm.onArchive?.(); }}>{tm.archived ? '보관 해제' : '보관'}</button>}
+    </>
+  );
+  const deleteItem = (close: () => void) => tm && (tm.deleteBlocked
+    ? <BlockedDeleteItem reason={tm.deleteBlocked} />
+    : tm.onDelete && <button type="button" role="menuitem" className="danger" onClick={() => { close(); tm.onDelete?.(); }}>삭제…</button>);
+  const hasMore = !!tm || shareActions.length > 0 || (p.headMenu?.length ?? 0) > 0;
   const [{ sendKey }] = usePrefs();
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggest.onKeyDown(e)) return;
@@ -405,41 +424,61 @@ export function Chat(p: ChatProps) {
   return (
     <main className="chat" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
+      {/* Claude's header: the title (folder on a second line) centred, chips on the left, ⋯ on the right. A narrow
+          pane falls back to a left-aligned, truncating row (styles.css, @container pane). */}
       <div className="chat-head">
-        <span className="chat-title-wrap">
-          {renaming !== null ? (
-            <input className="chat-title-input" aria-label="채팅 이름" value={renaming} autoFocus maxLength={200}
-              onChange={(e) => setRenaming(e.target.value)} onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.nativeEvent.isComposing) return;
-                if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-                if (e.key === 'Escape') { e.preventDefault(); renamingRef.current = null; setRenaming(null); }
-              }} />
-          ) : tm ? (
-            <button type="button" className="chat-title" title={p.title} aria-haspopup="menu" aria-expanded={titleMenuOpen} onClick={() => setTitleMenuOpen((o) => !o)}>
-              <span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span>
-            </button>
-          ) : (
-            <span className="chat-title" title={p.title}><span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span></span>
+        <div className="chat-head-main">
+          <span className="chat-title-wrap">
+            {renaming !== null ? (
+              <input className="chat-title-input" aria-label="채팅 이름" value={renaming} autoFocus maxLength={200}
+                onChange={(e) => setRenaming(e.target.value)} onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return;
+                  if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                  if (e.key === 'Escape') { e.preventDefault(); renamingRef.current = null; setRenaming(null); }
+                }} />
+            ) : tm ? (
+              <button type="button" className="chat-title" title={p.title} aria-haspopup="menu" aria-expanded={titleMenuOpen} onClick={() => setTitleMenuOpen((o) => !o)}>
+                <span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span>
+              </button>
+            ) : (
+              <span className="chat-title" title={p.title}><span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span></span>
+            )}
+            {titleMenuOpen && tm && (
+              <MenuList className="session-menu chat-title-menu" label="채팅 메뉴" onClose={() => setTitleMenuOpen(false)}>
+                {sessionItems(() => setTitleMenuOpen(false))}
+                {deleteItem(() => setTitleMenuOpen(false))}
+              </MenuList>
+            )}
+          </span>
+          {folder && <span className="folder-chip chat-subtitle" title={p.cwd}>{folder}</span>}
+        </div>
+        <div className="chat-head-chips">
+          {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
+          {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${PERM_MODE_HINT[permMode]}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}
+          {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
+        </div>
+        <div className="chat-head-end">
+          {p.headActions}
+          {hasMore && (
+            <span className="chat-more-wrap">
+              <button type="button" className="icon-btn chat-more" aria-label="채팅 메뉴" title={share.done ?? '채팅 메뉴'} aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)}>
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="8" r="1.35" /><circle cx="8" cy="8" r="1.35" /><circle cx="12.5" cy="8" r="1.35" /></svg>
+              </button>
+              {share.done && <span className="share-toast" role="status">{share.done}</span>}
+              {moreOpen && (
+                <MenuList className="session-menu chat-more-menu" label="채팅 메뉴" onClose={() => setMoreOpen(false)}>
+                  {sessionItems(() => setMoreOpen(false))}
+                  {tm && (shareActions.length > 0 || p.headMenu?.length) ? <div className="menu-sep" role="separator" /> : null}
+                  {shareActions.map((a) => <button key={a.key} type="button" role="menuitem" aria-disabled={a.disabled || undefined} onClick={a.disabled ? undefined : a.run}>{a.label}</button>)}
+                  {p.headMenu?.map((it) => <button key={it.label} type="button" role="menuitem" onClick={() => { setMoreOpen(false); it.run(); }}>{it.label}</button>)}
+                  {tm && (tm.onDelete || tm.deleteBlocked) && <div className="menu-sep" role="separator" />}
+                  {deleteItem(() => setMoreOpen(false))}
+                </MenuList>
+              )}
+            </span>
           )}
-          {titleMenuOpen && tm && (
-            <MenuList className="session-menu chat-title-menu" label="채팅 메뉴" onClose={() => setTitleMenuOpen(false)}>
-              {tm.onRename && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); setRenaming(p.title); }}>이름 바꾸기</button>}
-              {tm.onTogglePin && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); tm.onTogglePin?.(); }}>{tm.pinned ? '고정 해제' : '맨 위에 고정'}</button>}
-              {tm.onArchive && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); tm.onArchive?.(); }}>{tm.archived ? '보관 해제' : '보관'}</button>}
-              {tm.deleteBlocked
-                ? <BlockedDeleteItem reason={tm.deleteBlocked} />
-                : tm.onDelete && <button type="button" role="menuitem" className="danger" onClick={() => { setTitleMenuOpen(false); tm.onDelete?.(); }}>삭제…</button>}
-            </MenuList>
-          )}
-        </span>
-        {folder && <span className="folder-chip" title={p.cwd}>{folder}</span>}
-        {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
-        {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${PERM_MODE_HINT[permMode]}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}
-        {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
-        <span className="spacer" />
-        {!p.isNew && <ShareMenu title={p.title} items={p.items} cwd={p.cwd} sessionId={p.sessionId} assistant={p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : 'Claude'} />}
-        {p.headActions}
+        </div>
       </div>
       {p.notices?.map((n) => (
         <div key={n.message} className={`pane-notice ${n.level}`} role={n.level === 'error' ? 'alert' : 'status'} data-testid="pane-notice">
@@ -510,7 +549,7 @@ export function Chat(p: ChatProps) {
           {(p.attachments.length > 0 || uploading > 0 || error) && (
             <div className="composer-files"><AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} /></div>
           )}
-          {/* One toolbar row, as in Desktop: [+] · pickers (they truncate, never wrap) · send/stop at the far right. */}
+          {/* One toolbar row, as in Claude: [+] · model pill · 계정/권한 pill (they truncate, never wrap) · mic · send/stop. */}
           <div className="composer-row">
             <AttachMenu onFiles={(f) => void addFiles(f)} />
             <div className="composer-actions">
@@ -527,20 +566,26 @@ export function Chat(p: ChatProps) {
                   {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{sandboxLabel[s]}</option>)}
                 </Pick>
               )}
-              <DictationButton text={text} onText={setText} />
-              <ContextGauge info={ctx} onHandoff={p.onHandoff} />
-              {p.onAccountPin && (effectiveEngine === 'claude' || (p.isNew && effectiveEngine === 'auto')) && (
-                <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
-              )}
-              {p.onPermMode && (
-                <Pick className={`perm perm-${permSupported ? permMode : 'default'}`} label={<><span className="perm-full">{PERM_MODE_LABEL[permSupported ? permMode : 'default']}</span><span className="perm-short">{PERM_MODE_SHORT[permSupported ? permMode : 'default']}</span></>} value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${PERM_MODE_HINT[permMode]} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
-                  {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
-                </Pick>
-              )}
               <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
+              {/* 계정 · 권한: one compact secondary pill next to the model pill (Claude has no such controls; deck keeps them). */}
+              {(showAccount || p.onPermMode) && (
+                <div className="composer-sec" role="group" aria-label="계정 · 권한">
+                  {showAccount && p.onAccountPin && (
+                    <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
+                  )}
+                  {p.onPermMode && (
+                    <Pick className={`perm perm-${permSupported ? permMode : 'default'}`} label={<><span className="perm-full">{PERM_MODE_LABEL[permSupported ? permMode : 'default']}</span><span className="perm-short">{PERM_MODE_SHORT[permSupported ? permMode : 'default']}</span></>} value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${PERM_MODE_HINT[permMode]} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
+                      {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
+                    </Pick>
+                  )}
+                </div>
+              )}
             </div>
-            {/* Send/stop never shrink; 대기열에 추가 is a round secondary button of the same size, just left of stop. */}
+            {/* Right end, as in Claude: context gauge, mic, then the round send/stop (never shrink); 대기열에 추가 is a round
+                secondary button of the same size, just left of stop. */}
             <div className="composer-send">
+              <ContextGauge info={ctx} onHandoff={p.onHandoff} />
+              <DictationButton text={text} onText={setText} />
               {p.activeTurnId && queueing && hasDraft && (
                 <button type="button" className="queue-add" onClick={submit} title={steering ? '대기열에 추가 (Enter) — 실행 중인 턴에 보내 다음 도구 실행 뒤 전달합니다' : '대기열에 추가 (Enter) — 지금 턴이 끝나면 보냅니다'}>
                   <QueueIcon /><span className="sr-only">대기열에 추가</span>

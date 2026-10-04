@@ -61,4 +61,19 @@ export function applyPrefs(prefs: Prefs, root: HTMLElement = document.documentEl
   if (prefs.theme === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', prefs.theme);
   root.setAttribute('data-width', prefs.chatWidth);
   root.style.setProperty('--font-scale', String(FONT_SCALE[prefs.fontSize]));
+  if (root.ownerDocument) applyThemeColor(prefs.theme, root.ownerDocument);
+}
+
+/** The top bar's colour (--sidebar) per theme: the browser chrome / status bar matches the bar under it. */
+export const THEME_COLOR = { dark: '#181817', light: '#f1efea' } as const;
+
+/**
+ * index.html carries one theme-color meta per colour scheme. A forced theme points both at its colour (the browser
+ * would otherwise follow the system scheme); "system" puts each back on its own scheme.
+ */
+export function applyThemeColor(theme: Theme, doc: Document = document): void {
+  for (const m of Array.from(doc.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'))) {
+    const own: 'dark' | 'light' = (m.getAttribute('media') ?? '').includes('light') ? 'light' : 'dark';
+    m.setAttribute('content', THEME_COLOR[theme === 'system' ? own : theme]);
+  }
 }

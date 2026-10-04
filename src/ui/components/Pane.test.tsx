@@ -55,7 +55,7 @@ describe('Pane (D6)', () => {
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol · 중간');
+    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
     fireEvent.click(screen.getByTestId('model-picker'));
     const items = within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio');
     expect(items.slice(0, 2).map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra')]);
@@ -76,12 +76,12 @@ describe('Pane (D6)', () => {
     const p0 = within(screen.getByTestId('pane-p0'));
     fireEvent.click(p0.getByTestId('model-picker'));
     fireEvent.click(within(p0.getByTestId('model-menu')).getByText('엑스트라'));
-    expect(p0.getByTestId('model-picker').textContent).toContain('Opus 5.5 · 엑스트라');
+    expect(p0.getByTestId('model-picker').textContent).toContain('Opus 5.5 엑스트라');
     // The other pane keeps the default.
-    expect(within(screen.getByTestId('pane-p1')).getByTestId('model-picker').textContent).toContain('Opus 5.5 · 높음');
+    expect(within(screen.getByTestId('pane-p1')).getByTestId('model-picker').textContent).toContain('Opus 5.5 높음');
     // GPT has its own effort (default 중간); switching back to Claude restores 엑스트라.
     fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'codex' } });
-    expect(p0.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol · 중간');
+    expect(p0.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
     fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'claude' } });
     fireEvent.change(p0.getByPlaceholderText(/메시지/), { target: { value: 'go' } });
     fireEvent.click(p0.getByText('보내기'));

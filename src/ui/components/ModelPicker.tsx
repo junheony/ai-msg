@@ -61,7 +61,7 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: {
         onClick={() => setOpen((o) => !o)}
       >
         {/* Name and effort as parts, so a narrow composer can drop the effort (it stays in the menu and the aria-label). */}
-        <span className="mp-label">{infoOf(model).name}{effortShown && <span className="mp-label-extra"> · {EFFORT_LABEL[effort]}</span>}</span>
+        <span className="mp-label">{infoOf(model).name}{effortShown && <span className="mp-label-extra"> {EFFORT_LABEL[effort]}</span>}</span>
         <span className="mp-caret" aria-hidden="true">⌄</span>
       </button>
       {open && (
