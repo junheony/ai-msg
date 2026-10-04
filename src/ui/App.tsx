@@ -7,7 +7,7 @@ import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
 import { Login } from './components/Login';
 import { NotifyMenu } from './components/NotifyMenu';
 import { SettingsView } from './components/SettingsView';
-import { postPin } from './pins';
+import { postPin, postPinOrder } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
 import { Pane, sendFromPane, useQueueRunner } from './components/Pane';
@@ -73,6 +73,8 @@ export function App() {
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
   const latest = useRef(state);
   latest.current = state;
+  /** 고정됨 reorder requests: only the newest one's answer is applied. */
+  const pinOrderSeq = useRef(0);
   const phone = useIsPhone();
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -369,6 +371,25 @@ export function App() {
             pins={state.pins}
             desktop={state.desktop}
             onTogglePin={(sessionId, pinned) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 실패' })); }}
+            onReorderPins={(order) => {
+              // Optimistic: the new order shows at once. Only the latest move's answer counts — an older one arriving
+              // late must not undo a newer move (the index broadcast settles those). A failed save puts the old order
+              // back, keeping pins added meanwhile (on top, like a new pin).
+              const seq = ++pinOrderSeq.current;
+              const before = latest.current.pins;
+              dispatch({ type: 'set_pins', pins: order });
+              postPinOrder(order).then(
+                (pins) => { if (seq === pinOrderSeq.current) dispatch({ type: 'set_pins', pins }); },
+                (err: unknown) => {
+                  if (seq !== pinOrderSeq.current) return;
+                  const now = latest.current.pins;
+                  const kept = new Set(before);
+                  const has = new Set(now);
+                  dispatch({ type: 'set_pins', pins: [...now.filter((id) => !kept.has(id)), ...before.filter((id) => has.has(id))] });
+                  dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 순서 변경 실패' });
+                },
+              );
+            }}
             collapsed={collapsed}
             onCollapsedChange={setCollapsed}
             onRename={(sessionId, title) => { postSessionMeta(sessionId, { title }).catch((err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '이름 바꾸기 실패' })); }}

@@ -6,6 +6,7 @@ import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches'
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 import { EngineMark, engineOf } from './EngineMark';
+import { usePinReorder } from '../pinOrder';
 
 /** Sessions shown per project before "더 보기". */
 export const FOLD_AT = 5;
@@ -26,7 +27,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete }: {
   /** 설정 (gear in the footer; ⌘, also opens it — 새 세션 기본 권한 lives there). */
   onOpenSettings?: () => void;
   projects: ProjectEntry[];
@@ -37,9 +38,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** F1: a folder chosen in 폴더 열기 (real path, server-validated) → new session there. */
   onOpenFolder?: (cwd: string) => void;
   fetchFn?: typeof fetch;
-  /** F2: pinned session ids in pin order, shown as 고정됨 above the projects. */
+  /** F2: pinned session ids in display order (top first), shown as 고정됨 above the projects. */
   pins?: string[];
   onTogglePin?: (sessionId: string, pinned: boolean) => void;
+  /** 고정됨 drag order: the full pin list, top first. Absent = the pinned rows do not reorder. */
+  onReorderPins?: (order: string[]) => void;
   /** Recent Claude Desktop sessions (newest first); opened like any session. */
   desktop?: DesktopSession[];
   /** ux-state: folded project groups (cwd), owned by the app so they survive a reload; absent = local state. */
@@ -133,6 +136,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const d = desktopById.get(id);
     return d && inView(d) && dMatch(d) ? [{ kind: 'desktop', d }] : [];
   });
+  // 고정됨 rows reorder by drag (touch: long-press) or Alt+↑/↓; hidden pins (filtered out) keep their place.
+  const reorderKeys = (group: string) => (group === 'pinned' && onReorderPins ? 'Alt+ArrowUp Alt+ArrowDown' : undefined);
+  const pinDrag = usePinReorder(pinned.map((it) => (it.kind === 'session' ? it.s.sessionId : it.d.sessionId)), pins, onReorderPins);
   // A Desktop session whose folder deck already lists shows there; the Desktop list only carries the rest.
   const desktopShown = desktop.filter((d) => !byId.has(d.sessionId) && !pinSet.has(d.sessionId) && inView(d) && dMatch(d));
 
@@ -179,11 +185,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           )}
           <span className="session-meta" {...(s.imported ? { title: s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project ?? (engine === 'codex' ? null : s.account.toUpperCase()), s.codexExec ? '자동 실행' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
           {canEdit && !edit && (
-            <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
+            <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
           )}
           {onTogglePin && (
-            <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(s.sessionId, !on); }}>
+            <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-keyshortcuts={reorderKeys(group)} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(s.sessionId, !on); }}>
               <PinIcon filled={on} />
             </button>
           )}
@@ -214,9 +220,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {ago(d.lastModified)}</span>
           {onTogglePin && (
             <>
-              <button type="button" className="row-more-btn" aria-label="세션 메뉴" title="고정" aria-haspopup="menu" aria-expanded={menu === key}
+              <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="고정" aria-haspopup="menu" aria-expanded={menu === key}
                 onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
-              <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(d.sessionId, !on); }}>
+              <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-keyshortcuts={reorderKeys(group)} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(d.sessionId, !on); }}>
                 <PinIcon filled={on} />
               </button>
             </>
@@ -274,7 +280,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       {pinned.length > 0 && (
         <section className="project pinned-group" data-testid="pinned-group">
           <div className="project-head"><span className="project-name">고정됨</span></div>
-          <ul>{pinned.map((it) => (it.kind === 'session' ? row(it.s, 'pinned') : desktopRow(it.d, 'pinned')))}</ul>
+          <ul {...pinDrag.listProps}>{pinned.map((it) => (it.kind === 'session' ? row(it.s, 'pinned') : desktopRow(it.d, 'pinned')))}</ul>
+          <span className="sr-only" role="status" aria-live="polite">{pinDrag.live}</span>
         </section>
       )}
       {view === 'projects' && desktopShown.length > 0 && (

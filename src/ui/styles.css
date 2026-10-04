@@ -173,6 +173,12 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .project-head:hover .icon-btn, .project-head .icon-btn:focus-visible { opacity: 1; }
 .pinned-group .project-head:hover { background: transparent; }
 .pinned-group .project-name { padding-left: 4px; }
+/* 고정됨 drag-to-reorder (pinOrder.ts): no text selection / iOS callout on a long press; the picked row follows the pointer, the others slide aside. */
+.pinned-group li { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.pinned-group ul.pin-reordering { cursor: grabbing; }
+.pinned-group ul.pin-reordering > li { transition: transform 160ms cubic-bezier(.2, 0, 0, 1); }
+.pinned-group ul.pin-reordering > li:hover:not(.pin-dragging) { background: transparent; }
+.pinned-group ul.pin-reordering > li.pin-dragging { transition: none; z-index: 2; background: var(--panel); box-shadow: var(--shadow); cursor: grabbing; }
 .sidebar li { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 6px 4px 22px; border-radius: 7px; cursor: pointer; font-size: calc(14px * var(--font-scale, 1)); }
 .sidebar li:hover { background: var(--hover); }
 .sidebar li.active { background: var(--selected); }

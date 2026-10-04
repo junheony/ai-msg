@@ -331,6 +331,32 @@ describe('POST /api/pins (F2)', () => {
     const off = await fetch(`${b3}/api/pins`, { method: 'POST', headers: { cookie: cookie(), origin: b3 }, body: JSON.stringify({ sessionId: ID, pinned: false }) });
     expect(await off.json()).toEqual({ pins: [] });
   });
+
+  it('POST /api/pins/order: auth, validation, reorder (unknown ids ignored, missing ones kept), persists and notifies', async () => {
+    const ID2 = '22222222-2222-4222-8222-222222222222';
+    const ID3 = '33333333-3333-4333-8333-333333333333';
+    const UNKNOWN = '99999999-9999-4999-8999-999999999999';
+    const post = (body: string, headers: Record<string, string> = { cookie: cookie(), origin: b3 }) => fetch(`${b3}/api/pins/order`, { method: 'POST', headers, body });
+    for (const id of [ID, ID2, ID3]) await pins.set(id, true);
+    expect(pins.list()).toEqual([ID3, ID2, ID]); // newest pin on top
+    const ok = JSON.stringify({ order: [ID, ID2, ID3] });
+    expect((await post(ok, { origin: b3 })).status).toBe(401);
+    expect((await post(ok, { cookie: cookie() })).status).toBe(403);
+    for (const body of ['{bad', JSON.stringify({}), JSON.stringify({ order: 'x' }), JSON.stringify({ order: [ID, 5] }), JSON.stringify({ order: ['../x'] }), JSON.stringify({ order: Array(401).fill(ID) })]) {
+      expect((await post(body)).status).toBe(400);
+    }
+    expect(pins.list()).toEqual([ID3, ID2, ID]);
+    const before = changed;
+    const r = await post(JSON.stringify({ order: [ID, UNKNOWN, ID3, ID] }));
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ pins: [ID, ID3, ID2] });
+    expect(changed).toBe(before + 1);
+    expect(JSON.parse(await fs.readFile(path.join(dir, 'pins.json'), 'utf8'))).toEqual([ID, ID3, ID2]);
+    const same = await post(JSON.stringify({ order: [ID, ID3, ID2] }));
+    expect(await same.json()).toEqual({ pins: [ID, ID3, ID2] });
+    expect(changed).toBe(before + 1); // nothing changed: no broadcast
+    for (const id of [ID, ID2, ID3]) await pins.set(id, false);
+  });
 });
 
 describe('GET /api/attachments/:id (ux-state thumbnails)', () => {

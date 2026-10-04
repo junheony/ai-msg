@@ -10,7 +10,7 @@ import type { SlashCommandCache } from './engine/slashCommands';
 import { FileReadError, type FileLister } from './files';
 import type { PushNotifier } from './push/PushNotifier';
 import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
-import { isPinnableId, type PinStore } from './sessions/PinStore';
+import { MAX_PINS, isPinnableId, type PinStore } from './sessions/PinStore';
 import { isTrashId } from './sessions/SessionTrash';
 import { MAX_TITLE_CHARS, type SessionMetaStore } from './sessions/SessionMetaStore';
 import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
@@ -289,6 +289,18 @@ export function createRequestHandler(deps: HttpDeps) {
           if (!body || !isPinnableId(body.sessionId) || typeof body.pinned !== 'boolean') { json(res, 400, { error: '잘못된 고정 요청입니다' }); return; }
           const pins = await deps.pins.set(body.sessionId, body.pinned);
           deps.onIndexChanged?.();
+          json(res, 200, { pins });
+          return;
+        }
+        if (url.pathname === '/api/pins/order' && req.method === 'POST') {
+          // 고정됨 drag order: the full list, top first; ids that are not pinned are ignored by the store.
+          if (!deps.pins) { json(res, 404, { error: 'not found' }); return; }
+          let body: { order?: unknown } = {};
+          try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
+          if (!body || !Array.isArray(body.order) || body.order.length > MAX_PINS * 2 || !body.order.every(isPinnableId)) { json(res, 400, { error: '잘못된 고정 순서 요청입니다' }); return; }
+          const before = deps.pins.list();
+          const pins = await deps.pins.reorder(body.order);
+          if (pins !== before) deps.onIndexChanged?.(); // an unchanged order is not broadcast
           json(res, 200, { pins });
           return;
         }
