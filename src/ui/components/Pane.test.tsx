@@ -221,3 +221,24 @@ describe('Pane: Esc stops the running turn from anywhere in the pane', () => {
     expect(send2).not.toHaveBeenCalled();
   });
 });
+
+describe('Pane: chat title menu uses the sidebar actions', () => {
+  afterEach(cleanup);
+  it('acts on the listed session; a GPT one gets 삭제 disabled', () => {
+    const entry = { sessionId: 's1', account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 1 };
+    const actions = { pins: ['s1'], onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn() };
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null } };
+    const app = { pending: [], questions: [], codexAvailable: false, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [entry] }] };
+    const { rerender } = render(<Pane pane={pane} app={app} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
+    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByText('고정 해제'));
+    expect(actions.onTogglePin).toHaveBeenCalledWith('s1', false);
+    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByText('삭제…'));
+    expect(actions.onDelete).toHaveBeenCalledWith(entry);
+    const gpt = { ...entry, account: 'gpt' as const, engine: 'codex' as const };
+    rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [gpt] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
+    fireEvent.click(document.querySelector('button.chat-title')!);
+    expect(screen.getByRole('menuitem', { name: '삭제…' }).getAttribute('aria-disabled')).toBe('true');
+  });
+});

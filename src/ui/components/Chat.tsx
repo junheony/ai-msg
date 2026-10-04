@@ -29,6 +29,7 @@ import { QueueChips } from './QueueChips';
 import { ShareMenu } from './ShareMenu';
 import { TodoPanel } from './TodoPanel';
 import { usePrefs } from '../usePrefs';
+import { MenuList } from './SessionMenu';
 import { useAutoGrow } from '../useAutoGrow';
 
 export type ChatProps = {
@@ -38,6 +39,8 @@ export type ChatProps = {
   activeTurnId: string | null;
   busy: boolean;
   title: string;
+  /** The title ⌄ menu (the sidebar ⋯ actions; `deleteBlocked` = 삭제 shown disabled with this reason). Absent = the caret is decoration. */
+  titleMenu?: { pinned: boolean; archived: boolean; onRename?: (title: string | null) => void; onTogglePin?: () => void; onArchive?: () => void; onDelete?: () => void; deleteBlocked?: string | null };
   /** Session folder: the header shows its last segment as a chip, the full path on hover. */
   cwd?: string;
   /** For `/` command suggestions (null while the session is new). */
@@ -308,6 +311,21 @@ export function Chat(p: ChatProps) {
     setText('');
     scroll.attach();
   };
+  // Title ⌄ menu and its inline rename (closed when the pane shows another session).
+  const [titleMenuOpen, setTitleMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const renamingRef = useRef<string | null>(null);
+  renamingRef.current = renaming;
+  useEffect(() => { setTitleMenuOpen(false); setRenaming(null); }, [p.sessionId]);
+  const commitRename = () => {
+    const v = renamingRef.current;
+    if (v === null) return;
+    renamingRef.current = null;
+    setRenaming(null);
+    const t = v.replace(/\s+/g, ' ').trim();
+    if (t !== p.title) p.titleMenu?.onRename?.(t || null);
+  };
+  const tm = p.titleMenu;
   const [{ sendKey }] = usePrefs();
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggest.onKeyDown(e)) return;
@@ -358,7 +376,33 @@ export function Chat(p: ChatProps) {
   return (
     <main className="chat">
       <div className="chat-head">
-        <span className="chat-title" title={p.title}><span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span></span>
+        <span className="chat-title-wrap">
+          {renaming !== null ? (
+            <input className="chat-title-input" aria-label="채팅 이름" value={renaming} autoFocus maxLength={200}
+              onChange={(e) => setRenaming(e.target.value)} onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return;
+                if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                if (e.key === 'Escape') { e.preventDefault(); renamingRef.current = null; setRenaming(null); }
+              }} />
+          ) : tm ? (
+            <button type="button" className="chat-title" title={p.title} aria-haspopup="menu" aria-expanded={titleMenuOpen} onClick={() => setTitleMenuOpen((o) => !o)}>
+              <span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span>
+            </button>
+          ) : (
+            <span className="chat-title" title={p.title}><span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span></span>
+          )}
+          {titleMenuOpen && tm && (
+            <MenuList className="session-menu chat-title-menu" label="채팅 메뉴" onClose={() => setTitleMenuOpen(false)}>
+              {tm.onRename && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); setRenaming(p.title); }}>이름 바꾸기</button>}
+              {tm.onTogglePin && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); tm.onTogglePin?.(); }}>{tm.pinned ? '고정 해제' : '맨 위에 고정'}</button>}
+              {tm.onArchive && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); tm.onArchive?.(); }}>{tm.archived ? '보관 해제' : '보관'}</button>}
+              {tm.deleteBlocked
+                ? <button type="button" role="menuitem" className="danger" aria-disabled="true" title={tm.deleteBlocked}>삭제…</button>
+                : tm.onDelete && <button type="button" role="menuitem" className="danger" onClick={() => { setTitleMenuOpen(false); tm.onDelete?.(); }}>삭제…</button>}
+            </MenuList>
+          )}
+        </span>
         {folder && <span className="folder-chip" title={p.cwd}>{folder}</span>}
         {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
         {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${PERM_MODE_HINT[permMode]}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}

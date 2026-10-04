@@ -2,16 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import type { Effort, ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import type { ClientMessage } from '../../shared/protocol';
-import type { ProjectEntry } from '../../shared/session-types';
+import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
 import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
-import { Chat, modelChoices } from './Chat';
+import { Chat, modelChoices, type ChatProps } from './Chat';
 import { ModelPicker } from './ModelPicker';
 import { ForkMenu } from './ForkMenu';
 import { NewChat } from './NewChat';
 import { OpenInDesktop } from './OpenInDesktop';
 import { SidePanel } from './SidePanel';
+import { deleteBlockedReason } from './SessionMenu';
 import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
 import { hasOpenPopup } from '../composerFocus';
 import { isTypingTarget } from '../shortcuts';
@@ -130,7 +131,15 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
 }
 
 /** One split-view pane: its own session, items and composer; user actions become `send`/`dispatch` here (D6). */
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn }: {
+export type SessionActions = {
+  pins: string[];
+  onRename: (sessionId: string, title: string | null) => void;
+  onTogglePin: (sessionId: string, pinned: boolean) => void;
+  onArchive: (sessionId: string, archived: boolean) => void;
+  onDelete: (s: SessionEntry) => void;
+};
+
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage' | 'projects' | 'defaultPermMode'>>;
   active: boolean;
@@ -146,6 +155,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   /** The empty pane's preselected project. */
   newChatCwd?: string | null;
   uploadFn?: UploadFn;
+  /** The chat title ⌄ menu (이름 바꾸기 / 고정 / 보관 / 삭제): the sidebar ⋯ menu's actions. Absent = no menu. */
+  sessionActions?: SessionActions;
 }) {
   const s = pane.session;
   // Side panel (artifacts / file preview): per pane, closed by ✕ or Esc, dropped when the pane's session changes.
@@ -259,6 +270,18 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       openRef.current?.(u.sessionId, u.cwd, u.title);
     }
   }, [pane.awaitingStart, pane.myTurns.length, pane.session?.sessionId]);
+  // A session deck lists gets the full menu; one only Claude Desktop lists (not in deck's projects) can be pinned.
+  const pinned = !!sid && !!sessionActions?.pins.includes(sid);
+  const titleMenu: ChatProps['titleMenu'] = !sid || !sessionActions ? undefined : entry
+    ? {
+        pinned, archived: !!entry.archived,
+        onRename: (title) => sessionActions.onRename(entry.sessionId, title),
+        onTogglePin: () => sessionActions.onTogglePin(entry.sessionId, !pinned),
+        onArchive: () => sessionActions.onArchive(entry.sessionId, !entry.archived),
+        onDelete: () => sessionActions.onDelete(entry),
+        deleteBlocked: deleteBlockedReason(entry),
+      }
+    : { pinned, archived: false, onTogglePin: () => sessionActions.onTogglePin(sid, !pinned) };
   const prevId = entry?.prevSession ?? pane.handoffFrom?.sessionId ?? null;
   const link = (id: string | null) => {
     if (!id || !s) return null;
@@ -276,6 +299,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           activeTurnId={pane.activeTurnId}
           busy={busy}
           title={s.title}
+          titleMenu={titleMenu}
           cwd={s.cwd}
           sessionId={s.sessionId}
           headActions={<>{fileBtn}{desktop}{fork}{close}</>}

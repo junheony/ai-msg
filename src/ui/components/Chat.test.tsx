@@ -286,3 +286,59 @@ describe('Chat readOnly', () => {
     expect(onAttach).not.toHaveBeenCalled();
   });
 });
+
+describe('Chat title ⌄ menu', () => {
+  afterEach(cleanup);
+  const menu = (extra: Partial<NonNullable<ChatProps['titleMenu']>> = {}) => ({ pinned: false, archived: false, onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn(), deleteBlocked: null, ...extra });
+
+  it('opens 이름 바꾸기 / 고정 / 보관 / 삭제 and runs the sidebar actions', () => {
+    const tm = menu();
+    renderChat([], false, vi.fn(), { title: '내 채팅', sessionId: 's1', titleMenu: tm });
+    const title = screen.getByRole('button', { name: /내 채팅/ });
+    expect(title.getAttribute('aria-haspopup')).toBe('menu');
+    fireEvent.click(title);
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '삭제…']);
+    fireEvent.click(screen.getByText('맨 위에 고정'));
+    expect(tm.onTogglePin).toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(title);
+    fireEvent.click(screen.getByText('보관'));
+    fireEvent.click(title);
+    fireEvent.click(screen.getByText('삭제…'));
+    expect(tm.onArchive).toHaveBeenCalled();
+    expect(tm.onDelete).toHaveBeenCalled();
+  });
+
+  it('이름 바꾸기 edits the title inline: Enter saves (trimmed; empty = back to the default), Esc cancels', () => {
+    const tm = menu();
+    renderChat([], false, vi.fn(), { title: '내 채팅', sessionId: 's1', titleMenu: tm });
+    fireEvent.click(screen.getByRole('button', { name: /내 채팅/ }));
+    fireEvent.click(screen.getByText('이름 바꾸기'));
+    const input = screen.getByLabelText('채팅 이름') as HTMLInputElement;
+    expect(input.value).toBe('내 채팅');
+    fireEvent.change(input, { target: { value: '  새   이름 ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(tm.onRename).toHaveBeenCalledTimes(1);
+    expect(tm.onRename).toHaveBeenCalledWith('새 이름');
+    fireEvent.click(screen.getByRole('button', { name: /내 채팅/ }));
+    fireEvent.click(screen.getByText('이름 바꾸기'));
+    fireEvent.change(screen.getByLabelText('채팅 이름'), { target: { value: 'nope' } });
+    fireEvent.keyDown(screen.getByLabelText('채팅 이름'), { key: 'Escape' });
+    expect(screen.queryByLabelText('채팅 이름')).toBeNull();
+    expect(tm.onRename).toHaveBeenCalledTimes(1);
+  });
+
+  it('삭제 is disabled with the reason for sessions deck cannot delete; no menu without actions', () => {
+    const tm = menu({ deleteBlocked: 'Codex 앱 기록은 deck에서 지울 수 없어요' });
+    renderChat([], false, vi.fn(), { title: 'gpt', sessionId: 's1', titleMenu: tm });
+    fireEvent.click(screen.getByRole('button', { name: /gpt/ }));
+    const del = screen.getByRole('menuitem', { name: '삭제…' });
+    expect(del.getAttribute('aria-disabled')).toBe('true');
+    expect(del.getAttribute('title')).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    fireEvent.click(del);
+    expect(tm.onDelete).not.toHaveBeenCalled();
+    cleanup();
+    renderChat([], false, vi.fn(), { title: 'plain' });
+    expect(screen.queryByRole('button', { name: /plain/ })).toBeNull();
+  });
+});

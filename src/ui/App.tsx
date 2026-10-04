@@ -336,6 +336,11 @@ export function App() {
       setUndo({ trashId, title: s.title, ...(which ? { which } : {}) });
     }, showError('삭제 실패'));
   };
+  // The sidebar ⋯ menu and the chat title ⌄ menu share these.
+  const togglePin = (sessionId: string, pinned: boolean) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), showError('고정 실패')); };
+  const renameSession = (sessionId: string, title: string | null) => { postSessionMeta(sessionId, { title }).catch(showError('이름 바꾸기 실패')); };
+  const archiveSession = (sessionId: string, archived: boolean) => { postSessionMeta(sessionId, { archived }).catch(showError('보관 실패')); };
+  const sessionActions = { pins: state.pins, onRename: renameSession, onTogglePin: togglePin, onArchive: archiveSession, onDelete: (s: SessionEntry) => askDelete(s) };
   const orphanPerms = orphanCards(state.panes, state.pending);
   const orphanQs = orphanCards(state.panes, state.questions);
 
@@ -392,7 +397,7 @@ export function App() {
             onRefresh={() => send({ type: 'refresh_index' })}
             pins={state.pins}
             desktop={state.desktop}
-            onTogglePin={(sessionId, pinned) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 실패' })); }}
+            onTogglePin={togglePin}
             onReorderPins={(order) => {
               // Optimistic: the new order shows at once. Only the latest move's answer counts — an older one arriving
               // late must not undo a newer move (the index broadcast settles those). A failed save puts the old order
@@ -414,8 +419,8 @@ export function App() {
             }}
             collapsed={collapsed}
             onCollapsedChange={setCollapsed}
-            onRename={(sessionId, title) => { postSessionMeta(sessionId, { title }).catch((err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '이름 바꾸기 실패' })); }}
-            onArchive={(sessionId, archived) => { postSessionMeta(sessionId, { archived }).catch((err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '보관 실패' })); }}
+            onRename={renameSession}
+            onArchive={archiveSession}
             onOpenHit={openHit}
             view={sidebarView}
             onViewChange={setSidebarView}
@@ -435,7 +440,7 @@ export function App() {
           )}
           {(phone ? [active] : state.panes).map((p) => (
             <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
-              onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} />
+              onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions} />
           ))}
         </div>
       </div>
