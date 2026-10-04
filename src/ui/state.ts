@@ -93,14 +93,37 @@ function release(queue: QueueItem[], go: (q: QueueItem) => boolean): QueueItem[]
 /** The pane leaves the session its held messages were meant for: they stay, as ordinary (paused) queue items. */
 const unhold = (queue: QueueItem[]): QueueItem[] => queue.map(({ restart: _r, maybeSent: _m, ...q }) => q);
 
-/** Messages that must not be let go with their session: held for a restart, maybe gone in, a lost steer, or parked before. */
-const isHeld = (q: QueueItem) => !!q.restart || q.maybeSent !== undefined || !!q.lostSteer || !!q.kept;
+/** Messages that must not be let go with their session: held for a restart, maybe gone in, a steer (in flight or lost), or parked before. */
+const isHeld = (q: QueueItem) => !!q.restart || q.maybeSent !== undefined || !!q.steer || !!q.lostSteer || !!q.kept;
+
+/** A held item as it is parked: a steer still on its way is with the server already — kept as a lost steer, never reported dropped. */
+const toParked = ({ restart: _r, steer, ...q }: QueueItem): QueueItem => (steer ? { ...q, lostSteer: steer } : q);
+
+/**
+ * The answer to a steer whose pane left the session meanwhile (the item is parked as a lost steer): gone in (or already in) —
+ * the parked copy is dropped; refused — it stays parked, plain, and the error bar names it.
+ */
+function settleParkedSteer(parked: AppState['parked'], msg: Extract<ServerMessage, { type: 'steer_delivered' | 'steer_rejected' }>): { parked: AppState['parked']; error?: string } {
+  const key = Object.keys(parked).find((k) => parked[k]!.queue.some((q) => q.lostSteer === msg.steerId));
+  if (!key) return { parked };
+  const bucket = parked[key]!;
+  const item = bucket.queue.find((q) => q.lostSteer === msg.steerId)!;
+  if (msg.type === 'steer_delivered' || msg.code === 'already_accepted') {
+    const queue = bucket.queue.filter((q) => q !== item);
+    const { [key]: _gone, ...rest } = parked;
+    return { parked: queue.length ? { ...parked, [key]: { ...bucket, queue } } : rest };
+  }
+  // Going in right now under this id: it may still land — left as a lost steer.
+  if (msg.code === 'in_flight') return { parked };
+  const queue = bucket.queue.map(({ lostSteer, ...q }): QueueItem => (lostSteer === msg.steerId ? { ...q, kept: true } : { ...q, ...(lostSteer ? { lostSteer } : {}) }));
+  return { parked: { ...parked, [key]: { ...bucket, queue } }, error: `진행 중인 턴에 들어가지 못한 메시지가 있습니다 — 그 세션을 다시 열면 큐에 있습니다: ${item.text || '첨부만'}` };
+}
 
 /** Held messages of a session the pane leaves go to its parked bucket (the rest stays in `queue`). */
 function parkHeld(parked: AppState['parked'], sessionId: string, cwd: string, queue: QueueItem[]): { parked: AppState['parked']; queue: QueueItem[] } {
   const held = queue.filter(isHeld);
   if (!held.length) return { parked, queue };
-  return { parked: { ...parked, [sessionId]: { cwd, queue: [...(parked[sessionId]?.queue ?? []), ...held.map(({ restart: _r, ...q }) => q)] } }, queue: queue.filter((q) => !isHeld(q)) };
+  return { parked: { ...parked, [sessionId]: { cwd, queue: [...(parked[sessionId]?.queue ?? []), ...held.map(toParked)] } }, queue: queue.filter((q) => !isHeld(q)) };
 }
 
 /** Slack for the device's and the server's clocks disagreeing. */
@@ -773,9 +796,11 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     }
     case 'thinking': case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
     case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result':
+      return { ...state, panes: mapPanes(state, msg) };
     case 'steer_delivered': case 'steer_rejected': {
       const kept = msg.type === 'steer_rejected' && msg.code === 'in_flight' && state.panes.some((p) => p.queue.some((q) => q.steer === msg.steerId));
-      return { ...state, panes: mapPanes(state, msg), ...(kept ? { error: msg.message } : {}) };
+      const away = settleParkedSteer(state.parked, msg);
+      return { ...state, parked: away.parked, panes: mapPanes(state, msg), ...(kept ? { error: msg.message } : away.error ? { error: away.error } : {}) };
     }
     case 'activity': {
       // A turn that finished while no focused pane showed its session leaves an unread dot.
@@ -823,16 +848,18 @@ function park(state: AppState, paneId: string | undefined): AppState {
   const held = p.queue.filter(isHeld);
   // The rest of the queue (typed for this session, never sent) is let go with the session — never silently.
   const dropped = p.queue.filter((q) => !isHeld(q));
+  const unsent = held.filter((q) => !q.steer);
   const texts = (qs: QueueItem[]) => qs.map((q) => q.text || '첨부만').join(' / ');
   if (dropped.length) console.warn('deck: queued messages dropped with their session:', dropped.map((q) => q.text));
   const notes = [
-    ...(held.length && !s.sessionId ? [`보내지 못한 메시지 ${held.length}개는 이 폴더에서 새 세션을 열면 큐로 돌아옵니다: ${texts(held)}`] : []),
+    // A steer still on its way is not unsent: it is not announced (its answer settles the parked copy).
+    ...(unsent.length && !s.sessionId ? [`보내지 못한 메시지 ${unsent.length}개는 이 폴더에서 새 세션을 열면 큐로 돌아옵니다: ${texts(unsent)}`] : []),
     ...(dropped.length ? [`큐에서 빠진 메시지 ${dropped.length}개: ${texts(dropped)}`] : []),
   ];
   const error = notes.length ? { error: notes.join(' · ') } : {};
   if (!held.length) return { ...state, ...error };
   const key = parkKey(s.sessionId, s.cwd);
-  const parked = { ...state.parked, [key]: { cwd: s.cwd, queue: [...(state.parked[key]?.queue ?? []), ...held.map(({ restart: _r, ...q }) => q)] } };
+  const parked = { ...state.parked, [key]: { cwd: s.cwd, queue: [...(state.parked[key]?.queue ?? []), ...held.map(toParked)] } };
   return { ...state, parked, ...error };
 }
 

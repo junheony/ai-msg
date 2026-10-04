@@ -110,8 +110,8 @@ export type WsDeps = {
   usage: UsageService;
   store: SessionStateStore;
   extraHosts?: string[];
-  /** UI build id (see buildId.ts); rides hello so open tabs notice a new build. */
-  build?: string | null;
+  /** UI build id (see buildId.ts); rides hello so open tabs notice a new build. A function is read per hello (live). */
+  build?: string | null | (() => string | null);
   /** D11: false hides the GPT engine in the UI and makes 'auto' mean Claude. */
   codexAvailable: boolean;
   /** Read on every hello, so a login done while deck runs shows up on the next connect. Absent = no Gemini. */
@@ -573,7 +573,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: deps.build } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
 

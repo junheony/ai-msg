@@ -296,3 +296,52 @@ describe('App 고정됨 reorder', () => {
     expect(pinnedTitles()).toEqual(['one', 'two']);
   });
 });
+
+describe('App new build without a server restart', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    sock.frames = [];
+    sock.onMessage = null;
+  });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear(); });
+
+  const bootWithBuild = async (build: string) => {
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    server({ type: 'hello', usage, projects: [], running: [], codex: { available: false }, build } as unknown as ServerMessage);
+  };
+
+  it('coming back to the page asks /api/build; a new id offers the 새 버전 pill, the same id or a failed fetch does not', async () => {
+    let answer: () => Response = () => new Response(JSON.stringify({ build: 'b1' }), { status: 200 });
+    const fetchMock = vi.fn(async (url: string) => (url === '/api/build' ? answer() : new Response('{}', { status: 200 })));
+    vi.stubGlobal('fetch', fetchMock);
+    sessionStorage.setItem('deck.reloadedFor', 'b2'); // already reloaded once for b2: the pill, not another reload
+    await bootWithBuild('b1');
+    const asked = () => fetchMock.mock.calls.filter((c) => c[0] === '/api/build').length;
+    expect(asked()).toBe(0);
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    await waitFor(() => expect(asked()).toBe(1));
+    expect(screen.queryByText(/새 버전이 있어요/)).toBeNull();
+    answer = () => new Response('nope', { status: 500 });
+    await act(async () => { window.dispatchEvent(new Event('pageshow')); });
+    await waitFor(() => expect(asked()).toBe(2));
+    expect(screen.queryByText(/새 버전이 있어요/)).toBeNull();
+    answer = () => new Response(JSON.stringify({ build: 'b2' }), { status: 200 });
+    await act(async () => { window.dispatchEvent(new Event('pageshow')); });
+    expect(await screen.findByText(/새 버전이 있어요/)).toBeTruthy();
+  });
+
+  it('the avatar menu ends with 새로고침', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    await bootWithBuild('b1');
+    fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
+    const labels = screen.getAllByRole('menuitem').map((b) => b.textContent ?? '');
+    expect(labels).toHaveLength(5);
+    expect(labels[0]).toMatch(/^설정/);
+    expect(labels[1]).toBe('사용량 기록');
+    expect(labels[2]).toMatch(/^테마: /);
+    expect(labels[3]).toMatch(/^단축키/);
+    expect(labels[4]).toBe('새로고침');
+  });
+});

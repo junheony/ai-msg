@@ -16,6 +16,7 @@ const TOKEN = 'e'.repeat(64);
 let base = '';
 let server: http.Server;
 let uiDir: string;
+let build: string | null = null;
 
 beforeAll(async () => {
   uiDir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ui-'));
@@ -25,7 +26,7 @@ beforeAll(async () => {
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
   const attachments = new AttachmentStore(path.join(uiDir, 'att'));
   await attachments.init();
-  server = http.createServer(createRequestHandler({ token: TOKEN, uiDir, usage, index, devOrigins: ['http://dev.local'], attachments }));
+  server = http.createServer(createRequestHandler({ token: TOKEN, uiDir, usage, index, devOrigins: ['http://dev.local'], attachments, build: () => build }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const addr = server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
@@ -33,6 +34,17 @@ beforeAll(async () => {
 afterAll(() => server.close());
 
 describe('http', () => {
+  it('GET /api/build needs the session cookie and answers the live build id (null without a build)', async () => {
+    expect((await fetch(`${base}/api/build`)).status).toBe(401);
+    const headers = { cookie: `deck_session=${cookieValueFor(TOKEN)}` };
+    expect(await (await fetch(`${base}/api/build`, { headers })).json()).toEqual({ build: null });
+    build = 'abc123';
+    const res = await fetch(`${base}/api/build`, { headers });
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(await res.json()).toEqual({ build: 'abc123' });
+    build = null;
+  });
+
   it('refuses API without a cookie', async () => {
     expect((await fetch(`${base}/api/me`)).status).toBe(401);
     expect((await fetch(`${base}/api/bootstrap`)).status).toBe(401);

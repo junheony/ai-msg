@@ -22,6 +22,8 @@ import type { UsageService } from './usage/UsageService';
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
 export type HttpDeps = {
   token: string; uiDir: string; usage: UsageService; index: SessionIndex; devOrigins?: string[]; extraHosts?: string[]; extraSessions?: () => SessionEntry[]; attachments?: AttachmentStore;
+  /** UI build id as of now (buildId.ts) for GET /api/build: a visible tab polls it to notice a UI-only rebuild. Absent = null. */
+  build?: () => string | null;
   /** F1: the folder picker only reaches inside this dir (default: the OS home dir). */
   home?: string;
   /** F1/F2: the project list or pins changed; main broadcasts a fresh `index` to every socket. */
@@ -281,6 +283,7 @@ export function createRequestHandler(deps: HttpDeps) {
       if (url.pathname.startsWith('/api/')) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
+        if (url.pathname === '/api/build' && req.method === 'GET') { json(res, 200, { build: deps.build?.() ?? null }); return; }
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }
         if (url.pathname === '/api/pins' && req.method === 'POST') {
           if (!deps.pins) { json(res, 404, { error: 'not found' }); return; }

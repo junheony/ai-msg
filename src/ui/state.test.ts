@@ -791,6 +791,33 @@ describe('message queue (ux-state)', () => {
       expect(nextQueued(pane(s))).toBeNull();
     });
 
+    it('a steer still in flight is parked as a lost steer, not reported dropped, when the pane leaves; a typed-only item still is', () => {
+      let s = reducer(running(), { type: 'queue_add', text: 'mid-turn', steerId: 'k1' });
+      s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'other' });
+      expect(s.error ?? null).toBeNull();
+      expect(s.parked.s1!.queue.map((q) => [q.text, q.lostSteer, q.steer])).toEqual([['mid-turn', 'k1', undefined]]);
+      let t = reducer(running(), { type: 'queue_add', text: 'typed only' });
+      t = reducer(t, { type: 'open', sessionId: 's2', cwd: '/w', title: 'other' });
+      expect(t.error).toContain('큐에서 빠진 메시지 1개: typed only');
+    });
+
+    it('the answer to a steer whose pane left settles the parked copy: delivered / already in drops it, refused keeps it plain and names it', () => {
+      const away = () => reducer(reducer(running(), { type: 'queue_add', text: 'mid-turn', steerId: 'k1' }), { type: 'open', sessionId: 's2', cwd: '/w', title: 'other' });
+      const scope = { turnId: 't1', sessionId: 's1', cwd: '/w' };
+      const done = reducer(away(), { type: 'server', msg: { type: 'steer_delivered', steerId: 'k1', prompt: { text: 'mid-turn' }, ...scope } as never });
+      expect(done.parked.s1).toBeUndefined();
+      expect(done.error ?? null).toBeNull();
+      const dup = reducer(away(), { type: 'server', msg: { type: 'steer_rejected', steerId: 'k1', message: 'x', code: 'already_accepted', ...scope } });
+      expect(dup.parked.s1).toBeUndefined();
+      const flying = reducer(away(), { type: 'server', msg: { type: 'steer_rejected', steerId: 'k1', message: 'x', code: 'in_flight', ...scope } });
+      expect(flying.parked.s1!.queue[0]).toMatchObject({ text: 'mid-turn', lostSteer: 'k1' });
+      const no = reducer(away(), { type: 'server', msg: { type: 'steer_rejected', steerId: 'k1', message: 'x', ...scope } });
+      expect(no.parked.s1!.queue.map((q) => [q.text, q.lostSteer, q.kept])).toEqual([['mid-turn', undefined, true]]);
+      expect(no.error).toContain('mid-turn');
+      // another steer's answer leaves it alone
+      expect(reducer(away(), { type: 'server', msg: { type: 'steer_rejected', steerId: 'zz', message: 'x', ...scope } }).parked.s1!.queue[0]!.lostSteer).toBe('k1');
+    });
+
     it('G: branch_edit parks held items (restart, maybeSent, lost steer, kept) with the parent; only plain ones follow, paused', () => {
       let s = lostSend('lost', ['old']);
       s = reducer(s, { type: 'queue_add', text: 'plain' });

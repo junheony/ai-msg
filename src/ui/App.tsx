@@ -19,7 +19,7 @@ import { UsageView } from './components/UsageView';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
-import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type UploadedAttachment } from './state';
+import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
 import { isMacPlatform, isTypingTarget, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { usePrefs } from './usePrefs';
@@ -31,6 +31,8 @@ import { tabTitle } from './tabTitle';
 const VIEW_KEY = 'deck.sidebarView';
 const HIDDEN_KEY = 'deck.sidebarHidden';
 const UNDO_MS = 10_000;
+/** How often a visible page asks /api/build (it also asks whenever it becomes visible). */
+const BUILD_CHECK_MS = 5 * 60_000;
 const MAC = isMacPlatform();
 const THEME_LABEL: Record<Theme, string> = { system: '시스템', light: '라이트', dark: '다크' };
 
@@ -128,6 +130,43 @@ export function App() {
 
   useEffect(() => { void fetch('/api/me').then((r) => setAuthed(r.ok)); }, []);
 
+  /** A build id from the server (a hello, or /api/build) against the first hello's: reload when nothing is at stake (true), else offer the pill. */
+  const noticeBuild = (build: string | null, nextState: () => AppState): boolean => {
+    // No baseline yet (the first hello came from a server without a build): the first id seen becomes it.
+    if (!firstBuild.current) { if (build) firstBuild.current = build; return false; }
+    if (!isNewBuild(firstBuild.current, build)) return false;
+    const next = nextState();
+    if (shouldAutoReload({ draftText: hasDraftText(), modalOpen: hasOpenModal(), state: next }) && claimReload(build!)) {
+      // The save effect never runs before the reload: the queues as of now are stored first.
+      lastQueues.current = saveQueues(snapshotQueues(next), lastQueues.current);
+      location.reload();
+      return true;
+    }
+    setNewBuild(true);
+    return false;
+  };
+  // A UI-only rebuild sends no hello: ask when the page comes back to the front (an installed PWA has no reload button), and every few minutes while it stays there.
+  useEffect(() => {
+    if (!authed) return;
+    let busy = false;
+    const check = () => {
+      if (busy || document.visibilityState !== 'visible') return;
+      busy = true;
+      void fetch('/api/build')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body: { build?: unknown } | null) => {
+          if (typeof body?.build !== 'string') return;
+          noticeBuild(body.build, () => latest.current);
+        })
+        .catch(() => undefined)
+        .finally(() => { busy = false; });
+    };
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('pageshow', check);
+    const t = setInterval(check, BUILD_CHECK_MS);
+    return () => { document.removeEventListener('visibilitychange', check); window.removeEventListener('pageshow', check); clearInterval(t); };
+  }, [authed]);
+
   useEffect(() => {
     if (!authed) return;
     sock.current = createSocket((msg) => {
@@ -137,17 +176,7 @@ export function App() {
         // A restarted server with a new UI build: reload when nothing is at stake, else offer the pill.
         const build = msg.build ?? null;
         setBuildId(build);
-        if (firstBuild.current === undefined) firstBuild.current = build;
-        else if (isNewBuild(firstBuild.current, build)) {
-          const next = reducer(latest.current, { type: 'server', msg });
-          if (shouldAutoReload({ draftText: hasDraftText(), modalOpen: hasOpenModal(), state: next }) && claimReload(build!)) {
-            // The save effect never runs before the reload: the queues as of this hello are stored now.
-            lastQueues.current = saveQueues(snapshotQueues(next), lastQueues.current);
-            location.reload();
-            return;
-          }
-          setNewBuild(true);
-        }
+        if (noticeBuild(build, () => reducer(latest.current, { type: 'server', msg }))) return;
         const panes = latest.current.panes;
         for (const id of new Set(panes.map((p) => p.session?.sessionId).filter((x): x is string => !!x))) sock.current?.send({ type: 'open_session', sessionId: id });
         for (const p of panes) {
@@ -450,6 +479,7 @@ export function App() {
               { label: '사용량 기록', run: () => setUsageOpen(true) },
               { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
               { label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) },
+              { label: '새로고침', run: () => location.reload() },
             ]}
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
             onNewChat={() => newChat()}
