@@ -79,10 +79,10 @@ describe('Sidebar folding and search', () => {
   const s = (i: number) => ({ sessionId: `s${i}`, account: 'a' as const, cwd: '/w', projectDir: '/p', file: '/f', title: `session ${i}`, lastModified: Date.now() - 3 * 3_600_000, sizeBytes: 1 });
   const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: Array.from({ length: 8 }, (_, i) => s(i)) }];
 
-  it('shows 5 sessions then 더 보기; the project header collapses its list; rows carry "A · 3시간 전"', () => {
+  it('shows 5 sessions then 더 보기; the project header collapses its list; rows carry the time, not an account letter', () => {
     const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     expect(container.querySelectorAll('li')).toHaveLength(5);
-    expect(container.querySelector('.session-meta')?.textContent).toBe('A · 3시간 전');
+    expect(container.querySelector('.session-meta')?.textContent).toBe('3시간 전'); // turns are spread over accounts, so a per-session letter would mislead
     fireEvent.click(screen.getByText('더 보기 (3)'));
     expect(container.querySelectorAll('li')).toHaveLength(8);
     fireEvent.click(screen.getByText('접기'));
@@ -305,7 +305,7 @@ describe('Sidebar engine marks', () => {
   const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [claude, codex] }];
   const markOf = (title: string) => screen.getByText(title).closest('li')!.querySelector('.engine-mark');
 
-  it('puts a Claude / Codex mark before the title in the 프로젝트 view; the Claude row keeps its account letter', () => {
+  it('puts a Claude / Codex mark before the title in the 프로젝트 view; no account letter on either row', () => {
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     expect(markOf('claude chat')?.getAttribute('title')).toBe('Claude');
     expect(markOf('codex chat')?.getAttribute('title')).toBe('Codex (GPT)');
@@ -317,7 +317,7 @@ describe('Sidebar engine marks', () => {
     expect(title.classList.contains('session-title')).toBe(true);
     expect(title.firstElementChild?.classList.contains('engine-mark')).toBe(true);
     expect(title.textContent).toBe('claude chat');
-    expect(screen.getByText('claude chat').closest('li')!.querySelector('.session-meta')?.textContent?.startsWith('A · ')).toBe(true);
+    expect(screen.getByText('claude chat').closest('li')!.querySelector('.session-meta')?.textContent).not.toMatch(/^[ABC] · /);
   });
 
   it('marks rows in 최근, 고정됨 and Desktop rows, next to an unchanged unread / running dot', () => {
