@@ -43,4 +43,60 @@ describe('useAutoGrow', () => {
     rerender(<Box text="" />);
     expect(ta.style.height).toBe('20px');
   });
+
+  it('re-fits when the width changes (a narrower pane wraps onto more lines), not on its own height change', () => {
+    let fire = () => {};
+    const RO = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class { constructor(cb: () => void) { fire = cb; } observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
+    try {
+      const { container } = render(<Box text="one two three" />);
+      const ta = container.querySelector('textarea')!;
+      let width = 300;
+      Object.defineProperty(ta, 'clientWidth', { configurable: true, get: () => width });
+      Object.defineProperty(ta, 'scrollHeight', { configurable: true, get: () => (width < 200 ? 40 : 20) });
+      fire();
+      expect(ta.style.height).toBe('20px'); // first observation: width recorded at mount was 0 → re-measured, still one line
+      width = 150;
+      fire();
+      expect(ta.style.height).toBe('40px');
+    } finally {
+      globalThis.ResizeObserver = RO;
+    }
+  });
+});
+
+describe('autoGrow keeps the transcript scroll', () => {
+  /**
+   * A 1000px transcript over a textarea: measuring at height auto shrinks the textarea, the transcript's viewport grows
+   * 400 → 500px and the browser clamps its scrollTop (to ≤ 500), as a real layout does.
+   */
+  function transcript(top: number) {
+    const body = document.createElement('div');
+    const ta = document.createElement('textarea');
+    fakeLayout(ta);
+    let scrollTop = top;
+    let height = '';
+    const client = () => (height === 'auto' ? 500 : 400);
+    Object.defineProperty(ta.style, 'height', { configurable: true, get: () => height, set: (v: string) => { height = v; scrollTop = Math.min(scrollTop, 1000 - client()); } });
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, get: () => 1000 });
+    Object.defineProperty(body, 'clientHeight', { configurable: true, get: client });
+    Object.defineProperty(body, 'scrollTop', { configurable: true, get: () => scrollTop, set: (v: number) => { scrollTop = Math.max(0, Math.min(v, 1000 - client())); } });
+    return { body, ta, top: () => scrollTop };
+  }
+
+  it('without it the clamp would move the transcript up (the bug)', () => {
+    const t = transcript(600);
+    autoGrow(t.ta);
+    expect(t.top()).toBe(500);
+  });
+
+  it('stuck to the bottom stays at the bottom; scrolled up near the bottom stays where it was', () => {
+    const t = transcript(600); // at the bottom: 1000 - 400
+    t.ta.value = 'a\nb';
+    autoGrow(t.ta, t.body);
+    expect(t.top()).toBe(600);
+    const u = transcript(550); // reading 50px up, also clamped while measuring
+    autoGrow(u.ta, u.body);
+    expect(u.top()).toBe(550);
+  });
 });

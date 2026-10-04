@@ -234,8 +234,8 @@ export function Chat(p: ChatProps) {
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Desktop: the composer grows with the text up to the CSS max-height (40vh) and shrinks back after a send.
-  useAutoGrow(taRef, text);
   const bodyRef = useRef<HTMLDivElement>(null);
+  useAutoGrow(taRef, text, bodyRef);
   const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
   const scroll = useStickToBottom(bodyRef, content, p.sessionId);
   const { addFiles: upload, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
