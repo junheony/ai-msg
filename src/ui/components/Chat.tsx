@@ -330,6 +330,7 @@ export function Chat(p: ChatProps) {
     if (t !== p.title) p.titleMenu?.onRename?.(t || null);
   };
   const tm = p.titleMenu;
+  const showAccount = !!p.onAccountPin && (effectiveEngine === 'claude' || (!!p.isNew && effectiveEngine === 'auto'));
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [p.sessionId]);
   const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : 'Claude' }, () => setMoreOpen(false));
@@ -548,7 +549,7 @@ export function Chat(p: ChatProps) {
           {(p.attachments.length > 0 || uploading > 0 || error) && (
             <div className="composer-files"><AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} /></div>
           )}
-          {/* One toolbar row, as in Desktop: [+] · pickers (they truncate, never wrap) · send/stop at the far right. */}
+          {/* One toolbar row, as in Claude: [+] · model pill · 계정/권한 pill (they truncate, never wrap) · mic · send/stop. */}
           <div className="composer-row">
             <AttachMenu onFiles={(f) => void addFiles(f)} />
             <div className="composer-actions">
@@ -565,20 +566,26 @@ export function Chat(p: ChatProps) {
                   {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{sandboxLabel[s]}</option>)}
                 </Pick>
               )}
-              <DictationButton text={text} onText={setText} />
-              <ContextGauge info={ctx} onHandoff={p.onHandoff} />
-              {p.onAccountPin && (effectiveEngine === 'claude' || (p.isNew && effectiveEngine === 'auto')) && (
-                <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
-              )}
-              {p.onPermMode && (
-                <Pick className={`perm perm-${permSupported ? permMode : 'default'}`} label={<><span className="perm-full">{PERM_MODE_LABEL[permSupported ? permMode : 'default']}</span><span className="perm-short">{PERM_MODE_SHORT[permSupported ? permMode : 'default']}</span></>} value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${PERM_MODE_HINT[permMode]} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
-                  {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
-                </Pick>
-              )}
               <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
+              {/* 계정 · 권한: one compact secondary pill next to the model pill (Claude has no such controls; deck keeps them). */}
+              {(showAccount || p.onPermMode) && (
+                <div className="composer-sec" role="group" aria-label="계정 · 권한">
+                  {showAccount && p.onAccountPin && (
+                    <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
+                  )}
+                  {p.onPermMode && (
+                    <Pick className={`perm perm-${permSupported ? permMode : 'default'}`} label={<><span className="perm-full">{PERM_MODE_LABEL[permSupported ? permMode : 'default']}</span><span className="perm-short">{PERM_MODE_SHORT[permSupported ? permMode : 'default']}</span></>} value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${PERM_MODE_HINT[permMode]} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
+                      {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
+                    </Pick>
+                  )}
+                </div>
+              )}
             </div>
-            {/* Send/stop never shrink; 대기열에 추가 is a round secondary button of the same size, just left of stop. */}
+            {/* Right end, as in Claude: context gauge, mic, then the round send/stop (never shrink); 대기열에 추가 is a round
+                secondary button of the same size, just left of stop. */}
             <div className="composer-send">
+              <ContextGauge info={ctx} onHandoff={p.onHandoff} />
+              <DictationButton text={text} onText={setText} />
               {p.activeTurnId && queueing && hasDraft && (
                 <button type="button" className="queue-add" onClick={submit} title={steering ? '대기열에 추가 (Enter) — 실행 중인 턴에 보내 다음 도구 실행 뒤 전달합니다' : '대기열에 추가 (Enter) — 지금 턴이 끝나면 보냅니다'}>
                   <QueueIcon /><span className="sr-only">대기열에 추가</span>

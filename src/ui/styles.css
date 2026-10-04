@@ -1425,7 +1425,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .open-desktop-btn { display: none; }
 }
 @container pane (max-width: 360px) {
-  .composer-actions .icon-btn.dictate { display: none; }
+  .composer-send .icon-btn.dictate { display: none; }
   .chat-head-chips > .chip.perm-bypassPermissions .perm-badge-short { display: none; }
   .chat-head-chips > .chip.perm-bypassPermissions { padding: 0 5px; }
 }
@@ -1434,15 +1434,16 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
    the model label first, then the account, then the permission mode (flex-shrink weights 100 / 10 / 1). */
 .composer-actions > * { flex-shrink: 0; }
 .composer-actions > .model-picker { flex: 0 100 auto; min-width: 2.8em; }
-.composer-actions > .model-picker.account-picker { flex: 0 10 auto; min-width: 2.4em; }
-.composer-actions > .pick { flex: 0 1 auto; min-width: 3.6em; }
+.composer-actions > .composer-sec { flex: 0 10 auto; min-width: 0; }
+.composer-sec > .model-picker.account-picker { flex: 0 10 auto; min-width: 2.4em; }
+.composer-actions > .pick, .composer-sec > .pick { flex: 0 1 auto; min-width: 3.6em; }
 .composer-actions .mp-button { width: 100%; }
 .composer-actions > .model-picker:not(.account-picker) .mp-button { justify-content: flex-start; }
 /* Narrow composer (split column, cover screen): the account keeps its seat letter, the model drops its effort, the
    pickers tighten their padding — so the labels that remain read whole instead of as "Op…". */
 @container pane (max-width: 480px) {
   .composer-actions .mp-label-extra { display: none; }
-  .composer-actions > .model-picker.account-picker { min-width: 0; }
+  .composer-sec > .model-picker.account-picker { min-width: 0; }
   /* the queue button takes a seat: the mic yields it (dictation is still on the keyboard) */
   .composer-row:has(.queue-add) .dictate { display: none; }
   .composer-actions .pick .perm-full { display: none; }
@@ -1551,4 +1552,86 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
     .chat-head-chips { flex: 0 0 auto; }
     .chat-head-end { margin-left: auto; flex: none; }
   }
+}
+
+/* === composer controls (Claude parity) ===
+   Round pills: [+] and the model pill (model + effort) on the left, deck's 계정 · 권한 as one quieter pill beside it,
+   the context gauge, mic and a round send/stop on the right. */
+.composer-row { gap: 6px; padding: 4px 10px 10px; }
+.composer-actions { justify-content: flex-start; gap: 6px; }
+.attach { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: calc(20px * var(--font-scale, 1)); transition: background .15s, box-shadow .15s; }
+.attach:hover, .attach.open { background: var(--hover); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 28%, transparent); }
+.composer-actions > .model-picker:not(.account-picker) .mp-button { height: 34px; padding: 0 14px; border-radius: 999px; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.composer-actions > .model-picker:not(.account-picker) .mp-button:hover, .composer-actions > .model-picker:not(.account-picker) .mp-button.open { background: var(--hover); }
+.composer-actions .mp-label-extra { color: var(--muted); }
+.composer-actions > .model-picker:not(.account-picker) .mp-caret { display: none; }
+.composer-sec { display: inline-flex; align-items: center; gap: 0; height: 34px; padding: 0 2px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); }
+.composer-sec .mp-button, .composer-sec .pick { height: 30px; border-radius: 999px; font-size: calc(12.5px * var(--font-scale, 1)); }
+.composer-sec .mp-button { padding: 0 10px; }
+.composer-sec .pick { padding: 0 20px 0 10px; }
+.composer-sec > * + * { position: relative; }
+.composer-sec > * + *::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 1px; background: var(--line-strong); pointer-events: none; }
+.composer-sec:empty { display: none; }
+.composer-send { gap: 6px; }
+.composer-send .icon-btn.dictate { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); background: var(--hover); }
+.composer-send .icon-btn.dictate:hover { background: var(--selected); }
+.composer-send .icon-btn.dictate.on { color: var(--danger); background: var(--danger-soft); }
+.send, .queue-add { width: 34px; height: 34px; margin-left: 0; }
+.send:disabled { background: color-mix(in srgb, var(--accent) 38%, var(--bg)); color: color-mix(in srgb, #fff 70%, transparent); }
+:root[data-theme="light"] .send:disabled { background: color-mix(in srgb, var(--accent) 35%, var(--bg)); color: #fff; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .send:disabled { background: color-mix(in srgb, var(--accent) 35%, var(--bg)); color: #fff; } }
+.attach:focus-visible, .send:focus-visible, .composer-send .icon-btn.dictate:focus-visible, .composer-actions .mp-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .attach, .send, .queue-add, .composer-send .icon-btn.dictate { width: 40px; height: 40px; }
+  .composer-actions > .model-picker:not(.account-picker) .mp-button, .composer-sec { height: 40px; }
+  .composer-sec .mp-button, .composer-sec .pick { height: 36px; }
+}
+@media (max-width: 720px) {
+  .attach, .send, .queue-add, .composer-send .icon-btn.dictate { width: var(--phone-tap); height: var(--phone-tap); }
+  .composer-actions > .model-picker:not(.account-picker) .mp-button, .composer-sec { height: var(--phone-tap); }
+  .composer-sec .mp-button, .composer-sec .pick { height: 40px; }
+  .composer-row { padding: 2px 6px 6px; gap: 4px; }
+  .composer-actions { gap: 4px; }
+}
+@container pane (max-width: 480px) {
+  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 10px; }
+  .composer-sec .pick { padding: 0 16px 0 7px; }
+  .composer-sec .mp-button { padding: 0 7px; }
+  .composer-actions { gap: 4px; }
+}
+@container pane (max-width: 360px) {
+  .composer-sec .pick { padding: 0 6px; }
+  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 8px; }
+}
+/* The new-chat card's model picker is the same pill. */
+.newchat-actions .model-picker:not(.account-picker) .mp-button { height: 34px; padding: 0 14px; border-radius: 999px; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.newchat-actions .model-picker:not(.account-picker) .mp-button:hover, .newchat-actions .model-picker:not(.account-picker) .mp-button.open { background: var(--hover); }
+.newchat-actions .mp-label-extra { color: var(--muted); }
+.newchat-actions .model-picker:not(.account-picker) .mp-caret { display: none; }
+@media (pointer: coarse) { .newchat-actions .model-picker:not(.account-picker) .mp-button { height: 40px; } }
+@media (max-width: 720px) { .newchat-actions .model-picker:not(.account-picker) .mp-button { height: var(--phone-tap); } }
+/* The model pill keeps its name and the 계정 · 권한 pill gives way first (it truncates, the model never reads "Opu…"). */
+.composer-actions > .model-picker:not(.account-picker) { flex: 0 1 auto; min-width: min-content; }
+.composer-actions > .model-picker:not(.account-picker) .mp-label { overflow: visible; }
+.composer-actions > .composer-sec { flex: 0 100 auto; overflow: hidden; }
+/* Inside the 계정 · 권한 pill the account keeps its seat letter; the permission label is what truncates. */
+.composer-sec { min-width: 0; }
+.composer-sec > .model-picker.account-picker { flex: 0 0 auto; min-width: min-content; }
+.composer-sec > .model-picker.account-picker .mp-label { overflow: visible; }
+.composer-sec > .pick { flex: 0 1 auto; min-width: 0; }
+@media (max-width: 720px) {
+  .composer-send { gap: 3px; }
+  .composer-send .ctx-gauge { padding: 0 2px; }
+}
+@container pane (max-width: 480px) {
+  .composer-sec .pick { padding: 0 15px 0 7px; }
+  .composer-sec .pick::after { right: 5px; }
+  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 11px; }
+}
+/* Phone-narrow: the pill outline already says "tap me", so the carets give their room to the labels. */
+@container pane (max-width: 420px) {
+  .composer-sec .pick { padding: 0 9px; }
+  .composer-sec .pick::after { display: none; }
+  .composer-sec .mp-caret { display: none; }
+  .composer-sec .mp-button { padding: 0 9px; }
 }

@@ -14,9 +14,10 @@ function setup(extra: Partial<Parameters<typeof ModelPicker>[0]> = {}) {
 describe('ModelPicker', () => {
   afterEach(cleanup);
 
-  it('button reads "<exact version> · <effort>"; closed until clicked', () => {
+  it('button reads "<exact version> <effort>" (aria-label keeps the ·); closed until clicked', () => {
     setup();
-    expect(screen.getByTestId('model-picker').textContent).toContain('Opus 5.5 · 높음');
+    expect(screen.getByTestId('model-picker').textContent).toContain('Opus 5.5 높음');
+    expect(screen.getByTestId('model-picker').getAttribute('aria-label')).toBe('모델: Opus 5.5 · 높음');
     expect(screen.queryByTestId('model-menu')).toBeNull();
     expect(screen.getByTestId('model-picker').getAttribute('aria-expanded')).toBe('false');
   });
@@ -41,7 +42,7 @@ describe('ModelPicker', () => {
 
   it('auto engine: Claude and GPT sections with headers', () => {
     setup({ models: [...CLAUDE_MODELS, ...CODEX_MODELS], model: 'gpt-6-sol', effort: 'medium' });
-    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol · 중간');
+    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
     fireEvent.click(screen.getByTestId('model-picker'));
     const menu = within(screen.getByTestId('model-menu'));
     expect(menu.getByText('Claude')).toBeTruthy();
