@@ -23,7 +23,7 @@ import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Ac
 import { isMacPlatform, isTypingTarget, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { usePrefs } from './usePrefs';
-import { nextTheme } from './prefs';
+import { nextTheme, type Theme } from './prefs';
 import { createSocket } from './ws';
 import { composerOf, focusComposer, routeContext, routeKey } from './composerFocus';
 import { tabTitle } from './tabTitle';
@@ -32,6 +32,7 @@ const VIEW_KEY = 'deck.sidebarView';
 const HIDDEN_KEY = 'deck.sidebarHidden';
 const UNDO_MS = 10_000;
 const MAC = isMacPlatform();
+const THEME_LABEL: Record<Theme, string> = { system: '시스템', light: '라이트', dark: '다크' };
 
 function readLocal(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -351,6 +352,7 @@ export function App() {
   const renameSession = (sessionId: string, title: string | null) => { postSessionMeta(sessionId, { title }).catch(showError('이름 바꾸기 실패')); };
   const archiveSession = (sessionId: string, archived: boolean) => { postSessionMeta(sessionId, { archived }).catch(showError('보관 실패')); };
   const sessionActions = { pins: state.pins, onRename: renameSession, onTogglePin: togglePin, onArchive: archiveSession, onDelete: (s: SessionEntry) => askDelete(s) };
+  const footAccount = active.session?.account ?? null;
   const orphanPerms = orphanCards(state.panes, state.pending);
   const orphanQs = orphanCards(state.panes, state.questions);
 
@@ -438,6 +440,14 @@ export function App() {
             activity={state.activity}
             unread={state.unread}
             onOpenSettings={() => setSettingsOpen(true)}
+            avatar={footAccount ? footAccount.slice(0, 1).toUpperCase() : 'D'}
+            avatarTitle={footAccount ? `deck · ${footAccount === 'gpt' ? 'GPT' : `계정 ${footAccount.toUpperCase()}`}` : 'deck'}
+            footMenu={[
+              { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
+              { label: '사용량 기록', run: () => setUsageOpen(true) },
+              { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
+              { label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) },
+            ]}
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
             onNewChat={() => newChat()}
           />

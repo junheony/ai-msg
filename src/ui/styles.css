@@ -160,8 +160,6 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .sidebar { width: 268px; overflow-y: auto; border-right: 1px solid var(--line); padding: 8px 8px 24px; background: var(--sidebar); display: flex; flex-direction: column; gap: 1px; }
 .sidebar-head { display: flex; align-items: center; gap: 2px; padding: 0 0 6px; }
 .sidebar-head .grow { flex: 1; }
-.sidebar-new { display: flex; align-items: center; gap: 8px; height: 34px; margin: 0 0 6px; padding: 0 9px; border-radius: 8px; color: var(--fg-strong); font-size: calc(13.5px * var(--font-scale, 1)); font-weight: 550; flex-shrink: 0; }
-.sidebar-new:hover { background: var(--hover); }
 .session-menu button[aria-disabled="true"] { opacity: .6; cursor: default; }
 .session-menu .menu-note { display: block; max-width: 220px; margin-top: 2px; font-size: calc(11.5px * var(--font-scale, 1)); line-height: 1.35; color: var(--muted); white-space: normal; }
 .session-menu button[aria-disabled="true"]:hover { background: transparent; }
@@ -1125,8 +1123,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @keyframes dictate-pulse { 50% { opacity: .45; } }
 @media (max-width: 720px) { .seg button { height: var(--phone-tap); } .settings-backdrop { padding: 0; align-items: stretch; } .settings { max-height: 100%; border-radius: 0; width: 100%; } }
 .sidebar-foot { display: flex; align-items: center; gap: 4px; }
-.sidebar-foot .settings-open { margin-left: auto; font-size: calc(16px * var(--font-scale, 1)); }
-@media (max-width: 720px) { .settings-open { width: var(--phone-tap); height: var(--phone-tap); } }
 /* Thinking disclosure (collapsed above the reply). */
 .thinking, .thinking-line { margin: 0 0 10px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
 .thinking > summary { cursor: pointer; user-select: none; width: fit-content; }
@@ -1502,10 +1498,23 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Sidebar foot sits on the screen edge like Claude's: the list fades out under it (no rule line), its fade lets taps
    through to the rows beneath, and its button stays above the home indicator. */
 .sidebar { --sidebar-end: 24px; }
-.sidebar-foot { bottom: calc(-1 * var(--sidebar-end)); margin-bottom: calc(-1 * var(--sidebar-end)); padding: 14px 10px max(10px, env(safe-area-inset-bottom, 0px)); border-top: 0; background: linear-gradient(to bottom, transparent, var(--sidebar) 14px); pointer-events: none; }
+.sidebar-foot { bottom: calc(-1 * var(--sidebar-end)); margin-bottom: calc(-1 * var(--sidebar-end)); padding: 28px 10px max(12px, env(safe-area-inset-bottom, 0px)); border-top: 0; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--sidebar) 85%, transparent) 20px, var(--sidebar) 34px); pointer-events: none; }
 .sidebar-foot > * { pointer-events: auto; }
-.sidebar-foot .settings-open { width: 34px; height: 34px; border-radius: 50%; font-variant-emoji: text; color: var(--muted); }
-.sidebar-foot .settings-open:hover { background: var(--hover); color: var(--fg); }
-@media (pointer: coarse) { .sidebar-foot .settings-open { width: var(--phone-tap); height: var(--phone-tap); } }
+/* Claude's bottom corners: the avatar (설정 및 계정 menu) left, the floating 새 세션 pill right. */
+.sidebar-foot { justify-content: space-between; gap: 8px; }
+.foot-menu-wrap { position: relative; display: inline-flex; }
+.sidebar-avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--panel); color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--line-strong), 0 2px 8px rgba(0, 0, 0, .18); font-size: calc(14px * var(--font-scale, 1)); font-weight: 600; letter-spacing: .01em; transition: background .15s, box-shadow .15s; }
+.sidebar-avatar:hover, .sidebar-avatar[aria-expanded="true"] { background: var(--bubble); }
+.sidebar-avatar:focus-visible, .sidebar-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sidebar-new { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 16px 0 13px; border-radius: 999px; background: var(--btn-primary-bg); color: var(--btn-primary-fg); box-shadow: 0 4px 16px rgba(0, 0, 0, .28); font-size: calc(14px * var(--font-scale, 1)); font-weight: 560; white-space: nowrap; transition: transform .15s ease, box-shadow .15s ease, filter .15s; }
+.sidebar-new:hover { filter: brightness(.94); box-shadow: 0 6px 20px rgba(0, 0, 0, .32); }
+.sidebar-new:active { transform: scale(.97); }
+:root[data-theme="light"] .sidebar-new, :root[data-theme="light"] .sidebar-avatar { box-shadow: 0 3px 12px rgba(0, 0, 0, .12), inset 0 0 0 1px var(--line); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .sidebar-new, :root:not([data-theme="dark"]) .sidebar-avatar { box-shadow: 0 3px 12px rgba(0, 0, 0, .12), inset 0 0 0 1px var(--line); } }
+.session-menu.foot-menu { left: 0; right: auto; top: auto; bottom: calc(100% + 8px); min-width: 210px; }
+.foot-menu button { display: flex; align-items: center; gap: 12px; }
+.foot-menu kbd { margin-left: auto; color: var(--faint); font: inherit; font-size: calc(11.5px * var(--font-scale, 1)); }
+.foot-menu-head { padding: 6px 9px 7px; margin-bottom: 3px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; }
+@media (pointer: coarse) { .sidebar-avatar { width: var(--phone-tap); height: var(--phone-tap); } .sidebar-new { height: var(--phone-tap); padding: 0 18px 0 15px; } }
 /* Touch on a wide screen (iPad landscape): the same 40px rows as the unfolded/tablet range; phones use --phone-tap. */
 @media (pointer: coarse) and (min-width: 1101px) { .sidebar li { min-height: 40px; } }

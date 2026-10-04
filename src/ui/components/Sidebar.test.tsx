@@ -344,27 +344,70 @@ describe('Sidebar engine marks', () => {
   });
 });
 
-describe('Sidebar: Desktop parity (새 채팅, empty copy, menu keyboard, 삭제 reasons)', () => {
+describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu keyboard, 삭제 reasons)', () => {
   afterEach(cleanup);
   const e = (id: string, title: string, extra: Record<string, unknown> = {}) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1, ...extra });
 
-  it('새 채팅 is the first item in both views and calls onNewChat', () => {
+  it('새 세션 is a pill at the bottom (after the list) in both views and calls onNewChat', () => {
     const onNewChat = vi.fn();
     const { container, rerender } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} view="recent" />);
-    expect(container.querySelector('.sidebar')!.firstElementChild?.textContent).toBe('새 채팅');
-    fireEvent.click(screen.getByText('새 채팅'));
+    const foot = container.querySelector('.sidebar')!.lastElementChild!;
+    expect(foot.className).toBe('sidebar-foot');
+    expect(foot.querySelector('.sidebar-new')?.textContent).toBe('새 세션');
+    expect(screen.queryByText('새 채팅')).toBeNull(); // no second, top-of-list button
+    fireEvent.click(screen.getByRole('button', { name: '새 세션' }));
     rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} view="projects" />);
-    fireEvent.click(screen.getByText('새 채팅'));
+    fireEvent.click(screen.getByRole('button', { name: '새 세션' }));
     expect(onNewChat).toHaveBeenCalledTimes(2);
   });
 
-  it('the empty list points at 새 채팅 / 폴더 열기, not a config file', () => {
+  it('the empty list points at 폴더 열기 / 새 세션, not a config file', () => {
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     const text = document.querySelector('.sidebar-empty')!.textContent!;
-    expect(text).toContain('새 채팅');
+    expect(text).toContain('새 세션');
     expect(text.indexOf('폴더 열기')).toBeGreaterThan(-1);
-    expect(text.indexOf('폴더 열기')).toBeLessThan(text.indexOf('새 채팅')); // no folder yet: picking one comes first
+    expect(text.indexOf('폴더 열기')).toBeLessThan(text.indexOf('새 세션')); // no folder yet: picking one comes first
     expect(text).not.toContain('projects.json');
+  });
+
+  it('avatar (bottom left) opens 설정 및 계정: header, items with hints, keyboard, Esc back to the avatar', () => {
+    const settings = vi.fn();
+    const usage = vi.fn();
+    render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={noop} avatar="B" avatarTitle="deck · 계정 B"
+      footMenu={[{ label: '설정', hint: '⌘,', run: settings }, { label: '사용량 기록', run: usage }]} />);
+    const avatar = screen.getByRole('button', { name: '설정 및 계정' });
+    expect(avatar.textContent).toBe('B');
+    expect(avatar.getAttribute('aria-haspopup')).toBe('menu');
+    expect(avatar.getAttribute('aria-expanded')).toBe('false');
+    // focus order: the avatar comes before the 새 세션 pill
+    const foot = document.querySelector('.sidebar-foot')!;
+    const buttons: HTMLElement[] = Array.from(foot.querySelectorAll('button'));
+    expect(buttons.indexOf(avatar)).toBeLessThan(buttons.indexOf(screen.getByRole('button', { name: '새 세션' })));
+    fireEvent.click(avatar);
+    expect(avatar.getAttribute('aria-expanded')).toBe('true');
+    const menu = screen.getByRole('menu', { name: '설정 및 계정' });
+    expect(menu.querySelector('.foot-menu-head')?.textContent).toBe('deck · 계정 B');
+    const items = screen.getAllByRole('menuitem');
+    expect(items.map((b) => b.textContent)).toEqual(['설정⌘,', '사용량 기록']);
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(avatar);
+    fireEvent.click(avatar);
+    fireEvent.click(screen.getByRole('menuitem', { name: /사용량 기록/ }));
+    expect(usage).toHaveBeenCalledTimes(1);
+    expect(settings).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('without footMenu the avatar menu still offers 설정 (onOpenSettings)', () => {
+    const settings = vi.fn();
+    render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenSettings={settings} />);
+    fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /설정/ }));
+    expect(settings).toHaveBeenCalledTimes(1);
   });
 
   it('⋯ menu: first item focused, ↑/↓ rove (wrapping), Esc closes and refocuses ⋯', () => {

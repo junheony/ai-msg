@@ -20,6 +20,8 @@ const SEARCH_DEBOUNCE_MS = 300;
 const MAX_RECENT = 150;
 
 export type SidebarView = 'recent' | 'projects';
+/** One entry of the avatar (설정 및 계정) menu at the bottom left. */
+export type SidebarMenuItem = { label: string; hint?: string; run: () => void };
 
 function ago(ms: number, now = Date.now()): string {
   const d = now - ms;
@@ -29,9 +31,14 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat }: {
-  /** 설정 (gear in the footer; ⌘, also opens it — 새 세션 기본 권한 lives there). */
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat, footMenu, avatar, avatarTitle }: {
+  /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
+  /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
+  footMenu?: SidebarMenuItem[];
+  /** The avatar's letter (the current account) and the menu's first line. */
+  avatar?: string;
+  avatarTitle?: string;
   projects: ProjectEntry[];
   currentSessionId: string | null;
   onOpen: (sessionId: string, cwd: string, title: string) => void;
@@ -66,13 +73,14 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onViewChange?: (view: SidebarView) => void;
   /** 삭제 (Claude sessions): the app confirms, moves it to the trash and offers undo. `which` names the branch of a 갈래 row. */
   onDelete?: (s: SessionEntry, which?: string) => void;
-  /** 새 채팅 (the list's first item, as in Desktop): same as ⌘N. */
+  /** 새 세션 (the floating pill bottom right, as in Claude): same as ⌘N — a new chat in the current pane's folder. */
   onNewChat?: () => void;
 }) {
   const [localView, setLocalView] = useState<SidebarView>(viewProp ?? 'projects');
   const view = viewProp ?? localView;
   const setView = (v: SidebarView) => { if (onViewChange) onViewChange(v); else setLocalView(v); };
   const [picking, setPicking] = useState(false);
+  const [footOpen, setFootOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [localCollapsed, setLocalCollapsed] = useState<Set<string>>(() => new Set(collapsedProp ?? []));
   const collapsed = collapsedProp ? new Set(collapsedProp) : localCollapsed;
@@ -261,13 +269,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     : [];
   // 프로젝트: the same — what 고정됨 shows is not listed again under its project.
   const visible = projects.map((p) => ({ p, sessions: groupBranches(p.sessions.filter(inView), links).filter((g) => !pinSet.has(g.entry.sessionId)).slice(0, MAX_SESSIONS).filter((g) => match(g.entry)) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
+  const menuItems: SidebarMenuItem[] = footMenu ?? (onOpenSettings ? [{ label: '설정', hint: `${isMacPlatform() ? '⌘' : 'Ctrl+'},`, run: onOpenSettings }] : []);
   return (
     <aside className="sidebar">
-      {onNewChat && (
-        <button type="button" className="sidebar-new" onClick={onNewChat} title={`새 채팅 (${isMacPlatform() ? '⌘' : 'Ctrl+'}N)`}>
-          <PlusIcon /><span>새 채팅</span>
-        </button>
-      )}
       <div className="sidebar-head">
         {onOpenFolder && (
           <button type="button" className="text-btn" onClick={() => setPicking((v) => !v)} title="아무 폴더에서 새 세션" aria-expanded={picking}>
@@ -302,7 +306,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <ul>{desktopShown.map((d) => desktopRow(d, 'desktop'))}</ul>
         </section>
       )}
-      {projects.length === 0 && <div className="muted sidebar-empty">아직 대화가 없어요. 폴더 열기로 작업할 폴더를 고른 뒤, 새 채팅으로 시작해 보세요.</div>}
+      {projects.length === 0 && <div className="muted sidebar-empty">아직 대화가 없어요. 폴더 열기로 작업할 폴더를 고른 뒤, 아래 새 세션으로 시작해 보세요.</div>}
       {showArchived && !q && (view === 'recent' ? recentList.length === 0 : visible.length === 0) && pinned.length === 0 && desktopShown.length === 0 && <div className="muted sidebar-empty">보관된 세션이 없습니다.</div>}
       {view === 'recent' && groupByDate(recentList).map((g) => (
         <section key={g.label} className="project date-group" data-testid={`date-group-${g.label}`}>
@@ -356,9 +360,32 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           {found?.q === fullQ && found.truncated && <div className="muted sidebar-empty">결과 일부만 표시됩니다.</div>}
         </section>
       )}
-      {onOpenSettings && (
+      {(menuItems.length > 0 || onNewChat) && (
+        // As in Claude: the avatar (settings/account) bottom left, a floating 새 세션 pill bottom right; the list scrolls
+        // under both behind a fade, and only the buttons take pointer events.
         <div className="sidebar-foot">
-          <button type="button" className="icon-btn settings-open" onClick={onOpenSettings} aria-label="설정" title="설정 (⌘,)">⚙</button>
+          {menuItems.length > 0 && (
+            <span className="foot-menu-wrap">
+              <button type="button" className="sidebar-avatar" aria-haspopup="menu" aria-expanded={footOpen} aria-label="설정 및 계정" title="설정 및 계정" onClick={() => setFootOpen((o) => !o)}>
+                {avatar ?? 'D'}
+              </button>
+              {footOpen && (
+                <MenuList className="session-menu foot-menu" label="설정 및 계정" onClose={() => setFootOpen(false)}>
+                  {avatarTitle && <div className="foot-menu-head">{avatarTitle}</div>}
+                  {menuItems.map((it) => (
+                    <button key={it.label} type="button" role="menuitem" onClick={() => { setFootOpen(false); it.run(); }}>
+                      <span>{it.label}</span>{it.hint && <kbd>{it.hint}</kbd>}
+                    </button>
+                  ))}
+                </MenuList>
+              )}
+            </span>
+          )}
+          {onNewChat && (
+            <button type="button" className="sidebar-new" onClick={onNewChat} title={`새 세션 (${isMacPlatform() ? '⌘' : 'Ctrl+'}N)`}>
+              <PlusIcon /><span>새 세션</span>
+            </button>
+          )}
         </div>
       )}
     </aside>
