@@ -194,6 +194,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           ) : (
             <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}><EngineMark engine={engine} decorative />{target.title}</span>
           )}
+          {/* meta + actions: one trailing group (a hover overlay with a mouse, line 2 + end column on touch / narrow) */}
+          <span className="row-end">
           <span className="session-meta" {...(s.imported ? { title: s.codexArchived ? 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다' : s.cwdMissing ? '폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다' : s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project ?? (engine === 'codex' ? null : s.account.toUpperCase()), s.codexExec ? '자동 실행' : null, s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
@@ -204,6 +206,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
               <PinIcon filled={on} />
             </button>
           )}
+          </span>
         </span>
         {menu === key && (
           <MenuList onClose={() => setMenu(null)}>
@@ -232,6 +235,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         <span className="session-row">
           {dot(d.sessionId)}
           <span className="session-title"><EngineMark engine="claude" decorative />{d.title}</span>
+          <span className="row-end">
           <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {ago(d.lastModified)}</span>
           {onTogglePin && (
             <>
@@ -242,6 +246,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
               </button>
             </>
           )}
+          </span>
         </span>
         {menu === key && onTogglePin && (
           <MenuList onClose={() => setMenu(null)}>

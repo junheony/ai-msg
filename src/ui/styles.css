@@ -1299,13 +1299,14 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-sum { display: none; }
 
 
-/* Sidebar rows on phone + tablet: title on line 1, meta on line 2, the buttons span both lines at the end. */
-@media (max-width: 1100px) {
+/* Sidebar rows on phone + tablet, and on any touch screen (no hover to reveal the meta): title on line 1, meta on
+   line 2, the buttons span both lines at the end. */
+@media (max-width: 1100px), (hover: none) {
   .session-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 2px; }
   .session-row > .session-title, .session-row > .session-rename { grid-column: 1; grid-row: 1; }
-  .sidebar .session-row > .session-meta { grid-column: 1; grid-row: 2; max-width: none; line-height: 1.35; }
-  .session-row > .row-more-btn { grid-column: 2; grid-row: 1 / span 2; }
-  .session-row > .pin-btn { grid-column: 3; grid-row: 1 / span 2; }
+  .sidebar .session-row .session-meta { grid-column: 1; grid-row: 2; max-width: none; line-height: 1.35; }
+  .session-row .row-more-btn { grid-column: 2; grid-row: 1 / span 2; }
+  .session-row .pin-btn { grid-column: 3; grid-row: 1 / span 2; }
   .sidebar li { padding-top: 5px; padding-bottom: 5px; }
 }
 /* Touch: no hover to reveal them, so only a compact ⋯ stays (고정 is in its menu); a pinned row keeps its pin. */
@@ -1638,3 +1639,41 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .composer-sec .mp-caret { display: none; }
   .composer-sec .mp-button { padding: 0 9px; }
 }
+
+/* === sidebar rows (Claude parity) ===
+   Roomier rows: a bigger title led by its engine mark, and the meta (project · account · time) a quiet second voice.
+   With a mouse the meta waits for hover / keyboard focus, so a title reads whole; on touch it stays on line 2.
+   The running / unread dots keep their seat in the left padding. */
+.sidebar li { min-height: 36px; padding: 6px 6px 6px 22px; border-radius: 9px; font-size: calc(15px * var(--font-scale, 1)); }
+@media (pointer: coarse) { .sidebar li { min-height: 40px; } }
+.sidebar .session-title { line-height: 1.35; letter-spacing: -.005em; }
+.sidebar .session-title .engine-mark { width: 1.05em; margin-right: .5em; opacity: .9; }
+.sidebar li.active .session-title .engine-mark { opacity: 1; }
+.sidebar .session-meta { color: var(--faint); font-size: calc(12px * var(--font-scale, 1)); }
+.sidebar li.active .session-meta { color: var(--muted); }
+/* The trailing group (meta · ⋯ · pin). By default its children sit in the row as before (display: contents). */
+.row-end { display: contents; }
+/* With a mouse on a wide sidebar it is an overlay at the row's end: hidden until hover / keyboard focus / its menu is
+   open, and fading in over the title's tail (the row's own tint, opaque) so the title keeps its full width. */
+@media (hover: hover) and (min-width: 1101px) {
+  .sidebar li { --row-tint: transparent; }
+  .sidebar li:hover { --row-tint: var(--hover); }
+  .sidebar li.active { --row-tint: var(--selected); }
+  .sidebar .row-end { display: flex; align-items: center; gap: 4px; position: absolute; top: 0; bottom: 0; right: 0; max-width: 72%; padding: 0 6px 0 30px; border-radius: 0 9px 9px 0; background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+  .sidebar .row-end .session-meta { min-width: 0; max-width: none; flex: 0 1 auto; }
+  .sidebar li:hover .row-end, .sidebar li:focus-within .row-end, .sidebar li:has(.row-more-btn[aria-expanded="true"]) .row-end { opacity: 1; pointer-events: auto; }
+  .sidebar li:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--hover); }
+  .sidebar li.active:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--selected); }
+  .pinned-group ul.pin-reordering .row-end { opacity: 0 !important; }
+}
+@media (max-width: 1100px), (hover: none) {
+  .sidebar li { padding-top: 7px; padding-bottom: 7px; }
+  .sidebar .session-row .session-meta { margin-top: 1px; padding-left: calc(23px * var(--font-scale, 1)); } /* under the title text, past the engine mark */
+}
+@media (hover: none) and (min-width: 1101px) { .sidebar li { min-height: 44px; } }
+@media (max-width: 720px) {
+  .sidebar li { min-height: var(--phone-tap); font-size: calc(16px * var(--font-scale, 1)); }
+  .sidebar .session-meta { font-size: calc(12.5px * var(--font-scale, 1)); }
+  .sidebar .session-row .session-meta { padding-left: calc(25px * var(--font-scale, 1)); }
+}
+@media (prefers-reduced-motion: reduce) { .sidebar .row-end { transition: none !important; } }

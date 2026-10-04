@@ -459,3 +459,30 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'c1' }), undefined);
   });
 });
+
+describe('Sidebar rows: Claude parity (icon left, quiet trailing meta)', () => {
+  afterEach(cleanup);
+  const s = (id: string, cwd: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd, projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1 });
+  const projects = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first')] }];
+  const desktop = [{ sessionId: 'd1', account: 'a' as const, title: 'desk chat', cwd: '/d', project: 'd', lastModified: stamp() }];
+
+  it('the title leads with its engine mark; meta, ⋯ and pin form one trailing group; the dot stays outside it', () => {
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" onTogglePin={noop} onRename={noop}
+      desktop={desktop} unread={['s1']} />);
+    for (const title of ['first', 'desk chat']) {
+      const row = screen.getByText(title).closest('li')!.querySelector('.session-row')!;
+      const kids = Array.from(row.children).map((el) => el.className.split(' ')[0]);
+      expect(kids.slice(-2)).toEqual(['session-title', 'row-end']);
+      expect(row.querySelector('.session-title')!.firstElementChild!.classList.contains('engine-mark')).toBe(true);
+      const end = row.querySelector('.row-end')!;
+      expect(Array.from(end.children).map((el) => el.className.split(' ')[0])).toEqual(['session-meta', 'row-more-btn', 'pin-btn']);
+      // keyboard: ⋯ then 고정, both labelled
+      const btns = Array.from(end.querySelectorAll('button')).map((b) => b.getAttribute('aria-label'));
+      expect(btns).toEqual(['세션 메뉴', '고정']);
+    }
+    const first = screen.getByText('first').closest('li')!;
+    expect(first.querySelector('.session-row > .row-dot.unread')).not.toBeNull();
+    expect(first.querySelector('.row-end .row-dot')).toBeNull();
+    expect(first.querySelector('.row-end .session-meta')!.textContent).toMatch(/^one · /);
+  });
+});
