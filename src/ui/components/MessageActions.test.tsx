@@ -137,11 +137,51 @@ describe('ShareMenu', () => {
     delete (navigator as { share?: unknown }).share;
   });
 
-  it('chat header shows the share menu for an existing session only', () => {
+  it('chat header: the share actions sit in the ⋯ menu, for an existing session only', async () => {
     renderChat(items);
-    expect(screen.getByRole('button', { name: '공유' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '공유' })).toBeNull(); // no separate share button: Claude keeps one ⋯
+    fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사']);
+    fireEvent.click(screen.getByRole('menuitem', { name: '링크 복사' }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(`${window.location.origin}/?session=s-1`));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect((await screen.findByRole('status')).textContent).toBe('링크를 복사했습니다');
     cleanup();
     renderChat([], { isNew: true, sessionId: null });
-    expect(screen.queryByRole('button', { name: '공유' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '채팅 메뉴' })).toBeNull();
+  });
+
+  it('⋯ menu: session actions, share, pane items, then 삭제 last; keyboard roving and Esc back to ⋯', () => {
+    const onRename = vi.fn();
+    const onDelete = vi.fn();
+    const onFiles = vi.fn();
+    renderChat(items, { cwd: '/w/deck', titleMenu: { pinned: false, archived: false, onRename, onTogglePin: () => {}, onArchive: () => {}, onDelete }, headMenu: [{ label: '파일 열기', run: onFiles }] });
+    // the title (centred) carries the folder as its second line
+    expect(document.querySelector('.chat-head-main .chat-subtitle')?.textContent).toBe('deck');
+    const more = screen.getByRole('button', { name: '채팅 메뉴' });
+    expect(more.getAttribute('aria-haspopup')).toBe('menu');
+    fireEvent.click(more);
+    const menu = screen.getByRole('menu', { name: '채팅 메뉴' });
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '파일 열기', '삭제…']);
+    expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(2);
+    expect(document.activeElement).toBe(screen.getAllByRole('menuitem')[0]);
+    fireEvent.keyDown(menu, { key: 'End' });
+    expect(document.activeElement?.textContent).toBe('삭제…');
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(more);
+    fireEvent.click(more);
+    fireEvent.click(screen.getByRole('menuitem', { name: '파일 열기' }));
+    expect(onFiles).toHaveBeenCalledTimes(1);
+    fireEvent.click(more);
+    fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+    expect(screen.getByLabelText('채팅 이름')).toBeTruthy();
+  });
+
+  it('⋯ menu: an empty conversation shows copy / export disabled, not missing', () => {
+    renderChat([], { titleMenu: { pinned: false, archived: false } });
+    fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
+    expect(screen.getByRole('menuitem', { name: '대화 복사 (마크다운)' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: '링크 복사' }).hasAttribute('aria-disabled')).toBe(false);
   });
 });

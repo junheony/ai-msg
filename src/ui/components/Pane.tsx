@@ -228,10 +228,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const isNew = s?.sessionId === null;
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
-  const fileBtn = s && <button type="button" className="icon-btn side-open" aria-label="파일 열기" title="파일 — 사이드 패널에서 세션 폴더의 파일 보기" aria-pressed={!!side} onClick={() => setSide(side ? null : { kind: 'pick' })}>
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true"><path d="M4 2.5h5l3 3v8H4z" /><path d="M9 2.5v3h3" /></svg>
-    <span className="side-open-label">파일</span>
-  </button>;
+  // 파일 (the session folder in the side panel) lives in the header's ⋯ menu, as Claude keeps its header bare.
+  const fileMenu = s ? [{ label: side ? '파일 패널 닫기' : '파일 열기', run: () => setSide(side ? null : { kind: 'pick' }) }] : [];
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   const busy = pane.activeTurnId !== null || pane.awaitingStart;
   const onModel = (m: ModelChoice) => dispatch({ type: 'set_model', model: m, paneId: pane.id });
@@ -315,7 +313,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           loading={!!pane.loading}
           cwd={s.cwd}
           sessionId={s.sessionId}
-          headActions={<>{fileBtn}{desktop}{fork}{close}</>}
+          headActions={<>{desktop}{fork}{close}</>}
+          headMenu={fileMenu}
           model={model}
           effort={effort}
           engine={pane.engine}

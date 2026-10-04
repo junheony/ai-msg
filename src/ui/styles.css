@@ -1272,8 +1272,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .side-pick { display: flex; flex-direction: column; gap: 8px; padding: 16px; font-size: calc(13px * var(--font-scale, 1)); }
 .side-pick input { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: calc(13px * var(--font-scale, 1)); }
 .side-pick .btn { align-self: flex-start; }
-.icon-btn.side-open { width: auto; padding: 0 8px; font-size: calc(12.5px * var(--font-scale, 1)); }
-.icon-btn.side-open[aria-pressed="true"] { color: var(--fg-strong); background: var(--selected); }
 .code-actions { display: inline-flex; align-items: center; gap: 2px; }
 .file-link { display: inline; padding: 0; font: inherit; color: inherit; text-align: inherit; cursor: pointer; text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
 .file-link:hover { color: var(--accent); }
@@ -1343,9 +1341,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
    (the composer's permission picker shows the mode; bypass stays as a warning). */
 @media (max-width: 720px) {
   .chat-head { gap: 6px; }
-  .chat-head > .folder-chip { max-width: 28%; min-width: 5.5em; }
-  .chat-head > .chip.sandbox { flex-shrink: 0; max-width: 35%; }
-  .chat-head > .chip.perm-acceptEdits, .chat-head > .chip.perm-plan { display: none; }
+  .chat-head-chips > .chip.sandbox { flex-shrink: 0; max-width: 35%; }
+  .chat-head-chips > .chip.perm-acceptEdits, .chat-head-chips > .chip.perm-plan { display: none; }
 }
 
 /* Tablet / unfolded inner screen: one-line top bar, a font-scale-aware sidebar that can be folded away (☰). */
@@ -1361,7 +1358,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .usage-loading { order: 2; flex: 1 1 auto; padding: 0; }
   .topbar-end .conn { padding: 0 6px; font-size: 0; gap: 0; }
   .sidebar { width: min(380px, max(280px, 32vw, calc(255px * var(--font-scale, 1)))); }
-  .chat-head > .folder-chip { max-width: 25%; }
 }
 /* Unfolded and touch: tap targets a step up from desktop's 26–30px, still denser than the phone's 44px. */
 @media (min-width: 721px) and (max-width: 1100px) and (pointer: coarse) {
@@ -1391,14 +1387,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Pane header: the title sizes to its text (no dead gap before the chips) and ellipsizes; the folder chip gives way
    first. The permission badge never shrinks or clips — a narrow pane swaps it for its compact form instead. */
 .pane { container: pane / inline-size; }
-.chat-head > .chat-title-wrap { flex: 0 1 auto; min-width: 0; }
+.chat-head-main > .chat-title-wrap { flex: 0 1 auto; min-width: 0; }
 .chat-title-wrap > .chat-title { min-width: 0; max-width: 100%; }
 .chat-title > span:first-child { min-width: 2.5em; }
-.chat-head > .folder-chip { flex: 0 6 auto; min-width: 3.5em; }
-.chat-head > .chip.perm-badge { flex: 0 0 auto; max-width: none; overflow: visible; gap: 4px; box-shadow: none; border-width: 1px; line-height: 1; }
+.chat-head-chips > .chip.perm-badge { flex: 0 0 auto; max-width: none; overflow: visible; gap: 4px; box-shadow: none; border-width: 1px; line-height: 1; }
 .perm-badge-icon { flex-shrink: 0; }
 .perm-badge-short { display: none; }
-.icon-btn.side-open { gap: 4px; }
 /* Queue row: 지금 전송 (interrupt + send this one first). */
 .queue-now { flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border-radius: 999px; color: var(--accent); font-size: calc(12px * var(--font-scale, 1)); font-weight: 600; white-space: nowrap; }
 .queue-now:hover { background: var(--accent-soft); }
@@ -1411,17 +1405,14 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 @container pane (max-width: 560px) {
   .chat-head { gap: 4px; padding-left: 10px; }
-  .chat-head > .folder-chip { max-width: 7em; }
-  .chat-head > .chip.perm-acceptEdits, .chat-head > .chip.perm-plan { display: none; }
-  .chat-head > .chip.sandbox { flex-shrink: 1; min-width: 3em; max-width: 35%; }
-  .icon-btn.side-open { padding: 0 6px; }
-  .side-open-label { display: none; }
+  .chat-head-chips > .chip.perm-acceptEdits, .chat-head-chips > .chip.perm-plan { display: none; }
+  .chat-head-chips > .chip.sandbox { flex-shrink: 1; min-width: 3em; max-width: 35%; }
   .turn-status .status-arg, .status-tools, .status-unit, .turn-status .status-stop { display: none; }
   .bg-pill-long { display: none; }
   .bg-pill { padding: 0 10px 0 9px; gap: 6px; }
 }
 @container pane (max-width: 480px) {
-  .chat-head > .chip.perm-badge { padding: 0 6px; }
+  .chat-head-chips > .chip.perm-badge { padding: 0 6px; }
   .perm-badge-full { display: none; }
   .perm-badge-short { display: inline; }
   .ctx-num { display: none; }
@@ -1430,13 +1421,13 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .queue-now { padding: 0; width: 26px; justify-content: center; }
 }
 @container pane (max-width: 400px) {
-  .chat-head > .folder-chip, .chat-head > .chip.sandbox { display: none; }
+  .chat-head-chips > .chip.sandbox { display: none; }
   .open-desktop-btn { display: none; }
 }
 @container pane (max-width: 360px) {
   .composer-actions .icon-btn.dictate { display: none; }
-  .chat-head > .chip.perm-bypassPermissions .perm-badge-short { display: none; }
-  .chat-head > .chip.perm-bypassPermissions { padding: 0 5px; }
+  .chat-head-chips > .chip.perm-bypassPermissions .perm-badge-short { display: none; }
+  .chat-head-chips > .chip.perm-bypassPermissions { padding: 0 5px; }
 }
 
 /* Composer toolbar: one row, never wraps. When it is tight the pickers truncate in priority order —
@@ -1518,3 +1509,46 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (pointer: coarse) { .sidebar-avatar { width: var(--phone-tap); height: var(--phone-tap); } .sidebar-new { height: var(--phone-tap); padding: 0 18px 0 15px; } }
 /* Touch on a wide screen (iPad landscape): the same 40px rows as the unfolded/tablet range; phones use --phone-tap. */
 @media (pointer: coarse) and (min-width: 1101px) { .sidebar li { min-height: 40px; } }
+
+/* === chat header (Claude parity) ===
+   Title centred with the folder as a small second line, chips (권한 / 샌드박스) quietly on the left, the pane's
+   buttons and ⋯ on the right. Equal side tracks keep the title on the pane's centre line. */
+.chat-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr); grid-template-areas: "chips main end"; align-items: center; column-gap: 10px; height: 54px; padding: 0 8px 0 12px; }
+.chat-head-main { grid-area: main; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; max-width: min(620px, 58cqi); text-align: center; line-height: 1.2; }
+.chat-head-main > .chat-title-wrap { max-width: 100%; }
+.chat-head-main .chat-title { justify-content: center; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; }
+.chat-head-main button.chat-title { margin-left: 0; padding: 2px 8px; border-radius: 8px; }
+.chat-head-main .chat-title .caret { opacity: 0; transition: opacity .15s; }
+.chat-head-main button.chat-title:hover .caret, .chat-head-main button.chat-title:focus-visible .caret, .chat-head-main button.chat-title[aria-expanded="true"] .caret { opacity: 1; }
+.chat-head-main .chat-title-input { margin-left: 0; text-align: center; }
+.chat-head-main .session-menu.chat-title-menu { left: 50%; transform: translateX(-50%); }
+.folder-chip.chat-subtitle { max-width: 100%; height: auto; padding: 0 8px; margin-top: 1px; background: none; box-shadow: none; border-radius: 0; line-height: 1.25; font-size: calc(11.5px * var(--font-scale, 1)); color: var(--muted); }
+.chat-head-chips { grid-area: chips; display: flex; align-items: center; gap: 6px; min-width: 0; justify-self: start; }
+.chat-head-end { grid-area: end; display: flex; align-items: center; gap: 2px; justify-self: end; min-width: 0; }
+.chat-head-end > .chat-more-wrap { position: relative; display: inline-flex; margin-left: 4px; }
+.icon-btn.chat-more { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
+.icon-btn.chat-more:hover, .icon-btn.chat-more[aria-expanded="true"] { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.session-menu.chat-more-menu { right: 0; left: auto; top: calc(100% + 6px); min-width: 220px; }
+.session-menu .menu-sep { height: 1px; margin: 4px 6px; background: var(--line); flex-shrink: 0; }
+/* 모두 자동 승인 stays on screen as a warning, but small and outlined rather than a loud block. */
+.chat-head-chips > .chip.perm-badge { height: 22px; padding: 0 8px; border-radius: 999px; border-color: color-mix(in srgb, currentColor 45%, transparent); background: transparent; font-size: calc(11.5px * var(--font-scale, 1)); font-weight: 500; }
+.chat-head-chips > .chip.sandbox { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (pointer: coarse) { .icon-btn.chat-more { width: 40px; height: 40px; } }
+@media (max-width: 720px) {
+  .chat-head { height: 52px; column-gap: 6px; padding: 0 4px 0 10px; }
+  .icon-btn.chat-more { width: var(--phone-tap); height: var(--phone-tap); box-shadow: none; }
+}
+/* Narrow split panes (not the phone, which keeps the centred title): one left-aligned row that truncates. */
+@media (min-width: 721px) {
+  @container pane (max-width: 520px) {
+    .chat-head { display: flex; gap: 6px; padding-left: 10px; }
+    .chat-head-main { flex: 0 1 auto; align-items: flex-start; max-width: none; text-align: left; }
+    .chat-head-main .chat-title { justify-content: flex-start; }
+    .chat-head-main button.chat-title { margin-left: -8px; }
+    .chat-head-main .chat-title-input { margin-left: -6px; text-align: left; }
+    .chat-head-main .session-menu.chat-title-menu { left: -6px; transform: none; }
+    .folder-chip.chat-subtitle { padding: 0; }
+    .chat-head-chips { flex: 0 0 auto; }
+    .chat-head-end { margin-left: auto; flex: none; }
+  }
+}
