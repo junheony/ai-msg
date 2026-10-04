@@ -164,6 +164,8 @@ describe('reducer', () => {
     expect(pane(openedOn('s')).loading).toBe(true);
     expect(pane(play([historyOf('s')], openedOn('s'))).loading).toBe(false);
     expect(pane(play([{ type: 'error', turnId: null, message: '기록을 읽지 못했습니다', sessionId: 's' }], openedOn('s'))).loading).toBe(false);
+    // an app-wide error (no session) can't be waited on: the placeholder must not hang
+    expect(pane(play([{ type: 'error', turnId: null, message: '잘못된 요청' }], openedOn('s'))).loading).toBe(false);
     expect(pane(reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' })).loading).toBe(false);
     expect(pane(reducer(openedOn('s'), { type: 'clear_pane' })).loading).toBe(false);
   });

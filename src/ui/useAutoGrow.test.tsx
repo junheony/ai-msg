@@ -48,6 +48,8 @@ describe('useAutoGrow', () => {
     let fire = () => {};
     const RO = globalThis.ResizeObserver;
     globalThis.ResizeObserver = class { constructor(cb: () => void) { fire = cb; } observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
+    const raf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => { cb(0); return 1; }) as typeof requestAnimationFrame; // the refit runs on the next frame
     try {
       const { container } = render(<Box text="one two three" />);
       const ta = container.querySelector('textarea')!;
@@ -61,6 +63,7 @@ describe('useAutoGrow', () => {
       expect(ta.style.height).toBe('40px');
     } finally {
       globalThis.ResizeObserver = RO;
+      globalThis.requestAnimationFrame = raf;
     }
   });
 });

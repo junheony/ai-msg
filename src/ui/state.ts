@@ -805,7 +805,8 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       if (sid && state.panes.some((p) => p.session?.sessionId === sid)) {
         return { ...state, panes: mapPanes(state, msg).map((p) => (p.session?.sessionId === sid ? { ...withNotice(p, { sessionId: sid, message: msg.message, level: 'error' }), loading: false } : p)) };
       }
-      return { ...state, panes: mapPanes(state, msg), error: msg.message };
+      // Not tied to a shown session: no pane can wait on it, so a loading placeholder would never clear — drop them.
+      return { ...state, panes: mapPanes(state, msg).map((p) => (p.loading ? { ...p, loading: false } : p)), error: msg.message };
     }
   }
 }

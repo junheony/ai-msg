@@ -1,13 +1,21 @@
-# HANDOFF — deck (갱신 2026-10-04)
+# HANDOFF — deck (갱신 2026-10-04 오후)
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 비공개 저장소(원격 없음).
 
-## 0. 최신 상태 (2026-10-04, master, 단위 1179 통과, 빌드·재시작 완료, 워크트리 전부 정리됨)
-최근 병합 4건 — 각각 Fable(critic) + Astra(GPT-6, `deck-run -q gpt - < bundle.md`) 교차 리뷰 후 수정:
-- **engine-badge**: 사이드바·새 대화 카드·⌘K·채팅 헤더에 Claude/GPT 엔진 마크(`EngineMark.tsx`). `codex exec` 스레드도 7일 이내면 목록에 뜸(`CodexImports.ts` `codexExec`).
-- **notice-meta**: Stop 훅 피드백·isMeta·task-notification 줄은 사용자 말풍선이 아니라 접힌 시스템 줄(`transcript.ts` `systemRow`, `turn_system` 이벤트). "다른 곳에서 쓰는 중" 배너는 패널 알림(`notices[]`, 최대 3)으로, 세션 제목·몇 분 전인지 표시(`elsewhereNotice.ts`).
-- **spread-routing**: 기본 라우팅 정책 '고르게 분산'(5h 가장 낮은 안전 계정), 기존 정책은 설정에서. 'down' 카드 들어올리기는 쓰는 창(5h·주간)마다 신선해야(`UsageService.lift`).
-- **refused-send**: 재시작 드레인 중 거절된 메시지·소켓 유실 메시지를 잃지도, 저절로 두 번 보내지도 않는다. 서버 `AcceptedRefs`(`<configDir>/accepted-refs.json`, 세션당 500·7일) + `pendingRefs`, 중복 ref 는 `already_accepted`(버림)/`in_flight`(멈춰 둠) 로 거절. 클라 큐는 sessionStorage `deck.queues.v1`, 상태 기계 설명은 `state.ts` 상단 주석.
+## 0. 최신 상태 (2026-10-04 오후, master, 단위 1281 통과, 빌드 완료, 워크트리 전부 정리됨)
+이번 구간 병합(각각 리뷰 후 지적 수정 → 병합 → 전체 테스트·빌드):
+- **pin-reorder**: 고정됨 순서 바꾸기 — 마우스 드래그(4px), 터치 길게 누르기(350ms), Alt+↑/↓. `PinStore` 위가 먼저 순서 저장, `POST /api/pins/order`, `ui/pinOrder.ts`. iPad 에서 사용자 확인 완료.
+- **codex-import-all**: Codex 스레드 전부(보관함·나이 무관 exec 포함, 하위 에이전트 제외, 약 103개). 보관됨/폴더 없음은 읽기 전용(`cwdMissing`, `codexArchived`, Chat `readOnly`).
+- **ipad-bottom-gap**: `.app{position:fixed;inset:0}`(iPadOS 26 PWA dvh 버그), 안전 영역 여백은 작성창·사이드바 아래로. 사용자 확인 완료.
+- **desktop-parity 1차**: 자동 높이 작성창, 아무 키나 누르면 작성창으로(IME 안전), 탭 제목, 세션 ⋯ 메뉴, Esc 범위, 파일 끌어 놓기 전체 패널, 로딩 스켈레톤.
+- **desktop-parity 2차**: 사이드바 아래 아바타 메뉴(설정/사용량/테마/단축키) + 떠 있는 "+ 새 세션", 가운데 제목·폴더 둘째 줄·오른쪽 위 ⋯(공유·파일 패널), 둥근 알약 작성창 컨트롤, 상태바 띠 색·theme-color, 넉넉한 사이드바 행(마우스는 메타를 hover 로).
+- 작은 수정: 앱 전체 오류에도 로딩 스켈레톤이 풀림, 작성창 ResizeObserver 재측정은 다음 프레임.
+
+다음 할 일:
+1. **Codex IPC 로 ChatGPT 앱이 잡고 있는 스레드에 보내기** — 스파이크 결과(`~/.codex/ipc/ipc.sock`, 4바이트 LE 길이+JSON, `initialize` → `thread-owner-discovery` v1 → `thread-follower-start-turn` v2)는 확인, 실제 턴은 아직 안 보냄. 사용자가 ChatGPT 앱에 버려도 되는 테스트 스레드를 열어 주면 짧은 턴 1회 → 되면 CodexEngine 에 구현(버전 불일치 시 fork-on-send 로 대체). 스파이크 스크립트 /tmp/cgpt-spike/.
+2. ⌘⇧O(Desktop 새 채팅) 바인딩 결정.
+3. 계정 C 해지 예정(사용자가 직접) — 날짜 들으면 deck 설정에서 C 제거.
+4. 알려진 틈: `(갈라진 사본)` 세션 2개(DWF QUANT 62adebb9, Crime Detector 950f92ec)는 사용자가 보관.
 
 서버 재시작: `/tmp/deck-relaunch.sh`(USR2 → 드레인 → `tsx src/server/main.ts`, CLAUDE_CONFIG_DIR=~/.claude-b) 를 `perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' nohup /tmp/deck-relaunch.sh &` 로. /tmp 라 재부팅 시 사라짐.
 

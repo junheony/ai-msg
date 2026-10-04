@@ -24,12 +24,15 @@ export function useAutoGrow(ref: RefObject<HTMLTextAreaElement | null>, value: s
     const ta = ref.current;
     if (!ta || typeof ResizeObserver === 'undefined') return;
     let width = ta.clientWidth;
+    let frame = 0;
     const ro = new ResizeObserver(() => {
       if (ta.clientWidth === width) return; // our own height change
       width = ta.clientWidth;
-      autoGrow(ta, keep?.current);
+      // Resizing inside the observer callback trips "ResizeObserver loop completed"; refit on the next frame.
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => autoGrow(ta, keep?.current));
     });
     ro.observe(ta);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); cancelAnimationFrame(frame); };
   }, [ref, keep]);
 }
