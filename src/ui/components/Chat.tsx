@@ -368,27 +368,38 @@ export function Chat(p: ChatProps) {
     const files = filesFrom(e.clipboardData);
     if (files.length) { e.preventDefault(); void addFiles(files); }
   };
-  // Files dropped anywhere on the pane attach (full-pane overlay while dragging); never a browser navigation.
+  // Files dropped anywhere on the pane attach (full-pane overlay while dragging); never a browser navigation. Anything
+  // else dragged (text into the rename / edit / queue fields) is left to the browser. Enter/leave are counted: moving
+  // between children fires leave/enter pairs, and Safari gives dragleave no relatedTarget.
+  const dragDepth = useRef(0);
   const hasFiles = (e: DragEvent<HTMLElement>) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  const onDragEnter = (e: DragEvent<HTMLElement>) => {
+    if (!hasFiles(e)) return;
+    dragDepth.current += 1;
+    if (!drag) setDrag(true);
+  };
   const onDragOver = (e: DragEvent<HTMLElement>) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
+    if (p.readOnly) e.dataTransfer.dropEffect = 'none';
     if (!drag) setDrag(true);
   };
   const onDragLeave = (e: DragEvent<HTMLElement>) => {
-    // Moving between children fires leave/enter pairs: only leaving the pane itself ends the drag.
-    if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) setDrag(false);
+    if (!hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDrag(false);
   };
   const onDrop = (e: DragEvent<HTMLElement>) => {
+    if (!hasFiles(e)) return;
     e.preventDefault();
+    dragDepth.current = 0;
     setDrag(false);
     const files = filesFrom(e.dataTransfer);
     if (files.length) void addFiles(files);
   };
-
   return (
-    <main className="chat" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
-      {drag && <div className="drop-overlay" data-testid="drop-overlay"><span>여기에 파일을 놓으세요</span></div>}
+    <main className="chat" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
       <div className="chat-head">
         <span className="chat-title-wrap">
           {renaming !== null ? (
@@ -469,7 +480,7 @@ export function Chat(p: ChatProps) {
         )}
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
         {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} />}
-        <div className={`composer ${drag ? 'dragover' : ''}`}>
+        <div className={`composer ${drag && !p.readOnly ? 'dragover' : ''}`}>
           {suggest.popup}
           <textarea
             ref={taRef}

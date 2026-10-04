@@ -355,21 +355,54 @@ describe('Chat title ⌄ menu', () => {
       expect(screen.queryByTestId('chat-loading')).toBeNull();
     });
 
-    it('a file dragged anywhere on the pane shows the overlay; leaving the pane or dropping hides it and the drop never navigates', () => {
+    it('a file dragged anywhere on the pane shows the overlay; moving between children keeps it (no relatedTarget needed — Safari); leaving or dropping hides it', () => {
       renderChat([]);
       const main = document.querySelector('main.chat')!;
       const body = document.querySelector('.chat-body')!;
       const files = { types: ['Files'], files: [], items: [] };
-      expect(fireEvent.dragOver(body, { dataTransfer: files })).toBe(false); // preventDefault → the browser will not open the file
+      fireEvent.dragEnter(main, { dataTransfer: files });
+      expect(fireEvent.dragOver(main, { dataTransfer: files })).toBe(false); // preventDefault → the browser will not open the file
       expect(screen.getByTestId('drop-overlay').textContent).toBe('여기에 파일을 놓으세요');
-      // jsdom has no DragEvent (relatedTarget would be dropped): a MouseEvent carries it the same way.
-      fireEvent(main, new MouseEvent('dragleave', { bubbles: true, relatedTarget: body })); // moving onto a child keeps it
+      fireEvent.dragEnter(body, { dataTransfer: files }); // onto a child: enter (child) fires before leave (pane)
+      fireEvent.dragLeave(main, { dataTransfer: files });
       expect(screen.queryByTestId('drop-overlay')).not.toBeNull();
-      fireEvent(main, new MouseEvent('dragleave', { bubbles: true, relatedTarget: null }));
+      fireEvent.dragLeave(body, { dataTransfer: files }); // out of the pane
       expect(screen.queryByTestId('drop-overlay')).toBeNull();
-      fireEvent.dragOver(body, { dataTransfer: files });
+      fireEvent.dragEnter(body, { dataTransfer: files });
       expect(fireEvent.drop(body, { dataTransfer: files })).toBe(false);
       expect(screen.queryByTestId('drop-overlay')).toBeNull();
+      fireEvent.dragEnter(body, { dataTransfer: files }); // the count starts over after a drop
+      expect(screen.queryByTestId('drop-overlay')).not.toBeNull();
+      fireEvent.dragLeave(body, { dataTransfer: files });
+      expect(screen.queryByTestId('drop-overlay')).toBeNull();
+    });
+
+    it('a read-only session shows its reason instead and accepts nothing', async () => {
+      const uploadFn = vi.fn(async (f: File) => ({ id: 'id-1', name: f.name, size: f.size, isImage: true }));
+      renderChat([], false, vi.fn(), { readOnly: '읽기만 할 수 있어요', uploadFn });
+      const body = document.querySelector('.chat-body')!;
+      const file = new File(['x'], 'a.png', { type: 'image/png' });
+      const dt = { types: ['Files'], files: [file], items: [], dropEffect: 'copy' };
+      fireEvent.dragEnter(body, { dataTransfer: dt });
+      fireEvent.dragOver(body, { dataTransfer: dt });
+      expect(screen.getByTestId('drop-overlay').textContent).toBe('읽기만 할 수 있어요');
+      expect(dt.dropEffect).toBe('none');
+      expect(fireEvent.drop(body, { dataTransfer: dt })).toBe(false);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(uploadFn).not.toHaveBeenCalled();
+    });
+
+    it('a file dropped on the transcript (not just the composer) is uploaded', async () => {
+      const uploadFn = vi.fn(async (f: File) => ({ id: 'id-1', name: f.name, size: f.size, isImage: true }));
+      renderChat([], false, vi.fn(), { uploadFn });
+      const file = new File(['x'], 'a.png', { type: 'image/png' });
+      fireEvent.drop(document.querySelector('.chat-body')!, { dataTransfer: { types: ['Files'], files: [file], items: [] } });
+      await waitFor(() => expect(uploadFn).toHaveBeenCalledTimes(1));
+    });
+
+    it('a text drop (rename / edit / queue fields) is left to the browser', () => {
+      renderChat([]);
+      expect(fireEvent.drop(document.querySelector('.chat-body')!, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
     });
 
     it('dragging text (not files) leaves the pane alone', () => {
