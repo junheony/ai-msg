@@ -168,7 +168,12 @@ export function App() {
   useEffect(() => { if (authed) requestFocus(); }, [authed]);
   // A file dropped outside the chat pane (sidebar, top bar) must never make the browser navigate to it.
   useEffect(() => {
-    const guard = (e: DragEvent) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); };
+    // The chat pane handles its own (preventDefault first), so only the rest gets the "no drop here" cursor.
+    const guard = (e: DragEvent) => {
+      if (e.defaultPrevented || !e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'none';
+    };
     window.addEventListener('dragover', guard);
     window.addEventListener('drop', guard);
     return () => { window.removeEventListener('dragover', guard); window.removeEventListener('drop', guard); };

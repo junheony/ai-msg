@@ -282,5 +282,12 @@ describe('Pane: chat title menu uses the sidebar actions', () => {
     rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [gpt] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
     fireEvent.click(document.querySelector('button.chat-title')!);
     expect(screen.getByRole('menuitem', { name: '삭제…' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('보관')).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // archived in Codex: only the Codex app can unarchive it, so no 보관 item (as in the sidebar)
+    rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [{ ...gpt, codexArchived: true, archived: true }] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
+    fireEvent.click(document.querySelector('button.chat-title')!);
+    expect(screen.queryByText('보관 해제')).toBeNull();
+    expect(screen.getAllByRole('menuitem').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['이름 바꾸기', '고정 해제', '삭제…']);
   });
 });

@@ -362,7 +362,8 @@ describe('Sidebar: Desktop parity (새 채팅, empty copy, menu keyboard, 삭제
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     const text = document.querySelector('.sidebar-empty')!.textContent!;
     expect(text).toContain('새 채팅');
-    expect(text).toContain('폴더 열기');
+    expect(text.indexOf('폴더 열기')).toBeGreaterThan(-1);
+    expect(text.indexOf('폴더 열기')).toBeLessThan(text.indexOf('새 채팅')); // no folder yet: picking one comes first
     expect(text).not.toContain('projects.json');
   });
 
@@ -402,6 +403,9 @@ describe('Sidebar: Desktop parity (새 채팅, empty copy, menu keyboard, 삭제
     const imported = del('imported');
     expect(imported.getAttribute('aria-disabled')).toBe('true');
     expect(imported.getAttribute('title')).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    // touch screens show no tooltip: the reason is also on screen, under the item
+    expect(imported.querySelector('.menu-note')?.textContent).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(imported.getAttribute('aria-describedby')).toBe(imported.querySelector('.menu-note')!.id);
     fireEvent.click(imported);
     expect(onDelete).not.toHaveBeenCalled();
     expect(del('gpt').getAttribute('title')).toContain('GPT');

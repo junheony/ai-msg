@@ -287,7 +287,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         pinned, archived: !!entry.archived,
         onRename: (title) => sessionActions.onRename(entry.sessionId, title),
         onTogglePin: () => sessionActions.onTogglePin(entry.sessionId, !pinned),
-        onArchive: () => sessionActions.onArchive(entry.sessionId, !entry.archived),
+        // Archived in Codex: only the Codex app can unarchive it (as in the sidebar).
+        onArchive: entry.codexArchived ? undefined : () => sessionActions.onArchive(entry.sessionId, !entry.archived),
         onDelete: () => sessionActions.onDelete(entry),
         deleteBlocked: deleteBlockedReason(entry),
       }

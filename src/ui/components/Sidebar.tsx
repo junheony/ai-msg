@@ -7,7 +7,7 @@ import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 import { EngineMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
-import { MenuList, deleteBlockedReason } from './SessionMenu';
+import { BlockedDeleteItem, MenuList, deleteBlockedReason } from './SessionMenu';
 import { isMacPlatform } from '../shortcuts';
 
 /** Sessions shown per project before "더 보기". */
@@ -207,7 +207,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
             {/* GPT / Gemini / Codex-app sessions: shown disabled with the reason, so it is clear why they stay. */}
             {onDelete && (deleteBlockedReason(target)
-              ? <button type="button" role="menuitem" className="danger" aria-disabled="true" title={deleteBlockedReason(target)!}>삭제…</button>
+              ? <BlockedDeleteItem reason={deleteBlockedReason(target)!} />
               : <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete(target, which); }}>삭제…</button>)}
           </MenuList>
         )}
@@ -302,7 +302,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <ul>{desktopShown.map((d) => desktopRow(d, 'desktop'))}</ul>
         </section>
       )}
-      {projects.length === 0 && <div className="muted sidebar-empty">아직 대화가 없어요. 위의 새 채팅으로 시작하거나, 폴더 열기로 작업할 폴더를 골라 보세요.</div>}
+      {projects.length === 0 && <div className="muted sidebar-empty">아직 대화가 없어요. 폴더 열기로 작업할 폴더를 고른 뒤, 새 채팅으로 시작해 보세요.</div>}
       {showArchived && !q && (view === 'recent' ? recentList.length === 0 : visible.length === 0) && pinned.length === 0 && desktopShown.length === 0 && <div className="muted sidebar-empty">보관된 세션이 없습니다.</div>}
       {view === 'recent' && groupByDate(recentList).map((g) => (
         <section key={g.label} className="project date-group" data-testid={`date-group-${g.label}`}>

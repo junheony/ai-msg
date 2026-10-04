@@ -29,7 +29,7 @@ import { QueueChips } from './QueueChips';
 import { ShareMenu } from './ShareMenu';
 import { TodoPanel } from './TodoPanel';
 import { usePrefs } from '../usePrefs';
-import { MenuList } from './SessionMenu';
+import { BlockedDeleteItem, MenuList } from './SessionMenu';
 import { useAutoGrow } from '../useAutoGrow';
 
 export type ChatProps = {
@@ -423,7 +423,7 @@ export function Chat(p: ChatProps) {
               {tm.onTogglePin && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); tm.onTogglePin?.(); }}>{tm.pinned ? '고정 해제' : '맨 위에 고정'}</button>}
               {tm.onArchive && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); tm.onArchive?.(); }}>{tm.archived ? '보관 해제' : '보관'}</button>}
               {tm.deleteBlocked
-                ? <button type="button" role="menuitem" className="danger" aria-disabled="true" title={tm.deleteBlocked}>삭제…</button>
+                ? <BlockedDeleteItem reason={tm.deleteBlocked} />
                 : tm.onDelete && <button type="button" role="menuitem" className="danger" onClick={() => { setTitleMenuOpen(false); tm.onDelete?.(); }}>삭제…</button>}
             </MenuList>
           )}

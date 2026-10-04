@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import type { SessionEntry } from '../../shared/session-types';
 
 /**
@@ -10,6 +10,16 @@ export function deleteBlockedReason(s: Pick<SessionEntry, 'imported' | 'engine' 
   if (s.engine === 'codex' || s.account === 'gpt') return 'GPT 대화 기록은 Codex 폴더에 있어 deck에서 지울 수 없어요';
   if (s.engine === 'gemini') return 'Gemini 대화 기록은 deck에서 지울 수 없어요';
   return null;
+}
+
+/** 삭제 deck cannot do: disabled, with the reason as a second line (a touch screen shows no title tooltip). */
+export function BlockedDeleteItem({ reason }: { reason: string }) {
+  const id = useId();
+  return (
+    <button type="button" role="menuitem" className="danger" aria-disabled="true" aria-label="삭제…" aria-describedby={id} title={reason}>
+      삭제…<span id={id} className="menu-note">{reason}</span>
+    </button>
+  );
 }
 
 /** Roving focus: the item index a key moves to (wrapping), or null for keys the menu does not move on. */

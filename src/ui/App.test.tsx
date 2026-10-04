@@ -168,6 +168,19 @@ describe('App type-to-compose', () => {
     expect(fireEvent.keyDown(document.body, { key: 'ㅎ' })).toBe(false);
     expect(document.activeElement).toBe(ta);
   });
+
+  it('a file dragged over the sidebar gets the no-drop cursor and never navigates; the chat pane keeps its own drop', async () => {
+    await boot();
+    openSession('one');
+    const side = { types: ['Files'], files: [], items: [], dropEffect: 'copy' };
+    expect(fireEvent.dragOver(document.querySelector('.sidebar')!, { dataTransfer: side })).toBe(false);
+    expect(side.dropEffect).toBe('none');
+    expect(fireEvent.drop(document.querySelector('.sidebar')!, { dataTransfer: side })).toBe(false);
+    const pane = { types: ['Files'], files: [], items: [], dropEffect: 'copy' };
+    expect(fireEvent.dragOver(within(lastPane()).getByLabelText('메시지'), { dataTransfer: pane })).toBe(false);
+    expect(pane.dropEffect).toBe('copy');
+    expect(fireEvent.dragOver(document.querySelector('.sidebar')!, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
+  });
 });
 
 describe('App phone layout (D10)', () => {
