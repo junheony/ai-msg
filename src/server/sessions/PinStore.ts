@@ -8,7 +8,10 @@ export function isPinnableId(v: unknown): v is string {
   return typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/.test(v);
 }
 
-/** F2: pinned sessions (`pins.json`, pin order, oldest first), shared by every device. */
+/**
+ * F2: pinned sessions (`pins.json`), shared by every device. The list is the 고정됨 display order, top first:
+ * a new pin goes to the top (like Claude Desktop) and the user can drag rows into any order (`reorder`).
+ */
 export class PinStore {
   private ids: string[] = [];
   private writing: Promise<void> = Promise.resolve();
@@ -26,7 +29,7 @@ export class PinStore {
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch { parsed = undefined; }
     if (Array.isArray(parsed)) {
-      this.ids = [...new Set(parsed.filter(isPinnableId))].slice(-this.max);
+      this.ids = [...new Set(parsed.filter(isPinnableId))].slice(0, this.max);
       return;
     }
     // Review fix 4: a corrupt file is moved aside (pins.json.bad), never silently overwritten by the next toggle.
@@ -41,10 +44,27 @@ export class PinStore {
 
   async set(sessionId: string, pinned: boolean): Promise<string[]> {
     const rest = this.ids.filter((id) => id !== sessionId);
+    return this.commit(pinned ? (this.ids.includes(sessionId) ? this.ids : [sessionId, ...rest].slice(0, this.max)) : rest);
+  }
+
+  /**
+   * The user's drag order. Only the current pins are reordered: unknown or repeated ids are ignored, and pins the
+   * order leaves out (pinned meanwhile on another device) keep their relative order after the listed ones.
+   */
+  async reorder(order: readonly unknown[]): Promise<string[]> {
+    const have = new Set(this.ids);
+    const listed = [...new Set(order.filter((id): id is string => typeof id === 'string' && have.has(id)))];
+    const seen = new Set(listed);
+    const next = [...listed, ...this.ids.filter((id) => !seen.has(id))];
+    if (next.every((id, i) => id === this.ids[i])) return this.ids;
+    return this.commit(next);
+  }
+
+  private async commit(next: string[]): Promise<string[]> {
     const prev = this.ids;
-    const next = pinned ? (this.ids.includes(sessionId) ? this.ids : [...rest, sessionId].slice(-this.max)) : rest;
+    if (next === prev) return next;
     this.ids = next;
-    // Serialized: two quick toggles must not race on the temp file.
+    // Serialized: two quick changes must not race on the temp file.
     this.writing = this.writing.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const tmp = `${this.file}.${process.pid}.tmp`;
@@ -54,7 +74,7 @@ export class PinStore {
     try {
       await this.writing;
     } catch (err) {
-      // Review fix 4: memory must not claim a pin the file does not have (unless a later toggle already moved on).
+      // Review fix 4: memory must not claim a pin the file does not have (unless a later change already moved on).
       if (this.ids === next) this.ids = prev;
       throw err;
     }
