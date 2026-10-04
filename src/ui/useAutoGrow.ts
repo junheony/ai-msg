@@ -10,7 +10,12 @@ export function autoGrow(ta: HTMLTextAreaElement, keep?: HTMLElement | null): vo
   const top = keep?.scrollTop ?? 0;
   const atBottom = !!keep && keep.scrollHeight - top - keep.clientHeight <= 2;
   ta.style.height = 'auto';
-  if (ta.scrollHeight) ta.style.height = `${ta.scrollHeight}px`;
+  const full = ta.scrollHeight;
+  if (full) ta.style.height = `${full}px`;
+  // While the whole text fits, the textarea must not be a scroller. Typing onto a new line scrolls it by a line to
+  // reveal the caret before this refit; iOS/iPadOS keeps that offset on its own scroller after the box has grown, so
+  // the text sits a line off from where the caret is drawn. Only a text taller than the CSS max-height scrolls.
+  ta.style.overflowY = full && ta.clientHeight >= full ? 'hidden' : '';
   if (keep) keep.scrollTop = atBottom ? keep.scrollHeight : top;
 }
 
@@ -26,7 +31,8 @@ export function useAutoGrow(ref: RefObject<HTMLTextAreaElement | null>, value: s
     let width = ta.clientWidth;
     let frame = 0;
     const ro = new ResizeObserver(() => {
-      if (ta.clientWidth === width) return; // our own height change
+      // Our own height change — unless the cap (max-height: 40vh) dropped below a text that used to fit: refit so it scrolls.
+      if (ta.clientWidth === width && !(ta.style.overflowY === 'hidden' && ta.scrollHeight > ta.clientHeight)) return;
       width = ta.clientWidth;
       // Resizing inside the observer callback trips "ResizeObserver loop completed"; refit on the next frame.
       cancelAnimationFrame(frame);

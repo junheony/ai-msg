@@ -25,6 +25,23 @@ describe('autoGrow', () => {
     const ta = document.createElement('textarea');
     autoGrow(ta);
     expect(ta.style.height).toBe('auto');
+    expect(ta.style.overflowY).toBe('');
+  });
+
+  it('is not a scroller while the text fits; scrolls only once the CSS max-height caps it (iPad caret offset)', () => {
+    const ta = document.createElement('textarea');
+    fakeLayout(ta);
+    const MAX = 60; // the CSS max-height
+    Object.defineProperty(ta, 'clientHeight', { configurable: true, get: () => Math.min(parseFloat(ta.style.height) || 0, MAX) });
+    ta.value = 'a\nb';
+    autoGrow(ta);
+    expect(ta.style.overflowY).toBe('hidden');
+    ta.value = 'a\nb\nc\nd\ne';
+    autoGrow(ta);
+    expect(ta.style.overflowY).toBe('');
+    ta.value = 'a';
+    autoGrow(ta);
+    expect(ta.style.overflowY).toBe('hidden');
   });
 });
 

@@ -215,9 +215,12 @@ export function App() {
         const how = routeKey(e, routeContext(e.target));
         const ta = how ? composerOf(latest.current.activePaneId) : null;
         if (!ta) return;
-        if (how === 'focus') e.preventDefault();
-        ta.focus({ preventScroll: true });
-        ta.setSelectionRange(ta.value.length, ta.value.length);
+        // Already in the composer (a key event retargeted elsewhere, as iPadOS does mid-IME): leave the key and the caret alone.
+        if (document.activeElement !== ta) {
+          if (how === 'focus') e.preventDefault();
+          ta.focus({ preventScroll: true });
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+        }
         return;
       }
       if (hasOpenModal() && id !== 'palette' && id !== 'help' && id !== 'settings') return;
