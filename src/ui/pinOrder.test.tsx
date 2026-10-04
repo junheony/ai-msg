@@ -62,8 +62,9 @@ describe('Sidebar 고정됨 reorder', () => {
   const setup = (pins = ['s1', 's2', 's3', 's4']) => {
     const onReorderPins = vi.fn();
     const onOpen = vi.fn();
-    render(<Sidebar projects={projects} currentSessionId={null} onOpen={onOpen} onNew={() => {}} onRefresh={() => {}} pins={pins} onTogglePin={() => {}} onReorderPins={onReorderPins} />);
-    return { onReorderPins, onOpen };
+    const ui = (p: string[]) => <Sidebar projects={projects} currentSessionId={null} onOpen={onOpen} onNew={() => {}} onRefresh={() => {}} pins={p} onTogglePin={() => {}} onReorderPins={onReorderPins} />;
+    const { rerender } = render(ui(pins));
+    return { onReorderPins, onOpen, rerender: (p: string[]) => rerender(ui(p)) };
   };
 
   it('mouse: dragging the first row below the third reorders, the row follows the pointer, and the drop does not open it', () => {
@@ -127,11 +128,60 @@ describe('Sidebar 고정됨 reorder', () => {
     expect(onReorderPins).toHaveBeenCalledWith(['s4', 's1', 's2', 's3']);
   });
 
+  it('touch: a late click after the drop is swallowed for a while; a click after that opens', () => {
+    vi.useFakeTimers();
+    const { onOpen } = setup();
+    const rows = layout();
+    pointer(rows[3]!, 'pointerdown', 112, 'touch');
+    act(() => { vi.advanceTimersByTime(400); });
+    pointer(window, 'pointermove', 0, 'touch');
+    pointer(window, 'pointerup', 0, 'touch');
+    act(() => { vi.advanceTimersByTime(300); });
+    fireEvent.click(rows[3]!);
+    expect(onOpen).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(700); });
+    fireEvent.click(rows[3]!);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('a list change mid-drag (broadcast) drops nothing rather than moving the wrong pin', () => {
+    const { onReorderPins, rerender } = setup();
+    const rows = layout();
+    pointer(rows[0]!, 'pointerdown', 16);
+    pointer(window, 'pointermove', 90);
+    act(() => { rerender(['s3', 's1', 's2', 's4']); }); // another device reordered meanwhile
+    pointer(window, 'pointerup', 90);
+    expect(onReorderPins).not.toHaveBeenCalled();
+    for (const r of rows) expect(r.style.transform).toBe('');
+  });
+
+  it('Escape during a drag cancels only the drag: other Escape handlers (drawer, panel, menu) do not see it', () => {
+    const { onReorderPins } = setup();
+    const rows = layout();
+    const other = vi.fn();
+    window.addEventListener('keydown', other);
+    try {
+      pointer(rows[0]!, 'pointerdown', 16);
+      pointer(window, 'pointermove', 90);
+      act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
+      expect(other).not.toHaveBeenCalled();
+      pointer(window, 'pointerup', 90);
+      expect(onReorderPins).not.toHaveBeenCalled();
+      // No drag: Escape reaches everyone as before.
+      act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+      expect(other).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('keydown', other);
+    }
+  });
+
   it('Alt+↑/↓ on a focused row control moves it one place', () => {
     const { onReorderPins } = setup();
     const btn = screen.getByTestId('pinned-group').querySelectorAll('li')[1]!.querySelector('button')!;
+    expect(btn.getAttribute('aria-keyshortcuts')).toBe('Alt+ArrowUp Alt+ArrowDown');
     fireEvent.keyDown(btn, { key: 'ArrowUp', altKey: true });
     expect(onReorderPins).toHaveBeenLastCalledWith(['s2', 's1', 's3', 's4']);
+    expect(screen.getByTestId('pinned-group').querySelector('[aria-live="polite"]')!.textContent).toBe('two — 고정됨 1/4번째로 옮김');
     fireEvent.keyDown(btn, { key: 'ArrowDown', altKey: true });
     expect(onReorderPins).toHaveBeenLastCalledWith(['s1', 's3', 's2', 's4']);
     fireEvent.keyDown(btn, { key: 'ArrowDown' });

@@ -73,6 +73,8 @@ export function App() {
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
   const latest = useRef(state);
   latest.current = state;
+  /** 고정됨 reorder requests: only the newest one's answer is applied. */
+  const pinOrderSeq = useRef(0);
   const phone = useIsPhone();
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -370,10 +372,23 @@ export function App() {
             desktop={state.desktop}
             onTogglePin={(sessionId, pinned) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 실패' })); }}
             onReorderPins={(order) => {
-              // Optimistic: the new order shows at once; a failed save puts the old one back.
-              const before = state.pins;
+              // Optimistic: the new order shows at once. Only the latest move's answer counts — an older one arriving
+              // late must not undo a newer move (the index broadcast settles those). A failed save puts the old order
+              // back, keeping pins added meanwhile (on top, like a new pin).
+              const seq = ++pinOrderSeq.current;
+              const before = latest.current.pins;
               dispatch({ type: 'set_pins', pins: order });
-              postPinOrder(order).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => { dispatch({ type: 'set_pins', pins: before }); dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 순서 변경 실패' }); });
+              postPinOrder(order).then(
+                (pins) => { if (seq === pinOrderSeq.current) dispatch({ type: 'set_pins', pins }); },
+                (err: unknown) => {
+                  if (seq !== pinOrderSeq.current) return;
+                  const now = latest.current.pins;
+                  const kept = new Set(before);
+                  const has = new Set(now);
+                  dispatch({ type: 'set_pins', pins: [...now.filter((id) => !kept.has(id)), ...before.filter((id) => has.has(id))] });
+                  dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 순서 변경 실패' });
+                },
+              );
             }}
             collapsed={collapsed}
             onCollapsedChange={setCollapsed}

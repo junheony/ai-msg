@@ -224,6 +224,35 @@ describe('App 고정됨 reorder', () => {
     expect(document.querySelector('.banner.error')).toBeNull();
   });
 
+  it('a late answer to an older move does not undo a newer one (success or failure)', async () => {
+    const pending: { resolve: (r: Response) => void; reject: (e: unknown) => void }[] = [];
+    vi.stubGlobal('fetch', vi.fn((url: string) => (url === '/api/pins/order' ? new Promise<Response>((resolve, reject) => { pending.push({ resolve, reject }); }) : Promise.resolve(new Response('{}', { status: 200 })))));
+    await bootPinned();
+    moveFirstDown(); // two, one
+    moveFirstDown(); // one, two
+    expect(pinnedTitles()).toEqual(['one', 'two']);
+    await act(async () => { pending[1]!.resolve(new Response(JSON.stringify({ pins: ['s1', 's2'] }), { status: 200 })); });
+    await act(async () => { pending[0]!.resolve(new Response(JSON.stringify({ pins: ['s2', 's1'] }), { status: 200 })); });
+    expect(pinnedTitles()).toEqual(['one', 'two']);
+    moveFirstDown(); // two, one
+    moveFirstDown(); // one, two
+    await act(async () => { pending[3]!.resolve(new Response(JSON.stringify({ pins: ['s1', 's2'] }), { status: 200 })); });
+    await act(async () => { pending[2]!.reject(new TypeError('Failed to fetch')); });
+    expect(pinnedTitles()).toEqual(['one', 'two']);
+    expect(document.querySelector('.banner.error')).toBeNull();
+  });
+
+  it('a failed save keeps a pin added meanwhile', async () => {
+    let fail: (e: unknown) => void = () => {};
+    vi.stubGlobal('fetch', vi.fn((url: string) => (url === '/api/pins/order' ? new Promise<Response>((_, reject) => { fail = reject; }) : Promise.resolve(new Response('{}', { status: 200 })))));
+    await bootPinned();
+    moveFirstDown(); // two, one
+    server({ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two'), entry('s3', 'three')] }], pins: ['s3', 's2', 's1'] } as unknown as ServerMessage);
+    await act(async () => { fail(new TypeError('Failed to fetch')); });
+    expect(pinnedTitles()).toEqual(['three', 'one', 'two']);
+    expect(document.querySelector('.banner.error')?.textContent).toContain('고정 순서 변경 실패');
+  });
+
   it('puts the old order back with a Korean error when the save fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => { if (url === '/api/pins/order') throw new TypeError('Failed to fetch'); return new Response('{}', { status: 200 }); }));
     await bootPinned();
