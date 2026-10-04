@@ -155,6 +155,9 @@ function trackViewport(): void {
   const w = Math.round(vv.width * vv.scale);
   if (w !== vvWidth) { vvWidth = w; vvMax = 0; }
   vvMax = Math.max(vvMax, vv.height);
+  // CSS hook: with the keyboard up the composer drops its home-indicator inset (styles.css "bottom edge").
+  const coarse = typeof window.matchMedia === 'function' && window.matchMedia(COARSE_QUERY).matches;
+  document.documentElement.toggleAttribute('data-soft-kb', coarse && vv.height < vvMax * 0.8);
 }
 if (typeof window !== 'undefined' && window.visualViewport) {
   trackViewport();
