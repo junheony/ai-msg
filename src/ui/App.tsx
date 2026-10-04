@@ -7,7 +7,7 @@ import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
 import { Login } from './components/Login';
 import { NotifyMenu } from './components/NotifyMenu';
 import { SettingsView } from './components/SettingsView';
-import { postPin } from './pins';
+import { postPin, postPinOrder } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
 import { Pane, sendFromPane, useQueueRunner } from './components/Pane';
@@ -369,6 +369,12 @@ export function App() {
             pins={state.pins}
             desktop={state.desktop}
             onTogglePin={(sessionId, pinned) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 실패' })); }}
+            onReorderPins={(order) => {
+              // Optimistic: the new order shows at once; a failed save puts the old one back.
+              const before = state.pins;
+              dispatch({ type: 'set_pins', pins: order });
+              postPinOrder(order).then((pins) => dispatch({ type: 'set_pins', pins }), (err: unknown) => { dispatch({ type: 'set_pins', pins: before }); dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 순서 변경 실패' }); });
+            }}
             collapsed={collapsed}
             onCollapsedChange={setCollapsed}
             onRename={(sessionId, title) => { postSessionMeta(sessionId, { title }).catch((err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '이름 바꾸기 실패' })); }}

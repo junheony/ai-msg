@@ -199,3 +199,36 @@ describe('App phone layout (D10)', () => {
     expect(document.querySelector('.sidebar-wrap.drawer.open')).toBeNull();
   });
 });
+
+describe('App 고정됨 reorder', () => {
+  beforeEach(() => { localStorage.clear(); sock.frames = []; sock.onMessage = null; });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const pinnedTitles = () => [...screen.getByTestId('pinned-group').querySelectorAll('.session-title')].map((e) => e.textContent);
+  const bootPinned = async () => {
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    server({ type: 'hello', usage, projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two')] }], pins: ['s1', 's2'], running: [], codex: { available: false } } as unknown as ServerMessage);
+  };
+  const moveFirstDown = () => fireEvent.keyDown(screen.getByTestId('pinned-group').querySelector('li button')!, { key: 'ArrowDown', altKey: true });
+
+  it('shows the new order at once and saves it', async () => {
+    let release: (r: Response) => void = () => {};
+    const fetchFn = vi.fn((url: string) => (url === '/api/pins/order' ? new Promise<Response>((r) => { release = r; }) : Promise.resolve(new Response('{}', { status: 200 }))));
+    vi.stubGlobal('fetch', fetchFn);
+    await bootPinned();
+    moveFirstDown();
+    expect(pinnedTitles()).toEqual(['two', 'one']);
+    expect(fetchFn).toHaveBeenCalledWith('/api/pins/order', expect.objectContaining({ body: JSON.stringify({ order: ['s2', 's1'] }) }));
+    await act(async () => { release(new Response(JSON.stringify({ pins: ['s2', 's1'] }), { status: 200 })); });
+    expect(pinnedTitles()).toEqual(['two', 'one']);
+    expect(document.querySelector('.banner.error')).toBeNull();
+  });
+
+  it('puts the old order back with a Korean error when the save fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => { if (url === '/api/pins/order') throw new TypeError('Failed to fetch'); return new Response('{}', { status: 200 }); }));
+    await bootPinned();
+    moveFirstDown();
+    await waitFor(() => expect(document.querySelector('.banner.error')?.textContent).toContain('고정 순서 변경 실패: 네트워크 오류'));
+    expect(pinnedTitles()).toEqual(['one', 'two']);
+  });
+});

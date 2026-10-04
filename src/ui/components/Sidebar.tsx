@@ -6,6 +6,7 @@ import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches'
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 import { EngineMark, engineOf } from './EngineMark';
+import { usePinReorder } from '../pinOrder';
 
 /** Sessions shown per project before "더 보기". */
 export const FOLD_AT = 5;
@@ -26,7 +27,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete }: {
   /** 설정 (gear in the footer; ⌘, also opens it — 새 세션 기본 권한 lives there). */
   onOpenSettings?: () => void;
   projects: ProjectEntry[];
@@ -37,9 +38,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** F1: a folder chosen in 폴더 열기 (real path, server-validated) → new session there. */
   onOpenFolder?: (cwd: string) => void;
   fetchFn?: typeof fetch;
-  /** F2: pinned session ids in pin order, shown as 고정됨 above the projects. */
+  /** F2: pinned session ids in display order (top first), shown as 고정됨 above the projects. */
   pins?: string[];
   onTogglePin?: (sessionId: string, pinned: boolean) => void;
+  /** 고정됨 drag order: the full pin list, top first. Absent = the pinned rows do not reorder. */
+  onReorderPins?: (order: string[]) => void;
   /** Recent Claude Desktop sessions (newest first); opened like any session. */
   desktop?: DesktopSession[];
   /** ux-state: folded project groups (cwd), owned by the app so they survive a reload; absent = local state. */
@@ -133,6 +136,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const d = desktopById.get(id);
     return d && inView(d) && dMatch(d) ? [{ kind: 'desktop', d }] : [];
   });
+  // 고정됨 rows reorder by drag (touch: long-press) or Alt+↑/↓; hidden pins (filtered out) keep their place.
+  const pinDrag = usePinReorder(pinned.map((it) => (it.kind === 'session' ? it.s.sessionId : it.d.sessionId)), pins, onReorderPins);
   // A Desktop session whose folder deck already lists shows there; the Desktop list only carries the rest.
   const desktopShown = desktop.filter((d) => !byId.has(d.sessionId) && !pinSet.has(d.sessionId) && inView(d) && dMatch(d));
 
@@ -274,7 +279,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       {pinned.length > 0 && (
         <section className="project pinned-group" data-testid="pinned-group">
           <div className="project-head"><span className="project-name">고정됨</span></div>
-          <ul>{pinned.map((it) => (it.kind === 'session' ? row(it.s, 'pinned') : desktopRow(it.d, 'pinned')))}</ul>
+          <ul {...pinDrag}>{pinned.map((it) => (it.kind === 'session' ? row(it.s, 'pinned') : desktopRow(it.d, 'pinned')))}</ul>
         </section>
       )}
       {view === 'projects' && desktopShown.length > 0 && (
