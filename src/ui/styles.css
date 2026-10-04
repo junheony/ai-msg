@@ -1677,3 +1677,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .sidebar .session-row .session-meta { padding-left: calc(25px * var(--font-scale, 1)); }
 }
 @media (prefers-reduced-motion: reduce) { .sidebar .row-end { transition: none !important; } }
+/* A narrow split column gets the phone's tighter spacing too. */
+@container pane (max-width: 420px) {
+  .composer-send { gap: 3px; }
+  .composer-send .ctx-gauge { padding: 0 2px; }
+  .composer-row { padding-left: 8px; padding-right: 8px; gap: 4px; }
+}
