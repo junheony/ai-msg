@@ -133,16 +133,17 @@ export class CodexRolloutIndex {
       this.running = this.scan().finally(() => { this.running = null; });
       return this.running;
     }
-    return (this.again ??= this.running.then(() => { this.again = null; return this.refresh(); }));
+    // A failed scan must not stick: the follow-up runs regardless (as ws.ts' rescanIndex).
+    return (this.again ??= this.running.catch(() => {}).then(() => { this.again = null; return this.refresh(); }));
   }
 
   private async scan(): Promise<void> {
     const [live, archived] = await Promise.all([rolloutFiles(this.root), this.archivedRoot ? rolloutsIn(this.archivedRoot) : Promise.resolve([])]);
     const files = [...live.map((f) => ({ ...f, archived: false })), ...archived.map((f) => ({ ...f, archived: true }))];
-    // A head without a prompt yet (thread just started) is retried once the file grows.
+    // A head without a prompt yet (thread just started), or none at all (first line still half-written), is retried once the file grows.
     const stale = files.filter((f) => {
       const c = this.heads.get(f.file);
-      return !c || f.size < c.size || (c.head && !c.head.title && f.size !== c.size);
+      return !c || f.size < c.size || ((!c.head || !c.head.title) && f.size !== c.size);
     });
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, stale.length) }, async () => {

@@ -11,6 +11,7 @@ import type { GeminiTurnRequest } from '../engine/GeminiEngine';
 import type { GeminiAccount } from '../../shared/accounts';
 import type { EngineEvent } from '../engine/Engine';
 import { readCooldownUntilMs } from '../routing/cooldown';
+import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
@@ -551,6 +552,23 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect(midTurn[0]?.imported).toBeUndefined();
     expect(midTurn[0]?.codexExec).toBeUndefined();
     expect(c.deps.store.get(tid)).toMatchObject({ engine: 'codex', cwd: work, title: 'hi deck', createdAtMs: NOW, lastTurnAtMs: NOW });
+  });
+
+  it('a deck Codex thread that Codex has since archived is refused (view only); nothing is spawned', async () => {
+    const tid = '01a0f2d3-0000-7c92-aeea-0000000000f2';
+    const codex = fakeCodex((req) => codexOk(req.resumeThreadId ?? 'x'));
+    const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
+    const work = path.join(c.base, 'work');
+    const arch = path.join(c.base, 'archived_sessions');
+    await fs.mkdir(work);
+    await fs.mkdir(arch);
+    await fs.writeFile(path.join(arch, `rollout-2026-10-04T00-00-00-${tid}.jsonl`), [{ type: 'session_meta', payload: { id: tid, cwd: work, originator: 'codex_exec', source: 'exec', thread_source: 'user' } }].map((l) => JSON.stringify(l)).join('\n') + '\n');
+    c.deps.index = new SessionIndex({ roots: c.roots, pinnedFile: path.join(c.base, 'p2.json'), codexRoot: path.join(c.base, 'codex-root'), codexArchivedRoot: arch });
+    await c.deps.index.refresh();
+    await c.deps.store.set({ engine: 'codex', sessionId: tid, cwd: work, lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gpt-6-sol', sandbox: 'read-only', rolloutFile: path.join(c.base, 'codex-root', 'gone.jsonl'), createdAtMs: 1 });
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: work, sessionId: tid, text: 'again' }, c.sink);
+    expect(c.msgs).toEqual([expect.objectContaining({ type: 'error', message: CODEX_ARCHIVED_NOTICE })]);
+    expect(codex.calls).toHaveLength(0);
   });
 
   it('resuming a codex session honours a per-turn Codex model; the badge shows it; the stored default is unchanged', async () => {

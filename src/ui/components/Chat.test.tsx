@@ -272,4 +272,17 @@ describe('Chat readOnly', () => {
     expect(onSend).not.toHaveBeenCalled();
     expect((screen.getByRole('button', { name: '보내기' }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('offers no 재시도 and ignores pasted / dropped files', async () => {
+    const uploadFn = vi.fn(async (f: File) => ({ id: 'id-1', name: f.name, size: f.size, isImage: true }));
+    const onAttach = vi.fn();
+    renderChat([{ kind: 'user', text: 'do the thing' }, failed], false, vi.fn(), { readOnly: '읽기만', uploadFn, onAttach });
+    expect(screen.queryByText('재시도')).toBeNull();
+    const file = new File(['x'], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(screen.getByLabelText('메시지'), { clipboardData: { files: [file], items: [] } });
+    fireEvent.drop(screen.getByLabelText('메시지').closest('.composer')!, { dataTransfer: { files: [file], items: [] } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(uploadFn).not.toHaveBeenCalled();
+    expect(onAttach).not.toHaveBeenCalled();
+  });
 });

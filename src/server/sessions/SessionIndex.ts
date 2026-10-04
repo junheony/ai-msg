@@ -266,13 +266,32 @@ export class SessionIndex {
   }
 
   /**
+   * The Codex thread as it is now: when the cached entry is stale — its rollout moved (archived / unarchived
+   * in Codex) or its folder came / went — the Codex list is rescanned once and `onChange` fires (index push).
+   */
+  async freshCodexImport(threadId: string): Promise<SessionEntry | null> {
+    const codex = this.codex;
+    const e = codex?.lookup(threadId) ?? null;
+    if (!codex || !e) return e;
+    const [fileOk, dirOk] = await Promise.all([fs.stat(e.file).then((st) => st.isFile(), () => false), fs.stat(e.cwd).then((st) => st.isDirectory(), () => false)]);
+    if (fileOk && dirOk === !e.cwdMissing) return e;
+    await codex.refresh().catch(() => undefined);
+    this.onChange?.();
+    return codex.lookup(threadId);
+  }
+
+  /**
    * Cached grouping of the profile scan; with `extra` (Codex sessions from the state store, D4) and/or
-   * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice.
+   * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice;
+   * if Codex has since archived it (its newest rollout is in archived_sessions), deck's entry is archived too.
    */
   projects(extra: SessionEntry[] = []): ProjectEntry[] {
+    const all = this.codex?.list() ?? [];
+    const archivedInCodex = new Set(all.filter((e) => e.codexArchived).map((e) => e.sessionId));
     const own = new Set(extra.map((e) => e.sessionId));
-    const imports = (this.codex?.list() ?? []).filter((e) => !own.has(e.sessionId));
-    return extra.length || imports.length ? this.group([...this.entries, ...extra, ...imports]) : this.grouped;
+    const mine = archivedInCodex.size ? extra.map((e) => (archivedInCodex.has(e.sessionId) ? { ...e, archived: true, codexArchived: true } : e)) : extra;
+    const imports = all.filter((e) => !own.has(e.sessionId));
+    return extra.length || imports.length ? this.group([...this.entries, ...mine, ...imports]) : this.grouped;
   }
 
   sessions(): SessionEntry[] {

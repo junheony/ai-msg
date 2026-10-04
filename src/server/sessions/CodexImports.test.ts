@@ -159,6 +159,33 @@ describe('CodexRolloutIndex', () => {
     expect(isDeckTestCwd('/Users/max/deck-e2e-work-1')).toBe(false);
   });
 
+  it('a failed scan does not stick: the overlapping follow-up and later refreshes still scan', async () => {
+    await writeFixtures(root, work);
+    let fail = true;
+    const idx = new CodexRolloutIndex(root, (f) => { if (fail) { fail = false; throw new Error('boom'); } return readRolloutHead(f); });
+    const first = idx.refresh();
+    const second = idx.refresh();
+    await expect(first).rejects.toThrow('boom');
+    await second;
+    expect(idx.list()).toHaveLength(3);
+    await idx.refresh();
+    expect(idx.list()).toHaveLength(3);
+  });
+
+  it('a rollout whose first line was half-written at scan time is listed once it grows', async () => {
+    const dir = path.join(root, '2026', '10', '04');
+    await fs.mkdir(dir, { recursive: true });
+    const f = path.join(dir, `rollout-x-${CLI_ID}.jsonl`);
+    const full = jsonl([meta(CLI_ID, work), user('late meta')]);
+    await fs.writeFile(f, full.slice(0, 200));
+    const idx = new CodexRolloutIndex(root);
+    await idx.refresh();
+    expect(idx.lookup(CLI_ID)).toBeNull();
+    await fs.writeFile(f, full);
+    await idx.refresh();
+    expect(idx.lookup(CLI_ID)).toMatchObject({ title: 'late meta' });
+  });
+
   it('importBlockReason: archived in Codex or folder gone → the Korean reason; otherwise null', async () => {
     expect(await importBlockReason({ cwd: work })).toBeNull();
     expect(await importBlockReason({ cwd: path.join(work, 'gone') })).toBe(`${CWD_MISSING_NOTICE}: ${path.join(work, 'gone')}`);
@@ -215,6 +242,39 @@ describe('SessionIndex with codexArchivedRoot', () => {
     const desk = projects.find((p) => p.cwd === other);
     expect(desk).toMatchObject({ name: 'Desktop', pinned: false });
     expect(desk?.sessions[0]).toMatchObject({ sessionId: AID, archived: true, codexArchived: true });
+  });
+});
+
+describe('SessionIndex.freshCodexImport', () => {
+  it('rescans (and pushes onChange) when Codex archived / unarchived the thread or its folder came back; else no rescan', async () => {
+    const { cli } = await writeFixtures(root, work);
+    const arch = path.join(base, 'archived_sessions');
+    await fs.mkdir(arch);
+    const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
+    const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root, codexArchivedRoot: arch });
+    await index.refresh();
+    let changes = 0;
+    index.onChange = () => { changes++; };
+    expect(await index.freshCodexImport(CLI_ID)).not.toHaveProperty('codexArchived');
+    expect(changes).toBe(0);
+    // Archived in Codex: the rollout moved.
+    const moved = path.join(arch, path.basename(cli));
+    await fs.rename(cli, moved);
+    expect(await index.freshCodexImport(CLI_ID)).toMatchObject({ file: moved, codexArchived: true });
+    expect(changes).toBe(1);
+    // Own (deck-run) copy of a thread Codex archived: archived too.
+    const own = { sessionId: CLI_ID, account: 'gpt' as const, engine: 'codex' as const, cwd: work, projectDir: '', file: cli, title: 'deck title', lastModified: 1, sizeBytes: 0 };
+    expect(index.projects([own]).flatMap((p) => p.sessions).find((e) => e.sessionId === CLI_ID)).toMatchObject({ title: 'deck title', archived: true, codexArchived: true });
+    // Unarchived again.
+    await fs.rename(moved, cli);
+    expect(await index.freshCodexImport(CLI_ID)).toMatchObject({ file: cli });
+    expect(index.codexImport(CLI_ID)).not.toHaveProperty('codexArchived');
+    expect(index.projects([own]).flatMap((p) => p.sessions).find((e) => e.sessionId === CLI_ID)).not.toHaveProperty('archived');
+    // A gone folder that is back.
+    expect(index.codexImport(GONE_ID)?.cwdMissing).toBe(true);
+    await fs.mkdir(path.join(work, 'deleted-temp-dir'));
+    expect(await index.freshCodexImport(GONE_ID)).not.toHaveProperty('cwdMissing');
+    expect(changes).toBe(3);
   });
 });
 

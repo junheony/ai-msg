@@ -215,7 +215,9 @@ export function Chat(p: ChatProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
   const scroll = useStickToBottom(bodyRef, content, p.sessionId);
-  const { addFiles, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
+  const { addFiles: upload, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
+  // Read-only: no paste / drop / 첨부 uploads either.
+  const addFiles = async (files: File[]) => { if (!p.readOnly) await upload(files); };
   const coarse = useCoarsePointer();
   // Set between compositionstart/end: some browsers report isComposing late or not at all.
   const composing = useRef(false);
@@ -227,7 +229,7 @@ export function Chat(p: ChatProps) {
   const lastPrompt = ([...p.items].reverse().find((it) => it.kind === 'user') as Extract<ChatItem, { kind: 'user' }> | undefined)?.text ?? null;
   // Never a handoff-note request: re-sending it would run the note prompt as a plain turn (tools allowed, no switch).
   const retryable = lastPrompt !== HANDOFF_PROMPT ? lastPrompt : null;
-  const retryPrompt = !p.busy && last?.kind === 'assistant' && last.error !== null && !last.streaming ? retryable : null;
+  const retryPrompt = !p.busy && !p.readOnly && last?.kind === 'assistant' && last.error !== null && !last.streaming ? retryable : null;
 
   // D3 / PF11: a new session follows the picker (the engine recorded at open time is ignored while it is new);
   // once the session exists its engine is fixed.
@@ -257,7 +259,7 @@ export function Chat(p: ChatProps) {
   const onBranchRef = useRef(p.onBranch);
   onBranchRef.current = p.onBranch;
   const canBranch = !!p.onBranch;
-  const canRetry = !p.busy && retryPrompt === null && retryable !== null && last?.kind === 'assistant';
+  const canRetry = !p.busy && !p.readOnly && retryPrompt === null && retryable !== null && last?.kind === 'assistant';
   const msgActions = useMemo<MessageActions>(() => ({
     onEdit: (t) => {
       setText(t);

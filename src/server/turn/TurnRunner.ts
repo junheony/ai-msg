@@ -20,7 +20,7 @@ import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
-import { importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
+import { CODEX_ARCHIVED_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
 import { elsewhereNotice } from '../sessions/elsewhereNotice';
 import { backupDivergedAndMove } from '../sessions/SessionFork';
 import { isAncestor, moveSession } from '../sessions/SessionMover';
@@ -985,7 +985,10 @@ export class TurnRunner {
     }
     if (p.sessionId) {
       state = deps.store.get(p.sessionId);
-      const imported = state ? null : deps.index.codexImport(p.sessionId);
+      // A deck Codex thread Codex has since archived (its rollout moved to archived_sessions): view only, like an archived import.
+      if (state && isCodexState(state) && (await deps.index.freshCodexImport(p.sessionId))?.codexArchived) { sink.emit({ type: 'error', turnId: p.turnId, message: CODEX_ARCHIVED_NOTICE }); return; }
+      // Checked live: a thread archived / unarchived in Codex or a folder that came back since the last scan is rescanned first.
+      const imported = state ? null : await deps.index.freshCodexImport(p.sessionId);
       if (imported) {
         // Folder gone (codex cannot spawn there) or archived in Codex (resume by id is not assured): view only.
         const blocked = await importBlockReason(imported);

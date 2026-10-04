@@ -664,7 +664,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               entry = deps.index.lookup(sessionId);
             }
             // A Codex Desktop / CLI thread deck has not run yet: its rollout, read-only; the first turn resumes it.
-            const imported = entry ? null : deps.index.codexImport(sessionId);
+            // Checked live: a rollout moved by Codex (archived / unarchived) or a folder that came / went since the last scan
+            // triggers a rescan and an index push, so the list and composer follow without a manual refresh.
+            const imported = entry ? null : await deps.index.freshCodexImport(sessionId);
             if (imported) {
               view(ws, sessionId);
               const messages = await (deps.readCodexImportHistory ?? readCodexTranscriptTail)(imported.file).catch(() => []);
