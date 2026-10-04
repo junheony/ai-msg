@@ -121,6 +121,8 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
     session: p.session ? { ...p.session, account: null, sandbox: null, ...(p.accountPin ? { accountPin: p.accountPin } : {}) } : null,
     model: p.model, efforts: { ...p.efforts }, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
     handoffFrom: p.handoffFrom ?? null, prefill: p.prefill ?? null,
+    // Its history is asked for again once the socket is up: loading until it arrives.
+    ...(p.session?.sessionId ? { loading: true } : {}),
   }));
   return withQueues({ ...base, panes, activePaneId: panes[ui.active]?.id ?? panes[0]!.id }, queues);
 }

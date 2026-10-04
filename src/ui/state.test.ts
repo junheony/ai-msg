@@ -160,6 +160,14 @@ describe('reducer', () => {
   const badge = (account: 'a' | 'b' | 'c') => ({ account, model: 'opus' as const, reason: 'r', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, modelNote: null });
   const historyOf = (sessionId: string, account: 'a' | 'b' | 'c' = 'b'): ServerMessage => ({ type: 'history', sessionId, cwd: '/w', account, messages: [{ kind: 'user', text: 'q', ts: null }], runningTurnId: null });
 
+  it('loading: open of a saved session sets it until its history (or an error about it) arrives; a new chat never loads', () => {
+    expect(pane(openedOn('s')).loading).toBe(true);
+    expect(pane(play([historyOf('s')], openedOn('s'))).loading).toBe(false);
+    expect(pane(play([{ type: 'error', turnId: null, message: '기록을 읽지 못했습니다', sessionId: 's' }], openedOn('s'))).loading).toBe(false);
+    expect(pane(reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' })).loading).toBe(false);
+    expect(pane(reducer(openedOn('s'), { type: 'clear_pane' })).loading).toBe(false);
+  });
+
   it("another session's turn events leave the open session untouched", () => {
     const s0 = play([historyOf('s')], openedOn('s'));
     const s = play([

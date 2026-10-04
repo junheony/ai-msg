@@ -7,6 +7,8 @@ import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 import { EngineMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
+import { BlockedDeleteItem, MenuList, deleteBlockedReason } from './SessionMenu';
+import { isMacPlatform } from '../shortcuts';
 
 /** Sessions shown per project before "더 보기". */
 export const FOLD_AT = 5;
@@ -27,7 +29,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat }: {
   /** 설정 (gear in the footer; ⌘, also opens it — 새 세션 기본 권한 lives there). */
   onOpenSettings?: () => void;
   projects: ProjectEntry[];
@@ -64,6 +66,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onViewChange?: (view: SidebarView) => void;
   /** 삭제 (Claude sessions): the app confirms, moves it to the trash and offers undo. `which` names the branch of a 갈래 row. */
   onDelete?: (s: SessionEntry, which?: string) => void;
+  /** 새 채팅 (the list's first item, as in Desktop): same as ⌘N. */
+  onNewChat?: () => void;
 }) {
   const [localView, setLocalView] = useState<SidebarView>(viewProp ?? 'projects');
   const view = viewProp ?? localView;
@@ -89,7 +93,6 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const match = (s: SessionEntry) => !q || s.title.toLowerCase().includes(q);
   const inView = (s: { archived?: boolean }) => (showArchived ? !!s.archived : !s.archived);
   const canEdit = !!(onRename || onArchive || onDelete);
-  const canDelete = (s: SessionEntry) => !!onDelete && !s.imported && s.engine !== 'codex' && s.engine !== 'gemini' && s.account !== 'gpt';
 
   // 대화 내용 검색: debounced; a stale answer (query changed meanwhile) is dropped.
   const fullQ = query.trim();
@@ -195,15 +198,18 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           )}
         </span>
         {menu === key && (
-          <div className="session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+          <MenuList onClose={() => setMenu(null)}>
             {which && <div className="session-menu-which muted" data-testid="session-menu-which">{which}</div>}
             {onRename && <button type="button" role="menuitem" onClick={() => startEdit(target, key)}>이름 바꾸기</button>}
             {/* Touch screens hide the row's pin button (it ate the title's width); pinning lives here too. */}
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {/* Archived in Codex: only the Codex app can unarchive it. */}
             {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
-            {canDelete(target) && <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete?.(target, which); }}>삭제…</button>}
-          </div>
+            {/* GPT / Gemini / Codex-app sessions: shown disabled with the reason, so it is clear why they stay. */}
+            {onDelete && (deleteBlockedReason(target)
+              ? <BlockedDeleteItem reason={deleteBlockedReason(target)!} />
+              : <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete(target, which); }}>삭제…</button>)}
+          </MenuList>
         )}
       </li>
     );
@@ -230,9 +236,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           )}
         </span>
         {menu === key && onTogglePin && (
-          <div className="session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+          <MenuList onClose={() => setMenu(null)}>
             <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(d.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>
-          </div>
+          </MenuList>
         )}
       </li>
     );
@@ -257,6 +263,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const visible = projects.map((p) => ({ p, sessions: groupBranches(p.sessions.filter(inView), links).filter((g) => !pinSet.has(g.entry.sessionId)).slice(0, MAX_SESSIONS).filter((g) => match(g.entry)) })).filter(({ sessions }) => (!q && !showArchived) || sessions.length > 0);
   return (
     <aside className="sidebar">
+      {onNewChat && (
+        <button type="button" className="sidebar-new" onClick={onNewChat} title={`새 채팅 (${isMacPlatform() ? '⌘' : 'Ctrl+'}N)`}>
+          <PlusIcon /><span>새 채팅</span>
+        </button>
+      )}
       <div className="sidebar-head">
         {onOpenFolder && (
           <button type="button" className="text-btn" onClick={() => setPicking((v) => !v)} title="아무 폴더에서 새 세션" aria-expanded={picking}>
@@ -291,7 +302,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <ul>{desktopShown.map((d) => desktopRow(d, 'desktop'))}</ul>
         </section>
       )}
-      {projects.length === 0 && <div className="muted sidebar-empty">세션이 없습니다. ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</div>}
+      {projects.length === 0 && <div className="muted sidebar-empty">아직 대화가 없어요. 폴더 열기로 작업할 폴더를 고른 뒤, 새 채팅으로 시작해 보세요.</div>}
       {showArchived && !q && (view === 'recent' ? recentList.length === 0 : visible.length === 0) && pinned.length === 0 && desktopShown.length === 0 && <div className="muted sidebar-empty">보관된 세션이 없습니다.</div>}
       {view === 'recent' && groupByDate(recentList).map((g) => (
         <section key={g.label} className="project date-group" data-testid={`date-group-${g.label}`}>
@@ -359,6 +370,14 @@ function PinIcon({ filled }: { filled: boolean }) {
     <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
       <path d="M6 1.75h4l-.5 4.5 2.5 2.5v1H4v-1l2.5-2.5z" />
       <path d="M8 9.75v4.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+      <path d="M8 3v10M3 8h10" />
     </svg>
   );
 }

@@ -181,3 +181,113 @@ describe('Pane (D6)', () => {
     });
   });
 });
+
+describe('Pane: Esc stops the running turn from anywhere in the pane', () => {
+  afterEach(() => { cleanup(); document.body.innerHTML = ''; });
+  const running: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null }, activeTurnId: 't1' };
+  const mount = (active = true) => {
+    const send = vi.fn();
+    render(<Pane pane={running} app={{ pending: [], questions: [], codexAvailable: false }} active={active} closable={false} dispatch={() => {}} send={send} onClose={() => {}} />);
+    return send;
+  };
+
+  it('Esc with nothing focused interrupts the active pane\'s turn (once)', () => {
+    const send = mount();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({ type: 'interrupt', turnId: 't1' });
+  });
+
+  it('the composer\'s own Esc is not doubled', () => {
+    const send = mount();
+    fireEvent.keyDown(screen.getByLabelText('메시지'), { key: 'Escape' });
+    expect(send.mock.calls.filter((c) => (c[0] as ClientMessage).type === 'interrupt')).toHaveLength(1);
+  });
+
+  it('an open menu / dialog takes the Esc first; a field being edited keeps it; an inactive pane ignores it', () => {
+    const send = mount();
+    const menu = document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    document.body.append(menu);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    menu.remove();
+    const input = document.createElement('input');
+    document.body.append(input);
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(send).not.toHaveBeenCalled();
+    cleanup();
+    const send2 = mount(false);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(send2).not.toHaveBeenCalled();
+  });
+
+  it('Esc that cancels a pin drag (swallowed in the capture phase, like pinOrder) does not stop the turn', () => {
+    const send = mount();
+    const drag = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); } };
+    window.addEventListener('keydown', drag, true); // added at drag start, after the pane mounted
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    window.removeEventListener('keydown', drag, true);
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('Esc that closes the usage popover (or the phone drawer) does not stop the turn, even when its handler removes it first', () => {
+    const send = mount();
+    const pop = document.createElement('div');
+    pop.setAttribute('role', 'tooltip');
+    document.body.append(pop);
+    // the popover's own handler runs before the pane's bubble listener and takes it off screen without preventDefault
+    const close = (e: KeyboardEvent) => { if (e.key === 'Escape') pop.remove(); };
+    document.addEventListener('keydown', close);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    document.removeEventListener('keydown', close);
+    expect(send).not.toHaveBeenCalled();
+    const drawer = document.createElement('div');
+    drawer.className = 'sidebar-wrap drawer open';
+    document.body.append(drawer);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    drawer.remove();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('focus outside the pane (top bar, sidebar) keeps Esc away from the turn', () => {
+    const send = mount();
+    const btn = document.createElement('button');
+    document.body.append(btn);
+    btn.focus();
+    fireEvent.keyDown(btn, { key: 'Escape' });
+    expect(send).not.toHaveBeenCalled();
+    (screen.getByTestId('pane-p1').querySelector('button') as HTMLButtonElement).focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Pane: chat title menu uses the sidebar actions', () => {
+  afterEach(cleanup);
+  it('acts on the listed session; a GPT one gets 삭제 disabled', () => {
+    const entry = { sessionId: 's1', account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 1 };
+    const actions = { pins: ['s1'], onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn() };
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null } };
+    const app = { pending: [], questions: [], codexAvailable: false, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [entry] }] };
+    const { rerender } = render(<Pane pane={pane} app={app} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
+    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByText('고정 해제'));
+    expect(actions.onTogglePin).toHaveBeenCalledWith('s1', false);
+    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByText('삭제…'));
+    expect(actions.onDelete).toHaveBeenCalledWith(entry);
+    const gpt = { ...entry, account: 'gpt' as const, engine: 'codex' as const };
+    rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [gpt] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
+    fireEvent.click(document.querySelector('button.chat-title')!);
+    expect(screen.getByRole('menuitem', { name: '삭제…' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('보관')).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // archived in Codex: only the Codex app can unarchive it, so no 보관 item (as in the sidebar)
+    rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [{ ...gpt, codexArchived: true, archived: true }] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
+    fireEvent.click(document.querySelector('button.chat-title')!);
+    expect(screen.queryByText('보관 해제')).toBeNull();
+    expect(screen.getAllByRole('menuitem').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['이름 바꾸기', '고정 해제', '삭제…']);
+  });
+});

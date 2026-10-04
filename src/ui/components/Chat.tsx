@@ -29,6 +29,8 @@ import { QueueChips } from './QueueChips';
 import { ShareMenu } from './ShareMenu';
 import { TodoPanel } from './TodoPanel';
 import { usePrefs } from '../usePrefs';
+import { BlockedDeleteItem, MenuList } from './SessionMenu';
+import { useAutoGrow } from '../useAutoGrow';
 
 export type ChatProps = {
   items: ChatItem[];
@@ -37,6 +39,8 @@ export type ChatProps = {
   activeTurnId: string | null;
   busy: boolean;
   title: string;
+  /** The title ⌄ menu (the sidebar ⋯ actions; `deleteBlocked` = 삭제 shown disabled with this reason). Absent = the caret is decoration. */
+  titleMenu?: { pinned: boolean; archived: boolean; onRename?: (title: string | null) => void; onTogglePin?: () => void; onArchive?: () => void; onDelete?: () => void; deleteBlocked?: string | null };
   /** Session folder: the header shows its last segment as a chip, the full path on hover. */
   cwd?: string;
   /** For `/` command suggestions (null while the session is new). */
@@ -119,6 +123,8 @@ export type ChatProps = {
   onDismissNotice?: (message: string) => void;
   /** View-only session (e.g. an imported Codex thread whose folder is gone): the composer is disabled and shows this reason. */
   readOnly?: string | null;
+  /** The session's history is on its way: a placeholder instead of a blank transcript. */
+  loading?: boolean;
 };
 
 const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
@@ -227,7 +233,9 @@ export function Chat(p: ChatProps) {
   useEffect(() => { if (p.prefill) setText((t) => (t.trim() ? t : p.prefill!)); }, [p.prefill]);
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Desktop: the composer grows with the text up to the CSS max-height (40vh) and shrinks back after a send.
   const bodyRef = useRef<HTMLDivElement>(null);
+  useAutoGrow(taRef, text, bodyRef);
   const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
   const scroll = useStickToBottom(bodyRef, content, p.sessionId);
   const { addFiles: upload, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
@@ -305,6 +313,21 @@ export function Chat(p: ChatProps) {
     setText('');
     scroll.attach();
   };
+  // Title ⌄ menu and its inline rename (closed when the pane shows another session).
+  const [titleMenuOpen, setTitleMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const renamingRef = useRef<string | null>(null);
+  renamingRef.current = renaming;
+  useEffect(() => { setTitleMenuOpen(false); setRenaming(null); }, [p.sessionId]);
+  const commitRename = () => {
+    const v = renamingRef.current;
+    if (v === null) return;
+    renamingRef.current = null;
+    setRenaming(null);
+    const t = v.replace(/\s+/g, ' ').trim();
+    if (t !== p.title) p.titleMenu?.onRename?.(t || null);
+  };
+  const tm = p.titleMenu;
   const [{ sendKey }] = usePrefs();
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggest.onKeyDown(e)) return;
@@ -345,17 +368,66 @@ export function Chat(p: ChatProps) {
     const files = filesFrom(e.clipboardData);
     if (files.length) { e.preventDefault(); void addFiles(files); }
   };
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+  // Files dropped anywhere on the pane attach (full-pane overlay while dragging); never a browser navigation. Anything
+  // else dragged (text into the rename / edit / queue fields) is left to the browser. Enter/leave are counted: moving
+  // between children fires leave/enter pairs, and Safari gives dragleave no relatedTarget.
+  const dragDepth = useRef(0);
+  const hasFiles = (e: DragEvent<HTMLElement>) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  const onDragEnter = (e: DragEvent<HTMLElement>) => {
+    if (!hasFiles(e)) return;
+    dragDepth.current += 1;
+    if (!drag) setDrag(true);
+  };
+  const onDragOver = (e: DragEvent<HTMLElement>) => {
+    if (!hasFiles(e)) return;
     e.preventDefault();
+    if (p.readOnly) e.dataTransfer.dropEffect = 'none';
+    if (!drag) setDrag(true);
+  };
+  const onDragLeave = (e: DragEvent<HTMLElement>) => {
+    if (!hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDrag(false);
+  };
+  const onDrop = (e: DragEvent<HTMLElement>) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
     setDrag(false);
     const files = filesFrom(e.dataTransfer);
     if (files.length) void addFiles(files);
   };
-
   return (
-    <main className="chat">
+    <main className="chat" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
       <div className="chat-head">
-        <span className="chat-title" title={p.title}><span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span></span>
+        <span className="chat-title-wrap">
+          {renaming !== null ? (
+            <input className="chat-title-input" aria-label="채팅 이름" value={renaming} autoFocus maxLength={200}
+              onChange={(e) => setRenaming(e.target.value)} onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return;
+                if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                if (e.key === 'Escape') { e.preventDefault(); renamingRef.current = null; setRenaming(null); }
+              }} />
+          ) : tm ? (
+            <button type="button" className="chat-title" title={p.title} aria-haspopup="menu" aria-expanded={titleMenuOpen} onClick={() => setTitleMenuOpen((o) => !o)}>
+              <span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span>
+            </button>
+          ) : (
+            <span className="chat-title" title={p.title}><span>{!p.isNew && p.sessionEngine && <EngineMark engine={p.sessionEngine} />}{p.title}</span><span className="caret" aria-hidden="true">⌄</span></span>
+          )}
+          {titleMenuOpen && tm && (
+            <MenuList className="session-menu chat-title-menu" label="채팅 메뉴" onClose={() => setTitleMenuOpen(false)}>
+              {tm.onRename && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); setRenaming(p.title); }}>이름 바꾸기</button>}
+              {tm.onTogglePin && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); tm.onTogglePin?.(); }}>{tm.pinned ? '고정 해제' : '맨 위에 고정'}</button>}
+              {tm.onArchive && <button type="button" role="menuitem" onClick={() => { setTitleMenuOpen(false); tm.onArchive?.(); }}>{tm.archived ? '보관 해제' : '보관'}</button>}
+              {tm.deleteBlocked
+                ? <BlockedDeleteItem reason={tm.deleteBlocked} />
+                : tm.onDelete && <button type="button" role="menuitem" className="danger" onClick={() => { setTitleMenuOpen(false); tm.onDelete?.(); }}>삭제…</button>}
+            </MenuList>
+          )}
+        </span>
         {folder && <span className="folder-chip" title={p.cwd}>{folder}</span>}
         {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
         {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${PERM_MODE_HINT[permMode]}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}
@@ -372,6 +444,12 @@ export function Chat(p: ChatProps) {
       ))}
       <div className="chat-body" ref={bodyRef}>
         {p.prevSession && <button type="button" className="session-link prev" data-testid="handoff-prev" onClick={p.prevSession.open} title={p.prevSession.title}>← 이전 세션 · {p.prevSession.title}</button>}
+        {p.loading && p.items.length === 0 && (
+          <div className="chat-loading" role="status" data-testid="chat-loading">
+            <span className="sr-only">불러오는 중…</span>
+            {[72, 46, 88, 60].map((w, i) => <span key={i} className={`skeleton-line ${i % 2 ? 'mine' : ''}`} style={{ width: `${w}%` }} aria-hidden="true" />)}
+          </div>
+        )}
         <AgentContext.Provider value={agentCtx}>
           <MessageActionsContext.Provider value={msgActions}>
             {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} last={i === shown.length - 1} />)}
@@ -402,7 +480,7 @@ export function Chat(p: ChatProps) {
         )}
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
         {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} />}
-        <div className={`composer ${drag ? 'dragover' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop}>
+        <div className={`composer ${drag && !p.readOnly ? 'dragover' : ''}`}>
           {suggest.popup}
           <textarea
             ref={taRef}

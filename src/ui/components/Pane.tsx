@@ -2,17 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import type { Effort, ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import type { ClientMessage } from '../../shared/protocol';
-import type { ProjectEntry } from '../../shared/session-types';
+import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
 import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
-import { Chat, modelChoices } from './Chat';
+import { Chat, modelChoices, type ChatProps } from './Chat';
 import { ModelPicker } from './ModelPicker';
 import { ForkMenu } from './ForkMenu';
 import { NewChat } from './NewChat';
 import { OpenInDesktop } from './OpenInDesktop';
 import { SidePanel } from './SidePanel';
+import { deleteBlockedReason } from './SessionMenu';
 import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
+import { hasOpenPopup } from '../composerFocus';
+import { isTypingTarget } from '../shortcuts';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -31,6 +34,9 @@ function paneModel(pane: PaneState) {
 function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
   return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
 }
+
+/** Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the folder picker. */
+const ESC_OWNERS = '[role="tooltip"], .sidebar-wrap.drawer.open, .folder-picker';
 
 /** Sends `text` (+ attachments) as the pane's next turn: `sent` for the reducer, `send` for the server. `ref`: a queued message's earlier clientRef (kept, so the server's acceptedRefs can tell whether it went in). */
 export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: (m: ClientMessage) => void, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string): void {
@@ -128,7 +134,15 @@ export function useQueueRunner(panes: PaneState[], connected: boolean, dispatch:
 }
 
 /** One split-view pane: its own session, items and composer; user actions become `send`/`dispatch` here (D6). */
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn }: {
+export type SessionActions = {
+  pins: string[];
+  onRename: (sessionId: string, title: string | null) => void;
+  onTogglePin: (sessionId: string, pinned: boolean) => void;
+  onArchive: (sessionId: string, archived: boolean) => void;
+  onDelete: (s: SessionEntry) => void;
+};
+
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage' | 'projects' | 'defaultPermMode'>>;
   active: boolean;
@@ -144,6 +158,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   /** The empty pane's preselected project. */
   newChatCwd?: string | null;
   uploadFn?: UploadFn;
+  /** The chat title ⌄ menu (이름 바꾸기 / 고정 / 보관 / 삭제): the sidebar ⋯ menu's actions. Absent = no menu. */
+  sessionActions?: SessionActions;
 }) {
   const s = pane.session;
   // Side panel (artifacts / file preview): per pane, closed by ✕ or Esc, dropped when the pane's session changes.
@@ -164,6 +180,37 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [side, active]);
+  // Stop: ux-state — the queue stays but pauses, so the next message does not fire into the stop.
+  const interrupt = () => {
+    if (!pane.activeTurnId) return;
+    if (pane.queue.length) dispatch({ type: 'queue_pause', paneId: pane.id });
+    send({ type: 'interrupt', turnId: pane.activeTurnId });
+  };
+  const interruptRef = useRef(interrupt);
+  interruptRef.current = interrupt;
+  // Esc stops the running turn from anywhere in the pane (the composer handles its own Esc). Whatever else owns the
+  // Esc goes first: the capture phase only notes whether something was open (a menu / dialog / palette / popover /
+  // the phone drawer, still on screen before its own handler closes it); the stop happens in the bubble phase, so a
+  // handler that took the Esc (preventDefault, or a pin drag swallowing it in capture) wins. A field being edited
+  // keeps its Esc; focus must be in this pane, or nowhere (then only the active pane stops).
+  const turnId = pane.activeTurnId;
+  useEffect(() => {
+    if (!turnId || side) return;
+    let owned = false;
+    const note = (e: KeyboardEvent) => { if (e.key === 'Escape') owned = hasOpenPopup() || document.querySelector(ESC_OWNERS) !== null; };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || owned) return;
+      if (isTypingTarget(e.target)) return;
+      const a = document.activeElement;
+      const nowhere = a === null || a === document.body;
+      if (nowhere ? !active : !sectionRef.current?.contains(a)) return;
+      e.preventDefault();
+      interruptRef.current();
+    };
+    window.addEventListener('keydown', note, true);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', note, true); window.removeEventListener('keydown', onKey); };
+  }, [turnId, side, active]);
   const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
     const box = sectionRef.current?.getBoundingClientRect();
     if (!box) return;
@@ -233,6 +280,19 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       openRef.current?.(u.sessionId, u.cwd, u.title);
     }
   }, [pane.awaitingStart, pane.myTurns.length, pane.session?.sessionId]);
+  // A session deck lists gets the full menu; one only Claude Desktop lists (not in deck's projects) can be pinned.
+  const pinned = !!sid && !!sessionActions?.pins.includes(sid);
+  const titleMenu: ChatProps['titleMenu'] = !sid || !sessionActions ? undefined : entry
+    ? {
+        pinned, archived: !!entry.archived,
+        onRename: (title) => sessionActions.onRename(entry.sessionId, title),
+        onTogglePin: () => sessionActions.onTogglePin(entry.sessionId, !pinned),
+        // Archived in Codex: only the Codex app can unarchive it (as in the sidebar).
+        onArchive: entry.codexArchived ? undefined : () => sessionActions.onArchive(entry.sessionId, !entry.archived),
+        onDelete: () => sessionActions.onDelete(entry),
+        deleteBlocked: deleteBlockedReason(entry),
+      }
+    : { pinned, archived: false, onTogglePin: () => sessionActions.onTogglePin(sid, !pinned) };
   const prevId = entry?.prevSession ?? pane.handoffFrom?.sessionId ?? null;
   const link = (id: string | null) => {
     if (!id || !s) return null;
@@ -240,7 +300,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     return { title: id === pane.handoffFrom?.sessionId && !t.cwd ? pane.handoffFrom.title : t.title, open: () => onOpenSession?.(id, t.cwd ?? s.cwd, t.title) };
   };
   return (
-    <section ref={sectionRef} className={`pane ${active ? 'active' : ''}${side && s ? ' with-side' : ''}`} data-testid={`pane-${pane.id}`} onMouseDownCapture={focus} onFocusCapture={focus}>
+    <section ref={sectionRef} className={`pane ${active ? 'active' : ''}${side && s ? ' with-side' : ''}`} data-testid={`pane-${pane.id}`} data-pane={pane.id} onMouseDownCapture={focus} onFocusCapture={focus}>
       <SidePanelContext.Provider value={s ? openSide : null}>
       {s ? (
         <Chat
@@ -250,6 +310,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           activeTurnId={pane.activeTurnId}
           busy={busy}
           title={s.title}
+          titleMenu={titleMenu}
+          loading={!!pane.loading}
           cwd={s.cwd}
           sessionId={s.sessionId}
           headActions={<>{fileBtn}{desktop}{fork}{close}</>}
@@ -277,12 +339,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           notices={pane.notices?.filter((n) => n.sessionId === null || n.sessionId === s.sessionId)}
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
           readOnly={entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : null}
-          onInterrupt={() => {
-            if (!pane.activeTurnId) return;
-            // ux-state: stop keeps the queue but pauses it — the next message must not fire into the stop.
-            if (pane.queue.length) dispatch({ type: 'queue_pause', paneId: pane.id });
-            send({ type: 'interrupt', turnId: pane.activeTurnId });
-          }}
+          onInterrupt={interrupt}
           onStopBackground={(turnId) => send({ type: 'interrupt', turnId })}
           onStopTask={(taskId) => { if (pane.bg) send({ type: 'stop_task', turnId: pane.bg.turnId, taskId }); }}
           runStartedAt={pane.runStartedAt}

@@ -205,6 +205,8 @@ export type PaneState = {
   prefill: string | null;
   /** Notes / errors about the session no turn owns (e.g. written outside deck just now): dismissible bars in this pane (newest 3), dropped when the pane shows another session. */
   notices?: PaneNotice[];
+  /** The opened session's history has not arrived yet (the pane shows a loading placeholder instead of a blank). */
+  loading?: boolean;
 };
 
 export type PaneNotice = { sessionId: string | null; message: string; level: 'notice' | 'error' };
@@ -744,7 +746,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       if (!state.panes.some((p) => p.session?.sessionId === msg.sessionId)) return state;
       const doubt = inDoubt(msg, Date.now());
       const doubted = state.panes.filter((p) => p.session?.sessionId === msg.sessionId).flatMap((p) => p.queue.filter(doubt).map((q) => q.text || '첨부만'));
-      return { ...state, ...(doubted.length ? { error: `이미 들어갔을 수 있어 멈춰 둔 메시지: ${doubted.join(' / ')}` } : {}), panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? paneOnServer(p, msg, false) : p)) };
+      return { ...state, ...(doubted.length ? { error: `이미 들어갔을 수 있어 멈춰 둔 메시지: ${doubted.join(' / ')}` } : {}), panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...paneOnServer(p, msg, false), loading: false } : p)) };
     }
     case 'permission_request': {
       // Prompts from every session are shown (any device may answer); replays on reconnect are deduped (review M10).
@@ -801,7 +803,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       if (msg.code === 'already_accepted') return { ...state, panes: mapPanes(state, msg) };
       const sid = msg.sessionId;
       if (sid && state.panes.some((p) => p.session?.sessionId === sid)) {
-        return { ...state, panes: mapPanes(state, msg).map((p) => (p.session?.sessionId === sid ? withNotice(p, { sessionId: sid, message: msg.message, level: 'error' }) : p)) };
+        return { ...state, panes: mapPanes(state, msg).map((p) => (p.session?.sessionId === sid ? { ...withNotice(p, { sessionId: sid, message: msg.message, level: 'error' }), loading: false } : p)) };
       }
       return { ...state, panes: mapPanes(state, msg), error: msg.message };
     }
@@ -861,7 +863,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return updatePane({ ...s, parked: back ? parked : s.parked, unread: action.sessionId ? s.unread.filter((u) => u !== action.sessionId) : s.unread }, action.paneId, (p) => ({
         ...p,
         session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
-        items: [], activeTurnId: null, myTurns: [], attachments: [], ...ACTIVITY_RESET,
+        items: [], activeTurnId: null, myTurns: [], attachments: [], ...ACTIVITY_RESET, loading: action.sessionId !== null,
         ...(same
           ? { queue: [...p.queue, ...(back ?? [])], queuePaused: p.queuePaused || !!back }
           : { awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: back ?? [], queuePaused: !!back, queueSendNow: null }),
@@ -921,7 +923,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
     case 'clear_pane': return updatePane(park(state, action.paneId), action.paneId, (p) => ({
-      ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET,
+      ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET, loading: false,
       handoff: null, handoffFrom: null, prefill: null, notices: [],
     }));
     case 'add_pane': {

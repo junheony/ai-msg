@@ -343,3 +343,76 @@ describe('Sidebar engine marks', () => {
     expect(screen.getByText('hit h3').querySelector('.engine-mark')).toBeNull();
   });
 });
+
+describe('Sidebar: Desktop parity (새 채팅, empty copy, menu keyboard, 삭제 reasons)', () => {
+  afterEach(cleanup);
+  const e = (id: string, title: string, extra: Record<string, unknown> = {}) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1, ...extra });
+
+  it('새 채팅 is the first item in both views and calls onNewChat', () => {
+    const onNewChat = vi.fn();
+    const { container, rerender } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} view="recent" />);
+    expect(container.querySelector('.sidebar')!.firstElementChild?.textContent).toBe('새 채팅');
+    fireEvent.click(screen.getByText('새 채팅'));
+    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} view="projects" />);
+    fireEvent.click(screen.getByText('새 채팅'));
+    expect(onNewChat).toHaveBeenCalledTimes(2);
+  });
+
+  it('the empty list points at 새 채팅 / 폴더 열기, not a config file', () => {
+    render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    const text = document.querySelector('.sidebar-empty')!.textContent!;
+    expect(text).toContain('새 채팅');
+    expect(text.indexOf('폴더 열기')).toBeGreaterThan(-1);
+    expect(text.indexOf('폴더 열기')).toBeLessThan(text.indexOf('새 채팅')); // no folder yet: picking one comes first
+    expect(text).not.toContain('projects.json');
+  });
+
+  it('⋯ menu: first item focused, ↑/↓ rove (wrapping), Esc closes and refocuses ⋯', () => {
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [e('s1', 'one')] }];
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onRename={noop} onArchive={noop} onTogglePin={noop} onDelete={noop} />);
+    const more = screen.getByLabelText('세션 메뉴');
+    fireEvent.click(more);
+    const items = screen.getAllByRole('menuitem');
+    expect(items.map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '삭제…']);
+    expect(document.activeElement).toBe(items[0]);
+    const menu = screen.getByRole('menu');
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(items[3]);
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(more);
+  });
+
+  it('삭제 stays visible but disabled, with the reason, for GPT / Gemini / Codex-app sessions', () => {
+    const onDelete = vi.fn();
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [
+      e('i1', 'imported', { account: 'gpt', engine: 'codex', imported: true }),
+      e('g1', 'gpt', { account: 'gpt', engine: 'codex' }),
+      e('m1', 'gem', { engine: 'gemini' }),
+      e('c1', 'claude'),
+    ] }];
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onDelete={onDelete} />);
+    const del = (title: string) => {
+      fireEvent.click(screen.getByText(title).closest('li')!.querySelector('[aria-label="세션 메뉴"]')!);
+      const b = screen.getByRole('menuitem', { name: '삭제…' });
+      return b;
+    };
+    const imported = del('imported');
+    expect(imported.getAttribute('aria-disabled')).toBe('true');
+    expect(imported.getAttribute('title')).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    // touch screens show no tooltip: the reason is also on screen, under the item
+    expect(imported.querySelector('.menu-note')?.textContent).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(imported.getAttribute('aria-describedby')).toBe(imported.querySelector('.menu-note')!.id);
+    fireEvent.click(imported);
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(del('gpt').getAttribute('title')).toContain('GPT');
+    expect(del('gem').getAttribute('title')).toContain('Gemini');
+    const claude = del('claude');
+    expect(claude.hasAttribute('aria-disabled')).toBe(false);
+    fireEvent.click(claude);
+    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'c1' }), undefined);
+  });
+});

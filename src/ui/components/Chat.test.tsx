@@ -286,3 +286,129 @@ describe('Chat readOnly', () => {
     expect(onAttach).not.toHaveBeenCalled();
   });
 });
+
+describe('Chat title ⌄ menu', () => {
+  afterEach(cleanup);
+  const menu = (extra: Partial<NonNullable<ChatProps['titleMenu']>> = {}) => ({ pinned: false, archived: false, onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn(), deleteBlocked: null, ...extra });
+
+  it('opens 이름 바꾸기 / 고정 / 보관 / 삭제 and runs the sidebar actions', () => {
+    const tm = menu();
+    renderChat([], false, vi.fn(), { title: '내 채팅', sessionId: 's1', titleMenu: tm });
+    const title = screen.getByRole('button', { name: /내 채팅/ });
+    expect(title.getAttribute('aria-haspopup')).toBe('menu');
+    fireEvent.click(title);
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '삭제…']);
+    fireEvent.click(screen.getByText('맨 위에 고정'));
+    expect(tm.onTogglePin).toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(title);
+    fireEvent.click(screen.getByText('보관'));
+    fireEvent.click(title);
+    fireEvent.click(screen.getByText('삭제…'));
+    expect(tm.onArchive).toHaveBeenCalled();
+    expect(tm.onDelete).toHaveBeenCalled();
+  });
+
+  it('이름 바꾸기 edits the title inline: Enter saves (trimmed; empty = back to the default), Esc cancels', () => {
+    const tm = menu();
+    renderChat([], false, vi.fn(), { title: '내 채팅', sessionId: 's1', titleMenu: tm });
+    fireEvent.click(screen.getByRole('button', { name: /내 채팅/ }));
+    fireEvent.click(screen.getByText('이름 바꾸기'));
+    const input = screen.getByLabelText('채팅 이름') as HTMLInputElement;
+    expect(input.value).toBe('내 채팅');
+    fireEvent.change(input, { target: { value: '  새   이름 ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(tm.onRename).toHaveBeenCalledTimes(1);
+    expect(tm.onRename).toHaveBeenCalledWith('새 이름');
+    fireEvent.click(screen.getByRole('button', { name: /내 채팅/ }));
+    fireEvent.click(screen.getByText('이름 바꾸기'));
+    fireEvent.change(screen.getByLabelText('채팅 이름'), { target: { value: 'nope' } });
+    fireEvent.keyDown(screen.getByLabelText('채팅 이름'), { key: 'Escape' });
+    expect(screen.queryByLabelText('채팅 이름')).toBeNull();
+    expect(tm.onRename).toHaveBeenCalledTimes(1);
+  });
+
+  it('삭제 is disabled with the reason for sessions deck cannot delete; no menu without actions', () => {
+    const tm = menu({ deleteBlocked: 'Codex 앱 기록은 deck에서 지울 수 없어요' });
+    renderChat([], false, vi.fn(), { title: 'gpt', sessionId: 's1', titleMenu: tm });
+    fireEvent.click(screen.getByRole('button', { name: /gpt/ }));
+    const del = screen.getByRole('menuitem', { name: '삭제…' });
+    expect(del.getAttribute('aria-disabled')).toBe('true');
+    expect(del.getAttribute('title')).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    fireEvent.click(del);
+    expect(tm.onDelete).not.toHaveBeenCalled();
+    cleanup();
+    renderChat([], false, vi.fn(), { title: 'plain' });
+    expect(screen.queryByRole('button', { name: /plain/ })).toBeNull();
+  });
+
+  describe('history placeholder and pane drop', () => {
+    it('shows 불러오는 중… while loading with no items, and nothing once items exist', () => {
+      renderChat([], false, vi.fn(), { loading: true });
+      expect(screen.getByTestId('chat-loading')).toHaveProperty('textContent', '불러오는 중…');
+      expect(screen.getByRole('status')).toBeTruthy();
+      cleanup();
+      renderChat([{ kind: 'user', text: 'q', ts: null } as ChatItem], false, vi.fn(), { loading: true });
+      expect(screen.queryByTestId('chat-loading')).toBeNull();
+      cleanup();
+      renderChat([], false, vi.fn(), { loading: false });
+      expect(screen.queryByTestId('chat-loading')).toBeNull();
+    });
+
+    it('a file dragged anywhere on the pane shows the overlay; moving between children keeps it (no relatedTarget needed — Safari); leaving or dropping hides it', () => {
+      renderChat([]);
+      const main = document.querySelector('main.chat')!;
+      const body = document.querySelector('.chat-body')!;
+      const files = { types: ['Files'], files: [], items: [] };
+      fireEvent.dragEnter(main, { dataTransfer: files });
+      expect(fireEvent.dragOver(main, { dataTransfer: files })).toBe(false); // preventDefault → the browser will not open the file
+      expect(screen.getByTestId('drop-overlay').textContent).toBe('여기에 파일을 놓으세요');
+      fireEvent.dragEnter(body, { dataTransfer: files }); // onto a child: enter (child) fires before leave (pane)
+      fireEvent.dragLeave(main, { dataTransfer: files });
+      expect(screen.queryByTestId('drop-overlay')).not.toBeNull();
+      fireEvent.dragLeave(body, { dataTransfer: files }); // out of the pane
+      expect(screen.queryByTestId('drop-overlay')).toBeNull();
+      fireEvent.dragEnter(body, { dataTransfer: files });
+      expect(fireEvent.drop(body, { dataTransfer: files })).toBe(false);
+      expect(screen.queryByTestId('drop-overlay')).toBeNull();
+      fireEvent.dragEnter(body, { dataTransfer: files }); // the count starts over after a drop
+      expect(screen.queryByTestId('drop-overlay')).not.toBeNull();
+      fireEvent.dragLeave(body, { dataTransfer: files });
+      expect(screen.queryByTestId('drop-overlay')).toBeNull();
+    });
+
+    it('a read-only session shows its reason instead and accepts nothing', async () => {
+      const uploadFn = vi.fn(async (f: File) => ({ id: 'id-1', name: f.name, size: f.size, isImage: true }));
+      renderChat([], false, vi.fn(), { readOnly: '읽기만 할 수 있어요', uploadFn });
+      const body = document.querySelector('.chat-body')!;
+      const file = new File(['x'], 'a.png', { type: 'image/png' });
+      const dt = { types: ['Files'], files: [file], items: [], dropEffect: 'copy' };
+      fireEvent.dragEnter(body, { dataTransfer: dt });
+      fireEvent.dragOver(body, { dataTransfer: dt });
+      expect(screen.getByTestId('drop-overlay').textContent).toBe('읽기만 할 수 있어요');
+      expect(dt.dropEffect).toBe('none');
+      expect(fireEvent.drop(body, { dataTransfer: dt })).toBe(false);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(uploadFn).not.toHaveBeenCalled();
+    });
+
+    it('a file dropped on the transcript (not just the composer) is uploaded', async () => {
+      const uploadFn = vi.fn(async (f: File) => ({ id: 'id-1', name: f.name, size: f.size, isImage: true }));
+      renderChat([], false, vi.fn(), { uploadFn });
+      const file = new File(['x'], 'a.png', { type: 'image/png' });
+      fireEvent.drop(document.querySelector('.chat-body')!, { dataTransfer: { types: ['Files'], files: [file], items: [] } });
+      await waitFor(() => expect(uploadFn).toHaveBeenCalledTimes(1));
+    });
+
+    it('a text drop (rename / edit / queue fields) is left to the browser', () => {
+      renderChat([]);
+      expect(fireEvent.drop(document.querySelector('.chat-body')!, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
+    });
+
+    it('dragging text (not files) leaves the pane alone', () => {
+      renderChat([]);
+      expect(fireEvent.dragOver(document.querySelector('.chat-body')!, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
+      expect(screen.queryByTestId('drop-overlay')).toBeNull();
+    });
+  });
+});
