@@ -160,6 +160,10 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .sidebar { width: 268px; overflow-y: auto; border-right: 1px solid var(--line); padding: 8px 8px 24px; background: var(--sidebar); display: flex; flex-direction: column; gap: 1px; }
 .sidebar-head { display: flex; align-items: center; gap: 2px; padding: 0 0 6px; }
 .sidebar-head .grow { flex: 1; }
+.sidebar-new { display: flex; align-items: center; gap: 8px; height: 34px; margin: 0 0 6px; padding: 0 9px; border-radius: 8px; color: var(--fg-strong); font-size: calc(13.5px * var(--font-scale, 1)); font-weight: 550; flex-shrink: 0; }
+.sidebar-new:hover { background: var(--hover); }
+.session-menu button[aria-disabled="true"] { opacity: .45; cursor: default; }
+.session-menu button[aria-disabled="true"]:hover { background: transparent; }
 .sidebar-search { display: flex; align-items: center; gap: 6px; height: 32px; margin: 0 0 6px; padding: 0 9px; border-radius: 8px; background: var(--hover); color: var(--faint); font-size: calc(13.5px * var(--font-scale, 1)); flex-shrink: 0; }
 .sidebar-search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: calc(13.5px * var(--font-scale, 1)); }
 .sidebar-search input::placeholder { color: var(--faint); }

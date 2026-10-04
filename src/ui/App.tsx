@@ -424,6 +424,7 @@ export function App() {
             unread={state.unread}
             onOpenSettings={() => setSettingsOpen(true)}
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
+            onNewChat={() => newChat()}
           />
         </div>
         <div className="panes" data-count={phone ? 1 : state.panes.length} style={{ '--cols': phone ? 1 : state.panes.length } as CSSProperties}>
