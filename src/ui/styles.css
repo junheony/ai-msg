@@ -125,9 +125,11 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .text-btn:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
 
 /* ───────── App shell ───────── */
-.app { display: flex; flex-direction: column; height: 100%; }
-/* Dynamic viewport: the shell follows Android/iOS toolbars (and the keyboard, see interactive-widget) so the composer stays on screen. */
-@supports (height: 100dvh) { .app { height: 100dvh; } }
+/* The shell is pinned to the viewport box itself (fixed + inset 0), never sized with a viewport unit: on iPadOS/iOS 26
+   home-screen apps 100dvh comes out shorter than the window by the status-bar height, which left a dead band under the
+   whole app. A fixed box follows the same toolbars dvh was meant to (Safari's collapsing bars, Android's keyboard via
+   interactive-widget=resizes-content) without that arithmetic. Bottom safe area: on the composer / sidebar foot only. */
+.app { display: flex; flex-direction: column; position: fixed; inset: 0; }
 .topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 14px; border-bottom: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; }
 .brand { display: inline-flex; align-items: center; gap: 7px; width: 240px; font-weight: 600; font-size: calc(14px * var(--font-scale, 1)); letter-spacing: .2px; color: var(--fg-strong); flex-shrink: 0; }
 .brand .spark { font-size: calc(16px * var(--font-scale, 1)); }
@@ -413,7 +415,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Recent Claude Desktop sessions */
 .desktop-group .session-meta { max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Sidebar footer: 자동 승인 toggle */
+/* Sidebar footer: the settings button, sticky at the end of the list (bottom edge: see the end of this file) */
 .sidebar-foot { position: sticky; bottom: -24px; margin: auto -8px -24px; padding: 8px 10px 12px; border-top: 1px solid var(--line); background: var(--sidebar); }
 .switch-track { position: relative; width: 28px; height: 16px; border-radius: 8px; background: var(--line-strong); flex-shrink: 0; transition: background .15s; }
 .switch-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-raised); transition: transform .15s; }
@@ -851,8 +853,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* === pwa === */
 /* Home-screen app (black-translucent status bar, viewport-fit=cover): keep content out of the notch / home indicator. */
-.app { box-sizing: border-box; padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0); }
-.sidebar-wrap.drawer { padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); box-sizing: border-box; }
+/* No bottom padding here: the transcript and the sidebar list run to the screen edge, and the composer / sidebar foot
+   keep themselves above the home indicator (see "bottom edge" at the end). */
+.app { box-sizing: border-box; padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0); }
+.sidebar-wrap.drawer { padding-top: env(safe-area-inset-top, 0); box-sizing: border-box; }
 .notify { position: relative; }
 .notify-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 280px; max-width: calc(100vw - 16px); padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); }
 .notify-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 6px; border-radius: 8px; text-align: left; }
@@ -1454,3 +1458,35 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .bg-pill-word { display: none; }
   .activity-bar:has(.bg-pill) .status-tokens { display: none; }
 }
+
+/* === bottom edge (Desktop/iPad parity) === */
+/* The composer floats over the transcript's last lines like Claude's: a short fade instead of a hard band, and the
+   transcript reserves that much room so its last line still scrolls clear. The fade strip lets taps through.
+   No z-index on the wrap: it paints over the transcript by being positioned and later in the DOM, without becoming a
+   stacking context — so its popovers (/ · @ suggest, attach menu, background tasks) still stack against the jump
+   button and against the other split panes by their own z-index. */
+.chat { --composer-fade: 28px; }
+.composer-wrap { position: relative; margin-top: calc(-1 * var(--composer-fade)); padding-top: calc(2px + var(--composer-fade)); background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 82%, transparent) calc(var(--composer-fade) * .6), var(--bg) var(--composer-fade)); pointer-events: none; }
+.composer-wrap > * { pointer-events: auto; }
+/* With the flex gap before it (12–18px) this adds about the fade's height, no more. */
+.chat-body::after { content: ""; flex: none; height: 10px; }
+.chat-body { scroll-padding-bottom: calc(var(--composer-fade) + 8px); }
+/* Under the composer: the home-indicator inset only (12px on screens without one), as on Claude for iPad. */
+.composer-wrap { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
+@media (max-width: 720px) { .composer-wrap { padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); } }
+/* On-screen keyboard up (Chat.tsx sets data-soft-kb): the keyboard covers the home indicator, so no inset gap above it. */
+:root[data-soft-kb] .composer-wrap { padding-bottom: 8px; }
+.composer { border-radius: 18px; }
+.composer textarea { padding: 13px 16px 4px; }
+.composer-row { padding: 2px 8px 8px; }
+
+/* Sidebar foot sits on the screen edge like Claude's: the list fades out under it (no rule line), its fade lets taps
+   through to the rows beneath, and its button stays above the home indicator. */
+.sidebar { --sidebar-end: 24px; }
+.sidebar-foot { bottom: calc(-1 * var(--sidebar-end)); margin-bottom: calc(-1 * var(--sidebar-end)); padding: 14px 10px max(10px, env(safe-area-inset-bottom, 0px)); border-top: 0; background: linear-gradient(to bottom, transparent, var(--sidebar) 14px); pointer-events: none; }
+.sidebar-foot > * { pointer-events: auto; }
+.sidebar-foot .settings-open { width: 34px; height: 34px; border-radius: 50%; font-variant-emoji: text; color: var(--muted); }
+.sidebar-foot .settings-open:hover { background: var(--hover); color: var(--fg); }
+@media (pointer: coarse) { .sidebar-foot .settings-open { width: var(--phone-tap); height: var(--phone-tap); } }
+/* Touch on a wide screen (iPad landscape): the same 40px rows as the unfolded/tablet range; phones use --phone-tap. */
+@media (pointer: coarse) and (min-width: 1101px) { .sidebar li { min-height: 40px; } }

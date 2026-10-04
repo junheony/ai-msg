@@ -155,6 +155,21 @@ function trackViewport(): void {
   const w = Math.round(vv.width * vv.scale);
   if (w !== vvWidth) { vvWidth = w; vvMax = 0; }
   vvMax = Math.max(vvMax, vv.height);
+  syncSoftKeyboardAttr();
+}
+/**
+ * CSS hook `<html data-soft-kb>`: with the on-screen keyboard up the composer drops its home-indicator inset
+ * (styles.css "bottom edge"). Measured against the layout viewport, not the tallest height seen: an iOS keyboard
+ * shrinks only the visual viewport, while a pinch-zoom (height × scale stays put) or a Stage Manager / split
+ * resize (the layout viewport shrinks with it) is not a keyboard and never leaves the attribute stuck on.
+ */
+export function syncSoftKeyboardAttr(): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const vv = window.visualViewport;
+  const coarse = typeof window.matchMedia === 'function' && window.matchMedia(COARSE_QUERY).matches;
+  const layout = document.documentElement.clientHeight;
+  const up = !!vv && coarse && layout > 0 && vv.height * vv.scale < layout * 0.8;
+  document.documentElement.toggleAttribute('data-soft-kb', up);
 }
 if (typeof window !== 'undefined' && window.visualViewport) {
   trackViewport();
