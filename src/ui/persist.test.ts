@@ -33,6 +33,9 @@ describe('persist (ux-state)', () => {
     expect(h.activePaneId).toBe('p1');
     expect(h.panes[0]).toMatchObject({ session: { sessionId: 's1', cwd: '/w', title: 'one', account: null }, model: 'fable', efforts: { claude: 'xhigh', codex: 'medium' }, items: [], queue: [] });
     expect(h.panes[1]).toMatchObject({ session: { sessionId: null, cwd: '/x', engine: 'codex' }, engine: 'codex', model: 'gpt-6-sol', sandbox: 'workspace-write' });
+    // a restored session waits for its history (placeholder); a new chat does not
+    expect(h.panes[0]?.loading).toBe(true);
+    expect(h.panes[1]?.loading).toBeFalsy();
     // add_pane after hydration keeps ids unique
     expect(reducer(h, { type: 'add_pane' }).panes.map((p) => p.id)).toEqual(['p0', 'p1', 'p2']);
   });

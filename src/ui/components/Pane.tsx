@@ -300,6 +300,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           busy={busy}
           title={s.title}
           titleMenu={titleMenu}
+          loading={!!pane.loading}
           cwd={s.cwd}
           sessionId={s.sessionId}
           headActions={<>{fileBtn}{desktop}{fork}{close}</>}

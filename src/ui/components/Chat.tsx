@@ -123,6 +123,8 @@ export type ChatProps = {
   onDismissNotice?: (message: string) => void;
   /** View-only session (e.g. an imported Codex thread whose folder is gone): the composer is disabled and shows this reason. */
   readOnly?: string | null;
+  /** The session's history is on its way: a placeholder instead of a blank transcript. */
+  loading?: boolean;
 };
 
 const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
@@ -366,7 +368,18 @@ export function Chat(p: ChatProps) {
     const files = filesFrom(e.clipboardData);
     if (files.length) { e.preventDefault(); void addFiles(files); }
   };
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+  // Files dropped anywhere on the pane attach (full-pane overlay while dragging); never a browser navigation.
+  const hasFiles = (e: DragEvent<HTMLElement>) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  const onDragOver = (e: DragEvent<HTMLElement>) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (!drag) setDrag(true);
+  };
+  const onDragLeave = (e: DragEvent<HTMLElement>) => {
+    // Moving between children fires leave/enter pairs: only leaving the pane itself ends the drag.
+    if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) setDrag(false);
+  };
+  const onDrop = (e: DragEvent<HTMLElement>) => {
     e.preventDefault();
     setDrag(false);
     const files = filesFrom(e.dataTransfer);
@@ -374,7 +387,8 @@ export function Chat(p: ChatProps) {
   };
 
   return (
-    <main className="chat">
+    <main className="chat" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      {drag && <div className="drop-overlay" data-testid="drop-overlay"><span>여기에 파일을 놓으세요</span></div>}
       <div className="chat-head">
         <span className="chat-title-wrap">
           {renaming !== null ? (
@@ -419,6 +433,12 @@ export function Chat(p: ChatProps) {
       ))}
       <div className="chat-body" ref={bodyRef}>
         {p.prevSession && <button type="button" className="session-link prev" data-testid="handoff-prev" onClick={p.prevSession.open} title={p.prevSession.title}>← 이전 세션 · {p.prevSession.title}</button>}
+        {p.loading && p.items.length === 0 && (
+          <div className="chat-loading" role="status" data-testid="chat-loading">
+            <span className="sr-only">불러오는 중…</span>
+            {[72, 46, 88, 60].map((w, i) => <span key={i} className={`skeleton-line ${i % 2 ? 'mine' : ''}`} style={{ width: `${w}%` }} aria-hidden="true" />)}
+          </div>
+        )}
         <AgentContext.Provider value={agentCtx}>
           <MessageActionsContext.Provider value={msgActions}>
             {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} last={i === shown.length - 1} />)}
@@ -449,7 +469,7 @@ export function Chat(p: ChatProps) {
         )}
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
         {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} />}
-        <div className={`composer ${drag ? 'dragover' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop}>
+        <div className={`composer ${drag ? 'dragover' : ''}`}>
           {suggest.popup}
           <textarea
             ref={taRef}

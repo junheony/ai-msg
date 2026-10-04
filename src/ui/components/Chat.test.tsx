@@ -341,4 +341,41 @@ describe('Chat title ⌄ menu', () => {
     renderChat([], false, vi.fn(), { title: 'plain' });
     expect(screen.queryByRole('button', { name: /plain/ })).toBeNull();
   });
+
+  describe('history placeholder and pane drop', () => {
+    it('shows 불러오는 중… while loading with no items, and nothing once items exist', () => {
+      renderChat([], false, vi.fn(), { loading: true });
+      expect(screen.getByTestId('chat-loading')).toHaveProperty('textContent', '불러오는 중…');
+      expect(screen.getByRole('status')).toBeTruthy();
+      cleanup();
+      renderChat([{ kind: 'user', text: 'q', ts: null } as ChatItem], false, vi.fn(), { loading: true });
+      expect(screen.queryByTestId('chat-loading')).toBeNull();
+      cleanup();
+      renderChat([], false, vi.fn(), { loading: false });
+      expect(screen.queryByTestId('chat-loading')).toBeNull();
+    });
+
+    it('a file dragged anywhere on the pane shows the overlay; leaving the pane or dropping hides it and the drop never navigates', () => {
+      renderChat([]);
+      const main = document.querySelector('main.chat')!;
+      const body = document.querySelector('.chat-body')!;
+      const files = { types: ['Files'], files: [], items: [] };
+      expect(fireEvent.dragOver(body, { dataTransfer: files })).toBe(false); // preventDefault → the browser will not open the file
+      expect(screen.getByTestId('drop-overlay').textContent).toBe('여기에 파일을 놓으세요');
+      // jsdom has no DragEvent (relatedTarget would be dropped): a MouseEvent carries it the same way.
+      fireEvent(main, new MouseEvent('dragleave', { bubbles: true, relatedTarget: body })); // moving onto a child keeps it
+      expect(screen.queryByTestId('drop-overlay')).not.toBeNull();
+      fireEvent(main, new MouseEvent('dragleave', { bubbles: true, relatedTarget: null }));
+      expect(screen.queryByTestId('drop-overlay')).toBeNull();
+      fireEvent.dragOver(body, { dataTransfer: files });
+      expect(fireEvent.drop(body, { dataTransfer: files })).toBe(false);
+      expect(screen.queryByTestId('drop-overlay')).toBeNull();
+    });
+
+    it('dragging text (not files) leaves the pane alone', () => {
+      renderChat([]);
+      expect(fireEvent.dragOver(document.querySelector('.chat-body')!, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
+      expect(screen.queryByTestId('drop-overlay')).toBeNull();
+    });
+  });
 });
