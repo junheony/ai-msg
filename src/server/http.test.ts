@@ -352,6 +352,9 @@ describe('POST /api/pins (F2)', () => {
     expect(await r.json()).toEqual({ pins: [ID, ID3, ID2] });
     expect(changed).toBe(before + 1);
     expect(JSON.parse(await fs.readFile(path.join(dir, 'pins.json'), 'utf8'))).toEqual([ID, ID3, ID2]);
+    const same = await post(JSON.stringify({ order: [ID, ID3, ID2] }));
+    expect(await same.json()).toEqual({ pins: [ID, ID3, ID2] });
+    expect(changed).toBe(before + 1); // nothing changed: no broadcast
     for (const id of [ID, ID2, ID3]) await pins.set(id, false);
   });
 });

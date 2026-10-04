@@ -298,8 +298,9 @@ export function createRequestHandler(deps: HttpDeps) {
           let body: { order?: unknown } = {};
           try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
           if (!body || !Array.isArray(body.order) || body.order.length > MAX_PINS * 2 || !body.order.every(isPinnableId)) { json(res, 400, { error: '잘못된 고정 순서 요청입니다' }); return; }
+          const before = deps.pins.list();
           const pins = await deps.pins.reorder(body.order);
-          deps.onIndexChanged?.();
+          if (pins !== before) deps.onIndexChanged?.(); // an unchanged order is not broadcast
           json(res, 200, { pins });
           return;
         }
