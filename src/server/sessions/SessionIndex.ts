@@ -153,18 +153,19 @@ export class SessionIndex {
   /**
    * `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list.
    * `codexRoot`: `~/.codex/sessions` — Codex Desktop / CLI threads listed for import; absent = none.
+   * `codexArchivedRoot`: `~/.codex/archived_sessions` — threads archived in Codex, listed under 보관됨.
    * `home`: Claude Desktop's profile — between truly diverged copies with equal timestamps, deck's copy wins.
    */
-  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; meta?: SessionMetaView; home?: Account | null }) {
-    this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot) : null;
+  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; codexArchivedRoot?: string; meta?: SessionMetaView; home?: Account | null }) {
+    this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot, undefined, opts.codexArchivedRoot ?? null) : null;
   }
 
-  /** A deck rename wins over the transcript's title; archived entries carry the flag. Unchanged entries are returned as is. */
-  private decorate<T extends { sessionId: string; title: string; archived?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink }>(e: T): T {
+  /** A deck rename wins over the transcript's title; archived entries (deck's or Codex's) carry the flag. Unchanged entries are returned as is. */
+  private decorate<T extends { sessionId: string; title: string; archived?: boolean; codexArchived?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink }>(e: T): T {
     const meta = this.opts.meta;
     if (!meta) return e;
     const title = meta.title(e.sessionId);
-    const archived = meta.isArchived(e.sessionId);
+    const archived = meta.isArchived(e.sessionId) || !!e.codexArchived;
     const prev = meta.prev?.(e.sessionId) ?? null;
     const next = meta.next?.(e.sessionId) ?? null;
     const branch = meta.branchOf?.(e.sessionId) ?? null;
@@ -265,13 +266,32 @@ export class SessionIndex {
   }
 
   /**
+   * The Codex thread as it is now: when the cached entry is stale — its rollout moved (archived / unarchived
+   * in Codex) or its folder came / went — the Codex list is rescanned once and `onChange` fires (index push).
+   */
+  async freshCodexImport(threadId: string): Promise<SessionEntry | null> {
+    const codex = this.codex;
+    const e = codex?.lookup(threadId) ?? null;
+    if (!codex || !e) return e;
+    const [fileOk, dirOk] = await Promise.all([fs.stat(e.file).then((st) => st.isFile(), () => false), fs.stat(e.cwd).then((st) => st.isDirectory(), () => false)]);
+    if (fileOk && dirOk === !e.cwdMissing) return e;
+    await codex.refresh().catch(() => undefined);
+    this.onChange?.();
+    return codex.lookup(threadId);
+  }
+
+  /**
    * Cached grouping of the profile scan; with `extra` (Codex sessions from the state store, D4) and/or
-   * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice.
+   * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice;
+   * if Codex has since archived it (its newest rollout is in archived_sessions), deck's entry is archived too.
    */
   projects(extra: SessionEntry[] = []): ProjectEntry[] {
+    const all = this.codex?.list() ?? [];
+    const archivedInCodex = new Set(all.filter((e) => e.codexArchived).map((e) => e.sessionId));
     const own = new Set(extra.map((e) => e.sessionId));
-    const imports = (this.codex?.list() ?? []).filter((e) => !own.has(e.sessionId));
-    return extra.length || imports.length ? this.group([...this.entries, ...extra, ...imports]) : this.grouped;
+    const mine = archivedInCodex.size ? extra.map((e) => (archivedInCodex.has(e.sessionId) ? { ...e, archived: true, codexArchived: true } : e)) : extra;
+    const imports = all.filter((e) => !own.has(e.sessionId));
+    return extra.length || imports.length ? this.group([...this.entries, ...mine, ...imports]) : this.grouped;
   }
 
   sessions(): SessionEntry[] {

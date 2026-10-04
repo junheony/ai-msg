@@ -183,7 +183,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           ) : (
             <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}><EngineMark engine={engine} decorative />{target.title}</span>
           )}
-          <span className="session-meta" {...(s.imported ? { title: s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project ?? (engine === 'codex' ? null : s.account.toUpperCase()), s.codexExec ? '자동 실행' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
+          <span className="session-meta" {...(s.imported ? { title: s.codexArchived ? 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다' : s.cwdMissing ? '폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다' : s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project ?? (engine === 'codex' ? null : s.account.toUpperCase()), s.codexExec ? '자동 실행' : null, s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
@@ -200,7 +200,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {onRename && <button type="button" role="menuitem" onClick={() => startEdit(target, key)}>이름 바꾸기</button>}
             {/* Touch screens hide the row's pin button (it ate the title's width); pinning lives here too. */}
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
-            {onArchive && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
+            {/* Archived in Codex: only the Codex app can unarchive it. */}
+            {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
             {canDelete(target) && <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(null); onDelete?.(target, which); }}>삭제…</button>}
           </div>
         )}

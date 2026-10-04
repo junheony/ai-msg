@@ -9,7 +9,8 @@ import { cookieValueFor } from './auth';
 import { StubEngine } from './engine/StubEngine';
 import { createRequestHandler } from './http';
 import { SessionIndex } from './sessions/SessionIndex';
-import { CLI_ID, DESKTOP_ID, writeFixtures } from './sessions/codexFixtures';
+import { CWD_MISSING_NOTICE } from './sessions/CodexImports';
+import { CLI_ID, DESKTOP_ID, GONE_ID, writeFixtures } from './sessions/codexFixtures';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
@@ -104,6 +105,22 @@ describe('ws: imported Codex threads', () => {
     await c.until((m) => m.type === 'hello');
     c.ws.send(JSON.stringify({ type: 'send', sessionId: CLI_ID, cwd: work, text: 'x', handoff: true, clientRef: 'h-codex' }));
     expect(await c.until((m) => m.type === 'error')).toMatchObject({ clientRef: 'h-codex', message: '이어서 새 세션은 Claude 대화에서만 돼요' });
+    expect(c.got.some((m) => m.type === 'turn_started')).toBe(false);
+    c.ws.close();
+  });
+
+  it('a thread whose folder is gone opens read-only: notice on open, a send is refused before any turn starts', async () => {
+    const c = await client();
+    await c.until((m) => m.type === 'hello');
+    c.ws.send(JSON.stringify({ type: 'open_session', sessionId: GONE_ID }));
+    expect(await c.until((m) => m.type === 'history')).toMatchObject({ sessionId: GONE_ID, engine: 'codex' });
+    const gone = `${CWD_MISSING_NOTICE}: ${path.join(work, 'deleted-temp-dir')}`;
+    expect(await c.until((m) => m.type === 'turn_notice' && m.message === gone)).toMatchObject({ sessionId: GONE_ID, turnId: '' });
+    // Same words from the send's own cwd check (M8) and, for a send naming another (existing) folder, from the runner.
+    c.ws.send(JSON.stringify({ type: 'send', sessionId: GONE_ID, cwd: path.join(work, 'deleted-temp-dir'), text: 'x', clientRef: 'gone' }));
+    expect(await c.until((m) => m.type === 'error')).toMatchObject({ clientRef: 'gone', message: gone });
+    c.ws.send(JSON.stringify({ type: 'send', sessionId: GONE_ID, cwd: work, text: 'x', clientRef: 'gone2' }));
+    expect(await c.until((m) => m.type === 'error' && m.message === gone)).toBeTruthy();
     expect(c.got.some((m) => m.type === 'turn_started')).toBe(false);
     c.ws.close();
   });

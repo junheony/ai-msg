@@ -23,6 +23,10 @@ export type SessionEntry = {
   imported?: boolean;
   /** An imported thread from a non-interactive `codex exec` run (shown with a 자동 실행 tag). */
   codexExec?: boolean;
+  /** An imported thread from `~/.codex/archived_sessions` (archived in Codex): listed under 보관됨, view only. */
+  codexArchived?: boolean;
+  /** An imported thread whose folder no longer exists: view only (codex cannot run without its cwd). */
+  cwdMissing?: boolean;
   /** 새 세션으로 이어가기 (session-meta.json): the session this one continued from / was continued in. */
   prevSession?: string;
   nextSession?: string;

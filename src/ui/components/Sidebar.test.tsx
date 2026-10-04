@@ -281,6 +281,21 @@ describe('Sidebar imported Codex threads', () => {
     expect(container.querySelector('.session-meta')?.textContent).toBe('자동 실행 · 2분 전');
     expect(container.querySelector('.engine-mark.codex')).not.toBeNull();
   });
+
+  it('tags a gone-folder thread 폴더 없음 and a Codex-archived one Codex 보관 (no 보관 해제: only Codex can)', () => {
+    const base = { account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true };
+    const gone = { ...base, sessionId: 'x2', title: 'gone', cwdMissing: true };
+    const arch = { ...base, sessionId: 'x3', title: 'arch', archived: true, codexArchived: true };
+    render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [gone, arch] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onArchive={noop} />);
+    const goneMeta = screen.getByText('gone').closest('li')!.querySelector('.session-meta')!;
+    expect(goneMeta.textContent).toBe('폴더 없음 · 2분 전');
+    expect(goneMeta.getAttribute('title')).toContain('폴더가 없어 이어서 보낼 수 없음');
+    fireEvent.click(screen.getByRole('button', { name: '보관됨' }));
+    const li = screen.getByText('arch').closest('li')!;
+    expect(li.querySelector('.session-meta')?.textContent).toBe('Codex 보관 · 2분 전');
+    fireEvent.click(li.querySelector('.row-more-btn')!);
+    expect(screen.queryByRole('menuitem', { name: '보관 해제' })).toBeNull();
+  });
 });
 
 describe('Sidebar engine marks', () => {

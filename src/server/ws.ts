@@ -14,7 +14,7 @@ import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
 import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
-import { liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
+import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
@@ -511,8 +511,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     };
     void (async () => {
       try {
-        // Review M8: the working directory must exist before a CLI is started in it.
-        if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
+        // Review M8: the working directory must exist before a CLI is started in it (an existing session: same words as importBlockReason).
+        if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: msg.sessionId ? `${CWD_MISSING_NOTICE}: ${msg.cwd}` : `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
         // F1: a new session may only start inside the home dir (realpath, so a symlink cannot escape it).
         // The checked real path is the one used (review fix 3): a symlink swapped after the check cannot redirect the run.
         let runCwd = msg.cwd;
@@ -664,7 +664,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               entry = deps.index.lookup(sessionId);
             }
             // A Codex Desktop / CLI thread deck has not run yet: its rollout, read-only; the first turn resumes it.
-            const imported = entry ? null : deps.index.codexImport(sessionId);
+            // Checked live: a rollout moved by Codex (archived / unarchived) or a folder that came / went since the last scan
+            // triggers a rescan and an index push, so the list and composer follow without a manual refresh.
+            const imported = entry ? null : await deps.index.freshCodexImport(sessionId);
             if (imported) {
               view(ws, sessionId);
               const messages = await (deps.readCodexImportHistory ?? readCodexTranscriptTail)(imported.file).catch(() => []);
@@ -673,6 +675,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               if (t) replay(ws, t, sessionId);
               const age = await rolloutActiveAgeMs(imported.file);
               if (age !== null) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: liveRolloutNotice(imported.title, age) });
+              // View only (folder gone / archived in Codex): said up front, not only when a send is refused.
+              const blocked = await importBlockReason(imported);
+              if (blocked) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: blocked });
               return;
             }
             if (!entry) { send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
