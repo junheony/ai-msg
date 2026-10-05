@@ -297,6 +297,55 @@ describe('App 고정됨 reorder', () => {
   });
 });
 
+describe('App ⌘1 … ⌘9 (고정됨)', () => {
+  beforeEach(() => { localStorage.clear(); sock.frames = []; sock.onMessage = null; vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 }))); });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const bootPinned = async () => {
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    server({ type: 'hello', usage, projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two'), entry('s3', 'three')] }], pins: ['s2', 's1'], running: [], codex: { available: false } } as unknown as ServerMessage);
+  };
+  /** jsdom has no Mac platform: the modifier is Ctrl. Returns false when the key was taken (preventDefault). */
+  const press = (n: number, extra: Record<string, unknown> = {}, target: Element | Window = window) => fireEvent.keyDown(target, { code: `Digit${n}`, key: String(n), ctrlKey: true, ...extra });
+  const opened = () => frames().filter((f) => f.type === 'open_session').map((f) => (f as { sessionId: string }).sessionId);
+
+  it('opens the nth pinned session in the active pane, in the sidebar order — also from the composer', async () => {
+    await bootPinned();
+    expect(press(1)).toBe(false);
+    expect(opened()).toEqual(['s2']);
+    expect(document.querySelector('.sidebar li.active .session-title')?.textContent).toBe('two');
+    expect(press(2, {}, within(lastPane()).getByLabelText('메시지'))).toBe(false);
+    expect(opened()).toEqual(['s2', 's1']);
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
+    expect(document.querySelector('.sidebar li.active .session-title')?.textContent).toBe('one');
+  });
+
+  it('follows the order the sidebar shows: a reorder and the 세션 검색 filter both renumber', async () => {
+    await bootPinned();
+    server({ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two'), entry('s3', 'three')] }], pins: ['s1', 's2'] } as unknown as ServerMessage);
+    press(1);
+    expect(opened()).toEqual(['s1']);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'two' } });
+    press(1);
+    expect(opened()).toEqual(['s1', 's2']);
+    expect(press(2)).toBe(true); // only one pinned row shows now
+  });
+
+  it('does nothing past the end of the list, with Shift / Alt, on a key repeat, or under a dialog — and leaves the key alone (a repeat excepted)', async () => {
+    await bootPinned();
+    expect(press(3)).toBe(true);
+    expect(press(9)).toBe(true);
+    expect(press(1, { shiftKey: true })).toBe(true);
+    expect(press(1, { altKey: true })).toBe(true);
+    expect(press(1, { repeat: true })).toBe(false); // a held key is kept from the browser, but opens nothing
+    expect(press(1, { ctrlKey: false })).toBe(true);
+    fireEvent.keyDown(window, { code: 'KeyK', key: 'k', ctrlKey: true });
+    expect(screen.queryByRole('dialog', { name: '명령 팔레트' })).not.toBeNull();
+    expect(press(1)).toBe(true);
+    expect(opened()).toEqual([]);
+  });
+});
+
 describe('App new build without a server restart', () => {
   beforeEach(() => {
     localStorage.clear();

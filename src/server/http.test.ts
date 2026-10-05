@@ -45,6 +45,20 @@ describe('http', () => {
     build = null;
   });
 
+  it('POST /api/diag logs one line of device numbers for a logged-in same-origin page, and refuses anything that is not an object', async () => {
+    const headers = { cookie: `deck_session=${cookieValueFor(TOKEN)}`, origin: base, 'content-type': 'application/json' };
+    expect((await fetch(`${base}/api/diag`, { method: 'POST', headers: { origin: base }, body: '{}' })).status).toBe(401);
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => { lines.push(a.join(' ')); };
+    try {
+      expect((await fetch(`${base}/api/diag`, { method: 'POST', headers, body: JSON.stringify({ inner: [1408, 938] }) })).status).toBe(200);
+      expect((await fetch(`${base}/api/diag`, { method: 'POST', headers, body: '[1]' })).status).toBe(400);
+      expect((await fetch(`${base}/api/diag`, { method: 'POST', headers, body: 'nope' })).status).toBe(400);
+    } finally { console.log = log; }
+    expect(lines).toEqual(['deck: diag {"inner":[1408,938]}']);
+  });
+
   it('refuses API without a cookie', async () => {
     expect((await fetch(`${base}/api/me`)).status).toBe(401);
     expect((await fetch(`${base}/api/bootstrap`)).status).toBe(401);

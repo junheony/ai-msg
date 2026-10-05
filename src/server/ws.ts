@@ -254,7 +254,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** 새 세션으로 이어가기: `to` continues `from` (deck's session meta, never the transcript), titled "<old title> (이어서)". */
   const linkHandoff = async (from: string, to: string) => {
     if (!deps.meta) return;
-    const old = deps.index.lookup(from)?.title ?? deps.store.codexEntries().find((e) => e.sessionId === from)?.title ?? from.slice(0, 8);
+    const old = deps.index.lookup(from)?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === from)?.title ?? from.slice(0, 8);
     try {
       await deps.meta.link(from, to, handoffTitle(old));
       deps.index.regroup();

@@ -281,11 +281,28 @@ export class SessionIndex {
   }
 
   /**
+   * Deck's own Codex sessions (`extra`: the state store's entries) as Codex has them now: titled with the Codex
+   * thread name when there is one (the stored title is the first prompt), and at least as recent as the thread's
+   * rollout file — Codex Desktop / CLI may be running it outside deck. As of the last refresh; others pass through.
+   */
+  codexOwned(extra: SessionEntry[]): SessionEntry[] {
+    const codex = this.codex;
+    if (!codex) return extra;
+    return extra.map((e) => {
+      if (e.engine !== 'codex') return e;
+      const title = codex.threadName(e.sessionId) ?? e.title;
+      const lastModified = Math.max(e.lastModified, codex.lookup(e.sessionId)?.lastModified ?? 0);
+      return title === e.title && lastModified === e.lastModified ? e : { ...e, title, lastModified };
+    });
+  }
+
+  /**
    * Cached grouping of the profile scan; with `extra` (Codex sessions from the state store, D4) and/or
    * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice;
    * if Codex has since archived it (its newest rollout is in archived_sessions), deck's entry is archived too.
    */
   projects(extra: SessionEntry[] = []): ProjectEntry[] {
+    extra = this.codexOwned(extra);
     const all = this.codex?.list() ?? [];
     const archivedInCodex = new Set(all.filter((e) => e.codexArchived).map((e) => e.sessionId));
     const own = new Set(extra.map((e) => e.sessionId));

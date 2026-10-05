@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { CODEX_ARCHIVED_NOTICE, CWD_MISSING_NOTICE, CodexRolloutIndex, importBlockReason, isDeckTestCwd, readRolloutHead, rolloutRecentlyActive } from './CodexImports';
+import { CODEX_ARCHIVED_NOTICE, CWD_MISSING_NOTICE, CodexRolloutIndex, importBlockReason, isDeckTestCwd, readRolloutHead, readThreadNames, rolloutRecentlyActive } from './CodexImports';
 import { SessionIndex } from './SessionIndex';
 import { CLI_ID, DESKTOP_ID, GONE_ID, SUB_ID, assistant, jsonl, meta, user, writeFixtures } from './codexFixtures';
 
@@ -219,7 +219,121 @@ describe('SessionIndex with codexRoot', () => {
 
     const own = { sessionId: CLI_ID, account: 'gpt' as const, engine: 'codex' as const, cwd: work, projectDir: '', file: '', title: 'deck title', lastModified: 1, sizeBytes: 0 };
     const sessions = index.projects([own]).find((p) => p.cwd === work)!.sessions;
-    expect(sessions.filter((s) => s.sessionId === CLI_ID)).toEqual([own]);
+    // Deck's entry, not the import — at least as recent as the thread's rollout file.
+    expect(sessions.filter((s) => s.sessionId === CLI_ID)).toEqual([{ ...own, lastModified: index.codexImport(CLI_ID)!.lastModified }]);
+  });
+});
+
+const nameLine = (id: string, thread_name: unknown) => JSON.stringify({ id, thread_name, updated_at: '2026-10-01T02:00:00.000Z' });
+
+describe('Codex thread names (session_index.jsonl beside the rollout roots)', () => {
+  const namesFile = () => path.join(base, 'session_index.jsonl');
+  const titles = (idx: CodexRolloutIndex) => Object.fromEntries(idx.list().map((e) => [e.sessionId, e.title]));
+
+  it('readThreadNames: the last line for an id wins; bad lines, other shapes and a half-written last line are skipped', async () => {
+    await fs.writeFile(namesFile(), [
+      nameLine(DESKTOP_ID, 'First Name'),
+      'not json',
+      '[1,2]',
+      nameLine('not-a-thread-id', 'Stray'),
+      nameLine(CLI_ID, 42),
+      nameLine(CLI_ID, '  Paper   Kite\n'),
+      nameLine(DESKTOP_ID, 'Tin Robot'),
+      nameLine(GONE_ID, 'Was Named'),
+      nameLine(GONE_ID, ' '),
+      `{"id":"${SUB_ID}","thread_na`,
+    ].join('\n'));
+    expect(Object.fromEntries(await readThreadNames(namesFile()))).toEqual({ [DESKTOP_ID]: 'Tin Robot', [CLI_ID]: 'Paper Kite' });
+  });
+
+  it('readThreadNames: only the end of a large file is read, without the line the cut falls in', async () => {
+    const last = nameLine(CLI_ID, 'Paper Kite') + '\n';
+    await fs.writeFile(namesFile(), nameLine(DESKTOP_ID, 'Tin Robot') + '\n' + nameLine(GONE_ID, 'Cut In Half') + '\n' + last);
+    expect(Object.fromEntries(await readThreadNames(namesFile(), Buffer.byteLength(last) + 10))).toEqual({ [CLI_ID]: 'Paper Kite' });
+    await expect(readThreadNames(path.join(base, 'absent.jsonl'))).rejects.toThrow();
+  });
+
+  it('a named thread is titled with its Codex name, the others with their first prompt; a rename shows on the next refresh', async () => {
+    await writeFixtures(root, work);
+    await fs.writeFile(namesFile(), nameLine(DESKTOP_ID, 'Old Name') + '\n' + nameLine(DESKTOP_ID, 'Tin Robot') + '\n');
+    const idx = new CodexRolloutIndex(root);
+    await idx.refresh();
+    expect(titles(idx)).toMatchObject({ [DESKTOP_ID]: 'Tin Robot', [CLI_ID]: 'List the files' });
+    expect(idx.threadName(DESKTOP_ID)).toBe('Tin Robot');
+    expect(idx.threadName(CLI_ID)).toBeNull();
+
+    await fs.appendFile(namesFile(), nameLine(CLI_ID, 'Paper Kite') + '\n');
+    await idx.refresh();
+    expect(titles(idx)).toMatchObject({ [DESKTOP_ID]: 'Tin Robot', [CLI_ID]: 'Paper Kite' });
+  });
+
+  it('a missing, emptied or garbage names file leaves the first-prompt titles', async () => {
+    await writeFixtures(root, work);
+    const idx = new CodexRolloutIndex(root);
+    await idx.refresh();
+    expect(titles(idx)).toMatchObject({ [DESKTOP_ID]: '스크린샷의 버그 고쳐줘', [CLI_ID]: 'List the files' });
+
+    await fs.writeFile(namesFile(), nameLine(DESKTOP_ID, 'Tin Robot') + '\n');
+    await idx.refresh();
+    expect(titles(idx)[DESKTOP_ID]).toBe('Tin Robot');
+
+    await fs.writeFile(namesFile(), '\u0000\u0001 {"id": half\n\n{}\n');
+    await idx.refresh();
+    expect(titles(idx)[DESKTOP_ID]).toBe('스크린샷의 버그 고쳐줘');
+
+    await fs.rm(namesFile());
+    await idx.refresh();
+    expect(titles(idx)[DESKTOP_ID]).toBe('스크린샷의 버그 고쳐줘');
+    expect(idx.threadName(DESKTOP_ID)).toBeNull();
+  });
+});
+
+describe('SessionIndex: Codex names and rollout time on listed sessions', () => {
+  const roots = () => ({ a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') });
+  const find = (index: SessionIndex, id: string, extra: Parameters<SessionIndex['projects']>[0] = []) => index.projects(extra).flatMap((p) => p.sessions).find((s) => s.sessionId === id)!;
+  const ownEntry = (file: string, lastModified: number) => ({ sessionId: CLI_ID, account: 'gpt' as const, engine: 'codex' as const, sandbox: 'workspace-write' as const, cwd: work, projectDir: path.dirname(file), file, title: 'List the files', lastModified, sizeBytes: 0 });
+
+  it('title: deck rename > Codex thread name > first prompt, for imported and deck-owned sessions alike', async () => {
+    const { cli } = await writeFixtures(root, work);
+    await fs.writeFile(path.join(base, 'session_index.jsonl'), nameLine(DESKTOP_ID, 'Tin Robot') + '\n' + nameLine(CLI_ID, 'Paper Kite') + '\n');
+    const renamed = new Map<string, string>();
+    const index = new SessionIndex({ roots: roots(), pinnedFile: path.join(base, 'p.json'), codexRoot: root, meta: { title: (id) => renamed.get(id) ?? null, isArchived: () => false } });
+    await index.refresh();
+    const own = [ownEntry(cli, 1)];
+    expect(find(index, DESKTOP_ID, own)).toMatchObject({ title: 'Tin Robot', imported: true });
+    expect(find(index, CLI_ID, own).title).toBe('Paper Kite');
+    expect(find(index, CLI_ID, own).imported).toBeUndefined();
+    expect(find(index, GONE_ID, own).title).toBe('hi');
+    expect(index.codexOwned(own)[0]!.title).toBe('Paper Kite');
+
+    renamed.set(DESKTOP_ID, 'My Import');
+    renamed.set(CLI_ID, 'My Own');
+    expect(find(index, DESKTOP_ID, own).title).toBe('My Import');
+    expect(find(index, CLI_ID, own).title).toBe('My Own');
+  });
+
+  it('a deck-owned Codex session is at least as recent as its rollout file, and follows it on the next refresh', async () => {
+    const { cli } = await writeFixtures(root, work);
+    const index = new SessionIndex({ roots: roots(), pinnedFile: path.join(base, 'p.json'), codexRoot: root });
+    const t1 = new Date('2026-10-02T03:00:00.000Z');
+    await fs.utimes(cli, t1, t1);
+    await index.refresh();
+    const stale = ownEntry(cli, t1.getTime() - 86_400_000);
+    expect(find(index, CLI_ID, [stale]).lastModified).toBe(t1.getTime());
+
+    // Codex wrote the rollout outside deck.
+    const t2 = new Date('2026-10-02T04:30:00.000Z');
+    await fs.utimes(cli, t2, t2);
+    expect(find(index, CLI_ID, [stale]).lastModified).toBe(t1.getTime());
+    await index.refresh();
+    expect(find(index, CLI_ID, [stale]).lastModified).toBe(t2.getTime());
+
+    // A deck turn newer than the file keeps its own time; other engines and unknown threads pass through.
+    const newer = ownEntry(cli, t2.getTime() + 5000);
+    expect(find(index, CLI_ID, [newer]).lastModified).toBe(t2.getTime() + 5000);
+    const gemini = { ...stale, sessionId: 'gem-1', engine: 'gemini' as const, account: 'g1' as const };
+    const unknown = { ...stale, sessionId: '01a0f2d3-0000-7c92-aeea-0000000000ff' };
+    expect(index.codexOwned([gemini, unknown])).toEqual([gemini, unknown]);
   });
 });
 

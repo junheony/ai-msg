@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     store: pushSubs,
     vapid: await loadOrCreateVapid(cfg.vapidFile),
     subject: cfg.vapidSubject ?? (dnsName ? `https://${dnsName}` : 'mailto:deck@localhost.localdomain'),
-    titleOf: (sessionId, cwd) => (sessionId ? index.lookup(sessionId)?.title ?? store.codexEntries().find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'deck',
+    titleOf: (sessionId, cwd) => (sessionId ? index.lookup(sessionId)?.title ?? index.codexOwned(store.codexEntries()).find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'deck',
   });
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));

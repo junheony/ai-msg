@@ -17,6 +17,12 @@ const UNTITLED = '(제목 없음)';
 /** Heads read in parallel on a cold scan (~1200 rollouts at first start). */
 const READ_CONCURRENCY = 8;
 
+/** Codex's own thread names, next to the rollout roots: one `{"id","thread_name","updated_at"}` object per line, appended on every rename. */
+const THREAD_NAMES_FILE = 'session_index.jsonl';
+/** Only the file's end is read (the last line for an id is its current name); a line is ~150 bytes. */
+const THREAD_NAMES_TAIL_BYTES = 4 * 1024 * 1024;
+const MAX_THREAD_NAME_CHARS = 200;
+
 /** A rollout touched this recently is probably still open in Codex Desktop / CLI. */
 export const LIVE_ROLLOUT_MS = 2 * 60 * 1000;
 
@@ -93,6 +99,37 @@ export async function readRolloutHead(file: string, maxBytes = HEAD_BYTES): Prom
   return meta ? { ...meta, title } : null;
 }
 
+/**
+ * Thread id → the name Codex shows for it, from the last `maxBytes` of `session_index.jsonl`. The last line for an
+ * id wins (an empty name clears it); lines that are not such an object — a half-written last one, the cut first
+ * one of a tail read — are skipped. Throws only when the file cannot be read.
+ */
+export async function readThreadNames(file: string, maxBytes = THREAD_NAMES_TAIL_BYTES): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  const fh = await fs.open(file, 'r');
+  let text: string;
+  try {
+    const { size } = await fh.stat();
+    const start = Math.max(0, size - maxBytes);
+    const buf = Buffer.alloc(size - start);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+    text = buf.subarray(0, bytesRead).toString('utf8');
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+  } finally {
+    await fh.close();
+  }
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let r: Rec | null;
+    try { r = rec(JSON.parse(line)); } catch { continue; }
+    if (!r || typeof r.id !== 'string' || !UUID.test(r.id) || typeof r.thread_name !== 'string') continue;
+    const name = r.thread_name.replace(/\s+/g, ' ').trim().slice(0, MAX_THREAD_NAME_CHARS);
+    if (name) names.set(r.id, name);
+    else names.delete(r.id);
+  }
+  return names;
+}
+
 type RolloutFile = { file: string; mtimeMs: number; size: number };
 
 /** The rollout files directly in `dir`, stat'ed in parallel. */
@@ -116,12 +153,15 @@ async function rolloutFiles(root: string): Promise<RolloutFile[]> {
  * and threads whose folder is gone (view only) included; sub-agent threads are not (they are not conversations),
  * nor deck's own e2e runs (isDeckTestCwd).
  * A rollout's head never changes once written, so it is read once per file and kept while the file does not
- * shrink; a rescan only stats. Nothing else under `~/.codex` is ever opened.
+ * shrink; a rescan only stats. A thread is titled with its Codex name (`session_index.jsonl` beside the rollout
+ * roots, re-read when its mtime or size changes), else its first prompt. Nothing else under `~/.codex` is ever opened.
  */
 export class CodexRolloutIndex {
   private heads = new Map<string, { size: number; head: RolloutHead | null }>();
   private entries: SessionEntry[] = [];
   private byId = new Map<string, SessionEntry>();
+  private names = new Map<string, string>();
+  private namesStamp = '';
   private running: Promise<void> | null = null;
   private again: Promise<void> | null = null;
 
@@ -137,7 +177,21 @@ export class CodexRolloutIndex {
     return (this.again ??= this.running.catch(() => {}).then(() => { this.again = null; return this.refresh(); }));
   }
 
+  /** Missing file = no names; a failed read keeps the names of the last good one. */
+  private async loadNames(): Promise<void> {
+    const file = path.join(path.dirname(this.root), THREAD_NAMES_FILE);
+    const st = await fs.stat(file).catch(() => null);
+    if (!st?.isFile()) { this.names = new Map(); this.namesStamp = ''; return; }
+    const stamp = `${st.mtimeMs}:${st.size}`;
+    if (stamp === this.namesStamp) return;
+    try {
+      this.names = await readThreadNames(file);
+      this.namesStamp = stamp;
+    } catch { /* retried on the next scan */ }
+  }
+
   private async scan(): Promise<void> {
+    await this.loadNames();
     const [live, archived] = await Promise.all([rolloutFiles(this.root), this.archivedRoot ? rolloutsIn(this.archivedRoot) : Promise.resolve([])]);
     const files = [...live.map((f) => ({ ...f, archived: false })), ...archived.map((f) => ({ ...f, archived: true }))];
     // A head without a prompt yet (thread just started), or none at all (first line still half-written), is retried once the file grows.
@@ -168,7 +222,7 @@ export class CodexRolloutIndex {
       const gone = !(await cwdExists(h.cwd));
       byId.set(h.threadId, {
         sessionId: h.threadId, account: 'gpt', engine: 'codex', cwd: h.cwd, projectDir: path.dirname(f.file), file: f.file,
-        title: h.title ?? UNTITLED, lastModified: f.mtimeMs, sizeBytes: f.size, imported: true,
+        title: this.names.get(h.threadId) ?? h.title ?? UNTITLED, lastModified: f.mtimeMs, sizeBytes: f.size, imported: true,
         ...(h.exec ? { codexExec: true } : {}),
         ...(f.archived ? { archived: true, codexArchived: true } : {}),
         ...(gone ? { cwdMissing: true } : {}),
@@ -186,6 +240,11 @@ export class CodexRolloutIndex {
 
   lookup(threadId: string): SessionEntry | null {
     return this.byId.get(threadId) ?? null;
+  }
+
+  /** The name Codex shows for the thread (as of the last refresh); null when it has none. */
+  threadName(threadId: string): string | null {
+    return this.names.get(threadId) ?? null;
   }
 }
 

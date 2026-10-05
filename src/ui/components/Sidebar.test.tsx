@@ -74,6 +74,70 @@ describe('Sidebar pins (F2)', () => {
   });
 });
 
+describe('Sidebar ⌘1 … ⌘9 hints', () => {
+  afterEach(cleanup);
+  const s = (i: number) => ({ sessionId: `s${i}`, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title: `session ${i}`, lastModified: stamp(), sizeBytes: 1 });
+  const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: Array.from({ length: 12 }, (_, i) => s(i)) }];
+  // 11 pinned; the first is a Desktop-only session.
+  const desktop = [{ sessionId: 'd1', account: 'a' as const, cwd: '/d', title: 'desk', project: 'd', lastModified: stamp() }];
+  const pins = ['d1', ...Array.from({ length: 10 }, (_, i) => `s${i}`)];
+  const hints = () => [...screen.getByTestId('pinned-group').querySelectorAll('li')].map((li) => li.querySelector('.pin-key')?.textContent ?? null);
+  /** jsdom has no Mac platform: the modifier is Ctrl. */
+  const hold = (extra: Record<string, unknown> = {}) => fireEvent.keyDown(window, { key: 'Control', ctrlKey: true, ...extra });
+  const nine = [...Array.from({ length: 9 }, (_, i) => `Ctrl+${i + 1}`), null, null];
+  const none = Array.from({ length: 11 }, () => null);
+  const setup = (onOpen: (id: string, cwd: string, title: string) => void = noop) => {
+    const pinShortcut = { current: (_: number) => false };
+    render(<Sidebar projects={projects} desktop={desktop} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} pins={pins} pinShortcut={pinShortcut} onTogglePin={noop} />);
+    return pinShortcut;
+  };
+
+  it('shows the number on the first nine pinned rows only, while Ctrl is held alone', () => {
+    setup();
+    expect(hints()).toEqual(none);
+    hold();
+    expect(hints()).toEqual(nine);
+    fireEvent.keyUp(window, { key: 'Control' });
+    expect(hints()).toEqual(none);
+    hold({ shiftKey: true });
+    expect(hints()).toEqual(none);
+    hold({ altKey: true });
+    expect(hints()).toEqual(none);
+    // Only pinned rows carry it.
+    hold();
+    expect(document.querySelectorAll('.pin-key')).toHaveLength(9);
+  });
+
+  it('cannot stick: window blur and a hidden page clear it', () => {
+    setup();
+    hold();
+    fireEvent.blur(window);
+    expect(hints()).toEqual(none);
+    hold();
+    fireEvent(document, new Event('visibilitychange'));
+    expect(hints()).toEqual(none);
+  });
+
+  it('no hints without the shortcut wired; with a filter the numbers follow the rows shown, and the opener opens that row', () => {
+    const onOpen = vi.fn();
+    const pinShortcut = setup(onOpen);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'session 1' } }); // "session 1" (s10 is not pinned)
+    hold();
+    expect(hints()).toEqual(['Ctrl+1']);
+    expect(pinShortcut.current(0)).toBe(true);
+    expect(onOpen).toHaveBeenLastCalledWith('s1', '/w', 'session 1');
+    expect(pinShortcut.current(1)).toBe(false);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: '' } });
+    expect(pinShortcut.current(0)).toBe(true);
+    expect(onOpen).toHaveBeenLastCalledWith('d1', '/d', 'desk');
+    cleanup();
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={pins} onTogglePin={noop} />);
+    hold();
+    expect(document.querySelector('.pin-key')).toBeNull();
+  });
+});
+
 describe('Sidebar folding and search', () => {
   afterEach(cleanup);
   const s = (i: number) => ({ sessionId: `s${i}`, account: 'a' as const, cwd: '/w', projectDir: '/p', file: '/f', title: `session ${i}`, lastModified: Date.now() - 3 * 3_600_000, sizeBytes: 1 });

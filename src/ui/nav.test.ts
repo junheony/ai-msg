@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dateGroupOf, groupByDate } from './dateGroups';
 import { fuzzyFilter, fuzzyScore } from './fuzzy';
-import { isMacPlatform, matchShortcut, shortcutList, type ShortcutKey } from './shortcuts';
+import { isMacPlatform, matchPinShortcut, matchShortcut, pinKeyLabel, shortcutList, type ShortcutKey } from './shortcuts';
 
 describe('fuzzyScore / fuzzyFilter', () => {
   it('matches substrings and in-order subsequences, case-insensitively; misses are null', () => {
@@ -79,5 +79,24 @@ describe('shortcuts', () => {
     expect(isMacPlatform({ platform: 'Win32' })).toBe(false);
     expect(shortcutList(true).find((s) => s.id === 'palette')?.keys).toBe('⌘K');
     expect(shortcutList(false).find((s) => s.id === 'new-pane')?.keys).toBe('Ctrl+⇧O');
+  });
+  it('⌘1 … ⌘9 → the 고정됨 row index: plain modifier only, never mid-IME', () => {
+    const m = (code: string, extra: Partial<ShortcutKey> & { repeat?: boolean } = {}, isMac = true) => matchPinShortcut(key(code, { metaKey: true, ...extra }), isMac);
+    expect(m('Digit1')).toBe(0);
+    expect(m('Digit9')).toBe(8);
+    expect(m('Digit0')).toBeNull();
+    expect(m('Numpad1')).toBeNull();
+    expect(m('KeyK')).toBeNull();
+    expect(m('Digit1', { shiftKey: true })).toBeNull();
+    expect(m('Digit1', { altKey: true })).toBeNull();
+    expect(m('Digit1', { ctrlKey: true })).toBeNull();
+    expect(m('Digit1', { repeat: true })).toBe(0);
+    expect(m('Digit1', { isComposing: true })).toBeNull();
+    expect(m('Digit1', { keyCode: 229 })).toBeNull();
+    expect(matchPinShortcut(key('Digit2'), true)).toBeNull();
+    expect(m('Digit2', {}, false)).toBeNull(); // ⌘ off Mac
+    expect(matchPinShortcut(key('Digit2', { ctrlKey: true }), false)).toBe(1);
+    expect(matchPinShortcut({ ...key(''), key: '3', metaKey: true }, true)).toBe(2); // no `code`: by key
+    expect([pinKeyLabel(0, true), pinKeyLabel(8, false), pinKeyLabel(9, true)]).toEqual(['⌘1', 'Ctrl+9', null]);
   });
 });

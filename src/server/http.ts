@@ -62,6 +62,8 @@ export const SECURITY_HEADERS: Record<string, string> = {
   'referrer-policy': 'no-referrer',
 };
 
+/** At most 30 /api/diag lines a minute reach the log. */
+const diagWindow = { at: 0, n: 0 };
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
 /** Deviation (added per review I5): SameSite=Strict doesn't separate ports, so every
@@ -284,6 +286,17 @@ export function createRequestHandler(deps: HttpDeps) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
         if (url.pathname === '/api/build' && req.method === 'GET') { json(res, 200, { build: deps.build?.() ?? null }); return; }
+        // Device-side layout numbers (shellFit.ts) for a problem that only shows on a real device: one log line, nothing stored.
+        if (url.pathname === '/api/diag' && req.method === 'POST') {
+          const now = Date.now();
+          if (now - diagWindow.at > 60_000) { diagWindow.at = now; diagWindow.n = 0; }
+          let body: unknown = null;
+          try { body = JSON.parse(await readBody(req, 4096)); } catch { /* invalid below */ }
+          if (!body || typeof body !== 'object' || Array.isArray(body)) { json(res, 400, { error: '잘못된 요청입니다' }); return; }
+          if (++diagWindow.n <= 30) console.log(`deck: diag ${JSON.stringify(body).slice(0, 2000)}`);
+          json(res, 200, { ok: true });
+          return;
+        }
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }
         if (url.pathname === '/api/pins' && req.method === 'POST') {
           if (!deps.pins) { json(res, 404, { error: 'not found' }); return; }

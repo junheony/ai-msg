@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { usePrefs } from '../usePrefs';
 import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
 import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy } from '../../shared/protocol';
 import { NotifyMenu } from './NotifyMenu';
-import { describeShell, isHomeScreenApp, setShellFit, shellFitEnabled } from '../shellFit';
+import { describeShell } from '../shellFit';
 
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
 declare const __DECK_VERSION__: string | undefined;
@@ -39,7 +39,6 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const [fit, setFit] = useState(shellFitEnabled);
   return (
     <div className="settings-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="settings" role="dialog" aria-modal="true" aria-label="설정">
@@ -88,7 +87,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           <h3>정보</h3>
           <dl className="settings-info">
             <dt>빌드</dt><dd>{build ?? '개발 모드'}</dd>
-            <dt>화면</dt><dd>{describeShell()}{isHomeScreenApp() && <> <button type="button" className="btn ghost" onClick={() => { setShellFit(!fit); setFit(shellFitEnabled()); }}>{fit ? '아래 띠 보정 끄기' : '아래 띠 보정 켜기'}</button></>}</dd>
+            <dt>화면</dt><dd>{describeShell()}</dd>
             <dt>서버 버전</dt><dd>deck {typeof __DECK_VERSION__ === 'string' ? __DECK_VERSION__ : '—'}</dd>
           </dl>
         </section>

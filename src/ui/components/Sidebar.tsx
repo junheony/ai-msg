@@ -8,7 +8,8 @@ import { FolderPicker } from './FolderPicker';
 import { EngineMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
 import { BlockedDeleteItem, MenuList, deleteBlockedReason } from './SessionMenu';
-import { isMacPlatform } from '../shortcuts';
+import { isMacPlatform, isPlainMod, pinKeyLabel } from '../shortcuts';
+import { hasOpenModal } from '../autoReload';
 
 /** Sessions shown per project before "더 보기". */
 export const FOLD_AT = 5;
@@ -31,7 +32,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat, footMenu, avatar, avatarTitle }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat, footMenu, avatar, avatarTitle }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
   /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
@@ -49,6 +50,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   fetchFn?: typeof fetch;
   /** F2: pinned session ids in display order (top first), shown as 고정됨 above the projects. */
   pins?: string[];
+  /**
+   * ⌘1 … ⌘9: the sidebar puts its opener here — (index) opens the nth 고정됨 row as shown (same list, same onOpen as a
+   * click) and says whether there was one. With it, those rows show their number while ⌘/Ctrl is held.
+   */
+  pinShortcut?: { current: (index: number, peek?: boolean) => boolean };
   onTogglePin?: (sessionId: string, pinned: boolean) => void;
   /** 고정됨 drag order: the full pin list, top first. Absent = the pinned rows do not reorder. */
   onReorderPins?: (order: string[]) => void;
@@ -92,6 +98,20 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [showArchived, setShowArchived] = useState(false);
   const [menu, setMenu] = useState<string | null>(null);
+  // ⌘/Ctrl held (alone, no dialog open): the 고정됨 rows show ⌘1 … ⌘9. Cleared on blur / hide, where the keyup never arrives.
+  const [modHeld, setModHeld] = useState(false);
+  const pinKeys = !!pinShortcut;
+  useEffect(() => {
+    if (!pinKeys) return;
+    const mac = isMacPlatform();
+    const onKey = (e: KeyboardEvent) => setModHeld(isPlainMod(e, mac) && !hasOpenModal());
+    const clear = () => setModHeld(false);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    window.addEventListener('blur', clear);
+    document.addEventListener('visibilitychange', clear);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey); window.removeEventListener('blur', clear); document.removeEventListener('visibilitychange', clear); };
+  }, [pinKeys]);
   // Keyed `${group}:${sessionId}`: a pinned session is listed twice and only the clicked copy opens its menu / editor.
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [found, setFound] = useState<{ q: string; hits: SearchHit[]; truncated: boolean; error: string | null } | null>(null);
@@ -150,6 +170,20 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // 고정됨 rows reorder by drag (touch: long-press) or Alt+↑/↓; hidden pins (filtered out) keep their place.
   const reorderKeys = (group: string) => (group === 'pinned' && onReorderPins ? 'Alt+ArrowUp Alt+ArrowDown' : undefined);
   const pinDrag = usePinReorder(pinned.map((it) => (it.kind === 'session' ? it.s.sessionId : it.d.sessionId)), pins, onReorderPins);
+  // ⌘1 … ⌘9 reads the very list the 고정됨 section renders (filters included), so a number is always the row showing it.
+  if (pinShortcut) {
+    pinShortcut.current = (index, peek) => {
+      const it = pinned[index];
+      if (!it) return false;
+      if (peek) return true;
+      const t = it.kind === 'session' ? it.s : it.d;
+      onOpen(t.sessionId, t.cwd, t.title);
+      return true;
+    };
+  }
+  // Gone with the sidebar (signed out): the key listener outlives it and must not open into a hidden pane.
+  useEffect(() => () => { if (pinShortcut) pinShortcut.current = () => false; }, [pinShortcut]);
+  const pinKey = (index: number) => (modHeld ? pinKeyLabel(index, isMacPlatform()) : null);
   // A Desktop session whose folder deck already lists shows there; the Desktop list only carries the rest.
   const desktopShown = desktop.filter((d) => !byId.has(d.sessionId) && !pinSet.has(d.sessionId) && inView(d) && dMatch(d));
 
@@ -164,7 +198,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   };
 
   /** `tree`: a 메시지 편집 갈래 tree shown as this one row — a click opens its newest session. `project`: the 최근 view's meta label. */
-  const row = (s: SessionEntry, group: string, tree?: BranchGroup<SessionEntry>, project?: string) => {
+  const row = (s: SessionEntry, group: string, tree?: BranchGroup<SessionEntry>, project?: string, keyHint?: string | null) => {
     const on = pinSet.has(s.sessionId);
     const key = `${group}:${s.sessionId}`;
     const edit = editing?.id === key ? editing : null;
@@ -208,6 +242,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           )}
           </span>
         </span>
+        {keyHint && !edit && <kbd className="pin-key" aria-hidden="true">{keyHint}</kbd>}
         {menu === key && (
           <MenuList onClose={() => setMenu(null)}>
             {which && <div className="session-menu-which muted" data-testid="session-menu-which">{which}</div>}
@@ -227,7 +262,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   };
 
   /** A Claude Desktop session outside deck's projects: opens like any session; the only action is 고정. */
-  const desktopRow = (d: DesktopSession, group: string) => {
+  const desktopRow = (d: DesktopSession, group: string, keyHint?: string | null) => {
     const on = pinSet.has(d.sessionId);
     const key = `${group}:${d.sessionId}`;
     return (
@@ -248,6 +283,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           )}
           </span>
         </span>
+        {keyHint && <kbd className="pin-key" aria-hidden="true">{keyHint}</kbd>}
         {menu === key && onTogglePin && (
           <MenuList onClose={() => setMenu(null)}>
             <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(d.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>
@@ -301,7 +337,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       {pinned.length > 0 && (
         <section className="project pinned-group" data-testid="pinned-group">
           <div className="project-head"><span className="project-name">고정됨</span></div>
-          <ul {...pinDrag.listProps}>{pinned.map((it) => (it.kind === 'session' ? row(it.s, 'pinned') : desktopRow(it.d, 'pinned')))}</ul>
+          <ul {...pinDrag.listProps}>{pinned.map((it, i) => (it.kind === 'session' ? row(it.s, 'pinned', undefined, undefined, pinKey(i)) : desktopRow(it.d, 'pinned', pinKey(i))))}</ul>
           <span className="sr-only" role="status" aria-live="polite">{pinDrag.live}</span>
         </section>
       )}

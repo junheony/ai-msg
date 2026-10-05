@@ -20,7 +20,7 @@ import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload }
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
-import { isMacPlatform, isTypingTarget, matchShortcut, type ShortcutId } from './shortcuts';
+import { isMacPlatform, isTypingTarget, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { usePrefs } from './usePrefs';
 import { nextTheme, type Theme } from './prefs';
@@ -112,6 +112,8 @@ export function App() {
     return () => clearTimeout(t);
   }, [undo]);
   const onShortcut = useRef<(id: ShortcutId) => void>(() => {});
+  /** ⌘1 … ⌘9: set by the sidebar — opens the nth 고정됨 row it shows, as a click on it would; false when there is none. */
+  const openPinned = useRef<(index: number, peek?: boolean) => boolean>(() => false);
   const lastSaved = useRef<string | null>(null);
   useEffect(() => { lastSaved.current = saveUi(snapshotUi(state, { collapsed, drawer }), lastSaved.current); }, [state.panes, state.activePaneId, collapsed, drawer]);
   // Queued messages: per tab (sessionStorage), so another tab of this browser never sends them.
@@ -237,6 +239,13 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
+      // ⌘1 … ⌘9: the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
+      // repeats are taken too (not reopened), or the browser would switch tabs on them.
+      const pin = matchPinShortcut(e, MAC);
+      if (pin !== null) {
+        if (!hasOpenModal() && openPinned.current(pin, e.repeat)) e.preventDefault();
+        return;
+      }
       const id = matchShortcut(e, { mac: MAC, typing: isTypingTarget(e.target) });
       if (!id) {
         // Type-to-compose: the key lands in the focused pane's composer (focus moves before the key's default action).
@@ -440,6 +449,7 @@ export function App() {
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
             pins={state.pins}
+            pinShortcut={openPinned}
             desktop={state.desktop}
             onTogglePin={togglePin}
             onReorderPins={(order) => {

@@ -46,6 +46,29 @@ export function matchShortcut(e: ShortcutKey, opts: { mac: boolean; typing: bool
   return b.id;
 }
 
+/** 고정됨 rows with a number shortcut: ⌘1 … ⌘9. */
+export const PIN_KEYS = 9;
+
+/** ⌘/Ctrl alone — no Shift or Alt, and not the other platform's modifier. */
+export function isPlainMod(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>, mac: boolean): boolean {
+  return (mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.shiftKey && !e.altKey;
+}
+
+/**
+ * ⌘1 … ⌘9 (Ctrl elsewhere): the index of the 고정됨 row this keydown opens, or null. By physical key, top row only;
+ * never with Shift / Alt or during IME composition. A repeat matches too, so the caller can keep the browser's own ⌘N off it.
+ */
+export function matchPinShortcut(e: ShortcutKey, mac: boolean): number | null {
+  if (e.isComposing || e.keyCode === 229 || !isPlainMod(e, mac)) return null;
+  const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code ? null : /^([1-9])$/.exec(e.key));
+  return digit ? Number(digit[1]) - 1 : null;
+}
+
+/** The hint on the nth 고정됨 row ("⌘1"), or null past the ninth. */
+export function pinKeyLabel(index: number, mac: boolean): string | null {
+  return index < PIN_KEYS ? `${mac ? '⌘' : 'Ctrl+'}${index + 1}` : null;
+}
+
 /** Cheat-sheet rows: key label with the platform's modifier. */
 export function shortcutList(mac: boolean): { id: ShortcutId; keys: string; label: string }[] {
   const mod = mac ? '⌘' : 'Ctrl+';

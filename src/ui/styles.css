@@ -130,6 +130,9 @@ input, textarea, select { font: inherit; color: var(--fg); }
    whole app. A fixed box follows the same toolbars dvh was meant to (Safari's collapsing bars, Android's keyboard via
    interactive-widget=resizes-content) without that arithmetic. Bottom safe area: on the composer / sidebar foot only. */
 .app { display: flex; flex-direction: column; position: fixed; inset: 0; }
+/* …but capped at 100dvh: in that same app the fixed box has also come out a status bar TALLER than the drawn area (the
+   composer's bottom edge was cut off). A cap only ever shortens, and an engine without dvh just drops it. */
+.app { max-height: 100dvh; }
 .topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 14px; border-bottom: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; }
 .brand { display: inline-flex; align-items: center; gap: 7px; width: 240px; font-weight: 600; font-size: calc(14px * var(--font-scale, 1)); letter-spacing: .2px; color: var(--fg-strong); flex-shrink: 0; }
 .brand .spark { font-size: calc(16px * var(--font-scale, 1)); }
@@ -195,6 +198,16 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .pin-btn:hover { color: var(--fg); background: var(--hover); }
 .sidebar li:hover .pin-btn, .pin-btn:focus-visible { opacity: 1; }
 .pin-btn.on { opacity: 1; color: var(--accent); }
+/* ⌘1 … ⌘9 on the first nine 고정됨 rows while ⌘/Ctrl is held: laid over the row's end where ⋯ / pin sit (out of the
+   flow, so nothing moves), after a beat so a quick ⌘C does not flash it. */
+.pin-key { position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; padding: 0 8px 0 30px; border-radius: 0 9px 9px 0; font-family: var(--mono); font-size: calc(11px * var(--font-scale, 1)); color: var(--muted); white-space: nowrap; pointer-events: none; animation: pin-key-in .12s ease .18s both; }
+@keyframes pin-key-in { from { opacity: 0; } }
+.sidebar li:has(> .pin-key) :is(.row-more-btn, .pin-btn) { visibility: hidden; }
+/* Wide sidebar with a mouse: the title runs to the row's end, so the hint fades in over its tail like the hover overlay, and replaces that overlay. */
+@media (hover: hover) and (min-width: 1101px) {
+  .pin-key { background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); }
+  .sidebar li:has(> .pin-key) .row-end { visibility: hidden; }
+}
 .more-btn { margin: 1px 0 0 16px; height: 24px; padding: 0 6px; font-size: calc(13px * var(--font-scale, 1)); color: var(--faint); border-radius: 6px; align-self: flex-start; }
 .more-btn:hover { color: var(--fg); background: var(--hover); }
 .sidebar-empty { padding: 12px 8px; }
@@ -868,7 +881,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 
 /* === pwa === */
-/* Home-screen app (black-translucent status bar, viewport-fit=cover): keep content out of the notch / home indicator. */
+/* Home-screen app (viewport-fit=cover): keep content out of the notch / home indicator. */
 /* No bottom padding here: the transcript and the sidebar list run to the screen edge, and the composer / sidebar foot
    keep themselves above the home indicator (see "bottom edge" at the end). */
 .app { box-sizing: border-box; padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0); }
@@ -1678,10 +1691,3 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .composer-send .ctx-gauge { padding: 0 2px; }
   .composer-row { padding-left: 8px; padding-right: 8px; gap: 4px; }
 }
-
-/* === shell fit === */
-/* Layout viewport shorter than the window (shellFit.ts measures it, opt-in): the document is made that much taller and
-   the shell is laid out in it instead of being pinned — a pinned box is clipped at the layout viewport's bottom. */
-:root[data-shell-fit] { height: calc(100% + var(--shell-short, 0px)); }
-:root[data-shell-fit] #root { position: relative; }
-:root[data-shell-fit] .app { position: absolute; }
