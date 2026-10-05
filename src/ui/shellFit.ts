@@ -1,8 +1,9 @@
 /**
  * iOS / iPadOS home-screen app: the layout viewport sometimes comes out shorter than the window by the status-bar
  * height (after an in-app reload, mostly), which leaves a dead band under the whole shell even though it is pinned
- * with `inset: 0`. The window's own height (outerHeight) stays right, so the shortfall is measured and the shell is
- * stretched down by it (`--shell-short`, styles.css "pwa").
+ * with `inset: 0`. The window's own height (outerHeight) stays right, so the shortfall is measured and the document
+ * itself is made that much taller with the shell laid out in it (`--shell-short` / `data-shell-fit`, styles.css
+ * "shell fit"). A fixed box cannot do it: whatever it paints below the layout viewport is clipped.
  */
 export type ShellMetrics = { standalone: boolean; inner: number; outer: number; vvHeight: number | null; vvScale: number; safeTop: number; /** screen.width / screen.height, either order. */ screen: [number, number] };
 
@@ -40,11 +41,24 @@ export function readShellMetrics(): ShellMetrics {
   };
 }
 
+const KEY = 'deck.shellFit';
+export const isHomeScreenApp = (): boolean => typeof navigator !== 'undefined' && (navigator as Navigator & { standalone?: boolean }).standalone === true;
+/** Off unless switched on in 설정 → 정보: the correction is unproven on real devices (a first attempt cut the bottom edge off). */
+export function shellFitEnabled(): boolean {
+  try { return localStorage.getItem(KEY) === '1'; } catch { return false; }
+}
+export function setShellFit(on: boolean): void {
+  try { if (on) localStorage.setItem(KEY, '1'); else localStorage.removeItem(KEY); } catch { /* private mode */ }
+  fitShell();
+}
+
 export function fitShell(): void {
-  const short = shellShortfall(readShellMetrics());
+  const root = document.documentElement;
+  const short = shellFitEnabled() ? shellShortfall(readShellMetrics()) : 0;
   if (short === null) return;
-  if (short > 0) document.documentElement.style.setProperty('--shell-short', `${short}px`);
-  else document.documentElement.style.removeProperty('--shell-short');
+  if (short > 0) root.style.setProperty('--shell-short', `${short}px`);
+  else root.style.removeProperty('--shell-short');
+  root.toggleAttribute('data-shell-fit', short > 0);
 }
 
 /** One line for 설정 → 정보: what the device reports, for a screenshot when the bottom edge looks wrong. */
@@ -55,7 +69,7 @@ export function describeShell(): string {
 }
 
 export function watchShell(): void {
-  if ((navigator as Navigator & { standalone?: boolean }).standalone !== true) return;
+  if (!isHomeScreenApp()) return;
   fitShell();
   for (const ev of ['resize', 'orientationchange', 'pageshow', 'focus']) window.addEventListener(ev, fitShell);
   window.visualViewport?.addEventListener('resize', fitShell);
