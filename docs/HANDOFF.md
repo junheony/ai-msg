@@ -1,8 +1,26 @@
-# HANDOFF — deck (갱신 2026-10-04 오후)
+# HANDOFF — deck (갱신 2026-10-05 밤)
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 비공개 저장소(원격 없음).
 
-## 0. 최신 상태 (2026-10-04 오후, master, 단위 1281 통과, 빌드 완료, 워크트리 전부 정리됨)
+## 0. 최신 상태 (2026-10-05 밤, master 8de595c, 단위 133파일 통과, 빌드 완료)
+10-05 에 들어간 것:
+- **조용한 동기화**(2fb4801, 8de595c): Claude Desktop 등 deck 밖에서 이어진 세션을 15초 폴(`server/ws.ts`, `sessions/foreignWrites.ts`)로 따라감. "Desktop 열림" 알림·태그는 없앰(`ui/held.ts` 삭제, 서버의 `heldBy` 계산은 남음). 이어받느라 백그라운드 작업을 끊었을 때만 한 줄(`recycleNotice`). **실행 중인 서버는 10-05 13:50 기동이라 8de595c 의 서버 쪽(조용한 재활용)은 재시작 뒤에 적용된다.**
+- **iPad 홈 화면 앱**: `viewport-fit=cover` 해제(`relaxViewport`), 포커스 때 상태바만큼 밀린 화면을 되돌리는 `pinShell()`(48pt 이하만 되돌림), `overscroll-behavior: none`. 진단 줄 `deck: diag`(pins·scroll·vv·app, 시각 없음). **기기 확인 안 됨** — 로그상 한 페이지에서 pins 가 80회대까지 올라 밀림이 계속 재발하고, scroll Y 66(48 초과)은 설계상 손대지 않는다.
+- 고정 세션 ⌘1–⌘9 · Codex 스레드 이름·시각(62f8bbe) · 살아 있는 UI 빌드 확인과 아바타 메뉴 "새로고침" · 끼어든 메시지를 "빠짐" 대신 보류로(e103dab) · 사이드바 계정 글자 제거(d5b56c3) · iPad 작성창 캐럿(b919d86).
+
+전체 요청 점검(10-05, 대화 기록 U1–U260 을 코드·커밋과 대조)에서 남은 것:
+1. **감사 로그가 거의 안 쌓임** — 프로필 `permissions.allow` 가 `canUseTool` 을 건너뛴다(`TurnRunner.ts:771-773`, `~/.config/deck/audit.log` 5일 63줄). PreToolUse 훅이나 `tool_call` 이벤트 기록으로 바꿔야 한다.
+2. **모델 자동 라우팅 미완** — 자동 분류는 Claude 새 세션 첫 턴뿐(`routing/AutoModel.ts`), GPT 는 항상 Sol(`TurnRunner.ts:1068`), 스펙 §4.2 "어려움 → Astra" 없음. 사용자 선택 대기(1: Claude 전 계정이 한도 근처일 때 GPT / 2: 작업 종류로 분담).
+3. **재부팅 자동 시작 없음** — launchd 미등록(nohup 실행). 사용자가 node 바이너리에 전체 디스크 접근 권한을 준 뒤 설치.
+4. **deck → Desktop 화면 반영은 불가** — Desktop 이 다시 읽게 할 방법이 없고 `claude://resume` 로 여는 것뿐. home write-back 실패 로그 23건.
+5. steer(작업 중 바로 전달): Codex·Gemini 는 턴이 끝난 뒤 전송. 중단 순간 이중 전달, 재로드 시 steer 첨부 표시 누락은 수정 여부 미확인.
+6. 기기 확인 대기: iPad 띠·캐럿, Fold 7 배치, 폰 갤러리 선택기, iPad 자동 새로고침, 푸시, 권한·질문 카드, "Desktop에서 열기".
+7. 최근 목록에서 세션 하나만 빼기 미구현 · Codex 하위 에이전트 스레드 약 1100개는 가져오지 않음(의도).
+8. 아래 0-1 의 "다음 할 일" 1–4(Codex IPC, ⌘⇧O, 계정 C, 갈라진 사본)는 그대로 유효.
+
+주의: deck 을 재시작하면 deck 안에서 돌던 세션의 프로세스와 세션 크론이 함께 사라진다. 다른 세션이 시간 맞춘 작업을 기다리는 동안에는 재시작하지 않는다.
+
+## 0-1. (이력) 2026-10-04 오후 (단위 1281 통과, 워크트리 전부 정리됨)
 이번 구간 병합(각각 리뷰 후 지적 수정 → 병합 → 전체 테스트·빌드):
 - **pin-reorder**: 고정됨 순서 바꾸기 — 마우스 드래그(4px), 터치 길게 누르기(350ms), Alt+↑/↓. `PinStore` 위가 먼저 순서 저장, `POST /api/pins/order`, `ui/pinOrder.ts`. iPad 에서 사용자 확인 완료.
 - **codex-import-all**: Codex 스레드 전부(보관함·나이 무관 exec 포함, 하위 에이전트 제외, 약 103개). 보관됨/폴더 없음은 읽기 전용(`cwdMissing`, `codexArchived`, Chat `readOnly`).
