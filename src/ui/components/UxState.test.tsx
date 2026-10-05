@@ -198,7 +198,9 @@ describe('composer queue (ux-state)', () => {
     const steer = send.mock.lastCall![0] as Extract<ClientMessage, { type: 'steer' }>;
     expect(steer).toMatchObject({ type: 'steer', turnId: 't1', text: 'also check b' });
     expect(steer.steerId).toBeTruthy();
-    expect(screen.getByTestId('queue').textContent).toContain('전달 대기');
+    expect(screen.getByTestId('queue').textContent).toContain('보냄 · 다음 단계에서 반영');
+    expect(screen.getByTestId('queue').textContent).toContain('실행 중에 보냄');
+    expect(screen.getByText('멈추고 지금 보내기')).toBeTruthy();
     // Pending steer: the queue runner must not resend it when the turn ends.
     server({ type: 'steer_delivered', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: steer.steerId, prompt: { text: 'also check b', attachments: [] } });
     expect(screen.queryByTestId('queue')).toBeNull();
@@ -228,13 +230,17 @@ describe('composer queue (ux-state)', () => {
   });
 
   it('Pane (Claude): 지금 전송 on a pending steer interrupts; the rejected steer then goes out first', () => {
-    const { send, server, box } = claudeHarness();
+    const { send, server, box, pane } = claudeHarness();
     fireEvent.change(box(), { target: { value: 'urgent' } });
     fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
     const steer = send.mock.lastCall![0] as Extract<ClientMessage, { type: 'steer' }>;
-    fireEvent.click(screen.getByLabelText('대기 메시지 1 지금 전송'));
+    fireEvent.click(screen.getByLabelText('대기 메시지 1 멈추고 지금 보내기'));
     expect(send.mock.lastCall![0]).toEqual({ type: 'interrupt', turnId: 't1' });
-    server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: false, text: '', badge: null, errorText: '중단됨' });
+    // An older server still sends the SDK's own abort text: no "오류:" line for a stop the user asked for.
+    server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: false, text: '', badge: { account: 'b', model: 'opus', reason: 'r', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, modelNote: null }, errorText: 'Claude Code process aborted by user' });
+    expect(document.querySelector('.msg.assistant .error')).toBeNull();
+    // The turn is marked as interrupted by this client: any error text it ends with is the stop.
+    expect(pane().items.some((it) => it.kind === 'assistant' && it.turnId === 't1' && it.interrupted)).toBe(true);
     expect(send).toHaveBeenCalledTimes(3);
     server({ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: steer.steerId, message: 'closed' });
     expect(send).toHaveBeenCalledTimes(4);

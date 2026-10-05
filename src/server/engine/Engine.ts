@@ -206,6 +206,12 @@ export type TurnRequest = {
   autoApprove?: () => boolean;
   /** Called for each tool call 자동 승인 allowed (audit). */
   onAutoApproved?: (req: PermissionRequest) => Promise<void>;
+  /**
+   * Audit of the tool calls canUseTool never saw (once each): 'cli' = run or refused by the CLI without asking (an allow
+   * rule, the permission mode, or a tool that needs no permission — the SDK does not tell these apart), 'rule' = refused
+   * by a deny rule, 'deck' = denied by deck's own hook (handoff note turn). Never the input itself.
+   */
+  onToolAudit?: (e: { toolName: string; input: unknown; toolUseId: string; decision: 'allow' | 'deny'; source: 'cli' | 'rule' | 'deck' }) => Promise<void>;
   /** Receives the process's input handle (streaming-input mode) so later user messages can join it while background work runs. */
   onLive?: (live: LiveInput) => void;
   /**

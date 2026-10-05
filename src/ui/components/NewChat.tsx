@@ -3,7 +3,7 @@ import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
-import { EngineMark, engineOf } from './EngineMark';
+import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
 import { touchEnterIsNewline } from './Chat';
 import { useAutoGrow } from '../useAutoGrow';
 
@@ -88,7 +88,7 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
   return (
     <div className="newchat">
       <div className="newchat-inner">
-        <h1 className="newchat-greeting"><span className="spark" aria-hidden="true">✳</span>{greeting(new Date(t).getHours())}</h1>
+        <h1 className="newchat-greeting"><ClaudeMark className="spark" />{greeting(new Date(t).getHours())}</h1>
         {projects.length === 0 ? (
           <p className="muted">프로젝트가 없습니다. 사이드바의 폴더 열기로 시작하거나 ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</p>
         ) : (

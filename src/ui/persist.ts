@@ -18,7 +18,7 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
  * send runs), so the link to its predecessor and the note waiting in the composer live only here until then.
  * `accountPin`: likewise the pin an id-less session sends with its first turn (an existing session's pin is the server's).
  */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account };
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -64,6 +64,7 @@ function pane(x: unknown): PersistedPane {
   return {
     session: sess,
     model: isModelChoice(x.model) ? x.model : d.model,
+    ...(x.modelPicked === true ? { modelPicked: true as const } : {}),
     efforts: { claude: isEffort(e.claude) ? e.claude : DEFAULT_EFFORT.claude, codex: isEffort(e.codex) ? e.codex : DEFAULT_EFFORT.codex, gemini: isEffort(e.gemini) ? e.gemini : DEFAULT_EFFORT.gemini },
     autoEffort: isEffort(x.autoEffort) ? x.autoEffort : null,
     engine: ENGINES.includes(x.engine as EngineChoice) ? (x.engine as EngineChoice) : d.engine,
@@ -95,7 +96,7 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
     v: 1,
     panes: state.panes.map((p) => ({
       session: p.session ? { sessionId: p.session.sessionId, cwd: p.session.cwd, title: p.session.title, engine: p.session.engine } : null,
-      model: p.model, efforts: p.efforts, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
+      model: p.model, ...(p.modelPicked ? { modelPicked: true as const } : {}), efforts: p.efforts, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
       ...(p.session && p.session.sessionId === null && p.handoffFrom ? { handoffFrom: p.handoffFrom } : {}),
       ...(p.session && p.session.sessionId === null && p.prefill ? { prefill: p.prefill } : {}),
       ...(p.session && p.session.sessionId === null && p.session.accountPin ? { accountPin: p.session.accountPin } : {}),
@@ -119,7 +120,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
   const panes: PaneState[] = ui.panes.map((p, i) => ({
     ...newPane(`p${i}`),
     session: p.session ? { ...p.session, account: null, sandbox: null, ...(p.accountPin ? { accountPin: p.accountPin } : {}) } : null,
-    model: p.model, efforts: { ...p.efforts }, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
+    model: p.model, modelPicked: p.modelPicked === true, efforts: { ...p.efforts }, autoEffort: p.autoEffort, engine: p.engine, sandbox: p.sandbox,
     handoffFrom: p.handoffFrom ?? null, prefill: p.prefill ?? null,
     // Its history is asked for again once the socket is up: loading until it arrives.
     ...(p.session?.sessionId ? { loading: true } : {}),

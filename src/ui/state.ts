@@ -1,5 +1,5 @@
 import type { Account, Seat } from '../shared/accounts';
-import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
+import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { ACCEPTED_REFS_TTL_MS, type DeckSettings, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
@@ -7,6 +7,7 @@ import type { UsageSnapshot } from '../shared/usage-types';
 import { handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
+import { familyOf } from '../shared/token-usage';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
 
@@ -14,7 +15,7 @@ export type ChatItem =
   | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number }
   /** A hook's message to the model (e.g. a Stop hook made it keep going): a muted row, collapsed. Never counted as a user message. */
   | { kind: 'system'; source: string; label: string; text: string }
-  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null };
+  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null; /** This client sent an interrupt for this turn (중단, 지금 전송): its error is the stop, not a failure. */ interrupted?: true };
 
 /** A subagent's own tool call, shown in its Agent card (nested subagents' calls are flattened into the top card). */
 export type AgentCall = { toolUseId: string; name: string; input: unknown; done: boolean; isError: boolean };
@@ -199,6 +200,8 @@ export type PaneState = {
   /** What that pending send carried (not for a handoff note): queued again if the server refuses it before its turn starts. */
   awaitingSend: { text: string; attachments: SentFile[]; /** the user-message ordinal it gets (nextUserN) */ n?: number; /** when it was sent (ms) */ at?: number; /** 메시지 편집 갈래: re-sent only by the user */ branch?: true } | null;
   model: ModelChoice;
+  /** The user picked `model` for this pane's session (or sent a new session with it): sent with every turn. Otherwise an existing session gets no model (it runs on its own default) and the picker shows that default. */
+  modelPicked: boolean;
   /** Reasoning effort per engine, so switching Claude ↔ GPT keeps each side's pick. */
   efforts: Record<EngineKind, Effort>;
   /** Effort while the model is 자동: null = 자동 too (the server picks per model). */
@@ -273,7 +276,7 @@ export type AppState = {
 export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, model: DEFAULT_MODEL, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
 export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false };
@@ -314,6 +317,8 @@ export type Action =
   | { type: 'queue_resume'; paneId?: string }
   /** 지금 전송: move the item to the head and send it as soon as the turn ends (the caller interrupts the turn). */
   | { type: 'queue_send_now'; id: string; paneId?: string }
+  /** This client sent `interrupt` for turn `turnId`. */
+  | { type: 'interrupt_sent'; turnId: string; paneId?: string }
   /** A steer got no answer (send failed, or none came in time): an ordinary queue item again (paused if it may have gone in). */
   | { type: 'steer_lost'; steerId: string; paneId?: string; /** The send itself failed: it never left, so the queue need not pause. */ unsent?: boolean };
 
@@ -345,6 +350,17 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
     }
   }
   return items;
+}
+
+/** The Claude model of a transcript's last assistant message (null: none, or not a deck model). */
+function lastClaudeModel(messages: TranscriptMessage[]): ModelChoice | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.kind !== 'assistant' || !m.model) continue;
+    const f = familyOf(m.model);
+    return f === 'fable' || f === 'opus' || f === 'sonnet' ? f : null;
+  }
+  return null;
 }
 
 /** Which engine a model runs on (자동 picks among Claude models). */
@@ -482,8 +498,9 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       if (msg.runningTurnId) items.push(streamingItem(msg.runningTurnId));
       const title = pane.session?.sessionId === msg.sessionId ? pane.session.title : msg.sessionId.slice(0, 8);
       const engine: EngineKind = msg.engine ?? 'claude';
-      // PF13: a Claude session is never sent a GPT model and vice versa.
-      const model = modelFor(engine, pane.model);
+      // PF13: a Claude session is never sent a GPT model and vice versa. A Claude session the user picked no model for shows
+      // the one it runs on: the server's sessionModel, else (an older server) the transcript's last model, else the imported default.
+      const model = engine === 'claude' && !pane.modelPicked ? (msg.sessionModel ?? lastClaudeModel(msg.messages) ?? IMPORTED_DEFAULT_MODEL) : modelFor(engine, pane.model);
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
       // A send that may have gone in is dropped if the server lists its clientRef as accepted (a lost steer: its id). An
       // older server sends no list: then by its text at or after the ordinal it would have had (the transcript may count
@@ -894,7 +911,9 @@ export function reducer(state: AppState, action: Action): AppState {
         items: [], activeTurnId: null, myTurns: [], attachments: [], ...ACTIVITY_RESET, loading: action.sessionId !== null,
         ...(same
           ? { queue: [...p.queue, ...(back ?? [])], queuePaused: p.queuePaused || !!back }
-          : { awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: back ?? [], queuePaused: !!back, queueSendNow: null }),
+          : { awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: back ?? [], queuePaused: !!back, queueSendNow: null,
+              // Another session: its model is its own again (history shows it); a new one starts on the default unless picked.
+              modelPicked: false, ...(action.sessionId === null && !p.modelPicked && engineOf(p.model) === 'claude' ? { model: DEFAULT_MODEL } : {}) }),
         handoff: null, handoffFrom: null, prefill: null, notices: [],
       }));
     }
@@ -929,13 +948,15 @@ export function reducer(state: AppState, action: Action): AppState {
       const n = nextUserN(p.items, p.session);
       return {
         ...p,
+        // A new session is sent with the picker's model: the session keeps sending it.
+        ...(p.session?.sessionId === null ? { modelPicked: true } : {}),
         items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(n) }],
         awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [], ...withN(n), at: Date.now() }, attachments: [], queuePaused: action.keepPaused ? p.queuePaused : false, prefill: null,
         ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
         ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
       };
     });
-    case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model }));
+    case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model, modelPicked: true }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
     case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model) }));
@@ -982,6 +1003,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'queue_edit': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.map((q) => (q.id === action.id ? { ...q, text: action.text } : q)) }));
     case 'queue_remove': return updatePane(state, action.paneId, (p) => ({ ...p, queue: p.queue.filter((q) => q.id !== action.id), ...(p.queueSendNow === action.id ? { queueSendNow: null } : {}) }));
     case 'queue_clear': return updatePane(state, action.paneId, (p) => ({ ...p, queue: [], queuePaused: false, queueSendNow: null }));
+    case 'interrupt_sent': return updatePane(state, action.paneId, (p) => updateTurn(p, action.turnId, (it) => ({ ...it, interrupted: true })));
     case 'queue_send_now': return updatePane(state, action.paneId, (p) => {
       const item = p.queue.find((q) => q.id === action.id);
       if (!item) return p;

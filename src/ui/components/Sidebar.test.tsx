@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Sidebar } from './Sidebar';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { META_TICK_MS, Sidebar } from './Sidebar';
 
 const noop = () => {};
 /** Fixture times: now, each one 1 ms older, so the 최근 view's newest-first order is the creation order (equal / ms-apart Date.now() made it flaky). */
@@ -322,6 +322,33 @@ describe('Sidebar activity dots', () => {
     expect(dotOf('two')?.getAttribute('aria-label')).toBe('백그라운드 작업 2개');
     expect(dotOf('three')?.classList.contains('unread')).toBe(true);
     expect(dotOf('four')).toBeNull();
+  });
+});
+
+describe('Sidebar row status and time', () => {
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
+  const s = (id: string, title: string, lastModified = Date.now() - 2 * 60_000) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified, sizeBytes: 1 });
+  const metaOf = (title: string) => screen.getByText(title).closest('li')!.querySelector('.session-meta')?.textContent;
+
+  it('승인 대기 → 실행 중 → 백그라운드 N개 → 새 응답 replace the time; otherwise the time', () => {
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s0', 'zero'), s('s1', 'one'), s('s2', 'two'), s('s3', 'three'), s('s4', 'four')] }];
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop}
+      activity={[{ sessionId: 's0', cwd: '/w', turnId: 't0', running: true, bg: 0, forMs: 0 }, { sessionId: 's1', cwd: '/w', turnId: 't1', running: true, bg: 1, forMs: 0 }, { sessionId: 's2', cwd: '/w', turnId: 't2', running: false, bg: 2, forMs: 0 }]}
+      unread={['s2', 's3']} waiting={['s0']} />);
+    expect(metaOf('zero')).toBe('승인 대기');
+    expect(metaOf('one')).toBe('실행 중');
+    expect(metaOf('two')).toBe('백그라운드 2개');
+    expect(metaOf('three')).toBe('새 응답');
+    expect(metaOf('four')).toBe('2분 전');
+  });
+
+  it('"N분 전" advances every minute without a new index', () => {
+    vi.useFakeTimers();
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'one', Date.now() - 2 * 60_000)] }];
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(metaOf('one')).toBe('2분 전');
+    act(() => { vi.advanceTimersByTime(META_TICK_MS * 3); });
+    expect(metaOf('one')).toBe('5분 전');
   });
 });
 

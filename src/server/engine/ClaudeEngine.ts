@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
-import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, type HookInput, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { accountEnv } from '../../shared/accounts';
 import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage, type TaskStatus, type TaskUpdate, type TaskUsage, type TurnPhase, type TurnUsage } from '../../shared/turn-types';
@@ -313,10 +313,60 @@ export const NO_TOOLS_MESSAGE = '인계 메모 작성 중에는 도구를 쓸 �
 /** 계속 계획 on the plan card: what the denied ExitPlanMode call tells the model. */
 export const KEEP_PLANNING_MESSAGE = '사용자가 계획을 승인하지 않았습니다 — 계획 모드를 유지하며 계획을 더 다듬어 주세요';
 
+/** Where an audited call was decided without deck being asked: 'cli' = the CLI ran or refused it on its own (an allow rule, the mode, or a tool that needs no permission — the SDK does not say which), 'rule' = a deny rule (the SDK says so), 'deck' = deck's own hook. */
+type AuditSource = 'cli' | 'rule' | 'deck';
+export type ToolAudit = { handled: Set<string>; report: (e: { tool_name: string; tool_input: unknown; tool_use_id: string }, decision: 'allow' | 'deny', source: AuditSource) => Promise<void> };
+
+/**
+ * One process's tool-call audit: each call is reported once — whichever of the hooks, the stream's permission_denied
+ * frame or the result's permission_denials sees it first — and never when canUseTool decided it (the caller audits those).
+ */
+export function toolAudit(req: TurnRequest): ToolAudit {
+  const handled = new Set<string>();
+  return {
+    handled,
+    report: async (e, decision, source) => {
+      if (handled.has(e.tool_use_id)) return;
+      handled.add(e.tool_use_id);
+      try {
+        await req.onToolAudit?.({ toolName: e.tool_name, input: e.tool_input, toolUseId: e.tool_use_id, decision, source });
+      } catch {
+        // best-effort, like every audit write: never fails the tool call
+      }
+    },
+  };
+}
+
+/** The denials an SDK message reports: a `system/permission_denied` frame (input from the call's tool_use block), or a result's `permission_denials`. */
+export function deniedCalls(m: SDKMessage, inputs: Map<string, unknown>): { tool_name: string; tool_input: unknown; tool_use_id: string; source: AuditSource }[] {
+  const r = m as unknown as Rec;
+  if (m.type === 'system' && r.subtype === 'permission_denied' && typeof r.tool_use_id === 'string' && typeof r.tool_name === 'string') {
+    return [{ tool_name: r.tool_name, tool_use_id: r.tool_use_id, tool_input: inputs.get(r.tool_use_id) ?? null, source: r.decision_reason_type === 'rule' ? 'rule' : 'cli' }];
+  }
+  if (m.type === 'result' && Array.isArray(r.permission_denials)) {
+    return (r.permission_denials as Rec[])
+      .filter((d) => typeof d.tool_use_id === 'string' && typeof d.tool_name === 'string')
+      .map((d) => ({ tool_name: d.tool_name as string, tool_use_id: d.tool_use_id as string, tool_input: d.tool_input ?? inputs.get(d.tool_use_id as string) ?? null, source: 'cli' as const }));
+  }
+  return [];
+}
+
 export function buildOptions(
   req: TurnRequest,
-  deps: { home: string; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void; /** false: DECK_STEER=0 (no echo flag). */ steer?: boolean },
+  deps: { home: string; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void; /** false: DECK_STEER=0 (no echo flag). */ steer?: boolean; /** Shared with the stream loop (denials it sees); a fresh one by default. */ audit?: ToolAudit },
 ): Options {
+  // Audit: canUseTool is asked only about calls that need a decision; an allow rule, the mode (acceptEdits) or a tool
+  // that needs no permission runs the rest without it. Those are reported from the after-hooks, denials also from the
+  // stream (run): the PermissionDenied hook fires only for auto-mode classifier denials, which deck's modes never use.
+  const audit = deps.audit ?? toolAudit(req);
+  const after = (decision: 'allow' | 'deny') => async (input: HookInput) => {
+    if (input.hook_event_name === 'PostToolUse' || input.hook_event_name === 'PostToolUseFailure' || input.hook_event_name === 'PermissionDenied') await audit.report(input, decision, 'cli');
+    return { continue: true };
+  };
+  const noTools = async (input: HookInput) => {
+    if (input.hook_event_name === 'PreToolUse') await audit.report(input, 'deny', 'deck');
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const, permissionDecisionReason: NO_TOOLS_MESSAGE } };
+  };
   return {
     cwd: req.cwd,
     env: accountEnv(req.account, deps.baseEnv, deps.home),
@@ -345,8 +395,14 @@ export function buildOptions(
     // over auto-answering in canUseTool (would mean re-implementing the CLI's rule matching).
     ...(req.allowRules?.length ? { settings: { permissions: { allow: req.allowRules } } } : {}),
     ...(req.allowDirs?.length ? { additionalDirectories: req.allowDirs } : {}),
-    ...(req.noTools ? { hooks: { PreToolUse: [{ hooks: [async () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const, permissionDecisionReason: NO_TOOLS_MESSAGE } })] }] } } : {}),
+    hooks: {
+      ...(req.noTools ? { PreToolUse: [{ hooks: [noTools] }] } : {}),
+      PostToolUse: [{ hooks: [after('allow')] }],
+      PostToolUseFailure: [{ hooks: [after('allow')] }],
+      PermissionDenied: [{ hooks: [after('deny')] }],
+    },
     canUseTool: async (toolName, input, ctx) => {
+      audit.handled.add(ctx.toolUseID);
       if (req.noTools) return { behavior: 'deny', message: NO_TOOLS_MESSAGE, interrupt: false };
       // D8: AskUserQuestion is not a permission prompt. The answers travel back as updatedInput.answers
       // (sdk-tools.d.ts AskUserQuestionInput.answers: "User answers collected by the permission component").
@@ -609,7 +665,10 @@ export class ClaudeEngine implements Engine {
       graceTimer = setTimeout(() => finish('grace'), this.bgGraceMs);
       graceTimer.unref?.();
     };
-    const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, steer: this.steer, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
+    const audit = toolAudit(req);
+    // Tool inputs by call id (for a permission_denied frame, which carries none); emptied at each result.
+    const toolInputs = new Map<string, unknown>();
+    const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, steer: this.steer, audit, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
     const write = async (f: { text: string; attachments: Attachment[] }, steerId: string | null): Promise<boolean> => {
       if (input.closed) return false;
       // Counted before the first await: the loop decides whether to close right after a result,
@@ -668,6 +727,9 @@ export class ClaudeEngine implements Engine {
           if (r.subtype !== 'success' || r.is_error === true) console.warn(`deck: CLI-injected turn failed (not ours): ${[r.subtype, ...(Array.isArray(r.errors) ? r.errors : [])].join(': ')}`);
           continue;
         }
+        if (m.type === 'assistant') for (const b of m.message.content) if (b.type === 'tool_use') toolInputs.set(b.id, b.input);
+        for (const d of deniedCalls(m, toolInputs)) await audit.report(d, 'deny', d.source);
+        if (m.type === 'result') toolInputs.clear();
         if (bg.apply(m)) {
           const tasks = bg.tasks();
           const detail = bg.detail();

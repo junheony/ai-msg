@@ -203,3 +203,27 @@ describe('SessionIndex heldBy (process holders)', () => {
     expect(byId()[ID2]).not.toHaveProperty('heldBy');
   });
 });
+
+describe('SessionIndex.touch', () => {
+  it('re-stats known files only: a newer mtime updates lastModified (same object lookup sees it) and re-sorts the project', async () => {
+    const a = await mkRoot();
+    const b = await mkRoot();
+    const c = await mkRoot();
+    const f1 = await writeSession(b, '-w-p', ID1, '/w/p', 'one', 1_000_000);
+    await writeSession(b, '-w-p', ID2, '/w/p', 'two', 2_000_000);
+    const idx = new SessionIndex({ roots: { a, b, c }, pinnedFile: '/nonexistent/p.json' });
+    await idx.refresh();
+    expect(idx.projects()[0]?.sessions.map((s) => s.sessionId)).toEqual([ID2, ID1]);
+    expect(await idx.touch()).toBe(false);
+    await fs.appendFile(f1, L({ type: 'assistant', message: { role: 'assistant', content: 'x' } }));
+    await fs.utimes(f1, 3_000, 3_000);
+    expect(await idx.touch([ID2])).toBe(false); // only the named sessions are looked at
+    expect(await idx.touch(undefined, new Set([ID1]))).toBe(false); // skipped (a running turn's session)
+    expect(await idx.touch([ID1])).toBe(true);
+    expect(idx.lookup(ID1)?.lastModified).toBe(3_000_000);
+    expect(idx.projects()[0]?.sessions.map((s) => s.sessionId)).toEqual([ID1, ID2]);
+    // A file that vanished is left alone (the next full refresh drops it).
+    await fs.rm(f1);
+    expect(await idx.touch()).toBe(false);
+  });
+});

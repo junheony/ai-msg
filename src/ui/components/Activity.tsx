@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { TaskStatus, TurnPhase } from '../../shared/turn-types';
 import type { AgentInfo, ChatItem, PaneBackground, ToolCallItem } from '../state';
 import { toolLabel } from '../toolLabel';
+import { ClaudeMark } from './EngineMark';
 
 type Assistant = Extract<ChatItem, { kind: 'assistant' }>;
 
@@ -79,7 +80,7 @@ export function StatusRow({ startedAt, started, progress, live, onInterrupt }: {
   const tools = live ? live.toolCalls.length : 0;
   return (
     <div className="turn-status" role="status" data-testid="turn-status">
-      <span className="spark spin" aria-hidden="true">✳</span>
+      <ClaudeMark className="spark spin" />
       <span className="status-verb">{verb}</span>
       {tool?.arg && <code className="status-arg" title={tool.arg}>{tool.arg}</code>}
       <span className="status-meta">
@@ -130,7 +131,7 @@ export function AgentCard({ call, live }: { call: ToolCallItem; live: boolean })
   const ms = info ? (info.usage && !running ? info.usage.durationMs : (info.endedAt ?? now) - info.startedAt) : null;
   const calls = info?.calls ?? [];
   const shown = all ? calls : calls.slice(-SHOW_CALLS);
-  const icon = running ? <span className="spark spin" aria-hidden="true">✳</span> : status === 'completed' ? <span className="agent-mark ok" aria-hidden="true">✓</span> : status === 'failed' ? <span className="agent-mark err" aria-hidden="true">✗</span> : <span className="agent-mark" aria-hidden="true">■</span>;
+  const icon = running ? <ClaudeMark className="spark spin" /> : status === 'completed' ? <span className="agent-mark ok" aria-hidden="true">✓</span> : status === 'failed' ? <span className="agent-mark err" aria-hidden="true">✗</span> : <span className="agent-mark" aria-hidden="true">■</span>;
   return (
     <div className={`agent-card ${status}`} data-testid="agent-card">
       <div className="agent-head">

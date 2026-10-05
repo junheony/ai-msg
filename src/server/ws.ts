@@ -4,7 +4,7 @@ import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount } from '../shared/accounts';
-import { defaultSandbox } from '../shared/models';
+import { defaultSandbox, IMPORTED_DEFAULT_MODEL } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
@@ -32,7 +32,7 @@ const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌�
 /** Following an outside write is silent; only background work the restarted process had to drop is worth a line (`n`: tasks stopped). */
 export const recycleNotice = (n: number) => `deck 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
 
-/** How often, while a browser is connected, deck looks for outside holders (one `ps`) and outside writes to the open sessions (a stat each). */
+/** How often, while a browser is connected, deck looks for outside holders (one `ps`), outside writes to the open sessions and newer mtimes of the listed transcripts (a stat each). */
 export const OUTSIDE_POLL_MS = 15_000;
 /** An entry is stamped a moment before it reaches the file: writes this much older than the last history sent are looked at again. */
 const OUTSIDE_SLACK_MS = 2000;
@@ -304,6 +304,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const outsideTimer = pollMs > 0 ? setInterval(() => {
     if (!clients.size || following) return;
     syncHolders();
+    // Sessions written outside deck (Desktop, a terminal) move in the list too: a stat of the known transcripts (~1 ms).
+    // Sessions with a deck turn running are left out — their files grow with the turn; its end touches them and broadcasts.
+    void deps.index.touch(undefined, new Set(busy.keys())).then((changed) => { if (changed) broadcast(indexMsg()); }).catch(() => undefined);
     following = true;
     void followOutside().catch((err: unknown) => console.error('deck: outside-write check failed', errMsg(err))).finally(() => { following = false; });
   }, pollMs) : null;
@@ -675,6 +678,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (msg.sessionId === null) {
         await deps.index.refresh();
         broadcast(indexMsg());
+      } else {
+        // An existing session: its row's time (and place in 최근) follows the turn — a stat of its transcript copies, not a
+        // rescan. Codex / Gemini rows are dated by the state store, which the turn has just written.
+        const st = deps.store.get(msg.sessionId);
+        if ((await deps.index.touch([msg.sessionId])) || (st && (isCodexState(st) || isGeminiState(st)))) broadcast(indexMsg());
       }
     })().catch((err: unknown) => console.error('deck: post-turn index refresh failed', errMsg(err)));
   };
@@ -701,7 +709,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     let seen = historyAt.get(ws);
     if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
     seen.set(sessionId, { at, clean: new Map(clean) });
-    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), messages, ...runningOf(sessionId) });
+    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, ...runningOf(sessionId) });
     if (t) replay(ws, t, sessionId);
   };
   const openSession = (ws: WebSocket, sessionId: string) => {

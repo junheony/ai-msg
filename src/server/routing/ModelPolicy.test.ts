@@ -3,9 +3,9 @@ import { CLAUDE_MODELS, DEFAULT_MODEL, isClaudeModel } from '../../shared/models
 import { MODEL_ARG, resolveModel } from './ModelPolicy';
 
 describe('models', () => {
-  it('only sonnet/opus/fable exist; default is opus', () => {
+  it('only sonnet/opus/fable exist; default is fable', () => {
     expect(CLAUDE_MODELS).toEqual(['sonnet', 'opus', 'fable']);
-    expect(DEFAULT_MODEL).toBe('opus');
+    expect(DEFAULT_MODEL).toBe('fable');
     expect(isClaudeModel('haiku')).toBe(false);
     expect(isClaudeModel('fable')).toBe(true);
     expect(MODEL_ARG).toEqual({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', fable: 'claude-fable-5-1' });

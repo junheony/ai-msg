@@ -19,6 +19,8 @@ export const SEARCH_MIN_CHARS = 2;
 const SEARCH_DEBOUNCE_MS = 300;
 /** 최근 view: newest sessions across all projects, split by day. */
 const MAX_RECENT = 150;
+/** How often the rows' "N분 전" is recomputed. */
+export const META_TICK_MS = 60_000;
 
 export type SidebarView = 'recent' | 'projects';
 /** One entry of the avatar (설정 및 계정) menu at the bottom left. */
@@ -32,7 +34,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat, footMenu, avatar, avatarTitle }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat, footMenu, avatar, avatarTitle }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
   /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
@@ -74,6 +76,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   activity?: SessionActivity[];
   /** Sessions that finished while not shown: unread dot until opened. */
   unread?: string[];
+  /** Sessions with a permission card or question waiting for the user: 승인 대기 in place of the row's time. */
+  waiting?: string[];
   /** 최근 (one list, date groups) or 프로젝트 (grouped by project); owned by the app when given. Default 프로젝트. */
   view?: SidebarView;
   onViewChange?: (view: SidebarView) => void;
@@ -86,6 +90,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const view = viewProp ?? localView;
   const setView = (v: SidebarView) => { if (onViewChange) onViewChange(v); else setLocalView(v); };
   const [picking, setPicking] = useState(false);
+  // "N분 전" moves on by itself: the rows re-render every minute even when no index arrives.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), META_TICK_MS); return () => clearInterval(t); }, []);
   const [footOpen, setFootOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [localCollapsed, setLocalCollapsed] = useState<Set<string>>(() => new Set(collapsedProp ?? []));
@@ -196,6 +203,17 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     if (unreadSet.has(sessionId)) return <span className="row-dot unread" role="img" aria-label="새 응답" title="새 응답" />;
     return null;
   };
+  const waitingSet = new Set(waiting);
+  /** What the row says in place of its time, same order as the dot (승인 대기 first: it needs the user). A 갈래 row: any member. */
+  const status = (ids: string[]): string | null => {
+    if (ids.some((id) => waitingSet.has(id))) return '승인 대기';
+    const acts = ids.map((id) => actById.get(id)).filter((a): a is SessionActivity => !!a);
+    if (acts.some((a) => a.running)) return '실행 중';
+    const bg = acts.reduce((n, a) => n + a.bg, 0);
+    if (bg > 0) return `백그라운드 ${bg}개`;
+    if (ids.some((id) => unreadSet.has(id))) return '새 응답';
+    return null;
+  };
 
   /** `tree`: a 메시지 편집 갈래 tree shown as this one row — a click opens its newest session. `project`: the 최근 view's meta label. */
   const row = (s: SessionEntry, group: string, tree?: BranchGroup<SessionEntry>, project?: string, keyHint?: string | null) => {
@@ -208,7 +226,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     // The row's menu acts on the session a click opens (the newest version of a 갈래 tree), and says which one it is.
     const order = members.map((id) => byId.get(id)).filter((x): x is SessionEntry => !!x).sort((a, b) => a.lastModified - b.lastModified);
     const engine = engineOf(target);
-    const which = members.length > 1 ? `갈래 ${order.findIndex((x) => x.sessionId === target.sessionId) + 1}/${members.length} · ${ago(target.lastModified)} 수정` : undefined;
+    const which = members.length > 1 ? `갈래 ${order.findIndex((x) => x.sessionId === target.sessionId) + 1}/${members.length} · ${ago(target.lastModified, now)} 수정` : undefined;
     return (
       <li key={s.sessionId} className={currentSessionId && members.includes(currentSessionId) ? 'active' : ''} title={target.title}
         // The second click of a double-click (rename) must not re-open the session.
@@ -230,7 +248,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           )}
           {/* meta + actions: one trailing group (a hover overlay with a mouse, line 2 + end column on touch / narrow) */}
           <span className="row-end">
-          <span className="session-meta" {...(s.imported ? { title: s.codexArchived ? 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다' : s.cwdMissing ? '폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다' : s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project, s.codexExec ? '자동 실행' : null, s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
+          <span className="session-meta" {...(s.imported ? { title: s.codexArchived ? 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다' : s.cwdMissing ? '폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다' : s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project, s.codexExec ? '자동 실행' : null, s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, status(members) ?? ago(s.lastModified, now)].filter(Boolean).join(' · ')}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
@@ -271,7 +289,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           {dot(d.sessionId)}
           <span className="session-title"><EngineMark engine="claude" decorative />{d.title}</span>
           <span className="row-end">
-          <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {ago(d.lastModified)}</span>
+          <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {status([d.sessionId]) ?? ago(d.lastModified, now)}</span>
           {onTogglePin && (
             <>
               <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="고정" aria-haspopup="menu" aria-expanded={menu === key}
@@ -390,7 +408,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
               <li key={`${h.sessionId}-${i}`} className="search-hit" title={`${h.title}\n${h.cwd}`} onClick={() => onOpenHit?.(h)}>
                 <span className="session-row">
                   <span className="session-title"><EngineMark engine={h.engine} decorative />{h.title}</span>
-                  <span className="session-meta">{h.role === 'user' ? '나' : h.engine === 'codex' ? 'GPT' : 'Claude'} · {ago(h.lastModified)}</span>
+                  <span className="session-meta">{h.role === 'user' ? '나' : h.engine === 'codex' ? 'GPT' : 'Claude'} · {ago(h.lastModified, now)}</span>
                 </span>
                 <span className="search-snippet">
                   {h.snippet.slice(0, h.matchStart)}<mark>{h.snippet.slice(h.matchStart, h.matchStart + h.matchLength)}</mark>{h.snippet.slice(h.matchStart + h.matchLength)}

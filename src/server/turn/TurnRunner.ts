@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { GEMINI_ACCOUNTS, SEAT_LABEL, isGeminiAccount, type Account, type GeminiAccount } from '../../shared/accounts';
-import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
+import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
@@ -109,6 +109,8 @@ export type TurnRunnerDeps = {
   maxRetries?: number;
 };
 
+/** What a turn the user stopped says, whatever the engine threw on the way out (the UI hides it as an error line). */
+export const ABORTED = '중단됨';
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
 
@@ -419,7 +421,7 @@ export class TurnRunner {
       const e = this.deps.index.lookup(sessionId);
       if (!st && (!e || e.account === 'gpt' || isGeminiAccount(e.account) || e.imported)) return { ok: false as const, error: 'Claude 대화만 삭제할 수 있습니다' };
       if (this.active.has(sessionId) || this.live.has(sessionId)) return { ok: false as const, error: '실행 중인 대화는 삭제할 수 없습니다 — 끝난 뒤 다시 시도하세요' };
-      const base: ClaudeSessionState = st ?? { sessionId, cwd: e!.cwd, account: e!.account as Account, projectDir: e!.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
+      const base: ClaudeSessionState = st ?? { sessionId, cwd: e!.cwd, account: e!.account as Account, projectDir: e!.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
       if ((await this.openElsewhere(base)) !== null) return { ok: false as const, error: '다른 곳(Desktop/CLI)에서 열려 있는 것 같아 삭제하지 않았습니다' };
       const copies = await findCopies(this.deps.projectsRoots, sessionId, base.projectDir, base.account).catch(() => []);
       try {
@@ -594,7 +596,7 @@ export class TurnRunner {
     if (!store.get(sessionId)) {
       const e = index.lookup(sessionId);
       if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return false;
-      await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL, ...(pin ? { accountPin: pin } : {}) });
+      await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL, ...(pin ? { accountPin: pin } : {}) });
       return true;
     }
     return store.setAccountPin(sessionId, pin);
@@ -621,7 +623,7 @@ export class TurnRunner {
     if (!st) {
       const e = index.lookup(sessionId);
       if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return false;
-      await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL, mode });
+      await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL, mode });
     } else if (isCodexState(st) || isGeminiState(st)) {
       return false;
     } else {
@@ -760,7 +762,7 @@ export class TurnRunner {
         }
         // Review M6: the audit log is best-effort; losing it must not lose the user's answer.
         try {
-          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, inputSha256: hashInput(pr.input) });
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision, source: 'user', inputSha256: hashInput(pr.input) });
         } catch (err) {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
@@ -770,7 +772,15 @@ export class TurnRunner {
       autoApprove: () => modeRef.mode === 'bypassPermissions',
       onAutoApproved: async (pr) => {
         try {
-          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision: 'auto', inputSha256: hashInput(pr.input) });
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision: 'auto', source: 'auto', inputSha256: hashInput(pr.input) });
+        } catch (err) {
+          console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
+        }
+      },
+      // Every other tool call (run or refused by a rule / the mode without a prompt, or by the handoff hook): one line each.
+      onToolAudit: async (t) => {
+        try {
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: t.toolName, decision: t.decision, source: t.source, inputSha256: hashInput(t.input) });
         } catch (err) {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
@@ -778,7 +788,7 @@ export class TurnRunner {
       onQuestion: async (q) => {
         const answers = await sink.askQuestion({ turnId: cur.turnId, sessionId: out.sessionId, cwd, ...q });
         try {
-          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: answers ? 'answered' : 'deny', inputSha256: hashInput(q.questions) });
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: answers ? 'answered' : 'deny', source: 'user', inputSha256: hashInput(q.questions) });
         } catch (err) {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
@@ -787,7 +797,7 @@ export class TurnRunner {
       onQuestionMalformed: async (input) => {
         try {
           const questions = input && typeof input === 'object' ? (input as { questions?: unknown }).questions : input;
-          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: 'deny', inputSha256: hashInput(questions) });
+          await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: 'AskUserQuestion', decision: 'deny', source: 'deck', inputSha256: hashInput(questions) });
         } catch (err) {
           console.error('deck: audit log write failed', err instanceof Error ? err.message : err);
         }
@@ -956,7 +966,7 @@ export class TurnRunner {
             const s = seg as Seg | null;
             seg = null;
             if (s) {
-              sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : displayError(ev.errorText, ev.stderr) });
+              sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : sink.signal.aborted ? ABORTED : displayError(ev.errorText, ev.stderr) });
             }
             await saveState(ev.ok);
             this.mirrorSoon(sessionId, sink, s?.turnId ?? cur.turnId);
@@ -1009,7 +1019,7 @@ export class TurnRunner {
       // 메시지 편집 갈래: a Claude session only (Codex / Gemini cannot resume at an entry).
       const st = deps.store.get(p.fork.from);
       const e = st ? null : deps.index.lookup(p.fork.from);
-      const parent: SessionState | null = st ?? (e && !(e.account === 'gpt' || isGeminiAccount(e.account)) ? { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL } : null);
+      const parent: SessionState | null = st ?? (e && !(e.account === 'gpt' || isGeminiAccount(e.account)) ? { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL } : null);
       if (!parent || isCodexState(parent) || isGeminiState(parent)) { sink.emit({ type: 'error', turnId: p.turnId, message: `편집할 Claude 세션을 찾을 수 없습니다: ${p.fork.from}` }); return; }
       return this.runClaude(p, parent, sink, '메시지 편집', attachments);
     }
@@ -1035,7 +1045,7 @@ export class TurnRunner {
         const e = deps.index.lookup(p.sessionId);
         // Codex sessions always have a state entry (D4); a 'gpt' index entry without one is a bug, not a resumable session.
         if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
-        state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: DEFAULT_MODEL };
+        state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
       }
     }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
@@ -1115,7 +1125,7 @@ export class TurnRunner {
       }
     }
     if (!res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit') this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit;
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : displayError(res.errorText, res.stderr) });
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? ABORTED : displayError(res.errorText, res.stderr) });
   }
 
   /** Explicit Gemini: a new session takes the first logged-in, non-cooled account (g1, then g2) and stays on it. */
@@ -1165,7 +1175,7 @@ export class TurnRunner {
       });
     }
     if (!res.ok && GEMINI_LIMIT_RE.test(res.errorText ?? '')) this.geminiCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : displayError(res.errorText, res.stderr) });
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? ABORTED : displayError(res.errorText, res.stderr) });
   }
 
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
@@ -1203,7 +1213,8 @@ export class TurnRunner {
   private async runClaudeTurn(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], early: string[], newSessionModel?: ClaudeModel): Promise<ClaudeSessionState | null> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
-    const sessionDefault = state?.defaultModel ?? newSessionModel ?? DEFAULT_MODEL;
+    // A new session keeps the model its first turn was sent with (자동's pick, else the picker's), else DEFAULT_MODEL.
+    const sessionDefault = state?.defaultModel ?? newSessionModel ?? (isClaudeModel(p.model) ? p.model : DEFAULT_MODEL);
     // 자동 on a later turn: the session keeps its model, and its auto effort unless the user picked one.
     if (p.model === 'auto' && p.effort === undefined) p = { ...p, effort: AUTO_EFFORT[sessionDefault] };
     const wantedClaude = isClaudeModel(p.model) ? p.model : undefined;
@@ -1308,7 +1319,7 @@ export class TurnRunner {
       if (res.ok) deps.usage.noteTurnOk(account);
       const failure = classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
       const badge = { account, model, reason, usage: res.usage, modelNote: note, ...pinMark() };
-      const shownError = displayError(res.errorText, res.stderr);
+      const shownError = sink.signal.aborted ? ABORTED : displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
         announceMode();

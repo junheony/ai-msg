@@ -3,7 +3,17 @@ export type ClaudeModel = 'sonnet' | 'opus' | 'fable';
 /** Spec §4.2: Haiku and Luna are never used. */
 export const CLAUDE_MODELS: readonly ClaudeModel[] = ['sonnet', 'opus', 'fable'];
 
-export const DEFAULT_MODEL: ClaudeModel = 'opus';
+/**
+ * A new Claude session nobody picked a model for runs on Fable. Fable used ≥ FABLE_MAX_PCT (or unknown) on the account the
+ * turn lands on → that turn runs on Opus (ModelPolicy.resolveModel); no Fable-eligible account at all → routed as Opus.
+ */
+export const DEFAULT_MODEL: ClaudeModel = 'fable';
+
+/**
+ * The stored default for a Claude session deck did not start (Claude Desktop / a terminal) when deck first records it:
+ * not Fable — a turn sent with no model (or 자동) must not silently switch such a session's model (and cold its cache).
+ */
+export const IMPORTED_DEFAULT_MODEL: ClaudeModel = 'opus';
 
 /**
  * D1: GPT models are Sol (default) and Astra. The deck id 'gpt-6-sol' is persisted (localStorage, session settings,
@@ -37,9 +47,9 @@ export const MODEL_LABEL: Record<AnyModel, string> = { sonnet: 'Sonnet', opus: '
  * "Fable 5.1". GPT names from codex-cli 0.159.2's ~/.codex/models_cache.json (display_name).
  */
 export const MODEL_INFO: Record<AnyModel, { name: string; description: string }> = {
-  opus: { name: 'Opus 5.5', description: '복잡한 작업과 일상 작업 모두에' },
+  opus: { name: 'Opus 5.5', description: '복잡한 작업과 일상 작업 모두에 · Fable 여유가 없을 때 대신 실행' },
   sonnet: { name: 'Sonnet 5.5', description: '간단한 작업에 가장 효율적' },
-  fable: { name: 'Fable 5.1', description: '가장 어려운 문제용 · 주간 80% 넘으면 Opus 로' },
+  fable: { name: 'Fable 5.1', description: '기본 모델 · 가장 뛰어난 추론 · Fable 주간 80% 넘으면 Opus 로' },
   'gpt-6-sol': { name: 'GPT-6.1-Sol', description: '코딩과 일상 작업의 주력 모델' },
   'gpt-6-astra': { name: 'GPT-6-Astra', description: '가장 까다로운 작업용 최상위 모델' },
   'gemini-pro': { name: 'Gemini Pro', description: 'gemini-cli 의 pro 별칭 · 서버가 현재 Pro 모델로 연결' },

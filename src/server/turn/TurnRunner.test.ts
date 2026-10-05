@@ -84,11 +84,11 @@ describe('TurnRunner', () => {
     const eng = new StubEngine(() => ok('new1', [{ kind: 'rate_limit', info: { status: 'allowed', fiveHour: { usedPct: 9, resetsAt: null }, weekly: { usedPct: 4, resetsAt: null } } }]));
     const c = await ctx(eng);
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
-    expect(eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: null, model: 'opus', cwd: '/w/new', prompt: 'hi' });
-    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ turnId: 't1', account: 'b', model: 'opus', attempt: 0 });
+    expect(eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: null, model: 'fable', cwd: '/w/new', prompt: 'hi' });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ turnId: 't1', account: 'b', model: 'fable', attempt: 0 });
     expect(msgsOf(c, 'delta')).toEqual([{ type: 'delta', turnId: 't1', sessionId: 'new1', cwd: '/w/new', text: 'ok' }]);
     const res = msgsOf(c, 'turn_result')[0];
-    expect(res).toMatchObject({ type: 'turn_result', ok: true, sessionId: 'new1', text: 'ok', badge: { account: 'b', model: 'opus', usage: { outputTokens: 4 } } });
+    expect(res).toMatchObject({ type: 'turn_result', ok: true, sessionId: 'new1', text: 'ok', badge: { account: 'b', model: 'fable', usage: { outputTokens: 4 } } });
     expect(c.deps.store.get('new1')).toMatchObject({ account: 'b', cwd: '/w/new', lastTurnAtMs: NOW, projectDir: path.join(c.roots.b, '-w-new') });
     expect(c.deps.usage.snapshot().accounts.b.fiveHour?.usedPct).toBe(9);
   });
@@ -452,6 +452,66 @@ describe('TurnRunner', () => {
     expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ badge: { model: 'opus', modelNote: expect.stringContaining('Fable') } });
   });
 
+  it('a turn the user stopped reports 중단됨 (no SDK text, no stderr tail); a real failure keeps its error', async () => {
+    const ac = new AbortController();
+    const eng = new StubEngine(() => { ac.abort(); return [{ kind: 'init', sessionId: 'x1', model: 'm' }, failResult('Claude Code process aborted by user', { sessionId: 'x1', stderr: 'at Query.readMessages (sdk.mjs:1)\nError: aborted' })]; });
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, { ...c.sink, signal: ac.signal });
+    expect(msgsOf(c, 'turn_result')).toMatchObject([{ ok: false, errorText: '중단됨' }]);
+    const eng2 = new StubEngine(() => [{ kind: 'init', sessionId: 'x2', model: 'm' }, failResult('boom', { sessionId: 'x2' })]);
+    const c2 = await ctx(eng2);
+    await new TurnRunner(c2.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c2.sink);
+    expect(msgsOf(c2, 'turn_result')).toMatchObject([{ ok: false, errorText: 'boom' }]);
+  });
+
+  it('default model: a new session with no model runs on Fable; Fable ≥80% everywhere → Opus, never a failure', async () => {
+    const eng = new StubEngine(() => ok('d1'));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls[0]?.model).toBe('fable');
+    expect(c.deps.store.get('d1')).toMatchObject({ defaultModel: 'fable' });
+    const eng2 = new StubEngine(() => ok('d2'));
+    const c2 = await ctx(eng2, {}, await usageWith([13, 7, 85], [2, 3, 90], [0, 50, 80]));
+    await new TurnRunner(c2.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c2.sink);
+    expect(eng2.calls[0]?.model).toBe('opus');
+    expect(msgsOf(c2, 'turn_result')[0]).toMatchObject({ ok: true, badge: { model: 'opus', modelNote: expect.stringContaining('Fable') } });
+    // The router still picked a usable account (not the protected one) though no account is Fable-eligible.
+    expect(eng2.calls[0]?.account).toBe('b');
+  });
+
+  it('a session deck did not start (index only) keeps Opus as its default, not Fable', async () => {
+    const eng = new StubEngine(() => ok(SID));
+    const c = await ctx(eng);
+    await seedSession(c, 'b');
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'hi' }, c.sink);
+    expect(eng.calls[0]?.model).toBe('opus');
+    expect(c.deps.store.get(SID)).toMatchObject({ defaultModel: 'opus' });
+  });
+
+  it('a send without a model runs on the session\'s stored default (the pane picked none)', async () => {
+    const eng = new StubEngine(() => ok(SID));
+    const c = await ctx(eng);
+    const srcDir = await seedSession(c, 'b');
+    await c.deps.store.set({ sessionId: SID, cwd: '/w/one', account: 'b', projectDir: srcDir, lastTurnAtMs: null, justCompacted: false, defaultModel: 'sonnet' });
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'hi' }, c.sink);
+    expect(eng.calls[0]?.model).toBe('sonnet');
+  });
+
+  it('audits every tool call once with its decision source (rule / user / auto)', async () => {
+    const eng = new StubEngine(async (req) => {
+      await req.onToolAudit?.({ toolName: 'Read', input: { file_path: '/x', secret: 'TOKEN=abc' }, toolUseId: 'r1', decision: 'allow', source: 'cli' });
+      await req.onToolAudit?.({ toolName: 'Bash', input: { command: 'rm' }, toolUseId: 'r2', decision: 'deny', source: 'rule' });
+      await req.onPermission({ toolName: 'Write', input: { file_path: '/y' }, toolUseId: 'u1' });
+      return ok('au1');
+    });
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 'tA', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    const raw = await fs.readFile(c.deps.auditFile, 'utf8');
+    expect(raw).not.toContain('TOKEN=abc');
+    const lines = raw.trim().split('\n').map((l) => JSON.parse(l) as { toolName: string; decision: string; source: string; turnId: string });
+    expect(lines.map((l) => [l.toolName, l.decision, l.source, l.turnId])).toEqual([['Read', 'allow', 'cli', 'tA'], ['Bash', 'deny', 'rule', 'tA'], ['Write', 'once', 'user', 'tA']]);
+  });
+
   it('effort travels to the Claude engine and survives a Fable → Opus downgrade; absent → no effort', async () => {
     const eng = new StubEngine(() => ok('e1'));
     const c = await ctx(eng, {}, await usageWith([13, 7, 85], [2, 3, 90], [0, 50, 80]));
@@ -649,7 +709,7 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'gpt', reason: expect.stringContaining('→ GPT') });
     const d = await ctx(new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]), { codex: null });
     await new TurnRunner(d.deps).run({ turnId: 't6', cwd: '/w', sessionId: null, text: 'x', engine: 'codex', model: 'gpt-6-astra' }, d.sink);
-    expect(d.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'b', engine: 'claude', model: 'opus', reason: expect.stringContaining('codex CLI 없음 → Claude') });
+    expect(d.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'b', engine: 'claude', model: 'fable', reason: expect.stringContaining('codex CLI 없음 → Claude') });
   });
 });
 

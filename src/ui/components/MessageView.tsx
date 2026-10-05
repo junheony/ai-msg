@@ -12,7 +12,7 @@ import { EditIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
 import { RoleBadge } from './RoleBadge';
 import { ToolCalls } from './ToolCallView';
-import { TurnBadge, isFailedTurn, isStoppedTurn } from './TurnBadge';
+import { TurnBadge, isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
 
 /** Plain text of a rendered markdown subtree (code blocks arrive as nested elements). */
 function textOf(node: ReactNode): string {
@@ -321,7 +321,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
     );
   }
   if (item.kind === 'system') return <SystemRow item={item} />;
-  const stopped = !!item.badge && !item.streaming && isStoppedTurn({ badge: item.badge, error: item.error, text: item.text });
+  const stopped = !!item.badge && !item.streaming && isStoppedTurn({ badge: item.badge, error: item.error, text: item.text, interrupted: !!item.interrupted });
   const retry = last && !item.streaming ? actions.onRetry : undefined;
   const hasActions = !item.streaming && (!!item.text || !!retry);
   return (
@@ -332,7 +332,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
       <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} />
       {item.text && <Markdown text={item.text} />}
       {item.streaming && <span className="cursor">▍</span>}
-      {item.error && !(stopped && item.error === '중단됨') && <div className="error">오류: {item.error}</div>}
+      {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
       {(item.badge || item.toolCalls.length > 0 || hasActions) && (
         <div className="turn-foot">
           {hasActions && (
@@ -341,7 +341,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
               {retry && <button type="button" className="msg-act" aria-label="재시도" title="재시도" onClick={retry}><RetryIcon /></button>}
             </div>
           )}
-          {item.badge && <TurnBadge badge={item.badge} stopped={stopped} failed={stopped && isFailedTurn(item)} cacheNote={item.cacheNote ?? null} />}
+          {item.badge && <TurnBadge badge={item.badge} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} />}
           <RoleBadge roles={roleSummary(item.toolCalls)} />
         </div>
       )}

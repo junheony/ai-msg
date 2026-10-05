@@ -10,14 +10,30 @@ export function OpenAIMark({ className }: { className: string }) {
   );
 }
 
+const CLAUDE_RAYS = Array.from({ length: 12 }, (_, i) => ({ angle: i * 30, len: i % 2 ? 8.2 : 10.4 }));
+
+/**
+ * Claude's multi-ray star as inline SVG in #D97757. A text ✳ (U+2733) is drawn as a green emoji on many systems, so the
+ * mark is never a glyph. Same box as OpenAIMark (24-unit viewBox, sized by its class / 1em).
+ */
+export function ClaudeMark({ className }: { className: string }) {
+  return (
+    <svg className={`claude-mark ${className}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g stroke="#D97757" strokeWidth="2.3" strokeLinecap="round">
+        {CLAUDE_RAYS.map(({ angle, len }) => <line key={angle} x1="12" y1="10.6" x2="12" y2={12 - len} transform={`rotate(${angle} 12 12)`} />)}
+      </g>
+    </svg>
+  );
+}
+
 /** Which engine a session runs on: its own field, else what its seat implies. */
 export function engineOf(s: { engine?: EngineKind | null; account?: Seat }): EngineKind {
   return s.engine ?? (s.account === 'gpt' ? 'codex' : isGeminiAccount(s.account) ? 'gemini' : 'claude');
 }
 
 /**
- * The engine mark before a session's title (the usage cards' marks): Claude ✳ in its color, the OpenAI blossom for Codex.
- * No text content (the ✳ is drawn by CSS), so the title's text and truncation stay as they were. Gemini (or anything
+ * The engine mark before a session's title (the usage cards' marks): the Claude star, the OpenAI blossom for Codex.
+ * No text content (both are SVG), so the title's text and truncation stay as they were. Gemini (or anything
  * else) has no mark. `decorative`: dense lists whose row already says what it is — hidden from assistive tech, tooltip kept.
  */
 export function EngineMark({ engine, decorative = false }: { engine: EngineKind; decorative?: boolean }) {
@@ -26,7 +42,7 @@ export function EngineMark({ engine, decorative = false }: { engine: EngineKind;
   const a11y = decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label };
   return (
     <span className={`engine-mark ${engine}`} title={label} {...a11y}>
-      {engine === 'codex' && <OpenAIMark className="engine-mark-svg" />}
+      {engine === 'codex' ? <OpenAIMark className="engine-mark-svg" /> : <ClaudeMark className="engine-mark-svg" />}
     </span>
   );
 }

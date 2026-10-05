@@ -6,23 +6,34 @@ function k(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
-/** The server reports an interrupted turn as errorText '중단됨' (TurnRunner); SDK/Codex aborts say abort/interrupt. */
-const ABORT_ERROR = /중단|abort|interrupt|cancel/i;
+/** The server's text for an interrupted turn (TurnRunner ABORTED). */
+const ABORTED = '중단됨';
+/** An older server passed the SDK's own text through for a user interrupt. */
+const OLD_SERVER_ABORT = /aborted by user/i;
+
+/**
+ * The turn was stopped by the user, not failed: the server says exactly '중단됨', this client sent an interrupt for it
+ * (중단, 지금 전송), or an older server's raw SDK "aborted by user". Other abort/cancel texts (timeouts, API or MCP
+ * cancellations) are real failures and keep their "오류:" line.
+ */
+export function isAbortError(error: string | null | undefined, interrupted = false): boolean {
+  return !!error && (interrupted || error.trim() === ABORTED || OLD_SERVER_ABORT.test(error));
+}
 
 /**
  * A turn that never really ran: interrupted, or finished with no input and no output tokens, or
  * failed before producing any text. Its footer says "중단됨" instead of a row of zeros.
  */
-export function isStoppedTurn(t: { badge: Badge; error?: string | null; text?: string }): boolean {
+export function isStoppedTurn(t: { badge: Badge; error?: string | null; text?: string; interrupted?: boolean }): boolean {
   const u = t.badge.usage;
-  if (t.error && ABORT_ERROR.test(t.error)) return true;
+  if (isAbortError(t.error, t.interrupted)) return true;
   if (u.inputTokens === 0 && u.outputTokens === 0) return true;
   return !!t.error && !(t.text ?? '').trim() && u.outputTokens === 0;
 }
 
 /** A stopped turn that ended on a real error (not an interrupt): its footer says "실패" rather than "중단됨". */
-export function isFailedTurn(t: { error?: string | null }): boolean {
-  return !!t.error && !ABORT_ERROR.test(t.error);
+export function isFailedTurn(t: { error?: string | null; interrupted?: boolean }): boolean {
+  return !!t.error && !isAbortError(t.error, t.interrupted);
 }
 
 /** Turn footer: account tile, model pill, token counts (or "중단됨" / "실패"), then the routing reason — one muted line. */

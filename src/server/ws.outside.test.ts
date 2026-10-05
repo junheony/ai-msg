@@ -204,6 +204,75 @@ describe('ws: outside poll, per socket', () => {
   });
 });
 
+describe('ws: the sidebar times stay current', () => {
+  const lastOf = (m: { projects: { sessions: { sessionId: string; lastModified: number }[] }[] }, sid: string) => m.projects.flatMap((p) => p.sessions).find((s) => s.sessionId === sid)?.lastModified;
+
+  it('the poll tick sends a fresh index when a known transcript was written outside deck (no pane open)', async () => {
+    const S = '5c5c5c5c-5c5c-45c5-85c5-5c5c5c5c5c5c';
+    const cwd = await seed(S, 'times1');
+    const a = await client();
+    const before = lastOf(await a.next('hello'), S)!;
+    expect(before).toBeGreaterThan(0);
+    const later = new Date(before + 120_000);
+    await fs.appendFile(fileOf(cwd, S), line('cli', 'from a terminal'));
+    await fs.utimes(fileOf(cwd, S), later, later);
+    expect(lastOf(await a.next('index', (m) => (lastOf(m, S) ?? 0) > before), S)).toBe(later.getTime());
+    a.close();
+  });
+
+  it('a turn in an existing session updates that session\'s entry right after the turn', async () => {
+    const S = '5d5d5d5d-5d5d-45d5-85d5-5d5d5d5d5d5d';
+    const cwd = await seed(S, 'times2');
+    fake = fakeSdk();
+    const a = await client();
+    await a.next('hello');
+    const touch = vi.spyOn(index, 'touch');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
+    const t = await a.next('turn_started');
+    fake.push(sdk.init(S), sdk.result('done', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    await vi.waitFor(() => expect(touch).toHaveBeenCalledWith([S]));
+    touch.mockRestore();
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+  });
+});
+
+describe('ws: a running turn\'s own writes', () => {
+  const lastOf = (m: { projects: { sessions: { sessionId: string; lastModified: number }[] }[] }, sid: string) => m.projects.flatMap((p) => p.sessions).find((s) => s.sessionId === sid)?.lastModified;
+
+  it('a Claude history names the model a send without one runs on (sessionModel): the imported default for a session deck never ran', async () => {
+    const S = '5f5f5f5f-5f5f-45f5-85f5-5f5f5f5f5f5f';
+    await seed(S, 'model1');
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'open_session', sessionId: S });
+    expect((await a.next('history', (m) => m.sessionId === S)).sessionModel).toBe('opus');
+    a.close();
+  });
+
+  it('the poll does not broadcast for a transcript that grows only because a deck turn runs; the turn\'s end does', async () => {
+    const S = '5e5e5e5e-5e5e-45e5-85e5-5e5e5e5e5e5e';
+    const cwd = await seed(S, 'times3');
+    fake = fakeSdk();
+    const a = await client();
+    const before = lastOf(await a.next('hello'), S)!;
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
+    const t = await a.next('turn_started');
+    const later = new Date(before + 120_000);
+    await fs.appendFile(fileOf(cwd, S), line('sdk-ts', 'streaming', 'assistant'));
+    await fs.utimes(fileOf(cwd, S), later, later);
+    // Several poll ticks (40 ms each) while the turn runs: no index moves this session.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(a.got.some((m) => m.type === 'index' && (lastOf(m, S) ?? 0) > before)).toBe(false);
+    fake.push(sdk.init(S), sdk.result('done', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    expect(lastOf(await a.next('index', (m) => (lastOf(m, S) ?? 0) > before), S)).toBeGreaterThan(before);
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+  });
+});
+
 describe('ws: deck follows a conversation that went on outside it', () => {
   /** Starts a turn that leaves the process held open with one background task. */
   async function heldOpen(S: string, name: string) {

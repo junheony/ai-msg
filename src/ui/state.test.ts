@@ -30,10 +30,10 @@ describe('reducer', () => {
     expect(engineOf('gemini-flash')).toBe('gemini');
     expect(modelFor('gemini', 'opus')).toBe('gemini-pro');
     expect(modelFor('gemini', 'gemini-flash')).toBe('gemini-flash');
-    expect(modelFor('claude', 'gemini-pro')).toBe('opus');
+    expect(modelFor('claude', 'gemini-pro')).toBe('fable');
     let s = reducer(initialState, { type: 'set_model', model: 'gemini-flash' });
     s = reducer(s, { type: 'set_engine', engine: 'auto' });
-    expect(s.panes[0]?.model).toBe('opus');
+    expect(s.panes[0]?.model).toBe('fable');
   });
 
   it('pins come from hello/index and set_pins; an index without pins keeps them (F2)', () => {
@@ -313,7 +313,7 @@ describe('panes (D6)', () => {
     expect(pane(s)).toMatchObject({ engine: 'codex', model: 'gpt-6-sol' });
     s = reducer(s, { type: 'set_model', model: 'gpt-6-astra' });
     s = reducer(s, { type: 'set_engine', engine: 'claude' });
-    expect(pane(s).model).toBe('opus');
+    expect(pane(s).model).toBe('fable');
     s = reducer(s, { type: 'set_sandbox', sandbox: 'workspace-write' });
     expect(pane(s).sandbox).toBe('workspace-write');
     expect(play([{ type: 'hello', usage, projects: [], running: [], codex: { available: true } }]).codexAvailable).toBe(true);
@@ -339,6 +339,7 @@ describe('panes (D6)', () => {
     let s = reducer(initialState, { type: 'set_model', model: 'gpt-6-astra' });
     s = reducer(s, { type: 'open', sessionId: 'c1', cwd: '/w', title: 'c' });
     s = play([hist('c1', 'claude')], s);
+    // Not picked for this session: it shows the session's own model (an older server sends none → the imported default).
     expect(pane(s).model).toBe('opus');
     s = reducer(s, { type: 'set_model', model: 'fable' });
     s = play([hist('c1', 'claude')], s);
@@ -622,6 +623,55 @@ describe('message queue (ux-state)', () => {
     s = result(s, 't2', true);
     expect(nextQueued(pane(s))?.text).toBe('a');
     expect(pane(reducer(s, { type: 'queue_send_now', id: 'nope' }))).toBe(pane(s));
+  });
+
+  describe('지금 전송 on a message already sent into the running turn (전달 대기)', () => {
+    const steering = () => {
+      let s = reducer(running(), { type: 'queue_add', text: 'a' });
+      s = reducer(s, { type: 'queue_add', text: 'steer me', steerId: 'k1' });
+      s = reducer(s, { type: 'queue_add', text: 'c' });
+      return reducer(s, { type: 'queue_send_now', id: pane(s).queue[1]!.id });
+    };
+    const rejected = (s: AppState) => play([{ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: 'k1', message: '세션 프로세스가 끝나 턴이 끝난 뒤 보냅니다' }], s);
+    const delivered = (s: AppState) => play([{ type: 'steer_delivered', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: 'k1', prompt: { text: 'steer me' } } as ServerMessage], s);
+
+    it('interrupted before it went in: waits for the server to hand it back, then goes out once as the next turn; the rest keep their order and the queue does not stay paused', () => {
+      let s = steering();
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['steer me', 'a', 'c']);
+      s = result(s, 't1', false); // the interrupt ended the turn
+      expect(nextQueued(pane(s))).toBeNull(); // still in the dead process's hands: not sent twice
+      s = rejected(s); // the process ended without taking it
+      const now = nextQueued(pane(s))!;
+      expect(now.text).toBe('steer me');
+      expect(now.steer).toBeUndefined();
+      s = reducer(s, { type: 'queue_remove', id: now.id });
+      expect(nextQueued(pane(s))).toBeNull(); // nothing else while the queue is paused by the stop
+      s = reducer(s, { type: 'sent', text: 'steer me', clientRef: 'r2' });
+      expect(pane(s).queuePaused).toBe(false);
+      expect(pane(s).queueSendNow).toBeNull();
+      s = result(started(s, 't2', 'r2'), 't2', true);
+      expect(pane(s).queue.map((q) => q.text)).toEqual(['a', 'c']);
+      expect(nextQueued(pane(s))?.text).toBe('a');
+    });
+
+    it('it went in just before the stop (steer_delivered, before or after the result): never sent again', () => {
+      for (const order of ['before', 'after'] as const) {
+        let s = steering();
+        s = order === 'before' ? result(delivered(s), 't1', false) : delivered(result(s, 't1', false));
+        expect(pane(s).queue.map((q) => q.text)).toEqual(['a', 'c']);
+        expect(pane(s).queueSendNow).toBeNull();
+        expect(pane(s).items.filter((it) => it.kind === 'user' && it.text === 'steer me')).toHaveLength(1);
+        expect(nextQueued(pane(s))).toBeNull(); // the stop paused the rest, as any stop does
+        // A late "already in" answer for the same id changes nothing.
+        expect(pane(play([{ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: 'k1', message: 'x', code: 'already_accepted' }], s)).queue.map((q) => q.text)).toEqual(['a', 'c']);
+      }
+    });
+
+    it('no answer at all (lost): after the steer timeout it still goes out, once', () => {
+      let s = result(steering(), 't1', false);
+      s = reducer(s, { type: 'steer_lost', steerId: 'k1' });
+      expect(nextQueued(pane(s))?.text).toBe('steer me');
+    });
   });
 
   it('stop / a failed turn pause the queue (kept); resume or a manual send unpause; open drops it', () => {

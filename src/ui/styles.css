@@ -109,6 +109,9 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .note { color: var(--warn); font-size: calc(13px * var(--font-scale, 1)); }
 .center { display: flex; align-items: center; justify-content: center; height: 100%; }
 .spark { color: var(--accent); font-weight: 700; display: inline-block; line-height: 1; }
+/* The Claude star (ClaudeMark): an SVG sized by the font, never a ✳ glyph (drawn as a green emoji on many systems). */
+.claude-mark { display: inline-block; width: 1em; height: 1em; vertical-align: -.125em; flex-shrink: 0; }
+svg.spark { transform-box: fill-box; transform-origin: center; }
 .spark.spin { animation: spark-spin 2.4s linear infinite; }
 @keyframes spark-spin { to { transform: rotate(360deg); } }
 
@@ -473,12 +476,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-card.current { background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
 .usage-dot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar), 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); }
 .usage-id { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 24px; line-height: 1; flex-shrink: 0; }
-.usage-mark.claude { color: var(--accent); font-size: calc(13px * var(--font-scale, 1)); font-weight: 700; }
+.usage-mark.claude { width: 14px; height: 14px; flex-shrink: 0; }
 .usage-mark.gpt { width: 14px; height: 14px; flex-shrink: 0; color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
 /* Engine mark at the start of a session title (sidebar, 최근 대화 cards, ⌘K, pane header): inline inside the truncating
    title, so it never wraps or adds height and the ellipsis only eats the text after it. Same marks as the usage cards. */
 .engine-mark { display: inline-block; width: 1em; height: 1em; margin-right: .4em; vertical-align: -.14em; line-height: 1; text-align: center; flex-shrink: 0; }
-.engine-mark.claude::before { content: '✳'; color: var(--accent); font-weight: 700; font-size: .92em; }
 .engine-mark.codex { color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
 .engine-mark-svg { display: block; width: 100%; height: 100%; }
 .usage-letter { font-size: calc(15px * var(--font-scale, 1)); font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
@@ -543,7 +545,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .usage-card { flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 7px 5px; border-radius: 10px; cursor: pointer; }
   .usage-dot { top: 6px; right: 6px; width: 5px; height: 5px; }
   .usage-id { flex-direction: row; justify-content: flex-start; gap: 4px; min-width: 0; height: 15px; }
-  .usage-mark.claude { font-size: calc(11px * var(--font-scale, 1)); }
+  .usage-mark.claude { width: 12px; height: 12px; }
   .usage-mark.gpt { width: 12px; height: 12px; }
   .usage-letter { font-size: calc(14px * var(--font-scale, 1)); }
   .usage-card.gpt .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
@@ -1329,7 +1331,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .usage-card { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto 3px; align-items: center; column-gap: 6px; row-gap: 4px; padding: 5px 8px 6px; border-radius: 9px; cursor: pointer; overflow: hidden; }
   .usage-dot { top: 4px; right: 4px; width: 5px; height: 5px; }
   .usage-id { flex-direction: row; justify-content: flex-start; gap: 3px; min-width: 0; height: auto; }
-  .usage-mark.claude { font-size: calc(11px * var(--font-scale, 1)); }
+  .usage-mark.claude { width: 12px; height: 12px; }
   .usage-mark.gpt { width: 12px; height: 12px; }
   .usage-letter { font-size: calc(14px * var(--font-scale, 1)); }
   .usage-card.gpt .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }

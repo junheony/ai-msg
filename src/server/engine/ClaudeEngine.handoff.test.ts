@@ -40,10 +40,68 @@ describe('buildOptions: handoff note turn (noTools)', () => {
 
   it('keeps the rest of the options (tools, model, resume) as a normal turn so the cached prefix still hits', () => {
     const { hooks, canUseTool: _a, abortController: _b, stderr: _c, ...withTools } = buildOptions(req({ noTools: true }), deps);
-    const { canUseTool: _d, abortController: _e, stderr: _f, ...normal } = buildOptions(req(), deps);
-    expect(hooks).toBeDefined();
-    expect(normal).not.toHaveProperty('hooks');
+    const { hooks: normalHooks, canUseTool: _d, abortController: _e, stderr: _f, ...normal } = buildOptions(req(), deps);
+    expect(hooks?.PreToolUse).toHaveLength(1);
+    expect(normalHooks).not.toHaveProperty('PreToolUse');
+    expect(Object.keys(normalHooks ?? {}).sort()).toEqual(['PermissionDenied', 'PostToolUse', 'PostToolUseFailure']);
     expect(withTools).toEqual(normal);
+  });
+});
+
+describe('buildOptions: one audit line per tool call', () => {
+  type Audit = Parameters<NonNullable<TurnRequest['onToolAudit']>>[0];
+  const fire = (o: Options, ev: 'PostToolUse' | 'PostToolUseFailure' | 'PermissionDenied', id: string) =>
+    ((o.hooks?.[ev] ?? []) as HookCallbackMatcher[])[0]!.hooks[0]!({ hook_event_name: ev, tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: id, session_id: 's1', transcript_path: '', cwd: '/w' } as never, id, { signal: new AbortController().signal });
+
+  it('reports a call the CLI ran without asking (no canUseTool) once as cli, skips calls canUseTool already decided, and reports denials', async () => {
+    const got: Audit[] = [];
+    const o = buildOptions(req({ onToolAudit: async (e) => { got.push(e); } }), deps);
+    expect(await fire(o, 'PostToolUse', 'r1')).toEqual({ continue: true });
+    await o.canUseTool!('Bash', { command: 'ls' }, { ...(ctx as object), toolUseID: 'c1' } as never);
+    await fire(o, 'PostToolUse', 'c1');
+    await fire(o, 'PostToolUseFailure', 'r2');
+    await fire(o, 'PermissionDenied', 'r3');
+    await fire(o, 'PostToolUse', 'r1');
+    expect(got.map((e) => [e.toolUseId, e.decision, e.source])).toEqual([['r1', 'allow', 'cli'], ['r2', 'allow', 'cli'], ['r3', 'deny', 'cli']]);
+  });
+
+  it('a handoff note turn reports its own refusal as deck, and a failing audit sink never breaks the turn', async () => {
+    const got: Audit[] = [];
+    const o = buildOptions(req({ noTools: true, onToolAudit: async (e) => { got.push(e); throw new Error('disk full'); } }), deps);
+    expect(await runHook(o)).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+    expect(got.map((e) => [e.toolName, e.decision, e.source])).toEqual([['Bash', 'deny', 'deck']]);
+  });
+});
+
+describe('ClaudeEngine: denials from the stream are audited (deck\'s modes never fire the PermissionDenied hook)', () => {
+  type Audit = Parameters<NonNullable<TurnRequest['onToolAudit']>>[0];
+  const call = (id: string, input: unknown) => ({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id, name: 'Bash', input }] }, session_id: 's1' });
+
+  it('a permission_denied frame and result.permission_denials: one line per call, rule vs cli, never one canUseTool decided', async () => {
+    const f = fakeSdk();
+    const queryFn = ((p: Parameters<typeof f.queryFn>[0]) => {
+      // A call deck itself asked the user about (and audits itself): canUseTool marks it before it runs.
+      void p.options!.canUseTool!('Bash', { command: 'rm' }, { ...(ctx as object), toolUseID: 'c1' } as never);
+      return f.queryFn(p);
+    }) as typeof f.queryFn;
+    f.push(
+      sdk.init('s1'),
+      call('d1', { command: 'curl x' }),
+      { type: 'system', subtype: 'permission_denied', tool_name: 'Bash', tool_use_id: 'd1', decision_reason_type: 'rule', message: 'denied', uuid: 'u1', session_id: 's1' },
+      call('d2', { command: 'sudo ls' }),
+      { ...sdk.result('done', 's1'), permission_denials: [
+        { tool_name: 'Bash', tool_use_id: 'd1', tool_input: { command: 'curl x' } },
+        { tool_name: 'Bash', tool_use_id: 'd2', tool_input: { command: 'sudo ls' } },
+        { tool_name: 'Bash', tool_use_id: 'c1', tool_input: { command: 'rm' } },
+      ] },
+    );
+    f.end();
+    const got: Audit[] = [];
+    for await (const _ of new ClaudeEngine({ queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ onToolAudit: async (e) => { got.push(e); } }))) { /* drain */ }
+    expect(got).toEqual([
+      { toolName: 'Bash', input: { command: 'curl x' }, toolUseId: 'd1', decision: 'deny', source: 'rule' },
+      { toolName: 'Bash', input: { command: 'sudo ls' }, toolUseId: 'd2', decision: 'deny', source: 'cli' },
+    ]);
   });
 });
 

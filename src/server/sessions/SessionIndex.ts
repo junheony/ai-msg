@@ -196,6 +196,28 @@ export class SessionIndex {
     this.desktopList = this.desktopList.map((d) => this.decorate(d));
   }
 
+  /**
+   * The cheap path next to `refresh`: re-stats the transcripts already listed (all, or only `sessionIds`' copies) and
+   * takes their new mtime / size — no directory walk, no head read (~1 ms for a few hundred files vs ~300 ms for a
+   * rescan). A vanished file is left for the next rescan. Regroups and returns true only when something moved.
+   */
+  async touch(sessionIds?: string[], skip?: ReadonlySet<string>): Promise<boolean> {
+    const want = sessionIds ? new Set(sessionIds) : null;
+    const list = this.entries.filter((e) => (!want || want.has(e.sessionId)) && !skip?.has(e.sessionId));
+    const stats = await Promise.all(list.map((e) => fs.stat(e.file).catch(() => null)));
+    let changed = false;
+    list.forEach((e, i) => {
+      const st = stats[i];
+      if (!st || (st.mtimeMs === e.lastModified && st.size === e.sizeBytes)) return;
+      // In place: `byId` holds these same objects.
+      e.lastModified = st.mtimeMs;
+      e.sizeBytes = st.size;
+      changed = true;
+    });
+    if (changed) this.grouped = this.group(this.entries);
+    return changed;
+  }
+
   /** Called when the background Codex read (see `refresh`) has added threads. */
   onChange: (() => void) | null = null;
 

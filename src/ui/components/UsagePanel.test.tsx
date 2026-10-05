@@ -111,7 +111,8 @@ describe('UsagePanel chips', () => {
     const pop = screen.getByRole('tooltip');
     expect(pop.textContent).toContain('2시간 30분 후 리셋');
     expect(pop.textContent).toContain('리셋 시각 없음');
-    expect(screen.getByTestId('account-a').querySelector('.usage-mark.claude')!.textContent).toBe('✳');
+    expect(screen.getByTestId('account-a').querySelector('svg.usage-mark.claude.claude-mark')).not.toBeNull();
+    expect(screen.getByTestId('account-a').textContent).not.toContain('✳');
     expect(screen.getByTestId('account-b').querySelector('.usage-dot')).toBeTruthy();
     expect(screen.getByTestId('account-a').querySelector('.usage-dot')).toBeNull();
     fireEvent.click(screen.getByTestId('account-a'));

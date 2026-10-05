@@ -31,8 +31,8 @@ describe('Pane (D6)', () => {
     expect(screen.queryByLabelText('패널 닫기')).toBeNull();
     fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: 'again' } });
     fireEvent.click(screen.getByText('보내기'));
-    // PF13: a Claude session is never sent a GPT model (falls back to the Claude default).
-    expect(send).toHaveBeenLastCalledWith({ type: 'send', sessionId: 's1', cwd: '/w', text: 'again', model: 'opus', effort: 'high', attachments: ['a1'], clientRef: expect.any(String) });
+    // PF13: a Claude session is never sent a GPT model; with none picked for it, it gets none (runs on its own default).
+    expect(send).toHaveBeenLastCalledWith({ type: 'send', sessionId: 's1', cwd: '/w', text: 'again', effort: 'high', attachments: ['a1'], clientRef: expect.any(String) });
     const ref2 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
     expect(ref2).not.toBe(ref1);
   });
@@ -76,16 +76,16 @@ describe('Pane (D6)', () => {
     const p0 = within(screen.getByTestId('pane-p0'));
     fireEvent.click(p0.getByTestId('model-picker'));
     fireEvent.click(within(p0.getByTestId('model-menu')).getByText('엑스트라'));
-    expect(p0.getByTestId('model-picker').textContent).toContain('Opus 5.5 엑스트라');
+    expect(p0.getByTestId('model-picker').textContent).toContain('Fable 5.1 엑스트라');
     // The other pane keeps the default.
-    expect(within(screen.getByTestId('pane-p1')).getByTestId('model-picker').textContent).toContain('Opus 5.5 높음');
+    expect(within(screen.getByTestId('pane-p1')).getByTestId('model-picker').textContent).toContain('Fable 5.1 높음');
     // GPT has its own effort (default 중간); switching back to Claude restores 엑스트라.
     fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(p0.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
     fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'claude' } });
     fireEvent.change(p0.getByPlaceholderText(/메시지/), { target: { value: 'go' } });
     fireEvent.click(p0.getByText('보내기'));
-    expect(frames.at(-1)).toMatchObject({ type: 'send', model: 'opus', effort: 'xhigh', engine: 'claude' });
+    expect(frames.at(-1)).toMatchObject({ type: 'send', model: 'fable', effort: 'xhigh', engine: 'claude' });
   });
 
   it('T9 (a): two panes sending into new sessions whose turn_started arrive in reverse order each get their own turn', () => {

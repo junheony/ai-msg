@@ -30,6 +30,11 @@ function paneModel(pane: PaneState) {
   return s && s.sessionId !== null && s.engine ? modelFor(s.engine, pane.model) : pane.model;
 }
 
+/** The model field of a send: none for an existing Claude session the user picked no model for (it runs on its own default). */
+function modelField(pane: PaneState, model: ModelChoice): { model?: ModelChoice } {
+  return pane.session?.sessionId && !pane.modelPicked && engineOf(model) === 'claude' ? {} : { model };
+}
+
 /** 자동: effort is 자동 too unless the user picked one (null → omitted; the server picks per model). */
 function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
   return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
@@ -48,7 +53,7 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
   const clientRef = ref ?? nextClientRef();
   dispatch({ type: 'sent', text, paneId: pane.id, attachments: attachments.map((a) => ({ id: a.id, name: a.name, isImage: a.isImage })), clientRef, ...(keepPaused ? { keepPaused } : {}) });
   send({
-    type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, model,
+    type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, ...modelField(pane, model),
     ...(effort ? { effort } : {}),
     ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox, ...(s.accountPin ? { accountPin: s.accountPin } : {}), ...(s.permissionMode || defaultMode ? { permissionMode: paneMode(pane, defaultMode) } : {}) } : {}),
     ...(ids.length ? { attachments: ids } : {}),
@@ -65,7 +70,7 @@ export function startHandoff(pane: PaneState, dispatch: (a: Action) => void, sen
   const effort = paneEffort(pane, model);
   const clientRef = nextClientRef();
   dispatch({ type: 'sent', text: HANDOFF_PROMPT, paneId: pane.id, clientRef, handoff: true });
-  send({ type: 'send', sessionId: s.sessionId, cwd: s.cwd, text: HANDOFF_PROMPT, model, ...(effort ? { effort } : {}), handoff: true, clientRef });
+  send({ type: 'send', sessionId: s.sessionId, cwd: s.cwd, text: HANDOFF_PROMPT, ...modelField(pane, model), ...(effort ? { effort } : {}), handoff: true, clientRef });
 }
 
 /**
@@ -80,7 +85,7 @@ export function startBranch(pane: PaneState, n: number, text: string, original: 
   const clientRef = nextClientRef();
   dispatch({ type: 'branch_edit', n, text, paneId: pane.id, clientRef });
   send({
-    type: 'send', sessionId: null, cwd: s.cwd, text, model, ...(effort ? { effort } : {}), engine: 'claude',
+    type: 'send', sessionId: null, cwd: s.cwd, text, ...modelField(pane, model), ...(effort ? { effort } : {}), engine: 'claude',
     ...(s.accountPin ? { accountPin: s.accountPin } : {}),
     branch: { from: s.sessionId, n, ...(original ? { expect: original } : {}) },
     clientRef,
@@ -184,6 +189,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const interrupt = () => {
     if (!pane.activeTurnId) return;
     if (pane.queue.length) dispatch({ type: 'queue_pause', paneId: pane.id });
+    dispatch({ type: 'interrupt_sent', turnId: pane.activeTurnId, paneId: pane.id });
     send({ type: 'interrupt', turnId: pane.activeTurnId });
   };
   const interruptRef = useRef(interrupt);
@@ -340,7 +346,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
           readOnly={entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : null}
           onInterrupt={interrupt}
-          onStopBackground={(turnId) => send({ type: 'interrupt', turnId })}
+          onStopBackground={(turnId) => { dispatch({ type: 'interrupt_sent', turnId, paneId: pane.id }); send({ type: 'interrupt', turnId }); }}
           onStopTask={(taskId) => { if (pane.bg) send({ type: 'stop_task', turnId: pane.bg.turnId, taskId }); }}
           runStartedAt={pane.runStartedAt}
           progress={pane.progress}
@@ -369,7 +375,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onQueueSendNow={(id) => {
             // 지금 전송: the item jumps the queue and goes out once the interrupt ends the turn (useQueueRunner).
             dispatch({ type: 'queue_send_now', id, paneId: pane.id });
-            if (pane.activeTurnId) send({ type: 'interrupt', turnId: pane.activeTurnId });
+            if (pane.activeTurnId) { dispatch({ type: 'interrupt_sent', turnId: pane.activeTurnId, paneId: pane.id }); send({ type: 'interrupt', turnId: pane.activeTurnId }); }
           }}
           onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
           onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}

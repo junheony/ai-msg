@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ACCOUNTS, SEAT_LABEL, type Seat } from '../../shared/accounts';
-import { OpenAIMark } from './EngineMark';
+import { ClaudeMark, OpenAIMark } from './EngineMark';
 import { emptyAccountUsage, parseIsoUtc, remainingPct, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 type WindowKey = 'fiveHour' | 'weekly' | 'fable';
@@ -124,7 +124,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
     >
       {current && <span className="usage-dot" aria-hidden="true" />}
       <div className="usage-id">
-        {seat === 'gpt' ? <OpenAIMark className="usage-mark gpt" /> : <span className="usage-mark claude" aria-hidden="true">✳</span>}
+        {seat === 'gpt' ? <OpenAIMark className="usage-mark gpt" /> : <ClaudeMark className="usage-mark claude" />}
         <span className="usage-letter">{SEAT_LABEL[seat]}</span>
       </div>
       <span className={`usage-sum ${worst ? levelClass(worst.w) : 'none'}`} aria-hidden="true" title={worst ? `가장 적게 남은 한도 · ${worst.name} ${worst.rem}%` : '잔여량 알 수 없음'}>

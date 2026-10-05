@@ -121,7 +121,10 @@ describe('chooseAccount — table', () => {
     { name: 'no eligible, excluded has least weekly → skip it', in: { exclude: ['b'], usage: snap({ w: 97 }, { w: 95 }, { w: 96 }) }, account: 'c', switched: false, reason: /자격 있는 계정 없음/ },
     { name: 'no eligible and nothing in the loose list → b', in: { protectedAccount: 'c', exclude: ['a', 'b'], usage: snap({ w: 97 }, { w: 95 }, { w: 96 }) }, account: 'b', switched: false, reason: /자격 있는 계정 없음/ },
     { name: 'no eligible, weekly tie → alphabetical first (claude-pick sorts (w, t))', in: { usage: snap({ w: 96 }, { w: 96 }, { w: 99 }) }, account: 'a', switched: false, reason: /자격 있는 계정 없음/ },
-    { name: 'needFable, nobody has room → stay (caller downgrades model)', in: { current: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: 85 }, { w: 3, f: 90 }, { w: 91, f: 80 }) }, account: 'a', switched: false, reason: /대안 없음/ },
+    { name: 'needFable, new session, nobody has Fable room → a usable account for Opus (not the cooled-down least-weekly one)', in: { needFable: true, cooldownUntilMs: { b: NOW + 60_000 }, usage: snap({ w: 7, f: 85 }, { w: 3, f: 90 }, { w: 50, f: 80 }) }, account: 'a', switched: false, reason: /Fable 여유 계정 없음 → Opus/ },
+    { name: 'needFable, new session, only the protected account has Fable room → not the protected one (Opus elsewhere)', in: { needFable: true, protectedAccount: 'a', usage: snap({ w: 7, f: 20 }, { w: 3, f: 85 }, { w: 10, f: null }) }, account: 'b', switched: false, reason: /Fable 여유 계정 없음 → Opus/ },
+    { name: 'needFable, current on another account, only the protected one has Fable room → stays (caller downgrades)', in: { current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: 20 }, { w: 3, f: 85 }, { w: 10, f: null }) }, account: 'b', switched: false, reason: /Fable 여유 계정 없음 → Opus/ },
+    { name: 'needFable, nobody has room → stay (caller downgrades model)', in: { current: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: 85 }, { w: 3, f: 90 }, { w: 91, f: 80 }) }, account: 'a', switched: false, reason: /Fable 여유 계정 없음 → Opus/ },
   ];
 
   it('I1: no ping-pong when the only alternative is also over its switch threshold', () => {
