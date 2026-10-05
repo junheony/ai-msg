@@ -66,6 +66,7 @@ export function shellReport(why: string): Record<string, unknown> {
     dpr: window.devicePixelRatio,
     orient: screen.orientation?.type ?? null,
     viewport: document.querySelector('meta[name="viewport"]')?.getAttribute('content') ?? null,
+    pins,
     ua: navigator.userAgent,
   };
 }
@@ -98,12 +99,56 @@ export function describeShell(): string {
  * below it, or at scrollY -32 with its bottom cut off, and the caret drawn that far below the text). Without cover the
  * system owns that strip and the page is laid out under it. Phones keep cover (notch / home indicator).
  */
-export function relaxViewport(): void {
+function isIPadApp(): boolean {
   const iPad = /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-  if (!iPad || !isHomeScreenApp()) return;
+  return iPad && isHomeScreenApp();
+}
+
+export function relaxViewport(): void {
+  if (!isIPadApp()) return;
   const meta = document.querySelector('meta[name="viewport"]');
   const content = meta?.getAttribute('content');
   if (meta && content) meta.setAttribute('content', content.split(',').map((x) => x.trim()).filter((x) => x !== 'viewport-fit=cover').join(', '));
+}
+
+let pins = 0;
+/** Largest slip put back: the status bar is 24–32 pt; the keyboard pans the view by far more. */
+const PIN_MAX = 48;
+/**
+ * iPad home-screen app: the page has nothing to scroll (the shell is a fixed box), yet focusing the composer pans the
+ * view by a status bar's height (reports: scrollY 32, shell top −32) — the top slides under the status bar, a band
+ * opens below and the caret is drawn that far from its text. With no on-screen keyboard and no zoom there is no reason
+ * for the view to be anywhere but the top, so it is put back. Left alone while the keyboard is up or the page is zoomed.
+ */
+export function pinShell(): void {
+  if (!isIPadApp()) return;
+  const vv = window.visualViewport;
+  const settle = () => {
+    if (vv && (Math.abs(vv.scale - 1) > 0.01 || vv.height < window.innerHeight - 1)) return;
+    if (document.documentElement.hasAttribute('data-soft-kb')) return;
+    const y = Math.abs(window.scrollY);
+    const top = Math.abs(vv?.offsetTop ?? 0);
+    if (y < 1 && top < 1) return;
+    // Only the status-bar-sized slip; a larger pan is the system lifting the composer above a keyboard still on its way up.
+    if (y > PIN_MAX || top > PIN_MAX) return;
+    pins += 1;
+    window.scrollTo(0, 0);
+  };
+  let pending = false;
+  const soon = () => {
+    settle();
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(settle);
+    setTimeout(settle, 120);
+    setTimeout(() => { pending = false; settle(); }, 400);
+  };
+  vv?.addEventListener('scroll', soon);
+  vv?.addEventListener('resize', soon);
+  window.addEventListener('scroll', soon, { passive: true });
+  document.addEventListener('focusin', soon);
+  document.addEventListener('selectionchange', soon);
+  window.addEventListener('pageshow', soon);
 }
 
 export function watchShell(): void {

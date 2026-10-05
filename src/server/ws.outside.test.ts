@@ -358,7 +358,7 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     fake.push(sdk.result('still going', S));
     await a.next('turn_result', (m) => m.turnId === fu.turnId);
     expect(fake.state.calls).toBe(1);
-    expect(a.got.some((m) => m.type === 'turn_notice' && m.message.includes('다시 시작했어요'))).toBe(false);
+    expect(a.got.some((m) => m.type === 'turn_notice' && m.turnId === '')).toBe(false);
     fake.push(sdk.bgLevel([]));
     fake.end();
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
@@ -378,7 +378,7 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     await fs.appendFile(fileOf(cwd, S), line('claude-desktop', 'from desktop'));
     a.send({ type: 'send', sessionId: S, cwd, text: 'more', clientRef: 'ref-q' });
     await new Promise((r) => setTimeout(r, 200));
-    expect(a.got.some((m) => m.type === 'turn_notice' && m.message.includes('다시 시작했어요'))).toBe(false);
+    expect(a.got.some((m) => m.type === 'turn_notice' && m.turnId === '')).toBe(false);
     fake.push(sdk.result('done', S));
     expect(await a.next('turn_result', (m) => m.turnId === first.turnId)).toMatchObject({ ok: true, text: 'done' });
     fake.end();

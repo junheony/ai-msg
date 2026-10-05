@@ -3,12 +3,10 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type Compone
 import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus } from '../../shared/protocol';
-import type { SessionHolder } from '../../shared/session-types';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import type { PermissionDecision, QuestionAnswers, TurnPhase } from '../../shared/turn-types';
 import type { AgentInfo, ChatItem, PaneBackground, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
 import { latestContext } from '../context';
-import { heldNote } from '../held';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
@@ -127,8 +125,6 @@ export type ChatProps = {
   onDismissNotice?: (message: string) => void;
   /** View-only session (e.g. an imported Codex thread whose folder is gone): the composer is disabled and shows this reason. */
   readOnly?: string | null;
-  /** Another `claude` process (Claude Desktop / a terminal) holds this session open: a one-line warning above the composer. Sending stays allowed. */
-  heldBy?: SessionHolder | null;
   /** The session's history is on its way: a placeholder instead of a blank transcript. */
   loading?: boolean;
 };
@@ -527,7 +523,6 @@ export function Chat(p: ChatProps) {
           </div>
         )}
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
-        {p.heldBy && !p.isNew && <div className="held-note" role="status" data-testid="held-note">{heldNote(p.heldBy)}</div>}
         {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} />}
         <div className={`composer ${drag && !p.readOnly ? 'dragover' : ''}`}>
           {suggest.popup}

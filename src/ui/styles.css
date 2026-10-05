@@ -97,6 +97,7 @@
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; background: var(--bg); color: var(--fg); }
 body { overflow: hidden; }
+html, body { overscroll-behavior: none; }
 button { font: inherit; color: inherit; cursor: pointer; border: 0; background: transparent; padding: 0; border-radius: 7px; }
 button:disabled { opacity: .45; cursor: default; }
 button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -148,9 +149,6 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .pane-notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .pane-notice-close { flex-shrink: 0; width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
 .pane-notice-close:hover { background: var(--hover); color: var(--fg); }
-/* The session is also open in another Claude process (Desktop / a terminal): one quiet line above the composer, not dismissible while it lasts */
-.held-note { margin-bottom: 6px; padding: 0 6px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); line-height: 1.5; overflow-wrap: anywhere; }
-.held-note::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: var(--warn); vertical-align: middle; }
 .banner.error { background: var(--danger-soft); color: var(--danger); padding: 7px 14px; font-size: calc(13.5px * var(--font-scale, 1)); cursor: pointer; border-bottom: 1px solid var(--line); }
 .update-pill { display: block; width: 100%; background: var(--accent-soft, var(--bg-raised)); color: var(--accent, var(--text)); border: 0; border-bottom: 1px solid var(--line); padding: 5px 14px; font-size: calc(13px * var(--font-scale, 1)); cursor: pointer; text-align: center; }
 .global-cards { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--line); background: var(--bg-raised); max-height: 45vh; overflow-y: auto; }

@@ -29,8 +29,8 @@ import type { UsageService } from './usage/UsageService';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
 
-/** Said when deck restarted a session's held-open process because the conversation went on outside deck (`n`: background tasks that ended with it). */
-export const recycleNotice = (n: number) => `deck 밖(Claude Desktop 등)에서 이어진 내용이 있어, 그 뒤부터 이어가도록 이 세션의 deck 프로세스를 다시 시작했어요${n > 0 ? ` — 기다리던 백그라운드 작업 ${n}개는 중단됐습니다` : ''}`;
+/** Following an outside write is silent; only background work the restarted process had to drop is worth a line (`n`: tasks stopped). */
+export const recycleNotice = (n: number) => `deck 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
 
 /** How often, while a browser is connected, deck looks for outside holders (one `ps`) and outside writes to the open sessions (a stat each). */
 export const OUTSIDE_POLL_MS = 15_000;
@@ -492,8 +492,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           // No socket check: the message was sent, and neither a follow-up nor a new turn needs its sender connected.
           if (foreign && !base.recycling && base.current === null && turns.get(busy.get(sid) ?? '') === base) {
             base.recycling = true;
-            const notice: ServerMessage = { type: 'turn_notice', turnId: '', sessionId: sid, cwd: base.cwd, message: recycleNotice(base.bg?.msg.tasks.length ?? 0) };
-            for (const [c, v] of viewing) if (v.has(sid)) send(c, notice);
+            const stopped = base.bg?.msg.tasks.length ?? 0;
+            if (stopped > 0) {
+              const notice: ServerMessage = { type: 'turn_notice', turnId: '', sessionId: sid, cwd: base.cwd, message: recycleNotice(stopped) };
+              for (const [c, v] of viewing) if (v.has(sid)) send(c, notice);
+            }
             base.ac.abort();
           }
           startTurn(ws, sent, true);

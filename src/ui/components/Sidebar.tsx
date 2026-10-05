@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import type { SessionActivity } from '../../shared/protocol';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { groupByDate } from '../dateGroups';
-import { heldNote, heldTag } from '../held';
 import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
@@ -231,7 +230,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           )}
           {/* meta + actions: one trailing group (a hover overlay with a mouse, line 2 + end column on touch / narrow) */}
           <span className="row-end">
-          <span className="session-meta" {...(target.heldBy ? { title: heldNote(target.heldBy) } : s.imported ? { title: s.codexArchived ? 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다' : s.cwdMissing ? '폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다' : s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project, s.codexExec ? '자동 실행' : null, s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, target.heldBy ? heldTag(target.heldBy) : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
+          <span className="session-meta" {...(s.imported ? { title: s.codexArchived ? 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다' : s.cwdMissing ? '폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다' : s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project, s.codexExec ? '자동 실행' : null, s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(s.lastModified)].filter(Boolean).join(' · ')}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
