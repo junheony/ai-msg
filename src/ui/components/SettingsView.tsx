@@ -4,6 +4,7 @@ import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
 import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy } from '../../shared/protocol';
 import { NotifyMenu } from './NotifyMenu';
+import { describeShell } from '../shellFit';
 
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
 declare const __DECK_VERSION__: string | undefined;
@@ -86,6 +87,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           <h3>정보</h3>
           <dl className="settings-info">
             <dt>빌드</dt><dd>{build ?? '개발 모드'}</dd>
+            <dt>화면</dt><dd>{describeShell()}</dd>
             <dt>서버 버전</dt><dd>deck {typeof __DECK_VERSION__ === 'string' ? __DECK_VERSION__ : '—'}</dd>
           </dl>
         </section>

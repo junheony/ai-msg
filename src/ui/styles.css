@@ -1678,3 +1678,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .composer-send .ctx-gauge { padding: 0 2px; }
   .composer-row { padding-left: 8px; padding-right: 8px; gap: 4px; }
 }
+
+/* === shell fit === */
+/* Layout viewport shorter than the window (shellFit.ts measures it): the shell and the full-screen layers reach down
+   over the dead band. Last in the file: it must win over each layer's own `inset: 0`. */
+.app, .usage-view, .settings-backdrop, .modal-backdrop, .lightbox, .drawer-backdrop, .side-wrap { bottom: calc(-1 * var(--shell-short, 0px)); }
