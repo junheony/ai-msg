@@ -88,7 +88,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           <h3>정보</h3>
           <dl className="settings-info">
             <dt>빌드</dt><dd>{build ?? '개발 모드'}</dd>
-            <dt>화면</dt><dd>{describeShell()}{isHomeScreenApp() && <> <button type="button" className="btn ghost" onClick={() => { setShellFit(!fit); setFit(!fit); }}>{fit ? '아래 띠 보정 끄기' : '아래 띠 보정 켜기'}</button></>}</dd>
+            <dt>화면</dt><dd>{describeShell()}{isHomeScreenApp() && <> <button type="button" className="btn ghost" onClick={() => { setShellFit(!fit); setFit(shellFitEnabled()); }}>{fit ? '아래 띠 보정 끄기' : '아래 띠 보정 켜기'}</button></>}</dd>
             <dt>서버 버전</dt><dd>deck {typeof __DECK_VERSION__ === 'string' ? __DECK_VERSION__ : '—'}</dd>
           </dl>
         </section>

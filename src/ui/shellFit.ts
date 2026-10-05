@@ -55,7 +55,8 @@ export function setShellFit(on: boolean): void {
 export function fitShell(): void {
   const root = document.documentElement;
   const short = shellFitEnabled() ? shellShortfall(readShellMetrics()) : 0;
-  if (short === null) return;
+  // Keyboard up / zoomed: cannot measure, and the band is not on screen — back to the pinned shell until it can.
+  if (short === null) { root.removeAttribute('data-shell-fit'); return; }
   if (short > 0) root.style.setProperty('--shell-short', `${short}px`);
   else root.style.removeProperty('--shell-short');
   root.toggleAttribute('data-shell-fit', short > 0);
