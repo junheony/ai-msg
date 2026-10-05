@@ -220,8 +220,10 @@ export function chooseAccount(input: RouterInput): RouterDecision {
   const { candidates, excluded } = rankCandidates(input);
   // No Fable-eligible account at all (≥ FABLE_MAX_PCT or unknown everywhere): the turn runs on Opus (resolveModel), so it
   // is routed as an Opus turn — not to the "least weekly" fallback, which ignores 5h limits and cooldowns. The same when
-  // only the protected account has Fable room: Fable alone does not move a session onto it (one already there stays).
-  if (input.needFable && !(input.protectedAccount && input.current === input.protectedAccount) && candidates.every((c) => c.account === input.protectedAccount)) {
+  // only the protected account has Fable room: Fable alone does not move a session onto it (one already there, and usable
+  // — it is a candidate — stays; a blocked one has no candidates left and is routed as Opus like any other).
+  const onProtected = !!input.protectedAccount && input.current === input.protectedAccount;
+  if (input.needFable && (candidates.length === 0 || (!onProtected && candidates.every((c) => c.account === input.protectedAccount)))) {
     const d = chooseAccount({ ...input, needFable: false });
     return { ...d, reason: `Fable 여유 계정 없음 → Opus · ${d.reason}` };
   }

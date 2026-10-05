@@ -15,7 +15,7 @@ import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SettingsStore } from './settings';
 import { SessionStateStore } from './turn/SessionState';
-import { TurnRunner } from './turn/TurnRunner';
+import { SHUTDOWN_ABORTED, TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket, recycleNotice } from './ws';
 
@@ -240,6 +240,20 @@ describe('ws: the sidebar times stay current', () => {
 
 describe('ws: a running turn\'s own writes', () => {
   const lastOf = (m: { projects: { sessions: { sessionId: string; lastModified: number }[] }[] }, sid: string) => m.projects.flatMap((p) => p.sessions).find((s) => s.sessionId === sid)?.lastModified;
+
+  it('abortAll (server shutdown) ends a running turn with the shutdown text, not the hidden 중단됨', async () => {
+    const S = '5b5b5b5b-5b5b-45b5-85b5-5b5b5b5b5b5b';
+    const cwd = await seed(S, 'shutdown1');
+    fake = fakeSdk();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
+    const t = await a.next('turn_started');
+    wsApi.abortAll();
+    expect((await a.next('turn_result', (m) => m.turnId === t.turnId)).errorText).toBe(SHUTDOWN_ABORTED);
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+  });
 
   it('a Claude history names the model a send without one runs on (sessionModel): the imported default for a session deck never ran', async () => {
     const S = '5f5f5f5f-5f5f-45f5-85f5-5f5f5f5f5f5f';

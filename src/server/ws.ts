@@ -24,7 +24,7 @@ import type { ProcessHolders } from './sessions/ProcessHolders';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readBranchPoint, readTranscript, type BranchPoint } from './sessions/transcript';
 import { isCodexState, isGeminiState, type ClaudeSessionState, type SessionStateStore } from './turn/SessionState';
-import type { TurnRunner, TurnSink } from './turn/TurnRunner';
+import { SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
@@ -886,7 +886,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     },
     activeTurns: () => turns.size,
     abortAll() {
-      for (const t of turns.values()) t.ac.abort();
+      // Marked as the server's: those turns end with SHUTDOWN_ABORTED, which the UI shows (a user's stop it hides).
+      for (const t of turns.values()) t.ac.abort(SHUTDOWN_ABORT);
     },
     close() {
       unsubscribeUsage();

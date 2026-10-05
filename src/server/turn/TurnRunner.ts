@@ -111,6 +111,12 @@ export type TurnRunnerDeps = {
 
 /** What a turn the user stopped says, whatever the engine threw on the way out (the UI hides it as an error line). */
 export const ABORTED = '중단됨';
+/** The abort reason deck's shutdown (ws abortAll) stops running turns with. */
+export const SHUTDOWN_ABORT = 'deck-shutdown';
+/** A turn cut by the server going down: shown (unlike a user's stop, which the UI hides as exactly ABORTED). */
+export const SHUTDOWN_ABORTED = '서버가 다시 시작되어 중단됨';
+/** The error text of an aborted turn: the user's stop (interrupt, 지금 전송; also a recycle) vs. the server shutting down. */
+export const abortedText = (signal: AbortSignal): string => (signal.reason === SHUTDOWN_ABORT ? SHUTDOWN_ABORTED : ABORTED);
 const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
 
@@ -966,7 +972,7 @@ export class TurnRunner {
             const s = seg as Seg | null;
             seg = null;
             if (s) {
-              sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : sink.signal.aborted ? ABORTED : displayError(ev.errorText, ev.stderr) });
+              sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(ev.errorText, ev.stderr) });
             }
             await saveState(ev.ok);
             this.mirrorSoon(sessionId, sink, s?.turnId ?? cur.turnId);
@@ -982,7 +988,7 @@ export class TurnRunner {
       flushThinking();
       this.live.delete(sessionId);
       const s = seg as Seg | null;
-      if (s) sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: s.reason, usage: ZERO_USAGE, modelNote: s.modelNote }, errorText: sink.signal.aborted ? '중단됨' : '결과 없이 끝났습니다' });
+      if (s) sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: s.reason, usage: ZERO_USAGE, modelNote: s.modelNote }, errorText: sink.signal.aborted ? abortedText(sink.signal) : '결과 없이 끝났습니다' });
       for (const q of queue) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
       if (tasks.length) sink.emit({ type: 'turn_background', ...scope(), tasks: [], detail: [] });
     }
@@ -1083,7 +1089,7 @@ export class TurnRunner {
     const scope = () => ({ turnId: p.turnId, sessionId, cwd });
     const badge = (usage: TurnUsage) => ({ account: 'gpt' as const, model, reason, usage, modelNote: null });
     if (!deps.codex) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: 'codex CLI 를 찾을 수 없습니다' }); return; }
-    if (sink.signal.aborted) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: '중단됨' }); return; }
+    if (sink.signal.aborted) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: abortedText(sink.signal) }); return; }
     sink.emit({ type: 'turn_started', ...scope(), account: 'gpt', model, reason, attempt: 0, engine: 'codex' });
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     let result: EngineResult | null = null;
@@ -1125,7 +1131,7 @@ export class TurnRunner {
       }
     }
     if (!res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit') this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit;
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? ABORTED : displayError(res.errorText, res.stderr) });
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
   }
 
   /** Explicit Gemini: a new session takes the first logged-in, non-cooled account (g1, then g2) and stays on it. */
@@ -1152,7 +1158,7 @@ export class TurnRunner {
       reason = `${reason} · ${SEAT_LABEL[account]}${free ? '' : ' (모두 쿨다운)'}`;
     }
     const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
-    if (sink.signal.aborted) { fail(account, '중단됨'); return; }
+    if (sink.signal.aborted) { fail(account, abortedText(sink.signal)); return; }
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini' });
     let result: EngineResult | null = null;
     for await (const ev of gem.engine.runTurn({ account, cwd, resumeSessionId: state?.sessionId ?? null, model, sandbox, prompt: promptWithFiles(p.text, attachments), signal: sink.signal })) {
@@ -1175,7 +1181,7 @@ export class TurnRunner {
       });
     }
     if (!res.ok && GEMINI_LIMIT_RE.test(res.errorText ?? '')) this.geminiCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? ABORTED : displayError(res.errorText, res.stderr) });
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
   }
 
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
@@ -1279,7 +1285,7 @@ export class TurnRunner {
       // Review M2: an interrupt between attempts (or before the first) ends the turn here.
       if (sink.signal.aborted) {
         flushEarly();
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: shownId(), cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null, ...pinMark() }, errorText: '중단됨' });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: shownId(), cwd, ok: false, text: '', badge: { account, model: wantedClaude ?? sessionDefault, reason, usage: ZERO_USAGE, modelNote: null, ...pinMark() }, errorText: abortedText(sink.signal) });
         announceMode();
         return done();
       }
@@ -1319,7 +1325,7 @@ export class TurnRunner {
       if (res.ok) deps.usage.noteTurnOk(account);
       const failure = classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
       const badge = { account, model, reason, usage: res.usage, modelNote: note, ...pinMark() };
-      const shownError = sink.signal.aborted ? ABORTED : displayError(res.errorText, res.stderr);
+      const shownError = sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
         announceMode();

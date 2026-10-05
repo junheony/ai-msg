@@ -11,7 +11,7 @@ const turn = (badge: never, extra: { text?: string; error?: string | null; strea
   ({ kind: 'assistant' as const, turnId: 't', text: extra.text ?? '', toolCalls: [], badge, streaming: extra.streaming ?? false, error: extra.error ?? null, notes: [], attempts: [], ...(extra.interrupted ? { interrupted: true as const } : {}) });
 
 /** Abort-looking texts that are real failures (not a stop the user asked for). */
-const REAL_FAILURES = ['API Error: Request was aborted.', 'The operation was aborted due to timeout', 'MCP error -32800: Request cancelled', 'Claude Code process exited with code 1\nstderr: AbortError: This operation was aborted'];
+const REAL_FAILURES = ['API Error: Request was aborted.', 'The operation was aborted due to timeout', 'MCP error -32800: Request cancelled', 'Claude Code process exited with code 1\nstderr: AbortError: This operation was aborted', '서버가 다시 시작되어 중단됨'];
 
 describe('isStoppedTurn', () => {
   it('zero input and zero output tokens is a stopped turn', () => {

@@ -1,15 +1,28 @@
-# HANDOFF — deck (갱신 2026-10-05 밤)
+# HANDOFF — deck (갱신 2026-10-06)
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 비공개 저장소(원격 없음).
 
-## 0. 최신 상태 (2026-10-05 밤, master 8de595c, 단위 133파일 통과, 빌드 완료)
+## 0. 최신 상태 (2026-10-06, master c645217 + 미커밋 A·B, 빌드 완료)
+무엇이 바뀌었나:
+- **c645217**: 턴이 끝날 때마다 세션 목록 갱신(실행 중 세션은 15초 폴에서 빼고 턴 종료 때 한 번), UI 는 재연결·복귀·2분마다 목록 재요청 · 사이드바 행이 지금 상태(승인 대기/실행 중/백그라운드/새 응답/시각) · Claude 아이콘 SVG · 새 세션 기본 Fable(가져온 세션은 Opus), 기존 세션은 고르지 않으면 `model` 을 안 보냄 · 끊긴 턴은 오류 대신 "중단됨" · 감사 로그가 모든 도구 호출·거부를 기록(1번 남은 것 해결).
+- **A(미커밋)**: 보호 계정 A 의 세션인데 A 가 쿨다운·한도면, Fable 여유가 A 에만 있어도 Opus 기준으로 다시 골라 B 로 넘김(`routing/AccountRouter.ts`). A 가 멀쩡하면 그대로 A.
+- **B(미커밋)**: 서버 종료(`abortAll`)로 끊긴 턴은 숨겨지는 "중단됨" 대신 `서버가 다시 시작되어 중단됨` 오류로 보임(`SHUTDOWN_ABORT`, `turn/TurnRunner.ts`·`ws.ts`). 중지·지금 전송·재활용은 그대로 "중단됨".
+
+재시작해야 반영되는 것: 위 전부의 서버 쪽(목록 갱신, `sessionModel`, 기본 모델, 라우팅, 감사 로그, 종료 표시). UI 는 빌드만으로 바뀐다. **서버는 아직 재시작하지 않았다.**
+
+알아 둘 것:
+- 업그레이드 전 기존 세션에서 고른 모델(sonnet·auto 등)은 첫 history 때 한 번 세션 기본값으로 돌아간다. 다시 고르면 유지.
+- 옛 서버에 붙어 있는 동안 피커는 기록의 마지막 모델을 보여 주지만 실제로는 세션 기본 모델로 돈다. 재시작하면 사라진다.
+- 감사 로그 `~/.config/deck/audit.log`(0600, 입력은 SHA-256 만). 5MiB 가 되면 `audit.log.1` 로 넘기고 이전 `.1` 은 덮는다. 넘기기 실패는 경고만 남기고 계속 쓴다.
+
+## 0-0. (이력) 2026-10-05 밤 (master 8de595c, 단위 133파일 통과, 빌드 완료)
 10-05 에 들어간 것:
 - **조용한 동기화**(2fb4801, 8de595c): Claude Desktop 등 deck 밖에서 이어진 세션을 15초 폴(`server/ws.ts`, `sessions/foreignWrites.ts`)로 따라감. "Desktop 열림" 알림·태그는 없앰(`ui/held.ts` 삭제, 서버의 `heldBy` 계산은 남음). 이어받느라 백그라운드 작업을 끊었을 때만 한 줄(`recycleNotice`). **실행 중인 서버는 10-05 13:50 기동이라 8de595c 의 서버 쪽(조용한 재활용)은 재시작 뒤에 적용된다.**
 - **iPad 홈 화면 앱**: `viewport-fit=cover` 해제(`relaxViewport`), 포커스 때 상태바만큼 밀린 화면을 되돌리는 `pinShell()`(48pt 이하만 되돌림), `overscroll-behavior: none`. 진단 줄 `deck: diag`(pins·scroll·vv·app, 시각 없음). **기기 확인 안 됨** — 로그상 한 페이지에서 pins 가 80회대까지 올라 밀림이 계속 재발하고, scroll Y 66(48 초과)은 설계상 손대지 않는다.
 - 고정 세션 ⌘1–⌘9 · Codex 스레드 이름·시각(62f8bbe) · 살아 있는 UI 빌드 확인과 아바타 메뉴 "새로고침" · 끼어든 메시지를 "빠짐" 대신 보류로(e103dab) · 사이드바 계정 글자 제거(d5b56c3) · iPad 작성창 캐럿(b919d86).
 
 전체 요청 점검(10-05, 대화 기록 U1–U260 을 코드·커밋과 대조)에서 남은 것:
-1. **감사 로그가 거의 안 쌓임** — 프로필 `permissions.allow` 가 `canUseTool` 을 건너뛴다(`TurnRunner.ts:771-773`, `~/.config/deck/audit.log` 5일 63줄). PreToolUse 훅이나 `tool_call` 이벤트 기록으로 바꿔야 한다.
+1. ~~**감사 로그가 거의 안 쌓임**~~ (10-06 c645217 에서 해결, 재시작 뒤 적용) — 프로필 `permissions.allow` 가 `canUseTool` 을 건너뛴다(`TurnRunner.ts:771-773`, `~/.config/deck/audit.log` 5일 63줄). PreToolUse 훅이나 `tool_call` 이벤트 기록으로 바꿔야 한다.
 2. **모델 자동 라우팅 미완** — 자동 분류는 Claude 새 세션 첫 턴뿐(`routing/AutoModel.ts`), GPT 는 항상 Sol(`TurnRunner.ts:1068`), 스펙 §4.2 "어려움 → Astra" 없음. 사용자 선택 대기(1: Claude 전 계정이 한도 근처일 때 GPT / 2: 작업 종류로 분담).
 3. **재부팅 자동 시작 없음** — launchd 미등록(nohup 실행). 사용자가 node 바이너리에 전체 디스크 접근 권한을 준 뒤 설치.
 4. **deck → Desktop 화면 반영은 불가** — Desktop 이 다시 읽게 할 방법이 없고 `claude://resume` 로 여는 것뿐. home write-back 실패 로그 23건.
@@ -61,7 +74,7 @@ deck v1(Plan 1): Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 �
 - 보호 계정 `~/.config/offload/protect` = `a`(Claude Desktop 이 A). 쿨다운은 claude-pick/offload 와 공유(`~/.cache/offload/cooldown`).
 
 ## 3. 미커밋 / 미푸시
-- 작업트리 깨끗. **원격 없음 — 맥에만 있다**(백업 필요).
+- A·B 와 이 문서 미커밋(10-06). **원격 없음 — 맥에만 있다**(백업 필요).
 
 ## 4. 다음에 할 일
 1. **(사용자) A 계정 CLI 재로그인**: `env -u CLAUDE_CONFIG_DIR claude auth login` — A 의 CLI 토큰이 무효화(401)돼 deck 은 A 를 6h 쿨다운하고 B/C 로 돈다. Desktop 로그인과는 별개 저장소.

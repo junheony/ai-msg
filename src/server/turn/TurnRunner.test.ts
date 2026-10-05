@@ -16,7 +16,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState } from './SessionState';
-import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const SID = '11111111-1111-4111-8111-111111111111';
@@ -450,6 +450,22 @@ describe('TurnRunner', () => {
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi', model: 'fable' }, c.sink);
     expect(eng.calls[0]?.model).toBe('opus');
     expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ badge: { model: 'opus', modelNote: expect.stringContaining('Fable') } });
+  });
+
+  it('a turn cut by the server shutting down says so (not 중단됨, which the UI hides) — mid-run and before its first attempt', async () => {
+    const ac = new AbortController();
+    const eng = new StubEngine(() => { ac.abort(SHUTDOWN_ABORT); return [{ kind: 'init', sessionId: 'y1', model: 'm' }, failResult('Claude Code process aborted by user', { sessionId: 'y1' })]; });
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, { ...c.sink, signal: ac.signal });
+    expect(msgsOf(c, 'turn_result')).toMatchObject([{ ok: false, errorText: SHUTDOWN_ABORTED }]);
+    const ac2 = new AbortController();
+    ac2.abort(SHUTDOWN_ABORT);
+    const eng2 = new StubEngine(() => ok('y2'));
+    const c2 = await ctx(eng2);
+    await new TurnRunner(c2.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, { ...c2.sink, signal: ac2.signal });
+    expect(eng2.calls).toHaveLength(0);
+    expect(msgsOf(c2, 'turn_result')).toMatchObject([{ ok: false, errorText: SHUTDOWN_ABORTED }]);
+    expect(SHUTDOWN_ABORTED).not.toBe('중단됨');
   });
 
   it('a turn the user stopped reports 중단됨 (no SDK text, no stderr tail); a real failure keeps its error', async () => {
