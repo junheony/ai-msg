@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount } from '../shared/accounts';
 import { defaultSandbox } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
+import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import type { AcceptedRefs } from './sessions/AcceptedRefs';
@@ -15,16 +16,26 @@ import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRoll
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
 import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
+import { scanForeign } from './sessions/foreignWrites';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
+import type { ProcessHolders } from './sessions/ProcessHolders';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readBranchPoint, readTranscript, type BranchPoint } from './sessions/transcript';
-import { isCodexState, isGeminiState, type SessionStateStore } from './turn/SessionState';
+import { isCodexState, isGeminiState, type ClaudeSessionState, type SessionStateStore } from './turn/SessionState';
 import type { TurnRunner, TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
+
+/** Said when deck restarted a session's held-open process because the conversation went on outside deck (`n`: background tasks that ended with it). */
+export const recycleNotice = (n: number) => `deck 밖(Claude Desktop 등)에서 이어진 내용이 있어, 그 뒤부터 이어가도록 이 세션의 deck 프로세스를 다시 시작했어요${n > 0 ? ` — 기다리던 백그라운드 작업 ${n}개는 중단됐습니다` : ''}`;
+
+/** How often, while a browser is connected, deck looks for outside holders (one `ps`) and outside writes to the open sessions (a stat each). */
+export const OUTSIDE_POLL_MS = 15_000;
+/** An entry is stamped a moment before it reaches the file: writes this much older than the last history sent are looked at again. */
+const OUTSIDE_SLACK_MS = 2000;
 
 type PermissionMsg = Extract<ServerMessage, { type: 'permission_request' }>;
 type QuestionMsg = Extract<ServerMessage, { type: 'question_request' }>;
@@ -133,6 +144,10 @@ export type WsDeps = {
   meta?: Pick<SessionMetaStore, 'link' | 'branch'>;
   /** The send clientRefs / steer ids each session accepted (survives a restart); rides `history` as `acceptedRefs`. */
   acceptedRefs?: Pick<AcceptedRefs, 'add' | 'remove' | 'has' | 'list' | 'since'>;
+  /** Process scan behind the index entries' `heldBy` (the same object the SessionIndex reads): rescanned at hello, open, send and on the outside poll. */
+  holders?: Pick<ProcessHolders, 'refresh'>;
+  /** See OUTSIDE_POLL_MS; 0 = no poll. */
+  outsidePollMs?: number;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -154,7 +169,7 @@ type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T
 type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null; /** Steers delivered in the running segment (the transcript may lag behind them). */ steers: TurnMsg<'steer_delivered'>[] };
 const MAX_REPLAY_SUBS = 500;
 
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string> };
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -237,6 +252,62 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     queuedRescan ??= indexRescan.catch(() => {}).then(() => { queuedRescan = null; return rescanIndex(); });
     return queuedRescan;
   };
+
+  /** Rescans who else holds sessions open (cached a few seconds); the index goes out again only when a holder came or went. */
+  const syncHolders = () => {
+    void deps.holders?.refresh().then((changed) => { if (changed) { deps.index.regroup(); broadcast(indexMsg()); } }).catch(() => undefined);
+  };
+  /**
+   * Per socket and Claude session it views: when its history was last sent (entries another process wrote after that are
+   * not on its screen yet) and, per transcript copy, the offset the outside poll found clean up to — a tick reads only
+   * what was appended since the last one. Per socket: one device opening a session must not hide from another what
+   * came in between.
+   */
+  const historyAt = new Map<WebSocket, Map<string, { at: number; clean: Map<string, number> }>>();
+  /**
+   * The open panes follow the other side: a viewed, idle Claude session whose transcript (any profile's copy) gained
+   * entries deck did not write since a socket's history was sent gets that history again — read once per session, sent
+   * to each socket that lacks it. Sessions with a deck turn are left alone: their pane is fed by the turn's own stream.
+   */
+  const followOutside = async () => {
+    const files = new Map<string, string[]>();
+    const stale = new Map<string, WebSocket[]>();
+    for (const [ws, seen] of historyAt) {
+      for (const [id, rec] of [...seen]) {
+        if (!viewing.get(ws)?.has(id)) { seen.delete(id); continue; }
+        if (busy.has(id)) continue;
+        if (!files.has(id)) files.set(id, deps.index.sessions().filter((e) => e.sessionId === id).map((e) => e.file));
+        for (const file of files.get(id)!) {
+          const r = await scanForeign(file, rec.at - OUTSIDE_SLACK_MS, rec.clean.get(file) ?? 0).catch(() => null);
+          if (!r) continue;
+          if (r.foreign) { stale.set(id, [...(stale.get(id) ?? []), ws]); break; }
+          rec.clean.set(file, r.end);
+        }
+      }
+    }
+    for (const [id, sockets] of stale) {
+      const st = deps.store.get(id);
+      const entry = deps.index.lookup(id);
+      if (!entry || busy.has(id) || (st && (isCodexState(st) || isGeminiState(st)))) continue;
+      // What is in the files now is in the history read next: the poll goes on from these sizes, so this write is not found again.
+      const clean = new Map<string, number>();
+      for (const file of files.get(id) ?? []) { const s = await fs.stat(file).catch(() => null); if (s) clean.set(file, s.size); }
+      const read = await readClaudeHistory(id, entry, st ?? null).catch(() => null);
+      // A turn that started during the read streams into the pane already: a history now would wipe what it showed.
+      if (!read || busy.has(id)) continue;
+      // No view() here: a pane closed during the read stays closed.
+      for (const ws of sockets) if (viewing.get(ws)?.has(id)) sendClaudeHistory(ws, id, read, clean);
+    }
+  };
+  let following = false;
+  const pollMs = deps.outsidePollMs ?? OUTSIDE_POLL_MS;
+  const outsideTimer = pollMs > 0 ? setInterval(() => {
+    if (!clients.size || following) return;
+    syncHolders();
+    following = true;
+    void followOutside().catch((err: unknown) => console.error('deck: outside-write check failed', errMsg(err))).finally(() => { following = false; });
+  }, pollMs) : null;
+  outsideTimer?.unref?.();
 
   /**
    * A new session got its id: other devices list it in their sidebar now, not when the turn ends. The CLI may
@@ -381,10 +452,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       : turns.get(busy.get(sessionId) ?? '')?.pendingRefs.has(ref) ? { message: '아직 처리 중인 메시지 — 멈춰 둠', code: 'in_flight' }
         : undefined;
 
-  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>) => {
+  /** `checked`: this send already waited for the foreign-write check of its session's held-open process. */
+  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
     const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
-    if (msg.sessionId) view(ws, msg.sessionId);
+    // A socket that closed while its send waited (foreign-write check, recycle) still gets its message run; it just views nothing.
+    if (msg.sessionId && clients.has(ws)) view(ws, msg.sessionId);
+    if (!checked) syncHolders();
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
@@ -405,6 +479,27 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (msg.sessionId && busy.has(msg.sessionId)) {
       // The session's process may only be waiting for background work: then the message joins it (TurnRunner.followUp).
       const base = turns.get(busy.get(msg.sessionId)!);
+      const sid = msg.sessionId;
+      if (base?.recycling) { base.afterRelease.push({ ws, msg }); return; }
+      // deck follows the other side: a process held open for background work read the transcript when it started. If
+      // Desktop / a CLI went on with the session since, a message written into it would be answered from before that —
+      // the conversation forks. So that process is ended and the send starts a new one, which resumes from the newest
+      // entry. Only between turns (`current` null): a streaming turn is never cut, the send then queues behind it as before.
+      if (base && !checked && base.current === null) {
+        const check = (base.outside ??= deps.runner.foreignWrites(sid).catch(() => false));
+        void check.then((foreign) => {
+          if (base.outside === check) base.outside = null;
+          // No socket check: the message was sent, and neither a follow-up nor a new turn needs its sender connected.
+          if (foreign && !base.recycling && base.current === null && turns.get(busy.get(sid) ?? '') === base) {
+            base.recycling = true;
+            const notice: ServerMessage = { type: 'turn_notice', turnId: '', sessionId: sid, cwd: base.cwd, message: recycleNotice(base.bg?.msg.tasks.length ?? 0) };
+            for (const [c, v] of viewing) if (v.has(sid)) send(c, notice);
+            base.ac.abort();
+          }
+          startTurn(ws, sent, true);
+        });
+        return;
+      }
       const followId = randomUUID();
       if (base) aliases.set(followId, base.turnId);
       prompts.set(followId, promptOf(msg));
@@ -426,7 +521,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []) };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -439,9 +534,21 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       questions.cancelTurn(turnId);
       for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); prompts.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
       broadcastActivity();
-      // Sends that arrived while the process was closing after its result (a closed socket's send is dropped).
-      for (const d of turn.afterRelease.splice(0)) if (clients.has(d.ws)) startTurn(d.ws, d.msg);
+      // Sends that arrived while the process was closing after its result (a closed socket's send is dropped — but not one
+      // that waited because deck itself ended the process). Each goes where a send would go now: the first starts the
+      // session's next turn; the others wait on that turn until its process can take a follow-up or is gone.
+      for (const d of turn.afterRelease.splice(0)) {
+        if (!turn.recycling && !clients.has(d.ws)) continue;
+        const next = d.msg.sessionId ? turns.get(busy.get(d.msg.sessionId) ?? '') : undefined;
+        if (next) next.afterRelease.push(d);
+        else startTurn(d.ws, d.msg);
+      }
     };
+    /** Sends carried over from the turn before (see release): given to the process once it is between turns — after the runner registered it as held open, hence the microtask. */
+    const drainWaiting = () => queueMicrotask(() => {
+      if (turns.get(turnId) !== turn || turn.current !== null || turn.recycling) return;
+      for (const d of turn.afterRelease.splice(0)) startTurn(d.ws, d.msg);
+    });
     let started = false;
     /** This send's clientRef, until it is recorded as accepted under its session id (a new session's comes with its result). */
     let unrecorded = msg.clientRef ?? null;
@@ -486,7 +593,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         // A new session's ref, once it has an id. Today's client never asks (a new session is not deduped: no history to
         // open); kept so a later client that does finds it.
         if (m.type === 'turn_result' && started) accepted(m.sessionId);
-        if (m.type === 'turn_result' && m.turnId === turn.current) { turn.current = null; turn.log.progress = null; }
+        if (m.type === 'turn_result' && m.turnId === turn.current) { turn.current = null; turn.log.progress = null; if (turn.afterRelease.length) drainWaiting(); }
         if (m.type === 'turn_background') turn.bg = m.tasks.length ? { msg: m, at: Date.now() } : null;
         if (m.type === 'turn_result' || m.type === 'turn_background') queueMicrotask(broadcastActivity);
         if (m.type === 'error' && !started && (m.turnId === null || m.turnId === turnId)) emitTurn(turn, { ...m, ...ref });
@@ -569,6 +676,85 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     })().catch((err: unknown) => console.error('deck: post-turn index refresh failed', errMsg(err)));
   };
 
+  /** `open_session`: the session's history (and, mid-turn, what its running turn has shown so far) to one socket, which views it from now on. */
+  /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
+  const runningOf = (sid: string) => {
+    const t = turns.get(busy.get(sid) ?? '');
+    const current = t?.current ?? null;
+    const since = deps.acceptedRefs?.since(sid);
+    return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
+  };
+  type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: Awaited<ReturnType<typeof readTranscript>> };
+  /** A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one read. */
+  const readClaudeHistory = async (sessionId: string, found: SessionEntry, st: ClaudeSessionState | null): Promise<ClaudeHistory> => {
+    const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
+    // Stamped before the read: an entry written while reading is looked at again by the outside poll.
+    const at = Date.now();
+    const messages = await readTranscript(best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file)).catch(() => readTranscript(found.file));
+    return { found, st, at, messages };
+  };
+  const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages }: ClaudeHistory, clean?: Map<string, number>) => {
+    const t = turns.get(busy.get(sessionId) ?? '');
+    let seen = historyAt.get(ws);
+    if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
+    seen.set(sessionId, { at, clean: new Map(clean) });
+    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), messages, ...runningOf(sessionId) });
+    if (t) replay(ws, t, sessionId);
+  };
+  const openSession = (ws: WebSocket, sessionId: string) => {
+    void (async () => {
+      // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
+      const st = deps.store.get(sessionId);
+      if (st && isCodexState(st)) {
+        view(ws, sessionId);
+        const messages = st.rolloutFile ? await (deps.readCodexHistory ?? readCodexTranscript)(st.rolloutFile).catch(() => []) : [];
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, messages, ...runningOf(sessionId) });
+        return;
+      }
+      // Gemini sessions: no transcript reader yet (the CLI's chat files are not read) — the pane starts empty.
+      if (st && isGeminiState(st)) {
+        view(ws, sessionId);
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, messages: [], ...runningOf(sessionId) });
+        return;
+      }
+      let entry = deps.index.lookup(sessionId);
+      // Review (flaky ws.test.ts): a session written just after the last scan isn't in
+      // the in-memory index yet. Rescan once (single-flight) and re-check before giving up.
+      if (!entry && !deps.index.codexImport(sessionId)) {
+        await rescanIndex();
+        entry = deps.index.lookup(sessionId);
+      }
+      // A Codex Desktop / CLI thread deck has not run yet: its rollout, read-only; the first turn resumes it.
+      // Checked live: a rollout moved by Codex (archived / unarchived) or a folder that came / went since the last scan
+      // triggers a rescan and an index push, so the list and composer follow without a manual refresh.
+      const imported = entry ? null : await deps.index.freshCodexImport(sessionId);
+      if (imported) {
+        view(ws, sessionId);
+        const messages = await (deps.readCodexImportHistory ?? readCodexTranscriptTail)(imported.file).catch(() => []);
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: defaultSandbox(deps.settings?.get().autoApprove ?? false), messages, ...runningOf(sessionId) });
+        const t = turns.get(busy.get(sessionId) ?? '');
+        if (t) replay(ws, t, sessionId);
+        const age = await rolloutActiveAgeMs(imported.file);
+        if (age !== null) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: liveRolloutNotice(imported.title, age) });
+        // View only (folder gone / archived in Codex): said up front, not only when a send is refused.
+        const blocked = await importBlockReason(imported);
+        if (blocked) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: blocked });
+        return;
+      }
+      if (!entry) { send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
+      view(ws, sessionId);
+      // PF5: `st` is narrowed to a Claude state (or null) by the Codex return above.
+      const found = entry;
+      await readClaudeHistory(sessionId, found, st ?? null)
+        .then((read) => {
+          sendClaudeHistory(ws, sessionId, read);
+          // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
+          void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
+        })
+        .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
+    })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
+  };
+
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
@@ -576,6 +762,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
+    // hello carried the last scan's flags; a changed scan follows as an index message.
+    syncHolders();
 
     ws.on('message', (data) => {
       let parsed: unknown;
@@ -632,73 +820,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `작업을 멈추지 못했습니다: ${errMsg(err)}` }));
           break;
         }
-        case 'open_session': {
-          const sessionId = msg.sessionId;
-          /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
-          const runningOf = (sid: string) => {
-            const t = turns.get(busy.get(sid) ?? '');
-            const current = t?.current ?? null;
-            const since = deps.acceptedRefs?.since(sid);
-            return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
-          };
-          void (async () => {
-            // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
-            const st = deps.store.get(sessionId);
-            if (st && isCodexState(st)) {
-              view(ws, sessionId);
-              const messages = st.rolloutFile ? await (deps.readCodexHistory ?? readCodexTranscript)(st.rolloutFile).catch(() => []) : [];
-              send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, messages, ...runningOf(sessionId) });
-              return;
-            }
-            // Gemini sessions: no transcript reader yet (the CLI's chat files are not read) — the pane starts empty.
-            if (st && isGeminiState(st)) {
-              view(ws, sessionId);
-              send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, messages: [], ...runningOf(sessionId) });
-              return;
-            }
-            let entry = deps.index.lookup(sessionId);
-            // Review (flaky ws.test.ts): a session written just after the last scan isn't in
-            // the in-memory index yet. Rescan once (single-flight) and re-check before giving up.
-            if (!entry && !deps.index.codexImport(sessionId)) {
-              await rescanIndex();
-              entry = deps.index.lookup(sessionId);
-            }
-            // A Codex Desktop / CLI thread deck has not run yet: its rollout, read-only; the first turn resumes it.
-            // Checked live: a rollout moved by Codex (archived / unarchived) or a folder that came / went since the last scan
-            // triggers a rescan and an index push, so the list and composer follow without a manual refresh.
-            const imported = entry ? null : await deps.index.freshCodexImport(sessionId);
-            if (imported) {
-              view(ws, sessionId);
-              const messages = await (deps.readCodexImportHistory ?? readCodexTranscriptTail)(imported.file).catch(() => []);
-              send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: defaultSandbox(deps.settings?.get().autoApprove ?? false), messages, ...runningOf(sessionId) });
-              const t = turns.get(busy.get(sessionId) ?? '');
-              if (t) replay(ws, t, sessionId);
-              const age = await rolloutActiveAgeMs(imported.file);
-              if (age !== null) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: liveRolloutNotice(imported.title, age) });
-              // View only (folder gone / archived in Codex): said up front, not only when a send is refused.
-              const blocked = await importBlockReason(imported);
-              if (blocked) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: blocked });
-              return;
-            }
-            if (!entry) { send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
-            view(ws, sessionId);
-            // PF5: `st` is narrowed to a Claude state (or null) by the Codex return above.
-            const found = entry;
-            // A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one shown.
-            const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
-            await readTranscript(best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file))
-              .catch(() => readTranscript(found.file))
-              .then((messages) => {
-                const t = turns.get(busy.get(sessionId) ?? '');
-                send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), messages, ...runningOf(sessionId) });
-                if (t) replay(ws, t, sessionId);
-                // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
-                void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
-              })
-              .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
-          })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
+        case 'open_session':
+          syncHolders();
+          openSession(ws, msg.sessionId);
           break;
-        }
         case 'close_session':
           viewing.get(ws)?.delete(msg.sessionId);
           break;
@@ -737,7 +862,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
     });
 
-    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
+    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); historyAt.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
   });
 
   return {
@@ -754,6 +879,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     },
     close() {
       unsubscribeUsage();
+      if (outsideTimer) clearInterval(outsideTimer);
       for (const c of clients) c.close();
       wss.close();
     },

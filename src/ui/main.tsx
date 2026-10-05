@@ -3,10 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles.css';
 import { applyPrefs, loadPrefs } from './prefs';
-import { watchShell } from './shellFit';
+import { relaxViewport, watchShell } from './shellFit';
 
 // Before the first render (no inline script: the CSP forbids it) so a saved theme/font size doesn't flash.
 applyPrefs(loadPrefs());
+relaxViewport();
 watchShell();
 
 createRoot(document.getElementById('root')!).render(<App />);

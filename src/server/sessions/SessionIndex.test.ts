@@ -173,3 +173,33 @@ describe('NFC/NFD paths (개발)', () => {
     expect(await readRecent(recentFile)).toEqual([NFD, '/w/x']);
   });
 });
+
+describe('SessionIndex heldBy (process holders)', () => {
+  it('a Claude session another process holds carries heldBy; it follows the holders on regroup, without a rescan', async () => {
+    const root = await mkRoot();
+    const roots = { a: path.join(root, 'a'), b: path.join(root, 'b'), c: path.join(root, 'c') };
+    await writeSession(roots.a, '-Users-x-proj', ID1, '/Users/x/proj', 'held', 2_000_000);
+    await writeSession(roots.a, '-Users-x-proj', ID2, '/Users/x/proj', 'free', 1_000_000);
+    const held = new Map<string, 'desktop' | 'other'>([[ID1, 'desktop']]);
+    const idx = new SessionIndex({ roots, pinnedFile: path.join(root, 'pinned.json'), holders: { heldBy: (id) => held.get(id) ?? null } });
+    await idx.refresh();
+    const byId = () => Object.fromEntries(idx.projects().flatMap((p) => p.sessions).map((s) => [s.sessionId, s]));
+    expect(byId()[ID1]?.heldBy).toBe('desktop');
+    expect(byId()[ID2]).not.toHaveProperty('heldBy');
+    // A Codex session with the same id shape is not a Claude process's to hold.
+    const codex: SessionEntry = { sessionId: ID3, account: 'gpt', engine: 'codex', cwd: '/Users/x/proj', projectDir: '', file: '', title: 'gpt', lastModified: 1, sizeBytes: 0 };
+    held.set(ID3, 'other');
+    expect(idx.projects([codex]).flatMap((p) => p.sessions).find((s) => s.sessionId === ID3)).not.toHaveProperty('heldBy');
+
+    held.set(ID1, 'other');
+    held.set(ID2, 'desktop');
+    expect(byId()[ID1]?.heldBy).toBe('desktop');
+    idx.regroup();
+    expect(byId()[ID1]?.heldBy).toBe('other');
+    expect(byId()[ID2]?.heldBy).toBe('desktop');
+    held.clear();
+    idx.regroup();
+    expect(byId()[ID1]).not.toHaveProperty('heldBy');
+    expect(byId()[ID2]).not.toHaveProperty('heldBy');
+  });
+});

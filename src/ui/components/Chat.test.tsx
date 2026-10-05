@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Chat } from './Chat';
+import { heldNote } from '../held';
 import type { ChatProps } from './Chat';
 import type { ChatItem } from '../state';
 
@@ -410,5 +411,36 @@ describe('Chat title ⌄ menu', () => {
       expect(fireEvent.dragOver(document.querySelector('.chat-body')!, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
       expect(screen.queryByTestId('drop-overlay')).toBeNull();
     });
+  });
+});
+
+describe('Chat: a session another Claude process holds', () => {
+  afterEach(cleanup);
+
+  it('says so in one line above the composer, per holder; sending stays possible', () => {
+    const onSend = renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { heldBy: 'desktop' });
+    const note = screen.getByTestId('held-note');
+    expect(note.textContent).toBe(heldNote('desktop'));
+    expect(note.textContent).toContain('Claude Desktop에도 열려 있는 세션입니다');
+    expect(note.textContent).not.toMatch(/닫/); // a warning about what each side sees, not an instruction to close anything
+    expect(note.closest('.composer-wrap')).not.toBeNull();
+    const box = screen.getByRole('textbox');
+    fireEvent.change(box, { target: { value: 'still sendable' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onSend).toHaveBeenCalled();
+    cleanup();
+    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { heldBy: 'other' });
+    expect(screen.getByTestId('held-note').textContent).toBe(heldNote('other'));
+  });
+
+  it('nothing when nobody else holds it, and never on a new chat', () => {
+    renderChat([{ kind: 'user', text: 'x' }]);
+    expect(screen.queryByTestId('held-note')).toBeNull();
+    cleanup();
+    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { heldBy: null });
+    expect(screen.queryByTestId('held-note')).toBeNull();
+    cleanup();
+    renderChat([], false, vi.fn(), { heldBy: 'desktop', isNew: true });
+    expect(screen.queryByTestId('held-note')).toBeNull();
   });
 });

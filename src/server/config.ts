@@ -97,7 +97,7 @@ function minutes(v: string | undefined, fallbackMin: number): number {
   return (Number.isFinite(n) && n > 0 ? n : fallbackMin) * 60_000;
 }
 
-function repoRootDefault(): string {
+export function repoRootDefault(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 }
 

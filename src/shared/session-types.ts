@@ -3,6 +3,9 @@ import type { BranchLink } from './branches';
 import type { CodexSandbox, EngineKind } from './models';
 import type { ContextUsage } from './turn-types';
 
+/** Who else has a Claude session open: Claude Desktop's own CLI process, or another one (a terminal `claude --resume`). */
+export type SessionHolder = 'desktop' | 'other';
+
 export type SessionEntry = {
   sessionId: string;
   /** Claude profile the jsonl lives in, or 'gpt' for a deck-created Codex thread (D4). */
@@ -32,6 +35,11 @@ export type SessionEntry = {
   nextSession?: string;
   /** 메시지 편집 갈래 (session-meta.json): this session was forked from `parent` by editing its user message `n`. */
   branch?: BranchLink;
+  /**
+   * A `claude` process outside deck has this session resumed right now (process scan, see ProcessHolders). It keeps
+   * its own history in memory, so messages sent from both sides fork the conversation. Absent = nobody (or unknown).
+   */
+  heldBy?: SessionHolder;
 };
 
 /** A recent Claude Desktop (Code tab) session; opened like any other session by `sessionId`. */
@@ -45,6 +53,7 @@ export type DesktopSession = {
   project: string;
   lastModified: number;
   archived?: boolean;
+  heldBy?: SessionHolder;
 };
 
 export type PinnedProject = { cwd: string; name?: string };

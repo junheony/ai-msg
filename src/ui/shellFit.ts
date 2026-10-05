@@ -65,6 +65,7 @@ export function shellReport(why: string): Record<string, unknown> {
     standalone: isHomeScreenApp(),
     dpr: window.devicePixelRatio,
     orient: screen.orientation?.type ?? null,
+    viewport: document.querySelector('meta[name="viewport"]')?.getAttribute('content') ?? null,
     ua: navigator.userAgent,
   };
 }
@@ -89,6 +90,20 @@ function reportSoon(why: string): void {
 export function describeShell(): string {
   const m = readShellMetrics();
   return `${window.innerWidth}×${m.inner} · 창 ${m.outer} · 화면 ${screen.width}×${screen.height} · 보이는 ${m.vvHeight === null ? '-' : Math.round(m.vvHeight)} · 위 ${m.safeTop}${m.standalone ? ' · 앱' : ''}`;
+}
+
+/**
+ * iPad home-screen app only: drops `viewport-fit=cover`. On iPadOS 26 the web view there keeps a status-bar-high top inset
+ * on its scroll view even though the page is told to cover it (reports show the page resting at scrollY 0 with a dead band
+ * below it, or at scrollY -32 with its bottom cut off, and the caret drawn that far below the text). Without cover the
+ * system owns that strip and the page is laid out under it. Phones keep cover (notch / home indicator).
+ */
+export function relaxViewport(): void {
+  const iPad = /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  if (!iPad || !isHomeScreenApp()) return;
+  const meta = document.querySelector('meta[name="viewport"]');
+  const content = meta?.getAttribute('content');
+  if (meta && content) meta.setAttribute('content', content.split(',').map((x) => x.trim()).filter((x) => x !== 'viewport-fit=cover').join(', '));
 }
 
 export function watchShell(): void {

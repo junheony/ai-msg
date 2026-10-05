@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Sidebar } from './Sidebar';
+import { heldNote, heldTag } from '../held';
 
 const noop = () => {};
 /** Fixture times: now, each one 1 ms older, so the 최근 view's newest-first order is the creation order (equal / ms-apart Date.now() made it flaky). */
@@ -548,5 +549,20 @@ describe('Sidebar rows: Claude parity (icon left, quiet trailing meta)', () => {
     expect(first.querySelector('.session-row > .row-dot.unread')).not.toBeNull();
     expect(first.querySelector('.row-end .row-dot')).toBeNull();
     expect(first.querySelector('.row-end .session-meta')!.textContent).toMatch(/^one · /);
+  });
+});
+
+describe('Sidebar: sessions another Claude process holds', () => {
+  afterEach(cleanup);
+
+  it('tags the row in its meta, with the explanation as the tooltip; other rows are untouched', () => {
+    const e = (id: string, heldBy?: 'desktop' | 'other') => ({ sessionId: id, account: 'a' as const, cwd: '/w', projectDir: '/r', file: `/r/${id}`, title: id, lastModified: Date.now(), sizeBytes: 1, ...(heldBy ? { heldBy } : {}) });
+    render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e('in-desktop', 'desktop'), e('in-terminal', 'other'), e('free')] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    const meta = (title: string) => screen.getByText(title).closest('li')!.querySelector('.session-meta')!;
+    expect(meta('in-desktop').textContent).toBe(`${heldTag('desktop')} · 방금`);
+    expect(meta('in-desktop').getAttribute('title')).toBe(heldNote('desktop'));
+    expect(meta('in-terminal').textContent).toBe(`${heldTag('other')} · 방금`);
+    expect(meta('free').textContent).toBe('방금');
+    expect(meta('free').getAttribute('title')).toBeNull();
   });
 });

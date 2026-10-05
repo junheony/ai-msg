@@ -22,6 +22,7 @@ import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
 import { CODEX_ARCHIVED_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
 import { elsewhereNotice } from '../sessions/elsewhereNotice';
+import { scanForeign } from '../sessions/foreignWrites';
 import { backupDivergedAndMove } from '../sessions/SessionFork';
 import { isAncestor, moveSession } from '../sessions/SessionMover';
 import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
@@ -126,7 +127,7 @@ export type FollowUpParams = { turnId: string; text: string; attachments?: strin
 /** The mutable "which deck turn is the process working for now" — permission cards and events follow it. */
 type Cursor = { turnId: string };
 
-type LiveSession = { submit(f: FollowUpParams, attachments: Attachment[]): boolean };
+type LiveSession = { submit(f: FollowUpParams, attachments: Attachment[]): boolean; /** When the process was started: it has read nothing another process wrote after this. */ since: number; /** Per transcript copy: the offset the foreign-write check found clean up to. */ clean: Map<string, number> };
 
 /** What 이 세션 accepted: allow rules as rule strings and added directories (its acceptEdits becomes the session's mode). */
 type SessionGrants = { rules: string[]; dirs: string[] };
@@ -247,6 +248,33 @@ export class TurnRunner {
       attachments = r.found;
     }
     return entry.submit(f, attachments);
+  }
+
+  /**
+   * Whether the session's held-open process (see `followUp`) is behind: since it started, some copy of the transcript
+   * gained main-chain entries deck did not write (Claude Desktop / a terminal CLI went on with the session). That
+   * process would answer from before them; a new one resumes from the newest copy (`reconcile`). False when no
+   * process is held open — every ordinary turn starts a new process that reads the transcript as it is. Never throws.
+   */
+  async foreignWrites(sessionId: string): Promise<boolean> {
+    const entry = this.live.get(sessionId);
+    const st = this.deps.store.get(sessionId);
+    if (!entry || !st || isCodexState(st) || isGeminiState(st)) return false;
+    try {
+      const copies = await findCopies(this.deps.projectsRoots, sessionId, st.projectDir, st.account);
+      for (const c of copies) {
+        const from = entry.clean.get(c.file);
+        // Never scanned: the stat spares the read (2 s of slack for file systems that keep whole-second mtimes).
+        if (from === undefined && c.mtimeMs < entry.since - 2000) continue;
+        // Scanned before: only what was appended since is read, so a process held open for hours costs each send the same.
+        const r = await scanForeign(c.file, entry.since, from ?? 0);
+        if (r.foreign) return true;
+        entry.clean.set(c.file, r.end);
+      }
+    } catch (err) {
+      console.error('deck: foreign write check failed', err instanceof Error ? err.message : err);
+    }
+    return false;
   }
 
   /** Resolves when every home write-back started so far has finished (tests, shutdown). */
@@ -837,8 +865,8 @@ export class TurnRunner {
    * sent meanwhile (its own turn id). Ends when the engine stream ends (no live task left, cap,
    * grace, abort).
    */
-  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants }): Promise<void> {
-    const { p, a, cur, sink, account, model, cwd, sessionId, grants } = c;
+  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants; startedAt: number }): Promise<void> {
+    const { p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt } = c;
     const scope = () => ({ turnId: cur.turnId, sessionId, cwd });
     type Seg = { turnId: string; reason: string; modelNote: string | null };
     let seg: Seg | null = null;
@@ -886,6 +914,8 @@ export class TurnRunner {
     // Follow-ups are taken only while background work holds the process open (else it closes right after this result).
     if (a.live && a.bgTasks.length) {
       this.live.set(sessionId, {
+        since: startedAt,
+        clean: new Map(),
         submit: (f, attachments) => {
           if (seg) queue.push({ f, attachments });
           else sendFollowUp(f, attachments);
@@ -1248,6 +1278,7 @@ export class TurnRunner {
       flushEarly();
 
       const cur: Cursor = { turnId: p.turnId };
+      const startedAt = this.now();
       const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, forkAt, sink, grants, modeRef, attachments, cur);
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
       const sessionId = a.sessionId ?? shownId();
@@ -1283,7 +1314,7 @@ export class TurnRunner {
         announceMode();
         // Held open for background work: write back now too, not only once at the end.
         if (sessionId && a.bgTasks.length) this.mirrorSoon(sessionId, sink, p.turnId);
-        if (sessionId) await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants });
+        if (sessionId) await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt });
         else await a.rest.return?.();
         return done();
       }
