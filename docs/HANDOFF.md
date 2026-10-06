@@ -5,13 +5,13 @@
 ## 다음 할 일 (2026-10-06 오후)
 
 - **재시작 결과 확인**: 이 문서를 커밋한 뒤 `/tmp/deck-relaunch.sh` 로 재시작했다(세션이 같이 끝나서 결과는 못 봤다). `~/.config/deck/deck.log` 끝의 `[relaunch …]` 줄을 본다 — `new server healthy` 면 새 코드, `NEW SERVER NOT HEALTHY` 면 이전 빌드(`/tmp/deck-fallback`, `be048e0`)로 돌아가 있는 것이고 원인은 그 위 로그에 있다. 정상이면 `/tmp/deck-fallback` 워크트리는 스크립트가 지운다.
-- **공개 저장소 CI**: https://github.com/junheony/quarterdeck — 올린 직후 CI(macOS 필수, Linux 참고용) 결과를 확인할 것. 다음에 공개본을 갱신할 때: master 에 커밋 → `bash scripts/export-public.sh <빈 디렉터리>` → 그 디렉터리의 내용을 공개 저장소 클론에 덮어쓰고 커밋(저자 `hwangmc88 <hwangmc88@gmail.com>`) → `gh auth switch --user junheony` 로 푸시 후 원래 계정으로 되돌린다.
+- **공개 저장소**: https://github.com/junheony/quarterdeck — 커밋 3개(`d676046` 첫 공개, `48f2e5b`·`237b54d` 테스트 파일 이름·타입 수정), CI 는 macOS·Linux 모두 통과(`237b54d`). 다음에 공개본을 갱신할 때: master 에 커밋 → `bash scripts/export-public.sh <빈 디렉터리>` → 그 디렉터리의 내용을 공개 저장소 클론에 덮어쓰고 커밋(저자 `hwangmc88 <hwangmc88@gmail.com>`) → `gh auth switch --user junheony` 로 푸시 후 원래 계정으로 되돌린다.
 - 기기(iPad/폰)에서 백그라운드 복귀 뒤 답이 이어지는지 확인(따라잡기, `6ac9401`).
 - 계정 C 를 뺄 때: 사용자가 날짜를 주면 `~/.config/deck/accounts.json` 을 만들어 `c` 를 `retired: true` 로(읽기 전용). 가장 최신 사본이 뺀 계정 프로필에 있는 세션은 재개가 거절되니, 그때 다른 계정으로 자동 이전하는 처리를 넣을지 정한다.
 - 4번째 계정을 붙이려면 `claude-pick`·`offload`·usage-deck 쪽도 새 id(쿨다운 파일명·카드 id)를 받아야 한다 — 미착수.
 - GPT 자동 라우팅 1/2 선택(사용자 결정 대기), launchd 자동 시작(전체 디스크 접근 권한은 사용자가 줘야 함).
 
-## 0. 최신 상태 (2026-10-06 오후, master `827466e` + 이 문서, 단위 149파일 1653건 통과, 빌드 완료)
+## 0. 최신 상태 (2026-10-06 오후, master `89cd81c` + 이 문서, 단위 149파일 1653건 통과, 빌드 완료)
 
 **들어간 것**
 - **계정 모듈**: 계정 수가 고정 3개가 아니다. `<configDir>/accounts.json`(`{version:1, home, accounts:[{id,label,configDir,card,retired}]}`)이 있으면 그대로, 없으면 `~/.claude` → `a`, `~/.claude-<영문 한 글자>` 를 찾아 쓴다(지금 이 맥은 파일 없이 a·b·c, 이전과 같은 결과). 파일이 틀리면 시작을 거부한다. `retired: true` = 읽기 전용. 설정에서 뺀 계정은 스캔하지 않는다. 설계·구현 메모는 `docs/superpowers/specs/2026-10-06-accounts-module-and-public-refit.md`, 사용법은 README "Claude 계정 여러 개 쓰기".
@@ -27,6 +27,8 @@
 - 새 세션에 쓸 수 없는(없는·뺀) 계정 핀을 붙이면 거절한다. 기존 세션의 쓸 수 없는 핀은 무시한다. 분기·인계는 부모의 핀을 조용히 무시한다.
 
 **남긴 것 (전부 LOW)**
+- **함정**: 같은 폴더에 대소문자만 다른 `x.test.ts` / `X.test.tsx` 를 두면 macOS 의 `tsc` 가 `.tsx` 쪽을 검사에서 뺀다(테스트는 돌지만 타입 검사는 안 됨). `Nav.test.tsx` 가 그랬고 `App.shortcuts.test.tsx` 로 바꿨다. 막는 검사는 아직 없다.
+- 커밋할 때 지운 경로를 `git add` 에 같이 주면 전체가 실패한다 — 공개 푸시 전에 `git status` 가 비었는지 볼 것(이번에 수정분이 빠진 채 한 번 올라갔다).
 - `ws.ts`: 핀이 없거나 쓸 수 있으면 모르는 `handoffFrom` 도 메타에 연결된다(이전부터). `fromKnown` 을 `linkHandoff` 쪽에도 쓰면 된다. `index.lookup` 에만 있는 세션의 인계 면제는 테스트가 없다.
 - `ws.ts`: 기존 세션 `send` 의 `cwd` 는 검사하지 않는다(소유자 전용). CI 액션 SHA 고정 안 함. `hostnameOf` 가 `::1` 을 다루지 않는다. `deck_url` 응답 크기 제한 없음.
 - e2e 테스트는 고쳤지만 돌리지 않았다(실계정 토큰 소모). `.bad` 파일은 자동으로 치우지 않는다. v1 색인이 디스크에 남는다.
