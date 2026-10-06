@@ -240,3 +240,30 @@ describe('ws: pins that stopped being usable', () => {
     c.ws.close();
   });
 });
+
+describe('ws: a handoffFrom that names no session does not lift the pin check', () => {
+  type Result = Extract<ServerMessage, { type: 'turn_result' }>;
+
+  it('a made-up handoffFrom with a retired or unknown pin is refused; one naming a known session still runs', async () => {
+    const c = await client(withReg);
+    await c.until((m) => m.type === 'hello');
+    engineAccounts = [];
+    for (const [ref, handoffFrom, accountPin, want] of [
+      ['r-fake', 'x', 'old', '설정에서 뺀(retired) 계정이라 고정할 수 없습니다: OLD(old)'],
+      ['r-fake-uuid', '41414141-4141-4414-8414-414141414141', 'old', '설정에서 뺀(retired) 계정이라 고정할 수 없습니다: OLD(old)'],
+      ['r-fake-path', '../x', 'zz', '설정에 없는 계정이라 고정할 수 없습니다: zz'],
+    ] as const) {
+      c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin, handoffFrom, clientRef: ref });
+      expect((await c.until<Err>((m) => m.type === 'error' && m.clientRef === ref)).message, ref).toContain(want);
+    }
+    expect(c.got.some((m) => m.type === 'turn_started')).toBe(false);
+    expect(engineAccounts).toEqual([]);
+    // SID is a session deck has state for: a real handoff, so the pin is ignored as before.
+    c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin: 'old', handoffFrom: SID, clientRef: 'r-real' });
+    expect((await c.until<Result>((m) => m.type === 'turn_result')).ok).toBe(true);
+    expect(c.got.filter((m) => m.type === 'error' && m.clientRef === 'r-real')).toEqual([]);
+    expect(engineAccounts).toHaveLength(1);
+    expect(['a', 'b', 'd']).toContain(engineAccounts[0]);
+    c.ws.close();
+  });
+});

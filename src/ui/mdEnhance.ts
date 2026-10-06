@@ -9,4 +9,6 @@ import 'katex/dist/katex.min.css';
  */
 // Single-$ math is off: prices and $TICKERs are common in chat. Only $$...$$ renders math.
 export const REMARK_ENHANCE = [[remarkMath, { singleDollarTextMath: false }]] as never[];
-export const REHYPE_ENHANCE = [[rehypeHighlight, { detect: false }], [rehypeKatex, { throwOnError: false, strict: 'ignore', maxSize: 20, maxExpand: 100 }]] as never[];
+/** No `maxExpand`: KaTeX's own limit (1000) is finite, and a lower one breaks ordinary blocks (a dozen `\implies`). */
+export const KATEX_OPTIONS = { throwOnError: false, strict: 'ignore', maxSize: 20 } as const;
+export const REHYPE_ENHANCE = [[rehypeHighlight, { detect: false }], [rehypeKatex, KATEX_OPTIONS]] as never[];

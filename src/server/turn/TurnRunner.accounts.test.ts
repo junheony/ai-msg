@@ -108,6 +108,13 @@ describe('TurnRunner · 뺀 계정(retired)과 설정에 없는 계정', () => {
     expect(c.engine.calls).toEqual([]);
     expect(of(c.msgs, 'error').map((m) => m.message)).toEqual([expect.stringMatching(/OLD 계정은 뺀 계정\(retired\)이라 이 세션을 이어갈 수 없습니다/)]);
     expect(of(c.msgs, 'turn_started')).toEqual([]);
+    // What the copy check said is delivered with the refusal, ahead of it.
+    const notices = of(c.msgs, 'turn_notice');
+    expect(notices.length).toBeGreaterThan(0);
+    for (const n of notices) expect(n).toMatchObject({ turnId: 't', sessionId: SID, cwd: '/w/one' });
+    expect(c.msgs.findIndex((m) => m.type === 'turn_notice')).toBeLessThan(c.msgs.findIndex((m) => m.type === 'error'));
+    // Intended: the copy check stored the session on the retired account, so it stays read-only.
+    expect(c.store.get(SID)).toMatchObject({ account: 'old' });
   });
 
   it('an account that is not configured any more: the turn is refused with what to do, the stored session is kept and can be deleted', async () => {

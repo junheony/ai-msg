@@ -527,8 +527,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
     // Only a pin the user picked for a new session is refused. An edit branch or a handoff carries its parent's stored pin,
-    // which the runner treats as no pin when the account is not active any more.
-    const badPin = msg.sessionId === null && msg.accountPin && !msg.branch && !msg.handoffFrom ? pinRefusal(msg.accountPin) : null;
+    // which the runner treats as no pin when the account is not active any more. A handoff is one only when `handoffFrom`
+    // (a session id) names a session deck knows — any other string does not lift the check.
+    const hf = msg.handoffFrom;
+    const fromKnown = isPinnableId(hf) && (!!deps.store.get(hf) || !!deps.index.lookup(hf));
+    const badPin = msg.sessionId === null && msg.accountPin && !msg.branch && !fromKnown ? pinRefusal(msg.accountPin) : null;
     if (badPin) { send(ws, { type: 'error', turnId: null, message: badPin, ...ref }); return; }
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
     // Idempotency: a send this session already took (or is taking) under this ref — a resent queue copy, a duplicated tab — runs once.

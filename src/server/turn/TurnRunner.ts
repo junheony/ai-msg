@@ -1225,9 +1225,12 @@ export class TurnRunner {
         await this.mirrors.get(state.sessionId);
         state = await this.reconcile(state, (m) => early.push(m));
         // The copy check reads retired accounts' dirs too: the newest copy may have put the session on one.
+        // Intended: `reconcile` has stored that move, so the session stays read-only from here on.
         refused = readOnly(state.account);
       }
       if (refused) {
+        // What the copy check found (diverged copies, ...) goes out with the refusal instead of being dropped.
+        for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: state?.sessionId ?? null, cwd: state?.cwd ?? p.cwd, message });
         sink.emit({ type: 'error', turnId: p.turnId, message: refused });
         return;
       }
