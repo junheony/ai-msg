@@ -457,3 +457,54 @@ describe('chooseAccount — 잔여량을 모르는 계정 (usage-deck 없음 · 
     expect(routeLogLine(null, chooseAccount(dflt({ protectedAccount: 'a', usage: noDeck })), testRegistry())).toMatch(/\(자격 있는 계정 없음 → 잔여량 모름 · B\) · 잔여량 모름 B, C, A$/);
   });
 });
+
+describe("chooseAccount — usage-deck 을 본 적 없는 설치 (usageSource: 'none')", () => {
+  const DOWN: Spec = { status: 'down' };
+  const lax = (u: UsageSnapshot): UsageSnapshot => ({ ...u, usageSource: 'none' });
+  const noDeck = lax(snap(DOWN, DOWN, DOWN, false));
+  const one = buildRegistry({ version: 1, accounts: [{ id: 'a' }] }, { homeDir: '/h' });
+  const none: UsageSnapshot = { generatedAt: new Date(NOW).toISOString(), deckReachable: false, accounts: {}, usageSource: 'none' };
+
+  it('a Fable turn goes to an account nothing is known about, as a Fable turn (no "→ Opus")', () => {
+    const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: noDeck }));
+    expect(d).toMatchObject({ account: 'b', switched: false, unknown: ['b', 'c', 'a'] });
+    expect(d.reason).toBe('자격 있는 계정 없음 → 잔여량 모름 · B');
+    for (const protectedAccount of [null, 'a'] as const) {
+      const solo = chooseAccount(dflt({ accounts: one, protectedAccount, needFable: true, usage: none }));
+      expect(solo).toMatchObject({ account: 'a', reason: '자격 있는 계정 없음 → 잔여량 모름 · A' });
+      expect(chooseAccount(dflt({ accounts: one, protectedAccount, needFable: true, usage: none, current: 'a', lastTurnAtMs: NOW - 60_000 })).reason).not.toMatch(/Opus|Fable/);
+    }
+  });
+
+  it('after a limit failure the next account takes the Fable turn; the cooled-down one is not an unknown candidate', () => {
+    const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, current: 'b', lastTurnAtMs: null, usage: noDeck, cooldownUntilMs: { b: NOW + 60_000 }, exclude: ['b'] }));
+    expect(d).toMatchObject({ account: 'c', switched: true, unknown: ['c', 'a'] });
+    expect(d.reason).toMatch(/^쿨다운\(~\d\d:\d\d\) → 잔여량 모름 · C 전환$/);
+    expect(chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: noDeck, cooldownUntilMs: { b: NOW + 60_000 } }))).toMatchObject({ account: 'c', unknown: ['c', 'a'] });
+  });
+
+  it('an account whose Fable value is not known stays eligible; a known Fable ≥ 80% is still out', () => {
+    // What a no-deck install looks like after a turn: 5h and weekly from the turn itself, never a Fable row.
+    const seen = lax(snap({ w: 10, f: null }, { w: 20, f: null }, DOWN));
+    const r = rankCandidates(dflt({ needFable: true, usage: seen }));
+    expect(r.candidates.map((c) => c.account).sort()).toEqual(['a', 'b']);
+    expect(chooseAccount(dflt({ needFable: true, current: 'a', lastTurnAtMs: NOW - 60_000, usage: seen }))).toMatchObject({ account: 'a', switched: false, reason: expect.not.stringMatching(/Fable/) });
+
+    const full = lax(snap({ w: 10, f: 85 }, { w: 20, f: null }, DOWN));
+    expect(rankCandidates(dflt({ needFable: true, usage: full })).excluded.a).toBe('Fable 85%');
+    expect(chooseAccount(dflt({ needFable: true, usage: full })).account).toBe('b');
+    expect(chooseAccount(dflt({ needFable: true, current: 'a', lastTurnAtMs: NOW - 60_000, usage: full }))).toMatchObject({ account: 'b', switched: true });
+    // Fable known to be full everywhere: an Opus turn, as with usage-deck.
+    const d = chooseAccount(dflt({ needFable: true, usage: lax(snap({ w: 10, f: 85 }, { w: 20, f: 90 }, { w: 30, f: 80 })) }));
+    expect(d.reason).toMatch(/^Fable 여유 계정 없음 → Opus · /);
+  });
+
+  it("with usage-deck ('deck', or no field) an unknown Fable value still means Opus — and the reason says it is unknown", () => {
+    for (const usage of [snap(DOWN, DOWN, DOWN, false), { ...snap(DOWN, DOWN, DOWN, false), usageSource: 'deck' as const }]) {
+      const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage }));
+      expect(d.account).toBe('b');
+      expect(d.reason).toBe('Fable 잔여량 모름(usage-deck 값 없음) → Opus · 자격 있는 계정 없음 → 잔여량 모름 · B');
+    }
+    expect(rankCandidates(dflt({ needFable: true, usage: snap({ w: 10, f: null }, { w: 20, f: null }, DOWN) })).excluded.a).toBe('Fable 값 없음');
+  });
+});

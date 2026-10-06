@@ -30,6 +30,17 @@ describe('config', () => {
     expect(readDeckUrl(path.join(dir, 'nope'))).toBe('http://127.0.0.1:9310');
   });
 
+  it('DECK_USAGE_STRICT: 1 → strict, 0 → lax, anything else → decided by <configDir>/usage-source.json', () => {
+    const home = path.join(dir, 'home-usage');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const of = (v?: string) => loadConfig({ DECK_CONFIG_DIR: '/cfg', ...(v === undefined ? {} : { DECK_USAGE_STRICT: v }) }, home, '/repo');
+    expect(of()).toMatchObject({ usageStrict: null, usageSourceFile: '/cfg/usage-source.json' });
+    expect(of('1').usageStrict).toBe(true);
+    expect(of('0').usageStrict).toBe(false);
+    expect(of('').usageStrict).toBeNull();
+    expect(of('yes').usageStrict).toBeNull();
+  });
+
   it('loadConfig derives paths from HOME and honours env overrides', () => {
     const home = path.join(dir, 'home');
     fs.mkdirSync(path.join(home, '.config', 'claude-pick'), { recursive: true });

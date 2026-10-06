@@ -60,6 +60,10 @@ export type DeckConfig = {
   vapidFile: string;
   pushSubscriptionsFile: string;
   /** 사용량 view: token usage aggregates + per-file read offsets (index format 2). */
+  /** `{"deckSeenAt": "<ISO>"}`: written once, the first time usage-deck answers (see UsageService). */
+  usageSourceFile: string;
+  /** `DECK_USAGE_STRICT`: `1` = always treat unknown usage as with usage-deck (Fable → Opus), `0` = never; null = by `usageSourceFile`. */
+  usageStrict: boolean | null;
   usageIndexFile: string;
   /** The format-1 index a build before configurable accounts wrote: converted once into `usageIndexFile`, never written. */
   usageIndexV1File: string;
@@ -149,6 +153,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     backupRetentionDays: Number(env.DECK_BACKUP_RETENTION_DAYS) > 0 ? Number(env.DECK_BACKUP_RETENTION_DAYS) : 30,
     vapidFile: path.join(configDir, 'vapid.json'),
     pushSubscriptionsFile: path.join(configDir, 'push-subscriptions.json'),
+    usageSourceFile: path.join(configDir, 'usage-source.json'),
+    usageStrict: env.DECK_USAGE_STRICT === '1' ? true : env.DECK_USAGE_STRICT === '0' ? false : null,
     usageIndexFile: path.join(configDir, 'usage-index-v2.json'),
     usageIndexV1File: path.join(configDir, 'usage-index.json'),
     vapidSubject: /^(https:|mailto:)/.test(env.DECK_VAPID_SUBJECT ?? '') ? env.DECK_VAPID_SUBJECT! : null,

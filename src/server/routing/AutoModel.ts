@@ -1,7 +1,7 @@
 import type { Account, AccountNames } from '../../shared/accounts';
 import { AUTO_EFFORT, MODEL_INFO, type ClaudeModel, type Effort } from '../../shared/models';
 import type { UsageSnapshot } from '../../shared/usage-types';
-import { WEEKLY_SWITCH_PCT, rankCandidates } from './AccountRouter';
+import { WEEKLY_SWITCH_PCT, isLax, noFableWhy, rankCandidates } from './AccountRouter';
 
 /**
  * 자동 모델: a cheap, deterministic difficulty guess for the FIRST turn of a new Claude session (never mid-session —
@@ -86,9 +86,16 @@ export function chooseAutoModel(i: AutoModelInput): AutoModelDecision {
   let model = c.model;
   const notes = [c.why];
   const base = { current: null, usage: i.usage, nowMs: i.nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: i.cooldownUntilMs, protectedAccount: i.protectedAccount, accounts: i.accounts };
-  if (model === 'fable' && rankCandidates({ ...base, needFable: true }).candidates.length === 0) {
-    model = 'opus';
-    notes.push('Fable 80%↑ → Opus');
+  const forFable = model === 'fable' ? rankCandidates({ ...base, needFable: true }) : null;
+  if (forFable && forFable.candidates.length === 0) {
+    if (isLax(i.usage) && forFable.unknown.length > 0) {
+      // Never had usage-deck: not knowing is no reason to leave Fable (a real limit is handled by the turn's own fallback).
+      notes.push('Fable 잔여량 모름');
+    } else {
+      model = 'opus';
+      const why = noFableWhy(base);
+      notes.push(why === 'Fable 여유 계정 없음' ? 'Fable 80%↑ → Opus' : `${why} → Opus`);
+    }
   }
   const { candidates } = rankCandidates({ ...base, needFable: false });
   const best = candidates.length ? Math.min(...candidates.map((x) => x.weeklyPct)) : null;

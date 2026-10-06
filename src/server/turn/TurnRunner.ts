@@ -1321,7 +1321,7 @@ export class TurnRunner {
         return done();
       }
       const fable = usageOf(deps.usage.snapshot(), account).fable?.usedPct ?? null;
-      const { model, note } = resolveModel(wantedClaude, sessionDefault, fable);
+      const { model, note } = resolveModel(wantedClaude, sessionDefault, fable, deps.usage.snapshot().usageSource);
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: shownId(), cwd, account, model, reason, attempt, engine: 'claude' });
       flushEarly();
 

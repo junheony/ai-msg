@@ -22,6 +22,7 @@ export type UsageSnapshot = {
   accounts: Record<Account, AccountUsage>;
   /** ChatGPT Pro (usage-deck card `codex`); status 'down' = unknown (D5). Optional only for Plan 1 test literals. */
   gpt?: AccountUsage;
+  /** 'none' = this install has never had an answer from usage-deck: unknown usage alone does not change the model or engine. Absent = 'deck'. */ usageSource?: 'deck' | 'none';
 };
 
 export function remainingPct(w: UsageWindow | null): number | null {

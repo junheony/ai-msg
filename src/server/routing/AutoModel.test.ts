@@ -96,3 +96,31 @@ describe('chooseAutoModel', () => {
     expect(auto('보안 취약점 검토해줘', usage(down)).model).toBe('opus');
   });
 });
+
+describe("chooseAutoModel — usage-deck 을 본 적 없는 설치 (usageSource: 'none')", () => {
+  const down: AccountUsage = { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null };
+  const lax = (u: UsageSnapshot): UsageSnapshot => ({ ...u, usageSource: 'none' });
+
+  it('unknown usage keeps Fable, and the reason says the usage is unknown', () => {
+    const r = auto('보안 취약점 검토해줘', lax(usage(down)));
+    expect(r).toMatchObject({ model: 'fable', effort: 'high' });
+    expect(r.reason).toContain('Fable 잔여량 모름');
+    expect(r.reason).not.toContain('Opus');
+    // Known 5h/weekly from a turn, no Fable row: still Fable.
+    expect(auto('보안 취약점 검토해줘', lax(usage(acct(30, null)))).model).toBe('fable');
+    expect(auto('버그 고쳐줘', lax(usage(down))).model).toBe('opus');
+  });
+
+  it('a known Fable ≥ 80% everywhere still falls back to Opus', () => {
+    const r = auto('보안 취약점 검토해줘', lax(usage(acct(30, 85))));
+    expect(r.model).toBe('opus');
+    expect(r.reason).toContain('Fable 80%↑ → Opus');
+  });
+
+  it("with usage-deck: unknown Fable → Opus, and the reason says it is unknown (not '80%↑')", () => {
+    const r = auto('보안 취약점 검토해줘', usage(down));
+    expect(r.model).toBe('opus');
+    expect(r.reason).toContain('Fable 잔여량 모름(usage-deck 값 없음) → Opus');
+    expect(r.reason).not.toContain('80%↑');
+  });
+});

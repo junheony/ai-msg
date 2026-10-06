@@ -74,11 +74,23 @@ function hhmm(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/** An install that has never had an answer from usage-deck: an unknown value alone does not change the model or engine. */
+export function isLax(usage: UsageSnapshot): boolean {
+  return usage.usageSource === 'none';
+}
+
+/** Why a Fable turn has no Fable-eligible account: every Fable value at the limit is known, or none is known at all. */
+export function noFableWhy(input: Pick<RouterInput, 'usage' | 'accounts'>): string {
+  const known = input.accounts.list().some((a) => (usageOf(input.usage, a).fable?.usedPct ?? -1) >= FABLE_MAX_PCT);
+  return known ? 'Fable 여유 계정 없음' : 'Fable 잔여량 모름(usage-deck 값 없음)';
+}
+
 export function rankCandidates(input: RouterInput): { candidates: Candidate[]; excluded: Partial<Record<Account, string>>; unknown: Account[] } {
   const candidates: Candidate[] = [];
   const excluded: Partial<Record<Account, string>> = {};
   const unknown: Account[] = [];
   const reg = input.accounts;
+  const lax = isLax(input.usage);
   for (const account of reg.list()) {
     if (input.exclude?.includes(account)) { excluded[account] = '제외 지정'; continue; }
     const u = usageOf(input.usage, account);
@@ -103,8 +115,9 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
     if (weekly >= EXCLUDE_PCT) { excluded[account] = `주간 ${weekly}%`; continue; }
     if (input.needFable) {
       const f = u.fable?.usedPct;
-      if (f === undefined || f === null) { excluded[account] = 'Fable 값 없음'; continue; }
-      if (f >= FABLE_MAX_PCT) { excluded[account] = `Fable ${f}%`; continue; }
+      if (f === undefined || f === null) {
+        if (!lax) { excluded[account] = 'Fable 값 없음'; continue; }
+      } else if (f >= FABLE_MAX_PCT) { excluded[account] = `Fable ${f}%`; continue; }
     }
     const hoursToReset = hoursUntil(u.weekly?.resetsAt ?? null, input.nowMs);
     candidates.push({
@@ -245,9 +258,12 @@ export function chooseAccount(input: RouterInput): RouterDecision {
   // only the protected account has Fable room: Fable alone does not move a session onto it (one already there, and usable
   // — it is a candidate — stays; a blocked one has no candidates left and is routed as Opus like any other).
   const onProtected = !!input.protectedAccount && input.current === input.protectedAccount;
-  if (input.needFable && (candidates.length === 0 || (!onProtected && candidates.every((c) => c.account === input.protectedAccount)))) {
+  const lax = isLax(input.usage);
+  // Without usage-deck ever: accounts nothing is known about take the Fable turn as it is (the unknown tier below).
+  const blindFable = lax && candidates.length === 0 && unknown.length > 0;
+  if (input.needFable && !blindFable && (candidates.length === 0 || (!onProtected && candidates.every((c) => c.account === input.protectedAccount)))) {
     const d = chooseAccount({ ...input, needFable: false });
-    return { ...d, reason: `Fable 여유 계정 없음 → Opus · ${d.reason}` };
+    return { ...d, reason: `${noFableWhy(input)} → Opus · ${d.reason}` };
   }
   const best = candidates[0] ?? null;
   const cur = input.current;
@@ -273,7 +289,7 @@ export function chooseAccount(input: RouterInput): RouterDecision {
   if (inCooldown) force = `쿨다운(~${hhmm(cd)})`;
   else if (fiveHour >= FIVE_HOUR_SWITCH_PCT || weekly >= WEEKLY_SWITCH_PCT) force = `문턱 초과(5h ${fiveHour}% · 주간 ${weekly}%)`;
   // Unknown Fable counts as not Fable-eligible, same as rankCandidates.
-  else if (input.needFable && fable === null) force = 'Fable 값 없음';
+  else if (input.needFable && fable === null && !lax) force = 'Fable 값 없음';
   else if (input.needFable && fable !== null && fable >= FABLE_MAX_PCT) force = `Fable ${fable}% 이상`;
 
   if (force) {

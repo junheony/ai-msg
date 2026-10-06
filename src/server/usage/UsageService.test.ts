@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { UsageService, parseDeckState, parseDeckCards } from './UsageService';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { UsageService, parseDeckState, parseDeckCards, type FetchLike } from './UsageService';
 import { buildRegistry } from '../../shared/accounts';
 import { remainingPct, usageOf, emptySnapshot } from '../../shared/usage-types';
 import { rankCandidates } from '../routing/AccountRouter';
@@ -320,5 +323,101 @@ describe('usage with a registry (not a/b/c)', () => {
     expect(Object.keys(s.accounts)).toEqual(['a']);
     expect(usageOf(s, 'work')).toMatchObject({ status: 'down', weekly: null, fiveHour: null });
     expect(usageOf(s, 'constructor').status).toBe('down');
+  });
+});
+
+describe('UsageService · usageSource (usage-deck 을 본 적이 있는가)', () => {
+  const NOW_ISO = '2026-10-06T12:00:00.000Z';
+  const okFetch = async () => ({ ok: true, json: async () => ({ cards: [] }) });
+  const failFetch = async () => { throw new Error('ECONNREFUSED'); };
+  async function tmp() {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'deck-usage-source-'));
+    return path.join(dir, 'usage-source.json');
+  }
+  const make = (o: { file?: string; strict?: boolean | null; fetchFn?: FetchLike; log?: (l: string) => void }) =>
+    new UsageService({ deckUrl: 'http://x', fetchFn: o.fetchFn ?? failFetch, now: () => new Date(NOW_ISO), accounts: testRegistry(), ...(o.file ? { usageSourceFile: o.file } : {}), ...(o.strict === undefined ? {} : { strict: o.strict }), ...(o.log ? { log: o.log } : {}) });
+
+  it('neither a record file nor the switch given: the snapshot carries no usageSource (read as deck)', async () => {
+    const s = make({});
+    expect(s.snapshot()).not.toHaveProperty('usageSource');
+    await s.pollOnce();
+    expect(s.snapshot()).not.toHaveProperty('usageSource');
+    expect(s.routingSnapshot()).not.toHaveProperty('usageSource');
+  });
+
+  it('DECK_USAGE_STRICT wins over everything: 1 → deck, 0 → none', async () => {
+    const seen = await tmp();
+    await fsp.writeFile(seen, JSON.stringify({ deckSeenAt: NOW_ISO }));
+    const lax = make({ file: seen, strict: false, fetchFn: okFetch });
+    expect(lax.snapshot().usageSource).toBe('none');
+    await lax.pollOnce();
+    expect(lax.snapshot().usageSource).toBe('none');
+    const strict = make({ file: await tmp(), strict: true });
+    await strict.pollOnce();
+    expect(strict.snapshot().usageSource).toBe('deck');
+  });
+
+  it('no record: deck until the first fetch attempt ends; then none if it failed', async () => {
+    const file = await tmp();
+    const s = make({ file });
+    expect(s.snapshot().usageSource).toBe('deck');
+    await s.pollOnce();
+    expect(s.snapshot()).toMatchObject({ deckReachable: false, usageSource: 'none' });
+    expect(s.routingSnapshot().usageSource).toBe('none');
+    await expect(fsp.stat(file)).rejects.toMatchObject({ code: 'ENOENT' });
+    // A turn's own numbers do not make it a usage-deck install.
+    s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 9, resetsAt: null } });
+    expect(s.snapshot().usageSource).toBe('none');
+  });
+
+  it('the first answer from usage-deck is recorded once (0600) and survives a restart and later outages', async () => {
+    const file = await tmp();
+    let up = false;
+    const s = make({ file, fetchFn: async () => (up ? okFetch() : failFetch()) });
+    await s.pollOnce();
+    expect(s.snapshot().usageSource).toBe('none');
+    up = true;
+    await s.pollOnce();
+    expect(s.snapshot().usageSource).toBe('deck');
+    expect(JSON.parse(await fsp.readFile(file, 'utf8'))).toEqual({ deckSeenAt: NOW_ISO });
+    expect((await fsp.stat(file)).mode & 0o777).toBe(0o600);
+    expect((await fsp.readdir(path.dirname(file)))).toEqual(['usage-source.json']);
+    // Not written again.
+    await fsp.writeFile(file, JSON.stringify({ deckSeenAt: '2026-01-01T00:00:00.000Z' }));
+    await s.pollOnce();
+    expect(JSON.parse(await fsp.readFile(file, 'utf8'))).toEqual({ deckSeenAt: '2026-01-01T00:00:00.000Z' });
+    up = false;
+    await s.pollOnce();
+    expect(s.snapshot().usageSource).toBe('deck');
+    // After a restart with usage-deck down: still a usage-deck install, before and after the first attempt.
+    const again = make({ file });
+    expect(again.snapshot().usageSource).toBe('deck');
+    await again.pollOnce();
+    expect(again.snapshot().usageSource).toBe('deck');
+  });
+
+  it('an answer that is not usage-deck\'s (HTTP error, no cards list) is not a sighting', async () => {
+    const file = await tmp();
+    const s = make({ file, fetchFn: async () => ({ ok: true, json: async () => ({ hello: 'world' }) }) });
+    await s.pollOnce();
+    expect(s.snapshot().usageSource).toBe('none');
+    const e = make({ file, fetchFn: async () => ({ ok: false, json: async () => ({ cards: [] }) }) });
+    await e.pollOnce();
+    expect(e.snapshot().usageSource).toBe('none');
+    await expect(fsp.stat(file)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each([['not JSON', '{'], ['no deckSeenAt', '{}'], ['not a time', '{"deckSeenAt":"soon"}'], ['not an object', '[]']])('a broken record (%s) reads as deck, with one log line', async (_n, body) => {
+    const file = await tmp();
+    await fsp.writeFile(file, body);
+    const logs: string[] = [];
+    const s = make({ file, log: (l) => logs.push(l) });
+    expect(s.snapshot().usageSource).toBe('deck');
+    await s.pollOnce();
+    await s.pollOnce();
+    expect(s.snapshot().usageSource).toBe('deck');
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain(file);
+    expect(await fsp.readFile(file, 'utf8')).toBe(body);
   });
 });
