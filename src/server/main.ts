@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   const token = await loadOrCreateToken(cfg.tokenFile);
   const accounts = cfg.accounts;
-  const usage = new UsageService({ deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, log: (line) => console.error(line) });
+  const usage = new UsageService({ deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, deckConfigured: cfg.deckUrlConfigured, log: (line) => console.error(line) });
   // Session rename / 보관 live in deck's own config (never in the Claude jsonl); loaded before the first scan.
   const meta = new SessionMetaStore(path.join(cfg.configDir, 'session-meta.json'));
   await meta.load();

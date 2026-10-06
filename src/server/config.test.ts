@@ -41,6 +41,21 @@ describe('config', () => {
     expect(of('yes').usageStrict).toBeNull();
   });
 
+  it('deckUrlConfigured: true only when the address was set (DECK_URL or the claude-pick file), not for the default', () => {
+    const home = path.join(dir, 'home-deck-url');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const of = (env: NodeJS.ProcessEnv = {}) => loadConfig({ DECK_CONFIG_DIR: '/cfg', ...env }, home, '/repo');
+    expect(of()).toMatchObject({ deckUrl: 'http://127.0.0.1:9310', deckUrlConfigured: false });
+    expect(of({ DECK_URL: '' })).toMatchObject({ deckUrl: 'http://127.0.0.1:9310', deckUrlConfigured: false });
+    expect(of({ DECK_URL: 'http://deck:9310' })).toMatchObject({ deckUrl: 'http://deck:9310', deckUrlConfigured: true });
+    fs.mkdirSync(path.join(home, '.config', 'claude-pick'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', 'claude-pick', 'deck_url'), '\n');
+    expect(of()).toMatchObject({ deckUrl: 'http://127.0.0.1:9310', deckUrlConfigured: false });
+    fs.writeFileSync(path.join(home, '.config', 'claude-pick', 'deck_url'), 'http://100.64.0.1:9310\n');
+    expect(of()).toMatchObject({ deckUrl: 'http://100.64.0.1:9310', deckUrlConfigured: true });
+    expect(of({ DECK_URL: 'http://deck:9310' })).toMatchObject({ deckUrl: 'http://deck:9310', deckUrlConfigured: true });
+  });
+
   it('loadConfig derives paths from HOME and honours env overrides', () => {
     const home = path.join(dir, 'home');
     fs.mkdirSync(path.join(home, '.config', 'claude-pick'), { recursive: true });

@@ -87,12 +87,12 @@ export function chooseAutoModel(i: AutoModelInput): AutoModelDecision {
   const base = { current: null, usage: i.usage, nowMs: i.nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: i.cooldownUntilMs, protectedAccount: i.protectedAccount, accounts: i.accounts };
   const forFable = model === 'fable' ? rankCandidates({ ...base, needFable: true }) : null;
   if (forFable && forFable.candidates.length === 0) {
-    if (isLax(i.usage) && forFable.unknown.length > 0) {
-      // Never had usage-deck: not knowing is no reason to leave Fable (a real limit is handled by the turn's own fallback).
+    // Never had usage-deck: not knowing is no reason to leave Fable, nor is a cooldown (a real limit is handled by the turn's own fallback).
+    const why = isLax(i.usage) && forFable.unknown.length > 0 ? null : noFableWhy(base);
+    if (why === null) {
       notes.push('Fable 잔여량 모름');
     } else {
       model = 'opus';
-      const why = noFableWhy(base);
       notes.push(why === 'Fable 여유 계정 없음' ? 'Fable 80%↑ → Opus' : `${why} → Opus`);
     }
   }

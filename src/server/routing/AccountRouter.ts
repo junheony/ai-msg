@@ -62,8 +62,9 @@ export type RouterDecision = {
   /** The pinned account was unusable this turn (e.g. '한도 도달'); `account` is the router's own choice. */
   pinBlocked?: string;
   /**
-   * An install without usage-deck only: this Fable turn was routed as an Opus turn, and why — the runner runs Opus, so
-   * the reason and the model come from this one decision. (With usage-deck `resolveModel` reaches Opus from the values.)
+   * This Fable turn was routed as an Opus turn, and why: set exactly when `reason` says "→ Opus". The runner runs Opus
+   * then, so the reason and the model come from this one decision. Without it the model follows the account's own
+   * Fable value (`resolveModel`).
    */
   asOpus?: string;
 };
@@ -85,14 +86,13 @@ export function isLax(usage: UsageSnapshot): boolean {
 }
 
 /**
- * Why a Fable turn has no Fable-eligible account: a Fable value at the limit is known, or none is known at all. An
- * install without usage-deck only gets here with every account ruled out (unknown is no reason there), so it names that.
+ * Why a Fable turn with no Fable-eligible account runs on Opus: a Fable value at the limit is known, or (with usage-deck)
+ * none is known. null = no reason: an install without usage-deck leaves Fable only for a known value at the limit —
+ * not for unknown values, cooldowns or 5h/weekly limits.
  */
-export function noFableWhy(input: Pick<RouterInput, 'usage' | 'accounts' | 'cooldownUntilMs' | 'nowMs'>): string {
-  const ids = input.accounts.list();
-  if (ids.some((a) => (usageOf(input.usage, a).fable?.usedPct ?? -1) >= FABLE_MAX_PCT)) return 'Fable 여유 계정 없음';
-  if (!isLax(input.usage)) return 'Fable 잔여량 모름(usage-deck 값 없음)';
-  return ids.every((a) => (input.cooldownUntilMs[a] ?? 0) > input.nowMs) ? '모든 계정 쿨다운' : '쓸 수 있는 계정 없음';
+export function noFableWhy(input: Pick<RouterInput, 'usage' | 'accounts'>): string | null {
+  if (input.accounts.list().some((a) => (usageOf(input.usage, a).fable?.usedPct ?? -1) >= FABLE_MAX_PCT)) return 'Fable 여유 계정 없음';
+  return isLax(input.usage) ? null : 'Fable 잔여량 모름(usage-deck 값 없음)';
 }
 
 export function rankCandidates(input: RouterInput): { candidates: Candidate[]; excluded: Partial<Record<Account, string>>; unknown: Account[] } {
@@ -142,9 +142,12 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
     });
   }
   candidates.sort(drainOrder(reg));
-  // The registry's fallback order: not protected and not home first, then home, the protected account last.
+  // The registry's fallback order: not protected and not home first, then home, the protected account last. Within
+  // one rank the lowest last-known weekly first (old numbers still tell a nearly full account from an empty one);
+  // accounts with no weekly value at all follow.
   const rank = (a: Account) => (a === input.protectedAccount ? 2 : reg.isHome(a) ? 1 : 0);
-  unknown.sort((x, y) => rank(x) - rank(y));
+  const lastWeekly = (a: Account) => usageOf(input.usage, a).weekly?.usedPct ?? Infinity;
+  unknown.sort((x, y) => rank(x) - rank(y) || (lastWeekly(x) === lastWeekly(y) ? 0 : lastWeekly(x) - lastWeekly(y)));
   return { candidates: (input.policy ?? 'balance') === 'balance' ? balanceOrder(candidates) : candidates, excluded, unknown };
 }
 
@@ -263,10 +266,10 @@ export function chooseAccount(input: RouterInput): RouterDecision {
     return { ...d, pinBlocked: block.why, reason: `고정 ${LABEL(pin)} ${block.detail} → ${d.reason}` };
   }
   const { candidates, excluded, unknown } = rankCandidates(input);
-  // No Fable-eligible account at all (≥ FABLE_MAX_PCT or unknown everywhere): the turn runs on Opus (resolveModel), so it
-  // is routed as an Opus turn — not to the "least weekly" fallback, which ignores 5h limits and cooldowns. The same when
-  // only the protected account has Fable room: Fable alone does not move a session onto it (one already there, and usable
-  // — it is a candidate — stays; a blocked one has no candidates left and is routed as Opus like any other).
+  // No Fable-eligible account at all: the turn is routed like an Opus turn — not to the "least weekly" fallback, which
+  // ignores 5h limits and cooldowns. The same when only the protected account has Fable room: Fable alone does not move
+  // a session onto it (one already there, and usable — it is a candidate — stays; a blocked one has no candidates left).
+  // Whether it then runs on Opus follows the account it lands on (below).
   const onProtected = !!input.protectedAccount && input.current === input.protectedAccount;
   const lax = isLax(input.usage);
   // Without usage-deck ever: accounts nothing is known about take the Fable turn as it is (the unknown tier below).
@@ -275,8 +278,13 @@ export function chooseAccount(input: RouterInput): RouterDecision {
     const d = chooseAccount({ ...input, needFable: false });
     // Landed on an account with Fable room anyway (the protected one, taken for its own sake): the Fable turn runs there.
     if (candidates.some((c) => c.account === d.account)) return d;
-    const why = lax && candidates.length > 0 ? 'Fable 여유는 보호 계정뿐' : noFableWhy(input);
-    return { ...d, ...(lax ? { asOpus: why } : {}), reason: `${why} → Opus · ${d.reason}` };
+    // The model follows that account's own Fable value, as `resolveModel` reads it: at the limit → Opus; unknown → Opus
+    // with usage-deck, Fable without; known room (the account is out for a 5h/weekly limit, a cooldown or an old card,
+    // none of which is a reason to change the model) → Fable. "→ Opus" is said only with `asOpus`, and the other way round.
+    const f = usageOf(input.usage, d.account).fable?.usedPct ?? null;
+    const why = f === null ? (lax ? null : noFableWhy(input)) : f < FABLE_MAX_PCT ? null : lax && candidates.length > 0 ? 'Fable 여유는 보호 계정뿐' : 'Fable 여유 계정 없음';
+    if (why === null) return d;
+    return { ...d, asOpus: why, reason: `${why} → Opus · ${d.reason}` };
   }
   const best = candidates[0] ?? null;
   const cur = input.current;
