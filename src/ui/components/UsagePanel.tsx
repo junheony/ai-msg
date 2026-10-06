@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ACCOUNTS, SEAT_LABEL, type Seat } from '../../shared/accounts';
 import { ClaudeMark, OpenAIMark } from './EngineMark';
-import { emptyAccountUsage, parseIsoUtc, remainingPct, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, parseIsoUtc, remainingPct, usageOf, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 type WindowKey = 'fiveHour' | 'weekly' | 'fable';
 const WINDOWS: { key: WindowKey; name: string }[] = [
@@ -180,7 +180,7 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory }: { u
   return (
     <div className="usage-panel">
       {ACCOUNTS.map((a) => (
-        <SeatCard key={a} seat={a} u={usage.accounts[a]} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />
+        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />
       ))}
       <SeatCard
         seat="gpt" u={gpt} windows={GPT_WINDOWS} current={current === 'gpt'} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory}

@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ACCOUNTS, type Account } from '../../shared/accounts';
+import type { Account } from '../../shared/accounts';
 import { isAncestor } from './SessionMover';
 
 /** One profile's copy of a session transcript. */
@@ -62,7 +62,7 @@ export async function lastConversationAt(file: string): Promise<number> {
  */
 export async function findCopies(roots: Record<Account, string>, sessionId: string, projectDir: string, account: Account): Promise<SessionCopy[]> {
   const name = path.basename(projectDir);
-  const dirs: [Account, string][] = [[account, projectDir], ...ACCOUNTS.map((a): [Account, string] => [a, path.join(roots[a], name)])];
+  const dirs: [Account, string][] = [[account, projectDir], ...Object.entries(roots).map(([a, root]): [Account, string] => [a, path.join(root, name)])];
   const seen = new Set<string>();
   const out: SessionCopy[] = [];
   for (const [acc, dir] of dirs) {

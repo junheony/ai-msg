@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Effort, ModelChoice } from '../../shared/models';
+import type { WireAccount } from '../../shared/accounts';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import type { ClientMessage } from '../../shared/protocol';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
@@ -55,7 +56,7 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
   send({
     type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, ...modelField(pane, model),
     ...(effort ? { effort } : {}),
-    ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox, ...(s.accountPin ? { accountPin: s.accountPin } : {}), ...(s.permissionMode || defaultMode ? { permissionMode: paneMode(pane, defaultMode) } : {}) } : {}),
+    ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox, ...(s.accountPin ? { accountPin: s.accountPin as WireAccount } : {}), ...(s.permissionMode || defaultMode ? { permissionMode: paneMode(pane, defaultMode) } : {}) } : {}),
     ...(ids.length ? { attachments: ids } : {}),
     ...(s.sessionId === null && pane.handoffFrom ? { handoffFrom: pane.handoffFrom.sessionId } : {}),
     clientRef,
@@ -86,7 +87,7 @@ export function startBranch(pane: PaneState, n: number, text: string, original: 
   dispatch({ type: 'branch_edit', n, text, paneId: pane.id, clientRef });
   send({
     type: 'send', sessionId: null, cwd: s.cwd, text, ...modelField(pane, model), ...(effort ? { effort } : {}), engine: 'claude',
-    ...(s.accountPin ? { accountPin: s.accountPin } : {}),
+    ...(s.accountPin ? { accountPin: s.accountPin as WireAccount } : {}),
     branch: { from: s.sessionId, n, ...(original ? { expect: original } : {}) },
     clientRef,
   });
@@ -389,7 +390,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onAccountPin={(pin) => {
             dispatch({ type: 'set_account_pin', pin, paneId: pane.id });
             // An existing session's pin lives on the server (applied from its next turn); a new one rides the first send.
-            if (s.sessionId) send({ type: 'set_account_pin', sessionId: s.sessionId, pin });
+            if (s.sessionId) send({ type: 'set_account_pin', sessionId: s.sessionId, pin: pin as WireAccount | null });
           }}
           permMode={paneMode(pane, app.defaultPermMode ?? null)}
           onPermMode={(mode) => {

@@ -44,7 +44,7 @@ describe('UsagePanel', () => {
   it('without a fixed now, the countdown ticks every 30 s', () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
-    const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
+    const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
     render(<UsagePanel usage={u} current={null} />);
     expect(screen.getByTestId('a-fiveHour').textContent).toContain('2시간 0분');
     act(() => { vi.advanceTimersByTime(60_000); });

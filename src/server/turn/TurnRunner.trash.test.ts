@@ -28,7 +28,7 @@ async function setup() {
     projectsRoots: roots, codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), homeAccount: 'a', now: () => NOW,
   });
   const put = async (a: Account, mtimeMs: number) => {
-    const f = path.join(roots[a], DIR, `${SID}.jsonl`);
+    const f = path.join(roots[a]!, DIR, `${SID}.jsonl`);
     await fs.mkdir(path.dirname(f), { recursive: true });
     await fs.writeFile(f, line);
     await fs.utimes(f, mtimeMs / 1000, mtimeMs / 1000);

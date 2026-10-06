@@ -1,5 +1,5 @@
-import { ACCOUNTS, CARD_ID, type Account, type UsageSeat } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, parseIsoUtc, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { LEGACY_ACCOUNTS, type Account, type AccountNames, type UsageSeat } from '../../shared/accounts';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits };
@@ -49,11 +49,13 @@ function cardsById(json: unknown): Map<string, Record<string, unknown>> {
   return byId;
 }
 
-export function parseDeckCards(json: unknown): { accounts: Record<Account, AccountUsage>; gpt: AccountUsage } {
+/** One entry per account of `reg` (retired ones too: their usage stays visible); absent `reg` = the a/b/c defaults. */
+export function parseDeckCards(json: unknown, reg: AccountNames = LEGACY_ACCOUNTS): { accounts: Record<Account, AccountUsage>; gpt: AccountUsage } {
   const byId = cardsById(json);
-  const accounts: Record<Account, AccountUsage> = { a: emptyAccountUsage(), b: emptyAccountUsage(), c: emptyAccountUsage() };
-  for (const account of ACCOUNTS) {
-    const card = byId.get(CARD_ID[account]);
+  const accounts: Record<Account, AccountUsage> = {};
+  for (const account of reg.all()) {
+    accounts[account] = emptyAccountUsage();
+    const card = byId.get(reg.cardId(account));
     if (!card) continue;
     const status = card.status === 'ok' ? 'ok' : card.status === 'stale' ? 'stale' : 'down';
     accounts[account] = { status, fetchedAt: str(card.fetchedAt), ...rowsOf(card) };
@@ -68,8 +70,8 @@ export function parseDeckCards(json: unknown): { accounts: Record<Account, Accou
   return { accounts, gpt };
 }
 
-export function parseDeckState(json: unknown): Record<Account, AccountUsage> {
-  return parseDeckCards(json).accounts;
+export function parseDeckState(json: unknown, reg: AccountNames = LEGACY_ACCOUNTS): Record<Account, AccountUsage> {
+  return parseDeckCards(json, reg).accounts;
 }
 
 export class UsageService {
@@ -88,14 +90,17 @@ export class UsageService {
   private readonly intervalMs: number;
   private readonly timeoutMs: number;
   private readonly now: () => Date;
+  private readonly reg: AccountNames;
 
-  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date }) {
+  /** `accounts`: the registry (absent = the a/b/c defaults). */
+  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts?: AccountNames }) {
     this.url = opts.deckUrl.replace(/\/+$/, '') + '/api/state';
     this.fetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
     this.intervalMs = opts.intervalMs ?? 60_000;
     this.timeoutMs = opts.timeoutMs ?? 6_000;
     this.now = opts.now ?? (() => new Date());
-    this.snap = emptySnapshot(this.now());
+    this.reg = opts.accounts ?? LEGACY_ACCOUNTS;
+    this.snap = emptySnapshot(this.now(), this.reg.all());
   }
 
   /** What the UI shows: the real card status (a setup_needed card stays 'down', so the re-login signal is kept). */
@@ -109,9 +114,10 @@ export class UsageService {
    */
   routingSnapshot(): UsageSnapshot {
     let accounts: UsageSnapshot['accounts'] | null = null;
-    for (const a of ACCOUNTS) {
-      const u = this.lift(a, this.snap.accounts[a]);
-      if (u !== this.snap.accounts[a]) (accounts ??= { ...this.snap.accounts })[a] = u;
+    for (const a of this.reg.all()) {
+      const cur = usageOf(this.snap, a);
+      const u = this.lift(a, cur);
+      if (u !== cur) (accounts ??= { ...this.snap.accounts })[a] = u;
     }
     return accounts ? { ...this.snap, accounts } : this.snap;
   }
@@ -127,7 +133,7 @@ export class UsageService {
   }
 
   private seatOf(s: UsageSnapshot, seat: UsageSeat): AccountUsage {
-    return seat === 'gpt' ? (s.gpt ?? emptyAccountUsage()) : s.accounts[seat];
+    return seat === 'gpt' ? (s.gpt ?? emptyAccountUsage()) : usageOf(s, seat);
   }
 
   /**
@@ -199,15 +205,15 @@ export class UsageService {
     try {
       const res = await this.fetchFn(this.url, { signal: ac.signal });
       if (!res.ok) throw new Error(`deck HTTP not ok`);
-      const parsed = parseDeckCards(await res.json());
+      const parsed = parseDeckCards(await res.json(), this.reg);
       const accounts = { ...parsed.accounts };
-      for (const a of ACCOUNTS) accounts[a] = this.overlay(a, accounts[a]);
+      for (const a of this.reg.all()) accounts[a] = this.overlay(a, usageOf(parsed, a));
       this.publish({ generatedAt: this.now().toISOString(), deckReachable: true, accounts, gpt: this.withCredits(this.overlay('gpt', parsed.gpt)) });
     } catch {
       // Spec §8: deck unreachable → keep last values, show them as stale.
       const stale = (u: AccountUsage): AccountUsage => ({ ...u, status: u.status === 'ok' ? 'stale' : u.status });
       const accounts = { ...this.snap.accounts };
-      for (const a of ACCOUNTS) accounts[a] = stale(accounts[a]);
+      for (const a of this.reg.all()) accounts[a] = stale(usageOf(this.snap, a));
       this.publish({ generatedAt: this.now().toISOString(), deckReachable: false, accounts, gpt: stale(this.seatOf(this.snap, 'gpt')) });
     } finally {
       clearTimeout(t);

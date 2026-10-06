@@ -23,7 +23,10 @@ type IndexFile = {
 };
 
 const VERSION = 1;
-const ACCOUNT_BIT: Record<Account, number> = { a: 1, b: 2, c: 4 };
+/** The accounts the v1 index format has a bit for (bit 8 is GLOBAL, so there is no room for a fourth). */
+type IndexedAccount = Exclude<UsageSource, 'codex'>;
+const INDEXED_ACCOUNTS: readonly IndexedAccount[] = ['a', 'b', 'c'];
+const ACCOUNT_BIT: Record<IndexedAccount, number> = { a: 1, b: 2, c: 4 };
 const GLOBAL_BIT = 8;
 const SAVE_EVERY_MS = 30_000;
 const CHUNK = 1024 * 1024;
@@ -32,7 +35,7 @@ const CLAUDE_NEEDLE = Buffer.from('"usage"');
 const CODEX_NEEDLES = [Buffer.from('"token_count"')];
 
 export type UsageIndexOpts = {
-  /** Claude `projects` dir per account (transcripts + `<id>/subagents/*.jsonl`). */
+  /** Claude `projects` dir per account (transcripts + `<id>/subagents/*.jsonl`). Only a/b/c are indexed (v1 format); other accounts are skipped and logged once. */
   projectsRoots: Record<Account, string>;
   /** `$CODEX_HOME/sessions` (rollout jsonl files). */
   codexSessionsRoot: string;
@@ -72,6 +75,7 @@ async function walkJsonl(root: string, accept: (rel: string) => boolean): Promis
 export class UsageIndex {
   private state: IndexFile = emptyIndex();
   private loaded = false;
+  private skippedLogged = false;
   private running: Promise<void> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastSave = 0;
@@ -191,11 +195,19 @@ export class UsageIndex {
 
   private async scan(): Promise<void> {
     await this.load();
+    const skipped = Object.keys(this.opts.projectsRoots).filter((a) => !(INDEXED_ACCOUNTS as readonly string[]).includes(a));
+    if (skipped.length > 0 && !this.skippedLogged) {
+      this.skippedLogged = true;
+      console.error(`deck: 사용량 집계는 아직 a·b·c 계정만 셉니다 — 빠진 계정: ${skipped.join(', ')}`);
+    }
     const targets: { file: string; source: UsageSource }[] = [];
     const unlisted: string[] = [];
     const roots: { root: string; source: UsageSource; accept: (rel: string) => boolean }[] = [
       // Transcripts and subagent transcripts; tool-result dumps and other sidecars are not jsonl.
-      ...(['a', 'b', 'c'] as const).map((a) => ({ root: this.opts.projectsRoots[a], source: a, accept: () => true })),
+      ...INDEXED_ACCOUNTS.flatMap((a) => {
+        const root = Object.hasOwn(this.opts.projectsRoots, a) ? this.opts.projectsRoots[a] : undefined;
+        return root === undefined ? [] : [{ root, source: a, accept: () => true }];
+      }),
       { root: this.opts.codexSessionsRoot, source: 'codex', accept: (rel) => path.basename(rel).startsWith('rollout-') },
     ];
     for (const { root, source, accept } of roots) {
@@ -252,7 +264,7 @@ export class UsageIndex {
     for (let i = 0; i < 5; i++) b[i]! += c[i]!;
   }
 
-  private claudeLine(line: Buffer, account: Account): void {
+  private claudeLine(line: Buffer, account: IndexedAccount): void {
     if (!line.includes(CLAUDE_NEEDLE)) return;
     let o: { type?: unknown; timestamp?: unknown; requestId?: unknown; uuid?: unknown; message?: { id?: unknown; model?: unknown; usage?: Record<string, unknown> } };
     try { o = JSON.parse(line.toString('utf8')) as typeof o; } catch { return; }
@@ -279,7 +291,7 @@ export class UsageIndex {
     if (!(mask & GLOBAL_BIT)) this.add(day, 'all', family, full);
     if (newMax > maxOut && mask) {
       const top: Bucket = [0, newMax - maxOut, 0, 0, 0];
-      for (const a of ['a', 'b', 'c'] as const) if (mask & ACCOUNT_BIT[a]) this.add(day, a, family, top);
+      for (const a of INDEXED_ACCOUNTS) if (mask & ACCOUNT_BIT[a]) this.add(day, a, family, top);
       if (mask & GLOBAL_BIT) this.add(day, 'all', family, top);
     }
     const next = (mask | bit | GLOBAL_BIT) + newMax * 16;

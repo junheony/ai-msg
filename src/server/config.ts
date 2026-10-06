@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isAccount, projectsDir, type Account } from '../shared/accounts';
+import { LEGACY_ACCOUNTS, type Account, type AccountNames, type AccountRegistry } from '../shared/accounts';
+import { loadAccountRegistry } from './accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
 import { resolveGeminiBin } from './engine/GeminiEngine';
 import { defaultCooldownDir } from './routing/cooldown';
@@ -15,11 +16,14 @@ export type DeckConfig = {
   stateFile: string;
   auditFile: string;
   deckUrl: string;
+  /** Claude accounts: `<configDir>/accounts.json`, else the profiles found in the home dir. */
+  accounts: AccountRegistry;
   protectedAccount: Account | null;
   cooldownDir: string;
   port: number;
   loopbackOnly: boolean;
   devOrigins: string[];
+  /** `projects` dir of every configured account (retired included). */
   projectsRoots: Record<Account, string>;
   uiDir: string;
   /** Deviation (added per review I5): extra Host-header names (e.g. Tailscale MagicDNS) allowed in addition to loopback/CGNAT. */
@@ -61,14 +65,14 @@ export type DeckConfig = {
   vapidSubject: string | null;
 };
 
-/** ~/.config/offload/protect: comment lines start with '#'; first non-blank token must be a|b|c. */
-export function readProtect(file: string): Account | null {
+/** ~/.config/offload/protect: comment lines start with '#'; first non-blank token must be a configured account (absent `accounts` = a|b|c). */
+export function readProtect(file: string, accounts: AccountNames = LEGACY_ACCOUNTS): Account | null {
   try {
     for (const raw of fs.readFileSync(file, 'utf8').split('\n')) {
       const line = raw.trim();
       if (!line || line.startsWith('#')) continue;
       const tok = line.split(/\s+/)[0];
-      return isAccount(tok) ? tok : null;
+      return accounts.has(tok) ? tok : null;
     }
   } catch {
     // missing file
@@ -103,10 +107,12 @@ export function repoRootDefault(): string {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), repoRoot: string = repoRootDefault()): DeckConfig {
   const configDir = env.DECK_CONFIG_DIR || path.join(home, '.config', 'deck');
-  const protectedAccount = isAccount(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'));
+  const accounts = loadAccountRegistry({ configDir, homeDir: home });
+  const protectedAccount = accounts.has(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'), accounts);
   return {
     home,
     configDir,
+    accounts,
     tokenFile: path.join(configDir, 'token'),
     pinnedFile: path.join(configDir, 'projects.json'),
     stateFile: path.join(configDir, 'session-state.json'),
@@ -117,7 +123,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     port: Number(env.DECK_PORT) || 9320,
     loopbackOnly: env.DECK_LOOPBACK_ONLY === '1',
     devOrigins: (env.DECK_DEV_ORIGIN ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-    projectsRoots: { a: projectsDir('a', home), b: projectsDir('b', home), c: projectsDir('c', home) },
+    projectsRoots: accounts.projectsRoots(),
     uiDir: env.DECK_UI_DIR || path.join(repoRoot, 'dist', 'ui'),
     extraHosts: (env.DECK_EXTRA_HOSTS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     codexBin: resolveCodexBin(env, home),

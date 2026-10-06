@@ -1,4 +1,4 @@
-import type { Account } from '../../shared/accounts';
+import type { Account, AccountNames } from '../../shared/accounts';
 import { AUTO_EFFORT, MODEL_INFO, type ClaudeModel, type Effort } from '../../shared/models';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { WEEKLY_SWITCH_PCT, rankCandidates } from './AccountRouter';
@@ -70,6 +70,8 @@ export type AutoModelInput = {
   nowMs: number;
   cooldownUntilMs: Partial<Record<Account, number>>;
   protectedAccount: Account | null;
+  /** Absent = the a/b/c defaults. */
+  accounts?: AccountNames;
 };
 
 export type AutoModelDecision = { model: ClaudeModel; effort: Effort; reason: string };
@@ -83,7 +85,7 @@ export function chooseAutoModel(i: AutoModelInput): AutoModelDecision {
   const c = classifyPrompt(i.text, i.attachmentCount);
   let model = c.model;
   const notes = [c.why];
-  const base = { current: null, usage: i.usage, nowMs: i.nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: i.cooldownUntilMs, protectedAccount: i.protectedAccount };
+  const base = { current: null, usage: i.usage, nowMs: i.nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: i.cooldownUntilMs, protectedAccount: i.protectedAccount, accounts: i.accounts };
   if (model === 'fable' && rankCandidates({ ...base, needFable: true }).candidates.length === 0) {
     model = 'opus';
     notes.push('Fable 80%↑ → Opus');

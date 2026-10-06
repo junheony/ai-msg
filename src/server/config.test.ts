@@ -29,6 +29,7 @@ describe('config', () => {
     fs.mkdirSync(path.join(home, '.config', 'offload'), { recursive: true });
     fs.writeFileSync(path.join(home, '.config', 'claude-pick', 'deck_url'), 'http://deck:9310\n');
     fs.writeFileSync(path.join(home, '.config', 'offload', 'protect'), '# c\na\n');
+    for (const p of ['.claude', '.claude-b', '.claude-c']) fs.mkdirSync(path.join(home, p, 'projects'), { recursive: true });
     const c = loadConfig({}, home, '/repo');
     expect(c).toMatchObject({
       configDir: path.join(home, '.config/deck'),
@@ -44,6 +45,7 @@ describe('config', () => {
       devOrigins: [],
       uiDir: '/repo/dist/ui',
     });
+    expect(c.accounts.list()).toEqual(['a', 'b', 'c']);
     expect(c.projectsRoots).toEqual({ a: path.join(home, '.claude/projects'), b: path.join(home, '.claude-b/projects'), c: path.join(home, '.claude-c/projects') });
     const o = loadConfig({ DECK_CONFIG_DIR: '/cfg', DECK_PORT: '9999', DECK_URL: 'http://x', CLAUDE_PROTECT: 'b', DECK_LOOPBACK_ONLY: '1', DECK_DEV_ORIGIN: 'http://localhost:5173,http://127.0.0.1:5173', DECK_UI_DIR: '/ui' }, home, '/repo');
     expect(o).toMatchObject({ configDir: '/cfg', tokenFile: '/cfg/token', port: 9999, deckUrl: 'http://x', protectedAccount: 'b', loopbackOnly: true, devOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'], uiDir: '/ui' });

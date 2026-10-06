@@ -1,4 +1,4 @@
-import type { Account } from '../../shared/accounts';
+import { LEGACY_ACCOUNTS, type Account, type AccountNames } from '../../shared/accounts';
 import type { EngineChoice, EngineKind } from '../../shared/models';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { WEEKLY_SWITCH_PCT, rankCandidates } from './AccountRouter';
@@ -15,9 +15,9 @@ export type EngineInput = {
   gptCooldownUntilMs: number | null;
   cooldownUntilMs: Partial<Record<Account, number>>;
   protectedAccount: Account | null;
+  /** Absent = the a/b/c defaults. */
+  accounts?: AccountNames;
 };
-
-const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
 function hhmm(ms: number): string {
   const d = new Date(ms);
@@ -34,11 +34,11 @@ export function chooseEngine(i: EngineInput): { engine: EngineKind; reason: stri
   const gw = gpt && gpt.status !== 'down' ? (gpt.weekly?.usedPct ?? null) : null;
   if (gw === null) return { engine: 'claude', reason: '자동 · GPT 잔여량 불명 → Claude' };
   if (gw >= WEEKLY_SWITCH_PCT) return { engine: 'claude', reason: `자동 · GPT 주간 ${gw}% → Claude` };
-  const { candidates } = rankCandidates({ current: null, usage: i.usage, nowMs: i.nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: i.cooldownUntilMs, protectedAccount: i.protectedAccount, needFable: false });
+  const { candidates } = rankCandidates({ current: null, usage: i.usage, nowMs: i.nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: i.cooldownUntilMs, protectedAccount: i.protectedAccount, needFable: false, accounts: i.accounts });
   // Best by weekly remaining, protected included: this is a capacity comparison, not the routing order.
   const best = candidates.length ? candidates.reduce((x, y) => (y.weeklyPct < x.weeklyPct ? y : x)) : null;
   const claudeRem = best ? 100 - best.weeklyPct : 0;
   const gptRem = 100 - gw;
   if (gptRem >= claudeRem + GPT_MARGIN_PCT) return { engine: 'codex', reason: `자동 · GPT 여유 ${gptRem}% ≥ Claude 최선 ${claudeRem}%+${GPT_MARGIN_PCT} → GPT` };
-  return { engine: 'claude', reason: best ? `자동 · Claude ${LABEL[best.account]} 여유 ${claudeRem}% → Claude` : '자동 · Claude' };
+  return { engine: 'claude', reason: best ? `자동 · Claude ${(i.accounts ?? LEGACY_ACCOUNTS).label(best.account)} 여유 ${claudeRem}% → Claude` : '자동 · Claude' };
 }

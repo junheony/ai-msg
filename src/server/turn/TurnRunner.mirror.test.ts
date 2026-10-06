@@ -44,7 +44,7 @@ async function setup(): Promise<Ctx> {
   const seen: string[] = [];
   const eng = new StubEngine(async (req: TurnRequest, call) => {
     const sid = req.resumeSessionId ?? SID;
-    const dir = path.join(roots[req.account], DIR);
+    const dir = path.join(roots[req.account]!, DIR);
     await fs.mkdir(dir, { recursive: true });
     const file = path.join(dir, `${sid}.jsonl`);
     seen.push(await fs.readFile(file, 'utf8').catch(() => ''));
@@ -62,21 +62,21 @@ async function setup(): Promise<Ctx> {
   return { base, roots, deps, runner: new TurnRunner(deps), eng, msgs, sink, seen };
 }
 
-const fileOf = (c: Ctx, a: Account, dir = DIR) => path.join(c.roots[a], dir, `${SID}.jsonl`);
+const fileOf = (c: Ctx, a: Account, dir = DIR) => path.join(c.roots[a]!, dir, `${SID}.jsonl`);
 const read = (f: string) => fs.readFile(f, 'utf8');
 /** The concurrent-open warning (TurnRunner's elsewhereNotice for Claude). */
 const ELSEWHERE = 'deck 밖(Claude Desktop 또는 Claude CLI)에서 바뀌었어요';
 const notices = (c: Ctx) => c.msgs.filter((m): m is Extract<ServerMessage, { type: 'turn_notice' }> => m.type === 'turn_notice').map((m) => m.message);
 
 async function put(c: Ctx, a: Account, content: string, mtimeMs?: number, dir = DIR) {
-  await fs.mkdir(path.join(c.roots[a], dir), { recursive: true });
+  await fs.mkdir(path.join(c.roots[a]!, dir), { recursive: true });
   await fs.writeFile(fileOf(c, a, dir), content);
   if (mtimeMs !== undefined) await fs.utimes(fileOf(c, a, dir), mtimeMs / 1000, mtimeMs / 1000);
 }
 
 /** A session deck last ran on B (warm, so routing keeps it there). */
 async function onB(c: Ctx) {
-  await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'b', projectDir: path.join(c.roots.b, DIR), lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'opus' });
+  await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'b', projectDir: path.join(c.roots.b!, DIR), lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'opus' });
 }
 
 async function turn(c: Ctx, sessionId: string | null, turnId = 't') {
@@ -235,7 +235,7 @@ describe('TurnRunner: write-back while the session is held open for background w
     const c = await setup();
     const g1 = gate();
     const g2 = gate();
-    const append = (text: string) => fs.mkdir(path.join(c.roots.b, DIR), { recursive: true }).then(() => fs.appendFile(fileOf(c, 'b'), line(text)));
+    const append = (text: string) => fs.mkdir(path.join(c.roots.b!, DIR), { recursive: true }).then(() => fs.appendFile(fileOf(c, 'b'), line(text)));
     const eng = new StubEngine(async () => (async function* () {
       await append('turn');
       yield { kind: 'init' as const, sessionId: SID, model: 'm', cwd: CWD };
@@ -279,11 +279,11 @@ describe('TurnRunner: write-back while the session is held open for background w
 describe('TurnRunner: resolving a session that diverged between deck and Desktop', () => {
   async function diverged(c: Ctx) {
     await put(c, 'a', line('one') + line('desktop went on'), NOW - 3_600_000);
-    await fs.mkdir(path.join(c.roots.a, DIR, SID, 'subagents'), { recursive: true });
-    await fs.writeFile(path.join(c.roots.a, DIR, SID, 'subagents', 'agent-d.jsonl'), '{"d":1}\n');
+    await fs.mkdir(path.join(c.roots.a!, DIR, SID, 'subagents'), { recursive: true });
+    await fs.writeFile(path.join(c.roots.a!, DIR, SID, 'subagents', 'agent-d.jsonl'), '{"d":1}\n');
     await put(c, 'b', line('one') + line('deck went on'), NOW - 60_000);
-    await fs.mkdir(path.join(c.roots.b, DIR, SID), { recursive: true });
-    await fs.writeFile(path.join(c.roots.b, DIR, SID, 'deck.txt'), 'b');
+    await fs.mkdir(path.join(c.roots.b!, DIR, SID), { recursive: true });
+    await fs.writeFile(path.join(c.roots.b!, DIR, SID, 'deck.txt'), 'b');
     await onB(c);
   }
   const listing = async (dir: string) => (await fs.readdir(dir)).sort();
@@ -294,7 +294,7 @@ describe('TurnRunner: resolving a session that diverged between deck and Desktop
     expect(await c.runner.forkStatus(SID)).toEqual({ diverged: true, deckAccount: 'b', homeAccount: 'a' });
     const r = await c.runner.resolveFork(SID, 'deck');
     expect(r.ok).toBe(true);
-    const aDir = path.join(c.roots.a, DIR);
+    const aDir = path.join(c.roots.a!, DIR);
     const names = await listing(aDir);
     const bak = names.find((n) => n.startsWith(`${SID}.jsonl.deck-fork-`))!;
     const bakDir = names.find((n) => n.startsWith(`${SID}.deck-fork-`))!;
@@ -331,7 +331,7 @@ describe('TurnRunner: resolving a session that diverged between deck and Desktop
 
     const res = await r.resolveFork(SID, 'home');
     expect(res.ok).toBe(true);
-    const bDir = path.join(c.roots.b, DIR);
+    const bDir = path.join(c.roots.b!, DIR);
     const names = await listing(bDir);
     const bak = names.find((n) => n.startsWith(`${SID}.jsonl.deck-fork-`))!;
     expect(await read(path.join(bDir, bak))).toBe(line('one') + line('deck went on'));
@@ -348,7 +348,7 @@ describe('TurnRunner: resolving a session that diverged between deck and Desktop
     await diverged(c);
     const r = new TurnRunner({ ...c.deps, move: async () => ({ ok: false, error: 'injected' }) });
     expect(await r.resolveFork(SID, 'deck')).toEqual({ ok: false, error: 'injected' });
-    const aDir = path.join(c.roots.a, DIR);
+    const aDir = path.join(c.roots.a!, DIR);
     expect((await listing(aDir)).filter((n) => n.includes('deck-fork'))).toEqual([]);
     expect(await read(fileOf(c, 'a'))).toBe(line('one') + line('desktop went on'));
     expect(await read(path.join(aDir, SID, 'subagents', 'agent-d.jsonl'))).toBe('{"d":1}\n');
@@ -362,11 +362,11 @@ describe('SessionIndex: which copy of a session wins', () => {
     await put(c, 'b', line('one'), NOW - 60_000);
     await c.deps.index.refresh();
     expect(c.deps.index.lookup(SID)?.account).toBe('a');
-    expect((await c.deps.index.bestCopy(SID, path.join(c.roots.b, DIR), 'b'))?.account).toBe('a');
+    expect((await c.deps.index.bestCopy(SID, path.join(c.roots.b!, DIR), 'b'))?.account).toBe('a');
     await put(c, 'b', line('one') + line('other'), NOW - 60_000);
     await c.deps.index.refresh();
     expect(c.deps.index.lookup(SID)?.account).toBe('b');
-    expect((await c.deps.index.bestCopy(SID, path.join(c.roots.b, DIR), 'b'))?.account).toBe('b');
+    expect((await c.deps.index.bestCopy(SID, path.join(c.roots.b!, DIR), 'b'))?.account).toBe('b');
   });
 });
 
@@ -392,7 +392,7 @@ describe('TurnRunner.openInDesktop', () => {
   it('a session on A itself or unknown to deck needs no write-back; a Codex session is unsupported', async () => {
     const c = await setup();
     expect(await c.runner.openInDesktop(SID)).toEqual({ ok: true, busy: false });
-    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'a', projectDir: path.join(c.roots.a, DIR), lastTurnAtMs: NOW, justCompacted: false, defaultModel: 'opus' });
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'a', projectDir: path.join(c.roots.a!, DIR), lastTurnAtMs: NOW, justCompacted: false, defaultModel: 'opus' });
     expect(await c.runner.openInDesktop(SID)).toEqual({ ok: true, busy: false });
     await c.deps.store.set({ sessionId: SID, engine: 'codex', cwd: CWD, lastTurnAtMs: NOW } as never);
     expect(await c.runner.openInDesktop(SID)).toEqual({ ok: false, reason: 'unsupported' });
@@ -410,14 +410,14 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
     await put(c, 'b', bCopy, NOW - 3_600_000);
     await put(c, 'c', cCopy, NOW - 60_000);
     // Deck last ran it on C, long ago: routing wants B (C's weekly is at 91%).
-    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c!, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
     await turn(c, SID);
 
     expect(c.eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: SID });
     expect(c.seen[0]).toBe(cCopy);
     expect((c.deps.store.get(SID) as ClaudeSessionState).account).toBe('b');
     // No forked session: the B dir holds only this session.
-    expect((await fs.readdir(path.join(c.roots.b, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
+    expect((await fs.readdir(path.join(c.roots.b!, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
     expect((await read(fileOf(c, 'b'))).startsWith(cCopy)).toBe(true);
     await c.deps.index.refresh();
     expect(c.deps.index.sessions().some((e) => e.title.includes('갈라진 사본'))).toBe(false);
@@ -435,7 +435,7 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
 
     // A (Desktop's profile) is never overwritten: the write-back still refuses.
     expect(await read(fileOf(c, 'a'))).toBe(aCopy);
-    expect((await fs.readdir(path.join(c.roots.a, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
+    expect((await fs.readdir(path.join(c.roots.a!, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
   });
 
   it('a failed overwrite keeps the current account with a plain notice; the target copy is restored', async () => {
@@ -443,14 +443,14 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
     const bCopy = line('one') + line('went on in deck on B');
     await put(c, 'b', bCopy, NOW - 3_600_000);
     await put(c, 'c', line('one') + line('went on in the CLI on C'), NOW - 60_000);
-    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c!, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
     let moves = 0;
     const runner = new TurnRunner({ ...c.deps, homeAccount: null, move: async (o) => (++moves === 2 ? { ok: false, error: 'disk full' } : moveSession(o)) });
     await runner.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
     expect(moves).toBe(2);
     expect(c.eng.calls[0]).toMatchObject({ account: 'c' });
     expect(await read(fileOf(c, 'b'))).toBe(bCopy);
-    expect((await fs.readdir(path.join(c.roots.b, DIR))).filter((n) => n !== `${SID}.jsonl`)).toEqual([]);
+    expect((await fs.readdir(path.join(c.roots.b!, DIR))).filter((n) => n !== `${SID}.jsonl`)).toEqual([]);
     expect(notices(c).some((m) => m.startsWith('세션을 B 계정으로 옮기지 못해 C 계정에서 이어가요') && m.includes('disk full'))).toBe(true);
   });
 
@@ -458,7 +458,7 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
     const c = await setup();
     await put(c, 'b', line('one') + line('went on in deck on B'), NOW - 3_600_000);
     await put(c, 'c', line('one') + line('the CLI on C, just now'), NOW - 10_000);
-    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c!, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
     await turn(c, SID);
     expect(c.eng.calls[0]).toMatchObject({ account: 'b' });
     const started = c.msgs.findIndex((m) => m.type === 'turn_started');
@@ -472,15 +472,15 @@ describe('TurnRunner: a diverged copy in the routing target', () => {
     const bCopy = cCopy + line('went on in the CLI on B');
     await put(c, 'b', bCopy, NOW - 3_600_000);
     await put(c, 'c', cCopy, NOW - 7_200_000);
-    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'c', projectDir: path.join(c.roots.c!, DIR), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
     // A move that reports divergence for the ahead copy (as a racing reconcile would leave it).
-    const runner = new TurnRunner({ ...c.deps, homeAccount: null, move: async (o) => (path.resolve(o.targetProjectsRoot) === path.resolve(c.roots.b) ? { ok: false, error: 'x', diverged: true } : moveSession(o)) });
+    const runner = new TurnRunner({ ...c.deps, homeAccount: null, move: async (o) => (path.resolve(o.targetProjectsRoot) === path.resolve(c.roots.b!) ? { ok: false, error: 'x', diverged: true } : moveSession(o)) });
     await runner.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
     expect(c.eng.calls[0]).toMatchObject({ account: 'b', resumeSessionId: SID });
     expect(c.seen[0]).toBe(bCopy);
-    expect(c.deps.store.get(SID)).toMatchObject({ account: 'b', projectDir: path.join(c.roots.b, DIR) });
+    expect(c.deps.store.get(SID)).toMatchObject({ account: 'b', projectDir: path.join(c.roots.b!, DIR) });
     expect(notices(c)).toContain('다른 계정에 더 최신 대화가 있어 그걸로 이어가요');
-    expect((await fs.readdir(path.join(c.roots.b, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
+    expect((await fs.readdir(path.join(c.roots.b!, DIR))).filter((n) => n.endsWith('.jsonl'))).toEqual([`${SID}.jsonl`]);
     expect(await fs.stat(path.join(c.base, 'session-backups')).catch(() => null)).toBeNull();
   });
 });
@@ -518,7 +518,7 @@ describe('TurnRunner: concurrent-open warning', () => {
     const c = await setup();
     const r = new TurnRunner({ ...c.deps, now: () => Date.now() });
     await put(c, 'b', line('one'), Date.now() - 60_000);
-    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'b', projectDir: path.join(c.roots.b, DIR), lastTurnAtMs: Date.now() - 60_000, justCompacted: false, defaultModel: 'opus' });
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'b', projectDir: path.join(c.roots.b!, DIR), lastTurnAtMs: Date.now() - 60_000, justCompacted: false, defaultModel: 'opus' });
     await r.run({ turnId: 't2', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
     await r.mirrorsSettled();
     expect(await fs.stat(fileOf(c, 'a')).then(() => true, () => false)).toBe(true);
@@ -534,7 +534,7 @@ describe('TurnRunner: concurrent-open warning', () => {
     const old = Date.now() - 600_000;
     await put(c, 'b', line('one'), old);
     await put(c, 'a', line('one') + line('Desktop, long ago'), old);
-    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'b', projectDir: path.join(c.roots.b, DIR), lastTurnAtMs: old, justCompacted: false, defaultModel: 'opus' });
+    await c.deps.store.set({ sessionId: SID, cwd: CWD, account: 'b', projectDir: path.join(c.roots.b!, DIR), lastTurnAtMs: old, justCompacted: false, defaultModel: 'opus' });
     await r.run({ turnId: 't', cwd: CWD, sessionId: SID, text: 'go' }, c.sink);
     await r.mirrorsSettled();
     expect(c.seen[0]).toBe(line('one') + line('Desktop, long ago'));
@@ -560,7 +560,7 @@ describe('TurnRunner: Claude Desktop metadata on the A copy', () => {
       // Desktop appends again; the next turn still continues from B (the user's last message is not lost).
       await fs.appendFile(fileOf(c, 'a'), meta(2));
       await fs.utimes(fileOf(c, 'a'), (NOW + 1_000) / 1000, (NOW + 1_000) / 1000);
-      expect((await c.deps.index.bestCopy(SID, path.join(c.roots.b, DIR), 'b'))?.account).toBe('b');
+      expect((await c.deps.index.bestCopy(SID, path.join(c.roots.b!, DIR), 'b'))?.account).toBe('b');
       await turn(c, SID, 't2');
       expect(c.eng.calls[1]).toMatchObject({ account: 'b' });
       expect(c.seen[1]).toBe(b1);

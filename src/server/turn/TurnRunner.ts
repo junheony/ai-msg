@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { GEMINI_ACCOUNTS, SEAT_LABEL, isGeminiAccount, type Account, type GeminiAccount } from '../../shared/accounts';
+import { GEMINI_ACCOUNTS, GEMINI_LABEL, LEGACY_ACCOUNTS, isGeminiAccount, type Account, type AccountNames, type GeminiAccount } from '../../shared/accounts';
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
@@ -28,6 +28,7 @@ import { isAncestor, moveSession } from '../sessions/SessionMover';
 import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
+import { usageOf } from '../../shared/usage-types';
 import { isCodexState, isGeminiState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type SessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
@@ -90,6 +91,9 @@ export type TurnRunnerDeps = {
   routeLog?: (line: string) => void;
   /** A session's mode changed during a turn (approved plan, 이 세션's "allow all edits") or via setPermissionMode. */
   onPermissionMode?: (sessionId: string, mode: PermMode) => void;
+  /** Which Claude accounts exist, their order and labels; absent = the a/b/c defaults. */
+  accounts?: AccountNames;
+  /** `projects` dir of each account. */
   projectsRoots: Record<Account, string>;
   /**
    * The profile Claude Desktop and a plain `claude --resume` use (A). After every Claude turn that ran
@@ -117,8 +121,6 @@ export const SHUTDOWN_ABORT = 'deck-shutdown';
 export const SHUTDOWN_ABORTED = '서버가 다시 시작되어 중단됨';
 /** The error text of an aborted turn: the user's stop (interrupt, 지금 전송; also a recycle) vs. the server shutting down. */
 export const abortedText = (signal: AbortSignal): string => (signal.reason === SHUTDOWN_ABORT ? SHUTDOWN_ABORTED : ABORTED);
-const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
-
 
 /** gemini-cli's quota / 429 errors (TerminalQuotaError, RESOURCE_EXHAUSTED); matched on the CLI's result error only. */
 const GEMINI_LIMIT_RE = /\bRESOURCE_EXHAUSTED\b|exhausted your (daily )?quota|\bQuota exceeded\b|"code"\s*:\s*429\b/i;
@@ -224,7 +226,10 @@ export class TurnRunner {
   /** When deck itself last wrote a transcript (its turn's process closed, a move/write-back), by resolved path. In memory only. */
   private readonly deckWroteAt = new Map<string, number>();
 
+  private readonly accounts: AccountNames;
+
   constructor(private readonly deps: TurnRunnerDeps) {
+    this.accounts = deps.accounts ?? LEGACY_ACCOUNTS;
     const move = deps.move ?? moveSession;
     this.move = async (o) => {
       const r = await move(o);
@@ -303,6 +308,17 @@ export class TurnRunner {
     sink.emit({ type: 'turn_notice', turnId, sessionId: state.sessionId, cwd: state.cwd, message });
   }
 
+  private label(account: Account): string {
+    return this.accounts.label(account);
+  }
+
+  /** The account's `projects` dir. Throws for an account that is not configured (a stored session of a removed one). */
+  private rootOf(account: Account): string {
+    const root = Object.hasOwn(this.deps.projectsRoots, account) ? this.deps.projectsRoots[account] : undefined;
+    if (root === undefined) throw new Error(`설정에 없는 계정: ${account}`);
+    return root;
+  }
+
   /**
    * After a Claude turn (its process closed, the jsonl flushed): copy the session back into the home
    * profile so Claude Desktop / `claude --resume` there see it. Runs in the background; a failure is a
@@ -345,7 +361,7 @@ export class TurnRunner {
     const home = this.deps.homeAccount;
     const st = this.deps.store.get(sessionId);
     if (!home || !st || isCodexState(st) || isGeminiState(st) || st.account === home) return null;
-    const homeDir = path.join(this.deps.projectsRoots[home], path.basename(st.projectDir));
+    const homeDir = path.join(this.rootOf(home), path.basename(st.projectDir));
     return { st, home, deckFile: path.join(st.projectDir, `${sessionId}.jsonl`), homeDir, homeFile: path.join(homeDir, `${sessionId}.jsonl`) };
   }
 
@@ -372,10 +388,10 @@ export class TurnRunner {
     const home = this.deps.homeAccount;
     if (!st || !home || st.account === home) return { ok: true, busy };
     return this.serialize(sessionId, async () => {
-      const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.deps.projectsRoots[home], ignoreOtherDirs: true });
+      const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.rootOf(home), ignoreOtherDirs: true });
       if (r.ok) return { ok: true as const, busy };
       // The home copy already contains ours: it is the newer one, nothing to write back.
-      if (r.diverged && (await isAncestor(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return { ok: true as const, busy };
+      if (r.diverged && (await isAncestor(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.rootOf(home), path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return { ok: true as const, busy };
       return r.diverged ? { ok: false as const, reason: 'diverged' as const } : { ok: false as const, reason: 'failed' as const, error: r.error };
     });
   }
@@ -453,23 +469,23 @@ export class TurnRunner {
     const st = this.deps.store.get(sessionId);
     if (!st || isCodexState(st) || isGeminiState(st) || st.account === home) return;
     // Only the same-named dir is refreshed: a stale copy under an older dir spelling must not block it (nor is it touched).
-    const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.deps.projectsRoots[home], ignoreOtherDirs: true });
+    const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.rootOf(home), ignoreOtherDirs: true });
     if (r.ok) {
       // A later failure (of any reason) is news again.
       for (const k of [...this.writeBackLogged]) if (k.startsWith(`${sessionId}\0`)) this.writeBackLogged.delete(k);
       return;
     }
     // The home copy already contains ours (Desktop went on, deck added nothing): the next turn pulls it in.
-    if (r.diverged && (await isAncestor(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.deps.projectsRoots[home], path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return;
+    if (r.diverged && (await isAncestor(path.join(st.projectDir, `${sessionId}.jsonl`), path.join(this.rootOf(home), path.basename(st.projectDir), `${sessionId}.jsonl`)).catch(() => false))) return;
     // Once per process for a given session and reason: a lasting state would otherwise log on every turn.
     const logKey = `${sessionId}\0${r.diverged ? 'diverged' : r.error}`;
     if (!this.writeBackLogged.has(logKey)) {
       this.writeBackLogged.add(logKey);
-      console.error(`deck: home write-back of ${sessionId} to ${LABEL[home]} failed: ${r.error}`);
+      console.error(`deck: home write-back of ${sessionId} to ${this.label(home)} failed: ${r.error}`);
     }
     this.noteOnce(sink, turnId, st, r.diverged
-      ? `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — ${LABEL[home]} 계정 사본은 덮어쓰지 않았습니다 (머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다)`
-      : `${LABEL[home]} 계정 사본 갱신 실패(${r.error}) — 대화는 계속됩니다`);
+      ? `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — ${this.label(home)} 계정 사본은 덮어쓰지 않았습니다 (머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다)`
+      : `${this.label(home)} 계정 사본 갱신 실패(${r.error}) — 대화는 계속됩니다`);
   }
 
   /**
@@ -490,18 +506,18 @@ export class TurnRunner {
         const others = r.heads.filter((h) => h !== r.best).map((h) => h.account);
         const kept = others.filter((a) => a === this.deps.homeAccount || a === this.deps.protectedAccount);
         const replaced = others.filter((a) => !kept.includes(a));
-        const names = (as: Account[]) => as.map((a) => LABEL[a]).join('·');
+        const names = (as: Account[]) => as.map((a) => this.label(a)).join('·');
         const parts = [
           ...(kept.length ? [`${names(kept)} 계정 사본은 덮어쓰지 않아요 (머리글의 '갈라짐' 메뉴에서 맞출 수 있습니다)`] : []),
           ...(replaced.length ? [`${names(replaced)} 계정 사본은 그 계정으로 옮길 때 백업해 두고 덮어써요`] : []),
         ];
-        const message = `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근 대화가 있는 ${LABEL[r.best.account]} 계정 사본으로 이어가고, ${parts.join(', ')}`;
+        const message = `다른 곳(Desktop/CLI)에서 따로 이어진 대화가 있어 갈라졌습니다 — 가장 최근 대화가 있는 ${this.label(r.best.account)} 계정 사본으로 이어가고, ${parts.join(', ')}`;
         if (this.firstNote(state.sessionId, message)) say(message);
       }
       if (r.best.projectDir === state.projectDir) return state;
       if (!r.heads.includes(copies[0]!)) {
         // Ours is an older prefix of the winner: refresh it in place (moveSession accepts only that).
-        const m = await this.move({ sessionId: state.sessionId, sourceProjectDir: r.best.projectDir, targetProjectsRoot: this.deps.projectsRoots[state.account] });
+        const m = await this.move({ sessionId: state.sessionId, sourceProjectDir: r.best.projectDir, targetProjectsRoot: this.rootOf(state.account) });
         if (m.ok && path.resolve(m.targetDir) === path.resolve(state.projectDir)) return state;
       }
       const next = { ...state, account: r.best.account, projectDir: r.best.projectDir };
@@ -599,6 +615,7 @@ export class TurnRunner {
    */
   async setAccountPin(sessionId: string, pin: Account | null): Promise<boolean> {
     const { store, index } = this.deps;
+    if (pin !== null && !this.accounts.list().includes(pin)) return false;
     if (!store.get(sessionId)) {
       const e = index.lookup(sessionId);
       if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return false;
@@ -666,12 +683,12 @@ export class TurnRunner {
    * Notices go through `say` (the caller shows them on the turn).
    */
   private async relocate(state: ClaudeSessionState, to: Account, say: (message: string) => void): Promise<ClaudeSessionState | null> {
-    const req = { sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] };
+    const req = { sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.rootOf(to) };
     let r = await this.move(req);
     let replaced: string | null = null;
     if (!r.ok && r.diverged) {
       // The target copy merely extends ours (it is ahead, not diverged): continue from it, as openInDesktop does.
-      const targetDir = path.join(this.deps.projectsRoots[to], path.basename(state.projectDir));
+      const targetDir = path.join(this.rootOf(to), path.basename(state.projectDir));
       if (await isAncestor(path.join(state.projectDir, `${state.sessionId}.jsonl`), path.join(targetDir, `${state.sessionId}.jsonl`)).catch(() => false)) {
         const next = { ...state, account: to, projectDir: targetDir };
         await this.deps.store.set(next);
@@ -679,26 +696,26 @@ export class TurnRunner {
         return next;
       }
       if (to === this.deps.homeAccount || to === this.deps.protectedAccount) {
-        say(`${LABEL[to]} 계정(Desktop)에 따로 이어진 대화가 있어 그 사본은 그대로 두었어요 — ${LABEL[state.account]} 계정에서 이어가요`);
+        say(`${this.label(to)} 계정(Desktop)에 따로 이어진 대화가 있어 그 사본은 그대로 두었어요 — ${this.label(state.account)} 계정에서 이어가요`);
         return null;
       }
-      const refuse = [this.deps.homeAccount, this.deps.protectedAccount].filter((a): a is Account => !!a).map((a) => this.deps.projectsRoots[a]);
+      const refuse = [this.deps.homeAccount, this.deps.protectedAccount].filter((a): a is Account => !!a).map((a) => this.rootOf(a));
       const f = await this.replaceDiverged({ ...req, refuseProjectsRoots: refuse, move: this.move });
       if (f.ok) {
         r = f.move;
-        console.log(`deck: ${state.sessionId} 의 ${LABEL[to]} 계정 사본이 갈라져 백업(${f.backupDir}) 뒤 덮어씀`);
-        replaced = `${LABEL[to]} 계정에 따로 이어진 사본이 있어 백업해 두고 이 대화로 덮어썼어요 (백업: ${f.backupDir} — 자동 정리되지 않아요)`;
+        console.log(`deck: ${state.sessionId} 의 ${this.label(to)} 계정 사본이 갈라져 백업(${f.backupDir}) 뒤 덮어씀`);
+        replaced = `${this.label(to)} 계정에 따로 이어진 사본이 있어 백업해 두고 이 대화로 덮어썼어요 (백업: ${f.backupDir} — 자동 정리되지 않아요)`;
         if (f.keptAside.length) {
           console.error(`deck: ${state.sessionId} 의 옮겨 둔 원래 사본이 백업 뒤에 바뀌어 지우지 않음: ${f.keptAside.join(', ')}`);
           replaced += ' (옮기는 사이 바뀐 원래 사본은 지우지 않고 남겨 두었어요)';
         }
       } else {
-        console.error(`deck: replacing the diverged copy of ${state.sessionId} in ${LABEL[to]} failed (${f.restored ? 'restored' : 'NOT restored'}, backup ${f.backupDir ?? '-'}): ${f.error}`);
+        console.error(`deck: replacing the diverged copy of ${state.sessionId} in ${this.label(to)} failed (${f.restored ? 'restored' : 'NOT restored'}, backup ${f.backupDir ?? '-'}): ${f.error}`);
         r = { ok: false, error: f.restored ? f.error : `${f.error} · 백업: ${f.backupDir ?? '없음'}` };
       }
     }
     if (!r.ok) {
-      say(`세션을 ${LABEL[to]} 계정으로 옮기지 못해 ${LABEL[state.account]} 계정에서 이어가요 (${r.error})`);
+      say(`세션을 ${this.label(to)} 계정으로 옮기지 못해 ${this.label(state.account)} 계정에서 이어가요 (${r.error})`);
       return null;
     }
     const next = { ...state, account: to, projectDir: r.targetDir };
@@ -712,13 +729,13 @@ export class TurnRunner {
    * safe mover (source never written) and the fork made from that copy. The parent itself is not relocated: its stored
    * state keeps its account and folder.
    */
-  private async copyForFork(state: ClaudeSessionState, to: Account, say: (message: string) => void, why = `${LABEL[state.account]} 계정을 지금 쓸 수 없어`): Promise<ClaudeSessionState | null> {
-    const r = await this.move({ sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.deps.projectsRoots[to] });
+  private async copyForFork(state: ClaudeSessionState, to: Account, say: (message: string) => void, why = `${this.label(state.account)} 계정을 지금 쓸 수 없어`): Promise<ClaudeSessionState | null> {
+    const r = await this.move({ sessionId: state.sessionId, sourceProjectDir: state.projectDir, targetProjectsRoot: this.rootOf(to) });
     if (!r.ok) {
-      say(`갈래를 ${LABEL[to]} 계정에 만들지 못해 ${LABEL[state.account]} 계정에서 만들어요 (${r.error})`);
+      say(`갈래를 ${this.label(to)} 계정에 만들지 못해 ${this.label(state.account)} 계정에서 만들어요 (${r.error})`);
       return null;
     }
-    say(`${why} 대화를 ${LABEL[to]} 계정에 복사해 갈래를 만들어요 — 원래 대화는 ${LABEL[state.account]} 계정에 그대로 있어요`);
+    say(`${why} 대화를 ${this.label(to)} 계정에 복사해 갈래를 만들어요 — 원래 대화는 ${this.label(state.account)} 계정에 그대로 있어요`);
     return { ...state, account: to, projectDir: r.targetDir };
   }
 
@@ -1001,7 +1018,7 @@ export class TurnRunner {
    */
   private async locateProjectDir(sessionId: string, account: Account, candidate: string): Promise<string> {
     if (await exists(path.join(candidate, `${sessionId}.jsonl`))) return candidate;
-    const root = this.deps.projectsRoots[account];
+    const root = this.rootOf(account);
     const dirs = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
     for (const d of dirs) {
       if (d.isDirectory() && (await exists(path.join(root, d.name, `${sessionId}.jsonl`)))) return path.join(root, d.name);
@@ -1055,20 +1072,20 @@ export class TurnRunner {
       }
     }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
-    if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${SEAT_LABEL[state.account]}`, attachments);
+    if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments);
     // Gemini is explicit only: chooseEngine (자동) never sees it.
     if (!state && p.engine === 'gemini') return this.runGemini(p, null, sink, 'Gemini 지정', attachments);
     if (!state) {
       const pick = chooseEngine({
         choice: p.engine ?? 'claude', usage: deps.usage.routingSnapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
-        gptCooldownUntilMs: this.gptCooldownUntil, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount,
+        gptCooldownUntilMs: this.gptCooldownUntil, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: this.accounts,
       });
       if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason, attachments);
       // Only a non-default choice earns a prefix, so Plan 1 badges read exactly as before.
       const enginePrefix = p.engine && p.engine !== 'claude' ? pick.reason : null;
       if (p.model === 'auto') {
         // 자동: decided once, here, for the new session; later turns keep it as the session default (prompt cache).
-        const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.routingSnapshot(), nowMs: this.now(), cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()), protectedAccount: deps.protectedAccount });
+        const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.routingSnapshot(), nowMs: this.now(), cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: this.accounts });
         return this.runClaude({ ...p, model: auto.model, effort: p.effort ?? auto.effort }, null, sink, enginePrefix ? `${enginePrefix} · ${auto.reason}` : auto.reason, attachments, auto.model);
       }
       return this.runClaude(p, null, sink, enginePrefix, attachments);
@@ -1149,13 +1166,13 @@ export class TurnRunner {
     let account: GeminiAccount;
     if (state) {
       account = state.account;
-      if (!gem.loggedIn(account)) { fail(account, `Gemini ${SEAT_LABEL[account]} 로그인 필요`); return; }
+      if (!gem.loggedIn(account)) { fail(account, `Gemini ${GEMINI_LABEL[account]} 로그인 필요`); return; }
     } else {
       const loggedIn = GEMINI_ACCOUNTS.filter((a) => gem.loggedIn(a));
       if (!loggedIn.length) { fail('g1', 'Gemini 로그인 필요 (docs/gemini-spike.md)'); return; }
       const free = loggedIn.find((a) => (this.geminiCooldownUntil[a] ?? 0) <= this.now());
       account = free ?? loggedIn[0]!;
-      reason = `${reason} · ${SEAT_LABEL[account]}${free ? '' : ' (모두 쿨다운)'}`;
+      reason = `${reason} · ${GEMINI_LABEL[account]}${free ? '' : ' (모두 쿨다운)'}`;
     }
     const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
     if (sink.signal.aborted) { fail(account, abortedText(sink.signal)); return; }
@@ -1191,6 +1208,10 @@ export class TurnRunner {
     const early: string[] = [];
     let end: ClaudeSessionState | null = null;
     try {
+      if (state && !Object.hasOwn(this.deps.projectsRoots, state.account)) {
+        sink.emit({ type: 'error', turnId: p.turnId, message: `설정에 없는 계정(${this.label(state.account)})의 세션이라 이어갈 수 없습니다` });
+        return;
+      }
       if (state) {
         // A write-back still copying this session finishes first (it must not see the next turn's writes).
         await this.mirrors.get(state.sessionId);
@@ -1228,10 +1249,12 @@ export class TurnRunner {
     // 메시지 편집 갈래: until the CLI reports the fork's id, `state` is the parent's and its id is not this turn's.
     let forkAt = p.fork && state?.sessionId === p.fork.from ? p.fork.at : null;
     // A fork takes the parent's pin (the pane sends the same one; it covers a pin set a moment before the edit).
-    const pin = state ? (state.accountPin ?? (forkAt ? p.accountPin : null) ?? null) : (p.accountPin ?? null);
+    const askedPin = state ? (state.accountPin ?? (forkAt ? p.accountPin : null) ?? null) : (p.accountPin ?? null);
+    // A pin on an account that is not active (removed or retired since) is no pin.
+    const pin = askedPin && this.accounts.list().includes(askedPin) ? askedPin : null;
     const shownId = () => (forkAt ? null : (state?.sessionId ?? null));
     const done = () => (forkAt ? null : state);
-    const routerBase = { usage: deps.usage.routingSnapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance' };
+    const routerBase = { usage: deps.usage.routingSnapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance', accounts: this.accounts };
 
     // An unpinned edit-fork runs on the parent's own account (it is not moved for a branch) unless that account is
     // unusable; a pinned one routes like any turn of the session, copying the parent to the pinned account.
@@ -1241,7 +1264,7 @@ export class TurnRunner {
       current: state?.account ?? null,
       lastTurnAtMs: state?.lastTurnAtMs ?? null,
       justCompacted: state?.justCompacted ?? false,
-      cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()),
+      cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()),
     };
     let first = chooseAccount(forkFrom ? { ...routeInput, pinned: forkFrom } : routeInput);
     // A fork whose pin is unusable stays on the parent's account like an unpinned one (a cold cache must not send it,
@@ -1249,8 +1272,8 @@ export class TurnRunner {
     let forkWhy: string | undefined;
     if (forkAt && state && pin && first.pinBlocked && pin !== state.account) {
       const stay = chooseAccount({ ...routeInput, pinned: state.account });
-      if (stay.pinBlocked) forkWhy = `${LABEL[pin]} 고정 계정과 ${LABEL[state.account]} 계정을 지금 쓸 수 없어`;
-      first = { ...stay, pinned: false, pinBlocked: first.pinBlocked, reason: `고정 ${LABEL[pin]} ${first.pinBlocked} → 갈래는 ${stay.reason}` };
+      if (stay.pinBlocked) forkWhy = `${this.label(pin)} 고정 계정과 ${this.label(state.account)} 계정을 지금 쓸 수 없어`;
+      first = { ...stay, pinned: false, pinBlocked: first.pinBlocked, reason: `고정 ${this.label(pin)} ${first.pinBlocked} → 갈래는 ${stay.reason}` };
     }
     let account = first.account;
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
@@ -1258,16 +1281,16 @@ export class TurnRunner {
     // The badge's pin marker: the account is the pinned one because of the pin.
     let byPin = first.pinned === true && account === pin;
     if (state && account !== state.account) {
-      if (byPin) forkWhy = `${LABEL[account]} 계정 고정이라`;
+      if (byPin) forkWhy = `${this.label(account)} 계정 고정이라`;
       const moved = forkAt ? await this.copyForFork(state, account, (m) => early.push(m), forkWhy) : await this.relocate(state, account, (m) => early.push(m));
       if (moved) state = moved;
-      else { account = state.account; reason = `이전 실패 · ${LABEL[account]} 유지`; byPin = false; }
+      else { account = state.account; reason = `이전 실패 · ${this.label(account)} 유지`; byPin = false; }
     }
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
     const elsewhereAge = state && !forkAt ? await this.openElsewhere(state) : null;
     if (state && elsewhereAge !== null) early.push(elsewhereNotice({ engine: 'claude', title: deps.index.lookup(state.sessionId)?.title ?? null, ageMs: elsewhereAge }));
-    deps.routeLog?.(routeLogLine(state?.sessionId ?? null, { ...first, account, reason }));
-    if (pin && first.pinBlocked && account !== pin) early.push(`${LABEL[pin]} 계정 ${first.pinBlocked} — 이번 턴은 ${LABEL[account]} 로 (고정은 유지)`);
+    deps.routeLog?.(routeLogLine(state?.sessionId ?? null, { ...first, account, reason }, this.accounts));
+    if (pin && first.pinBlocked && account !== pin) early.push(`${this.label(pin)} 계정 ${first.pinBlocked} — 이번 턴은 ${this.label(account)} 로 (고정은 유지)`);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];
@@ -1289,7 +1312,7 @@ export class TurnRunner {
         announceMode();
         return done();
       }
-      const fable = deps.usage.snapshot().accounts[account].fable?.usedPct ?? null;
+      const fable = usageOf(deps.usage.snapshot(), account).fable?.usedPct ?? null;
       const { model, note } = resolveModel(wantedClaude, sessionDefault, fable);
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: shownId(), cwd, account, model, reason, attempt, engine: 'claude' });
       flushEarly();
@@ -1306,7 +1329,7 @@ export class TurnRunner {
           sessionId,
           cwd,
           account,
-          projectDir: await this.locateProjectDir(sessionId, account, state?.projectDir ?? path.join(deps.projectsRoots[account], projectSlug(a.initCwd ?? cwd))),
+          projectDir: await this.locateProjectDir(sessionId, account, state?.projectDir ?? path.join(this.rootOf(account), projectSlug(a.initCwd ?? cwd))),
           lastTurnAtMs: res.ok ? this.now() : forked ? null : (state?.lastTurnAtMs ?? null),
           justCompacted: a.compacted,
           defaultModel: sessionDefault,
@@ -1355,7 +1378,7 @@ export class TurnRunner {
           current: account,
           lastTurnAtMs: null,
           justCompacted: false,
-          cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now()),
+          cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()),
           exclude: tried,
         });
         if (cand.account === account || tried.includes(cand.account)) break;

@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ACCOUNTS, type Account } from '../../shared/accounts';
+import type { Account } from '../../shared/accounts';
 import type { BranchLink } from '../../shared/branches';
 import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry, SessionHolder } from '../../shared/session-types';
 import { findCopies, resolveCopies, type PrefixFn, type SessionCopy } from './copies';
@@ -223,7 +223,7 @@ export class SessionIndex {
 
   /** `codexInBackground`: do not wait for the (slow) Codex rollout read; `onChange` fires once it is done. */
   async refresh(opts: { codexInBackground?: boolean } = {}): Promise<void> {
-    const all = (await Promise.all(ACCOUNTS.map((a) => scanProfile(a, this.opts.roots[a])))).flat();
+    const all = (await Promise.all(Object.entries(this.opts.roots).map(([a, root]) => scanProfile(a, root)))).flat();
     this.entries = all;
     // The same id in several profiles/dirs: the copy containing the others wins; truly diverged → latest conversation timestamp.
     const byId = new Map<string, SessionEntry[]>();

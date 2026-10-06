@@ -28,7 +28,7 @@ async function setup(engine: StubEngine, extra: Partial<TurnRunnerDeps> = {}) {
     engine, index, store, usage, cooldownDir: path.join(base, 'cooldown'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots,
     codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), now: () => NOW, maxRetries: 0, ...extra,
   });
-  const dir = path.join(roots.c, '-w-one');
+  const dir = path.join(roots.c!, '-w-one');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, `${PARENT}.jsonl`);
   await fs.writeFile(file, [{ type: 'user', uuid: 'u0', parentUuid: null, cwd: '/w/one', message: { role: 'user', content: '첫 질문' } }, { type: 'assistant', uuid: 'a0', parentUuid: 'u0', message: { id: 'm', role: 'assistant', content: [{ type: 'text', text: '답' }] } }].map((r) => JSON.stringify(r)).join('\n') + '\n');

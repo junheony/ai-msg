@@ -85,7 +85,7 @@ export function AccountPicker({ pin, current, usage, onPin }: {
           <div className="mp-section" role="group" aria-label="계정">
             <div className="mp-head">이 세션의 계정</div>
             {item(null, '자동', '턴마다 잔여량과 캐시를 보고 고름')}
-            {ACCOUNTS.map((a) => item(a, NAME[a], pct(usage?.accounts[a])))}
+            {ACCOUNTS.map((a) => item(a, NAME[a] ?? a, pct(usage?.accounts[a])))}
           </div>
         </div>
       )}

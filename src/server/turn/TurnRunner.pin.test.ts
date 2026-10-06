@@ -46,7 +46,7 @@ async function setup(engine: StubEngine, usage?: UsageService) {
   const msgs: ServerMessage[] = [];
   const sink: TurnSink = { emit: (m) => msgs.push(m), askPermission: async () => 'once', askQuestion: async () => null, signal: new AbortController().signal };
   const seed = async (account: Account) => {
-    const dir = path.join(roots[account], '-w-one');
+    const dir = path.join(roots[account]!, '-w-one');
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, `${SID}.jsonl`), JSON.stringify({ type: 'user', cwd: '/w/one', message: { role: 'user', content: 'seed' } }) + '\n');
     await index.refresh();

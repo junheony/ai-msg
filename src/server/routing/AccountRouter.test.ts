@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Account } from '../../shared/accounts';
+import { buildRegistry, type Account } from '../../shared/accounts';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
 import { chooseAccount, rankCandidates, routeLogLine, type RouterInput } from './AccountRouter';
 
@@ -350,5 +350,34 @@ describe('routeLogLine', () => {
     expect(line).toMatch(/제외 A 쿨다운/);
     expect(line).not.toMatch(/\n/);
     expect(routeLogLine(null, d)).toMatch(/^deck: route 새 세션 → C/);
+  });
+});
+
+describe('chooseAccount — accounts from a registry (not a/b/c)', () => {
+  const reg = buildRegistry({ version: 1, home: 'w', accounts: [{ id: 'w', label: 'Work' }, { id: 'p' }, { id: 'old', retired: true }] }, { homeDir: '/h' });
+  const usage = (accounts: Record<string, AccountUsage>): UsageSnapshot => ({ generatedAt: new Date(NOW).toISOString(), deckReachable: true, accounts });
+
+  it('ranks only the active accounts of the registry and labels them', () => {
+    const d = chooseAccount(input({ accounts: reg, protectedAccount: null, usage: usage({ w: acct({ w: 50 }), p: acct({ w: 10 }), old: acct({ w: 1 }), a: acct({ w: 1 }) }) }));
+    expect(['w', 'p']).toContain(d.account);
+    expect(d.candidates.map((c) => c.account).sort()).toEqual(['p', 'w']);
+    expect(routeLogLine('s', { ...d, account: 'w' }, reg)).toContain('→ Work');
+  });
+
+  it('an account with no usage entry is not eligible, and nothing throws', () => {
+    const d = chooseAccount(input({ accounts: reg, protectedAccount: null, usage: usage({ p: acct({ w: 10 }) }) }));
+    expect(d.account).toBe('p');
+  });
+
+  it('nothing ranks → the registry fallback (not protected, not home), never a hard-coded b', () => {
+    const d = chooseAccount(input({ accounts: reg, protectedAccount: null, usage: usage({}) }));
+    expect(d.account).toBe('p');
+    expect(chooseAccount(input({ accounts: reg, protectedAccount: 'p', usage: usage({}) })).account).toBe('w');
+  });
+
+  it('a pin on an account that is not active in the registry is ignored', () => {
+    const d = chooseAccount(input({ accounts: reg, protectedAccount: null, pinned: 'old', usage: usage({ w: acct({ w: 50 }), p: acct({ w: 10 }), old: acct({ w: 1 }) }) }));
+    expect(['w', 'p']).toContain(d.account);
+    expect(d.pinned).toBeFalsy();
   });
 });

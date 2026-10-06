@@ -1,22 +1,182 @@
-export type Account = 'a' | 'b' | 'c';
+/**
+ * A Claude account id: the persistent key of one Claude profile (session state, cooldown file name, usage rows).
+ * Which ids exist is configuration (`AccountRegistry`), not a type — validate with `registry.has()`.
+ */
+export type Account = string;
 
-export const ACCOUNTS: readonly Account[] = ['a', 'b', 'c'];
+export const ACCOUNT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,15}$/;
 
-/** The profile Claude Desktop reads and writes (~/.claude): deck mirrors sessions it ran on B/C back there. */
-export const HOME_ACCOUNT: Account = 'a';
+/** Ids that already mean another seat or usage source (`Seat`, `UsageSource`), or an Object.prototype member (ids key plain objects): never a Claude account. */
+export const RESERVED_ACCOUNT_IDS: readonly string[] = ['gpt', 'g1', 'g2', 'codex', 'all', 'constructor'];
 
-/** usage-deck card ids (spec §3, claude-pick). */
-export const CARD_ID: Record<Account, string> = {
-  a: 'claude:main',
-  b: 'claude:second',
-  c: 'claude:third',
+/** One entry of `<configDir>/accounts.json`. */
+export type AccountSpec = {
+  id: string;
+  /** Default `id.toUpperCase()`. */
+  label?: string;
+  /** Profile dir (`~` = the home dir). Default `~/.claude` for `a`, else `~/.claude-<id>`. */
+  configDir?: string;
+  /** usage-deck card id. Default `claude:main|second|third` for a|b|c (claude-pick), else `claude:<id>`. */
+  card?: string;
+  /** Read-only: sessions and usage stay visible, the router and pickers skip it. */
+  retired?: boolean;
 };
 
-export function isAccount(x: unknown): x is Account {
-  return x === 'a' || x === 'b' || x === 'c';
+/** `<configDir>/accounts.json`. `home`: the profile Claude Desktop reads and writes (default `a`, else the first active account). */
+export type AccountsConfig = { version: 1; home?: string; accounts: AccountSpec[] };
+
+/** The part of the registry that needs no paths (routing, labels, usage cards). */
+export interface AccountNames {
+  /** Active accounts, in configured order (the order ties are broken in). */
+  list(): readonly Account[];
+  /** Active and retired accounts, in configured order. */
+  all(): readonly Account[];
+  /** A configured account (active or retired). */
+  has(id: unknown): id is Account;
+  isRetired(id: Account): boolean;
+  /** Any id has a label: an id that is no longer configured shows as `ID`. */
+  label(id: Account): string;
+  /** usage-deck card id (`claude:<id>` for an id that is not configured). */
+  cardId(id: Account): string;
+  /** The profile Claude Desktop reads and writes: deck mirrors sessions it ran elsewhere back there. */
+  readonly home: Account;
+  isHome(id: Account): boolean;
+  /** The account to use when nothing ranks: the first active account that is neither `protect` nor home (`b` in the a/b/c set), else the first that is not `protect`, else the only one there is. */
+  fallback(protect: Account | null): Account;
 }
 
-/** a → ~/.claude (CLAUDE_CONFIG_DIR must stay unset), b → ~/.claude-b, c → ~/.claude-c. */
+export interface AccountRegistry extends AccountNames {
+  /** Throws for an id that is not configured (never guess a profile: the turn would bill another account). */
+  profileDir(id: Account): string;
+  projectsDir(id: Account): string;
+  /** `projects` dir of every configured account (retired included), in configured order. */
+  projectsRoots(): Record<Account, string>;
+  /**
+   * Environment for one SDK turn. Copies `base`, removes every token variable (env tokens override the config dir
+   * and would silently bill another account) and the base-URL / Bedrock / Vertex / entrypoint variables, and selects
+   * the profile: the default dir `~/.claude` = no CLAUDE_CONFIG_DIR (keychain service name has no hash suffix), any
+   * other = CLAUDE_CONFIG_DIR. Throws for an id that is not configured.
+   */
+  env(id: Account, base: NodeJS.ProcessEnv): Record<string, string | undefined>;
+}
+
+/** claude-pick's card ids for the first three accounts. */
+const LEGACY_CARD: ReadonlyMap<string, string> = new Map([['a', 'claude:main'], ['b', 'claude:second'], ['c', 'claude:third']]);
+
+const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const;
+
+/** Inherited from a parent Claude Code / proxy setup, these would send the turn elsewhere or mislabel it. */
+const ROUTING_VARS = ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_ENTRYPOINT'] as const;
+
+function expandDir(dir: string, homeDir: string): string {
+  const d = dir === '~' ? homeDir : dir.startsWith('~/') ? `${homeDir}/${dir.slice(2)}` : dir;
+  return d.length > 1 ? d.replace(/\/+$/, '') : d;
+}
+
+/**
+ * The registry for a parsed config. Throws (with the reason) on an id that is not `ACCOUNT_ID_RE` or is reserved,
+ * a duplicate id / profile dir / card, a relative profile dir, a `home` that is not an active account, or no active account.
+ */
+export function buildRegistry(config: AccountsConfig, opts: { homeDir: string }): AccountRegistry {
+  const homeDir = opts.homeDir.length > 1 ? opts.homeDir.replace(/\/+$/, '') : opts.homeDir;
+  const defaultDir = `${homeDir}/.claude`;
+  type Entry = { id: Account; label: string; dir: string; card: string; retired: boolean };
+  const byId = new Map<Account, Entry>();
+  const dirs = new Map<string, Account>();
+  const cards = new Map<string, Account>();
+  for (const spec of config.accounts) {
+    const id = spec.id;
+    if (typeof id !== 'string' || !ACCOUNT_ID_RE.test(id)) throw new Error(`계정 id "${String(id)}" 는 쓸 수 없습니다 (${ACCOUNT_ID_RE.source})`);
+    if (RESERVED_ACCOUNT_IDS.includes(id)) throw new Error(`계정 id "${id}" 는 다른 자리에 쓰는 이름입니다 (${RESERVED_ACCOUNT_IDS.join(', ')})`);
+    if (byId.has(id)) throw new Error(`계정 id 중복: ${id}`);
+    const dir = expandDir(spec.configDir ?? (id === 'a' ? defaultDir : `${homeDir}/.claude-${id}`), homeDir);
+    if (!dir.startsWith('/')) throw new Error(`계정 ${id} 의 configDir "${dir}" 는 절대 경로(또는 ~/…)여야 합니다`);
+    const card = spec.card ?? LEGACY_CARD.get(id) ?? `claude:${id}`;
+    const sameDir = dirs.get(dir);
+    if (sameDir !== undefined) throw new Error(`계정 ${sameDir} 와 ${id} 의 configDir 이 같습니다: ${dir}`);
+    const sameCard = cards.get(card);
+    if (sameCard !== undefined) throw new Error(`계정 ${sameCard} 와 ${id} 의 card 가 같습니다: ${card}`);
+    dirs.set(dir, id);
+    cards.set(card, id);
+    byId.set(id, { id, label: spec.label || id.toUpperCase(), dir, card, retired: spec.retired === true });
+  }
+  const all: readonly Account[] = [...byId.keys()];
+  const active: readonly Account[] = all.filter((id) => !byId.get(id)!.retired);
+  const first = active[0];
+  if (first === undefined) throw new Error('쓸 수 있는(retired 가 아닌) 계정이 하나도 없습니다');
+  const home = config.home ?? (active.includes('a') ? 'a' : first);
+  if (!active.includes(home)) throw new Error(`home "${home}" 은 쓸 수 있는 계정이 아닙니다`);
+  const known = (id: Account): Entry => {
+    const e = typeof id === 'string' ? byId.get(id) : undefined;
+    if (!e) throw new Error(`설정에 없는 계정: ${String(id)}`);
+    return e;
+  };
+  const get = (id: Account): Entry | undefined => (typeof id === 'string' ? byId.get(id) : undefined);
+  return {
+    list: () => active,
+    all: () => all,
+    has: (id: unknown): id is Account => typeof id === 'string' && byId.has(id),
+    isRetired: (id) => get(id)?.retired ?? false,
+    label: (id) => get(id)?.label ?? String(id).toUpperCase(),
+    cardId: (id) => get(id)?.card ?? `claude:${id}`,
+    home,
+    isHome: (id) => id === home,
+    fallback: (protect) => active.find((id) => id !== protect && id !== home) ?? active.find((id) => id !== protect) ?? first,
+    profileDir: (id) => known(id).dir,
+    projectsDir: (id) => `${known(id).dir}/projects`,
+    projectsRoots: () => Object.fromEntries(all.map((id) => [id, `${known(id).dir}/projects`])),
+    env: (id, base) => {
+      const dir = known(id).dir;
+      const env: Record<string, string | undefined> = { ...base };
+      for (const v of [...TOKEN_VARS, ...ROUTING_VARS]) delete env[v];
+      if (dir === defaultDir) delete env.CLAUDE_CONFIG_DIR;
+      else env.CLAUDE_CONFIG_DIR = dir;
+      return env;
+    },
+  };
+}
+
+/**
+ * The config used when there is no accounts.json, from the names of the profile directories found in the home dir:
+ * `.claude` → a, `.claude-<x>` → x (x an id, not reserved; `.claude-a` loses to `.claude`), sorted by id.
+ * Home = a, else the first. Nothing found = a alone (`~/.claude` appears at the first login).
+ */
+export function defaultAccountsConfig(profileNames: readonly string[]): AccountsConfig {
+  const ids = new Set<string>();
+  for (const name of profileNames) {
+    if (name === '.claude') ids.add('a');
+    else if (name.startsWith('.claude-')) {
+      const id = name.slice('.claude-'.length);
+      if (ACCOUNT_ID_RE.test(id) && id !== 'a' && !RESERVED_ACCOUNT_IDS.includes(id)) ids.add(id);
+    }
+  }
+  if (ids.size === 0) ids.add('a');
+  const sorted = [...ids].sort();
+  return { version: 1, home: ids.has('a') ? 'a' : (sorted[0] as string), accounts: sorted.map((id) => ({ id })) };
+}
+
+/** The a/b/c registry deck had before accounts.json. Server code gets its registry from `loadAccountRegistry`; this is the default for callers that pass none (tests). */
+export function legacyRegistry(homeDir: string): AccountRegistry {
+  return buildRegistry(defaultAccountsConfig(['.claude', '.claude-b', '.claude-c']), { homeDir });
+}
+
+/** `legacyRegistry` without paths: the default `AccountNames` of pure functions (router, usage parsing) when the caller passes none. */
+export const LEGACY_ACCOUNTS: AccountNames = legacyRegistry('/');
+
+/**
+ * Compatibility exports for the UI until it takes the account list from the server (`hello.accounts`): the a/b/c
+ * defaults. Server code uses the `AccountRegistry` it is given, never these.
+ */
+export const ACCOUNTS: readonly Account[] = ['a', 'b', 'c'];
+/** The account ids the wire schema accepts today (`protocol.ts`): the UI narrows a pin to this before sending. */
+export type WireAccount = 'a' | 'b' | 'c';
+export const HOME_ACCOUNT: Account = 'a';
+export const CARD_ID: Record<Account, string> = Object.fromEntries(LEGACY_CARD);
+
+export function isAccount(x: unknown): x is Account {
+  return LEGACY_ACCOUNTS.has(x);
+}
+
 export function profileDir(account: Account, home: string): string {
   return `${home}/${account === 'a' ? '.claude' : `.claude-${account}`}`;
 }
@@ -25,28 +185,12 @@ export function projectsDir(account: Account, home: string): string {
   return `${profileDir(account, home)}/projects`;
 }
 
-const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const;
-
-/** Inherited from a parent Claude Code / proxy setup, these would send the turn elsewhere or mislabel it. */
-const ROUTING_VARS = ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_ENTRYPOINT'] as const;
-
-/**
- * Environment for one SDK turn. Copies `base`, removes every token variable
- * (env tokens override the config dir and would silently bill another account) and the
- * base-URL / Bedrock / Vertex / entrypoint variables,
- * and selects the profile: a = no CLAUDE_CONFIG_DIR (keychain service name has
- * no hash suffix), b/c = ~/.claude-b / ~/.claude-c.
- */
 export function accountEnv(
   account: Account,
   base: NodeJS.ProcessEnv,
   home: string,
 ): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...base };
-  for (const v of [...TOKEN_VARS, ...ROUTING_VARS]) delete env[v];
-  if (account === 'a') delete env.CLAUDE_CONFIG_DIR;
-  else env.CLAUDE_CONFIG_DIR = profileDir(account, home);
-  return env;
+  return legacyRegistry(home).env(account, base);
 }
 
 /** Two Google accounts for gemini-cli, each with its own GEMINI_CLI_HOME (never chosen by 자동). */
@@ -67,11 +211,13 @@ export function geminiCredFile(account: GeminiAccount, home: string): string {
   return `${geminiHome(account, home)}/.gemini/oauth_creds.json`;
 }
 
-/** Who ran a turn: one of the three Claude accounts, the single ChatGPT Pro account, or a Gemini account. */
+/** Who ran a turn: a Claude account, the single ChatGPT Pro account, or a Gemini account. */
 export type Seat = Account | 'gpt' | GeminiAccount;
 /** Seats with a usage card (Gemini quota is not readable locally). */
 export type UsageSeat = Account | 'gpt';
-export const SEAT_LABEL: Record<Seat, string> = { a: 'A', b: 'B', c: 'C', gpt: 'GPT', g1: 'G1', g2: 'G2' };
+export const GEMINI_LABEL: Record<GeminiAccount, string> = { g1: 'G1', g2: 'G2' };
+/** Compatibility export for the UI (a/b/c only for Claude); the server labels Claude accounts with `registry.label()`. */
+export const SEAT_LABEL: Record<Seat, string> = { a: 'A', b: 'B', c: 'C', gpt: 'GPT', ...GEMINI_LABEL };
 
 const OPENAI_VARS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL'] as const;
 
