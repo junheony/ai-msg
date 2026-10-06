@@ -52,6 +52,11 @@ export type RouterDecision = {
   switched: boolean;
   candidates: Candidate[];
   excluded: Partial<Record<Account, string>>;
+  /**
+   * 잔여량 모름: accounts whose usage is not known (no usage-deck, no card, a card too old to trust) and that nothing
+   * else rules out, in the order they are tried — after every candidate. They also keep their entry in `excluded`.
+   */
+  unknown?: Account[];
   /** The account is the session's pinned one, chosen because of the pin. */
   pinned?: boolean;
   /** The pinned account was unusable this turn (e.g. '한도 도달'); `account` is the router's own choice. */
@@ -69,25 +74,30 @@ function hhmm(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-export function rankCandidates(input: RouterInput): { candidates: Candidate[]; excluded: Partial<Record<Account, string>> } {
+export function rankCandidates(input: RouterInput): { candidates: Candidate[]; excluded: Partial<Record<Account, string>>; unknown: Account[] } {
   const candidates: Candidate[] = [];
   const excluded: Partial<Record<Account, string>> = {};
+  const unknown: Account[] = [];
   const reg = input.accounts;
   for (const account of reg.list()) {
     if (input.exclude?.includes(account)) { excluded[account] = '제외 지정'; continue; }
     const u = usageOf(input.usage, account);
-    if (u.status === 'down') { excluded[account] = '잔여량 정보 없음'; continue; }
+    const cd = input.cooldownUntilMs[account];
+    const cooling = cd !== undefined && cd > input.nowMs;
+    if (u.status === 'down') { excluded[account] = '잔여량 정보 없음'; if (!cooling) unknown.push(account); continue; }
     if (u.status === 'stale') {
       const age = u.fetchedAt ? input.nowMs - parseIsoUtc(u.fetchedAt) : Number.NaN;
       if (Number.isNaN(age) || age > STALE_MAX_MS) {
         excluded[account] = `stale 자료 ${Number.isNaN(age) ? '?' : Math.round(age / 1000)}초 경과`;
+        // Its last numbers at the limit: old, but no reason to try it before anything else.
+        const atLimit = (u.fiveHour?.usedPct ?? 0) >= EXCLUDE_PCT || (u.weekly?.usedPct ?? 0) >= EXCLUDE_PCT;
+        if (!cooling && !atLimit) unknown.push(account);
         continue;
       }
     }
-    const cd = input.cooldownUntilMs[account];
-    if (cd !== undefined && cd > input.nowMs) { excluded[account] = `쿨다운(~${hhmm(cd)})`; continue; }
+    if (cooling) { excluded[account] = `쿨다운(~${hhmm(cd)})`; continue; }
     const weekly = u.weekly?.usedPct;
-    if (weekly === undefined || weekly === null) { excluded[account] = '주간 사용률 없음'; continue; }
+    if (weekly === undefined || weekly === null) { excluded[account] = '주간 사용률 없음'; unknown.push(account); continue; }
     const fiveHour = u.fiveHour?.usedPct ?? 0;
     if (fiveHour >= EXCLUDE_PCT) { excluded[account] = `5h ${fiveHour}%`; continue; }
     if (weekly >= EXCLUDE_PCT) { excluded[account] = `주간 ${weekly}%`; continue; }
@@ -109,7 +119,10 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
     });
   }
   candidates.sort(drainOrder(reg));
-  return { candidates: (input.policy ?? 'balance') === 'balance' ? balanceOrder(candidates) : candidates, excluded };
+  // The registry's fallback order: not protected and not home first, then home, the protected account last.
+  const rank = (a: Account) => (a === input.protectedAccount ? 2 : reg.isHome(a) ? 1 : 0);
+  unknown.sort((x, y) => rank(x) - rank(y));
+  return { candidates: (input.policy ?? 'balance') === 'balance' ? balanceOrder(candidates) : candidates, excluded, unknown };
 }
 
 /** 리셋 임박 먼저 소진: protected last, then the highest (100 - weekly) / hours-to-reset; full ties: the later account in the registry's order first. */
@@ -177,8 +190,9 @@ function bestWhy(input: RouterInput, cands: Candidate[]): string {
 export function routeLogLine(sessionId: string | null, d: RouterDecision, accounts: AccountNames): string {
   const LABEL = (a: Account) => accounts.label(a);
   const cands = d.candidates.map((c) => `${LABEL(c.account)}${c.protected ? '(보호)' : ''} 5h ${pct5(c)} · 주간 ${c.weeklyPct}%`).join(', ');
-  const ex = accounts.list().filter((a) => d.excluded[a]).map((a) => `${LABEL(a)} ${d.excluded[a]}`).join(', ');
-  return `deck: route ${sessionId ? sessionId.slice(0, 8) : '새 세션'} → ${LABEL(d.account)} (${d.reason})${cands ? ` · 후보 ${cands}` : ''}${ex ? ` · 제외 ${ex}` : ''}`;
+  const unknown = (d.unknown ?? []).map(LABEL).join(', ');
+  const ex = accounts.list().filter((a) => d.excluded[a] && !d.unknown?.includes(a)).map((a) => `${LABEL(a)} ${d.excluded[a]}`).join(', ');
+  return `deck: route ${sessionId ? sessionId.slice(0, 8) : '새 세션'} → ${LABEL(d.account)} (${d.reason})${cands ? ` · 후보 ${cands}` : ''}${unknown ? ` · 잔여량 모름 ${unknown}` : ''}${ex ? ` · 제외 ${ex}` : ''}`;
 }
 
 /** claude-pick exit 3: least weekly among non-excluded, non-protected accounts with a weekly value, ties in the registry's order; else the registry's fallback (not protected, not home: `b` in the a/b/c set). */
@@ -216,16 +230,16 @@ export function chooseAccount(input: RouterInput): RouterDecision {
     // A pin skips warm-cache and threshold switching (and the protected-account rule: it is the user's explicit choice).
     const block = pinBlock(input, pin);
     if (!block) {
-      const { candidates, excluded } = rankCandidates(input);
+      const ranked = rankCandidates(input);
       const switched = input.current !== null && input.current !== pin;
-      return { candidates, excluded, account: pin, switched, pinned: true, reason: `고정 ${LABEL(pin)}${switched ? ' 전환' : ''}` };
+      return { ...ranked, account: pin, switched, pinned: true, reason: `고정 ${LABEL(pin)}${switched ? ' 전환' : ''}` };
     }
     // Unusable: the router's own choice for this turn only (the pin stays).
     const d = chooseAccount({ ...input, pinned: null, exclude: [...(input.exclude ?? []), pin] });
     if (d.account === pin) return { ...d, reason: `고정 ${LABEL(pin)} ${block.detail} · 대안 없음 · ${d.reason}` };
     return { ...d, pinBlocked: block.why, reason: `고정 ${LABEL(pin)} ${block.detail} → ${d.reason}` };
   }
-  const { candidates, excluded } = rankCandidates(input);
+  const { candidates, excluded, unknown } = rankCandidates(input);
   // No Fable-eligible account at all (≥ FABLE_MAX_PCT or unknown everywhere): the turn runs on Opus (resolveModel), so it
   // is routed as an Opus turn — not to the "least weekly" fallback, which ignores 5h limits and cooldowns. The same when
   // only the protected account has Fable room: Fable alone does not move a session onto it (one already there, and usable
@@ -237,10 +251,13 @@ export function chooseAccount(input: RouterInput): RouterDecision {
   }
   const best = candidates[0] ?? null;
   const cur = input.current;
-  const base = { candidates, excluded };
+  const base = { candidates, excluded, unknown };
 
   if (cur === null) {
     if (best) return { ...base, account: best.account, switched: false, reason: `새 세션 · ${bestWhy(input, candidates)}` };
+    // Nobody is known to have room: an account nothing is known about comes before one known to be at its limit.
+    const blind = unknown[0];
+    if (blind !== undefined) return { ...base, account: blind, switched: false, reason: `자격 있는 계정 없음 → 잔여량 모름 · ${LABEL(blind)}` };
     const fb = leastWeekly(input);
     return { ...base, account: fb, switched: false, reason: `자격 있는 계정 없음 → 최소 사용 ${LABEL(fb)}` };
   }
@@ -274,6 +291,8 @@ export function chooseAccount(input: RouterInput): RouterDecision {
     const hard = inCooldown || fiveHour >= EXCLUDE_PCT || weekly >= EXCLUDE_PCT;
     const alt = hard ? ordered.find((c) => c.account !== cur) : undefined;
     if (alt) return { ...base, account: alt.account, switched: true, reason: `${force} → ${LABEL(alt.account)} 전환(여유 있는 대안 없음)` };
+    const blind = hard ? unknown.find((a) => a !== cur) : undefined;
+    if (blind !== undefined) return { ...base, account: blind, switched: true, reason: `${force} → 잔여량 모름 · ${LABEL(blind)} 전환` };
     return { ...base, account: cur, switched: false, reason: `${force} · 여유 있는 대안 없음 · ${LABEL(cur)} 유지` };
   }
 

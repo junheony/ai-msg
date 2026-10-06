@@ -1211,8 +1211,13 @@ export class TurnRunner {
     const early: string[] = [];
     let end: ClaudeSessionState | null = null;
     try {
-      if (state && !this.roots.has(state.account)) {
-        sink.emit({ type: 'error', turnId: p.turnId, message: `설정에 없는 계정(${this.label(state.account)})의 세션이라 이어갈 수 없습니다` });
+      // Read-only sessions: an account that is not configured any more, or one marked retired. Both stay listed (and deletable).
+      if (state && (!this.accounts.has(state.account) || !this.roots.has(state.account))) {
+        sink.emit({ type: 'error', turnId: p.turnId, message: `설정에 없는 계정(${this.label(state.account)})의 세션이라 이어갈 수 없습니다 — 이어 쓰려면 accounts.json 에 {"id": ${JSON.stringify(state.account)}, "configDir": "그 계정의 설정 폴더"} 를 추가하고 deck 을 다시 시작하세요. 필요 없는 세션이면 삭제해도 됩니다.` });
+        return;
+      }
+      if (state && this.accounts.isRetired(state.account)) {
+        sink.emit({ type: 'error', turnId: p.turnId, message: `${this.label(state.account)} 계정은 뺀 계정(retired)이라 이 세션을 이어갈 수 없습니다 — 기록은 그대로 볼 수 있습니다. 이어 쓰려면 accounts.json 에서 이 계정의 "retired" 를 지우고 deck 을 다시 시작하거나, 새 세션에서 이어가세요.` });
         return;
       }
       if (state) {

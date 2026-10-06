@@ -383,3 +383,77 @@ describe('chooseAccount — accounts from a registry (not a/b/c)', () => {
     expect(d.pinned).toBeFalsy();
   });
 });
+
+describe('chooseAccount — 잔여량을 모르는 계정 (usage-deck 없음 · 일부 카드만 있음)', () => {
+  const DOWN: Spec = { status: 'down' };
+  const noDeck = snap(DOWN, DOWN, DOWN, false);
+  const one = buildRegistry({ version: 1, accounts: [{ id: 'a' }] }, { homeDir: '/h' });
+  const none: UsageSnapshot = { generatedAt: new Date(NOW).toISOString(), deckReachable: false, accounts: {} };
+
+  it('no usage-deck: a new session goes in the fallback order (not protected, not home first; the protected one last)', () => {
+    const d = chooseAccount(dflt({ protectedAccount: 'a', usage: noDeck }));
+    expect(d).toMatchObject({ account: 'b', switched: false, unknown: ['b', 'c', 'a'], candidates: [] });
+    expect(d.reason).toMatch(/자격 있는 계정 없음 → 잔여량 모름 · B/);
+    expect(chooseAccount(dflt({ protectedAccount: 'b', usage: noDeck })).unknown).toEqual(['c', 'a', 'b']);
+    expect(chooseAccount(dflt({ protectedAccount: null, usage: noDeck })).unknown).toEqual(['b', 'c', 'a']);
+  });
+
+  it('no usage-deck: an account in cooldown or ruled out this turn is not a candidate', () => {
+    expect(chooseAccount(dflt({ protectedAccount: 'a', usage: noDeck, cooldownUntilMs: { b: NOW + 60_000 } }))).toMatchObject({ account: 'c', unknown: ['c', 'a'] });
+    expect(chooseAccount(dflt({ protectedAccount: 'a', usage: noDeck, exclude: ['b', 'c'] }))).toMatchObject({ account: 'a', unknown: ['a'] });
+  });
+
+  it('no usage-deck: a session whose account hit its limit moves to the next account instead of failing there again', () => {
+    const d = chooseAccount(dflt({ protectedAccount: 'a', current: 'b', lastTurnAtMs: NOW - 60_000, usage: noDeck, cooldownUntilMs: { b: NOW + 60_000 }, exclude: ['b'] }));
+    expect(d).toMatchObject({ account: 'c', switched: true });
+    expect(d.reason).toMatch(/쿨다운.*잔여량 모름 · C 전환/);
+    // Nothing else left: stays.
+    expect(chooseAccount(dflt({ accounts: one, protectedAccount: null, current: 'a', lastTurnAtMs: NOW - 60_000, usage: none, cooldownUntilMs: { a: NOW + 60_000 } }))).toMatchObject({ account: 'a', switched: false });
+  });
+
+  it('no usage-deck: a session stays on its account (warm or cold)', () => {
+    expect(chooseAccount(dflt({ protectedAccount: 'a', current: 'c', lastTurnAtMs: NOW - 60_000, usage: noDeck }))).toMatchObject({ account: 'c', switched: false });
+    expect(chooseAccount(dflt({ protectedAccount: 'a', current: 'c', lastTurnAtMs: NOW - 3 * H, usage: noDeck }))).toMatchObject({ account: 'c', switched: false });
+  });
+
+  it('one account only: it gets the turn — also when it is the protected one, and with Fable asked', () => {
+    for (const protectedAccount of [null, 'a'] as const) {
+      expect(chooseAccount(dflt({ accounts: one, protectedAccount, usage: none }))).toMatchObject({ account: 'a', switched: false, unknown: ['a'] });
+      expect(chooseAccount(dflt({ accounts: one, protectedAccount, usage: none, needFable: true })).account).toBe('a');
+      expect(chooseAccount(dflt({ accounts: one, protectedAccount, usage: none, current: 'a', lastTurnAtMs: NOW - 60_000 }))).toMatchObject({ account: 'a', switched: false });
+      expect(chooseAccount(dflt({ accounts: one, protectedAccount, usage: none, pinned: 'a' }))).toMatchObject({ account: 'a', pinned: true });
+    }
+  });
+
+  it('some cards only: an account with known room comes before every unknown one — the unknown ones stay listed', () => {
+    const d = chooseAccount(dflt({ protectedAccount: 'a', usage: snap(DOWN, { s: 10, w: 20 }, {}) }));
+    expect(d).toMatchObject({ account: 'b', unknown: ['c', 'a'] });
+    expect(d.candidates.map((c) => c.account)).toEqual(['b']);
+    // A stale card past the limit of trust is unknown too; one whose last numbers were at the limit is not.
+    expect(chooseAccount(dflt({ usage: snap({ w: 10 }, { w: 10, status: 'stale', age: 601_000 }, { w: 97, status: 'stale', age: 601_000 }) })).unknown).toEqual(['b']);
+  });
+
+  it('some cards only: an unknown account beats one known to be at its limit', () => {
+    const d = chooseAccount(dflt({ protectedAccount: null, usage: snap({ w: 96 }, { w: 99 }, DOWN) }));
+    expect(d).toMatchObject({ account: 'c', switched: false });
+    // A session on an account at its limit moves there.
+    const m = chooseAccount(dflt({ protectedAccount: null, current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 96 }, { w: 99 }, DOWN) }));
+    expect(m).toMatchObject({ account: 'c', switched: true });
+    // Over the switch threshold only (not unusable): an unknown account is not worth a cache rewrite.
+    expect(chooseAccount(dflt({ protectedAccount: null, current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 90 }, { w: 99 }, DOWN) }))).toMatchObject({ account: 'a', switched: false });
+  });
+
+  it('a known account, even the protected one, is taken before an unknown one', () => {
+    expect(chooseAccount(dflt({ protectedAccount: 'a', usage: snap({ w: 10 }, DOWN, DOWN) })).account).toBe('a');
+    const m = chooseAccount(dflt({ protectedAccount: 'a', current: 'b', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { b: NOW + 60_000 }, usage: snap({ w: 10 }, { w: 10 }, DOWN) }));
+    expect(m).toMatchObject({ account: 'a', switched: true });
+  });
+
+  it('routeLogLine names the unknown accounts apart from the excluded ones', () => {
+    const d = chooseAccount(dflt({ protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ w: 10 }, { s: 10, w: 20 }, DOWN) }));
+    const line = routeLogLine(null, d, testRegistry());
+    expect(line).toMatch(/후보 B 5h 10% · 주간 20% · 잔여량 모름 C · 제외 A 쿨다운/);
+    expect(line).not.toMatch(/제외[^·]*C/);
+    expect(routeLogLine(null, chooseAccount(dflt({ protectedAccount: 'a', usage: noDeck })), testRegistry())).toMatch(/\(자격 있는 계정 없음 → 잔여량 모름 · B\) · 잔여량 모름 B, C, A$/);
+  });
+});
