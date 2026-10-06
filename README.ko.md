@@ -85,35 +85,59 @@ npm run restart                         # 재시작: 돌던 턴이 끝난 뒤 �
 ```bash
 claude                                   # 첫 계정   -> ~/.claude
 CLAUDE_CONFIG_DIR=~/.claude-b claude     # 둘째 계정 -> ~/.claude-b
-CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c
+CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c  (계정 수는 제한 없음)
 ```
 
-설정 없이도 시작할 때 자동으로 찾는다. `~/.claude` 는 계정 `a`, `~/.claude-<id>` 는 계정 `<id>` 가 된다. 계정을 더했으면 서버를 다시 시작한다.
+`accounts.json` 이 없으면 시작할 때 자동으로 찾는다. `~/.claude` 는 계정 `a`, `~/.claude-<영문 소문자 한 글자>` 는 그 글자의 계정이 된다. `.claude-<x>` 는 안에 `projects` 디렉터리나 `.claude.json` 이 있을 때만 센다. 그 밖의 `~/.claude-*` 이름(`.claude-backup`, `.claude-2` 등)은 무시하고, 시작 로그에 그 디렉터리를 추가할 `accounts.json` 항목을 한 줄씩 알려 준다. 계정은 하나만 있어도 동작하고, 아무것도 없으면 `a` 하나다.
 
-계정에 이름을 붙이거나, 홈 계정을 바꾸거나, 계정을 은퇴시키려면 `~/.config/deck/accounts.json` 을 만든다.
+다른 id 나 디렉터리를 쓰거나, 이름을 붙이거나, 홈 계정을 바꾸거나, 계정을 빼려면 `<설정 디렉터리>/accounts.json`(기본 `~/.config/deck/accounts.json`)을 만든다.
 
 ```json
 {
   "version": 1,
   "home": "a",
   "accounts": [
-    { "id": "a", "label": "Main", "configDir": "~/.claude" },
-    { "id": "b", "label": "Work", "configDir": "~/.claude-b" },
-    { "id": "c", "retired": true }
+    { "id": "a", "label": "Main" },
+    { "id": "work", "label": "Work", "configDir": "~/.claude-work" },
+    { "id": "side", "configDir": "/Users/alice/profiles/side", "card": "claude:side-project" },
+    { "id": "old", "label": "Old", "retired": true }
   ]
 }
 ```
 
 | 필드 | 기본값 | 뜻 |
 |---|---|---|
-| `id` | 필수 | 바뀌지 않는 키, `^[a-z0-9][a-z0-9_-]{0,15}$`. 세션과 함께 저장되므로 바꾸지 않는다. |
-| `label` | `id` 의 대문자 | 화면에 보이는 이름. |
-| `configDir` | `~/.claude-<id>` | 프로필 디렉터리. |
-| `card` | `claude:<id>` | 선택 사항인 사용량 대시보드의 카드 id([사용량 자료](#사용량-자료) 참고). |
-| `retired` | `false` | 읽기 전용. 세션과 사용량은 계속 보이지만 새 턴을 받지 않는다. |
-| `home`(최상위) | `a` | Claude Desktop 이 쓰는 프로필. 다른 계정에서 돌린 세션을 여기로 미러링한다. |
+| `version` | 필수 | `1` 이어야 한다. |
+| `id` | 필수 | 바뀌지 않는 키, `^[a-z0-9][a-z0-9_-]{0,15}$`. 세션과 함께 저장된다. 쓸 수 없는 이름: `gpt`, `g1`, `g2`, `codex`, `all`, `auto`, `none`, `null`, `undefined`, `constructor`. |
+| `label` | `id` 의 대문자 | 화면에 보이는 이름(1~40자). |
+| `configDir` | `a` 는 `~/.claude`, 그 밖은 `~/.claude-<id>` | 프로필 디렉터리. 절대 경로이거나 `~/` 로 시작. |
+| `card` | `a`·`b`·`c` 는 `claude:main`·`claude:second`·`claude:third`, 그 밖은 `claude:<id>` | 선택 사항인 사용량 대시보드의 카드 id([사용량 자료](#사용량-자료) 참고). |
+| `retired` | `false` | 읽기 전용. 세션과 사용량은 계속 보이지만 라우팅·계정 선택기·고정에서 빠진다. 이 계정의 세션을 이어 가려 하면 안내 문구와 함께 거부된다. |
+| `home`(최상위) | `a` 가 쓸 수 있으면 `a`, 아니면 첫 번째 쓸 수 있는 계정 | Claude Desktop 이 읽고 쓰는 프로필 하나. 다른 계정에서 돌린 세션을 여기로 미러링한다. 쓸 수 있는(retired 가 아닌) 계정이어야 한다. |
 
-**보호 계정.** 한 계정을 직접(예: Claude Desktop 에서) 같이 쓴다면 보호 계정으로 지정해 자동 라우팅이 가장 나중에 쓰게 한다. `CLAUDE_PROTECT=<id>` 로 지정하거나, `~/.config/offload/protect` 의 주석이 아닌 첫 줄에 id 를 적는다(작성자의 다른 도구와 공유하는 선택적 경로이며 없어도 된다). 세션을 보호 계정에 고정하는 것은 그대로 된다 — 고정은 사용자가 직접 고른 것이기 때문이다.
+쓸 수 있는 계정이 최소 하나는 있어야 한다. 모르는 필드는 무시한다.
+
+**파일이 있는데 잘못됐으면**(읽을 수 없음, JSON 아님, 형식 오류, id·디렉터리·card 중복, 없는 `home`, 상대 경로 `configDir`) 서버는 시작하지 않고 파일 경로와 이유를 출력한다. 자동 발견으로 넘어가지 않는다. 파일이 말하는 것과 다른 계정 구성으로 조용히 도는 것을 막기 위해서다. 파일이 없을 때만 자동 발견을 한다.
+
+### 계정 추가
+
+1. 새 프로필 디렉터리에 Claude Code CLI 로 직접 로그인한다. 예: `CLAUDE_CONFIG_DIR=~/.claude-work claude`.
+2. `accounts.json` 에 항목을 추가한다. 파일이 없고 `~/.claude-d` 처럼 한 글자 접미사라면 항목이 필요 없다.
+3. 서버를 다시 시작한다.
+
+### 계정 빼기
+
+- **`"retired": true`** — 세션과 사용량이 읽기 전용으로 계속 보인다. 기록을 남기려면 이쪽을 쓴다.
+- **항목을 지우기** — 그 계정의 `projects` 디렉터리를 더 이상 읽지 않으므로 세션이 목록에서 사라진다. 디스크의 파일은 그대로다. 남겨서 보려면 `retired` 를 쓴다.
+
+주의:
+
+- `id` 를 바꾸거나 두 계정의 `configDir` 을 맞바꾸면 사용량 집계가 겹쳐 실제보다 높게 나올 수 있다. id 는 바꾸지 않는다.
+- 토큰 사용량 인덱스가 다루는 Claude 계정은 뺀 계정·지운 계정을 포함해 평생 최대 23개다. 넘치는 계정은 로그에 한 번 알리고 세지 않는다.
+
+**Claude Desktop** 미러링 대상은 최상위 `home` 계정 하나다.
+
+**보호 계정.** 한 계정을 직접(예: Claude Desktop 에서) 같이 쓴다면 보호 계정으로 지정해 자동 라우팅이 가장 나중에 쓰게 한다. `accounts.json` 이 아니라 별도로 지정한다. `CLAUDE_PROTECT=<id>` 로 지정하거나, `~/.config/offload/protect` 의 주석이 아닌 첫 줄에 id 를 적는다(작성자의 다른 도구와 공유하는 선택적 경로이며 없어도 된다). 설정에 없는 계정 id 는 시작 로그에 경고를 남기고 무시한다. 세션을 보호 계정에 고정하는 것은 그대로 된다 — 고정은 사용자가 직접 고른 것이기 때문이다.
 
 ### 턴이 계정을 받는 방법
 
@@ -148,6 +172,7 @@ CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c
 | `DECK_DRAIN_MAX_MIN` | `15` | 재시작할 때 돌고 있는 턴을 기다리는 최대 분. |
 | `DECK_BG_MAX_MIN` | `120` | 턴이 끝난 뒤 백그라운드 작업 때문에 CLI 프로세스를 열어 두는 최대 분. |
 | `DECK_BACKUP_RETENTION_DAYS` | `30` | 분기 백업과 삭제한 세션을 지우는 기준 일수. |
+| `DECK_USAGE_STRICT` | 미설정 | `1` = 잔여량 모름 → Opus·엔진 전환, `0` = 전환 안 함. 미설정이면 `usage-source.json` 으로 정한다. |
 | `DECK_URL` | `http://127.0.0.1:9310` | 선택 사항인 사용량 대시보드의 주소. 미설정이면 `~/.config/claude-pick/deck_url` 파일이 있을 때 그 첫 줄을 쓴다(작성자의 다른 도구와 공유하는 선택적 경로이며 없어도 된다). |
 | `CLAUDE_PROTECT` | 미설정 | 보호 계정 id. 없으면 `~/.config/offload/protect`(작성자의 다른 도구와 공유하는 선택적 경로, 없어도 된다). |
 | `CLAUDE_PICK_COOLDOWN_DIR` | `$XDG_CACHE_HOME/offload/cooldown` (`~/.cache/...`) | 계정별 쿨다운 파일이 있는 디렉터리. |
@@ -172,9 +197,11 @@ quarterdeck 은 `DECK_URL` 의 외부 사용량 대시보드를 60초마다 조�
             { "label": "Weekly (7d)", "used": 40, "resetsAt": "2026-01-05T00:00:00Z" } ] } ] }
 ```
 
-`accounts.json` 이 없으면 발견된 계정 앞 세 개가 카드 id `claude:main`, `claude:second`, `claude:third` 에 대응하고, 그 뒤는 `claude:<id>` 다.
+계정 `a`·`b`·`c` 는 카드 id `claude:main`·`claude:second`·`claude:third` 에 대응하고, 나머지 계정은 `claude:<id>` 에 대응한다. 바꾸려면 `accounts.json` 의 `card` 를 쓴다.
 
-대시보드가 응답하지 않아도 전부 동작한다. 이때 사용량 창은 각 CLI 가 턴 도중 알려 주는 값에서 온다. 그래서 계정은 턴을 한 번 돌린 뒤에야 숫자가 보이고, 사용량을 모르는 계정은 아는 계정보다 뒤 순위 후보가 된다. 토큰 사용 이력 화면은 로컬 기록을 읽으므로 대시보드와 무관하다.
+대시보드가 응답하지 않아도 전부 동작한다. 이때 사용량 창은 각 CLI 가 턴 도중 알려 주는 값에서 온다. 그래서 계정은 턴을 한 번 돌린 뒤에야 숫자가 보이고, 사용량을 모르는 계정은 값이 알려진 후보보다 뒤, 한도에 닿은 것으로 알려진 계정보다 앞 순위 후보가 된다. 토큰 사용 이력 화면은 로컬 기록을 읽으므로 대시보드와 무관하다.
+
+**사용량 대시보드가 없으면 잔여량을 알 수 없고, quarterdeck 은 그 이유만으로 요청을 바꾸지 않는다.** "모름"만으로는 모델이나 엔진을 바꾸지 않는다. Fable 을 요청하면 Fable 로 실행한다. 플랜 한도를 넘는 Fable 초과 과금은 사용자가 직접 관리해야 한다. 대시보드 응답을 한 번이라도 본 설치는 엄격 모드로 `<설정 디렉터리>/usage-source.json` 에 기록되고, 이때는 잔여량 모름이 Fable 대신 Opus, 엔진 전환으로 이어진다. `DECK_USAGE_STRICT=1` 로 엄격 모드를, `DECK_USAGE_STRICT=0` 으로 느슨한 모드를 강제한다. 첫 대시보드 조회가 끝나기 전에는 엄격한 쪽으로 동작한다.
 
 ## 원격 접속
 
@@ -213,8 +240,8 @@ quarterdeck 은 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 �
 | 파일 | 내용 |
 |---|---|
 | `token` | 로그인 토큰(`0600`). |
-| `accounts.json` | 선택. 계정 목록. |
-| `settings.json` | 기본 권한 모드, 라우팅 정책. |
+| `accounts.json` | 선택. 계정 목록([Claude 계정 여러 개 쓰기](#claude-계정-여러-개-쓰기)). |
+| `settings.json` | 기본 권한 모드(기본값: 매번 묻기), 라우팅 정책. |
 | `projects.json` | 선택. 고정 프로젝트 폴더. |
 | `session-state.json` | 세션별 계정·모델·마지막 턴. |
 | `session-meta.json`, `pins.json` | 바꾼 제목, 보관 표시, 고정한 세션. |
@@ -223,8 +250,9 @@ quarterdeck 은 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 �
 | `audit.log` | 권한 결정. |
 | `attachments/` | 올린 파일(`0700`, 파일당 10 MiB, 7일 뒤 삭제). |
 | `vapid.json`, `push-subscriptions.json` | Web Push 키와 구독(`0600`). |
-| `usage-index.json`, `usage-index.json.seen` | 토큰 사용량 집계와 중복 제거 로그. |
-| `gemini/<id>/` | Gemini 계정별 Gemini CLI 홈. |
+| `usage-index-v2.json`, `usage-index-v2.json.seen` | 토큰 사용량 집계와 중복 제거 로그. 옛 `usage-index.json` 은 변환할 때 한 번 읽고 그대로 둔다. |
+| `usage-source.json` | 사용량 대시보드가 처음 응답했을 때 한 번 기록(`{"deckSeenAt": ...}`). |
+| `gemini/<id>/` | Gemini 계정별 Gemini CLI 홈(`DECK_CONFIG_DIR` 를 따른다). |
 
 launchd 서비스는 여기에 더해 `~/.config/deck/env`(서비스용 환경변수)를 읽고 출력을 `~/.config/deck/deck.log` 에 쓴다.
 

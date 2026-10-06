@@ -27,7 +27,9 @@ An account is a Claude Code profile directory (`src/shared/accounts.ts`). For ea
 - `CLAUDE_CONFIG_DIR` selects the profile. The default profile `~/.claude` is run with the variable **unset**; setting it changes how the CLI names its stored login.
 - `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and the Bedrock/Vertex switches are removed. An inherited token would override the profile and bill another account.
 
-The *home* account is the profile Claude Desktop uses. The *protected* account is one the user also works in directly; automatic routing ranks it last.
+Which accounts exist is configuration, not code: `<config dir>/accounts.json` (`src/server/accounts.ts`), or, when that file is missing, the profiles found in the home directory (`~/.claude` as `a`, `~/.claude-<one letter>`). A file that exists but is invalid stops the server with the path and reason; it never falls back to discovery. The result is an `AccountRegistry`, passed to every component that needs account names, labels, card ids or profile directories. Ids are the persistent key (session state, cooldown file names, usage rows). A *retired* account stays in `all()` (its sessions and usage are read) but not in `list()` (routing, pickers, pins).
+
+The *home* account (top-level `home`) is the single profile Claude Desktop uses; write-back targets it. The *protected* account is one the user also works in directly; automatic routing ranks it last. It comes from `CLAUDE_PROTECT` or `~/.config/offload/protect`, not from `accounts.json`.
 
 ## Turn flow
 
@@ -39,8 +41,9 @@ The *home* account is the profile Claude Desktop uses. The *protected* account i
    - a session stays on its account while the prompt cache is warm (`WARM_MS`, 55 minutes);
    - it must switch at 80% of the 5-hour window, 85% of the weekly window, or during a cooldown;
    - accounts at 95% or more, in cooldown, or with stale usage data are not candidates;
+   - an account whose usage is unknown (no dashboard, no card, a stale card) is a later-tier candidate: after candidates with known usage, before accounts known to be at their limit;
    - candidates are ordered by the routing policy: `balance` (lowest 5-hour usage) or `drain` (`(100 − weekly%) / hours to weekly reset`, highest first). The protected account is last.
-3. **Model** (`routing/ModelPolicy.ts`, `routing/AutoModel.ts`): the session's model, or the per-turn choice. A Fable turn on an account whose Fable window is at 80% or unknown runs on Opus instead.
+3. **Model** (`routing/ModelPolicy.ts`, `routing/AutoModel.ts`): the session's model, or the per-turn choice. A Fable turn on an account whose Fable window is at 80% runs on Opus instead. An unknown Fable window has the same effect only on an install that has seen a usage dashboard answer (strict mode, see Usage data); otherwise the turn runs as requested.
 4. **Relocation.** If the chosen account differs from where the session's transcript lives, `SessionMover` copies the transcript (and its side files) into the target profile's `projects/` directory and verifies the copy by hash. The source is never modified. If the copies have diverged, the move is refused rather than overwritten, except that a diverged copy outside the home/protected profile is backed up first.
 5. **Run.** `ClaudeEngine` calls the Agent SDK with `resume`, the session's permission mode and the user/project/local setting sources. Engine events are mapped to protocol messages and emitted to the turn's sink. Permission requests arrive through the SDK's `canUseTool` callback, are shown as cards on every connected device, and each decision is appended to the audit log.
 6. **Retry.** `limitDetect.ts` classifies a failed result from the SDK's own error text. A `limit` failure puts the account on cooldown for 1 hour and an `auth` failure for 6 hours; the session is relocated and the same turn is retried on the next account, at most 2 times. Cooldowns are plain files (`<cooldown dir>/<account id>` holding a Unix time) so other local tools can share them.
@@ -69,7 +72,9 @@ The server does not own conversations. Transcripts stay in the CLIs' own files:
 
 ## Usage data
 
-`UsageService` keeps one snapshot of the 5-hour, weekly and Fable windows per account. It has two sources: an optional external dashboard polled every 60 seconds (`GET <DECK_URL>/api/state`), and the rate-limit information each CLI reports during a turn, which overrides an older or missing dashboard reading. `UsageIndex` is separate: it incrementally scans local transcripts into token-usage aggregates for the history view.
+`UsageService` keeps one snapshot of the 5-hour, weekly and Fable windows per account. It has two sources: an optional external dashboard polled every 60 seconds (`GET <DECK_URL>/api/state`), and the rate-limit information each CLI reports during a turn, which overrides an older or missing dashboard reading. `UsageIndex` is separate: it incrementally scans local transcripts into token-usage aggregates for the history view (`usage-index-v2.json`; the index can hold 23 Claude accounts over its lifetime, retired and removed ones included).
+
+**Usage source.** `UsageSnapshot.usageSource` is `deck` or `none`. An install that has never had a dashboard answer is `none` (lenient): unknown quota alone changes neither the model nor the engine. The first answer is recorded in `usage-source.json` and the install is `deck` (strict) from then on. `DECK_USAGE_STRICT=1|0` overrides it. Before the first fetch attempt has ended, the snapshot is `deck`.
 
 ## WebSocket protocol
 
@@ -86,7 +91,7 @@ The UI changes on rebuild and the server on restart, so a new UI talks to an old
 3. Send a new message type only in answer to a request that an old peer would not make.
 4. The UI asks what the server can do in exactly one place: `has('<feature>')` in `src/ui/features.ts`, backed by `hello.features`. It does not infer capabilities from field presence or build ids.
 
-Current features: `sessionModel`, `abortLabel`, `catchup`.
+Current features: `sessionModel`, `abortLabel`, `catchup`, `accounts`.
 
 ## Catch-up
 

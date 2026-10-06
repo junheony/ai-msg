@@ -85,35 +85,59 @@ Each account is a Claude Code **profile directory**. Log in once per profile:
 ```bash
 claude                                   # first account  -> ~/.claude
 CLAUDE_CONFIG_DIR=~/.claude-b claude     # second account -> ~/.claude-b
-CLAUDE_CONFIG_DIR=~/.claude-c claude     # third account  -> ~/.claude-c
+CLAUDE_CONFIG_DIR=~/.claude-c claude     # third account  -> ~/.claude-c  (any number of accounts works)
 ```
 
-With no configuration, quarterdeck discovers them at start: `~/.claude` becomes account `a`, and every `~/.claude-<id>` becomes account `<id>`. Restart after adding one.
+With no `accounts.json`, quarterdeck discovers accounts at start: `~/.claude` becomes account `a`, and `~/.claude-<letter>` (one lower-case ASCII letter) becomes the account with that letter. A `.claude-<x>` directory counts only if it contains a `projects` directory or a `.claude.json`. Any other `~/.claude-*` name (`.claude-backup`, `.claude-2`) is ignored, and the start log prints the `accounts.json` entry that would add it. One account is enough; with nothing found, the account is `a`.
 
-To name accounts, set the home account or retire one, create `~/.config/deck/accounts.json`:
+To use other ids or directories, name accounts, set the home account or retire one, create `<config dir>/accounts.json` (default `~/.config/deck/accounts.json`):
 
 ```json
 {
   "version": 1,
   "home": "a",
   "accounts": [
-    { "id": "a", "label": "Main", "configDir": "~/.claude" },
-    { "id": "b", "label": "Work", "configDir": "~/.claude-b" },
-    { "id": "c", "retired": true }
+    { "id": "a", "label": "Main" },
+    { "id": "work", "label": "Work", "configDir": "~/.claude-work" },
+    { "id": "side", "configDir": "/Users/alice/profiles/side", "card": "claude:side-project" },
+    { "id": "old", "label": "Old", "retired": true }
   ]
 }
 ```
 
 | Field | Default | Meaning |
 |---|---|---|
-| `id` | required | Permanent key, `^[a-z0-9][a-z0-9_-]{0,15}$`. Stored with sessions; do not rename. |
-| `label` | `id` in upper case | Name shown in the UI. |
-| `configDir` | `~/.claude-<id>` | The profile directory. |
-| `card` | `claude:<id>` | Card id in the optional usage dashboard (see [Usage data](#usage-data)). |
-| `retired` | `false` | Read-only: sessions and usage stay visible, but the account gets no new turns. |
-| `home` (top level) | `a` | The profile Claude Desktop uses. Sessions run elsewhere are mirrored back to it. |
+| `version` | required | Must be `1`. |
+| `id` | required | Permanent key, `^[a-z0-9][a-z0-9_-]{0,15}$`. Stored with sessions. Not allowed: `gpt`, `g1`, `g2`, `codex`, `all`, `auto`, `none`, `null`, `undefined`, `constructor`. |
+| `label` | `id` in upper case | Name shown in the UI (1 to 40 characters). |
+| `configDir` | `~/.claude` for `a`, else `~/.claude-<id>` | The profile directory: absolute, or starting with `~/`. |
+| `card` | `claude:main`, `claude:second`, `claude:third` for `a`, `b`, `c`; else `claude:<id>` | Card id in the optional usage dashboard (see [Usage data](#usage-data)). |
+| `retired` | `false` | Read-only: sessions and usage stay visible, but the account is left out of routing, the account picker and pinning. Continuing one of its sessions is refused with a message. |
+| `home` (top level) | `a` if it is active, else the first active account | The one profile Claude Desktop reads and writes. Sessions run on other accounts are mirrored back to it. Must be an active account. |
 
-**Protected account.** If you also use one account interactively (for example in Claude Desktop), mark it protected so automatic routing uses it last. Set `CLAUDE_PROTECT=<id>`, or put the id on the first non-comment line of `~/.config/offload/protect` (an optional path shared with the author's other tools; it does not need to exist). Pinning a session to the protected account still works; a pin is an explicit choice.
+At least one account must be active. Unknown fields are ignored.
+
+**If the file is there but wrong** (unreadable, not JSON, wrong shape, duplicate id, directory or card, unknown `home`, relative `configDir`), the server does not start. It prints the file path and the reason. It does not fall back to discovery, because that would silently run with a different set of accounts than the file says. Only a missing file means discovery.
+
+### Add an account
+
+1. Log in to a new profile directory with the Claude Code CLI yourself, for example `CLAUDE_CONFIG_DIR=~/.claude-work claude`.
+2. Add an entry to `accounts.json`. Without the file, a one-letter suffix such as `~/.claude-d` needs no entry.
+3. Restart the server.
+
+### Remove an account
+
+- **`"retired": true`** keeps its sessions and usage visible, read-only. Use this to keep history.
+- **Deleting the entry** removes the account's sessions from the list, because its `projects` directory is no longer scanned. Files on disk are not touched. To keep seeing them, use `retired`.
+
+Cautions:
+
+- Changing an `id`, or swapping the `configDir` of two accounts, makes usage counts overlap and read too high. Treat ids as permanent.
+- The token-usage index has room for 23 Claude accounts over its lifetime, retired and removed ones included. Further accounts are logged once and not counted.
+
+**Claude Desktop** mirroring targets the single top-level `home` account.
+
+**Protected account.** If you also use one account interactively (for example in Claude Desktop), mark it protected so automatic routing uses it last. This is not part of `accounts.json`. Set `CLAUDE_PROTECT=<id>`, or put the id on the first non-comment line of `~/.config/offload/protect` (an optional path shared with the author's other tools; it does not need to exist). An id that is not a configured account is ignored with a start-log warning. Pinning a session to the protected account still works; a pin is an explicit choice.
 
 ### How a turn gets an account
 
@@ -141,13 +165,14 @@ All settings are environment variables. None is required.
 | Variable | Default | Description |
 |---|---|---|
 | `DECK_PORT` | `9320` | Listen port. |
-| `DECK_CONFIG_DIR` | `~/.config/deck` | Token, settings, session state, audit log, attachments. |
+| `DECK_CONFIG_DIR` | `~/.config/deck` | Token, `accounts.json`, settings, session state, audit log, attachments, usage files, Gemini homes. |
 | `DECK_LOOPBACK_ONLY` | unset | `1` = listen on `127.0.0.1` only, even when Tailscale is up. |
 | `DECK_EXTRA_HOSTS` | empty | Comma-separated extra names accepted in the `Host` header. |
 | `DECK_STEER` | on | `0` = messages sent during a turn are queued for after it instead of injected. |
 | `DECK_DRAIN_MAX_MIN` | `15` | On graceful restart, minutes to wait for running turns. |
 | `DECK_BG_MAX_MIN` | `120` | Minutes a CLI process may stay open for background tasks after its turn. |
 | `DECK_BACKUP_RETENTION_DAYS` | `30` | Age at which fork backups and trashed sessions are deleted. |
+| `DECK_USAGE_STRICT` | unset | `1` = unknown quota means Opus / engine switch, `0` = never. Unset: decided by `usage-source.json`. |
 | `DECK_URL` | `http://127.0.0.1:9310` | Base URL of the optional usage dashboard. When unset, the first line of `~/.config/claude-pick/deck_url` is used if that file exists (an optional path shared with the author's other tools). |
 | `CLAUDE_PROTECT` | unset | Protected account id. Falls back to `~/.config/offload/protect` (optional, shared with the author's other tools). |
 | `CLAUDE_PICK_COOLDOWN_DIR` | `$XDG_CACHE_HOME/offload/cooldown` (`~/.cache/...`) | Directory of per-account cooldown files. |
@@ -172,9 +197,11 @@ quarterdeck can poll an external usage dashboard at `DECK_URL` (`GET /api/state`
             { "label": "Weekly (7d)", "used": 40, "resetsAt": "2026-01-05T00:00:00Z" } ] } ] }
 ```
 
-Without `accounts.json`, the first three discovered accounts map to the card ids `claude:main`, `claude:second` and `claude:third`, and later ones to `claude:<id>`.
+Account `a`, `b` and `c` map to the card ids `claude:main`, `claude:second` and `claude:third`; every other account maps to `claude:<id>`. Set `card` in `accounts.json` to change it.
 
-When no dashboard answers, everything still works. Usage windows then come from what the CLIs report during each turn, so an account shows numbers only after it has run a turn, and accounts with unknown usage are tried after accounts with known usage. The token-usage history view reads local transcripts and does not depend on the dashboard.
+When no dashboard answers, everything still works. Usage windows then come from what the CLIs report during each turn, so an account shows numbers only after it has run a turn, and accounts with unknown usage are tried after accounts with known usage and before accounts known to be at their limit. The token-usage history view reads local transcripts and does not depend on the dashboard.
+
+**Without a usage dashboard, remaining quota is unknown, and quarterdeck does not change your request because of that.** An unknown value alone does not switch the model or the engine: a Fable turn runs on Fable as requested. Managing Fable usage beyond your plan's limit (extra billing) is up to you. An install that has seen a dashboard answer even once is recorded as strict in `<config dir>/usage-source.json`; there, unknown quota means Opus instead of Fable and a switch of engine. Set `DECK_USAGE_STRICT=1` to force strict mode or `DECK_USAGE_STRICT=0` to force the lenient one. Until the first dashboard request has finished, the strict side applies.
 
 ## Remote access
 
@@ -213,8 +240,8 @@ Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
 | File | Content |
 |---|---|
 | `token` | Login token (`0600`). |
-| `accounts.json` | Optional account list. |
-| `settings.json` | Default permission mode, routing policy. |
+| `accounts.json` | Optional account list ([Multiple Claude accounts](#multiple-claude-accounts)). |
+| `settings.json` | Default permission mode (default: ask every time), routing policy. |
 | `projects.json` | Optional pinned project folders. |
 | `session-state.json` | Per-session account, model and last turn. |
 | `session-meta.json`, `pins.json` | Renamed titles, archive flags, pinned sessions. |
@@ -223,8 +250,9 @@ Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
 | `audit.log` | Permission decisions. |
 | `attachments/` | Uploaded files (`0700`; 10 MiB each, deleted after 7 days). |
 | `vapid.json`, `push-subscriptions.json` | Web Push keys and subscriptions (`0600`). |
-| `usage-index.json`, `usage-index.json.seen` | Token-usage aggregates and their dedupe log. |
-| `gemini/<id>/` | Gemini CLI home per Gemini account. |
+| `usage-index-v2.json`, `usage-index-v2.json.seen` | Token-usage aggregates and their dedupe log. An older `usage-index.json` is read once for conversion and left in place. |
+| `usage-source.json` | Written once, the first time a usage dashboard answers (`{"deckSeenAt": ...}`). |
+| `gemini/<id>/` | Gemini CLI home per Gemini account (follows `DECK_CONFIG_DIR`). |
 
 The launchd service additionally uses `~/.config/deck/env` (environment for the service) and writes its output to `~/.config/deck/deck.log`.
 
