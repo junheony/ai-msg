@@ -90,13 +90,14 @@ export function chooseAutoModel(i: AutoModelInput): AutoModelDecision {
     // Never had usage-deck: not knowing is no reason to leave Fable, nor is a cooldown (a real limit is handled by the turn's own fallback).
     const why = isLax(i.usage) && forFable.unknown.length > 0 ? null : noFableWhy(base);
     // "Unknown" is said only when some Fable value is unknown. With every value known (and below the limit), the
-    // accounts are out for a 5h/weekly limit or a cooldown, and the reason says that.
+    // accounts are out for something else (5h/weekly limit, cooldown, a card that is down or stale), so the reason
+    // names no cause — only that no account can take a Fable turn.
     const fableUnknown = i.accounts.list().some((a) => (usageOf(i.usage, a).fable?.usedPct ?? null) === null);
     if (why === null) {
       if (fableUnknown) notes.push('Fable 잔여량 모름');
     } else {
       model = 'opus';
-      notes.push(why === 'Fable 여유 계정 없음' ? 'Fable 80%↑ → Opus' : fableUnknown ? `${why} → Opus` : '쓸 수 있는 계정 없음(5h·주간 한도·쿨다운) → Opus');
+      notes.push(why === 'Fable 여유 계정 없음' ? 'Fable 80%↑ → Opus' : fableUnknown ? `${why} → Opus` : 'Fable 로 쓸 수 있는 계정 없음 → Opus');
     }
   }
   const { candidates } = rankCandidates({ ...base, needFable: false });

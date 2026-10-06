@@ -138,10 +138,10 @@ describe('chooseAutoModel — 쓸 계정이 없는데 Fable 값은 알려진 경
   /** Every account at 5h 96% with Fable known at 10%: no candidate, and nothing about Fable is unknown. */
   const full: AccountUsage = { ...acct(30, 10), fiveHour: { usedPct: 96, resetsAt: null } };
 
-  it('with usage-deck: still Opus, and the reason names the limits — not an unknown Fable value', () => {
+  it('with usage-deck: still Opus, and the reason says no account can take Fable — not an unknown Fable value', () => {
     const r = auto('보안 취약점 검토해줘', usage(full));
     expect(r.model).toBe('opus');
-    expect(r.reason).toContain('쓸 수 있는 계정 없음(5h·주간 한도·쿨다운) → Opus');
+    expect(r.reason).toContain('Fable 로 쓸 수 있는 계정 없음 → Opus');
     expect(r.reason).not.toContain('모름');
     // One account without a Fable value: unknown is true again, and said.
     expect(auto('보안 취약점 검토해줘', usage(full, { ...full, fable: null })).reason).toContain('Fable 잔여량 모름(usage-deck 값 없음) → Opus');
