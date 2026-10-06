@@ -1,3 +1,4 @@
+import { useAccounts } from '../accounts';
 import { useEffect, useRef, useState } from 'react';
 import { getForkStatus, resolveFork, type ForkStatus } from '../sessionApi';
 
@@ -7,6 +8,7 @@ import { getForkStatus, resolveFork, type ForkStatus } from '../sessionApi';
  * is kept as a `*.deck-fork-<time>` backup. Re-checked when the session changes or a turn ends.
  */
 export function ForkMenu({ sessionId, busy, onResolved, onError }: { sessionId: string; busy: boolean; onResolved: () => void; onError: (message: string) => void }) {
+  const names = useAccounts();
   const [status, setStatus] = useState<ForkStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
@@ -28,8 +30,8 @@ export function ForkMenu({ sessionId, busy, onResolved, onError }: { sessionId: 
   }, [open]);
 
   if (!status?.diverged) return null;
-  const home = status.homeAccount?.toUpperCase() ?? 'A';
-  const deck = status.deckAccount?.toUpperCase() ?? '';
+  const home = status.homeAccount ? names.label(status.homeAccount) : (names.home?.label ?? 'A');
+  const deck = status.deckAccount ? names.label(status.deckAccount) : '';
   const pick = (keep: 'deck' | 'home') => {
     const what = keep === 'deck'
       ? `Desktop(${home}) 쪽 대화를 deck 대화로 바꿉니다. 지금 Desktop 대화는 백업 파일로 남습니다. Desktop 에서 이 세션을 닫은 뒤 진행하세요.`

@@ -29,6 +29,7 @@ import { composerOf, focusComposer, routeContext, routeKey } from './composerFoc
 import { tabTitle } from './tabTitle';
 import { useIndexRefresh, type IndexRefresh } from './indexRefresh';
 import { createCatchup, type Catchup } from './catchup';
+import { AccountsContext, uiAccounts } from './accounts';
 import { has, setFeatures } from './features';
 
 const VIEW_KEY = 'deck.sidebarView';
@@ -314,6 +315,7 @@ export function App() {
     return () => cancelAnimationFrame(id);
   }, [scrollTo, state.panes]);
 
+  const accounts = useMemo(() => uiAccounts(state.accounts), [state.accounts]);
   if (authed === null) return <div className="center">확인 중…</div>;
   if (!authed) return <Login onLoggedIn={() => setAuthed(true)} />;
 
@@ -422,6 +424,7 @@ export function App() {
   const orphanQs = orphanCards(state.panes, state.questions);
 
   return (
+    <AccountsContext value={accounts}>
     <div className="app">
       <header className="topbar">
         {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
@@ -507,8 +510,8 @@ export function App() {
             unread={state.unread}
             waiting={[...state.pending, ...state.questions].map((c) => c.sessionId).filter((id): id is string => !!id)}
             onOpenSettings={() => setSettingsOpen(true)}
-            avatar={footAccount ? footAccount.slice(0, 1).toUpperCase() : 'D'}
-            avatarTitle={footAccount ? `deck · ${footAccount === 'gpt' ? 'GPT' : `계정 ${footAccount.toUpperCase()}`}` : 'deck'}
+            avatar={footAccount ? accounts.label(footAccount).slice(0, 1).toUpperCase() : 'D'}
+            avatarTitle={footAccount ? `deck · ${footAccount === 'gpt' ? 'GPT' : `계정 ${accounts.label(footAccount)}`}` : 'deck'}
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
               { label: '사용량 기록', run: () => setUsageOpen(true) },
@@ -533,5 +536,6 @@ export function App() {
         </div>
       </div>
     </div>
+    </AccountsContext>
   );
 }

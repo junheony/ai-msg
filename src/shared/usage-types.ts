@@ -1,4 +1,4 @@
-import { ACCOUNTS, type Account } from './accounts';
+import type { Account } from './accounts';
 
 export type UsageWindow = { usedPct: number; resetsAt: string | null };
 
@@ -39,8 +39,8 @@ export function usageOf(s: Pick<UsageSnapshot, 'accounts'>, account: Account): A
   return (Object.hasOwn(s.accounts, account) ? s.accounts[account] : undefined) ?? emptyAccountUsage();
 }
 
-/** `accounts`: the server passes its registry's ids; the default is the a/b/c compatibility list. */
-export function emptySnapshot(now: Date, accounts: readonly Account[] = ACCOUNTS): UsageSnapshot {
+/** `accounts`: the ids to carry (the server passes its registry's). */
+export function emptySnapshot(now: Date, accounts: readonly Account[]): UsageSnapshot {
   return {
     generatedAt: now.toISOString(),
     deckReachable: false,

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Account, GeminiAccount, Seat } from './accounts';
+import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, type Account, type AccountNames, type GeminiAccount, type Seat } from './accounts';
 import type { AnyModel, ClaudeModel, CodexSandbox, EngineKind } from './models';
 import { PERM_MODES, type PermMode } from './permission';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from './session-types';
@@ -12,6 +12,8 @@ export const MAX_ATTACHMENTS_PER_TURN = 8;
 /** D7: per-file upload size cap, shared by the server (413) and the UI (pre-flight check before the network call). */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const CLIENT_REF_MAX = 64;
+/** A Claude account id by shape only (`ACCOUNT_ID_RE`): which ids exist is the server's configuration, checked when the message is handled. */
+const AccountId = z.string().regex(ACCOUNT_ID_RE).refine((id) => !RESERVED_ACCOUNT_IDS.includes(id));
 
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
@@ -29,7 +31,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     /** New Codex / Gemini sessions only (D2). */
     sandbox: z.enum(['read-only', 'workspace-write']).optional(),
     /** New Claude sessions only: 이 세션은 B 써 (null/absent = 자동). Existing sessions use set_account_pin. */
-    accountPin: z.enum(['a', 'b', 'c']).nullable().optional(),
+    accountPin: AccountId.nullable().optional(),
     /** New Claude sessions only: the permission mode picked before the first send (existing sessions use set_permission_mode). */
     permissionMode: z.enum(PERM_MODES).optional(),
     attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
@@ -76,7 +78,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('watch_turn'), turnId: z.string().min(1) }),
   z.object({ type: z.literal('refresh_index') }),
   /** Pin a Claude session to an account (null = 자동); persisted, applied from the next turn, broadcast as `account_pin`. */
-  z.object({ type: z.literal('set_account_pin'), sessionId: z.string().min(1), pin: z.enum(['a', 'b', 'c']).nullable() }),
+  z.object({ type: z.literal('set_account_pin'), sessionId: z.string().min(1), pin: AccountId.nullable() }),
   /** A Claude session's permission mode; persisted, applied to its running turn at once, broadcast as `permission_mode`. */
   z.object({ type: z.literal('set_permission_mode'), sessionId: z.string().min(1), mode: z.enum(PERM_MODES) }),
   /**
@@ -100,6 +102,14 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
  */
 export const ROUTING_POLICIES = ['balance', 'drain'] as const;
 export type RoutingPolicy = (typeof ROUTING_POLICIES)[number];
+
+/** One configured Claude account as the UI needs it (`hello.accounts`). `retired`: read-only — shown, never offered as a pin. */
+export type AccountInfo = { id: Account; label: string; home: boolean; retired: boolean };
+
+/** `hello.accounts` for a registry: every configured account (retired included), in configured order. */
+export function accountInfos(names: Pick<AccountNames, 'all' | 'label' | 'isHome' | 'isRetired'>): AccountInfo[] {
+  return names.all().map((id) => ({ id, label: names.label(id), home: names.isHome(id), retired: names.isRetired(id) }));
+}
 
 /** gemini-cli present, and which accounts have an OAuth file (existence only; the UI shows "로그인 필요" otherwise). */
 export type GeminiStatus = { available: boolean; loggedIn: Record<GeminiAccount, boolean> };
@@ -126,8 +136,9 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - sessionModel: a Claude session's `history` carries the model it runs on.
  * - abortLabel: a user's interrupt ends the turn with exactly '중단됨' (never the SDK's own text).
  * - catchup: turn events carry `pos`; `open_session.after` is answered with `catchup` when possible.
+ * - accounts: `hello.accounts` lists the configured Claude accounts; account pins take any of its active ids.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**
@@ -145,7 +156,7 @@ export type SessionFacts = { runningTurnId: string | null; /** Claude sessions: 
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   | { type: 'settings'; settings: DeckSettings }
   /** A Claude session's permission mode changed (picker, Shift+Tab, or an approved plan). */
   | { type: 'permission_mode'; sessionId: string; mode: PermMode }
