@@ -290,6 +290,8 @@ describe('catch-up (open_session.after)', () => {
     // Within what is kept: caught up.
     b.send({ type: 'open_session', sessionId: sid, after: { epoch: last.epoch, seq: last.seq - 1 } });
     await b.next('catchup');
+    // The tail follows the header in frames of its own: wait for it rather than assume it came in the same read.
+    await b.next('delta', (m) => m.pos?.seq === last.seq);
     expect(b.events(sid).map((m) => m.pos.seq)).toEqual([last.seq]);
     release();
     await a.next('turn_result');
