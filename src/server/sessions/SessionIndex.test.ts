@@ -136,8 +136,8 @@ describe('recent folders (F1)', () => {
   });
 });
 
-describe('NFC/NFD paths (개발)', () => {
-  const NFC = '/Users/max/Documents/개발/deck'.normalize('NFC');
+describe('NFC/NFD paths (작업)', () => {
+  const NFC = '/Users/alice/Documents/작업/deck'.normalize('NFC');
   const NFD = NFC.normalize('NFD');
   const s = (sessionId: string, cwd: string, lastModified: number): SessionEntry => ({
     sessionId, account: 'a', cwd, projectDir: '/p', file: '/p/' + sessionId + '.jsonl', title: 't', lastModified, sizeBytes: 1,

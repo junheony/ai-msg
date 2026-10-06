@@ -143,7 +143,7 @@ describe('http', () => {
   it('a 500 returns a generic body and keeps the detail in the server log', async () => {
     const roots = { a: path.join(uiDir, 'a'), b: path.join(uiDir, 'b'), c: path.join(uiDir, 'c') };
     const index = new SessionIndex({ roots, pinnedFile: path.join(uiDir, 'p.json') });
-    const usage = { snapshot: () => { throw new Error('SECRET-DETAIL /Users/max/.claude-b'); } } as unknown as UsageService;
+    const usage = { snapshot: () => { throw new Error('SECRET-DETAIL /Users/alice/.claude-b'); } } as unknown as UsageService;
     const s2 = http.createServer(createRequestHandler({ token: TOKEN, uiDir, usage, index }));
     await new Promise<void>((r) => s2.listen(0, '127.0.0.1', r));
     const logged: unknown[] = [];
@@ -253,7 +253,7 @@ describe('folder picker routes (F1)', () => {
   beforeAll(async () => {
     home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-fhome-')));
     outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-fout-')));
-    await fs.mkdir(path.join(home, 'Documents', '개발', 'deck'), { recursive: true });
+    await fs.mkdir(path.join(home, 'Documents', '작업', 'deck'), { recursive: true });
     await fs.writeFile(path.join(home, 'Documents', 'secret.txt'), 'x');
     await fs.symlink(outside, path.join(home, 'out-link'));
     const roots = { a: path.join(home, 'na'), b: path.join(home, 'nb'), c: path.join(home, 'nc') };
@@ -277,7 +277,7 @@ describe('folder picker routes (F1)', () => {
   it('GET /api/dirs lists subdirectories of a ~ path (dirs only)', async () => {
     const r = await fetch(`${b2}/api/dirs?path=${encodeURIComponent('~/Documents/')}`, { headers: { cookie: cookie() } });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ path: path.join(home, 'Documents'), parent: home, dirs: [{ name: '개발', path: path.join(home, 'Documents', '개발') }] });
+    expect(await r.json()).toEqual({ path: path.join(home, 'Documents'), parent: home, dirs: [{ name: '작업', path: path.join(home, 'Documents', '작업') }] });
     const none = await fetch(`${b2}/api/dirs`, { headers: { cookie: cookie() } });
     expect(((await none.json()) as { path: string }).path).toBe(home);
   });
@@ -291,7 +291,7 @@ describe('folder picker routes (F1)', () => {
   });
 
   it('POST /api/recent-folders needs auth + Origin, validates, records the real path and notifies', async () => {
-    const body = JSON.stringify({ path: '~/Documents/개발/deck' });
+    const body = JSON.stringify({ path: '~/Documents/작업/deck' });
     expect((await fetch(`${b2}/api/recent-folders`, { method: 'POST', headers: { origin: b2 }, body })).status).toBe(401);
     expect((await fetch(`${b2}/api/recent-folders`, { method: 'POST', headers: { cookie: cookie() }, body })).status).toBe(403);
     const bad = await fetch(`${b2}/api/recent-folders`, { method: 'POST', headers: { cookie: cookie(), origin: b2 }, body: JSON.stringify({ path: outside }) });
@@ -299,7 +299,7 @@ describe('folder picker routes (F1)', () => {
     const before = changed;
     const ok = await fetch(`${b2}/api/recent-folders`, { method: 'POST', headers: { cookie: cookie(), origin: b2 }, body });
     expect(ok.status).toBe(200);
-    const real = path.join(home, 'Documents', '개발', 'deck');
+    const real = path.join(home, 'Documents', '작업', 'deck');
     expect(await ok.json()).toEqual({ path: real, recent: [real] });
     expect(changed).toBe(before + 1);
     expect(idx.projects().map((p) => p.cwd)).toContain(real);
@@ -439,7 +439,7 @@ describe('GET /api/attachments/:id (ux-state thumbnails)', () => {
 });
 
 describe('PWA + Web Push over http', () => {
-  const HOST = 'max-macbookpro.tail88e649.ts.net';
+  const HOST = 'deck-host.example.ts.net';
   const cookie = `deck_session=${cookieValueFor(TOKEN)}`;
   const SUB = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc123', keys: { p256dh: 'BPk3x_-y', auth: 'AuTh_-0' } };
   let s3: http.Server;

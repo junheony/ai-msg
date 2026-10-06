@@ -18,7 +18,7 @@ function fakeFetch(opts: { postStatus?: number } = {}) {
     if (url === '/api/recent-folders') return ok({ recent: [`${H}/Documents/old`] });
     if (url.startsWith('/api/dirs')) {
       const p = new URL(url, 'http://x').searchParams.get('path');
-      if (p === '~/Documents/') return ok({ path: `${H}/Documents`, parent: H, dirs: [{ name: '개발', path: `${H}/Documents/개발` }, { name: 'Work', path: `${H}/Documents/Work` }, { name: 'web', path: `${H}/Documents/web` }] });
+      if (p === '~/Documents/') return ok({ path: `${H}/Documents`, parent: H, dirs: [{ name: '작업', path: `${H}/Documents/작업` }, { name: 'Work', path: `${H}/Documents/Work` }, { name: 'web', path: `${H}/Documents/web` }] });
       return ok({ path: H, parent: null, dirs: [{ name: 'Documents', path: `${H}/Documents` }] });
     }
     return ok({}, 404);
@@ -46,7 +46,7 @@ describe('FolderPicker (F1)', () => {
     fireEvent.change(screen.getByLabelText('폴더 경로'), { target: { value: '~/Documents/w' } });
     await waitFor(() => expect(screen.getByText('web')).toBeTruthy());
     expect(screen.getByText('Work')).toBeTruthy();
-    expect(screen.queryByText('개발')).toBeNull();
+    expect(screen.queryByText('작업')).toBeNull();
   });
 
   it('clicking a suggestion descends into it; Enter opens the typed folder via the server', async () => {
@@ -55,10 +55,10 @@ describe('FolderPicker (F1)', () => {
     render(<FolderPicker onOpen={onOpen} onClose={() => {}} fetchFn={fn} />);
     const input = screen.getByLabelText('폴더 경로') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '~/Documents/' } });
-    fireEvent.click(await screen.findByText('개발'));
-    expect(input.value).toBe(`${H}/Documents/개발/`);
+    fireEvent.click(await screen.findByText('작업'));
+    expect(input.value).toBe(`${H}/Documents/작업/`);
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(`${H}/Documents/개발`));
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(`${H}/Documents/작업`));
     const post = calls.find((c) => c.init?.method === 'POST');
     expect(post?.url).toBe('/api/recent-folders');
   });

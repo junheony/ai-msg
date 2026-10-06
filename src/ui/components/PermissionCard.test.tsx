@@ -30,7 +30,7 @@ describe('PermissionCard', () => {
   });
 
   it('keeps a long session rule out of the button: short label, full rule in the tooltip and a wrapping line below', () => {
-    const long = `git -C /Users/max/Documents/개발/deck-wt-desktop log --oneline --decorate --graph --all -n 200 ${'x'.repeat(300)}`;
+    const long = `git -C /Users/alice/Documents/작업/deck-wt-desktop log --oneline --decorate --graph --all -n 200 ${'x'.repeat(300)}`;
     const label = `이 세션 동안 \`Bash(${long})\` 허용`;
     render(<PermissionCard req={{ turnId: 't', sessionId: 's1', cwd: '/w', requestId: 'r3', toolName: 'Bash', input: { command: long }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: label }} onDecide={() => {}} />);
     const btn = screen.getByRole('button', { name: '이 세션 동안 허용' });

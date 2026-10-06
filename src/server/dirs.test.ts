@@ -10,7 +10,7 @@ let outside: string;
 beforeAll(async () => {
   home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-home-')));
   outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-outside-')));
-  await fs.mkdir(path.join(home, 'Documents', '개발', 'deck'), { recursive: true });
+  await fs.mkdir(path.join(home, 'Documents', '작업', 'deck'), { recursive: true });
   await fs.mkdir(path.join(home, 'Documents', 'b-proj'));
   await fs.mkdir(path.join(home, 'Documents', '.hidden'));
   await fs.writeFile(path.join(home, 'Documents', 'file.txt'), 'x');
@@ -26,7 +26,7 @@ describe('resolveUnderHome', () => {
   it('expands ~ and ~/ and accepts absolute paths under home', async () => {
     expect(await resolveUnderHome('~', home)).toBe(home);
     expect(await resolveUnderHome('~/', home)).toBe(home);
-    expect(await resolveUnderHome('~/Documents/개발', home)).toBe(path.join(home, 'Documents', '개발'));
+    expect(await resolveUnderHome('~/Documents/작업', home)).toBe(path.join(home, 'Documents', '작업'));
     expect(await resolveUnderHome(path.join(home, 'Documents'), home)).toBe(path.join(home, 'Documents'));
   });
 
@@ -63,7 +63,7 @@ describe('listDirs', () => {
     expect(r.parent).toBe(home);
     expect(r.dirs).toEqual([
       { name: 'b-proj', path: path.join(home, 'Documents', 'b-proj') },
-      { name: '개발', path: path.join(home, 'Documents', '개발') },
+      { name: '작업', path: path.join(home, 'Documents', '작업') },
     ]);
   });
 

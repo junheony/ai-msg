@@ -3,8 +3,11 @@ import path from 'node:path';
 import { isPermMode, permModeFromAutoApprove, type PermMode } from '../shared/permission';
 import { ROUTING_POLICIES, type DeckSettings, type RoutingPolicy } from '../shared/protocol';
 
-/** 자동 승인 (new sessions in 모두 자동 승인) unless the user turned it off; 자동 routing spreads load (고르게 분산). */
-export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance' };
+/**
+ * A fresh install asks before every tool call (기본 — 묻기); 모두 자동 승인 is opt-in through the settings screen.
+ * An existing `settings.json` always wins over these. 자동 routing spreads load (고르게 분산).
+ */
+export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' };
 
 /** Both permission fields from one source: `defaultPermissionMode` wins; a lone legacy `autoApprove` maps to bypass / default. */
 function normalize(mode: PermMode, routingPolicy: RoutingPolicy): Required<DeckSettings> {

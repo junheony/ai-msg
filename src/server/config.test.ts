@@ -18,8 +18,8 @@ describe('config', () => {
 
   it('readDeckUrl trims and falls back', () => {
     const f = path.join(dir, 'deck_url');
-    fs.writeFileSync(f, 'http://100.125.168.94:9310  \n');
-    expect(readDeckUrl(f)).toBe('http://100.125.168.94:9310');
+    fs.writeFileSync(f, 'http://100.64.0.2:9310  \n');
+    expect(readDeckUrl(f)).toBe('http://100.64.0.2:9310');
     expect(readDeckUrl(path.join(dir, 'nope'))).toBe('http://127.0.0.1:9310');
   });
 

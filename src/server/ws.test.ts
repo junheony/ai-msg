@@ -117,7 +117,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
 
-// Deviation (evidence-based fix, not a plan/review item): on this machine the HTTP
+// Deviation (evidence-based fix, not a plan/review item): the HTTP
 // upgrade response and the server's first WS frame (sent synchronously on 'connection')
 // can be coalesced into a single client-side read, so 'open' and 'message' fire
 // back-to-back in one synchronous turn — before the `await connect()` continuation
@@ -633,20 +633,20 @@ describe('ws', () => {
     ws.close();
   });
 
-  it('hello carries 자동 승인 (default on); set_settings persists it and broadcasts to every client', async () => {
+  it('hello carries 자동 승인 (default off); set_settings persists it and broadcasts to every client', async () => {
     const a = await connect({ Origin: origin, Cookie: COOKIE });
     const b = await connect({ Origin: origin, Cookie: COOKIE });
-    expect((await collect(a.ws, (m) => m.type === 'hello')).at(-1)).toMatchObject({ type: 'hello', settings: { autoApprove: true } });
+    expect((await collect(a.ws, (m) => m.type === 'hello')).at(-1)).toMatchObject({ type: 'hello', settings: { autoApprove: false, defaultPermissionMode: 'default' } });
     await collect(b.ws, (m) => m.type === 'hello');
     const pa = collect(a.ws, (m) => m.type === 'settings');
     const pb = collect(b.ws, (m) => m.type === 'settings');
-    a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: false }));
-    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' } });
-    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' } });
-    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' });
-    const pc = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: true }));
-    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance' } });
+    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance' } });
+    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance' } });
+    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance' });
+    const pc = collect(a.ws, (m) => m.type === 'settings');
+    a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: false }));
+    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' } });
     const pd = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', defaultPermissionMode: 'plan' }));
     expect((await pd).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'balance' } });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { findBranchPoint, hookMessage, parseHead, parseTranscript, readHead, readTranscript, textOfContent } from './transcript';
 
 const L = (o: unknown) => JSON.stringify(o);
-const CWD = '/Users/max/Documents/개발/agentic-harness';
+const CWD = '/Users/alice/Documents/작업/sample-project';
 
 describe('textOfContent', () => {
   it('handles string content, text blocks, and image blocks', () => {
@@ -21,9 +21,9 @@ describe('parseHead', () => {
       L({ type: 'queue-operation', sessionId: 's1' }),
       L({ type: 'custom-title', customTitle: 'Old', sessionId: 's1' }),
       L({ type: 'user', cwd: CWD, message: { role: 'user', content: 'first prompt' } }),
-      L({ type: 'custom-title', customTitle: 'Agentic Harness', sessionId: 's1' }),
+      L({ type: 'custom-title', customTitle: 'Sample Project', sessionId: 's1' }),
     ].join('\n');
-    expect(parseHead(text)).toEqual({ cwd: CWD, title: 'Agentic Harness' });
+    expect(parseHead(text)).toEqual({ cwd: CWD, title: 'Sample Project' });
   });
 
   it('falls back to the first real user message, skipping compact summaries and <command> wrappers', () => {

@@ -82,7 +82,7 @@ describe('checkUpgrade', () => {
 
   // PWA: tailscale serve fronts deck at https://<magicdns> (no port) and forwards that Host unchanged.
   it('accepts the https MagicDNS origin (no port) when its Host is allowlisted', () => {
-    const host = 'max-macbookpro.tail88e649.ts.net';
+    const host = 'deck-host.example.ts.net';
     expect(checkUpgrade({ headers: { cookie, origin: `https://${host}`, host } }, token, [], [host])).toEqual({ ok: true });
     expect(checkUpgrade({ headers: { cookie, origin: `https://${host}`, host } }, token).ok).toBe(false);
     expect(checkUpgrade({ headers: { cookie, origin: 'https://evil.example', host } }, token, [], [host]).ok).toBe(false);
@@ -100,13 +100,13 @@ describe('isAllowedHost', () => {
     expect(isAllowedHost('127.0.0.1:9320')).toBe(true);
     expect(isAllowedHost('localhost:9320')).toBe(true);
     expect(isAllowedHost('[::1]:9320')).toBe(true);
-    expect(isAllowedHost('100.106.182.94:9320', ['100.106.182.94'])).toBe(true);
+    expect(isAllowedHost('100.64.0.1:9320', ['100.64.0.1'])).toBe(true);
     expect(isAllowedHost('deck.tail.ts.net:9320', ['deck.tail.ts.net'])).toBe(true);
   });
 
   it('rejects an arbitrary 100.64/10 host that deck does not bind to', () => {
     expect(isAllowedHost('100.72.1.2:9320')).toBe(false);
-    expect(isAllowedHost('100.72.1.2:9320', ['100.106.182.94'])).toBe(false);
+    expect(isAllowedHost('100.72.1.2:9320', ['100.64.0.1'])).toBe(false);
     expect(isAllowedHost('evil.example:9320')).toBe(false);
     expect(isAllowedHost(undefined)).toBe(false);
   });

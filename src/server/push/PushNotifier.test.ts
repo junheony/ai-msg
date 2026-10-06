@@ -6,7 +6,7 @@ import type { ServerMessage } from '../../shared/protocol';
 import { PushNotifier, firstLine, selectPush, type PushSender } from './PushNotifier';
 import { SubscriptionStore } from './SubscriptionStore';
 
-const scope = { turnId: 't1', sessionId: 's1', cwd: '/Users/max/dev/proj' };
+const scope = { turnId: 't1', sessionId: 's1', cwd: '/Users/alice/dev/proj' };
 const titleOf = (sid: string | null, cwd: string) => (sid === 's1' ? '로그인 버그 고치기' : cwd.split('/').pop() ?? 'deck');
 
 describe('firstLine', () => {
@@ -43,7 +43,7 @@ describe('selectPush (trigger rules)', () => {
   });
 
   it('a new session without an id falls back to the folder name', () => {
-    const p = selectPush({ type: 'turn_result', turnId: 't9', sessionId: null, cwd: '/Users/max/dev/proj', ok: true, text: 'ok', badge: null, errorText: null }, titleOf);
+    const p = selectPush({ type: 'turn_result', turnId: 't9', sessionId: null, cwd: '/Users/alice/dev/proj', ok: true, text: 'ok', badge: null, errorText: null }, titleOf);
     expect(p).toMatchObject({ title: 'proj', tag: 'turn-t9', sessionId: null });
   });
 

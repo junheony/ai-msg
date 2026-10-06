@@ -42,7 +42,7 @@ export type ChildLike = Pick<ChildProcess, 'stdout' | 'stderr' | 'stdin' | 'kill
 export type SpawnFn = (bin: string, args: string[], opts: { cwd: string; env: Record<string, string | undefined> }) => ChildLike;
 
 /**
- * D2: every turn overrides the user's config.toml (which sets danger-full-access on this Mac) with a
+ * D2: every turn overrides the user's config.toml (which may set a wider sandbox or approval policy) with a
  * sandbox and `approval_policy="never"` — exec mode cannot relay approvals, so the sandbox is the guard.
  * The prompt is read from stdin (`-`), never placed in argv. `-i` is multi-valued, so a flag follows
  * the image list to keep the trailing `-` from being taken as a file. `resume` has no `-s`/`-C`
@@ -300,7 +300,7 @@ function isExecutable(p: string): boolean {
   try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch { return false; }
 }
 
-/** D1/D11: gpt-6-sol needs codex-cli >= 0.159 (0.146.1 was rejected with HTTP 400 on this Mac). */
+/** D1/D11: gpt-6-sol needs codex-cli >= 0.159 (0.146.1 was rejected with HTTP 400). */
 export const MIN_CODEX_VERSION = '0.159.0';
 
 function parseVersion(v: string): [number, number, number] {

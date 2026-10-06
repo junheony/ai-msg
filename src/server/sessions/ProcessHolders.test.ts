@@ -6,13 +6,13 @@ const B = 'bb198c8d-0000-4000-8000-000000000002';
 const C = 'cc198c8d-0000-4000-8000-000000000003';
 const D = 'dd198c8d-0000-4000-8000-000000000004';
 const DECK = 39022;
-const ROOT = '/Users/u/Documents/개발/deck/node_modules/';
+const ROOT = '/Users/u/Documents/작업/deck/node_modules/';
 const SDK = `${ROOT}@anthropic-ai/claude-agent-sdk-darwin-arm64/claude --output-format stream-json --verbose --input-format stream-json --model claude-opus-5-5 --permission-prompt-tool stdio`;
 const DESKTOP = '/Users/u/Library/Application Support/Claude/claude-code/2.1.280/claude.app/Contents/MacOS/claude --output-format stream-json --verbose --input-format stream-json';
 
 const PS = [
   `    1     0 /sbin/launchd`,
-  `${DECK}     1 node /Users/u/Documents/개발/deck/dist/server/main.js`,
+  `${DECK}     1 node /Users/u/Documents/작업/deck/dist/server/main.js`,
   // deck's own children: one of them holds the same session Desktop does.
   ` 8595 ${DECK} ${SDK} --resume=${A}`,
   `25117 ${DECK} ${SDK} --resume=${B}`,

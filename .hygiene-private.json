@@ -1,0 +1,58 @@
+[
+  {
+    "name": "home path",
+    "pattern": "(?:/|\\\\{1,2}|%2F|%5C)(?:Users|home)(?:/|\\\\{1,2}|%2F|%5C)max(?![A-Za-z0-9_])",
+    "flags": "gi"
+  },
+  {
+    "name": "home path slug",
+    "pattern": "-(?:Users|home)-max(?![A-Za-z0-9])",
+    "flags": "gi"
+  },
+  {
+    "name": "tilde user",
+    "pattern": "~max(?![A-Za-z0-9_])",
+    "flags": "gi"
+  },
+  {
+    "name": "work folder",
+    "pattern": "(?:Documents|Desktop|Projects|~|(?:Users|home)(?:/|\\\\{1,2}|%2F|%5C)[^/\\\\%\\s'\\\"]+)(?:(?:/|\\\\{1,2}|%2F|%5C)|['\\\"]\\s*,\\s*['\\\"])(?:개발|%EA%B0%9C%EB%B0%9C|%E1%84%80%E1%85%A2%E1%84%87%E1%85%A1%E1%86%AF)",
+    "flags": "gi"
+  },
+  {
+    "name": "tailnet id",
+    "pattern": "tail88e649",
+    "flags": "gi"
+  },
+  {
+    "name": "tailnet host",
+    "pattern": "max-?macbook(?:-?pro)?",
+    "flags": "gi"
+  },
+  {
+    "name": "tailnet address",
+    "pattern": "100\\.106\\.182\\.\\d+|100\\.125\\.168\\.\\d+",
+    "flags": "g"
+  },
+  {
+    "name": "personal project",
+    "pattern": "StandX|agentic[-_ ]?harness|quant[-_ ]?analyzer|creditscend|blockschool|petclaw|boredbrain",
+    "flags": "gi"
+  },
+  {
+    "name": "personal mail id",
+    "pattern": "max1909\\d*",
+    "flags": "gi"
+  },
+  {
+    "name": "personal mail",
+    "pattern": "[A-Za-z0-9._%+-]+@(?:gmail|googlemail|naver|daum|hanmail|kakao|nate|icloud|me|mac|outlook|hotmail|live|yahoo|proton|protonmail|pm)\\.(?:com|net|me|co\\.kr)",
+    "flags": "gi",
+    "allow": "^hwangmc88@gmail\\.com$"
+  },
+  {
+    "name": "account name outside the public repo slug",
+    "pattern": "junheony(?!/quarterdeck)",
+    "flags": "gi"
+  }
+]

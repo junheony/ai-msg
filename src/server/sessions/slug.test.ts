@@ -3,9 +3,9 @@ import { projectSlug } from './slug';
 
 describe('projectSlug', () => {
   it('replaces every non-alphanumeric character with a dash (per code point)', () => {
-    expect(projectSlug('/Users/max/Documents/개발/agentic-harness')).toBe('-Users-max-Documents----agentic-harness');
-    expect(projectSlug('/Users/max/Documents/개발/StandX_volume')).toBe('-Users-max-Documents----StandX-volume');
+    expect(projectSlug('/Users/alice/Documents/작업/sample-project')).toBe('-Users-alice-Documents----sample-project');
+    expect(projectSlug('/Users/alice/Documents/작업/Acme_app')).toBe('-Users-alice-Documents----Acme-app');
     expect(projectSlug('/private/tmp/claude-501/sdk-spike/work')).toBe('-private-tmp-claude-501-sdk-spike-work');
-    expect(projectSlug('/Users/max/Documents/개발/agentic-harness'.normalize('NFD'))).toBe('-Users-max-Documents-------agentic-harness');
+    expect(projectSlug('/Users/alice/Documents/작업/sample-project'.normalize('NFD'))).toBe('-Users-alice-Documents--------sample-project');
   });
 });

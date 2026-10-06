@@ -149,7 +149,7 @@ describe('TurnRunner', () => {
   it('new session: when the slugged dir has no jsonl, the account root is searched for it', async () => {
     let c!: Ctx;
     const eng = new StubEngine(async (req) => {
-      // e.g. the CLI spelled 개발 in NFD while we hold NFC — simulate with an unrelated dir name
+      // e.g. the CLI spelled 작업 in NFD while we hold NFC — simulate with an unrelated dir name
       const dir = path.join(c.roots[req.account], '-somewhere-else');
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(path.join(dir, 'far1.jsonl'), '{}\n');

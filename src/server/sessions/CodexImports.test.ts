@@ -156,7 +156,7 @@ describe('CodexRolloutIndex', () => {
     expect(isDeckTestCwd('/private/tmp')).toBe(false);
     expect(isDeckTestCwd('/tmp/other/deck-e2e-work-1')).toBe(false);
     expect(isDeckTestCwd('/private/var/folders/wd/x/T/codex-scratch')).toBe(false);
-    expect(isDeckTestCwd('/Users/max/deck-e2e-work-1')).toBe(false);
+    expect(isDeckTestCwd('/Users/alice/deck-e2e-work-1')).toBe(false);
   });
 
   it('a failed scan does not stick: the overlapping follow-up and later refreshes still scan', async () => {
