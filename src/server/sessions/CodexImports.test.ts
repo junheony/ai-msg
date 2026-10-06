@@ -27,8 +27,8 @@ describe('readRolloutHead', () => {
 
   it('marks `codex exec` automation rollouts with exec: true', async () => {
     const f = path.join(base, 'exec.jsonl');
-    await fs.writeFile(f, jsonl([meta(CLI_ID, work, { originator: 'codex_exec', source: 'exec' }), user('<environment_context>…'), user('You are the 3D asset lane\nmore')]));
-    expect(await readRolloutHead(f)).toEqual({ threadId: CLI_ID, cwd: work, title: 'You are the 3D asset lane', exec: true });
+    await fs.writeFile(f, jsonl([meta(CLI_ID, work, { originator: 'codex_exec', source: 'exec' }), user('<environment_context>…'), user('You are the docs lane\nmore')]));
+    expect(await readRolloutHead(f)).toEqual({ threadId: CLI_ID, cwd: work, title: 'You are the docs lane', exec: true });
     const g = path.join(base, 'exec2.jsonl');
     await fs.writeFile(g, jsonl([meta(CLI_ID, work, { originator: 'codex_exec' }), user('x')]));
     expect((await readRolloutHead(g))?.exec).toBe(true);
@@ -149,7 +149,7 @@ describe('CodexRolloutIndex', () => {
   });
 
   it('isDeckTestCwd: deck-e2e top folder under /tmp, /private/tmp, os.tmpdir() or macOS /var/folders/*/*/T only', () => {
-    expect(isDeckTestCwd('/private/var/folders/wd/rsjb4x016t5_5fk_j20mcqn40000gn/T/deck-e2e-work-COgPpj')).toBe(true);
+    expect(isDeckTestCwd('/private/var/folders/wd/x/T/deck-e2e-work-AbCdEf')).toBe(true);
     expect(isDeckTestCwd('/var/folders/wd/x/T/deck-e2e-perm-work-1/sub')).toBe(true);
     expect(isDeckTestCwd('/tmp/deck-e2e-work-1')).toBe(true);
     expect(isDeckTestCwd('/private/tmp/deck-e2e-cfg-1')).toBe(true);
@@ -377,7 +377,7 @@ describe('SessionIndex.freshCodexImport', () => {
     await fs.rename(cli, moved);
     expect(await index.freshCodexImport(CLI_ID)).toMatchObject({ file: moved, codexArchived: true });
     expect(changes).toBe(1);
-    // Own (deck-run) copy of a thread Codex archived: archived too.
+    // Own (my-wrapper) copy of a thread Codex archived: archived too.
     const own = { sessionId: CLI_ID, account: 'gpt' as const, engine: 'codex' as const, cwd: work, projectDir: '', file: cli, title: 'deck title', lastModified: 1, sizeBytes: 0 };
     expect(index.projects([own]).flatMap((p) => p.sessions).find((e) => e.sessionId === CLI_ID)).toMatchObject({ title: 'deck title', archived: true, codexArchived: true });
     // Unarchived again.

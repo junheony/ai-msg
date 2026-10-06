@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ProcessHolders, parseHolders } from './ProcessHolders';
 
-const A = 'aa198c8d-0000-4000-8000-000000000001';
-const B = 'bb198c8d-0000-4000-8000-000000000002';
-const C = 'cc198c8d-0000-4000-8000-000000000003';
-const D = 'dd198c8d-0000-4000-8000-000000000004';
+const A = 'aa000000-0000-4000-8000-000000000001';
+const B = 'bb000000-0000-4000-8000-000000000002';
+const C = 'cc000000-0000-4000-8000-000000000003';
+const D = 'dd000000-0000-4000-8000-000000000004';
 const DECK = 39022;
 const ROOT = '/Users/u/Documents/작업/deck/node_modules/';
 const SDK = `${ROOT}@anthropic-ai/claude-agent-sdk-darwin-arm64/claude --output-format stream-json --verbose --input-format stream-json --model claude-opus-5-5 --permission-prompt-tool stdio`;

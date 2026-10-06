@@ -211,9 +211,9 @@ describe('CodexEngine', () => {
   });
 
   it('thread writer lock: "already has an active writer" (thread open in the ChatGPT desktop app) → Korean message + errorKind, no raw stderr dump', async () => {
-    // Observed 2026-10-03 (codex-cli 0.159.2): resume of a thread the ChatGPT.app `codex app-server` holds a writer lock on.
-    const tid = '019f2d6c-a49f-7aa0-a2b5-38f75f3e7b6b';
-    const stderr = `2026-10-03T19:24:59.529211Z ERROR codex_core::session::session: failed to initialize thread persistence: thread-store conflict: thread ${tid} already has an active writer\nError: thread/resume: thread/resume failed: thread ${tid} already has an active writer (code -32600)\n`;
+    // Observed with codex-cli 0.159.2: resume of a thread the ChatGPT.app `codex app-server` holds a writer lock on.
+    const tid = '01900000-0000-7000-8000-000000000001';
+    const stderr = `2026-01-01T00:00:00.000000Z ERROR codex_core::session::session: failed to initialize thread persistence: thread-store conflict: thread ${tid} already has an active writer\nError: thread/resume: thread/resume failed: thread ${tid} already has an active writer (code -32600)\n`;
     const fake = fakeChild([], 1, stderr);
     const engine = new CodexEngine('/opt/codex', { baseEnv: {}, spawnFn: () => fake.child });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -231,7 +231,7 @@ describe('CodexEngine', () => {
   });
 
   it('thread writer lock: stderr that arrives after the child "exit" event is still classified (exit → stderr chunk → end)', async () => {
-    const tid = '019f2d6c-a49f-7aa0-a2b5-38f75f3e7b6b';
+    const tid = '01900000-0000-7000-8000-000000000001';
     const em = new EventEmitter();
     const stderr = new PassThrough();
     const stdout = new PassThrough();

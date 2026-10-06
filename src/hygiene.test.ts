@@ -33,6 +33,7 @@ describe('repository hygiene', () => {
       'xox' + 'b-' + '1234567890-abcdef',
       'AI' + 'za' + run(11) + 'ab',
       '-----BEGIN ' + 'OPENSSH PRIVATE KEY-----',
+      '/private/var/folders/' + 'wd/' + 'abcd1234ef_gh5678/T/x',
     ]) expect(hit(s), `${s.slice(0, 6)}…`).toBe(true);
     for (const s of [
       'sk-' + 'ant-api03-' + run(8),
@@ -40,6 +41,7 @@ describe('repository hygiene', () => {
       'sk-notification-task',
       'gh' + 'p_short',
       '-----BEGIN PUBLIC KEY-----',
+      '/private/var/folders/wd/x/T/',
     ]) expect(hit(s), s.slice(0, 12)).toBe(false);
   });
 });

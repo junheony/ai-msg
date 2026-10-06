@@ -22,6 +22,7 @@ export const GENERIC_RULES: Rule[] = [
   { name: 'aws key id', pattern: /A[KS]IA[0-9A-Z]{16}/g, allow: EXAMPLE },
   { name: 'slack token', pattern: /xox[abprs]-[A-Za-z0-9-]{10,}/g, allow: EXAMPLE },
   { name: 'google api key', pattern: /AIza[0-9A-Za-z_-]{35}/g, allow: EXAMPLE },
+  { name: 'macOS temp dir hash', pattern: /\/var\/folders\/[a-z0-9_]{2}\/[a-z0-9_]{10,}\//gi },
   { name: 'private key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
 ];
 

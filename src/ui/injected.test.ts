@@ -3,10 +3,10 @@ import { hasInjected, parseUserText } from './injected';
 
 const TASK = `<task-notification>
 <task-id>abc730bf4872fa123</task-id>
-<tool-use-id>toolu_01AaV2Gp7HNLKNWuCEpraURd</tool-use-id>
+<tool-use-id>toolu_01TESTtestTESTtestTEST0001</tool-use-id>
 <output-file>/private/tmp/claude-501/x/tasks/abc730bf4872fa123.output</output-file>
 <status>completed</status>
-<summary>Agent "KGEN unlock schedule research" finished</summary>
+<summary>Agent "docs review" finished</summary>
 <note>A task-notification fires each time this agent stops.</note>
 <result>I couldn't do any of the research.
 
@@ -27,7 +27,7 @@ describe('parseUserText', () => {
     expect(n.kind).toBe('task');
     expect(n.status).toBe('completed');
     expect(n.label).toBe('백그라운드 작업 완료');
-    expect(n.summary).toBe('Agent "KGEN unlock schedule research" finished');
+    expect(n.summary).toBe('Agent "docs review" finished');
     expect(n.body).toContain("I couldn't do any of the research.");
     expect(n.body).toContain('**WebSearch:** refused');
     expect(n.raw).toBe(TASK);
@@ -41,10 +41,10 @@ describe('parseUserText', () => {
   });
 
   it('handles several notifications in one turn, in order', () => {
-    const two = TASK + '\n' + TASK.replace('completed', 'failed').replace('KGEN', 'BABY');
+    const two = TASK + '\n' + TASK.replace('completed', 'failed').replace('docs', 'api');
     const r = parseUserText(two);
     expect(r.notices.map((n) => n.status)).toEqual(['completed', 'failed']);
-    expect(r.notices[1]!.summary).toContain('BABY');
+    expect(r.notices[1]!.summary).toContain('api');
     expect(r.text).toBe('');
   });
 

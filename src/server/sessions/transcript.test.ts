@@ -204,11 +204,11 @@ describe('isMeta user lines (hook feedback and other harness injections)', () =>
     const lines = [
       meta('Another Claude session sent a message:\n<agent-message from="a1">보고</agent-message>', { origin: { kind: 'peer', from: 'a1' } }),
       asst('a1', 'x', 'm1', '받았어요'),
-      meta('[예약 확인] 09-25 01:40 KST 릴리스 점검', { turnOrigin: 'scheduled', promptSource: 'system' }),
+      meta('[예약 확인] 01-01 09:00 KST 정기 점검', { turnOrigin: 'scheduled', promptSource: 'system' }),
       asst('a2', 'x', 'm1', '같은 id 라도 합치지 않음'),
       meta('Goal check-in: «대시보드 다듬기» is still active'),
       meta('A session-scoped Stop hook is now active with condition: "계속"'),
-      meta('진입 타이밍 측정 경과 보고.', { promptSource: 'sdk' }),
+      meta('정기 점검 결과 보고.', { promptSource: 'sdk' }),
       meta('# /loop — schedule a recurring prompt', { turnCompanion: true }),
       meta('<command-message>workflow-authoring</command-message>\n<skill-format>true</skill-format>'),
       meta('(Re-invocation of /artifact-design — follow it again)'),
