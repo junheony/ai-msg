@@ -4,7 +4,9 @@
 
 ## 다음 할 일 (2026-10-06 오후)
 
-- **재시작 결과 확인**: 이 문서를 커밋한 뒤 `/tmp/deck-relaunch.sh` 로 재시작했다(세션이 같이 끝나서 결과는 못 봤다). `~/.config/deck/deck.log` 끝의 `[relaunch …]` 줄을 본다 — `new server healthy` 면 새 코드, `NEW SERVER NOT HEALTHY` 면 이전 빌드(`/tmp/deck-fallback`, `be048e0`)로 돌아가 있는 것이고 원인은 그 위 로그에 있다. 정상이면 `/tmp/deck-fallback` 워크트리는 스크립트가 지운다.
+- **모델 고정 수정 (2026-10-06 16:40)**: Desktop 에서 가져온 세션은 기본 모델이 Opus 로 저장돼(`IMPORTED_DEFAULT_MODEL`) 피커가 늘 Opus 였고, 피커에서 고른 모델은 세션에 저장되지 않았다. 지금은 가져온 세션도 Fable 이 기본이다. 보낼 때 고른 모델이 세션의 기본값으로 저장되고, `turn_started.sessionModel` 로 다른 창·기기에 알린다. 이미 Opus 로 저장된 가져온 세션 12개(모두 첫 entrypoint `claude-desktop`)는 재시작 사이에 `/tmp/deck-migrate-fable.py` 로 fable 로 바꿨다(백업 `~/.config/deck/session-state.json.bak-*`). 재시작은 `RELAUNCH_PRESTART` 훅(마이그레이션 + `vite build`)을 붙인 `/tmp/deck-relaunch.sh`, 대체 빌드는 `/tmp/deck-fallback`(`470b11e`, dist 복사본). `deck.log` 의 `[migrate-fable …]`·`[relaunch …]` 줄로 결과를 본다. 공개 저장소에는 아직 안 올렸다.
+- 참고: usage-deck 의 `claude:second`(B) 카드가 16:03 부터 `setup_needed`(cred_file 에 accessToken 없음)다. deck 은 마지막 값(Fable 31%)을 그대로 쓰니 라우팅은 동작하지만, 값이 갱신되지 않는다. 고치는 건 사용자 몫(B 프로필 로그인 상태 확인).
+- **재시작 결과 확인 (이전 건)**: `/tmp/deck-relaunch.sh` 로 재시작했고 `new server healthy (pid 28053)` 으로 끝났다.
 - **공개 저장소**: https://github.com/junheony/quarterdeck — 커밋 3개(`d676046` 첫 공개, `48f2e5b`·`237b54d` 테스트 파일 이름·타입 수정), CI 는 macOS·Linux 모두 통과(`237b54d`). 다음에 공개본을 갱신할 때: master 에 커밋 → `bash scripts/export-public.sh <빈 디렉터리>` → 그 디렉터리의 내용을 공개 저장소 클론에 덮어쓰고 커밋(저자 `hwangmc88 <hwangmc88@gmail.com>`) → `gh auth switch --user junheony` 로 푸시 후 원래 계정으로 되돌린다.
 - 기기(iPad/폰)에서 백그라운드 복귀 뒤 답이 이어지는지 확인(따라잡기, `6ac9401`).
 - 계정 C 를 뺄 때: 사용자가 날짜를 주면 `~/.config/deck/accounts.json` 을 만들어 `c` 를 `retired: true` 로(읽기 전용). 가장 최신 사본이 뺀 계정 프로필에 있는 세션은 재개가 거절되니, 그때 다른 계정으로 자동 이전하는 처리를 넣을지 정한다.
