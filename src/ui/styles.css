@@ -1708,23 +1708,28 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 [data-acct-idx="0"] { --acct: var(--acct-0); } [data-acct-idx="1"] { --acct: var(--acct-1); } [data-acct-idx="2"] { --acct: var(--acct-2); } [data-acct-idx="3"] { --acct: var(--acct-3); }
 [data-acct-idx="4"] { --acct: var(--acct-4); } [data-acct-idx="5"] { --acct: var(--acct-5); } [data-acct-idx="6"] { --acct: var(--acct-6); } [data-acct-idx="7"] { --acct: var(--acct-7); }
 .turn-badge .acct[data-acct-idx] { color: var(--acct); background: color-mix(in srgb, var(--acct) var(--acct-soft), transparent); }
-/* An account taken out of the configuration (retired): its label, dimmed. One the configuration no longer has: its id, grey. */
-.turn-badge .acct.acct-retired { opacity: .55; }
-.turn-badge .acct.acct-unknown { color: var(--muted); background: color-mix(in srgb, var(--muted) 16%, transparent); font-weight: 600; }
-.mp-label .acct-retired { opacity: .55; }
-.mp-label .acct-unknown { color: var(--muted); }
-.uv-tabs button.acct-retired { opacity: .6; }
-.uv-tabs button.acct-unknown { color: var(--faint); }
+/* A long label is cut at 12 characters (the title has all of it); A/B/C never reach it. */
+/* (The 1px of padding keeps the clip off the glyph's edge.) */
+.turn-badge .acct-name { min-width: 0; max-width: 12ch; margin: 0 -1px; padding: 0 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The GPT tile stays the 20px square it was, its three letters drawn as before. */
+.turn-badge .acct.acct-gpt { width: 20px; padding: 0; }
+.turn-badge .acct.acct-gpt .acct-name { min-width: auto; max-width: none; margin: 0; padding: 0; overflow: visible; }
+.mp-acct { display: inline-block; max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* An account taken out of the configuration (retired, shown by its label) or one the configuration no longer has (shown
+   by its id): the muted text colour and a dashed edge — readable, and told apart without relying on colour. */
+.turn-badge .acct.acct-retired, .turn-badge .acct.acct-unknown { color: var(--muted); background: transparent; outline: 1px dashed var(--muted); outline-offset: -1px; font-weight: 600; }
+.mp-label .acct-retired, .mp-label .acct-unknown, .account-picker .mp-button.pinned .acct-retired, .account-picker .mp-button.pinned .acct-unknown { color: var(--muted); text-decoration: underline dashed; text-underline-offset: 3px; }
+/* (An unselected tab is the muted colour already; the picked one keeps its own.) */
+.uv-tabs button.acct-retired, .uv-tabs button.acct-unknown { outline: 1px dashed var(--muted); outline-offset: -1px; }
 
 /* Two-row top bar (above the compact layouts): one or two cards do not stretch across the whole row (four cards never reach this width). */
 @media (min-width: 1100.02px) and (max-width: 1279.98px) { .usage-card { max-width: 320px; } }
 
-/* Compact cards with a longer label: the label gives way (ellipsis), the number keeps its width. */
-@media (max-width: 1100px) {
-  .usage-card { grid-template-columns: minmax(0, 1fr) auto; }
-  .usage-id { overflow: hidden; }
-  .usage-letter { min-width: 0; max-width: none; text-align: left; }
-}
+/* The label is cut with overflow hidden: room below the line for g/y/p without moving anything. */
+.usage-letter { padding-bottom: .25em; margin-bottom: -.25em; }
+/* Up to four cards in the compact layout: the number keeps its room and a long label is what gets cut (one letter never
+   reaches it, so A/B/C/GPT are laid out as `auto minmax(0, 1fr)` laid them out). */
+@media (max-width: 1100px) { .usage-panel:not([data-dense]) .usage-card { grid-template-columns: auto minmax(min-content, 1fr); } }
 
 /* More than four cards (four accounts + GPT and up): no room for the rows of numbers, so at every width a card is the
    label over the lowest remaining %, over thin bars (5h · 주간 · Fable); the tap popover has the numbers. */
@@ -1732,7 +1737,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-panel[data-dense] .usage-dot { top: 4px; right: 4px; width: 5px; height: 5px; }
 .usage-panel[data-dense] .usage-id { flex-direction: row; justify-content: flex-start; gap: 3px; min-width: 0; height: auto; overflow: hidden; }
 .usage-panel[data-dense] .usage-mark { width: 12px; height: 12px; }
-.usage-panel[data-dense] .usage-letter { min-width: 0; max-width: none; text-align: left; font-size: calc(13px * var(--font-scale, 1)); line-height: 14px; }
+.usage-panel[data-dense] .usage-letter { min-width: 0; max-width: none; text-align: left; font-size: calc(13px * var(--font-scale, 1)); line-height: 1.2; }
 .usage-panel[data-dense] .usage-card.gpt .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
 .usage-panel[data-dense] .usage-sum { display: block; justify-self: start; min-width: 0; overflow: hidden; white-space: nowrap; line-height: 1.2; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
 .usage-panel[data-dense] .usage-sum small { margin-left: 1px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
@@ -1750,4 +1755,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (max-width: 720px) {
   .usage-panel[data-dense] .usage-card { padding: 4px 4px 5px; }
   .usage-panel[data-dense] .usage-sum small { display: none; }
+  /* Seven cards and up do not fit one row of a phone: two rows (the cards are flex items of the top bar here, the panel
+     being display: contents — the basis leaves room for the 5px gaps, so exactly --usage-cols-wrap fit a row). */
+  .usage-panel[data-wrap] .usage-card { flex: 1 1 calc(100% / var(--usage-cols-wrap) - 5px); max-width: calc(100% / var(--usage-cols-wrap)); margin-top: 4px; }
+  /* The picker's phone cap (150px) is a little short of "자동 · " and a 12-character label. */
+  .account-picker .mp-button { max-width: 172px; }
 }

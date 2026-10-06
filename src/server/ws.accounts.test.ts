@@ -108,11 +108,11 @@ describe('ws: accounts from the registry', () => {
     engineAccounts = [];
     c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin: 'zz', clientRef: 'r-unknown' });
     const unknown = await c.until<Err>((m) => m.type === 'error' && m.clientRef === 'r-unknown');
-    expect(unknown.message).toBe('설정에 없는 계정이라 고정할 수 없습니다: zz (쓸 수 있는 계정: a, b, d)');
+    expect(unknown.message).toBe('설정에 없는 계정이라 고정할 수 없습니다: zz (쓸 수 있는 계정: A(a), Work(b), D(d))');
     expect(unknown.turnId).toBeNull();
     c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin: 'old', clientRef: 'r-retired' });
     const retired = await c.until<Err>((m) => m.type === 'error' && m.clientRef === 'r-retired');
-    expect(retired.message).toBe('뺀 계정(retired)이라 고정할 수 없습니다: old (쓸 수 있는 계정: a, b, d)');
+    expect(retired.message).toBe('설정에서 뺀(retired) 계정이라 고정할 수 없습니다: OLD(old) (쓸 수 있는 계정: A(a), Work(b), D(d))');
     // c is an account of the default three, not of this server.
     c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin: 'c', clientRef: 'r-c' });
     expect((await c.until<Err>((m) => m.type === 'error' && m.clientRef === 'r-c')).message).toContain('설정에 없는 계정');
@@ -138,14 +138,14 @@ describe('ws: accounts from the registry', () => {
     await c.until((m) => m.type === 'hello');
     c.say({ type: 'set_account_pin', sessionId: SID, pin: 'zz' });
     const unknown = await c.until<Err>((m) => m.type === 'error' && m.message.includes('zz'));
-    expect(unknown).toMatchObject({ sessionId: SID, turnId: null, message: '설정에 없는 계정이라 고정할 수 없습니다: zz (쓸 수 있는 계정: a, b, d)' });
+    expect(unknown).toMatchObject({ sessionId: SID, turnId: null, message: '설정에 없는 계정이라 고정할 수 없습니다: zz (쓸 수 있는 계정: A(a), Work(b), D(d))' });
     c.say({ type: 'set_account_pin', sessionId: SID, pin: 'old' });
     const retired = await c.until<Err>((m) => m.type === 'error' && m.message.includes('old'));
-    expect(retired).toMatchObject({ sessionId: SID, message: '뺀 계정(retired)이라 고정할 수 없습니다: old (쓸 수 있는 계정: a, b, d)' });
+    expect(retired).toMatchObject({ sessionId: SID, message: '설정에서 뺀(retired) 계정이라 고정할 수 없습니다: OLD(old) (쓸 수 있는 계정: A(a), Work(b), D(d))' });
     expect(store.get(SID)).not.toHaveProperty('accountPin');
-    expect(c.got.some((m) => m.type === 'account_pin')).toBe(false);
+    expect(c.got.some((m) => m.type === 'account_pin' && m.pin !== null)).toBe(false);
     c.say({ type: 'set_account_pin', sessionId: SID, pin: 'd' });
-    expect(await c.until((m) => m.type === 'account_pin')).toEqual({ type: 'account_pin', sessionId: SID, pin: 'd' });
+    expect(await c.until((m) => m.type === 'account_pin' && m.pin !== null)).toEqual({ type: 'account_pin', sessionId: SID, pin: 'd' });
     expect(store.get(SID)).toMatchObject({ accountPin: 'd' });
     c.say({ type: 'set_account_pin', sessionId: SID, pin: null });
     await c.until((m) => m.type === 'account_pin' && m.pin === null);
@@ -160,7 +160,83 @@ describe('ws: accounts from the registry', () => {
     await c.until((m) => m.type === 'turn_result');
     expect(engineAccounts).toEqual(['c']);
     c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin: 'd', clientRef: 'r-d' });
-    expect((await c.until<Err>((m) => m.type === 'error' && m.clientRef === 'r-d')).message).toBe('설정에 없는 계정이라 고정할 수 없습니다: d (쓸 수 있는 계정: a, b, c)');
+    expect((await c.until<Err>((m) => m.type === 'error' && m.clientRef === 'r-d')).message).toBe('설정에 없는 계정이라 고정할 수 없습니다: d (쓸 수 있는 계정: A(a), B(b), C(c))');
+    c.ws.close();
+  });
+});
+
+describe('ws: pins that stopped being usable', () => {
+  const PARENT = '31313131-3131-4313-8313-313131313131';
+  type Pin = Extract<ServerMessage, { type: 'account_pin' }>;
+  type Result = Extract<ServerMessage, { type: 'turn_result' }>;
+  /** A session of account b whose stored pin is the retired account, with a two-message transcript. */
+  const seedParent = async () => {
+    const dir = path.join(base, '.claude-b', 'projects', 'p');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, `${PARENT}.jsonl`), [
+      { type: 'user', uuid: 'u0', parentUuid: null, cwd: work, message: { role: 'user', content: 'seed' } },
+      { type: 'assistant', uuid: 'a0', parentUuid: 'u0', message: { id: 'm0', role: 'assistant', content: [{ type: 'text', text: '답 0' }] } },
+      { type: 'user', uuid: 'u1', parentUuid: 'a0', message: { role: 'user', content: '두 번째' } },
+    ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+    await store.set({ sessionId: PARENT, cwd: work, account: 'b', projectDir: dir, lastTurnAtMs: Date.now(), justCompacted: false, defaultModel: 'opus', accountPin: 'old' });
+  };
+
+  it('an edit branch and a handoff carrying the parent\'s retired pin are not refused: the turn runs and the pin is ignored', async () => {
+    await seedParent();
+    const c = await client(withReg);
+    await c.until((m) => m.type === 'hello');
+    for (const [ref, extra] of [['r-branch0', { branch: { from: PARENT, n: 0, expect: 'seed' } }], ['r-branch1', { branch: { from: PARENT, n: 1, expect: '두 번째' } }], ['r-handoff', { handoffFrom: PARENT }], ['r-unknown-pin', { handoffFrom: PARENT, accountPin: 'zz' }]] as const) {
+      engineAccounts = [];
+      c.got.length = 0;
+      c.say({ type: 'send', sessionId: null, cwd: work, text: 'edited', accountPin: 'old', clientRef: ref, ...extra });
+      const done = await c.until<Result>((m) => m.type === 'turn_result');
+      expect(done.ok, ref).toBe(true);
+      expect(c.got.filter((m) => m.type === 'error'), ref).toEqual([]);
+      expect(engineAccounts, ref).toHaveLength(1);
+      expect(['a', 'b', 'd'], ref).toContain(engineAccounts[0]);
+    }
+    c.ws.close();
+  });
+
+  it('the same pin picked for a plain new session is refused', async () => {
+    const c = await client(withReg);
+    await c.until((m) => m.type === 'hello');
+    engineAccounts = [];
+    c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin: 'old', clientRef: 'r-new' });
+    expect((await c.until<Err>((m) => m.type === 'error' && m.clientRef === 'r-new')).message).toContain('설정에서 뺀(retired) 계정이라 고정할 수 없습니다: OLD(old)');
+    expect(c.got.some((m) => m.type === 'turn_started')).toBe(false);
+    expect(engineAccounts).toEqual([]);
+    c.ws.close();
+  });
+
+  it('a send into an existing session ignores an accountPin that is not configured (the session keeps its own)', async () => {
+    const c = await client(withReg);
+    await c.until((m) => m.type === 'hello');
+    engineAccounts = [];
+    c.say({ type: 'send', sessionId: SID, cwd: work, text: 'more', accountPin: 'zz', clientRef: 'r-existing' });
+    const done = await c.until<Result>((m) => m.type === 'turn_result');
+    expect(done.ok).toBe(true);
+    expect(c.got.filter((m) => m.type === 'error')).toEqual([]);
+    expect(engineAccounts).toHaveLength(1);
+    expect(store.get(SID)).not.toHaveProperty('accountPin');
+    c.ws.close();
+  });
+
+  it('set_account_pin refused: the sender gets the stored pin back (null when none), so its picker returns to it', async () => {
+    const c = await client(withReg);
+    await c.until((m) => m.type === 'hello');
+    c.say({ type: 'set_account_pin', sessionId: SID, pin: 'zz' });
+    await c.until((m) => m.type === 'error' && m.message.includes('zz'));
+    expect(await c.until<Pin>((m) => m.type === 'account_pin')).toEqual({ type: 'account_pin', sessionId: SID, pin: null });
+    c.say({ type: 'set_account_pin', sessionId: SID, pin: 'd' });
+    await c.until((m) => m.type === 'account_pin' && m.pin === 'd');
+    c.got.length = 0;
+    c.say({ type: 'set_account_pin', sessionId: SID, pin: 'old' });
+    await c.until((m) => m.type === 'error' && m.message.includes('old'));
+    expect(await c.until<Pin>((m) => m.type === 'account_pin')).toEqual({ type: 'account_pin', sessionId: SID, pin: 'd' });
+    expect(store.get(SID)).toMatchObject({ accountPin: 'd' });
+    c.say({ type: 'set_account_pin', sessionId: SID, pin: null });
+    await c.until((m) => m.type === 'account_pin' && m.pin === null);
     c.ws.close();
   });
 });

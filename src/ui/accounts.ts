@@ -26,6 +26,16 @@ export function accountListOf(list: readonly AccountInfo[] | undefined): readonl
   return out.length ? out : LEGACY_ACCOUNT_LIST;
 }
 
+/** `pin` when it names an account a turn can run on, else null (the server takes such a pin as none). */
+export function activePin(list: readonly AccountInfo[], pin: Account | null | undefined): Account | null {
+  return pin && list.some((a) => a.id === pin && !a.retired) ? pin : null;
+}
+
+/** Same accounts, same order, same facts. */
+export function sameAccountList(a: readonly AccountInfo[], b: readonly AccountInfo[]): boolean {
+  return a === b || (a.length === b.length && a.every((x, i) => { const y = b[i]!; return x.id === y.id && x.label === y.label && x.home === y.home && x.retired === y.retired; }));
+}
+
 /** A seat's label: GPT, a Gemini account's, a configured Claude account's — and the id itself for one that is not configured. */
 export function seatLabel(list: readonly AccountInfo[], seat: Seat): string {
   if (seat === 'gpt') return 'GPT';
@@ -50,6 +60,8 @@ export type UiAccounts = {
   slot(seat: Seat): number | null;
   /** How a seat's tile is drawn: its palette slot, 'retired' (label, dimmed), 'unknown' (the id, grey) or 'other' (GPT, Gemini). */
   look(seat: Seat): { slot: number | null; kind: 'active' | 'retired' | 'unknown' | 'other' };
+  /** The look in words, for titles and aria labels: '뺀 계정', '설정에 없는 계정', or null. */
+  state(seat: Seat): string | null;
 };
 
 export function uiAccounts(list: readonly AccountInfo[]): UiAccounts {
@@ -59,6 +71,11 @@ export function uiAccounts(list: readonly AccountInfo[]): UiAccounts {
     const i = typeof seat === 'string' ? at.get(seat) : undefined;
     return i === undefined ? null : i % ACCOUNT_PALETTE_SIZE;
   };
+  const look: UiAccounts['look'] = (seat) => {
+    if (seat === 'gpt' || isGeminiAccount(seat)) return { slot: null, kind: 'other' };
+    const a = get(seat);
+    return { slot: slot(seat), kind: !a ? 'unknown' : a.retired ? 'retired' : 'active' };
+  };
   return {
     all: list,
     active: list.filter((a) => !a.retired),
@@ -67,11 +84,8 @@ export function uiAccounts(list: readonly AccountInfo[]): UiAccounts {
     isRetired: (id) => get(id)?.retired ?? false,
     label: (seat) => seatLabel(list, seat),
     slot,
-    look: (seat) => {
-      if (seat === 'gpt' || isGeminiAccount(seat)) return { slot: null, kind: 'other' };
-      const a = get(seat);
-      return { slot: slot(seat), kind: !a ? 'unknown' : a.retired ? 'retired' : 'active' };
-    },
+    look,
+    state: (seat) => { const k = look(seat).kind; return k === 'retired' ? '뺀 계정' : k === 'unknown' ? '설정에 없는 계정' : null; },
   };
 }
 

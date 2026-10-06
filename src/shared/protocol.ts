@@ -13,7 +13,7 @@ export const MAX_ATTACHMENTS_PER_TURN = 8;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const CLIENT_REF_MAX = 64;
 /** A Claude account id by shape only (`ACCOUNT_ID_RE`): which ids exist is the server's configuration, checked when the message is handled. */
-const AccountId = z.string().regex(ACCOUNT_ID_RE).refine((id) => !RESERVED_ACCOUNT_IDS.includes(id));
+const AccountId = z.string().regex(ACCOUNT_ID_RE).refine((id) => !RESERVED_ACCOUNT_IDS.includes(id), { message: '예약된 이름이라 계정 id 로 쓸 수 없습니다' });
 
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
