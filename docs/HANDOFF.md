@@ -4,6 +4,7 @@
 
 ## 다음 할 일 (2026-10-06 오후)
 
+- **파일 작업 카드 접기 (2026-10-06 17:00)**: 대화 안의 Edit/Write 카드가 diff 전체를 펼쳐 보여 화면을 차지했다. 이제 `DiffCard folded`(`<details>` + `<summary class="diff-head">`)로 경로·새 파일·+N −M 한 줄만 보이고 누르면 펼쳐진다. 승인 카드(PermissionCard)와 사이드 패널의 diff 는 그대로 펼쳐진 `<div>` 다. 모델 고정 수정(`868d028`)은 16:49 재시작으로 반영됐고(`new server healthy (pid 56716)`, 12개 세션 fable 전환 확인), 이 세션도 Fable 5.1 로 돈다.
 - **모델 고정 수정 (2026-10-06 16:40)**: Desktop 에서 가져온 세션은 기본 모델이 Opus 로 저장돼(`IMPORTED_DEFAULT_MODEL`) 피커가 늘 Opus 였고, 피커에서 고른 모델은 세션에 저장되지 않았다. 지금은 가져온 세션도 Fable 이 기본이다. 보낼 때 고른 모델이 세션의 기본값으로 저장되고, `turn_started.sessionModel` 로 다른 창·기기에 알린다. 이미 Opus 로 저장된 가져온 세션 12개(모두 첫 entrypoint `claude-desktop`)는 재시작 사이에 `/tmp/deck-migrate-fable.py` 로 fable 로 바꿨다(백업 `~/.config/deck/session-state.json.bak-*`). 재시작은 `RELAUNCH_PRESTART` 훅(마이그레이션 + `vite build`)을 붙인 `/tmp/deck-relaunch.sh`, 대체 빌드는 `/tmp/deck-fallback`(`470b11e`, dist 복사본). `deck.log` 의 `[migrate-fable …]`·`[relaunch …]` 줄로 결과를 본다. 공개 저장소에는 아직 안 올렸다.
 - 참고: usage-deck 의 `claude:second`(B) 카드가 16:03 부터 `setup_needed`(cred_file 에 accessToken 없음)다. deck 은 마지막 값(Fable 31%)을 그대로 쓰니 라우팅은 동작하지만, 값이 갱신되지 않는다. 고치는 건 사용자 몫(B 프로필 로그인 상태 확인).
 - **재시작 결과 확인 (이전 건)**: `/tmp/deck-relaunch.sh` 로 재시작했고 `new server healthy (pid 28053)` 으로 끝났다.
