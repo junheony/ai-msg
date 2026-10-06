@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Account } from '../../shared/accounts';
+import type { Account, AccountRoot } from '../../shared/accounts';
 import { addDays, CODEX_SOURCE, familyOf, localDay, type ModelFamily, type UsageHistory, type UsageRow, type UsageSource } from '../../shared/token-usage';
 
 /** [input, output, cacheRead, cacheWrite, messages] — compact on disk. */
@@ -58,7 +58,7 @@ const CODEX_NEEDLES = [Buffer.from('"token_count"')];
 
 export type UsageIndexOpts = {
   /** Claude `projects` dir per account (transcripts + `<id>/subagents/*.jsonl`). At most `MAX_USAGE_ACCOUNTS` over the life of the index; one more is logged and left out. */
-  projectsRoots: Record<Account, string>;
+  projectsRoots: readonly AccountRoot[];
   /** `$CODEX_HOME/sessions` (rollout jsonl files). */
   codexSessionsRoot: string;
   /** Cache file (`~/.config/deck/usage-index-v2.json`); its dedupe log is `<indexFile>.seen`. */
@@ -384,7 +384,7 @@ export class UsageIndex {
   private async scan(): Promise<void> {
     await this.load();
     const sources = this.state.sources;
-    const accounts = Object.keys(this.opts.projectsRoots).filter((a) => {
+    const accounts = this.opts.projectsRoots.filter(({ id: a }) => {
       if (sources.includes(a)) return true;
       if (sources.length < MAX_USAGE_ACCOUNTS) { sources.push(a); return true; }
       // No bit left: counting it under another account's bit would be wrong, so it is left out, loudly.
@@ -398,7 +398,7 @@ export class UsageIndex {
     const unlisted: string[] = [];
     const roots: { root: string; source: UsageSource; accept: (rel: string) => boolean }[] = [
       // Transcripts and subagent transcripts; tool-result dumps and other sidecars are not jsonl.
-      ...accounts.map((a) => ({ root: this.opts.projectsRoots[a]!, source: a, accept: () => true })),
+      ...accounts.map((r) => ({ root: r.dir, source: r.id, accept: () => true })),
       { root: this.opts.codexSessionsRoot, source: CODEX_SOURCE, accept: (rel) => path.basename(rel).startsWith('rollout-') },
     ];
     for (const { root, source, accept } of roots) {

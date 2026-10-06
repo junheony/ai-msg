@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_ID_RE, LEGACY_ACCOUNTS, buildRegistry, defaultAccountsConfig, legacyRegistry } from './accounts';
+import { ACCOUNT_ID_RE, LEGACY_ACCOUNTS, buildRegistry, defaultAccountsConfig } from './accounts';
+import { testRegistry } from './accounts.testkit';
 
 const H = '/Users/x';
 
@@ -108,13 +109,13 @@ describe('buildRegistry', () => {
   });
 
   it('has() only accepts configured ids', () => {
-    const r = legacyRegistry(H);
+    const r = testRegistry(H);
     expect(r.has('a')).toBe(true);
     for (const x of ['d', 'gpt', 'g1', '', 'A', null, undefined, 1, {}, 'toString', '__proto__', 'constructor']) expect(r.has(x)).toBe(false);
   });
 
   it('an unknown id has a label and a card id, but never a profile dir or an env', () => {
-    const r = legacyRegistry(H);
+    const r = testRegistry(H);
     expect(r.label('zz')).toBe('ZZ');
     expect(r.cardId('zz')).toBe('claude:zz');
     expect(r.isRetired('zz')).toBe(false);
@@ -126,7 +127,7 @@ describe('buildRegistry', () => {
   });
 
   it('fallback: the first active account that is neither protected nor home (the old hard-coded b); then any unprotected one', () => {
-    const r = legacyRegistry(H);
+    const r = testRegistry(H);
     expect(r.fallback('a')).toBe('b');
     expect(r.fallback('c')).toBe('b');
     expect(r.fallback(null)).toBe('b');

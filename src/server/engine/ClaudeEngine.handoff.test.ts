@@ -98,7 +98,7 @@ describe('ClaudeEngine: denials from the stream are audited (deck\'s modes never
     );
     f.end();
     const got: Audit[] = [];
-    for await (const _ of new ClaudeEngine({ queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ onToolAudit: async (e) => { got.push(e); } }))) { /* drain */ }
+    for await (const _ of new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ onToolAudit: async (e) => { got.push(e); } }))) { /* drain */ }
     expect(got).toEqual([
       { toolName: 'Bash', input: { command: 'curl x' }, toolUseId: 'd1', decision: 'deny', source: 'rule' },
       { toolName: 'Bash', input: { command: 'sudo ls' }, toolUseId: 'd2', decision: 'deny', source: 'cli' },
@@ -114,7 +114,7 @@ describe('ClaudeEngine: handoff note turn through the SDK (fake)', () => {
     f.push(sdk.init('s1'), sdk.delta('## 목표'), sdk.result('## 목표', 's1'));
     f.end();
     const evs: EngineEvent[] = [];
-    for await (const e of new ClaudeEngine({ queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ noTools: true }))) evs.push(e);
+    for await (const e of new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ noTools: true }))) evs.push(e);
     expect(evs.map((e) => e.kind)).toEqual(['init', 'delta', 'result']);
     expect(seen?.resume).toBe('s1');
     expect(await runHook(seen!)).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });

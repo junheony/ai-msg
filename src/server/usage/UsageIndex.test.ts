@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MAX_USAGE_ACCOUNTS, UsageIndex } from './UsageIndex';
 import type { UsageRow } from '../../shared/token-usage';
+import { rootsOf } from '../../shared/accounts.testkit';
 
 let dir: string;
 let roots: { a: string; b: string; c: string };
@@ -20,7 +21,7 @@ function tokenCount(total: number[], last: number[], ts = TS): string {
   const v = (a: number[]) => ({ input_tokens: a[0], cached_input_tokens: a[1], cache_write_input_tokens: a[2], output_tokens: a[3] });
   return JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: v(total), last_token_usage: v(last) } } }) + '\n';
 }
-const make = () => new UsageIndex({ projectsRoots: roots, codexSessionsRoot: codexRoot, indexFile, now: () => NOW });
+const make = () => new UsageIndex({ projectsRoots: rootsOf(roots), codexSessionsRoot: codexRoot, indexFile, now: () => NOW });
 const pick = (rows: UsageRow[], source: string) => rows.filter((r) => r.source === source).reduce((s, r) => ({ input: s.input + r.input, output: s.output + r.output, cacheRead: s.cacheRead + r.cacheRead, cacheWrite: s.cacheWrite + r.cacheWrite, messages: s.messages + r.messages }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, messages: 0 });
 
 beforeEach(async () => {
@@ -145,7 +146,7 @@ describe('UsageIndex', () => {
 describe('UsageIndex v2 (bit per source, v1 migration)', () => {
   let v1File: string;
   let logs: string[];
-  const makeWith = (projectsRoots: Record<string, string>) => new UsageIndex({ projectsRoots, codexSessionsRoot: codexRoot, indexFile, legacyIndexFile: v1File, now: () => NOW });
+  const makeWith = (projectsRoots: Record<string, string>) => new UsageIndex({ projectsRoots: rootsOf(projectsRoots), codexSessionsRoot: codexRoot, indexFile, legacyIndexFile: v1File, now: () => NOW });
   const saved = async () => JSON.parse(await fs.readFile(indexFile, 'utf8')) as { version: number; sources: string[]; seen?: unknown };
   const moreRoots = async (ids: string[]) => {
     const out: Record<string, string> = {};

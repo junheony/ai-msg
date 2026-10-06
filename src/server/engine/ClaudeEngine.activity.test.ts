@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BackgroundTracker, ClaudeEngine, ProgressMeter, mapSdkMessage } from './ClaudeEngine';
 import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { fakeSdk, sdk } from './fakeSdk';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 const M = (o: unknown) => o as SDKMessage;
 
@@ -85,7 +86,7 @@ describe('ClaudeEngine: activity events in a turn', () => {
       { type: 'system', subtype: 'task_notification', task_id: 'a1', tool_use_id: 'toolu_ag', status: 'completed', summary: '42', session_id: 's1' },
       sdk.result('ok'),
     );
-    const evs = await all(new ClaudeEngine({ queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req()));
+    const evs = await all(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req()));
     expect(evs.map((e) => e.kind)).toEqual(['init', 'progress', 'tool_call', 'progress', 'task_update', 'sub_tool_call', 'sub_tool_result', 'task_update', 'task_done', 'result']);
     expect(evs[1]).toEqual({ kind: 'progress', outputTokens: 0, phase: 'tool' });
     expect(evs[3]).toEqual({ kind: 'progress', outputTokens: 30, phase: 'tool' });
@@ -95,7 +96,7 @@ describe('ClaudeEngine: activity events in a turn', () => {
     const f = fakeSdk();
     let live: LiveInput | null = null;
     f.push(sdk.init(), sdk.bgLevel([{ id: 'k', desc: 'sleep 20' }]), sdk.result('launched'));
-    const it = new ClaudeEngine({ queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ onLive: (l) => { live = l; } }))[Symbol.asyncIterator]();
+    const it = new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ onLive: (l) => { live = l; } }))[Symbol.asyncIterator]();
     const seen: EngineEvent[] = [];
     while (!seen.some((e) => e.kind === 'result')) seen.push((await it.next()).value as EngineEvent);
     const bg = seen.find((e) => e.kind === 'background');

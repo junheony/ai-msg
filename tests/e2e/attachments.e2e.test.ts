@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ServerMessage } from '../../src/shared/protocol';
-import { SEAT_LABEL } from '../../src/shared/accounts';
 import { collect, collectAllowing, pngNoise, pngSolid, startDeck, upload, type Deck } from './harness';
 
 type Result = Extract<ServerMessage, { type: 'turn_result' }>;
@@ -21,7 +20,7 @@ describe('deck e2e: attachments on Claude B (D7, D14)', () => {
     expect(result.ok).toBe(true);
     expect(result.badge!.account).toBe('b');
     expect(result.text.toLowerCase()).toContain('red');
-    console.log(`e2e image turn on ${SEAT_LABEL[result.badge!.account]}: "${result.text.trim()}"`);
+    console.log(`e2e image turn on ${result.badge!.account.toUpperCase()}: "${result.text.trim()}"`);
     ws.close();
   });
 
@@ -34,7 +33,7 @@ describe('deck e2e: attachments on Claude B (D7, D14)', () => {
     const pr = collect(ws, (m) => m.type === 'turn_result');
     ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: deck.workDir, text: 'Describe the attached image in at most ten words.', model: 'sonnet', attachments: [img.id] }));
     const result = (await pr).at(-1) as Result;
-    console.log(`e2e large image (${(data.length / 1e6).toFixed(2)} MB): ok=${result.ok} account=${result.badge ? SEAT_LABEL[result.badge.account] : '?'} text=${JSON.stringify(result.text.trim().slice(0, 200))} error=${JSON.stringify(result.errorText)}`);
+    console.log(`e2e large image (${(data.length / 1e6).toFixed(2)} MB): ok=${result.ok} account=${result.badge ? result.badge.account.toUpperCase() : '?'} text=${JSON.stringify(result.text.trim().slice(0, 200))} error=${JSON.stringify(result.errorText)}`);
     expect(result.ok).toBe(true);
     expect(result.badge!.account).toBe('b');
     ws.close();

@@ -70,7 +70,6 @@ export type AutoModelInput = {
   nowMs: number;
   cooldownUntilMs: Partial<Record<Account, number>>;
   protectedAccount: Account | null;
-  /** Absent = the a/b/c defaults. */
   accounts: AccountNames;
 };
 

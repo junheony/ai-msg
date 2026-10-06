@@ -60,7 +60,7 @@ describe('remainingPct', () => {
 
 describe('UsageService', () => {
   function svc(fetchFn: any, now = () => new Date('2026-09-30T12:30:00Z')) {
-    return new UsageService({ deckUrl: 'http://deck.test:9310/', fetchFn, intervalMs: 60_000, now });
+    return new UsageService({ accounts: testRegistry(), deckUrl: 'http://deck.test:9310/', fetchFn, intervalMs: 60_000, now });
   }
 
   it('polls <deckUrl>/api/state and exposes a snapshot', async () => {
@@ -260,7 +260,7 @@ describe('GPT usage (D5)', () => {
 
   it('applyTurn("gpt") corrects the snapshot until the deck card is newer', async () => {
     let state: unknown = { cards: [codexSetup] };
-    const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date('2026-09-30T12:30:00Z') });
+    const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date('2026-09-30T12:30:00Z') });
     await u.pollOnce();
     expect(u.snapshot().gpt?.weekly).toBeNull();
     expect(u.snapshot().gpt?.status).toBe('down');
@@ -279,7 +279,7 @@ describe('GPT usage (D5)', () => {
 
   it('down card with newer fetchedAt keeps the rollout observation', async () => {
     let state: unknown = { cards: [codexSetup] };
-    const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date('2026-09-30T12:30:00Z') });
+    const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date('2026-09-30T12:30:00Z') });
     await u.pollOnce();
     u.applyTurn('gpt', { weekly: { usedPct: 40, resetsAt: '2026-10-03T18:10:34.000Z' } });
     // A setup_needed card re-fetched after the observation carries no usable numbers → the observation stays.
@@ -292,14 +292,14 @@ describe('GPT usage (D5)', () => {
   });
 
   it('an observation older than the one kept is ignored (F3: a rollout poll never undoes a newer turn reading)', () => {
-    const u = new UsageService({ deckUrl: 'http://x', now: () => new Date('2026-09-30T12:30:00Z') });
+    const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date('2026-09-30T12:30:00Z') });
     u.applyTurn('gpt', { weekly: { usedPct: 50, resetsAt: '2026-10-03T18:10:34.000Z' } }, Date.parse('2026-09-30T12:20:00Z'));
     u.applyTurn('gpt', { weekly: { usedPct: 10, resetsAt: '2026-10-03T18:10:34.000Z' } }, Date.parse('2026-09-30T12:10:00Z'));
     expect(u.snapshot().gpt).toMatchObject({ status: 'ok', weekly: { usedPct: 50 }, fetchedAt: '2026-09-30T12:20:00.000Z' });
   });
 
   it('an observation whose windows have all reset since is shown stale, also after a poll (F3)', async () => {
-    const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [codexSetup] }) }), now: () => new Date('2026-10-05T00:00:00Z') });
+    const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [codexSetup] }) }), now: () => new Date('2026-10-05T00:00:00Z') });
     u.applyTurn('gpt', { weekly: { usedPct: 100, resetsAt: '2026-10-03T18:10:34.000Z' } }, Date.parse('2026-10-01T02:16:46Z'));
     expect(u.snapshot().gpt).toMatchObject({ status: 'stale', weekly: { usedPct: 100 } });
     await u.pollOnce();

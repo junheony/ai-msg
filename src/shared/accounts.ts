@@ -51,12 +51,8 @@ export interface AccountNames {
 /** One account's `projects` dir. A list, not an object keyed by id: object keys that look like numbers do not keep their order. */
 export type AccountRoot = { id: Account; dir: string };
 
-/** What the session readers take: the registry's list, or an id → dir object (tests; its key order is the order). */
-export type ProjectsRoots = readonly AccountRoot[] | Readonly<Record<Account, string>>;
-
-export function rootList(roots: ProjectsRoots): readonly AccountRoot[] {
-  return Array.isArray(roots) ? (roots as readonly AccountRoot[]) : Object.entries(roots as Record<Account, string>).map(([id, dir]) => ({ id, dir }));
-}
+/** What the session readers take: the registry's ordered list (`registry.projectsRoots()`). */
+export type ProjectsRoots = readonly AccountRoot[];
 
 export interface AccountRegistry extends AccountNames {
   /** Throws for an id that is not configured (never guess a profile: the turn would bill another account). */
@@ -193,43 +189,12 @@ export function defaultAccountsConfig(profileNames: readonly string[], note: (li
   return { version: 1, home: found.has('a') ? 'a' : (sorted[0] as string), accounts: sorted.map((id) => found.get(id) as AccountSpec) };
 }
 
-/** The a/b/c registry deck had before accounts.json. Server code gets its registry from `loadAccountRegistry`; this is the default for callers that pass none (tests). */
-export function legacyRegistry(homeDir: string): AccountRegistry {
-  return buildRegistry(defaultAccountsConfig(['.claude', '.claude-b', '.claude-c']), { homeDir });
-}
-
-/** `legacyRegistry` without paths: the default `AccountNames` of pure functions (router, usage parsing) when the caller passes none. */
-export const LEGACY_ACCOUNTS: AccountNames = legacyRegistry('/');
-
 /**
- * Compatibility exports for the UI until it takes the account list from the server (`hello.accounts`): the a/b/c
- * defaults. Server code uses the `AccountRegistry` it is given, never these.
+ * The a/b/c names deck had before accounts.json — for one caller only: a new UI attached to an old server whose
+ * `hello` has no `accounts` falls back to these (`src/ui/accounts.ts`). Server code takes the registry it is given
+ * (`loadAccountRegistry`), never this.
  */
-export const ACCOUNTS: readonly Account[] = ['a', 'b', 'c'];
-/** The account ids the wire schema accepts today (`protocol.ts`): the UI narrows a pin to this before sending. */
-export type WireAccount = 'a' | 'b' | 'c';
-export const HOME_ACCOUNT: Account = 'a';
-export const CARD_ID: Record<Account, string> = Object.fromEntries(LEGACY_CARD);
-
-export function isAccount(x: unknown): x is Account {
-  return LEGACY_ACCOUNTS.has(x);
-}
-
-export function profileDir(account: Account, home: string): string {
-  return `${home}/${account === 'a' ? '.claude' : `.claude-${account}`}`;
-}
-
-export function projectsDir(account: Account, home: string): string {
-  return `${profileDir(account, home)}/projects`;
-}
-
-export function accountEnv(
-  account: Account,
-  base: NodeJS.ProcessEnv,
-  home: string,
-): Record<string, string | undefined> {
-  return legacyRegistry(home).env(account, base);
-}
+export const LEGACY_ACCOUNTS: AccountNames = buildRegistry(defaultAccountsConfig(['.claude', '.claude-b', '.claude-c']), { homeDir: '/' });
 
 /** Two Google accounts for gemini-cli, each with its own GEMINI_CLI_HOME (never chosen by 자동). */
 export type GeminiAccount = 'g1' | 'g2';
@@ -254,8 +219,6 @@ export type Seat = Account | 'gpt' | GeminiAccount;
 /** Seats with a usage card (Gemini quota is not readable locally). */
 export type UsageSeat = Account | 'gpt';
 export const GEMINI_LABEL: Record<GeminiAccount, string> = { g1: 'G1', g2: 'G2' };
-/** Compatibility export for the UI (a/b/c only for Claude); the server labels Claude accounts with `registry.label()`. */
-export const SEAT_LABEL: Record<Seat, string> = { a: 'A', b: 'B', c: 'C', gpt: 'GPT', ...GEMINI_LABEL };
 
 const OPENAI_VARS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL'] as const;
 

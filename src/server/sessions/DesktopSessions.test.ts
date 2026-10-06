@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { SessionEntry } from '../../shared/session-types';
 import { readDesktopMeta, recentDesktopSessions } from './DesktopSessions';
 import { SessionIndex } from './SessionIndex';
+import { rootsOf } from '../../shared/accounts.testkit';
 
 const uuid = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
 
@@ -73,12 +74,12 @@ describe('SessionIndex.desktop', () => {
     await fs.writeFile(path.join(projDir, `${uuid(1)}.jsonl`), JSON.stringify({ type: 'user', cwd: '/Users/x/deck', sessionId: uuid(1), message: { role: 'user', content: 'hello from desktop' } }) + '\n');
     const desktopRoot = path.join(base, 'claude-code-sessions');
     await writeMeta(desktopRoot, 1, { title: 'Desktop work', cwd: '/Users/x/deck', lastActivityAt: 1 });
-    const idx = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), desktopRoot });
+    const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), desktopRoot });
     expect(idx.desktop()).toEqual([]);
     await idx.refresh();
     expect(idx.desktop()).toEqual([expect.objectContaining({ sessionId: uuid(1), account: 'a', title: 'Desktop work', project: 'deck', cwd: '/Users/x/deck' })]);
     // Without a desktopRoot the list stays empty.
-    const plain = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') });
+    const plain = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json') });
     await plain.refresh();
     expect(plain.desktop()).toEqual([]);
   });

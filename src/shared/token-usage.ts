@@ -1,4 +1,4 @@
-import { LEGACY_ACCOUNTS, type Account, type AccountNames } from './accounts';
+import type { Account, AccountNames } from './accounts';
 
 /** Token usage history (사용량 view): where the tokens were spent, per day × source × model family. */
 
@@ -16,7 +16,7 @@ export function usageSources(accounts: readonly Account[]): UsageSource[] {
 }
 
 /** Tab / legend label: the account's label (an id that is not configured shows as `ID`), `GPT` for Codex, `합계` for the total. */
-export function usageSourceLabel(source: UsageSource | 'all', names: Pick<AccountNames, 'label'> = LEGACY_ACCOUNTS): string {
+export function usageSourceLabel(source: UsageSource | 'all', names: Pick<AccountNames, 'label'>): string {
   return source === 'all' ? '합계' : source === CODEX_SOURCE ? 'GPT' : names.label(source);
 }
 

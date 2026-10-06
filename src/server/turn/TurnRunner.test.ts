@@ -17,6 +17,7 @@ import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState } from './SessionState';
 import { SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const SID = '11111111-1111-4111-8111-111111111111';
@@ -29,7 +30,7 @@ function card(id: string, s: number, w: number, f: number, resetH: number) {
 
 async function usageWith(a: [number, number, number], b: [number, number, number], c: [number, number, number]) {
   const state = { cards: [card('claude:main', ...a, 154), card('claude:second', ...b, 84), card('claude:third', ...c, 36)] };
-  const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
+  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }
@@ -40,11 +41,12 @@ async function ctx(engine: StubEngine, over: Partial<TurnRunnerDeps> = {}, usage
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-tr-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
-  const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'projects.json') });
+  const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'projects.json') });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
   const moves: unknown[] = [];
   const deps: TurnRunnerDeps = {
+    accounts: testRegistry(),
     engine,
     usage: usage ?? (await usageWith([13, 7, 0], [2, 3, 4], [0, 91, 27])),
     index,
@@ -52,7 +54,7 @@ async function ctx(engine: StubEngine, over: Partial<TurnRunnerDeps> = {}, usage
     cooldownDir: path.join(base, 'cooldown'),
     protectedAccount: 'a',
     auditFile: path.join(base, 'audit.log'),
-    projectsRoots: roots,
+    projectsRoots: rootsOf(roots),
     codex: null,
     attachments: null,
     codexSessionsRoot: path.join(base, 'codex-sessions'),
@@ -109,7 +111,7 @@ describe('TurnRunner', () => {
     await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, d.sink);
     expect(eng2.calls[0]).toMatchObject({ account: 'b' });
     // setup_needed card for b (down) — deck's own successful turn on b lifts it for routing.
-    const down = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main', 13, 7, 0, 154), { ...card('claude:second', 2, 3, 4, 84), status: 'setup_needed' }, card('claude:third', 0, 91, 27, 36)] }) }), now: () => new Date(NOW) });
+    const down = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main', 13, 7, 0, 154), { ...card('claude:second', 2, 3, 4, 84), status: 'setup_needed' }, card('claude:third', 0, 91, 27, 36)] }) }), now: () => new Date(NOW) });
     await down.pollOnce();
     expect(down.snapshot().accounts.b!.status).toBe('down');
     // Pinned to b, so the turn runs there even though routing would skip a down card.
@@ -578,7 +580,7 @@ const codexOk = (tid: string, text = 'ok'): EngineEvent[] => [
 async function usageWithGpt(gptWeekly: number | null) {
   const cards: unknown[] = [card('claude:main', 13, 70, 0, 154), card('claude:second', 2, 60, 4, 84), card('claude:third', 0, 91, 27, 36)];
   if (gptWeekly !== null) cards.push({ id: 'codex', status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Weekly (7d)', used: gptWeekly }] });
-  const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) });
+  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }
@@ -613,7 +615,7 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     // What `codex exec --json` writes while deck's first turn runs.
     await fs.writeFile(path.join(root, '2026', '10', '04', `rollout-2026-10-04T00-00-00-${tid}.jsonl`),
       [{ type: 'session_meta', payload: { id: tid, cwd: work, originator: 'codex_exec', source: 'exec', thread_source: 'user' } }, { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi deck' }] } }].map((l) => JSON.stringify(l)).join('\n') + '\n');
-    const index = new SessionIndex({ roots: c.roots, pinnedFile: path.join(c.base, 'p2.json'), codexRoot: root });
+    const index = new SessionIndex({ roots: rootsOf(c.roots), pinnedFile: path.join(c.base, 'p2.json'), codexRoot: root });
     let midTurn: { sessionId: string; imported?: boolean; codexExec?: boolean }[] = [];
     c.deps.codex = {
       async *runTurn() {
@@ -639,7 +641,7 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     await fs.mkdir(work);
     await fs.mkdir(arch);
     await fs.writeFile(path.join(arch, `rollout-2026-10-04T00-00-00-${tid}.jsonl`), [{ type: 'session_meta', payload: { id: tid, cwd: work, originator: 'codex_exec', source: 'exec', thread_source: 'user' } }].map((l) => JSON.stringify(l)).join('\n') + '\n');
-    c.deps.index = new SessionIndex({ roots: c.roots, pinnedFile: path.join(c.base, 'p2.json'), codexRoot: path.join(c.base, 'codex-root'), codexArchivedRoot: arch });
+    c.deps.index = new SessionIndex({ roots: rootsOf(c.roots), pinnedFile: path.join(c.base, 'p2.json'), codexRoot: path.join(c.base, 'codex-root'), codexArchivedRoot: arch });
     await c.deps.index.refresh();
     await c.deps.store.set({ engine: 'codex', sessionId: tid, cwd: work, lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gpt-6-sol', sandbox: 'read-only', rolloutFile: path.join(c.base, 'codex-root', 'gone.jsonl'), createdAtMs: 1 });
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: work, sessionId: tid, text: 'again' }, c.sink);

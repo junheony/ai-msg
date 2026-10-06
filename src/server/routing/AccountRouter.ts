@@ -61,6 +61,11 @@ export type RouterDecision = {
   pinned?: boolean;
   /** The pinned account was unusable this turn (e.g. '한도 도달'); `account` is the router's own choice. */
   pinBlocked?: string;
+  /**
+   * An install without usage-deck only: this Fable turn was routed as an Opus turn, and why — the runner runs Opus, so
+   * the reason and the model come from this one decision. (With usage-deck `resolveModel` reaches Opus from the values.)
+   */
+  asOpus?: string;
 };
 
 function hoursUntil(iso: string | null, nowMs: number): number {
@@ -79,10 +84,15 @@ export function isLax(usage: UsageSnapshot): boolean {
   return usage.usageSource === 'none';
 }
 
-/** Why a Fable turn has no Fable-eligible account: every Fable value at the limit is known, or none is known at all. */
-export function noFableWhy(input: Pick<RouterInput, 'usage' | 'accounts'>): string {
-  const known = input.accounts.list().some((a) => (usageOf(input.usage, a).fable?.usedPct ?? -1) >= FABLE_MAX_PCT);
-  return known ? 'Fable 여유 계정 없음' : 'Fable 잔여량 모름(usage-deck 값 없음)';
+/**
+ * Why a Fable turn has no Fable-eligible account: a Fable value at the limit is known, or none is known at all. An
+ * install without usage-deck only gets here with every account ruled out (unknown is no reason there), so it names that.
+ */
+export function noFableWhy(input: Pick<RouterInput, 'usage' | 'accounts' | 'cooldownUntilMs' | 'nowMs'>): string {
+  const ids = input.accounts.list();
+  if (ids.some((a) => (usageOf(input.usage, a).fable?.usedPct ?? -1) >= FABLE_MAX_PCT)) return 'Fable 여유 계정 없음';
+  if (!isLax(input.usage)) return 'Fable 잔여량 모름(usage-deck 값 없음)';
+  return ids.every((a) => (input.cooldownUntilMs[a] ?? 0) > input.nowMs) ? '모든 계정 쿨다운' : '쓸 수 있는 계정 없음';
 }
 
 export function rankCandidates(input: RouterInput): { candidates: Candidate[]; excluded: Partial<Record<Account, string>>; unknown: Account[] } {
@@ -263,7 +273,10 @@ export function chooseAccount(input: RouterInput): RouterDecision {
   const blindFable = lax && candidates.length === 0 && unknown.length > 0;
   if (input.needFable && !blindFable && (candidates.length === 0 || (!onProtected && candidates.every((c) => c.account === input.protectedAccount)))) {
     const d = chooseAccount({ ...input, needFable: false });
-    return { ...d, reason: `${noFableWhy(input)} → Opus · ${d.reason}` };
+    // Landed on an account with Fable room anyway (the protected one, taken for its own sake): the Fable turn runs there.
+    if (candidates.some((c) => c.account === d.account)) return d;
+    const why = lax && candidates.length > 0 ? 'Fable 여유는 보호 계정뿐' : noFableWhy(input);
+    return { ...d, ...(lax ? { asOpus: why } : {}), reason: `${why} → Opus · ${d.reason}` };
   }
   const best = candidates[0] ?? null;
   const cur = input.current;

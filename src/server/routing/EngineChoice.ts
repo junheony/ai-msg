@@ -15,7 +15,6 @@ export type EngineInput = {
   gptCooldownUntilMs: number | null;
   cooldownUntilMs: Partial<Record<Account, number>>;
   protectedAccount: Account | null;
-  /** Absent = the a/b/c defaults. */
   accounts: AccountNames;
 };
 

@@ -8,6 +8,7 @@ import { createRequestHandler } from './http';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
+import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'f'.repeat(64);
 const cookie = `deck_session=${cookieValueFor(TOKEN)}`;
@@ -22,10 +23,10 @@ beforeAll(async () => {
   await fs.mkdir(path.join(roots.a, '-p'), { recursive: true });
   const ts = new Date().toISOString();
   await fs.writeFile(path.join(roots.a, '-p', 's.jsonl'), JSON.stringify({ type: 'assistant', timestamp: ts, message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 3, output_tokens: 4 } } }) + '\n');
-  const index = new SessionIndex({ roots, pinnedFile: path.join(dir, 'p.json') });
+  const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(dir, 'p.json') });
   await index.refresh();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
-  const idx = new UsageIndex({ projectsRoots: roots, codexSessionsRoot: path.join(dir, 'codex'), indexFile: path.join(dir, 'usage-index.json') });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+  const idx = new UsageIndex({ projectsRoots: rootsOf(roots), codexSessionsRoot: path.join(dir, 'codex'), indexFile: path.join(dir, 'usage-index.json') });
   const usageHistory = { history: (d: number) => idx.history(d), refresh: () => { refreshes++; return idx.refresh(); } };
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index, usageHistory }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));

@@ -16,6 +16,7 @@ import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner, type TurnSink } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
+import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'c'.repeat(64);
 const COOKIE = `deck_session=${cookieValueFor(TOKEN)}`;
@@ -38,7 +39,7 @@ async function boot(runner: TurnRunner, usage: UsageService, extra: { catchupKee
   const settings = new SettingsStore(path.join(base, `settings-${name}.json`));
   await settings.load();
   const server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  const api = attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, acceptedRefs: new AcceptedRefs(null), outsidePollMs: 0, ...extra });
+  const api = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, acceptedRefs: new AcceptedRefs(null), outsidePollMs: 0, ...extra });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   return { server, api, origin: `http://127.0.0.1:${port}`, wsUrl: `ws://127.0.0.1:${port}/ws` };
@@ -49,9 +50,9 @@ beforeAll(async () => {
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-wscu-work-')));
-  index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') });
+  index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json') });
   await index.refresh();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
   const stub = new StubEngine(async (req) => {
@@ -68,7 +69,7 @@ beforeAll(async () => {
     }
     return [{ kind: 'init', sessionId: sid, model: 'm' }, { kind: 'delta', text: 'o' }, { kind: 'delta', text: 'k' }, okResult(sid, 'ok')];
   });
-  const runner = new TurnRunner({ attachments: null, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  const runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
   full = await boot(runner, usage);
   short = await boot(runner, usage, { catchupKeep: 2 });
   // A runner that plays a script: 'big' streams a small and a large (Korean) delta and waits; 'park' ends its turn and

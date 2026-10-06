@@ -163,4 +163,18 @@ describe("TurnRunner · usage-deck 을 본 적 없는 설치 (usageSource: 'none
     expect(engine.calls[2]).toMatchObject({ account: 'c', model: 'fable' });
     expect(c.logs.at(-1)).toMatch(/잔여량 모름 C, A · 제외 B 잔여량 정보 없음$/);
   });
+
+  it('a Fable turn the router routes as Opus runs on Opus (reason and model from one decision)', async () => {
+    const engine = new StubEngine((call, n) => (n === 0
+      ? [{ kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('limit')]
+      : ok(call.resumeSessionId ?? NEW)));
+    const c = await setup([{ id: 'a' }], null, { strict: false, engine });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'go', model: 'fable' }, c.sink);
+    // The only account is cooling down now: the next Fable turn is routed as an Opus turn.
+    await c.runner.run({ turnId: 't2', cwd: '/w/two', sessionId: null, text: 'go', model: 'fable' }, c.sink);
+    expect(engine.calls.map((x) => [x.account, x.model])).toEqual([['a', 'fable'], ['a', 'opus']]);
+    const last = of(c.msgs, 'turn_result').at(-1);
+    expect(last?.badge?.reason).toMatch(/^모든 계정 쿨다운 → Opus · /);
+    expect(last?.badge).toMatchObject({ model: 'opus', modelNote: '모든 계정 쿨다운 → Opus 로 대체' });
+  });
 });

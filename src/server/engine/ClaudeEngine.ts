@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import { query, type HookInput, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { legacyRegistry, type AccountRegistry } from '../../shared/accounts';
+import type { AccountRegistry } from '../../shared/accounts';
 import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage, type TaskStatus, type TaskUpdate, type TaskUsage, type TurnPhase, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
@@ -601,10 +601,10 @@ export class ClaudeEngine implements Engine {
   /** Kill switch (DECK_STEER=0 → false): no `onLive().steer`, no echo flag; follow-ups and per-uuid bookkeeping stay. */
   private readonly steer: boolean;
 
-  constructor(opts: { queryFn?: QueryFn; home?: string; /** Absent = the a/b/c profiles under `home`. */ accounts?: Pick<AccountRegistry, 'env'>; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number; onCommands?: CommandsListener; steer?: boolean } = {}) {
+  constructor(opts: { queryFn?: QueryFn; home?: string; accounts: Pick<AccountRegistry, 'env'>; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number; onCommands?: CommandsListener; steer?: boolean }) {
     this.queryFn = opts.queryFn ?? ((p) => query(p));
     this.home = opts.home ?? os.homedir();
-    this.accounts = opts.accounts ?? legacyRegistry(this.home);
+    this.accounts = opts.accounts;
     this.baseEnv = opts.baseEnv ?? process.env;
     this.readFile = opts.readFile ?? ((p) => fs.readFile(p));
     this.bgMaxMs = opts.bgMaxMs ?? BG_MAX_MS;

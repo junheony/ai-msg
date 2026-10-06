@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { GEMINI_ACCOUNTS, GEMINI_LABEL, LEGACY_ACCOUNTS, isGeminiAccount, rootList, type Account, type AccountNames, type GeminiAccount, type ProjectsRoots } from '../../shared/accounts';
+import { GEMINI_ACCOUNTS, GEMINI_LABEL, isGeminiAccount, type Account, type AccountNames, type GeminiAccount, type ProjectsRoots } from '../../shared/accounts';
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
@@ -91,8 +91,8 @@ export type TurnRunnerDeps = {
   routeLog?: (line: string) => void;
   /** A session's mode changed during a turn (approved plan, 이 세션's "allow all edits") or via setPermissionMode. */
   onPermissionMode?: (sessionId: string, mode: PermMode) => void;
-  /** Which Claude accounts exist, their order and labels; absent = the a/b/c defaults. */
-  accounts?: AccountNames;
+  /** Which Claude accounts exist, their order and labels. */
+  accounts: AccountNames;
   /** `projects` dir of each configured account (retired included). */
   projectsRoots: ProjectsRoots;
   /**
@@ -231,8 +231,8 @@ export class TurnRunner {
   private readonly roots: ReadonlyMap<Account, string>;
 
   constructor(private readonly deps: TurnRunnerDeps) {
-    this.accounts = deps.accounts ?? LEGACY_ACCOUNTS;
-    this.roots = new Map(rootList(deps.projectsRoots).map((r) => [r.id, r.dir]));
+    this.accounts = deps.accounts;
+    this.roots = new Map(deps.projectsRoots.map((r) => [r.id, r.dir]));
     const move = deps.move ?? moveSession;
     this.move = async (o) => {
       const r = await move(o);
@@ -1284,6 +1284,8 @@ export class TurnRunner {
       first = { ...stay, pinned: false, pinBlocked: first.pinBlocked, reason: `고정 ${this.label(pin)} ${first.pinBlocked} → 갈래는 ${stay.reason}` };
     }
     let account = first.account;
+    // Set while the account is the router's choice for a Fable turn it routed as Opus (see RouterDecision.asOpus).
+    let asOpus = first.asOpus;
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
     const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: shownId(), cwd, message }); };
     // The badge's pin marker: the account is the pinned one because of the pin.
@@ -1292,7 +1294,7 @@ export class TurnRunner {
       if (byPin) forkWhy = `${this.label(account)} 계정 고정이라`;
       const moved = forkAt ? await this.copyForFork(state, account, (m) => early.push(m), forkWhy) : await this.relocate(state, account, (m) => early.push(m));
       if (moved) state = moved;
-      else { account = state.account; reason = `이전 실패 · ${this.label(account)} 유지`; byPin = false; }
+      else { account = state.account; reason = `이전 실패 · ${this.label(account)} 유지`; byPin = false; asOpus = undefined; }
     }
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
     const elsewhereAge = state && !forkAt ? await this.openElsewhere(state) : null;
@@ -1321,7 +1323,8 @@ export class TurnRunner {
         return done();
       }
       const fable = usageOf(deps.usage.snapshot(), account).fable?.usedPct ?? null;
-      const { model, note } = resolveModel(wantedClaude, sessionDefault, fable, deps.usage.snapshot().usageSource);
+      const resolved = resolveModel(wantedClaude, sessionDefault, fable, deps.usage.snapshot().usageSource);
+      const { model, note } = asOpus && resolved.model === 'fable' ? { model: 'opus' as const, note: `${asOpus} → Opus 로 대체` } : resolved;
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: shownId(), cwd, account, model, reason, attempt, engine: 'claude' });
       flushEarly();
 
@@ -1376,7 +1379,7 @@ export class TurnRunner {
       tried.push(account);
       const why = failure === 'limit' ? '한도 도달' : '인증 실패';
       // Review M1: a refused move rules that account out for this turn; ask the router again.
-      let next: { account: Account; reason: string } | null = null;
+      let next: { account: Account; reason: string; asOpus?: string } | null = null;
       let moveRefused = false;
       for (;;) {
         const cand = chooseAccount({
@@ -1406,6 +1409,7 @@ export class TurnRunner {
       sink.emit({ type: 'turn_retry', turnId: p.turnId, sessionId: shownId() ?? sessionId, cwd, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
       reason = `재시도(${why}) · ${next.reason}`;
       account = next.account;
+      asOpus = next.asOpus;
       byPin = false;
     }
     return done();

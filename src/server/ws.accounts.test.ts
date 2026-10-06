@@ -14,6 +14,7 @@ import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
+import { testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'a'.repeat(64);
 const COOKIE = `deck_session=${cookieValueFor(TOKEN)}`;
@@ -34,28 +35,28 @@ beforeAll(async () => {
   await fs.mkdir(work);
   // Profile dirs under the temp dir only: a = <base>/.claude, the others <base>/.claude-<id>.
   const reg = buildRegistry({ version: 1, accounts: [{ id: 'a' }, { id: 'b', label: 'Work' }, { id: 'old', retired: true }, { id: 'd' }] }, { homeDir: base });
-  const start = async (accounts: AccountRegistry | undefined, name: string): Promise<string> => {
-    const roots: Record<string, string> = accounts ? accounts.projectsRoots() : { a: path.join(base, name, 'a'), b: path.join(base, name, 'b'), c: path.join(base, name, 'c') };
-    for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
+  const start = async (accounts: AccountRegistry, name: string, seed: boolean): Promise<string> => {
+    const roots = accounts.projectsRoots();
+    for (const r of roots) await fs.mkdir(r.dir, { recursive: true });
     const index = new SessionIndex({ roots, pinnedFile: path.join(base, `${name}-p.json`) });
     await index.refresh();
-    const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), ...(accounts ? { accounts } : {}) });
+    const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), accounts });
     const st = new SessionStateStore(path.join(base, `${name}-state.json`));
     await st.load();
-    if (accounts) {
+    if (seed) {
       store = st;
-      await st.set({ sessionId: SID, cwd: work, account: 'b', projectDir: path.join(roots.b!, 'p'), lastTurnAtMs: Date.now(), justCompacted: false, defaultModel: 'opus' });
+      await st.set({ sessionId: SID, cwd: work, account: 'b', projectDir: path.join(accounts.projectsDir('b'), 'p'), lastTurnAtMs: Date.now(), justCompacted: false, defaultModel: 'opus' });
     }
     const engine = new StubEngine(async (req) => { engineAccounts.push(req.account); return [{ kind: 'init', sessionId: 'sess-new', model: 'm' }, okResult('sess-new', 'ok')]; });
-    const runner = new TurnRunner({ attachments: null, engine, usage, index, store: st, cooldownDir: path.join(base, `${name}-cd`), protectedAccount: null, auditFile: path.join(base, `${name}-audit.log`), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions'), ...(accounts ? { accounts } : {}) });
+    const runner = new TurnRunner({ attachments: null, engine, usage, index, store: st, cooldownDir: path.join(base, `${name}-cd`), protectedAccount: null, auditFile: path.join(base, `${name}-audit.log`), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions'), accounts });
     const server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-    apis.push(attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store: st, codexAvailable: false, cwdRoots: [base], ...(accounts ? { accounts } : {}) }));
+    apis.push(attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store: st, codexAvailable: false, cwdRoots: [base], accounts }));
     servers.push(server);
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     return `127.0.0.1:${(server.address() as { port: number }).port}`;
   };
-  withReg = await start(reg, 'reg');
-  legacy = await start(undefined, 'legacy');
+  withReg = await start(reg, 'reg', true);
+  legacy = await start(testRegistry(path.join(base, 'legacy')), 'legacy', false);
 });
 afterAll(async () => { for (const a of apis) a.close(); for (const s of servers) s.close(); await fs.rm(base, { recursive: true, force: true }); });
 
@@ -94,7 +95,7 @@ describe('ws: accounts from the registry', () => {
     c.ws.close();
   });
 
-  it('a server started without a registry lists a/b/c with a as home', async () => {
+  it('a server with the a/b/c registry lists a/b/c with a as home', async () => {
     const c = await client(legacy);
     const hello = await c.until<Hello>((m) => m.type === 'hello');
     expect(hello.accounts?.map((a) => [a.id, a.label, a.home, a.retired])).toEqual([['a', 'A', true, false], ['b', 'B', false, false], ['c', 'C', false, false]]);
@@ -111,7 +112,7 @@ describe('ws: accounts from the registry', () => {
     expect(unknown.turnId).toBeNull();
     c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin: 'old', clientRef: 'r-retired' });
     const retired = await c.until<Err>((m) => m.type === 'error' && m.clientRef === 'r-retired');
-    expect(retired.message).toBe('설정에서 뺀(retired) 계정이라 고정할 수 없습니다: old (쓸 수 있는 계정: a, b, d)');
+    expect(retired.message).toBe('뺀 계정(retired)이라 고정할 수 없습니다: old (쓸 수 있는 계정: a, b, d)');
     // c is an account of the default three, not of this server.
     c.say({ type: 'send', sessionId: null, cwd: work, text: 'hi', accountPin: 'c', clientRef: 'r-c' });
     expect((await c.until<Err>((m) => m.type === 'error' && m.clientRef === 'r-c')).message).toContain('설정에 없는 계정');
@@ -140,7 +141,7 @@ describe('ws: accounts from the registry', () => {
     expect(unknown).toMatchObject({ sessionId: SID, turnId: null, message: '설정에 없는 계정이라 고정할 수 없습니다: zz (쓸 수 있는 계정: a, b, d)' });
     c.say({ type: 'set_account_pin', sessionId: SID, pin: 'old' });
     const retired = await c.until<Err>((m) => m.type === 'error' && m.message.includes('old'));
-    expect(retired).toMatchObject({ sessionId: SID, message: '설정에서 뺀(retired) 계정이라 고정할 수 없습니다: old (쓸 수 있는 계정: a, b, d)' });
+    expect(retired).toMatchObject({ sessionId: SID, message: '뺀 계정(retired)이라 고정할 수 없습니다: old (쓸 수 있는 계정: a, b, d)' });
     expect(store.get(SID)).not.toHaveProperty('accountPin');
     expect(c.got.some((m) => m.type === 'account_pin')).toBe(false);
     c.say({ type: 'set_account_pin', sessionId: SID, pin: 'd' });

@@ -10,6 +10,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const SID = '22222222-2222-4222-8222-222222222222';
@@ -22,7 +23,7 @@ function card(id: string, s: number, w: number, resetH: number) {
 
 async function usageWith(a: [number, number], b: [number, number], c: [number, number]) {
   const state = { cards: [card('claude:main', ...a, 154), card('claude:second', ...b, 84), card('claude:third', ...c, 36)] };
-  const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
+  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }
@@ -31,14 +32,15 @@ async function setup(engine: StubEngine, usage?: UsageService) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-pin-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
-  const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'projects.json') });
+  const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'projects.json') });
   const stateFile = path.join(base, 'state.json');
   const store = new SessionStateStore(stateFile);
   await store.load();
   const moves: { targetProjectsRoot: string }[] = [];
   const deps: TurnRunnerDeps = {
+    accounts: testRegistry(),
     engine, index, store, usage: usage ?? (await usageWith([13, 7], [2, 3], [0, 40])),
-    cooldownDir: path.join(base, 'cooldown'), protectedAccount: 'a', auditFile: path.join(base, 'audit.log'), projectsRoots: roots,
+    cooldownDir: path.join(base, 'cooldown'), protectedAccount: 'a', auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots),
     codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'),
     move: async (o) => { moves.push(o); return { ok: true, targetDir: path.join(o.targetProjectsRoot, path.basename(o.sourceProjectDir)), targetFile: '', copied: [] }; },
     now: () => NOW, maxRetries: 2,

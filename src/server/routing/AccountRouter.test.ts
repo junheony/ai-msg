@@ -499,6 +499,38 @@ describe("chooseAccount — usage-deck 을 본 적 없는 설치 (usageSource: '
     expect(d.reason).toMatch(/^Fable 여유 계정 없음 → Opus · /);
   });
 
+  it('only the protected account has Fable room: landing on it anyway keeps Fable; landing elsewhere is an Opus turn, and the decision carries it', () => {
+    // Nothing else is known: the new session lands on the protected account whatever the model, so Fable runs there.
+    const alone = lax(snap({ w: 10, f: 10 }, DOWN, DOWN));
+    const stay = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: alone }));
+    expect(stay.account).toBe('a');
+    expect(stay.reason).not.toMatch(/Opus/);
+    expect(stay.asOpus).toBeUndefined();
+    // Another account is usable for Opus: Fable alone does not move the turn onto the protected one.
+    const other = lax(snap({ w: 10, f: 10 }, { w: 20, f: 85 }, DOWN));
+    const moved = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: other }));
+    expect(moved.account).toBe('b');
+    expect(moved.reason).toMatch(/^Fable 여유는 보호 계정뿐 → Opus · /);
+    expect(moved.asOpus).toBe('Fable 여유는 보호 계정뿐');
+    // With usage-deck: the same accounts, and where the turn lands on the protected account no false "→ Opus".
+    expect(chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: snap({ w: 10, f: 10 }, DOWN, DOWN) }))).toMatchObject({ account: 'a', reason: expect.not.stringMatching(/Opus/) });
+    const strict = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: snap({ w: 10, f: 10 }, { w: 20, f: 85 }, DOWN) }));
+    expect(strict).toMatchObject({ account: 'b', reason: expect.stringMatching(/^Fable 여유 계정 없음 → Opus · /) });
+    expect(strict.asOpus).toBeUndefined();
+  });
+
+  it('every account cooling down: an Opus turn whose reason names the cooldown, not usage-deck', () => {
+    const cooldownUntilMs = { a: NOW + 60_000, b: NOW + 60_000, c: NOW + 60_000 };
+    const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: noDeck, cooldownUntilMs }));
+    expect(d.reason).toMatch(/^모든 계정 쿨다운 → Opus · /);
+    expect(d.reason).not.toMatch(/usage-deck/);
+    expect(d.asOpus).toBe('모든 계정 쿨다운');
+    // Known limits, no cooldown: not "unknown" either.
+    const full = chooseAccount(dflt({ needFable: true, usage: lax(snap({ w: 99, f: null }, { w: 98, f: null }, { w: 97, f: null })) }));
+    expect(full.reason).toMatch(/^쓸 수 있는 계정 없음 → Opus · /);
+    expect(full.asOpus).toBe('쓸 수 있는 계정 없음');
+  });
+
   it("with usage-deck ('deck', or no field) an unknown Fable value still means Opus — and the reason says it is unknown", () => {
     for (const usage of [snap(DOWN, DOWN, DOWN, false), { ...snap(DOWN, DOWN, DOWN, false), usageSource: 'deck' as const }]) {
       const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage }));

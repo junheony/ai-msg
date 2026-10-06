@@ -11,6 +11,7 @@ import { moveSession } from '../sessions/SessionMover';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState } from './SessionState';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const SID = '22222222-2222-4222-8222-222222222222';
@@ -37,7 +38,7 @@ async function setup(): Promise<Ctx> {
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   const state = { cards: [card('claude:main', 13, 7, 0, 154), card('claude:second', 2, 3, 4, 84), card('claude:third', 0, 91, 27, 36)] };
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
   await usage.pollOnce();
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
@@ -52,9 +53,10 @@ async function setup(): Promise<Ctx> {
     return [{ kind: 'init', sessionId: sid, model: 'm', cwd: CWD }, okResult(sid)];
   });
   const deps: TurnRunnerDeps = {
-    engine: eng, usage, index: new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), home: 'a' }), store,
+    accounts: testRegistry(),
+    engine: eng, usage, index: new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), home: 'a' }), store,
     cooldownDir: path.join(base, 'cooldown'), protectedAccount: 'a', auditFile: path.join(base, 'audit.log'),
-    projectsRoots: roots, codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'),
+    projectsRoots: rootsOf(roots), codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'),
     homeAccount: 'a', now: () => NOW, maxRetries: 0,
   };
   const msgs: ServerMessage[] = [];

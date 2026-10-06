@@ -29,7 +29,7 @@ describe('메시지 편집 갈래: fork options', () => {
     f.push(sdk.init('child'), sdk.delta('답'), sdk.result('답', 'child'));
     f.end();
     const evs: EngineEvent[] = [];
-    for await (const e of new ClaudeEngine({ queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ forkAt: 'a1' }))) evs.push(e);
+    for await (const e of new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ forkAt: 'a1' }))) evs.push(e);
     expect(seen).toMatchObject({ resume: 'parent', forkSession: true, resumeSessionAt: 'a1' });
     expect(evs.find((e) => e.kind === 'init')).toMatchObject({ sessionId: 'child' });
     expect(evs.find((e) => e.kind === 'result')).toMatchObject({ sessionId: 'child', ok: true });

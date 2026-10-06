@@ -117,6 +117,14 @@ describe("chooseAutoModel — usage-deck 을 본 적 없는 설치 (usageSource:
     expect(r.reason).toContain('Fable 80%↑ → Opus');
   });
 
+  it('every account cooling down: Opus, and the reason names the cooldown, not usage-deck', () => {
+    const cooldownUntilMs = { a: NOW + 60_000, b: NOW + 60_000, c: NOW + 60_000 };
+    const r = chooseAutoModel({ text: '보안 취약점 검토해줘', attachmentCount: 0, usage: lax(usage(down)), nowMs: NOW, cooldownUntilMs, protectedAccount: null, accounts: testRegistry() });
+    expect(r.model).toBe('opus');
+    expect(r.reason).toContain('모든 계정 쿨다운 → Opus');
+    expect(r.reason).not.toContain('usage-deck');
+  });
+
   it("with usage-deck: unknown Fable → Opus, and the reason says it is unknown (not '80%↑')", () => {
     const r = auto('보안 취약점 검토해줘', usage(down));
     expect(r.model).toBe('opus');

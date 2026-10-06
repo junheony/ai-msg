@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ServerMessage } from '../../src/shared/protocol';
-import { SEAT_LABEL } from '../../src/shared/accounts';
 import { collect, startDeck, type Deck } from './harness';
 
 // Server, temp dirs, login, B pinning (D13) and the buffered collector live in harness.ts (PF16).
@@ -25,7 +24,7 @@ describe('deck e2e (real accounts)', () => {
     expect(result.badge!.model).toBe('sonnet');
     expect(result.badge!.usage.outputTokens).toBeGreaterThan(0);
     expect(result.badge!.reason.length).toBeGreaterThan(0);
-    console.log(`e2e turn 1 ran on ${SEAT_LABEL[result.badge!.account]} — ${result.badge!.reason}`);
+    console.log(`e2e turn 1 ran on ${result.badge!.account.toUpperCase()} — ${result.badge!.reason}`);
     sessionId = result.sessionId ?? '';
     const index = msgs.at(-1) as Extract<ServerMessage, { type: 'index' }>;
     const project = index.projects.find((pj) => pj.cwd === deck.workDir);
@@ -47,7 +46,7 @@ describe('deck e2e (real accounts)', () => {
     expect(result.ok).toBe(true);
     expect(result.text.trim().toLowerCase()).toBe('ok');
     expect(result.sessionId).toBe(sessionId);
-    console.log(`e2e turn 2 ran on ${SEAT_LABEL[result.badge!.account]} — ${result.badge!.reason}`);
+    console.log(`e2e turn 2 ran on ${result.badge!.account.toUpperCase()} — ${result.badge!.reason}`);
     ws.close();
   });
 });

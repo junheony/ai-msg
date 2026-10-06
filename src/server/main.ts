@@ -61,7 +61,7 @@ async function main(): Promise<void> {
   const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
   codexUsage.start();
   // 사용량 view: incremental token usage index over every transcript/rollout; first scan runs in the background.
-  const usageHistory = new UsageIndex({ projectsRoots: Object.fromEntries(cfg.projectsRoots.map((r) => [r.id, r.dir])), codexSessionsRoot: cfg.codexSessionsRoot, indexFile: cfg.usageIndexFile, legacyIndexFile: cfg.usageIndexV1File });
+  const usageHistory = new UsageIndex({ projectsRoots: cfg.projectsRoots, codexSessionsRoot: cfg.codexSessionsRoot, indexFile: cfg.usageIndexFile, legacyIndexFile: cfg.usageIndexV1File });
   usageHistory.start();
   const attachments = new AttachmentStore(cfg.attachmentsDir);
   await attachments.init();

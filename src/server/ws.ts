@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
-import { LEGACY_ACCOUNTS, isGeminiAccount, type AccountNames } from '../shared/accounts';
+import { isGeminiAccount, type AccountNames } from '../shared/accounts';
 import { defaultSandbox, IMPORTED_DEFAULT_MODEL } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
@@ -125,8 +125,8 @@ export type WsDeps = {
   build?: string | null | (() => string | null);
   /** D11: false hides the GPT engine in the UI and makes 'auto' mean Claude. */
   codexAvailable: boolean;
-  /** The configured Claude accounts: rides hello (`accounts`), and an account pin must be one of its active ids. Absent = a/b/c. */
-  accounts?: AccountNames;
+  /** The configured Claude accounts: rides hello (`accounts`), and an account pin must be one of its active ids. */
+  accounts: AccountNames;
   /** Read on every hello, so a login done while deck runs shows up on the next connect. Absent = no Gemini. */
   geminiStatus?: () => GeminiStatus;
   readCodexHistory?: typeof readCodexTranscript;
@@ -509,11 +509,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         : undefined;
 
   /** `checked`: this send already waited for the foreign-write check of its session's held-open process. */
-  const accounts = deps.accounts ?? LEGACY_ACCOUNTS;
+  const accounts = deps.accounts;
   /** Why this account cannot be pinned (the schema only checks an id's shape), or null. */
   const pinRefusal = (id: string): string | null =>
     !accounts.has(id) ? `설정에 없는 계정이라 고정할 수 없습니다: ${id} (쓸 수 있는 계정: ${accounts.list().join(', ')})`
-      : accounts.isRetired(id) ? `설정에서 뺀(retired) 계정이라 고정할 수 없습니다: ${id} (쓸 수 있는 계정: ${accounts.list().join(', ')})`
+      : accounts.isRetired(id) ? `뺀 계정(retired)이라 고정할 수 없습니다: ${id} (쓸 수 있는 계정: ${accounts.list().join(', ')})`
         : null;
 
   const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false) => {

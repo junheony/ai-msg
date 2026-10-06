@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { LEGACY_ACCOUNTS, type Account, type AccountNames, type UsageSeat } from '../../shared/accounts';
+import { type Account, type AccountNames, type UsageSeat } from '../../shared/accounts';
 import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
@@ -51,7 +51,7 @@ function cardsById(json: unknown): Map<string, Record<string, unknown>> {
   return byId;
 }
 
-/** One entry per account of `reg` (retired ones too: their usage stays visible); absent `reg` = the a/b/c defaults. */
+/** One entry per account of `reg` (retired ones too: their usage stays visible). */
 export function parseDeckCards(json: unknown, reg: AccountNames): { accounts: Record<Account, AccountUsage>; gpt: AccountUsage } {
   const byId = cardsById(json);
   const accounts: Record<Account, AccountUsage> = {};
@@ -103,17 +103,17 @@ export class UsageService {
   private firstAttemptDone = false;
 
   /**
-   * `accounts`: the registry (absent = the a/b/c defaults).
+   * `accounts`: the registry.
    * `usageSourceFile` (`<configDir>/usage-source.json`) and `strict` (`DECK_USAGE_STRICT`: true → 'deck', false → 'none',
    * null → by the record) decide the snapshot's `usageSource`; with neither, the snapshot has none (= 'deck').
    */
-  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts?: AccountNames; usageSourceFile?: string; strict?: boolean | null; log?: (line: string) => void }) {
+  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; log?: (line: string) => void }) {
     this.url = opts.deckUrl.replace(/\/+$/, '') + '/api/state';
     this.fetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
     this.intervalMs = opts.intervalMs ?? 60_000;
     this.timeoutMs = opts.timeoutMs ?? 6_000;
     this.now = opts.now ?? (() => new Date());
-    this.reg = opts.accounts ?? LEGACY_ACCOUNTS;
+    this.reg = opts.accounts;
     this.sourceFile = opts.usageSourceFile ?? null;
     this.strict = opts.strict ?? null;
     this.log = opts.log ?? (() => {});
