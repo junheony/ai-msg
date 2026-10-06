@@ -511,10 +511,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** `checked`: this send already waited for the foreign-write check of its session's held-open process. */
   const accounts = deps.accounts;
   /** Why this account cannot be pinned (the schema only checks an id's shape), or null. */
-  const pinRefusal = (id: string): string | null =>
-    !accounts.has(id) ? `설정에 없는 계정이라 고정할 수 없습니다: ${id} (쓸 수 있는 계정: ${accounts.list().join(', ')})`
-      : accounts.isRetired(id) ? `뺀 계정(retired)이라 고정할 수 없습니다: ${id} (쓸 수 있는 계정: ${accounts.list().join(', ')})`
+  const pinRefusal = (id: string): string | null => {
+    const usable = accounts.list().map((a) => `${accounts.label(a)}(${a})`).join(', ');
+    return !accounts.has(id) ? `설정에 없는 계정이라 고정할 수 없습니다: ${id} (쓸 수 있는 계정: ${usable})`
+      : accounts.isRetired(id) ? `설정에서 뺀(retired) 계정이라 고정할 수 없습니다: ${accounts.label(id)}(${id}) (쓸 수 있는 계정: ${usable})`
         : null;
+  };
 
   const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
@@ -524,7 +526,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (!checked) syncHolders();
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
-    const badPin = msg.sessionId === null && msg.accountPin ? pinRefusal(msg.accountPin) : null;
+    // Only a pin the user picked for a new session is refused. An edit branch or a handoff carries its parent's stored pin,
+    // which the runner treats as no pin when the account is not active any more.
+    const badPin = msg.sessionId === null && msg.accountPin && !msg.branch && !msg.handoffFrom ? pinRefusal(msg.accountPin) : null;
     if (badPin) { send(ws, { type: 'error', turnId: null, message: badPin, ...ref }); return; }
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
     // Idempotency: a send this session already took (or is taking) under this ref — a resent queue copy, a duplicated tab — runs once.
@@ -942,7 +946,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           break;
         case 'set_account_pin': {
           const badPin = msg.pin === null ? null : pinRefusal(msg.pin);
-          if (badPin) { send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: badPin }); break; }
+          if (badPin) {
+            send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: badPin });
+            // The sender showed the pin already: back to what is stored.
+            const st = deps.store.get(msg.sessionId);
+            send(ws, { type: 'account_pin', sessionId: msg.sessionId, pin: (st && !isCodexState(st) && !isGeminiState(st) ? st.accountPin : undefined) ?? null });
+            break;
+          }
           void deps.runner.setAccountPin(msg.sessionId, msg.pin)
             .then((ok) => {
               if (ok) broadcast({ type: 'account_pin', sessionId: msg.sessionId, pin: msg.pin });

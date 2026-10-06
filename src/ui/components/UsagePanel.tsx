@@ -181,10 +181,10 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory }: { u
   if (!usage) return <div className="usage-panel"><span className="usage-loading">잔여량 불러오는 중…</span></div>;
   const gpt = usage.gpt ?? emptyAccountUsage();
   // One card per active account and one for GPT: the grid's column count. Past four cards there is no room for the rows
-  // of numbers: the compact card (label over the lowest remaining %) at every width.
+  // of numbers: the compact card (label over the lowest remaining %) at every width. From seven cards a phone shows two rows.
   const cards = active.length + 1;
   return (
-    <div className="usage-panel" {...(cards > 4 ? { 'data-dense': '' } : {})} style={{ '--usage-cards': cards } as CSSProperties}>
+    <div className="usage-panel" {...(cards > 4 ? { 'data-dense': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})} style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}>
       {active.map(({ id: a }) => (
         <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />
       ))}

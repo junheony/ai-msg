@@ -8,6 +8,9 @@ import type { AccountInfo } from '../../shared/protocol';
 import type { UsageHistory, UsageRow } from '../../shared/token-usage';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { AccountsContext, LEGACY_UI_ACCOUNTS, uiAccounts } from '../accounts';
+import { setFeatures } from '../features';
+import { newPane, type PaneState } from '../state';
+import { Pane } from './Pane';
 import { AccountPicker } from './AccountPicker';
 import { TurnBadge } from './TurnBadge';
 import { UsagePanel } from './UsagePanel';
@@ -26,7 +29,7 @@ const usage: UsageSnapshot = {
 };
 const cards = () => [...document.querySelectorAll('.usage-card')].map((c) => c.querySelector('.usage-letter')!.textContent);
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); setFeatures(undefined); });
 
 describe('UsagePanel with any number of accounts', () => {
   it('one account: its card and GPT, the full card (no compact layout), two grid columns', () => {
@@ -54,6 +57,26 @@ describe('UsagePanel with any number of accounts', () => {
     expect(screen.getByTestId('team-2-weekly').textContent).toContain('—');
     expect(screen.getByTestId('account-d').className).toContain('current');
     expect(document.body.textContent).not.toContain('undefined');
+  });
+
+  it('seven cards and more wrap into two rows on a phone: data-wrap and the columns of one row; up to six stay in one', () => {
+    const eight = Array.from({ length: 8 }, (_, i) => acct(`n${i}`));
+    render(<With list={eight}><UsagePanel usage={{ ...usage, accounts: {} }} current={null} now={0} /></With>);
+    let panel = document.querySelector<HTMLElement>('.usage-panel')!;
+    expect(panel.style.getPropertyValue('--usage-cards')).toBe('9');
+    expect(panel.hasAttribute('data-wrap')).toBe(true);
+    expect(panel.style.getPropertyValue('--usage-cols-wrap')).toBe('5');
+    cleanup();
+    render(<With list={eight.slice(0, 6)}><UsagePanel usage={{ ...usage, accounts: {} }} current={null} now={0} /></With>);
+    panel = document.querySelector<HTMLElement>('.usage-panel')!;
+    expect(panel.hasAttribute('data-wrap')).toBe(true);
+    expect(panel.style.getPropertyValue('--usage-cols-wrap')).toBe('4');
+    cleanup();
+    render(<With list={eight.slice(0, 5)}><UsagePanel usage={{ ...usage, accounts: {} }} current={null} now={0} /></With>);
+    panel = document.querySelector<HTMLElement>('.usage-panel')!;
+    expect(panel.hasAttribute('data-dense')).toBe(true);
+    expect(panel.hasAttribute('data-wrap')).toBe(false);
+    expect(panel.style.getPropertyValue('--usage-cols-wrap')).toBe('');
   });
 
   it('the default list (no provider): A, B, C, GPT as four columns in the full layout', () => {
@@ -102,6 +125,69 @@ describe('AccountPicker with the configured accounts', () => {
     fireEvent.click(gone);
     expect(names()).not.toContain('Old');
     expect(names()).not.toContain('c');
+  });
+
+  it('a pin on a retired account or on an id that is not configured: drawn as such and said in words (it works as 자동)', () => {
+    const { unmount } = render(<With list={SIX}><AccountPicker pin="old" current="a" usage={null} onPin={() => {}} /></With>);
+    const btn = screen.getByTestId('account-picker');
+    expect(btn.textContent).toContain('Old');
+    expect(btn.querySelector('.mp-acct.acct-retired')).not.toBeNull();
+    expect(btn.getAttribute('aria-label')).toBe('계정: Old (뺀 계정 — 자동으로 동작) 고정');
+    expect(btn.querySelector<HTMLElement>('.mp-acct')!.title).toBe('Old (뺀 계정 — 자동으로 동작)');
+    unmount();
+    render(<With list={SIX}><AccountPicker pin="zz" current={null} usage={null} onPin={() => {}} /></With>);
+    const gone = screen.getByTestId('account-picker');
+    expect(gone.textContent).toContain('zz');
+    expect(gone.querySelector('.mp-acct.acct-unknown')).not.toBeNull();
+    expect(gone.getAttribute('aria-label')).toBe('계정: zz (설정에 없는 계정 — 자동으로 동작) 고정');
+  });
+
+  it('an active pin and an automatic account read as before; a current retired / unknown one is said in the label', () => {
+    const label = (pin: string | null, current: string | null) => {
+      cleanup();
+      render(<With list={SIX}><AccountPicker pin={pin} current={current} usage={null} onPin={() => {}} /></With>);
+      return screen.getByTestId('account-picker');
+    };
+    expect(label('d', 'a').getAttribute('aria-label')).toBe('계정: D 고정');
+    expect(label('d', 'a').querySelector('.acct-retired, .acct-unknown')).toBeNull();
+    expect(label('b', null).getAttribute('aria-label')).toBe('계정: Work (Desktop) 고정');
+    expect(label(null, 'team-2').getAttribute('aria-label')).toBe('계정: 자동 · Team-2');
+    expect(label(null, null).getAttribute('aria-label')).toBe('계정: 자동');
+    expect(label(null, 'old').getAttribute('aria-label')).toBe('계정: 자동 · Old (뺀 계정)');
+    expect(label(null, 'c').getAttribute('aria-label')).toBe('계정: 자동 · c (설정에 없는 계정)');
+    // The name is its own element (it is what gets cut when long); its title carries the whole of it.
+    expect(label('p', null).querySelector<HTMLElement>('.mp-acct')!.textContent).toBe('Personal');
+    expect(label('p', null).querySelector<HTMLElement>('.mp-acct')!.title).toBe('Personal');
+  });
+});
+
+describe('a session whose account cannot run a turn', () => {
+  const on = (account: string, sessionId: string | null = 's1'): PaneState => ({ ...newPane('p1'), session: { sessionId, cwd: '/w', account, title: 't', engine: 'claude', sandbox: null } });
+  const note = (pane: PaneState, list: AccountInfo[] | null = SIX) => {
+    cleanup();
+    const el = <Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: false }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} />;
+    render(list ? <With list={list}>{el}</With> : el);
+    return screen.queryByTestId('composer-note');
+  };
+
+  it('a line above the input says it cannot be continued — retired and unconfigured apart; an active account has none', () => {
+    setFeatures(['accounts']);
+    expect(note(on('old'))!.textContent).toBe('뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다');
+    expect(note(on('c'))!.textContent).toBe('설정에 없는 계정의 세션이라 이어 쓸 수 없습니다');
+    expect(note(on('d'))).toBeNull();
+    expect(note(on('gpt'))).toBeNull();
+    expect(note(on('g1'))).toBeNull();
+    // The input stays usable (the server answers the send).
+    note(on('old'));
+    expect((screen.getByPlaceholderText(/메시지/) as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it('not for a session without an id yet, and not on a server that does not list its accounts (its sessions resume as before)', () => {
+    setFeatures(['accounts']);
+    expect(note(on('old', null))).toBeNull();
+    setFeatures(undefined);
+    expect(note(on('d'), null)).toBeNull();
+    expect(note(on('zz'), null)).toBeNull();
   });
 });
 
@@ -167,6 +253,29 @@ describe('account palette (styles.css)', () => {
     expect(tile).not.toMatch(/[^-]width: 20px/);
     expect(css).toMatch(/\.usage-panel \{[^}]*grid-template-columns: repeat\(var\(--usage-cards, 4\), minmax\(0,/);
   });
+
+  it('a long label is cut at 12 characters in the badge and in the picker (the whole of it is in the title)', () => {
+    expect(part).toMatch(/\.turn-badge \.acct-name \{[^}]*max-width: 12ch;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;/);
+    expect(part).toMatch(/\.mp-acct \{[^}]*max-width: 12ch;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;/);
+    render(<With list={[acct('long', 'A-very-long-account-label-of-forty-chars')]}><TurnBadge badge={{ account: 'long', model: 'opus', reason: 'r', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }, modelNote: null }} /></With>);
+    const tile = document.querySelector<HTMLElement>('.turn-badge .acct')!;
+    expect(tile.querySelector('.acct-name')!.textContent).toBe('A-very-long-account-label-of-forty-chars');
+    expect(tile.title).toBe('계정 A-very-long-account-label-of-forty-chars');
+  });
+
+  it('retired / not configured: the muted text colour and a dashed line, never opacity (it would take the text under 4.5:1)', () => {
+    const rules = [...part.matchAll(/[^{}]*\.acct-(?:retired|unknown)[^{}]*\{[^}]*\}/g)].map((m) => m[0]);
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) expect(r).not.toMatch(/opacity/);
+    expect(rules.some((r) => /color: var\(--muted\)/.test(r))).toBe(true);
+    expect(rules.some((r) => /dashed/.test(r))).toBe(true);
+  });
+
+  it('the compact card keeps its mark-then-number columns for up to four cards (as before); only five and more put the label first', () => {
+    expect(css).toMatch(/@media \(max-width: 1100px\) \{\s*\.usage-card \{ display: grid; grid-template-columns: auto minmax\(0, 1fr\);/);
+    expect(part).not.toMatch(/@media \(max-width: 1100px\) \{\s*\.usage-card \{/);
+    expect(css).toMatch(/@media \(max-width: 720px\) \{[^@]*\.usage-panel\[data-wrap\] \.usage-card \{ flex: 1 1 calc\(100% \/ var\(--usage-cols-wrap\) - 5px\);/);
+  });
 });
 
 describe('usageTabs', () => {
@@ -203,8 +312,34 @@ describe('usageTabs', () => {
     // Before the answer: the configured accounts.
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['합계', 'A', 'Work', 'D', 'GPT']);
     await waitFor(() => expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['합계', 'A', 'Work', 'Old', 'D', 'c', 'GPT']));
-    expect(screen.getByRole('tab', { name: 'Old' }).className).toContain('acct-retired');
-    expect(screen.getByRole('tab', { name: 'c' }).className).toContain('acct-unknown');
+    // The state in words too (colour alone does not say it).
+    const old = screen.getByRole('tab', { name: 'Old (뺀 계정)' });
+    expect(old.className).toContain('acct-retired');
+    expect(old.title).toBe('Old (뺀 계정)');
+    const gone = screen.getByRole('tab', { name: 'c (설정에 없는 계정)' });
+    expect(gone.className).toContain('acct-unknown');
+    expect(gone.title).toBe('c (설정에 없는 계정)');
+    expect(screen.getByRole('tab', { name: 'Work' }).hasAttribute('title')).toBe(false);
     expect(screen.getByRole('tab', { name: 'Work' }).className).not.toContain('acct-');
+  });
+
+  it('the picked tab leaves with its rows: 합계 is shown meanwhile, and the pick is back when the tab is', async () => {
+    const body = (rows: UsageRow[]): UsageHistory => ({ generatedAt: 'x', days: 84, lastScanAt: null, scanning: false, sources: ['a', 'b', 'c', 'codex'], rows });
+    const answers = [body([row('all'), row('c')]), body([row('all')]), body([row('all'), row('c')])];
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify(answers.shift()), { status: 200 })) as unknown as typeof fetch;
+    render(<AccountsContext value={names}><UsageView onClose={() => {}} fetchFn={fetchFn} now={new Date(2026, 9, 2, 12)} /></AccountsContext>);
+    const on = () => screen.getAllByRole('tab').filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => t.textContent);
+    const tabs = () => screen.getAllByRole('tab').map((t) => t.textContent);
+    await waitFor(() => expect(tabs()).toContain('c'));
+    fireEvent.click(screen.getByRole('tab', { name: 'c (설정에 없는 계정)' }));
+    expect(on()).toEqual(['c']);
+    expect(screen.queryByText(/합계는 여러 계정에 복사된/)).toBeNull();
+    fireEvent.click(screen.getByText('새로고침'));
+    await waitFor(() => expect(tabs()).not.toContain('c'));
+    expect(on()).toEqual(['합계']);
+    expect(screen.getByText(/합계는 여러 계정에 복사된/)).toBeTruthy();
+    fireEvent.click(screen.getByText('새로고침'));
+    await waitFor(() => expect(tabs()).toContain('c'));
+    expect(on()).toEqual(['c']);
   });
 });
