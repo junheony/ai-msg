@@ -127,7 +127,7 @@ describe('UsagePanel header layout (styles.css)', () => {
   const usage = css.slice(css.indexOf('/* === usage header === */'), css.indexOf('/* === chat polish === */'));
   it('never scrolls the cards sideways; below 1280px the cards drop to their own row in four equal columns', () => {
     expect(usage).not.toMatch(/overflow-x:\s*auto/);
-    expect(usage).toMatch(/\.usage-panel \{[^}]*grid-template-columns: repeat\(4, minmax\(0,/);
+    expect(usage).toMatch(/\.usage-panel \{[^}]*grid-template-columns: repeat\(var\(--usage-cards, 4\), minmax\(0,/);
     const two = usage.slice(usage.indexOf('@media (max-width: 1279.98px)'));
     expect(two).toMatch(/\.topbar \{[^}]*flex-wrap: wrap/);
     expect(two).toMatch(/\.usage-card \{[^}]*flex: 1 1 0/);

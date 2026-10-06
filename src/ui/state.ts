@@ -1,6 +1,6 @@
 import type { Account, Seat } from '../shared/accounts';
 import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import { ACCEPTED_REFS_TTL_MS, type DeckSettings, type SessionFacts, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
+import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type DeckSettings, type SessionFacts, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -8,6 +8,7 @@ import { handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
+import { LEGACY_ACCOUNT_LIST, accountListOf, seatLabel } from './accounts';
 import { has } from './features';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
@@ -244,6 +245,8 @@ const withNotice = (p: PaneState, n: PaneNotice): PaneState => ({ ...p, notices:
 export type AppState = {
   connected: boolean;
   usage: UsageSnapshot | null;
+  /** The server's Claude accounts (hello.accounts, retired included); a/b/c until a hello says otherwise — read through `uiAccounts`. */
+  accounts: readonly AccountInfo[];
   projects: ProjectEntry[];
   /** Prompts from every session (any device may answer); the pane whose session they belong to shows them. */
   pending: PendingPermission[];
@@ -280,7 +283,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false };
+export const initialState: AppState = { connected: false, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -329,8 +332,6 @@ const withN = (n: number | undefined) => (n !== undefined ? { n } : {});
 export type SentRecord = { text: string; files: SentFile[] };
 
 export type ThinkingInfo = { text: string; redacted: boolean; startedAt: number | null; ms: number | null };
-
-const LABEL: Record<Account, string> = { a: 'A', b: 'B', c: 'C' };
 
 export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
@@ -486,7 +487,7 @@ function settleQueue(pane: PaneState, msg: SessionFacts, items: ChatItem[]): Pic
 }
 
 /** One pane's view of a server message. `claim`: this pane may claim an unclaimed turn_started (only the first waiting pane does). */
-function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): PaneState {
+function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accounts: readonly AccountInfo[]): PaneState {
   switch (msg.type) {
     case 'hello': {
       // Reconnect: show 중단 for a turn still running on the open session; drop one that ended meanwhile.
@@ -653,7 +654,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
     case 'turn_retry':
       if (!belongs(pane, msg)) return pane;
       // Review M11: the retry streams into a fresh segment; the failed attempt's text is kept apart.
-      return updateTurn(pane, msg.turnId, ({ thinking: _drop, ...it }) => ({ ...it, text: '', attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${LABEL[msg.fromAccount]} → ${LABEL[msg.toAccount]}: ${msg.reason}`] }));
+      return updateTurn(pane, msg.turnId, ({ thinking: _drop, ...it }) => ({ ...it, text: '', attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${seatLabel(accounts, msg.fromAccount)} → ${seatLabel(accounts, msg.toAccount)}: ${msg.reason}`] }));
     case 'turn_background': {
       if (!belongs(pane, msg)) return pane;
       // One pill per pane (one process per session); [] clears it.
@@ -753,7 +754,7 @@ function afterHandoffNote(pane: PaneState, ok: boolean): PaneState {
 }
 
 function mapPanes(state: AppState, msg: ServerMessage): PaneState[] {
-  return state.panes.map((p) => paneOnServer(p, msg, false));
+  return state.panes.map((p) => paneOnServer(p, msg, false, state.accounts));
 }
 
 /**
@@ -792,7 +793,7 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
     case 'hello':
-      return applySettings({ ...state, connected: true, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
+      return applySettings({ ...state, connected: true, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts: has('accounts') ? accountListOf(msg.accounts) : LEGACY_ACCOUNT_LIST, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
     case 'settings': return applySettings(state, msg.settings);
     // A mode the user picked before the id arrived wins: it is on its way to the server.
     case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && !p.session.permissionModePending ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
@@ -806,7 +807,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       if (!state.panes.some((p) => p.session?.sessionId === msg.sessionId)) return state;
       const doubt = inDoubt(msg, Date.now());
       const doubted = state.panes.filter((p) => p.session?.sessionId === msg.sessionId).flatMap((p) => p.queue.filter(doubt).map((q) => q.text || '첨부만'));
-      return { ...state, ...(doubted.length ? { error: `이미 들어갔을 수 있어 멈춰 둔 메시지: ${doubted.join(' / ')}` } : {}), panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...paneOnServer(p, msg, false), loading: false } : p)) };
+      return { ...state, ...(doubted.length ? { error: `이미 들어갔을 수 있어 멈춰 둔 메시지: ${doubted.join(' / ')}` } : {}), panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...paneOnServer(p, msg, false, state.accounts), loading: false } : p)) };
     }
     case 'permission_request': {
       // Prompts from every session are shown (any device may answer); replays on reconnect are deduped (review M10).
@@ -825,7 +826,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       let claimed = false;
       const panes = state.panes.map((p) => {
         const canClaim = !claimed && p.awaitingStart;
-        const next = paneOnServer(p, msg, canClaim);
+        const next = paneOnServer(p, msg, canClaim, state.accounts);
         if (canClaim && next.myTurns.includes(msg.turnId)) claimed = true;
         return next;
       });

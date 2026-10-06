@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  FAMILY_LABEL, MODEL_FAMILIES, addCounts, addDays, cacheHitPct, costOf, emptyCounts, localDay, totalTokens, usageSourceLabel, usageSources, weekStart,
+  FAMILY_LABEL, MODEL_FAMILIES, addCounts, addDays, cacheHitPct, costOf, emptyCounts, localDay, totalTokens, CODEX_SOURCE, usageSourceLabel, weekStart,
   type ModelFamily, type TokenCounts, type UsageHistory, type UsageRow, type UsageSource,
 } from '../../shared/token-usage';
-import { ACCOUNTS } from '../../shared/accounts';
+import { useAccounts, type UiAccounts } from '../accounts';
 
 type View = UsageSource | 'all';
 type Sum = TokenCounts & { cost: number };
@@ -70,6 +70,20 @@ export function dailyStacks(rows: UsageRow[], view: View, today: string, n: numb
   return days.map((d) => at.get(d)!);
 }
 
+/**
+ * The tabs: 합계, the active accounts, then every other source that has rows — configured (retired) accounts in configured
+ * order, then ids the configuration no longer has, in the index's order (`history.sources`; absent from an older server) —
+ * and GPT last. `sources` alone never makes a tab: right after a start it is only `codex`, and an index moved from v1 lists a/b/c whatever is configured.
+ */
+export function usageTabs(names: Pick<UiAccounts, 'all'>, data: Pick<UsageHistory, 'sources' | 'rows'> | null): View[] {
+  const withRows = new Set<string>();
+  for (const r of data?.rows ?? []) if (r.source !== 'all' && r.source !== CODEX_SOURCE) withRows.add(r.source);
+  const configured = names.all.filter((a) => !a.retired || withRows.has(a.id)).map((a) => a.id);
+  const known = new Set(names.all.map((a) => a.id));
+  const gone = [...new Set([...(data?.sources ?? []), ...withRows])].filter((s) => s !== CODEX_SOURCE && !known.has(s) && withRows.has(s));
+  return ['all', ...configured, ...gone, CODEX_SOURCE];
+}
+
 function Tile({ label, s, sub }: { label: string; s: Sum; sub: boolean }) {
   return (
     <div className="uv-tile">
@@ -134,6 +148,7 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>('all');
   const [busy, setBusy] = useState(false);
+  const names = useAccounts();
 
   const load = useCallback(async (refresh: boolean) => {
     setBusy(true);
@@ -177,9 +192,10 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
           <button type="button" className="uv-btn uv-close" onClick={onClose} aria-label="닫기">닫기</button>
         </header>
         <div className="uv-tabs" role="tablist" aria-label="계정">
-          {(['all', ...usageSources(ACCOUNTS)] as View[]).map((v) => (
-            <button key={v} type="button" role="tab" aria-selected={view === v} className={view === v ? 'on' : ''} onClick={() => setView(v)}>{usageSourceLabel(v)}</button>
-          ))}
+          {usageTabs(names, data).map((v) => {
+            const kind = v === 'all' || v === CODEX_SOURCE ? 'active' : names.look(v).kind;
+            return <button key={v} type="button" role="tab" aria-selected={view === v} className={`${view === v ? 'on' : ''}${kind === 'active' ? '' : ` acct-${kind}`}`} onClick={() => setView(v)}>{usageSourceLabel(v, names)}</button>;
+          })}
         </div>
         {error && <div className="uv-note error">{error}</div>}
         {data?.scanning && <div className="uv-note">기록을 읽는 중입니다 — 처음에는 몇 분 걸릴 수 있어요. 숫자가 계속 늘어납니다.</div>}

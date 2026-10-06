@@ -1,5 +1,6 @@
 import { MODEL_LABEL } from '../../shared/models';
 import type { TurnBadge as Badge } from '../../shared/protocol';
+import { useAccounts } from '../accounts';
 import { has } from '../features';
 import { PinIcon } from './AccountPicker';
 
@@ -40,10 +41,13 @@ export function isFailedTurn(t: { error?: string | null; interrupted?: boolean }
 /** Turn footer: account tile, model pill, token counts (or "중단됨" / "실패"), then the routing reason — one muted line. */
 export function TurnBadge({ badge, stopped = false, failed = false, cacheNote = null }: { badge: Badge; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null }) {
   const u = badge.usage;
+  const names = useAccounts();
+  const label = names.label(badge.account);
+  const look = names.look(badge.account);
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
   return (
     <div className={`turn-badge${stopped ? ' stopped' : ''}`}>
-      <span className={`acct acct-${badge.account}`} title={`계정 ${badge.account.toUpperCase()}${badge.pinned ? ' · 고정' : ''}`}>{badge.account.toUpperCase()}</span>
+      <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={`계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`}>{label}</span>
       {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
       <span className="tb-model">{MODEL_LABEL[badge.model]}</span>
       {stopped ? (

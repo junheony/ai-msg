@@ -1,4 +1,4 @@
-import { isAccount, type Account } from '../shared/accounts';
+import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, type Account } from '../shared/accounts';
 import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { ATTACHMENT_ID, MAX_ATTACHMENTS_PER_TURN } from '../shared/protocol';
 import { MAX_PANES, newPane, nextQueueId, parkKey, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
@@ -71,7 +71,7 @@ function pane(x: unknown): PersistedPane {
     sandbox: CODEX_SANDBOXES.includes(x.sandbox as CodexSandbox) ? (x.sandbox as CodexSandbox) : d.sandbox,
     ...(pending && hf && shortStr(hf.sessionId, 200) && hf.sessionId && shortStr(hf.title, 500) ? { handoffFrom: { sessionId: hf.sessionId, title: hf.title } } : {}),
     ...(pending && shortStr(x.prefill, 100_000) && x.prefill ? { prefill: x.prefill } : {}),
-    ...(pending && isAccount(x.accountPin) ? { accountPin: x.accountPin } : {}),
+    ...(pending && typeof x.accountPin === 'string' && ACCOUNT_ID_RE.test(x.accountPin) && !RESERVED_ACCOUNT_IDS.includes(x.accountPin) ? { accountPin: x.accountPin } : {}),
   };
 }
 
