@@ -1,13 +1,39 @@
-# HANDOFF — deck (갱신 2026-10-06)
+# HANDOFF — deck (갱신 2026-10-06 오후)
 
-> 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 비공개 저장소(원격 없음).
+> 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 이 저장소는 비공개 원본(원격 없음)이고, 공개본은 `scripts/export-public.sh` 로 뽑아 따로 올린다.
 
-## 다음 할 일 (2026-10-06 12시)
+## 다음 할 일 (2026-10-06 오후)
 
-- `6ac9401` 따라잡기·서버 기능 목록 커밋, 서버 재시작으로 반영. 기기(iPad/폰)에서 백그라운드 복귀 뒤 답이 이어지는지 확인 필요. 리뷰 잔여 LOW: gap 중 시작 전 실패한 send 는 awaiting 이 남을 수 있음(`ui/state.ts`), history 읽기가 30초를 넘으면 재연결 반복(`ui/catchup.ts`), `App.tsx` 리스너 배선 무테스트.
-- 계정 모듈화·공개 정비: 설계 `docs/superpowers/specs/2026-10-06-accounts-module-and-public-refit.md`. 1단계(AccountRegistry)부터. 공개 쪽은 사용자 결정 4건 대기.
+- **재시작 결과 확인**: 이 문서를 커밋한 뒤 `/tmp/deck-relaunch.sh` 로 재시작했다(세션이 같이 끝나서 결과는 못 봤다). `~/.config/deck/deck.log` 끝의 `[relaunch …]` 줄을 본다 — `new server healthy` 면 새 코드, `NEW SERVER NOT HEALTHY` 면 이전 빌드(`/tmp/deck-fallback`, `be048e0`)로 돌아가 있는 것이고 원인은 그 위 로그에 있다. 정상이면 `/tmp/deck-fallback` 워크트리는 스크립트가 지운다.
+- **공개 저장소 CI**: https://github.com/junheony/quarterdeck — 올린 직후 CI(macOS 필수, Linux 참고용) 결과를 확인할 것. 다음에 공개본을 갱신할 때: master 에 커밋 → `bash scripts/export-public.sh <빈 디렉터리>` → 그 디렉터리의 내용을 공개 저장소 클론에 덮어쓰고 커밋(저자 `hwangmc88 <hwangmc88@gmail.com>`) → `gh auth switch --user junheony` 로 푸시 후 원래 계정으로 되돌린다.
+- 기기(iPad/폰)에서 백그라운드 복귀 뒤 답이 이어지는지 확인(따라잡기, `6ac9401`).
+- 계정 C 를 뺄 때: 사용자가 날짜를 주면 `~/.config/deck/accounts.json` 을 만들어 `c` 를 `retired: true` 로(읽기 전용). 가장 최신 사본이 뺀 계정 프로필에 있는 세션은 재개가 거절되니, 그때 다른 계정으로 자동 이전하는 처리를 넣을지 정한다.
+- 4번째 계정을 붙이려면 `claude-pick`·`offload`·usage-deck 쪽도 새 id(쿨다운 파일명·카드 id)를 받아야 한다 — 미착수.
+- GPT 자동 라우팅 1/2 선택(사용자 결정 대기), launchd 자동 시작(전체 디스크 접근 권한은 사용자가 줘야 함).
 
-## 0. 최신 상태 (2026-10-06, master c645217 + 미커밋 A·B, 빌드 완료)
+## 0. 최신 상태 (2026-10-06 오후, master `827466e` + 이 문서, 단위 149파일 1653건 통과, 빌드 완료)
+
+**들어간 것**
+- **계정 모듈**: 계정 수가 고정 3개가 아니다. `<configDir>/accounts.json`(`{version:1, home, accounts:[{id,label,configDir,card,retired}]}`)이 있으면 그대로, 없으면 `~/.claude` → `a`, `~/.claude-<영문 한 글자>` 를 찾아 쓴다(지금 이 맥은 파일 없이 a·b·c, 이전과 같은 결과). 파일이 틀리면 시작을 거부한다. `retired: true` = 읽기 전용. 설정에서 뺀 계정은 스캔하지 않는다. 설계·구현 메모는 `docs/superpowers/specs/2026-10-06-accounts-module-and-public-refit.md`, 사용법은 README "Claude 계정 여러 개 쓰기".
+- **사용량 색인 v2**: `usage-index-v2.json`(+`.seen`). v1 은 읽기만 하고 남겨 둔다(첫 시작 때 한 번 변환, 계정 자리 23개).
+- **usageSource**: usage-deck 을 쓰는 설치는 엄격(`'deck'` — Fable 잔여량 모름이면 Opus), 아니면 느슨(`'none'`). 우선순위 `DECK_USAGE_STRICT` > `usage-source.json` > 대시보드 주소 명시(`DECK_URL`·`claude-pick/deck_url`) > 첫 조회 결과. 이 맥은 `deck_url` 이 있어 엄격이고 재시작 스크립트도 `DECK_USAGE_STRICT=1` 을 준다.
+- **라우터**: 잔여량 모름 계정은 후순위 후보. 이유 문구와 실제 모델이 항상 일치한다("→ Opus" 면 Opus 로 실행). `reconcile` 뒤 뺀 계정을 다시 검사한다.
+- **공개 정비**: MIT, README 영어/한국어, `docs/ARCHITECTURE.md`, CI, 위생 테스트(`src/hygiene.ts` — 개인 경로·호스트·키 모양), 픽스처 전부 합성값. 공개에서 빠지는 파일은 `.gitattributes` 의 `export-ignore`.
+- **보안 보강**: KaTeX `maxSize: 20`(`maxExpand` 는 기본값 — 낮추면 정상 수식이 깨진다), CSP `form-action 'self'`·`object-src 'none'`, 서비스 워커는 `text/html` 응답만 `/` 로 캐시.
+- **권한 기본값 변경**: 코드 기본이 "자동 승인"에서 "매번 묻기"(`DEFAULT_SETTINGS`)로 바뀌었다. 이 맥은 이전 동작을 유지하려고 `~/.config/deck/settings.json` 에 `bypassPermissions` 를 적어 두었다(설정 화면에서 바꾸면 이 파일이 갱신된다).
+
+**달라진 동작 (알아 둘 것)**
+- 엄격 모드에서 Fable 후보가 없고 usage-deck 카드가 `down`/설정 필요 상태면 이제 Opus 로 돈다(전에는 Fable). 의도한 보수적 변경.
+- 새 세션에 쓸 수 없는(없는·뺀) 계정 핀을 붙이면 거절한다. 기존 세션의 쓸 수 없는 핀은 무시한다. 분기·인계는 부모의 핀을 조용히 무시한다.
+
+**남긴 것 (전부 LOW)**
+- `ws.ts`: 핀이 없거나 쓸 수 있으면 모르는 `handoffFrom` 도 메타에 연결된다(이전부터). `fromKnown` 을 `linkHandoff` 쪽에도 쓰면 된다. `index.lookup` 에만 있는 세션의 인계 면제는 테스트가 없다.
+- `ws.ts`: 기존 세션 `send` 의 `cwd` 는 검사하지 않는다(소유자 전용). CI 액션 SHA 고정 안 함. `hostnameOf` 가 `::1` 을 다루지 않는다. `deck_url` 응답 크기 제한 없음.
+- e2e 테스트는 고쳤지만 돌리지 않았다(실계정 토큰 소모). `.bad` 파일은 자동으로 치우지 않는다. v1 색인이 디스크에 남는다.
+- 화면: 사용량 카드 2줄 배치가 이전과 몇 px 다르다. 721–1100px 에서 카드 9개면 빡빡하다.
+- 재시작하면 세션 cron(예: prediction-deepdive)은 사라진다 — 필요하면 다시 건다.
+
+## 0-2. (이력) 2026-10-06 오전 (master c645217 + 미커밋 A·B, 빌드 완료)
 무엇이 바뀌었나:
 - **c645217**: 턴이 끝날 때마다 세션 목록 갱신(실행 중 세션은 15초 폴에서 빼고 턴 종료 때 한 번), UI 는 재연결·복귀·2분마다 목록 재요청 · 사이드바 행이 지금 상태(승인 대기/실행 중/백그라운드/새 응답/시각) · Claude 아이콘 SVG · 새 세션 기본 Fable(가져온 세션은 Opus), 기존 세션은 고르지 않으면 `model` 을 안 보냄 · 끊긴 턴은 오류 대신 "중단됨" · 감사 로그가 모든 도구 호출·거부를 기록(1번 남은 것 해결).
 - **A(미커밋)**: 보호 계정 A 의 세션인데 A 가 쿨다운·한도면, Fable 여유가 A 에만 있어도 Opus 기준으로 다시 골라 B 로 넘김(`routing/AccountRouter.ts`). A 가 멀쩡하면 그대로 A.
@@ -85,7 +111,7 @@ deck v1(Plan 1): Claude Max 3계정을 공식 Agent SDK + 구독 OAuth 로만 �
 - 보호 계정 `~/.config/offload/protect` = `a`(Claude Desktop 이 A). 쿨다운은 claude-pick/offload 와 공유(`~/.cache/offload/cooldown`).
 
 ## 3. 미커밋 / 미푸시
-- A·B 와 이 문서 미커밋(10-06). **원격 없음 — 맥에만 있다**(백업 필요).
+- 미커밋 없음(10-06 오후). **이 저장소는 원격 없음 — 맥에만 있다**(백업 필요). 공개본 `junheony/quarterdeck` 은 이력 없는 단일 커밋이라 이 저장소의 백업이 아니다.
 
 ## 4. 다음에 할 일
 1. **(사용자) A 계정 CLI 재로그인**: `env -u CLAUDE_CONFIG_DIR claude auth login` — A 의 CLI 토큰이 무효화(401)돼 deck 은 A 를 6h 쿨다운하고 B/C 로 돈다. Desktop 로그인과는 별개 저장소.
