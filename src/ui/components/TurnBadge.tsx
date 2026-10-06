@@ -1,5 +1,6 @@
 import { MODEL_LABEL } from '../../shared/models';
 import type { TurnBadge as Badge } from '../../shared/protocol';
+import { has } from '../features';
 import { PinIcon } from './AccountPicker';
 
 function k(n: number): string {
@@ -8,7 +9,7 @@ function k(n: number): string {
 
 /** The server's text for an interrupted turn (TurnRunner ABORTED). */
 const ABORTED = '중단됨';
-/** An older server passed the SDK's own text through for a user interrupt. */
+/** An older server (no 'abortLabel') passed the SDK's own text through for a user interrupt. */
 const OLD_SERVER_ABORT = /aborted by user/i;
 
 /**
@@ -17,7 +18,7 @@ const OLD_SERVER_ABORT = /aborted by user/i;
  * cancellations) are real failures and keep their "오류:" line.
  */
 export function isAbortError(error: string | null | undefined, interrupted = false): boolean {
-  return !!error && (interrupted || error.trim() === ABORTED || OLD_SERVER_ABORT.test(error));
+  return !!error && (interrupted || error.trim() === ABORTED || (!has('abortLabel') && OLD_SERVER_ABORT.test(error)));
 }
 
 /**

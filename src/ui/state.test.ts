@@ -1079,6 +1079,40 @@ describe('message queue (ux-state)', () => {
       expect(fresh.error).toBeNull();
     });
 
+    it('catchup: the transcript and the running turn stay as they are; the queue is settled as a history would', () => {
+      const caughtUp = (extra: Partial<Extract<ServerMessage, { type: 'catchup' }>> = {}): ServerMessage => ({ type: 'catchup', sessionId: 's1', runningTurnId: null, acceptedRefs: [], ...extra });
+      const base = lostSend('계속', ['old']);
+      const items = pane(base).items;
+      // listed as accepted: it went in — dropped
+      let s = play([caughtUp({ acceptedRefs: ['r1'] })], base);
+      expect(pane(s).queue).toEqual([]);
+      expect(pane(s).items).toBe(items);
+      expect(pane(s).loading).toBeFalsy();
+      // not listed: sent again under the same ref
+      s = play([caughtUp()], base);
+      expect(nextQueued(pane(s))?.ref).toBe('r1');
+      expect(pane(s).items).toBe(items);
+      // going in right now: paused, with the banner
+      s = play([caughtUp({ pendingRefs: ['r1'] })], base);
+      expect(pane(s).queuePaused).toBe(true);
+      expect(nextQueued(pane(s))).toBeNull();
+      expect(s.error).toBe('이미 들어갔을 수 있어 멈춰 둔 메시지: 계속');
+      // the session's server-side settings come with it
+      s = play([caughtUp({ accountPin: 'b', permissionMode: 'plan', sessionModel: 'fable' })], base);
+      expect(pane(s).session).toMatchObject({ sessionId: 's1', accountPin: 'b', permissionMode: 'plan' });
+      expect(pane(s).model).toBe('fable');
+      // about a session no pane shows: nothing
+      expect(play([caughtUp({ sessionId: 'other', acceptedRefs: ['r1'] })], base)).toBe(base);
+    });
+
+    it('catchup: what was missed follows as ordinary events onto the turn already on screen', () => {
+      let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+      s = play([{ type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: 't1', messages: [] }, { type: 'delta', turnId: 't1', sessionId: 's1', cwd: '/w', text: 'a' }], s);
+      s = play([{ type: 'catchup', sessionId: 's1', runningTurnId: 't1', acceptedRefs: [] }, { type: 'delta', turnId: 't1', sessionId: 's1', cwd: '/w', text: 'b' }], s);
+      expect(pane(s).activeTurnId).toBe('t1');
+      expect(pane(s).items.at(-1)).toMatchObject({ kind: 'assistant', turnId: 't1', text: 'ab', streaming: true });
+    });
+
     it('C: a lost send the server is injecting right now (pendingRefs) is never sent by itself', () => {
       let s = lostSend('계속', ['old']);
       s = play([{ ...historyWith([{ text: 'old', n: 0 }], []), pendingRefs: ['r1'] } as ServerMessage], s);

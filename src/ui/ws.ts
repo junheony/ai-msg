@@ -9,7 +9,7 @@ export function createSocket(
   onMessage: (m: ServerMessage) => void,
   onStatus: (connected: boolean) => void,
   onUnauthed: () => void = () => {},
-): { /** `false`: not connected, nothing sent. */ send(m: ClientMessage): boolean; close(): void } {
+): { /** `false`: not connected, nothing sent. */ send(m: ClientMessage): boolean; /** Drops the current socket (it stopped answering) and connects anew, without waiting for its close. */ reconnect(): void; close(): void } {
   let ws: WebSocket | null = null;
   let closed = false;
   let delay = 1000;
@@ -41,6 +41,14 @@ export function createSocket(
       if (!ws || ws.readyState !== WebSocket.OPEN) return false;
       ws.send(JSON.stringify(m));
       return true;
+    },
+    reconnect() {
+      if (closed || !ws) return;
+      const old = ws;
+      old.onopen = old.onmessage = old.onclose = old.onerror = null;
+      old.close();
+      onStatus(false);
+      open();
     },
     close() { closed = true; ws?.close(); },
   };

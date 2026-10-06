@@ -15,6 +15,12 @@
 - 옛 서버에 붙어 있는 동안 피커는 기록의 마지막 모델을 보여 주지만 실제로는 세션 기본 모델로 돈다. 재시작하면 사라진다.
 - 감사 로그 `~/.config/deck/audit.log`(0600, 입력은 SHA-256 만). 5MiB 가 되면 `audit.log.1` 로 넘기고 이전 `.1` 은 덮는다. 넘기기 실패는 경고만 남기고 계속 쓴다.
 
+## 0-1. 미커밋 (2026-10-06): 서버 기능 목록 · 끊긴 구간 따라잡기
+- **기능 목록**: `hello.features`(`FEATURES`, `shared/protocol.ts`). UI 의 "옛 서버면" 분기 2곳(세션 모델 추정, "aborted by user")은 `ui/features.ts` 의 `has()` 만 본다. 규칙은 `docs/protocol.md`.
+- **따라잡기**: 턴 이벤트에 `pos {sid, epoch, seq}`, 서버는 실행 중 프로세스의 최근 이벤트를 보관(`ws.ts` `emitTurn`·`catchUp`), UI 는 `ui/catchup.ts` 가 순서를 지키고 재연결·화면 복귀·번호 건너뜀 때 `open_session.after` 로 빠진 것만 받는다. 못 채우면 전체 history. TurnRunner 는 안 건드림.
+- **서버 재시작 전에는 꺼져 있다**(옛 서버 = 기능 없음 = 이전 동작). 서버는 재시작하지 않았다.
+- 남은 것: 전체 history 로 떨어지면 받던 중인 답의 앞부분은 기록 파일에 적힐 때까지 안 보인다(이전과 같음). `App.tsx` 의 연결(소켓 콜백·visibilitychange 리스너) 자체는 자동 테스트가 없다(로직은 `ui/catchup.test.ts`). 실시간 도구 출력은 크기 제한이 없다(history 는 8192자) — 맞추면 실시간 화면이 달라져서 손대지 않았다. 기기에서 확인 안 됨.
+
 ## 0-0. (이력) 2026-10-05 밤 (master 8de595c, 단위 133파일 통과, 빌드 완료)
 10-05 에 들어간 것:
 - **조용한 동기화**(2fb4801, 8de595c): Claude Desktop 등 deck 밖에서 이어진 세션을 15초 폴(`server/ws.ts`, `sessions/foreignWrites.ts`)로 따라감. "Desktop 열림" 알림·태그는 없앰(`ui/held.ts` 삭제, 서버의 `heldBy` 계산은 남음). 이어받느라 백그라운드 작업을 끊었을 때만 한 줄(`recycleNotice`). **실행 중인 서버는 10-05 13:50 기동이라 8de595c 의 서버 쪽(조용한 재활용)은 재시작 뒤에 적용된다.**

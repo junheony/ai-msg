@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import { MessageView } from './MessageView';
+import { setFeatures } from '../features';
 import { isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
 
 const mk = (inputTokens: number, outputTokens: number, cacheReadTokens = 0) =>
@@ -22,6 +23,14 @@ describe('isStoppedTurn', () => {
     expect(isStoppedTurn({ badge: mk(10, 5), error: '중단됨', text: 'partial' })).toBe(true);
     expect(isStoppedTurn({ badge: mk(10, 5), error: 'Claude Code process aborted by user', text: 'p' })).toBe(true);
     expect(isStoppedTurn({ badge: mk(10, 5), error: 'API Error: Request was aborted.', text: 'p', interrupted: true })).toBe(true);
+  });
+  it('a server that labels its own interrupts (features abortLabel): the SDK text is a real failure, 중단됨 still a stop', () => {
+    setFeatures(['abortLabel']);
+    try {
+      expect(isAbortError('Claude Code process aborted by user')).toBe(false);
+      expect(isAbortError('중단됨')).toBe(true);
+      expect(isAbortError('Claude Code process aborted by user', true)).toBe(true);
+    } finally { setFeatures(undefined); }
   });
   it('other abort/cancel texts are real failures: not stopped once there is output, and 실패 not 중단됨', () => {
     for (const error of REAL_FAILURES) {

@@ -1,6 +1,6 @@
 import type { Account, Seat } from '../shared/accounts';
 import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import { ACCEPTED_REFS_TTL_MS, type DeckSettings, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
+import { ACCEPTED_REFS_TTL_MS, type DeckSettings, type SessionFacts, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -8,6 +8,7 @@ import { handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
+import { has } from './features';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
 
@@ -138,7 +139,7 @@ const STALE_MS = ACCEPTED_REFS_TTL_MS - SKEW_MS;
  * it: `acceptedRefsSince`). They wait for the user. An older server
  * (no acceptedRefs) is checked by text instead.
  */
-function inDoubt(msg: Extract<ServerMessage, { type: 'history' }>, now: number): (q: QueueItem) => boolean {
+function inDoubt(msg: SessionFacts, now: number): (q: QueueItem) => boolean {
   if (!msg.acceptedRefs) return () => false;
   const accepted = new Set(msg.acceptedRefs);
   const pending = new Set(msg.pendingRefs ?? []);
@@ -465,6 +466,25 @@ function withAgent(pane: PaneState, id: string, fn: (a: AgentInfo) => AgentInfo)
   return { ...pane, agents: { ...pane.agents, [id]: fn(pane.agents[id] ?? blankAgent(Date.now())) } };
 }
 
+/**
+ * The queue after the server's word on what it accepted (a history, or a catch-up's header). A send that may have gone
+ * in is dropped if the server lists its clientRef as accepted (a lost steer: its id). An older server sends no list:
+ * then by its text at or after the ordinal it would have had in the history's `items` (the transcript may count other
+ * records as user messages too). The rest held back by the restart go out now.
+ */
+function settleQueue(pane: PaneState, msg: SessionFacts, items: ChatItem[]): Pick<PaneState, 'queue'> & Partial<Pick<PaneState, 'queueSendNow' | 'queuePaused'>> {
+  const accepted = msg.acceptedRefs ? new Set(msg.acceptedRefs) : null;
+  const went = (q: QueueItem) => accepted
+    ? (q.maybeSent !== undefined && !!q.ref && accepted.has(q.ref)) || (!!q.lostSteer && accepted.has(q.lostSteer))
+    : q.maybeSent !== undefined && items.some((it) => it.kind === 'user' && it.n !== undefined && it.n >= q.maybeSent! && sameUserText(it, q.text));
+  for (const q of pane.queue) if (went(q)) console.warn('deck: queued message already went in — not sent again:', q.text);
+  const doubt = inDoubt(msg, Date.now());
+  const doubted = pane.queue.some((q) => !went(q) && doubt(q));
+  const kept = pane.queue.filter((q) => !went(q)).map(({ maybeSent: _m, ...q }) => (doubt({ ...q, maybeSent: _m }) ? unhold([q])[0]! : q));
+  const sent = kept.some((q) => q.id === pane.queueSendNow) ? {} : { queueSendNow: null };
+  return { ...sent, ...(doubted ? { queuePaused: true } : {}), queue: release(kept, (q) => q.restart === 'hello' || q.restart === 'hold') };
+}
+
 /** One pane's view of a server message. `claim`: this pane may claim an unclaimed turn_started (only the first waiting pane does). */
 function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): PaneState {
   switch (msg.type) {
@@ -499,23 +519,23 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean): Pane
       const title = pane.session?.sessionId === msg.sessionId ? pane.session.title : msg.sessionId.slice(0, 8);
       const engine: EngineKind = msg.engine ?? 'claude';
       // PF13: a Claude session is never sent a GPT model and vice versa. A Claude session the user picked no model for shows
-      // the one it runs on: the server's sessionModel, else (an older server) the transcript's last model, else the imported default.
-      const model = engine === 'claude' && !pane.modelPicked ? (msg.sessionModel ?? lastClaudeModel(msg.messages) ?? IMPORTED_DEFAULT_MODEL) : modelFor(engine, pane.model);
+      // the one it runs on: the server's sessionModel, else (an older server, which never sends one) the transcript's last model, else the imported default.
+      const model = engine === 'claude' && !pane.modelPicked ? (msg.sessionModel ?? (has('sessionModel') ? undefined : lastClaudeModel(msg.messages)) ?? IMPORTED_DEFAULT_MODEL) : modelFor(engine, pane.model);
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
-      // A send that may have gone in is dropped if the server lists its clientRef as accepted (a lost steer: its id). An
-      // older server sends no list: then by its text at or after the ordinal it would have had (the transcript may count
-      // other records as user messages too). The rest held back by the restart go out now.
-      const accepted = msg.acceptedRefs ? new Set(msg.acceptedRefs) : null;
-      const went = (q: QueueItem) => accepted
-        ? (q.maybeSent !== undefined && !!q.ref && accepted.has(q.ref)) || (!!q.lostSteer && accepted.has(q.lostSteer))
-        : q.maybeSent !== undefined && items.some((it) => it.kind === 'user' && it.n !== undefined && it.n >= q.maybeSent! && sameUserText(it, q.text));
-      for (const q of pane.queue) if (went(q)) console.warn('deck: queued message already went in — not sent again:', q.text);
-      const doubt = inDoubt(msg, Date.now());
-      const doubted = pane.queue.some((q) => !went(q) && doubt(q));
-      const kept = pane.queue.filter((q) => !went(q)).map(({ maybeSent: _m, ...q }) => (doubt({ ...q, maybeSent: _m }) ? unhold([q])[0]! : q));
-      const sent = kept.some((q) => q.id === pane.queueSendNow) ? {} : { queueSendNow: null };
       const notice = pane.notices?.some((n) => n.sessionId !== msg.sessionId) ? { notices: pane.notices.filter((n) => n.sessionId === msg.sessionId) } : {};
-      return { ...pane, ...sent, ...(doubted ? { queuePaused: true } : {}), queue: release(kept, (q) => q.restart === 'hello' || q.restart === 'hold'), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
+      // This pane's send is listed as accepted, so its turn_started is behind us (it came ahead of a gap in the stream and
+      // was not applied, or with the old socket): the pane stops waiting for it, and the turn running now is its own.
+      const mine = pane.awaitingStart && pane.awaitingRef !== null && !!msg.acceptedRefs?.includes(pane.awaitingRef);
+      const started = mine ? { awaitingStart: false, awaitingRef: null, awaitingSend: null, ...(msg.runningTurnId && !pane.myTurns.includes(msg.runningTurnId) ? { myTurns: [...pane.myTurns, msg.runningTurnId] } : {}) } : {};
+      return { ...pane, ...started, ...settleQueue(pane, msg, items), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
+    }
+    case 'catchup': {
+      // The device was not behind, or what it missed follows as ordinary events: the transcript stays as it is. Only what a
+      // history's header would have settled is settled — the queue, and the session's server-side settings.
+      const sess = pane.session;
+      if (sess?.sessionId !== msg.sessionId) return pane;
+      const session = { ...sess, ...(msg.accountPin !== undefined ? { accountPin: msg.accountPin } : {}), ...(msg.permissionMode && !sess.permissionModePending ? { permissionMode: msg.permissionMode } : {}) };
+      return { ...pane, ...(msg.acceptedRefs ? settleQueue(pane, msg, []) : {}), session, ...(msg.sessionModel && sess.engine === 'claude' && !pane.modelPicked ? { model: msg.sessionModel } : {}) };
     }
     case 'turn_started': {
       let p = pane;
@@ -779,7 +799,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'account_pin': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, accountPin: msg.pin } } : p)) };
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
-    case 'history': {
+    case 'history': case 'catchup': {
       // Every pane with this session open (`open` records the id before open_session is sent, so a pane still
       // waiting for its reply counts). A history no pane views — its pane was closed or switched while the reply
       // was in flight — is dropped, never adopted by a blank pane (T9 prerequisite b).

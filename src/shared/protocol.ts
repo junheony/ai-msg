@@ -64,7 +64,12 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('interrupt'), turnId: z.string().min(1) }),
   /** Stop one background task of a running turn (the rest of the turn keeps going). */
   z.object({ type: z.literal('stop_task'), turnId: z.string().min(1), taskId: z.string().min(1).max(200) }),
-  z.object({ type: z.literal('open_session'), sessionId: z.string().min(1) }),
+  /**
+   * `after` (servers with the 'catchup' feature; others drop it and answer with the full history): the last stream
+   * position this device applied for the session. When the server still holds what came after it, it answers `catchup`
+   * and only those events instead of `history`.
+   */
+  z.object({ type: z.literal('open_session'), sessionId: z.string().min(1), after: z.object({ epoch: z.string().min(1).max(200), seq: z.number().int().min(0) }).optional() }),
   /** D6: a pane closed this session; stop routing its turn events to this socket. */
   z.object({ type: z.literal('close_session'), sessionId: z.string().min(1) }),
   /** After a reconnect: keep receiving a running turn this tab started (e.g. a new session with no id yet). */
@@ -115,13 +120,32 @@ export type RunningTurn = { turnId: string; sessionId: string | null; cwd: strin
  */
 export type SessionActivity = { sessionId: string; cwd: string; turnId: string; running: boolean; bg: number; forMs: number };
 
-/** Review I3: every turn-scoped message says which session (null = new, not yet known) and cwd it belongs to. */
-type TurnScope = { turnId: string; sessionId: string | null; cwd: string };
+/**
+ * What this server can do beyond the first protocol, announced in `hello.features` (see docs/protocol.md). A server
+ * that sends no list has none of them. The UI asks only through ui/features.ts `has()`.
+ * - sessionModel: a Claude session's `history` carries the model it runs on.
+ * - abortLabel: a user's interrupt ends the turn with exactly '중단됨' (never the SDK's own text).
+ * - catchup: turn events carry `pos`; `open_session.after` is answered with `catchup` when possible.
+ */
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup'] as const;
+export type Feature = (typeof FEATURES)[number];
+
+/**
+ * Where a turn event stands in its session's stream: `seq` grows by one per event for the session (never reused while
+ * the server runs); `epoch` names the process that produced it (events can be re-sent only while it lives).
+ */
+export type StreamPos = { sid: string; epoch: string; seq: number };
+
+/** Review I3: every turn-scoped message says which session (null = new, not yet known) and cwd it belongs to. `pos`: once the session has an id ('catchup' servers). */
+type TurnScope = { turnId: string; sessionId: string | null; cwd: string; pos?: StreamPos };
+
+/** What `history` and `catchup` both say about the session besides its messages. */
+export type SessionFacts = { runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** Claude sessions: the model a send without one runs on (the session's own default; absent: an older server). */ sessionModel?: ClaudeModel; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number; /** The session's newest stream position (absent: no turn since the server started, or an older server). */ pos?: StreamPos };
 
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   | { type: 'settings'; settings: DeckSettings }
   /** A Claude session's permission mode changed (picker, Shift+Tab, or an approved plan). */
   | { type: 'permission_mode'; sessionId: string; mode: PermMode }
@@ -129,7 +153,12 @@ export type ServerMessage =
   | { type: 'account_pin'; sessionId: string; pin: Account | null }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[] }
-  | { type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** Claude sessions: the model a send without one runs on (the session's own default; absent: an older server). */ sessionModel?: ClaudeModel; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number }
+  | ({ type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[] } & SessionFacts)
+  /**
+   * The answer to `open_session.after` when nothing has to be read again: the device keeps what it shows, and the events
+   * after its position (if any) follow this message at once, in order. Never sent unasked.
+   */
+  | ({ type: 'catchup'; sessionId: string } & SessionFacts)
   | ({ type: 'turn_started'; account: Seat; model: AnyModel; reason: string; attempt: number; engine?: EngineKind; clientRef?: string; /** The user message that started this turn (absent for a background continuation); the sending pane already shows it. */ prompt?: TurnPrompt } & TurnScope)
   | ({ type: 'delta'; text: string } & TurnScope)
   /** Claude thinking content so far (chunks; empty text = a block started); `redacted` = an encrypted block. */
@@ -186,14 +215,15 @@ export type ServerMessage =
   | ({ type: 'steer_delivered'; steerId: string; prompt: TurnPrompt; /** Re-sent after `history` to a device that opened the session mid-turn (the transcript may already show it). */ replay?: true } & TurnScope)
   /** A steer did not go in (no running Claude turn, process closed, retry/failover): the sending device sends it after the turn. */
   | ({ type: 'steer_rejected'; steerId: string; message: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode } & TurnScope)
-  | { type: 'error'; turnId: string | null; message: string; clientRef?: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string };
+  | { type: 'error'; turnId: string | null; message: string; pos?: StreamPos; clientRef?: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string };
 
 /**
  * 'draining': the server is about to restart (USR2) — the device sends the refused message again once it reconnects.
  * 'already_accepted': the session took a send / steer under this ref already — the device drops its copy.
  * 'in_flight': the session is taking this ref right now (not recorded yet; it may still fail) — the device keeps its copy, paused.
+ * 'not_found': open_session named a session the server does not have — asking again will not help.
  */
-export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight';
+export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found';
 
 /** How long / how many accepted refs the server keeps per session (`history.acceptedRefs`). */
 export const ACCEPTED_REFS_TTL_MS = 7 * 24 * 60 * 60 * 1000;

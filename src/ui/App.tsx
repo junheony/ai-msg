@@ -28,6 +28,8 @@ import { createSocket } from './ws';
 import { composerOf, focusComposer, routeContext, routeKey } from './composerFocus';
 import { tabTitle } from './tabTitle';
 import { useIndexRefresh, type IndexRefresh } from './indexRefresh';
+import { createCatchup, type Catchup } from './catchup';
+import { has, setFeatures } from './features';
 
 const VIEW_KEY = 'deck.sidebarView';
 const HIDDEN_KEY = 'deck.sidebarHidden';
@@ -171,12 +173,24 @@ export function App() {
   }, [authed]);
 
   // The sidebar's times and new outside sessions: a throttled rescan on reconnect, on coming back into view, every 2 min,
-  // and after a turn's result unless the server sends its index by itself (a newer server does at a turn's end).
+  // and after a turn's result unless the server sends its index by itself (it does not while background work keeps the process open).
   const refreshIndex = useRef<IndexRefresh | null>(null);
+  /** Keeps each shown session's turn events in order and asks for what a reconnect or a stalled socket missed (catchup.ts). */
+  const catchup = useRef<Catchup | null>(null);
   refreshIndex.current = useIndexRefresh(!!authed, () => sock.current?.send({ type: 'refresh_index' }));
   useEffect(() => {
     if (!authed) return;
+    const tracker = createCatchup({
+      send: (m) => !!sock.current?.send(m),
+      enabled: () => has('catchup'),
+      shown: () => latest.current.panes.map((p) => p.session?.sessionId).filter((x): x is string => !!x),
+      stalled: () => sock.current?.reconnect(),
+    });
+    catchup.current = tracker;
     sock.current = createSocket((msg) => {
+      if (msg.type === 'hello') setFeatures(msg.features);
+      // A repeat of an event already applied, one ahead of a gap (what is missing was just asked for), or a retry's same failure: not applied.
+      if (!tracker.accept(msg)) return;
       dispatch(msg.type === 'history' ? { type: 'server', msg, sentFiles: loadSent(msg.sessionId) } : { type: 'server', msg });
       if (msg.type === 'turn_result') refreshIndex.current?.afterTurn();
       if (msg.type === 'index') refreshIndex.current?.indexSeen();
@@ -187,14 +201,16 @@ export function App() {
         setBuildId(build);
         if (noticeBuild(build, () => reducer(latest.current, { type: 'server', msg }))) return;
         refreshIndex.current?.request();
-        const panes = latest.current.panes;
-        for (const id of new Set(panes.map((p) => p.session?.sessionId).filter((x): x is string => !!x))) sock.current?.send({ type: 'open_session', sessionId: id });
-        for (const p of panes) {
+        // A 'catchup' server is asked only for what came after this device's last event (it sends the whole history if it cannot tell).
+        tracker.hello();
+        for (const p of latest.current.panes) {
           if (p.activeTurnId && msg.running.some((r) => r.turnId === p.activeTurnId)) sock.current?.send({ type: 'watch_turn', turnId: p.activeTurnId });
         }
       }
-    }, (value) => dispatch({ type: 'connected', value }), () => setAuthed(false));
-    return () => sock.current?.close();
+    }, (value) => { if (!value) tracker.cancel(); dispatch({ type: 'connected', value }); }, () => setAuthed(false));
+    const onVis = () => { if (!document.hidden) tracker.visible(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { document.removeEventListener('visibilitychange', onVis); tracker.cancel(); catchup.current = null; sock.current?.close(); };
   }, [authed]);
 
   // Only once this socket's hello is in: a send between onopen and hello would be requeued by that hello.
@@ -311,12 +327,12 @@ export function App() {
     const next = reducer(prev, action);
     latest.current = next;
     dispatch(action);
-    for (const sessionId of sessionsToClose(prev, next)) send({ type: 'close_session', sessionId });
+    for (const sessionId of sessionsToClose(prev, next)) { catchup.current?.forget(sessionId); send({ type: 'close_session', sessionId }); }
   };
   const active = state.panes.find((p) => p.id === state.activePaneId) ?? state.panes[0]!;
   const openIn = (paneId: string, sessionId: string | null, cwd: string, title: string) => {
     apply({ type: 'open', sessionId, cwd, title, paneId });
-    if (sessionId) send({ type: 'open_session', sessionId });
+    if (sessionId) { catchup.current?.forget(sessionId); send({ type: 'open_session', sessionId }); }
     setDrawer(false);
     requestFocus(paneId);
   };

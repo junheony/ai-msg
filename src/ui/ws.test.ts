@@ -33,6 +33,23 @@ describe('createSocket', () => {
     expect(FakeWS.instances).toHaveLength(1);
   });
 
+  it('reconnect: a socket that stopped answering is dropped at once (its late events go nowhere) and a new one opened', () => {
+    const status: boolean[] = [];
+    const sock = createSocket(() => {}, (v) => status.push(v));
+    const first = FakeWS.instances[0]!;
+    first.readyState = 1;
+    first.onopen?.();
+    sock.reconnect();
+    expect(FakeWS.instances).toHaveLength(2);
+    expect(status).toEqual([true, false]);
+    expect(first.onmessage).toBeNull();
+    expect(first.onclose).toBeNull();
+    // After close(): nothing.
+    sock.close();
+    sock.reconnect();
+    expect(FakeWS.instances).toHaveLength(2);
+  });
+
   it('still reconnects when the session is valid', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true })));
     const onUnauthed = vi.fn();

@@ -5,7 +5,7 @@ import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount } from '../shared/accounts';
 import { defaultSandbox, IMPORTED_DEFAULT_MODEL } from '../shared/models';
-import { CLIENT_REF_MAX, ClientMessageSchema, type ClientMessage, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
@@ -24,7 +24,7 @@ import type { ProcessHolders } from './sessions/ProcessHolders';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readBranchPoint, readTranscript, type BranchPoint } from './sessions/transcript';
 import { isCodexState, isGeminiState, type ClaudeSessionState, type SessionStateStore } from './turn/SessionState';
-import { SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
+import { abortedText, SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
@@ -148,6 +148,11 @@ export type WsDeps = {
   holders?: Pick<ProcessHolders, 'refresh'>;
   /** See OUTSIDE_POLL_MS; 0 = no poll. */
   outsidePollMs?: number;
+  /** See CATCHUP_KEEP_EVENTS (tests shrink it). */
+  catchupKeep?: number;
+  /** …and at most this many bytes (default CATCHUP_KEEP_BYTES), idle for at most this long (default CATCHUP_IDLE_MS). */
+  catchupKeepBytes?: number;
+  catchupIdleMs?: number;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -168,8 +173,16 @@ type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T
  */
 type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null; /** Steers delivered in the running segment (the transcript may lag behind them). */ steers: TurnMsg<'steer_delivered'>[] };
 const MAX_REPLAY_SUBS = 500;
+/**
+ * Catch-up: how much of a running process's event stream is kept for devices that come back (`open_session.after`).
+ * Older events fall out; a device that needs them gets the full history instead.
+ */
+export const CATCHUP_KEEP_EVENTS = 5000;
+export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
+/** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
+export const CATCHUP_IDLE_MS = 10 * 60_000;
 
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean };
+type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -368,7 +381,27 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     return null;
   };
 
-  /** Turn events reach the socket that started the turn and sockets viewing its session — nobody else. */
+  /** Each session's newest stream position since this server started (a later process of the session counts on from it). */
+  const heads = new Map<string, StreamPos>();
+  const keepEvents = deps.catchupKeep ?? CATCHUP_KEEP_EVENTS;
+  const keepBytes = deps.catchupKeepBytes ?? CATCHUP_KEEP_BYTES;
+  const idleMs = deps.catchupIdleMs ?? CATCHUP_IDLE_MS;
+  /** (Re)starts the idle clock of a process's kept events; a turn still running when it runs out keeps them. */
+  const idleSoon = (turn: Turn) => {
+    if (turn.streamIdle) clearTimeout(turn.streamIdle);
+    turn.streamIdle = setTimeout(() => {
+      turn.streamIdle = null;
+      if (turn.current !== null && turns.has(turn.turnId)) { idleSoon(turn); return; }
+      turn.stream = [];
+      turn.streamBytes = 0;
+    }, idleMs);
+    turn.streamIdle.unref?.();
+  };
+
+  /**
+   * Turn events reach the socket that started the turn and sockets viewing its session — nobody else. Once the session
+   * has an id every event is numbered (`pos`) and kept for a while, so a device that was away can ask for what it missed.
+   */
   const emitTurn = (turn: Turn, msg: ServerMessage) => {
     const sid = 'sessionId' in msg ? msg.sessionId : null;
     if (sid && turn.sessionId !== sid) {
@@ -384,7 +417,25 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
     if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
-    for (const c of to) send(c, msg);
+    let out = msg;
+    let seq = 0;
+    if (turn.sessionId) {
+      seq = Math.max(turn.seq, heads.get(turn.sessionId)?.seq ?? 0) + 1;
+      const pos: StreamPos = { sid: turn.sessionId, epoch: turn.turnId, seq };
+      turn.seq = seq;
+      heads.set(turn.sessionId, pos);
+      // Only turn events and a turn's errors come through here: both carry `pos`.
+      out = { ...msg, pos } as ServerMessage;
+    }
+    const data = JSON.stringify(out);
+    if (seq) {
+      // The newest event is always kept, whatever its size: what is kept is a whole tail or nothing.
+      turn.stream.push({ seq, data, bytes: Buffer.byteLength(data) });
+      turn.streamBytes += turn.stream[turn.stream.length - 1]!.bytes;
+      while (turn.stream.length > keepEvents || (turn.streamBytes > keepBytes && turn.stream.length > 1)) turn.streamBytes -= turn.stream.shift()!.bytes;
+      idleSoon(turn);
+    }
+    for (const c of to) if (c.readyState === WebSocket.OPEN) c.send(data);
     notify(msg);
   };
 
@@ -527,13 +578,14 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
     turns.set(turnId, turn);
     const release = () => {
       turns.delete(turnId);
+      if (turn.streamIdle) clearTimeout(turn.streamIdle);
       prompts.delete(turnId);
       for (const [k, v] of [...busy]) if (v === turnId) busy.delete(k);
       broker.cancelTurn(turnId);
@@ -670,8 +722,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         // Review I6: a rejected run still ends the turn for the UI.
         console.error('deck: turn failed', err);
         // Failed before its turn_started: the sending pane is still waiting and only its clientRef can release it.
-        if (!started && msg.clientRef) send(ws, { type: 'error', turnId: null, message: displayError(errMsg(err), null) ?? '실행 실패', ...ref });
-        emitTurn(turn, { type: 'turn_result', turnId, sessionId: turn.sessionId, cwd: turn.cwd, ok: false, text: '', badge: null, errorText: displayError(errMsg(err), null) });
+        // A run cut by an interrupt (any device's) or the shutdown says so in deck's words, as a turn the runner ended itself does.
+        const text = ac.signal.aborted ? abortedText(ac.signal) : displayError(errMsg(err), null);
+        if (!started && msg.clientRef) send(ws, { type: 'error', turnId: null, message: text ?? '실행 실패', ...ref });
+        emitTurn(turn, { type: 'turn_result', turnId, sessionId: turn.sessionId, cwd: turn.cwd, ok: false, text: '', badge: null, errorText: text });
       } finally {
         release();
       }
@@ -693,7 +747,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;
     const since = deps.acceptedRefs?.since(sid);
-    return { runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
+    const pos = heads.get(sid);
+    return { ...(pos ? { pos } : {}), runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
   };
   type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: Awaited<ReturnType<typeof readTranscript>> };
   /** A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one read. */
@@ -711,6 +766,37 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     seen.set(sessionId, { at, clean: new Map(clean) });
     send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, ...runningOf(sessionId) });
     if (t) replay(ws, t, sessionId);
+  };
+  /**
+   * `open_session.after`: true when the device was answered without reading anything again — `catchup`, then the events
+   * after its position. That needs its position to be on the session's newest process, and either that process still
+   * running with every later event kept, or nothing later at all on a socket that has viewed the session all along (a
+   * new socket on an idle session may have missed what was written outside deck). Anything else: false, and the caller
+   * sends the full history.
+   */
+  const catchUp = (ws: WebSocket, sessionId: string, after: { epoch: string; seq: number }): boolean => {
+    // The header's acceptedRefs are what release a device's held messages (as a history's do).
+    if (!deps.acceptedRefs || !clients.has(ws)) return false;
+    const head = heads.get(sessionId);
+    if (!head || head.epoch !== after.epoch || after.seq > head.seq) return false;
+    const t = turns.get(busy.get(sessionId) ?? '');
+    const live = t?.turnId === head.epoch ? t : undefined;
+    let tail: { seq: number; data: string }[] = [];
+    if (after.seq < head.seq) {
+      if (!live) return false;
+      tail = live.stream.filter((e) => e.seq > after.seq);
+      if (tail.length !== head.seq - after.seq || tail[0]!.seq !== after.seq + 1 || tail[tail.length - 1]!.seq !== head.seq) return false;
+    } else if (!live && !viewing.get(ws)?.has(sessionId)) return false;
+    view(ws, sessionId);
+    // The outside poll follows this socket's view of the session from here on, as after a history.
+    let seen = historyAt.get(ws);
+    if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
+    if (!seen.has(sessionId)) seen.set(sessionId, { at: Date.now(), clean: new Map() });
+    const st = deps.store.get(sessionId);
+    const claude = st && !isCodexState(st) && !isGeminiState(st) ? { accountPin: st.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st.defaultModel } : {};
+    send(ws, { type: 'catchup', sessionId, ...claude, ...runningOf(sessionId) });
+    for (const e of tail) ws.send(e.data);
+    return true;
   };
   const openSession = (ws: WebSocket, sessionId: string) => {
     void (async () => {
@@ -752,7 +838,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         if (blocked) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: blocked });
         return;
       }
-      if (!entry) { send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
+      if (!entry) { send(ws, { type: 'error', turnId: null, sessionId, code: 'not_found', message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
       view(ws, sessionId);
       // PF5: `st` is narrowed to a Claude state (or null) by the Codex return above.
       const found = entry;
@@ -770,7 +856,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: [...FEATURES], ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
     // hello carried the last scan's flags; a changed scan follows as an index message.
@@ -833,7 +919,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         }
         case 'open_session':
           syncHolders();
-          openSession(ws, msg.sessionId);
+          if (!(msg.after && catchUp(ws, msg.sessionId, msg.after))) openSession(ws, msg.sessionId);
           break;
         case 'close_session':
           viewing.get(ws)?.delete(msg.sessionId);

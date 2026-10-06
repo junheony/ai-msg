@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ClientMessage, ServerMessage } from '../shared/protocol';
 import type { TranscriptMessage } from '../shared/session-types';
 import { sendFromPane, startBranch, startHandoff } from './components/Pane';
+import { setFeatures } from './features';
 import { hydrate, parseUi, snapshotUi } from './persist';
 import { initialState, reducer, type AppState } from './state';
 
@@ -22,6 +23,8 @@ const openExisting = (sessionModel?: 'sonnet' | 'opus' | 'fable', messages?: Tra
 };
 
 describe('pane model: an existing session runs on its own default unless the user picks one', () => {
+  afterEach(() => setFeatures(undefined));
+
   it('an existing Claude session with no pick sends no model (send, handoff, branch) and shows the server sessionModel', () => {
     const s = openExisting('opus');
     expect(pane(s).model).toBe('opus');
@@ -33,6 +36,13 @@ describe('pane model: an existing session runs on its own default unless the use
     const msgs: TranscriptMessage[] = [{ kind: 'user', text: 'q', ts: null }, { kind: 'assistant', text: 'a', model: 'claude-sonnet-5-5', toolCalls: [], ts: null }];
     expect(pane(openExisting(undefined, msgs)).model).toBe('sonnet');
     expect(pane(openExisting()).model).toBe('opus');
+  });
+
+  it('a server that sends sessionModel (features) and sent none: the imported default, never a guess from the transcript', () => {
+    setFeatures(['sessionModel']);
+    const msgs: TranscriptMessage[] = [{ kind: 'user', text: 'q', ts: null }, { kind: 'assistant', text: 'a', model: 'claude-sonnet-5-5', toolCalls: [], ts: null }];
+    expect(pane(openExisting(undefined, msgs)).model).toBe('opus');
+    expect(pane(openExisting('fable', msgs)).model).toBe('fable');
   });
 
   it('picking a model sends it from then on; opening another session drops the pick', () => {
