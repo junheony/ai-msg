@@ -297,11 +297,14 @@ describe('UsageIndex v2 (bit per source, v1 migration)', () => {
         await fs.writeFile(path.join(roots.a, '-proj', 's.jsonl'), asst('m1', { input_tokens: 3, output_tokens: 4 }));
         await makeWith(roots).refresh();
         await corrupt();
+        const broken = await fs.readFile(indexFile, 'utf8');
         logs = [];
         const idx = makeWith(roots);
         await idx.refresh();
         expect(logs.filter((l) => l.includes('버립니다'))).toHaveLength(1);
         expect(logs.join('\n')).toContain(indexFile);
+        // What was given up on is kept aside, not overwritten.
+        expect(await fs.readFile(`${indexFile}.bad`, 'utf8')).toBe(broken);
         // Scanned from zero exactly once: neither lost nor doubled.
         expect(pick(idx.history(30).rows, 'a')).toEqual({ input: 3, output: 4, cacheRead: 0, cacheWrite: 0, messages: 1 });
         expect(pick(idx.history(30).rows, 'all')).toMatchObject({ output: 4, messages: 1 });
@@ -321,6 +324,7 @@ describe('UsageIndex v2 (bit per source, v1 migration)', () => {
         const idx = makeWith(roots);
         await idx.refresh();
         expect(logs.filter((l) => l.includes('버립니다') && l.includes(v1File))).toHaveLength(1);
+        expect(await fs.readFile(`${v1File}.seen`, 'utf8')).toContain(seenText); // v1 files are never moved or written
         expect(bucketsOf(idx.history(30).rows)).toEqual({ '2026-10-02|a|opus': [3, 4, 0, 0, 1], '2026-10-02|all|opus': [3, 4, 0, 0, 1] });
       }
     });
@@ -348,5 +352,145 @@ describe('UsageIndex v2 (bit per source, v1 migration)', () => {
     const again = makeWith(many);
     await again.refresh();
     expect(pick(again.history(30).rows, 'all')).toMatchObject({ input: 2 + MAX_USAGE_ACCOUNTS, messages: 1 + MAX_USAGE_ACCOUNTS });
+  });
+
+  const noDrops = () => expect(logs.filter((l) => l.includes('버립니다') || l.includes('scan failed'))).toEqual([]);
+  /** Two more starts on what the last one saved: the index is read back as it is, never dropped. */
+  async function restartTwice(projectsRoots: Record<string, string>): Promise<UsageIndex> {
+    await makeWith(projectsRoots).refresh();
+    const idx = makeWith(projectsRoots);
+    await idx.refresh();
+    noDrops();
+    await expect(fs.stat(`${indexFile}.bad`)).rejects.toMatchObject({ code: 'ENOENT' });
+    return idx;
+  }
+
+  it('cuts an output_tokens beyond what the dedupe value can hold, and reads its own index back', async () => {
+    const cap = 2 ** 29 - 1;
+    await fs.writeFile(path.join(roots.a, '-proj', 's.jsonl'), asst('huge', { input_tokens: 1e300, output_tokens: 600_000_000 }) + asst('m1', { output_tokens: 4 }));
+    await fs.writeFile(path.join(roots.b, '-proj', 's.jsonl'), asst('huge', { input_tokens: 1e300, output_tokens: 600_000_000 }));
+    await makeWith(roots).refresh();
+    expect(await fs.readFile(`${indexFile}.seen`, 'utf8')).toContain(`huge\t${1 | 2 | 4}\t${cap}\n`);
+    const idx = await restartTwice(roots);
+    expect(pick(idx.history(30).rows, 'a')).toEqual({ input: cap, output: cap + 4, cacheRead: 0, cacheWrite: 0, messages: 2 });
+    expect(pick(idx.history(30).rows, 'b')).toMatchObject({ output: cap, messages: 1 });
+    expect(pick(idx.history(30).rows, 'all')).toMatchObject({ output: cap + 4, messages: 2 });
+  });
+
+  it('floors fractional token counts (Claude and Codex), and reads its own index back', async () => {
+    await fs.writeFile(path.join(roots.a, '-proj', 's.jsonl'), asst('frac', { input_tokens: 1.9, output_tokens: 2.5, cache_read_input_tokens: 0.5 }) + asst('frac', { input_tokens: 1.9, output_tokens: 3.2 }));
+    await fs.writeFile(path.join(codexRoot, '2026', '10', '02', 'rollout-f.jsonl'), tokenCount([100.7, 40.2, 0, 10.9], [100.7, 40.2, 0, 10.9]) + tokenCount([1e300, 40.2, 0, 10.9], [1, 0, 0, 0]));
+    await makeWith(roots).refresh();
+    expect(await fs.readFile(`${indexFile}.seen`, 'utf8')).toBe('frac\t3\t3\n');
+    const idx = await restartTwice(roots);
+    expect(pick(idx.history(30).rows, 'a')).toEqual({ input: 1, output: 3, cacheRead: 0, cacheWrite: 0, messages: 1 });
+    expect(pick(idx.history(30).rows, 'codex')).toEqual({ input: Number.MAX_SAFE_INTEGER - 40, output: 10, cacheRead: 40, cacheWrite: 0, messages: 2 });
+  });
+
+  it('leaves out a message whose id would split its dedupe line (logged once), and reads its own index back', async () => {
+    await fs.writeFile(path.join(roots.a, '-proj', 's.jsonl'), asst('m\t1', { output_tokens: 5 }) + asst('m\n2', { output_tokens: 5 }) + asst('m\r3', { output_tokens: 5 }) + asst('ok', { output_tokens: 4 }));
+    await makeWith(roots).refresh();
+    expect(logs.filter((l) => l.includes('메시지 id'))).toHaveLength(1);
+    expect(await fs.readFile(`${indexFile}.seen`, 'utf8')).toBe('ok\t3\t4\n');
+    const idx = await restartTwice(roots);
+    expect(pick(idx.history(30).rows, 'a')).toMatchObject({ output: 4, messages: 1 });
+    expect(pick(idx.history(30).rows, 'all')).toMatchObject({ output: 4, messages: 1 });
+  });
+
+  it('appends after the last whole line when an earlier append left a piece behind', async () => {
+    const f = path.join(roots.a, '-proj', 's.jsonl');
+    await fs.writeFile(f, asst('m1', { output_tokens: 4 }));
+    const idx = makeWith(roots);
+    await idx.refresh();
+    // What appendFile leaves when it fails after writing part of its data (ENOSPC, EIO): the save threw, the process lives on.
+    await fs.appendFile(`${indexFile}.seen`, 'm2\t3');
+    await fs.appendFile(f, asst('m2', { output_tokens: 7 }) + asst('m3', { output_tokens: 1 }));
+    await idx.refresh();
+    expect(await fs.readFile(`${indexFile}.seen`, 'utf8')).toBe('m1\t3\t4\nm2\t3\t7\nm3\t3\t1\n');
+    const again = await restartTwice(roots);
+    expect(pick(again.history(30).rows, 'a')).toMatchObject({ output: 12, messages: 3 });
+  });
+
+  it('drops what lies beyond seenLen in the dedupe log (a save that never finished) and counts those messages', async () => {
+    const f = path.join(roots.a, '-proj', 's.jsonl');
+    await fs.writeFile(f, asst('m1', { output_tokens: 4 }));
+    await makeWith(roots).refresh();
+    // The log was appended, the index was not rewritten: its offsets and counts do not include these.
+    await fs.appendFile(`${indexFile}.seen`, 'm2\t3\t7\nm3\t3');
+    await fs.appendFile(f, asst('m2', { output_tokens: 7 }));
+    const idx = makeWith(roots);
+    await idx.refresh();
+    noDrops();
+    expect(pick(idx.history(30).rows, 'a')).toMatchObject({ output: 11, messages: 2 });
+    expect(await fs.readFile(`${indexFile}.seen`, 'utf8')).toBe('m1\t3\t4\nm2\t3\t7\n');
+    await restartTwice(roots);
+  });
+
+  it('dedupes and tops up on the last bit (account 23) across restarts', async () => {
+    const ids = Array.from({ length: MAX_USAGE_ACCOUNTS }, (_, i) => `x${i}`);
+    const many = await moreRoots(ids);
+    const last = ids.at(-1)!;
+    await fs.writeFile(path.join(many[last]!, '-proj', 's.jsonl'), asst('m1', { input_tokens: 3, output_tokens: 2 }));
+    await fs.writeFile(path.join(many.x0!, '-proj', 's.jsonl'), asst('m1', { input_tokens: 3, output_tokens: 2 }));
+    await makeWith(many).refresh();
+    expect(await fs.readFile(`${indexFile}.seen`, 'utf8')).toContain(`m1\t${1 + 2 + 2 ** MAX_USAGE_ACCOUNTS}\t2\n`);
+    // After a restart: the same message again in the last account (already counted), a larger output in the first.
+    await fs.writeFile(path.join(many[last]!, '-proj', 't.jsonl'), asst('m1', { input_tokens: 3, output_tokens: 2 }));
+    await fs.appendFile(path.join(many.x0!, '-proj', 's.jsonl'), asst('m1', { input_tokens: 3, output_tokens: 9 }));
+    const idx = await restartTwice(many);
+    for (const s of [last, 'x0', 'all']) expect(pick(idx.history(30).rows, s)).toEqual({ input: 3, output: 9, cacheRead: 0, cacheWrite: 0, messages: 1 });
+    expect(pick(idx.history(30).rows, 'x1').messages).toBe(0);
+  });
+
+  it('converts the v1 files again when the v2 index broke, counting what came after the migration exactly once', async () => {
+    await writeV1();
+    await makeWith(roots).refresh();
+    // After the migration: one new message, and one the v1 index had already counted for a (m1).
+    await fs.writeFile(path.join(roots.a, '-proj', 's.jsonl'),
+      asst('m1', { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 }, { ts: '2026-10-01T03:00:00.000Z' }) + asst('m5', { input_tokens: 4 }));
+    const expected = { ...V1_BUCKETS, '2026-10-02|a|opus': [4, 0, 0, 0, 1], '2026-10-02|all|opus': [4, 0, 0, 0, 1] };
+    const first = makeWith(roots);
+    await first.refresh();
+    expect(bucketsOf(first.history(30).rows)).toEqual(expected);
+    await fs.writeFile(indexFile, '{"version":2,"sour');
+    logs = [];
+    const idx = makeWith(roots);
+    await idx.refresh();
+    expect(logs.filter((l) => l.includes('버립니다'))).toHaveLength(1);
+    expect(logs.filter((l) => l.includes('옮겼습니다'))).toHaveLength(1);
+    expect(bucketsOf(idx.history(30).rows)).toEqual(expected);
+    expect(await fs.readFile(`${indexFile}.bad`, 'utf8')).toBe('{"version":2,"sour');
+    expect(await fs.readFile(`${indexFile}.seen.bad`, 'utf8')).toContain('m5\t3\t0\n');
+    logs = [];
+    await fs.rm(`${indexFile}.bad`);
+    const again = await restartTwice(roots);
+    expect(bucketsOf(again.history(30).rows)).toEqual(expected);
+  });
+
+  it('a read error is a failed scan, not a broken index: nothing is dropped, moved or converted, and the next scan loads it', async () => {
+    await fs.writeFile(path.join(roots.a, '-proj', 's.jsonl'), asst('m1', { input_tokens: 3, output_tokens: 4 }));
+    await makeWith(roots).refresh();
+    const before = [await fs.readFile(indexFile, 'utf8'), await fs.readFile(`${indexFile}.seen`, 'utf8')];
+    await writeV1(); // still there from before the migration: must not be taken instead
+    const eio = () => Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' });
+    for (const target of [indexFile, `${indexFile}.seen`]) {
+      const real = fs.readFile.bind(fs);
+      const spy = vi.spyOn(fs, 'readFile').mockImplementation(((file: unknown, ...rest: unknown[]) => (file === target ? Promise.reject(eio()) : (real as (...a: unknown[]) => Promise<unknown>)(file, ...rest))) as typeof fs.readFile);
+      logs = [];
+      const idx = makeWith(roots);
+      await idx.refresh();
+      expect(logs.filter((l) => l.includes('scan failed') && l.includes('EIO'))).toHaveLength(1);
+      expect(logs.filter((l) => l.includes('버립니다') || l.includes('옮겼습니다'))).toEqual([]);
+      expect(idx.history(30).rows).toEqual([]);
+      spy.mockRestore();
+      expect([await fs.readFile(indexFile, 'utf8'), await fs.readFile(`${indexFile}.seen`, 'utf8')]).toEqual(before);
+      await expect(fs.stat(`${indexFile}.bad`)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.stat(`${indexFile}.seen.bad`)).rejects.toMatchObject({ code: 'ENOENT' });
+      // The next cycle of the same instance reads the index that was there all along.
+      logs = [];
+      await idx.refresh();
+      noDrops();
+      expect(bucketsOf(idx.history(30).rows)).toEqual({ '2026-10-02|a|opus': [3, 4, 0, 0, 1], '2026-10-02|all|opus': [3, 4, 0, 0, 1] });
+    }
   });
 });
