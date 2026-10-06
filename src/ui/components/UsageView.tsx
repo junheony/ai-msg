@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  FAMILY_LABEL, MODEL_FAMILIES, USAGE_SOURCES, USAGE_SOURCE_LABEL, addCounts, addDays, cacheHitPct, costOf, emptyCounts, localDay, totalTokens, weekStart,
+  FAMILY_LABEL, MODEL_FAMILIES, addCounts, addDays, cacheHitPct, costOf, emptyCounts, localDay, totalTokens, usageSourceLabel, usageSources, weekStart,
   type ModelFamily, type TokenCounts, type UsageHistory, type UsageRow, type UsageSource,
 } from '../../shared/token-usage';
+import { ACCOUNTS } from '../../shared/accounts';
 
 type View = UsageSource | 'all';
 type Sum = TokenCounts & { cost: number };
@@ -176,8 +177,8 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
           <button type="button" className="uv-btn uv-close" onClick={onClose} aria-label="닫기">닫기</button>
         </header>
         <div className="uv-tabs" role="tablist" aria-label="계정">
-          {(['all', ...USAGE_SOURCES] as View[]).map((v) => (
-            <button key={v} type="button" role="tab" aria-selected={view === v} className={view === v ? 'on' : ''} onClick={() => setView(v)}>{USAGE_SOURCE_LABEL[v]}</button>
+          {(['all', ...usageSources(ACCOUNTS)] as View[]).map((v) => (
+            <button key={v} type="button" role="tab" aria-selected={view === v} className={view === v ? 'on' : ''} onClick={() => setView(v)}>{usageSourceLabel(v)}</button>
           ))}
         </div>
         {error && <div className="uv-note error">{error}</div>}

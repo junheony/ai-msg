@@ -59,8 +59,10 @@ export type DeckConfig = {
   /** Web Push: VAPID keypair (0600, generated once) and browser subscriptions (0600). */
   vapidFile: string;
   pushSubscriptionsFile: string;
-  /** 사용량 view: token usage aggregates + per-file read offsets. */
+  /** 사용량 view: token usage aggregates + per-file read offsets (index format 2). */
   usageIndexFile: string;
+  /** The format-1 index a build before configurable accounts wrote: converted once into `usageIndexFile`, never written. */
+  usageIndexV1File: string;
   /** VAPID `sub` claim override (`DECK_VAPID_SUBJECT`, https: or mailto:); default derived from the MagicDNS name. */
   vapidSubject: string | null;
 };
@@ -142,7 +144,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     backupRetentionDays: Number(env.DECK_BACKUP_RETENTION_DAYS) > 0 ? Number(env.DECK_BACKUP_RETENTION_DAYS) : 30,
     vapidFile: path.join(configDir, 'vapid.json'),
     pushSubscriptionsFile: path.join(configDir, 'push-subscriptions.json'),
-    usageIndexFile: path.join(configDir, 'usage-index.json'),
+    usageIndexFile: path.join(configDir, 'usage-index-v2.json'),
+    usageIndexV1File: path.join(configDir, 'usage-index.json'),
     vapidSubject: /^(https:|mailto:)/.test(env.DECK_VAPID_SUBJECT ?? '') ? env.DECK_VAPID_SUBJECT! : null,
   };
 }
