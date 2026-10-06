@@ -62,9 +62,9 @@ function FileLink({ path, fallback, children }: { path: string | null; fallback:
  */
 const MD_COMPONENTS: Components = {
   img: ({ src, alt }) => (
-    <a href={typeof src === 'string' ? src : undefined} rel="noreferrer noopener" target="_blank">🖼 {alt || (typeof src === 'string' ? src : '이미지')}</a>
+    <a href={typeof src === 'string' ? src : undefined} title={typeof src === 'string' ? src : undefined} rel="noreferrer noopener" target="_blank">🖼 {alt || (typeof src === 'string' ? src : '이미지')}</a>
   ),
-  a: ({ href, children }) => <FileLink path={href && !/^[a-z][\w+.-]*:/i.test(href) && !href.startsWith('#') ? filePathIn(decodeSafe(href)) : null} fallback={<a href={href} rel="noreferrer noopener" target="_blank">{children}</a>}>{children}</FileLink>,
+  a: ({ href, children }) => <FileLink path={href && !/^[a-z][\w+.-]*:/i.test(href) && !href.startsWith('#') ? filePathIn(decodeSafe(href)) : null} fallback={<a href={href} title={href} rel="noreferrer noopener" target="_blank">{children}</a>}>{children}</FileLink>,
   // Inline code naming a file opens it in the pane's side panel (fenced code ends with a newline, so it never matches).
   code: ({ className, children }) => {
     const text = typeof children === 'string' ? children : null;

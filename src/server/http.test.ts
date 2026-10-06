@@ -131,7 +131,7 @@ describe('http', () => {
   });
 
   it('every response carries CSP, nosniff and no-referrer — static, API, and error responses', async () => {
-    const CSP = "default-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'";
+    const CSP = "default-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
     await fs.writeFile(path.join(uiDir, 'index.html'), '<html>deck</html>');
     const cookie = `deck_session=${cookieValueFor(TOKEN)}`;
     for (const r of [await fetch(`${base}/`), await fetch(`${base}/api/me`), await fetch(`${base}/api/bootstrap`, { headers: { cookie } }), await fetch(`${base}/api/nope`, { headers: { cookie } })]) {

@@ -33,7 +33,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       try {
         const res = await fetch(req);
-        if (res.ok) {
+        if (res.ok && (res.headers.get('content-type') || '').includes('text/html')) {
           const cache = await caches.open(CACHE);
           await cache.put('/', res.clone());
         }

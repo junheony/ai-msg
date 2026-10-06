@@ -76,7 +76,7 @@ scripts/install-launchd.sh --uninstall
 npm run restart                         # 재시작: 돌던 턴이 끝난 뒤 내려간다
 ```
 
-서비스는 `~/.config/deck/env` 의 환경변수(`KEY=value` 한 줄씩)를 읽는다.
+서비스는 `~/.config/deck/env` 의 환경변수(`KEY=value` 한 줄씩)를 읽는다. 이 파일은 셸 스크립트로 읽히므로(`scripts/launchd/run.sh` 가 source) 본인만 쓸 수 있게 둔다(`chmod 600`).
 
 ## Claude 계정 여러 개 쓰기
 

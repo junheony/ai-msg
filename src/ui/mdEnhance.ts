@@ -9,4 +9,4 @@ import 'katex/dist/katex.min.css';
  */
 // Single-$ math is off: prices and $TICKERs are common in chat. Only $$...$$ renders math.
 export const REMARK_ENHANCE = [[remarkMath, { singleDollarTextMath: false }]] as never[];
-export const REHYPE_ENHANCE = [[rehypeHighlight, { detect: false }], [rehypeKatex, { throwOnError: false, strict: 'ignore' }]] as never[];
+export const REHYPE_ENHANCE = [[rehypeHighlight, { detect: false }], [rehypeKatex, { throwOnError: false, strict: 'ignore', maxSize: 20, maxExpand: 100 }]] as never[];

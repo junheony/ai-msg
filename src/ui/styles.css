@@ -1162,6 +1162,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
 .markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.markdown :not(.katex-display) > .katex { max-width: 100%; overflow: hidden; }
 /* Permission modes: the composer picker / header badge (plan = blue, bypass = red warning) and the plan card. */
 .pick.perm-acceptEdits { color: var(--accent); }
 .pick.perm-plan { color: #3b82f6; }

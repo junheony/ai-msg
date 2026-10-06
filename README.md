@@ -76,7 +76,7 @@ scripts/install-launchd.sh --uninstall
 npm run restart                         # graceful restart: running turns finish first
 ```
 
-The service reads environment variables from `~/.config/deck/env` (`KEY=value` lines).
+The service reads environment variables from `~/.config/deck/env` (`KEY=value` lines). The file is read as a shell script (`scripts/launchd/run.sh` sources it), so keep it writable by you only (`chmod 600`).
 
 ## Multiple Claude accounts
 
