@@ -3,6 +3,7 @@ import { buildRegistry, type Account } from '../../shared/accounts';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
 import { testRegistry } from '../../shared/accounts.testkit';
 import { chooseAccount, rankCandidates, routeLogLine, type RouterInput } from './AccountRouter';
+import { resolveModel } from './ModelPolicy';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const H = 3_600_000;
@@ -516,27 +517,131 @@ describe("chooseAccount — usage-deck 을 본 적 없는 설치 (usageSource: '
     expect(chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: snap({ w: 10, f: 10 }, DOWN, DOWN) }))).toMatchObject({ account: 'a', reason: expect.not.stringMatching(/Opus/) });
     const strict = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: snap({ w: 10, f: 10 }, { w: 20, f: 85 }, DOWN) }));
     expect(strict).toMatchObject({ account: 'b', reason: expect.stringMatching(/^Fable 여유 계정 없음 → Opus · /) });
-    expect(strict.asOpus).toBeUndefined();
+    expect(strict.asOpus).toBe('Fable 여유 계정 없음');
   });
 
-  it('every account cooling down: an Opus turn whose reason names the cooldown, not usage-deck', () => {
+  it('only the protected account is known and the session is on an unknown one (warm): it stays there as a Fable turn', () => {
+    const NOFABLE: Spec = { status: 'down', f: null };
+    const usage = lax(snap({ w: 10, f: 10 }, NOFABLE, NOFABLE));
+    const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, current: 'b', lastTurnAtMs: NOW - 60_000, usage }));
+    expect(d).toMatchObject({ account: 'b', switched: false });
+    expect(d.reason).not.toMatch(/Opus/);
+    expect(d.asOpus).toBeUndefined();
+    expect(modelOf(d, usage)).toBe('fable');
+    // With usage-deck the same input is an Opus turn on B, as before.
+    const strict = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, current: 'b', lastTurnAtMs: NOW - 60_000, usage: { ...usage, usageSource: 'deck' } }));
+    expect(strict).toMatchObject({ account: 'b', asOpus: 'Fable 잔여량 모름(usage-deck 값 없음)', reason: expect.stringMatching(/^Fable 잔여량 모름\(usage-deck 값 없음\) → Opus · /) });
+  });
+
+  it('every account cooling down, or at a known 5h/weekly limit: still a Fable turn — only a known Fable value at the limit means Opus', () => {
     const cooldownUntilMs = { a: NOW + 60_000, b: NOW + 60_000, c: NOW + 60_000 };
-    const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: noDeck, cooldownUntilMs }));
-    expect(d.reason).toMatch(/^모든 계정 쿨다운 → Opus · /);
-    expect(d.reason).not.toMatch(/usage-deck/);
-    expect(d.asOpus).toBe('모든 계정 쿨다운');
-    // Known limits, no cooldown: not "unknown" either.
-    const full = chooseAccount(dflt({ needFable: true, usage: lax(snap({ w: 99, f: null }, { w: 98, f: null }, { w: 97, f: null })) }));
-    expect(full.reason).toMatch(/^쓸 수 있는 계정 없음 → Opus · /);
-    expect(full.asOpus).toBe('쓸 수 있는 계정 없음');
+    const NOFABLE: Spec = { status: 'down', f: null };
+    const cooling = lax(snap(NOFABLE, NOFABLE, NOFABLE, false));
+    const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage: cooling, cooldownUntilMs }));
+    expect(d).toMatchObject({ account: 'b', reason: '자격 있는 계정 없음 → 최소 사용 B' });
+    expect(d.asOpus).toBeUndefined();
+    expect(modelOf(d, cooling)).toBe('fable');
+    const limits = lax(snap({ w: 99, f: null }, { w: 98, f: null }, { w: 97, f: null }));
+    const full = chooseAccount(dflt({ needFable: true, usage: limits }));
+    expect(full.reason).toBe('자격 있는 계정 없음 → 최소 사용 C');
+    expect(full.asOpus).toBeUndefined();
+    expect(modelOf(full, limits)).toBe('fable');
+    // The account it falls back to has a known Fable value at the limit: Opus, and the reason says why.
+    const known = lax(snap({ w: 99, f: null }, { w: 98, f: null }, { w: 97, f: 85 }));
+    expect(chooseAccount(dflt({ needFable: true, usage: known }))).toMatchObject({ account: 'c', asOpus: 'Fable 여유 계정 없음', reason: 'Fable 여유 계정 없음 → Opus · 자격 있는 계정 없음 → 최소 사용 C' });
   });
 
   it("with usage-deck ('deck', or no field) an unknown Fable value still means Opus — and the reason says it is unknown", () => {
+    const DOWN: Spec = { status: 'down', f: null };
     for (const usage of [snap(DOWN, DOWN, DOWN, false), { ...snap(DOWN, DOWN, DOWN, false), usageSource: 'deck' as const }]) {
       const d = chooseAccount(dflt({ protectedAccount: 'a', needFable: true, usage }));
       expect(d.account).toBe('b');
       expect(d.reason).toBe('Fable 잔여량 모름(usage-deck 값 없음) → Opus · 자격 있는 계정 없음 → 잔여량 모름 · B');
+      expect(d.asOpus).toBe('Fable 잔여량 모름(usage-deck 값 없음)');
     }
     expect(rankCandidates(dflt({ needFable: true, usage: snap({ w: 10, f: null }, { w: 20, f: null }, DOWN) })).excluded.a).toBe('Fable 값 없음');
+  });
+});
+
+/** The model the runner runs a Fable turn on, given the decision (TurnRunner: `asOpus` first, else `resolveModel` on the account's Fable value). */
+function modelOf(d: { account: Account; asOpus?: string }, usage: UsageSnapshot): string {
+  return d.asOpus ? 'opus' : resolveModel('fable', 'fable', usage.accounts[d.account]?.fable?.usedPct ?? null, usage.usageSource).model;
+}
+
+describe('chooseAccount — 최종 리뷰: 이유 문구와 실행 모델', () => {
+  const DOWN: Spec = { status: 'down', f: null };
+  const sources = [undefined, 'deck', 'none'] as const;
+  const withSource = (u: UsageSnapshot, s: (typeof sources)[number]): UsageSnapshot => (s ? { ...u, usageSource: s } : u);
+
+  it('no candidate for a 5h limit while Fable has room (with usage-deck): the turn runs on Fable and the reason does not say "→ Opus" or "값 없음"', () => {
+    for (const s of sources) {
+      const usage = withSource(snap({ s: 96, w: 10, f: 10 }, { s: 96, w: 20, f: 10 }, { s: 96, w: 30, f: 10 }), s);
+      const d = chooseAccount(dflt({ needFable: true, usage }));
+      expect(d.candidates).toEqual([]);
+      expect(d).toMatchObject({ account: 'a', reason: '자격 있는 계정 없음 → 최소 사용 A' });
+      expect(d.asOpus).toBeUndefined();
+      expect(modelOf(d, usage)).toBe('fable');
+    }
+  });
+
+  it('no candidate and the account it falls back to has Fable at the limit, or (with usage-deck) no Fable value: Opus, with the true cause', () => {
+    const at = snap({ s: 96, w: 10, f: 85 }, { s: 96, w: 20, f: 10 }, { s: 96, w: 30, f: 10 });
+    for (const s of sources) {
+      expect(chooseAccount(dflt({ needFable: true, usage: withSource(at, s) }))).toMatchObject({ account: 'a', asOpus: 'Fable 여유 계정 없음', reason: 'Fable 여유 계정 없음 → Opus · 자격 있는 계정 없음 → 최소 사용 A' });
+    }
+    const missing = snap({ s: 96, w: 10, f: null }, { s: 96, w: 20, f: 10 }, { s: 96, w: 30, f: 10 });
+    expect(chooseAccount(dflt({ needFable: true, usage: missing }))).toMatchObject({ account: 'a', asOpus: 'Fable 잔여량 모름(usage-deck 값 없음)' });
+    const laxD = chooseAccount(dflt({ needFable: true, usage: withSource(missing, 'none') }));
+    expect(laxD.asOpus).toBeUndefined();
+    expect(laxD.reason).not.toMatch(/Opus/);
+  });
+
+  it('whatever the usage: the reason says "→ Opus" exactly when the decision carries asOpus, and the cause it names is true of the account', () => {
+    const specs: Spec[] = [{ w: 10, f: 10 }, { w: 10, f: 85 }, { w: 10, f: null }, { s: 96, w: 10, f: 10 }, { s: 96, w: 10, f: 85 }, { w: 99, f: null }, DOWN, { status: 'down', w: 10, f: 10 }, { status: 'stale', age: 1_200_000, w: 10, f: 10 }];
+    const cools: Partial<Record<Account, number>>[] = [{}, { b: NOW + 60_000 }, { a: NOW + 60_000, b: NOW + 60_000, c: NOW + 60_000 }];
+    let n = 0;
+    for (const a of specs) for (const b of specs) for (const c of specs) for (const s of sources) for (const cooldownUntilMs of cools) for (const current of [null, 'b'] as const) for (const protectedAccount of [null, 'a'] as const) {
+      const usage = withSource(snap(a, b, c), s);
+      const d = chooseAccount(dflt({ needFable: true, usage, cooldownUntilMs, current, lastTurnAtMs: current ? NOW - 60_000 : null, protectedAccount }));
+      const says = /→ Opus/.test(d.reason);
+      expect(says, d.reason).toBe(d.asOpus !== undefined);
+      const f = usage.accounts[d.account]?.fable?.usedPct ?? null;
+      // "→ Opus" is never said of an account whose Fable value is known to have room …
+      if (says) expect(f === null || f >= 80, `${d.reason} · Fable ${f}`).toBe(true);
+      // … and its stated cause is true: "값 없음" only when that account has no Fable value.
+      if (/값 없음\) → Opus/.test(d.reason)) expect(f, d.reason).toBeNull();
+      // Without usage-deck, Opus needs a known value at the limit.
+      if (says && s === 'none') expect(f, d.reason).not.toBeNull();
+      n++;
+    }
+    expect(n).toBe(9 ** 3 * 3 * 3 * 2 * 2);
+  });
+});
+
+describe('chooseAccount — 최종 리뷰: 잔여량 모름 계정의 순서', () => {
+  const OLD = 1_200_000;
+
+  it('usage-deck out for 20 minutes: among accounts of one rank the lowest last-known weekly goes first', () => {
+    const usage = snap({ status: 'stale', age: OLD, w: 50 }, { status: 'stale', age: OLD, w: 90 }, { status: 'stale', age: OLD, w: 10 }, false);
+    const d = chooseAccount(dflt({ usage }));
+    expect(d.candidates).toEqual([]);
+    expect(d).toMatchObject({ account: 'c', unknown: ['c', 'b', 'a'], reason: '자격 있는 계정 없음 → 잔여량 모름 · C' });
+    // The rank still comes first: home after the others, the protected account last, whatever their weekly.
+    const low = snap({ status: 'stale', age: OLD, w: 1 }, { status: 'stale', age: OLD, w: 90 }, { status: 'stale', age: OLD, w: 10 }, false);
+    expect(chooseAccount(dflt({ usage: low })).unknown).toEqual(['c', 'b', 'a']);
+    expect(chooseAccount(dflt({ usage: low, protectedAccount: 'c' })).unknown).toEqual(['b', 'a', 'c']);
+  });
+
+  it('an account with no weekly value at all follows those with one; equal values keep the registry order', () => {
+    const usage = snap({ status: 'stale', age: OLD, w: 50 }, { status: 'down' }, { status: 'stale', age: OLD, w: 60 }, false);
+    expect(rankCandidates(dflt({ usage })).unknown).toEqual(['c', 'b', 'a']);
+    const same = snap({ status: 'down' }, { status: 'stale', age: OLD, w: 40 }, { status: 'stale', age: OLD, w: 40 }, false);
+    expect(rankCandidates(dflt({ usage: same })).unknown).toEqual(['b', 'c', 'a']);
+  });
+
+  it('the current account cooling down, another at its 5h limit, the third with a down card: the turn moves to the unknown one (not "stay")', () => {
+    const d = chooseAccount(dflt({ current: 'b', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { b: NOW + 60_000 }, usage: snap({ s: 96, w: 10 }, { w: 20 }, { status: 'down' }) }));
+    expect(d).toMatchObject({ account: 'c', switched: true, candidates: [], unknown: ['c'] });
+    expect(d.reason).toMatch(/^쿨다운\(~\d\d:\d\d\) → 잔여량 모름 · C 전환$/);
   });
 });

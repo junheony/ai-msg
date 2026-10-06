@@ -95,6 +95,7 @@ export class UsageService {
   private readonly reg: AccountNames;
   private readonly sourceFile: string | null;
   private readonly strict: boolean | null;
+  private readonly deckConfigured: boolean;
   private readonly log: (line: string) => void;
   /** usage-deck has answered at least once (this run, or an earlier one: `sourceFile`). */
   private deckSeen = false;
@@ -106,8 +107,10 @@ export class UsageService {
    * `accounts`: the registry.
    * `usageSourceFile` (`<configDir>/usage-source.json`) and `strict` (`DECK_USAGE_STRICT`: true → 'deck', false → 'none',
    * null → by the record) decide the snapshot's `usageSource`; with neither, the snapshot has none (= 'deck').
+   * `deckConfigured`: the user set the usage-deck address (not the default), so with no record yet a failed first fetch
+   * still reads as 'deck' (usage-deck is late or down, not absent). Order: `strict` > the record > this > the first fetch.
    */
-  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; log?: (line: string) => void }) {
+  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; deckConfigured?: boolean; log?: (line: string) => void }) {
     this.url = opts.deckUrl.replace(/\/+$/, '') + '/api/state';
     this.fetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
     this.intervalMs = opts.intervalMs ?? 60_000;
@@ -116,6 +119,7 @@ export class UsageService {
     this.reg = opts.accounts;
     this.sourceFile = opts.usageSourceFile ?? null;
     this.strict = opts.strict ?? null;
+    this.deckConfigured = opts.deckConfigured ?? false;
     this.log = opts.log ?? (() => {});
     if (this.sourceFile) this.readRecord(this.sourceFile);
     this.snap = this.withSource(emptySnapshot(this.now(), this.reg.all()));
@@ -164,7 +168,7 @@ export class UsageService {
     if (this.strict !== null) return this.strict ? 'deck' : 'none';
     if (!this.sourceFile) return null;
     // Before the first fetch attempt has ended nothing is known yet: the strict side.
-    return this.deckSeen || this.recordBroken || !this.firstAttemptDone ? 'deck' : 'none';
+    return this.deckSeen || this.recordBroken || this.deckConfigured || !this.firstAttemptDone ? 'deck' : 'none';
   }
 
   private withSource(s: UsageSnapshot): UsageSnapshot {

@@ -1211,19 +1211,25 @@ export class TurnRunner {
     const early: string[] = [];
     let end: ClaudeSessionState | null = null;
     try {
-      // Read-only sessions: an account that is not configured any more, or one marked retired. Both stay listed (and deletable).
-      if (state && (!this.accounts.has(state.account) || !this.roots.has(state.account))) {
-        sink.emit({ type: 'error', turnId: p.turnId, message: `설정에 없는 계정(${this.label(state.account)})의 세션이라 이어갈 수 없습니다 — 이어 쓰려면 accounts.json 에 {"id": ${JSON.stringify(state.account)}, "configDir": "그 계정의 설정 폴더"} 를 추가하고 deck 을 다시 시작하세요. 필요 없는 세션이면 삭제해도 됩니다.` });
-        return;
-      }
-      if (state && this.accounts.isRetired(state.account)) {
-        sink.emit({ type: 'error', turnId: p.turnId, message: `${this.label(state.account)} 계정은 뺀 계정(retired)이라 이 세션을 이어갈 수 없습니다 — 기록은 그대로 볼 수 있습니다. 이어 쓰려면 accounts.json 에서 이 계정의 "retired" 를 지우고 deck 을 다시 시작하거나, 새 세션에서 이어가세요.` });
-        return;
-      }
-      if (state) {
+      // Read-only sessions: an account that is not configured any more, or one marked retired. A retired account's
+      // sessions stay listed (and deletable); the projects dir of an account removed from the settings is not scanned
+      // any more, so such a session stays listed only while another account has a copy of it.
+      const readOnly = (account: Account): string | null => {
+        if (!this.accounts.has(account) || !this.roots.has(account)) return `설정에 없는 계정(${this.label(account)})의 세션이라 이어갈 수 없습니다 — 이어 쓰려면 accounts.json 에 {"id": ${JSON.stringify(account)}, "configDir": "그 계정의 설정 폴더"} 를 추가하고 deck 을 다시 시작하세요. 필요 없는 세션이면 삭제해도 됩니다.`;
+        if (this.accounts.isRetired(account)) return `${this.label(account)} 계정은 뺀 계정(retired)이라 이 세션을 이어갈 수 없습니다 — 기록은 그대로 볼 수 있습니다. 이어 쓰려면 accounts.json 에서 이 계정의 "retired" 를 지우고 deck 을 다시 시작하거나, 새 세션에서 이어가세요.`;
+        return null;
+      };
+      let refused = state ? readOnly(state.account) : null;
+      if (state && !refused) {
         // A write-back still copying this session finishes first (it must not see the next turn's writes).
         await this.mirrors.get(state.sessionId);
         state = await this.reconcile(state, (m) => early.push(m));
+        // The copy check reads retired accounts' dirs too: the newest copy may have put the session on one.
+        refused = readOnly(state.account);
+      }
+      if (refused) {
+        sink.emit({ type: 'error', turnId: p.turnId, message: refused });
+        return;
       }
       // A handoff-note turn denies every tool: no tool boundary to fold a steer in at, and it must stay a pure note.
       if (!p.handoff) this.steering.set(p.turnId, { pending: new Map(), ids: new Set() });
@@ -1284,7 +1290,8 @@ export class TurnRunner {
       first = { ...stay, pinned: false, pinBlocked: first.pinBlocked, reason: `고정 ${this.label(pin)} ${first.pinBlocked} → 갈래는 ${stay.reason}` };
     }
     let account = first.account;
-    // Set while the account is the router's choice for a Fable turn it routed as Opus (see RouterDecision.asOpus).
+    // Set while the account is the router's choice for a Fable turn it routed as Opus (see RouterDecision.asOpus): its
+    // reason says "→ Opus", so the turn runs on Opus whatever the usage snapshot says by the time the attempt starts.
     let asOpus = first.asOpus;
     let reason = enginePrefix ? `${enginePrefix} · ${first.reason}` : first.reason;
     const flushEarly = () => { for (const message of early.splice(0)) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId: shownId(), cwd, message }); };

@@ -334,8 +334,8 @@ describe('UsageService · usageSource (usage-deck 을 본 적이 있는가)', ()
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'deck-usage-source-'));
     return path.join(dir, 'usage-source.json');
   }
-  const make = (o: { file?: string; strict?: boolean | null; fetchFn?: FetchLike; log?: (l: string) => void }) =>
-    new UsageService({ deckUrl: 'http://x', fetchFn: o.fetchFn ?? failFetch, now: () => new Date(NOW_ISO), accounts: testRegistry(), ...(o.file ? { usageSourceFile: o.file } : {}), ...(o.strict === undefined ? {} : { strict: o.strict }), ...(o.log ? { log: o.log } : {}) });
+  const make = (o: { file?: string; strict?: boolean | null; configured?: boolean; fetchFn?: FetchLike; log?: (l: string) => void }) =>
+    new UsageService({ deckUrl: 'http://x', fetchFn: o.fetchFn ?? failFetch, now: () => new Date(NOW_ISO), accounts: testRegistry(), ...(o.file ? { usageSourceFile: o.file } : {}), ...(o.strict === undefined ? {} : { strict: o.strict }), ...(o.configured === undefined ? {} : { deckConfigured: o.configured }), ...(o.log ? { log: o.log } : {}) });
 
   it('neither a record file nor the switch given: the snapshot carries no usageSource (read as deck)', async () => {
     const s = make({});
@@ -357,7 +357,7 @@ describe('UsageService · usageSource (usage-deck 을 본 적이 있는가)', ()
     expect(strict.snapshot().usageSource).toBe('deck');
   });
 
-  it('no record: deck until the first fetch attempt ends; then none if it failed', async () => {
+  it('no record, usage-deck address not set by the user: deck until the first fetch attempt ends; then none if it failed', async () => {
     const file = await tmp();
     const s = make({ file });
     expect(s.snapshot().usageSource).toBe('deck');
@@ -367,6 +367,28 @@ describe('UsageService · usageSource (usage-deck 을 본 적이 있는가)', ()
     await expect(fsp.stat(file)).rejects.toMatchObject({ code: 'ENOENT' });
     // A turn's own numbers do not make it a usage-deck install.
     s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 9, resetsAt: null } });
+    expect(s.snapshot().usageSource).toBe('none');
+  });
+
+  it('no record, usage-deck address set by the user: deck also after a failed first fetch (late or down, not absent)', async () => {
+    const file = await tmp();
+    const s = make({ file, configured: true });
+    expect(s.snapshot().usageSource).toBe('deck');
+    await s.pollOnce();
+    expect(s.snapshot()).toMatchObject({ deckReachable: false, usageSource: 'deck' });
+    expect(s.routingSnapshot().usageSource).toBe('deck');
+    // Nothing is written until usage-deck itself answers.
+    await expect(fsp.stat(file)).rejects.toMatchObject({ code: 'ENOENT' });
+    // The same without the option (false): the first fetch decides.
+    const unset = make({ file, configured: false });
+    await unset.pollOnce();
+    expect(unset.snapshot().usageSource).toBe('none');
+  });
+
+  it('DECK_USAGE_STRICT=0 wins over a usage-deck address set by the user', async () => {
+    const s = make({ file: await tmp(), strict: false, configured: true });
+    expect(s.snapshot().usageSource).toBe('none');
+    await s.pollOnce();
     expect(s.snapshot().usageSource).toBe('none');
   });
 

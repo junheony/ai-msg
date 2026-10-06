@@ -41,6 +41,7 @@
 - 파일이 없을 때의 자동 발견은 `~/.claude` 와 `~/.claude-<영문 한 글자>` 만. 그 밖의 `~/.claude-*` 는 계정으로 쓰지 않고, 추가하려면 넣을 accounts.json 항목을 시작 로그에 한 줄씩 찍는다.
 - accounts.json 이 있는데 읽을 수 없거나 내용이 틀리면 기본값으로 넘어가지 않고 시작을 거부한다(다른 계정 구성으로 조용히 도는 것을 막음).
 - "usage-deck 없이"는 설치별로 판정한다: `UsageSnapshot.usageSource` — usage-deck 응답을 한 번이라도 본 설치는 `'deck'`(`<configDir>/usage-source.json` 에 기록, 잔여량 모름 = 기존대로 Opus·엔진 전환), 한 번도 못 본 설치는 `'none'`(모름만으로는 모델·엔진을 바꾸지 않음). `DECK_USAGE_STRICT=1|0` 으로 강제. 첫 조회가 끝나기 전에는 `'deck'`.
+- usage-deck 주소를 사용자가 명시한 설치(`DECK_URL`, 또는 `~/.config/claude-pick/deck_url` 에서 읽은 주소 — 기본 주소로 떨어진 경우는 아님)는 기록 파일이 없어도 `'deck'`(엄격)으로 본다. 우선순위: `DECK_USAGE_STRICT` > `usage-source.json` 기록 > 주소 명시 설정 > 첫 조회 결과.
 - 라우터는 잔여량을 모르는 계정을 "후순위 후보"로 둔다: 값이 알려진 후보 뒤, 한도에 닿은 것으로 알려진 계정 앞.
 - 생성자·deps 의 `accounts` 는 필수 인자다. a/b/c 기본값(`LEGACY_ACCOUNTS`)은 `hello.accounts` 가 없는 옛 서버에 붙은 새 UI 용으로만 남겼다.
 

@@ -64,6 +64,8 @@ export type DeckConfig = {
   usageSourceFile: string;
   /** `DECK_USAGE_STRICT`: `1` = always treat unknown usage as with usage-deck (Fable → Opus), `0` = never; null = by `usageSourceFile`. */
   usageStrict: boolean | null;
+  /** The usage-deck address was set by the user (`DECK_URL`, or `~/.config/claude-pick/deck_url`), not the default: an install that expects usage-deck. */
+  deckUrlConfigured: boolean;
   usageIndexFile: string;
   /** The format-1 index a build before configurable accounts wrote: converted once into `usageIndexFile`, never written. */
   usageIndexV1File: string;
@@ -88,7 +90,9 @@ export function readProtect(file: string, accounts: AccountNames, warn: (line: s
   return null;
 }
 
-export function readDeckUrl(file: string, fallback = 'http://127.0.0.1:9310'): string {
+const DEFAULT_DECK_URL = 'http://127.0.0.1:9310';
+
+export function readDeckUrl(file: string, fallback = DEFAULT_DECK_URL): string {
   try {
     const first = fs.readFileSync(file, 'utf8').split('\n')[0]?.trim() ?? '';
     return first || fallback;
@@ -119,6 +123,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
   const accounts = loadAccountRegistry({ configDir, homeDir: home, log });
   // CLAUDE_PROTECT wins over the file; a value that is not a configured account falls through to the file, with a warning.
   if (env.CLAUDE_PROTECT && !accounts.has(env.CLAUDE_PROTECT)) log(`deck: CLAUDE_PROTECT="${env.CLAUDE_PROTECT}" 는 설정에 없는 계정이라 무시합니다 (계정: ${accounts.all().join(', ')})`);
+  const deckUrlFromFile = readDeckUrl(path.join(home, '.config', 'claude-pick', 'deck_url'), '');
   const protectedAccount = accounts.has(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'), accounts, log);
   return {
     home,
@@ -128,7 +133,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     pinnedFile: path.join(configDir, 'projects.json'),
     stateFile: path.join(configDir, 'session-state.json'),
     auditFile: path.join(configDir, 'audit.log'),
-    deckUrl: env.DECK_URL || readDeckUrl(path.join(home, '.config', 'claude-pick', 'deck_url')),
+    deckUrl: env.DECK_URL || deckUrlFromFile || DEFAULT_DECK_URL,
     protectedAccount,
     cooldownDir: defaultCooldownDir(env, home),
     port: Number(env.DECK_PORT) || 9320,
@@ -155,6 +160,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     pushSubscriptionsFile: path.join(configDir, 'push-subscriptions.json'),
     usageSourceFile: path.join(configDir, 'usage-source.json'),
     usageStrict: env.DECK_USAGE_STRICT === '1' ? true : env.DECK_USAGE_STRICT === '0' ? false : null,
+    deckUrlConfigured: !!env.DECK_URL || deckUrlFromFile !== '',
     usageIndexFile: path.join(configDir, 'usage-index-v2.json'),
     usageIndexV1File: path.join(configDir, 'usage-index.json'),
     vapidSubject: /^(https:|mailto:)/.test(env.DECK_VAPID_SUBJECT ?? '') ? env.DECK_VAPID_SUBJECT! : null,

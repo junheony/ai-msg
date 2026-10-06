@@ -7,7 +7,7 @@ import type { ServerMessage } from '../../shared/protocol';
 import type { EngineEvent } from '../engine/Engine';
 import { StubEngine, failResult, okResult } from '../engine/StubEngine';
 import { SessionIndex } from '../sessions/SessionIndex';
-import { UsageService } from '../usage/UsageService';
+import { UsageService, type FetchLike } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState } from './SessionState';
 import { TurnRunner, type TurnSink } from './TurnRunner';
 
@@ -22,7 +22,7 @@ const of = <T extends ServerMessage['type']>(msgs: ServerMessage[], t: T) => msg
 const exists = (p: string) => fs.lstat(p).then(() => true, () => false);
 
 /** A temp home with one config dir per account; no usage-deck (every fetch fails). */
-async function setup(accounts: AccountSpec[], protectedAccount: Account | null = null, o: { strict?: boolean; engine?: StubEngine } = {}) {
+async function setup(accounts: AccountSpec[], protectedAccount: Account | null = null, o: { strict?: boolean; engine?: StubEngine; fetchFn?: FetchLike } = {}) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-accounts-runner-'));
   const reg = buildRegistry({ version: 1, accounts: accounts.map((a) => ({ ...a, configDir: `~/cfg-${a.id}` })) }, { homeDir: base });
   const roots = reg.projectsRoots();
@@ -30,7 +30,7 @@ async function setup(accounts: AccountSpec[], protectedAccount: Account | null =
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
   const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') });
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => { throw new Error('ECONNREFUSED'); }, now: () => new Date(NOW), accounts: reg, ...(o.strict === undefined ? {} : { strict: o.strict }) });
+  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: o.fetchFn ?? (async () => { throw new Error('ECONNREFUSED'); }), now: () => new Date(NOW), accounts: reg, ...(o.strict === undefined ? {} : { strict: o.strict }) });
   await usage.pollOnce();
   const engine = o.engine ?? new StubEngine((call) => ok(call.resumeSessionId ?? NEW));
   const logs: string[] = [];
@@ -53,7 +53,7 @@ async function setup(accounts: AccountSpec[], protectedAccount: Account | null =
     return st;
   };
   const rootOf = (id: Account) => roots.find((r) => r.id === id)!.dir;
-  return { base, reg, runner, engine, store, index, msgs, sink, logs, seed, rootOf };
+  return { base, reg, runner, engine, usage, store, index, msgs, sink, logs, seed, rootOf };
 }
 
 describe('TurnRunner · 뺀 계정(retired)과 설정에 없는 계정', () => {
@@ -95,6 +95,19 @@ describe('TurnRunner · 뺀 계정(retired)과 설정에 없는 계정', () => {
     await c.runner.run({ turnId: 't2', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
     expect(c.engine.calls[1]).toMatchObject({ account: 'b', resumeSessionId: SID });
     expect(of(c.msgs, 'error')).toEqual([]);
+  });
+
+  it('a newer diverged copy under a retired account does not move the turn there: refused after the copy check, nothing runs', async () => {
+    const c = await setup([{ id: 'a' }, { id: 'b' }, { id: 'old', retired: true }]);
+    await c.seed('b', c.rootOf('b'));
+    const turn = (text: string, at: string) => JSON.stringify({ type: 'user', uuid: text, cwd: '/w/one', timestamp: at, message: { role: 'user', content: text } }) + '\n';
+    await fs.appendFile(path.join(c.rootOf('b'), DIR, `${SID}.jsonl`), turn('from deck', '2026-10-06T10:00:00.000Z'));
+    await fs.mkdir(path.join(c.rootOf('old'), DIR), { recursive: true });
+    await fs.writeFile(path.join(c.rootOf('old'), DIR, `${SID}.jsonl`), line + turn('from the CLI', '2026-10-06T11:00:00.000Z'));
+    await c.runner.run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
+    expect(c.engine.calls).toEqual([]);
+    expect(of(c.msgs, 'error').map((m) => m.message)).toEqual([expect.stringMatching(/OLD 계정은 뺀 계정\(retired\)이라 이 세션을 이어갈 수 없습니다/)]);
+    expect(of(c.msgs, 'turn_started')).toEqual([]);
   });
 
   it('an account that is not configured any more: the turn is refused with what to do, the stored session is kept and can be deleted', async () => {
@@ -164,17 +177,47 @@ describe("TurnRunner · usage-deck 을 본 적 없는 설치 (usageSource: 'none
     expect(c.logs.at(-1)).toMatch(/잔여량 모름 C, A · 제외 B 잔여량 정보 없음$/);
   });
 
-  it('a Fable turn the router routes as Opus runs on Opus (reason and model from one decision)', async () => {
+  it('the only account cooling down: the next Fable turn still runs as Fable (a cooldown is no reason to change the model)', async () => {
     const engine = new StubEngine((call, n) => (n === 0
       ? [{ kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('limit')]
       : ok(call.resumeSessionId ?? NEW)));
     const c = await setup([{ id: 'a' }], null, { strict: false, engine });
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'go', model: 'fable' }, c.sink);
-    // The only account is cooling down now: the next Fable turn is routed as an Opus turn.
     await c.runner.run({ turnId: 't2', cwd: '/w/two', sessionId: null, text: 'go', model: 'fable' }, c.sink);
-    expect(engine.calls.map((x) => [x.account, x.model])).toEqual([['a', 'fable'], ['a', 'opus']]);
+    expect(engine.calls.map((x) => [x.account, x.model])).toEqual([['a', 'fable'], ['a', 'fable']]);
     const last = of(c.msgs, 'turn_result').at(-1);
-    expect(last?.badge?.reason).toMatch(/^모든 계정 쿨다운 → Opus · /);
-    expect(last?.badge).toMatchObject({ model: 'opus', modelNote: '모든 계정 쿨다운 → Opus 로 대체' });
+    expect(last?.badge?.reason).toBe('자격 있는 계정 없음 → 최소 사용 A');
+    expect(last?.badge).toMatchObject({ model: 'fable', modelNote: null });
+  });
+});
+
+describe('TurnRunner · 이유 문구와 실행 모델 (최종 리뷰)', () => {
+  const rows = (s: number, w: number, f: number) => [{ label: 'Session (5h)', used: s, resetsAt: null }, { label: 'Weekly (7d)', used: w, resetsAt: null }, { label: 'Fable (7d)', used: f, resetsAt: null }];
+  const deck = (cards: unknown[]): FetchLike => async () => ({ ok: true, json: async () => ({ cards }) });
+
+  it('every account at its 5h limit while Fable has room (with usage-deck): the turn runs on Fable and the reason does not say "→ Opus"', async () => {
+    const fetchedAt = new Date(NOW - 10_000).toISOString();
+    const c = await setup([{ id: 'a' }, { id: 'b' }, { id: 'c' }], null, { fetchFn: deck(['claude:main', 'claude:second', 'claude:third'].map((id) => ({ id, status: 'ok', fetchedAt, rows: rows(96, 10, 10) }))) });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'go', model: 'fable' }, c.sink);
+    const badge = of(c.msgs, 'turn_result').at(-1)?.badge;
+    expect(c.engine.calls.map((x) => x.model)).toEqual(['fable']);
+    expect(badge).toMatchObject({ model: 'fable', modelNote: null });
+    expect(badge?.reason).not.toMatch(/Opus|값 없음/);
+    expect(badge?.reason).toMatch(/^자격 있는 계정 없음 → 최소 사용 /);
+  });
+
+  it('a reason that says "→ Opus" runs on Opus even when the card still shows an old Fable value with room', async () => {
+    // usage-deck's own token for A expired (setup_needed, last-good rows an hour old), deck's turns on A work: routing
+    // trusts the turn's 5h/weekly and no Fable value — the router says "→ Opus", and the runner must not read the old 10%.
+    const c = await setup([{ id: 'a' }], null, { fetchFn: deck([{ id: 'claude:main', status: 'setup_needed', fetchedAt: new Date(NOW - 3_600_000).toISOString(), rows: rows(20, 30, 10) }]) });
+    c.usage.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 30, resetsAt: null } }, NOW);
+    c.usage.noteTurnOk('a', NOW);
+    expect(c.usage.snapshot().accounts.a?.fable?.usedPct).toBe(10);
+    expect(c.usage.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fable: null });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'go', model: 'fable' }, c.sink);
+    const badge = of(c.msgs, 'turn_result').at(-1)?.badge;
+    expect(badge?.reason).toMatch(/^Fable 잔여량 모름\(usage-deck 값 없음\) → Opus · /);
+    expect(c.engine.calls.map((x) => x.model)).toEqual(['opus']);
+    expect(badge).toMatchObject({ model: 'opus', modelNote: 'Fable 잔여량 모름(usage-deck 값 없음) → Opus 로 대체' });
   });
 });
