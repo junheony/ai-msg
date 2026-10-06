@@ -83,7 +83,7 @@ function freePort(): Promise<number> {
 /**
  * Starts `src/server/main.ts` with temp dirs. D13: unless `pinB: false`, accounts a and c get a
  * 6 h cooldown in the server's own temp cooldown dir (never ~/.cache/offload/cooldown), so the
- * router can only pick B (a's CLI token is revoked, c is near its weekly limit).
+ * router can only pick B (keeps the suite on one account, away from the protected one).
  */
 export async function startDeck(opts: { pinB?: boolean } = {}): Promise<Deck> {
   const port = await freePort();

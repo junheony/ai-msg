@@ -121,7 +121,7 @@ describe('UsagePanel chips', () => {
 });
 
 describe('UsagePanel header layout (styles.css)', () => {
-  // Layout itself is checked in a real browser (.superpowers/sdd/ui-round/pw/header-check.mjs, 320–1600px);
+  // Layout itself was checked by hand in a real browser (320–1600px wide);
   // these guard the rules that keep all four cards on screen without sideways scrolling.
   const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
   const usage = css.slice(css.indexOf('/* === usage header === */'), css.indexOf('/* === chat polish === */'));

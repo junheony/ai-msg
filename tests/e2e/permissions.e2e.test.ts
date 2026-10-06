@@ -11,7 +11,7 @@ import { projectSlug } from '../../src/server/sessions/slug';
 
 // 이 세션 against the real CLI: an edit allowed for the session stays allowed on the next turn,
 // a Bash command still prompts, and no settings file is ever written into the project.
-// Account a is excluded (its CLI token is revoked and it is the protected Desktop account):
+// Account a is excluded (it stands in for the protected Desktop account):
 // CLAUDE_PROTECT=a plus a long cooldown on a in the temp cooldown dir.
 
 const PORT = 9500 + Math.floor(Math.random() * 100);
