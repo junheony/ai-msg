@@ -367,7 +367,7 @@ describe('Sidebar imported Codex threads', () => {
   });
 
   it('tags a `codex exec` thread 자동 실행 in the meta', () => {
-    const e = { sessionId: 'x1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'You are the 3D asset lane', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true, codexExec: true };
+    const e = { sessionId: 'x1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'You are the docs lane', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true, codexExec: true };
     const { container } = render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     expect(container.querySelector('.session-meta')?.textContent).toBe('자동 실행 · 2분 전');
     expect(container.querySelector('.engine-mark.codex')).not.toBeNull();
