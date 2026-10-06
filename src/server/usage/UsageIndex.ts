@@ -47,7 +47,7 @@ const GLOBAL_BIT = 1;
  */
 const MASK_BITS = 24;
 const MASK_SPAN = 2 ** MASK_BITS;
-const MAX_OUTPUT = Number.MAX_SAFE_INTEGER / MASK_SPAN - 1;
+const MAX_OUTPUT = 2 ** (53 - MASK_BITS) - 1;
 /** Claude accounts the index can hold, counting those that left the configuration (one bit each, next to GLOBAL). */
 export const MAX_USAGE_ACCOUNTS = MASK_BITS - 1;
 const SAVE_EVERY_MS = 30_000;
@@ -74,21 +74,46 @@ function emptyIndex(): IndexFile {
 }
 
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+/** A sum of counts: past 2^53 it is no longer exact, and still no reason to drop the index. */
+const isAmount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/**
+ * A token count as a transcript states it, made a whole number in [0, cap]: fractions are floored, anything that
+ * is not a positive number is 0. What goes into the index must be something `load` accepts again — a value it
+ * rejects is re-read from the same transcript line by the rescan, and the index would be dropped at every start.
+ */
+function tokenCount(v: unknown, cap: number): number {
+  return typeof v === 'number' && v > 0 ? Math.min(Math.floor(v), cap) : 0;
+}
+
+/** The content of an index file is not something this code can use (as opposed to: the file could not be read right now). */
+class Unusable extends Error {}
+
+function parseJson(buf: Buffer): unknown {
+  try {
+    return JSON.parse(buf.toString('utf8'));
+  } catch (err) {
+    throw new Unusable(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** A message id with one of these would split its `.seen` line: such a message is left out. */
+const ID_BREAKS_LINE = /[\t\n\r]/;
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Throws (with what is wrong) unless `raw` has the parts v1 and v2 share in a usable shape. */
 function checkBody(raw: unknown): asserts raw is Pick<IndexFile, 'lastScanAt' | 'files' | 'buckets' | 'seenLen'> {
-  if (!isRecord(raw)) throw new Error('객체가 아님');
-  if (raw.lastScanAt !== null && typeof raw.lastScanAt !== 'string') throw new Error('lastScanAt');
-  if (raw.seenLen !== undefined && !isCount(raw.seenLen)) throw new Error('seenLen');
-  if (!isRecord(raw.files) || !isRecord(raw.buckets)) throw new Error('files/buckets 없음');
+  if (!isRecord(raw)) throw new Unusable('객체가 아님');
+  if (raw.lastScanAt !== null && typeof raw.lastScanAt !== 'string') throw new Unusable('lastScanAt');
+  if (raw.seenLen !== undefined && !isCount(raw.seenLen)) throw new Unusable('seenLen');
+  if (!isRecord(raw.files) || !isRecord(raw.buckets)) throw new Unusable('files/buckets 없음');
   for (const [file, f] of Object.entries(raw.files)) {
     const ok = isRecord(f) && typeof f.source === 'string' && isCount(f.size) && typeof f.ino === 'number' && isCount(f.offset)
       && (f.codexTotal === undefined || (Array.isArray(f.codexTotal) && f.codexTotal.length === 4 && f.codexTotal.every(isCount)));
-    if (!ok) throw new Error(`files 항목: ${file}`);
+    if (!ok) throw new Unusable(`files 항목: ${file}`);
   }
   for (const [key, b] of Object.entries(raw.buckets)) {
-    if (!(Array.isArray(b) && b.length === 5 && b.every(isCount)) || key.split('|').length !== 3) throw new Error(`buckets 항목: ${key}`);
+    if (!(Array.isArray(b) && b.length === 5 && b.every(isAmount)) || key.split('|').length !== 3) throw new Unusable(`buckets 항목: ${key}`);
   }
 }
 
@@ -109,10 +134,10 @@ async function readIfExists(file: string): Promise<Buffer | null> {
 async function seenFields(file: string, len: number): Promise<{ lines: string[][]; size: number }> {
   const buf = await readIfExists(file);
   if (!buf) {
-    if (len > 0) throw new Error(`${path.basename(file)} 없음`);
+    if (len > 0) throw new Unusable(`${path.basename(file)} 없음`);
     return { lines: [], size: 0 };
   }
-  if (buf.length < len || (len > 0 && buf[len - 1] !== NL)) throw new Error(`${path.basename(file)} 가 색인이 센 길이(${len})와 맞지 않음`);
+  if (buf.length < len || (len > 0 && buf[len - 1] !== NL)) throw new Unusable(`${path.basename(file)} 가 색인이 센 길이(${len})와 맞지 않음`);
   const text = buf.toString('utf8', 0, len);
   return { lines: len === 0 ? [] : text.slice(0, -1).split('\n').map((l) => l.split('\t')), size: buf.length };
 }
@@ -158,6 +183,9 @@ export class UsageIndex {
   private seen = new Map<string, number>();
   private dirtySeen = new Map<string, number>();
   private seenLines = 0;
+  /** Bytes of the `.seen` log that are whole lines this instance read or wrote (what `seenLen` is saved as). */
+  private seenBytes = 0;
+  private oddIdLogged = false;
   private readonly now: () => Date;
 
   constructor(private readonly opts: UsageIndexOpts) {
@@ -202,21 +230,53 @@ export class UsageIndex {
     return { generatedAt: this.now().toISOString(), days, lastScanAt: this.state.lastScanAt, scanning: this.scanning, sources: [...this.state.sources, CODEX_SOURCE], rows };
   }
 
+  /**
+   * Throws when a file could not be read or written just now (EACCES, EMFILE, EIO, …): nothing on disk is changed,
+   * this scan fails and the next one loads again. Only content that cannot be used is given up on.
+   */
   private async load(): Promise<void> {
     if (this.loaded) return;
-    this.loaded = true;
+    try {
+      await this.loadFiles();
+      this.loaded = true;
+    } catch (err) {
+      this.forget();
+      throw err;
+    }
+  }
+
+  private forget(): void {
+    this.state = emptyIndex();
+    this.seen.clear();
+    this.dirtySeen.clear();
+    this.seenLines = 0;
+    this.seenBytes = 0;
+    this.rewriteSeen = false;
+  }
+
+  private async loadFiles(): Promise<void> {
+    /** False when there is no such index or its content is unusable (logged); I/O errors pass through. */
     const attempt = async (file: string, read: () => Promise<boolean>): Promise<boolean> => {
       try {
         return await read();
       } catch (err) {
-        console.error(`deck: 사용량 색인 ${file} 을 읽을 수 없어 버립니다 — ${err instanceof Error ? err.message : String(err)}`);
-        this.state = emptyIndex();
-        this.seen.clear();
-        this.seenLines = 0;
+        if (!(err instanceof Unusable)) throw err;
+        console.error(`deck: 사용량 색인 ${file} 을 읽을 수 없어 버립니다 — ${err.message}`);
+        this.forget();
         return false;
       }
     };
+    const moveAside = async (file: string) => {
+      await fs.promises.rename(file, `${file}.bad`).catch((err: NodeJS.ErrnoException) => { if (err.code !== 'ENOENT') throw err; });
+    };
     if (await attempt(this.opts.indexFile, () => this.loadCurrent())) return;
+    // What was given up on is kept for a look (`.bad`, the previous one overwritten); a dedupe log without its index
+    // (a migration that stopped halfway) goes the same way — counts restart, so it must not make messages look seen.
+    await moveAside(this.opts.indexFile);
+    await moveAside(this.seenFile);
+    // An unusable v2 index falls back to the v1 files when they are still there, not straight to an empty index: v1
+    // is a consistent snapshot (counts, offsets and dedupe log of one moment), so continuing from it counts everything
+    // exactly once — and keeps what since-deleted transcripts contributed, which a full rescan can never do better than.
     const legacy = this.opts.legacyIndexFile;
     if (legacy !== undefined && await attempt(legacy, () => this.loadV1(legacy))) {
       // Written at once (dedupe log, then the index: the index is what makes the migration done). A stop before
@@ -224,59 +284,59 @@ export class UsageIndex {
       this.rewriteSeen = true;
       await this.save();
       console.error(`deck: 사용량 색인을 v1(${legacy}) 에서 v2(${this.opts.indexFile}) 로 옮겼습니다 — 메시지 ${this.seen.size}건, 옛 파일은 그대로 둡니다`);
-      return;
     }
-    // Nothing usable: every transcript is read again (slow, exact — Claude counts are idempotent by message id).
-    // Counts start from zero, so a leftover dedupe log would make messages count as already seen.
-    await fs.promises.rm(this.seenFile, { force: true });
+    // Else nothing usable: every transcript is read again (slow, exact — Claude counts are idempotent by message id).
   }
 
   private get seenFile(): string {
     return `${this.opts.indexFile}.seen`;
   }
 
-  /** False when there is no index file; throws when there is one this code cannot use. */
+  /** False when there is no index file; throws `Unusable` when there is one this code cannot use. */
   private async loadCurrent(): Promise<boolean> {
     const buf = await readIfExists(this.opts.indexFile);
     if (!buf) return false;
-    const raw = JSON.parse(buf.toString('utf8')) as { version?: unknown; sources?: unknown };
-    if (raw?.version !== VERSION) throw new Error(`모르는 형식 버전 ${JSON.stringify(raw?.version)}`);
+    const raw = parseJson(buf) as { version?: unknown; sources?: unknown } | null;
+    if (raw?.version !== VERSION) throw new Unusable(`모르는 형식 버전 ${JSON.stringify(raw?.version)}`);
     checkBody(raw);
     const sources = raw.sources;
-    if (!Array.isArray(sources) || sources.length > MAX_USAGE_ACCOUNTS || new Set(sources).size !== sources.length || !sources.every((x) => typeof x === 'string')) throw new Error('sources');
-    const { lines, size } = await seenFields(this.seenFile, raw.seenLen ?? 0);
+    if (!Array.isArray(sources) || sources.length > MAX_USAGE_ACCOUNTS || new Set(sources).size !== sources.length || !sources.every((x) => typeof x === 'string')) throw new Unusable('sources');
+    const len = raw.seenLen ?? 0;
+    const { lines, size } = await seenFields(this.seenFile, len);
     const maskEnd = 2 ** (sources.length + 1);
     for (const f of lines) {
       const mask = Number(f[1]);
       const max = Number(f[2]);
-      if (f.length !== 3 || !f[0] || !isCount(mask) || mask < 1 || mask >= maskEnd || !isCount(max) || max > MAX_OUTPUT) throw new Error(`.seen 줄 ${this.seenLines + 1} 을 해석할 수 없음`);
+      if (f.length !== 3 || !f[0] || !isCount(mask) || mask < 1 || mask >= maskEnd || !isCount(max) || max > MAX_OUTPUT) throw new Unusable(`.seen 줄 ${this.seenLines + 1} 을 해석할 수 없음`);
       this.seen.set(f[0], mask + max * MASK_SPAN);
       this.seenLines++;
     }
     // Drop what a crashed save left beyond the counted part, so appends continue from a clean tail.
-    if ((raw.seenLen ?? 0) < size) await fs.promises.truncate(this.seenFile, raw.seenLen ?? 0);
+    if (len < size) await fs.promises.truncate(this.seenFile, len);
+    this.seenBytes = len;
     this.state = raw as IndexFile;
     return true;
   }
 
-  /** The v1 index converted in memory (nothing is written here). False when there is no v1 file; throws when it cannot be converted exactly. */
+  /** The v1 index converted in memory (nothing is written here). False when there is no v1 file; throws `Unusable` when it cannot be converted exactly. */
   private async loadV1(file: string): Promise<boolean> {
     const buf = await readIfExists(file);
     if (!buf) return false;
-    const raw = JSON.parse(buf.toString('utf8')) as IndexFileV1;
-    if (raw?.version !== 1) throw new Error(`모르는 형식 버전 ${JSON.stringify((raw as { version?: unknown } | null)?.version)}`);
+    const raw = parseJson(buf) as IndexFileV1 | null;
+    if (raw?.version !== 1) throw new Unusable(`모르는 형식 버전 ${JSON.stringify((raw as { version?: unknown } | null)?.version)}`);
     checkBody(raw);
     const entries: [string, unknown][] = isRecord(raw.seen)
       ? Object.entries(raw.seen)
       : (await seenFields(`${file}.seen`, raw.seenLen ?? 0)).lines.map((f, i) => {
-        if (f.length !== 2 || !f[0] || !/^\d+$/.test(f[1]!)) throw new Error(`.seen 줄 ${i + 1} 을 해석할 수 없음`);
+        if (f.length !== 2 || !f[0] || !/^\d+$/.test(f[1]!)) throw new Unusable(`.seen 줄 ${i + 1} 을 해석할 수 없음`);
         return [f[0], Number(f[1])];
       });
     for (const [id, v] of entries) {
       // v1: a=1 b=2 c=4 GLOBAL=8, value = mask + maxOutput * 16. Every entry was counted somewhere, so mask 0 is not v1.
-      if (!isCount(v) || v % 16 === 0) throw new Error(`메시지 ${id} 의 값 ${String(v)} 을 해석할 수 없음`);
+      if (!isCount(v) || v % 16 === 0 || ID_BREAKS_LINE.test(id)) throw new Unusable(`메시지 ${JSON.stringify(id)} 의 값 ${String(v)} 을 해석할 수 없음`);
       const max = Math.floor(v / 16);
-      if (max > MAX_OUTPUT) throw new Error(`메시지 ${id} 의 값 ${v} 이 너무 큼`);
+      if (max > MAX_OUTPUT) throw new Unusable(`메시지 ${id} 의 값 ${v} 이 너무 큼`);
+      // `v & 8` and `v & 7` look at the low four bits only (ToInt32 keeps them), so they are right for v beyond 2^32 too.
       this.seen.set(id, (v & 8 ? GLOBAL_BIT : 0) + ((v & 7) << 1) + max * MASK_SPAN);
     }
     this.state = { version: VERSION, lastScanAt: raw.lastScanAt, sources: [...V1_SOURCES], files: raw.files, buckets: raw.buckets };
@@ -289,17 +349,33 @@ export class UsageIndex {
     const lines = (m: Map<string, number>) => [...m].map(([id, v]) => `${id}\t${v % MASK_SPAN}\t${Math.floor(v / MASK_SPAN)}\n`).join('');
     // The dedupe log first: a crash between the two leaves it ahead of the counts, never behind.
     if (this.rewriteSeen || this.seenLines > 2 * this.seen.size + 10_000) {
-      await fs.promises.writeFile(`${this.seenFile}.tmp`, lines(this.seen), { mode: 0o600 });
+      const all = lines(this.seen);
+      await fs.promises.writeFile(`${this.seenFile}.tmp`, all, { mode: 0o600 });
+      // Known window: a stop between this rename and the index rename below leaves an index whose `seenLen` belongs
+      // to the log that was just replaced; the next start finds they do not fit, gives the index up and rescans
+      // (what deleted transcripts contributed is lost; nothing is missed or counted twice). A generation number
+      // shared by the two files would close it.
       await fs.promises.rename(`${this.seenFile}.tmp`, this.seenFile);
+      this.seenBytes = Buffer.byteLength(all);
       this.rewriteSeen = false;
       this.dirtySeen.clear();
       this.seenLines = this.seen.size;
     } else if (this.dirtySeen.size) {
-      await fs.promises.appendFile(this.seenFile, lines(this.dirtySeen), { mode: 0o600 });
+      const add = lines(this.dirtySeen);
+      const fh = await fs.promises.open(this.seenFile, 'a', 0o600);
+      try {
+        // An append that failed halfway (ENOSPC, EIO) left a piece of a line behind: cut back to what is known whole,
+        // or this append would continue that piece and the log would not parse at the next start.
+        await fh.truncate(this.seenBytes);
+        await fh.appendFile(add);
+      } finally {
+        await fh.close();
+      }
+      this.seenBytes += Buffer.byteLength(add);
       this.seenLines += this.dirtySeen.size;
       this.dirtySeen.clear();
     }
-    this.state.seenLen = (await fs.promises.stat(this.seenFile).catch(() => ({ size: 0 }))).size;
+    this.state.seenLen = this.seenBytes;
     const tmp = `${this.opts.indexFile}.${process.pid}.tmp`;
     await fs.promises.writeFile(tmp, JSON.stringify(this.state), { mode: 0o600 });
     await fs.promises.rename(tmp, this.opts.indexFile);
@@ -391,8 +467,16 @@ export class UsageIndex {
     const id = typeof m.id === 'string' ? m.id : typeof o.requestId === 'string' ? o.requestId : typeof o.uuid === 'string' ? o.uuid : null;
     const t = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) : NaN;
     if (!id || Number.isNaN(t)) return;
-    const n = (k: string) => { const v = u[k]; return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0; };
-    const c: Bucket = [n('input_tokens'), Math.min(n('output_tokens'), MAX_OUTPUT), n('cache_read_input_tokens'), n('cache_creation_input_tokens'), 1];
+    if (ID_BREAKS_LINE.test(id)) {
+      if (!this.oddIdLogged) {
+        this.oddIdLogged = true;
+        console.error(`deck: 사용량 집계에서 뺍니다 — 탭·줄바꿈이 든 메시지 id ${JSON.stringify(id.slice(0, 80))} (같은 종류는 더 알리지 않습니다)`);
+      }
+      return;
+    }
+    // One message's counts, each within MAX_OUTPUT (the dedupe value has that much room for output_tokens).
+    const n = (k: string) => tokenCount(u[k], MAX_OUTPUT);
+    const c: Bucket = [n('input_tokens'), n('output_tokens'), n('cache_read_input_tokens'), n('cache_creation_input_tokens'), 1];
     if (c[0] + c[1] + c[2] + c[3] === 0) return;
     const prev = this.seen.get(id) ?? 0;
     const mask = prev % MASK_SPAN;
@@ -424,7 +508,8 @@ export class UsageIndex {
     const t = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) : NaN;
     if (Number.isNaN(t)) return;
     const vec = (u: Record<string, unknown> | undefined): CodexTotal => {
-      const n = (k: string) => { const v = u?.[k]; return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0; };
+      // Cumulative per rollout, so only the safe-integer range bounds it.
+      const n = (k: string) => tokenCount(u?.[k], Number.MAX_SAFE_INTEGER);
       return [n('input_tokens'), n('cached_input_tokens'), n('cache_write_input_tokens'), n('output_tokens')];
     };
     const total = vec(p.info.total_token_usage);
