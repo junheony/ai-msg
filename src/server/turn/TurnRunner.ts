@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { GEMINI_ACCOUNTS, GEMINI_LABEL, LEGACY_ACCOUNTS, isGeminiAccount, type Account, type AccountNames, type GeminiAccount } from '../../shared/accounts';
+import { GEMINI_ACCOUNTS, GEMINI_LABEL, LEGACY_ACCOUNTS, isGeminiAccount, rootList, type Account, type AccountNames, type GeminiAccount, type ProjectsRoots } from '../../shared/accounts';
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, defaultSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
@@ -93,8 +93,8 @@ export type TurnRunnerDeps = {
   onPermissionMode?: (sessionId: string, mode: PermMode) => void;
   /** Which Claude accounts exist, their order and labels; absent = the a/b/c defaults. */
   accounts?: AccountNames;
-  /** `projects` dir of each account. */
-  projectsRoots: Record<Account, string>;
+  /** `projects` dir of each configured account (retired included). */
+  projectsRoots: ProjectsRoots;
   /**
    * The profile Claude Desktop and a plain `claude --resume` use (A). After every Claude turn that ran
    * elsewhere the session is mirrored back into it (append-only, prefix-checked). Absent/null = no write-back.
@@ -227,9 +227,12 @@ export class TurnRunner {
   private readonly deckWroteAt = new Map<string, number>();
 
   private readonly accounts: AccountNames;
+  /** `projects` dir by account, in configured order. */
+  private readonly roots: ReadonlyMap<Account, string>;
 
   constructor(private readonly deps: TurnRunnerDeps) {
     this.accounts = deps.accounts ?? LEGACY_ACCOUNTS;
+    this.roots = new Map(rootList(deps.projectsRoots).map((r) => [r.id, r.dir]));
     const move = deps.move ?? moveSession;
     this.move = async (o) => {
       const r = await move(o);
@@ -314,7 +317,7 @@ export class TurnRunner {
 
   /** The account's `projects` dir. Throws for an account that is not configured (a stored session of a removed one). */
   private rootOf(account: Account): string {
-    const root = Object.hasOwn(this.deps.projectsRoots, account) ? this.deps.projectsRoots[account] : undefined;
+    const root = this.roots.get(account);
     if (root === undefined) throw new Error(`설정에 없는 계정: ${account}`);
     return root;
   }
@@ -458,7 +461,7 @@ export class TurnRunner {
   /** 되돌리기 for trashSession. */
   async restoreSession(trashId: string): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> {
     try {
-      const r = await restoreFromTrash({ trashId, projectsRoots: Object.values(this.deps.projectsRoots) });
+      const r = await restoreFromTrash({ trashId, projectsRoots: [...this.roots.values()] });
       return { ok: true, sessionId: r.sessionId };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1208,7 +1211,7 @@ export class TurnRunner {
     const early: string[] = [];
     let end: ClaudeSessionState | null = null;
     try {
-      if (state && !Object.hasOwn(this.deps.projectsRoots, state.account)) {
+      if (state && !this.roots.has(state.account)) {
         sink.emit({ type: 'error', turnId: p.turnId, message: `설정에 없는 계정(${this.label(state.account)})의 세션이라 이어갈 수 없습니다` });
         return;
       }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { GPT_MARGIN_PCT, chooseEngine, type EngineInput } from './EngineChoice';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const win = (usedPct: number) => ({ usedPct, resetsAt: new Date(NOW + 84 * 3_600_000).toISOString() });
@@ -15,7 +16,7 @@ function usage(claudeWeekly: [number, number, number], gptWeekly: number | null,
 }
 
 function input(over: Partial<EngineInput>): EngineInput {
-  return { choice: 'auto', usage: usage([40, 50, 60], 20), nowMs: NOW, codexAvailable: true, gptCooldownUntilMs: null, cooldownUntilMs: {}, protectedAccount: null, ...over };
+  return { choice: 'auto', usage: usage([40, 50, 60], 20), nowMs: NOW, codexAvailable: true, gptCooldownUntilMs: null, cooldownUntilMs: {}, protectedAccount: null, accounts: testRegistry(), ...over };
 }
 
 describe('chooseEngine (D3)', () => {

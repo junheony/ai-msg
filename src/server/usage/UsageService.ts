@@ -50,7 +50,7 @@ function cardsById(json: unknown): Map<string, Record<string, unknown>> {
 }
 
 /** One entry per account of `reg` (retired ones too: their usage stays visible); absent `reg` = the a/b/c defaults. */
-export function parseDeckCards(json: unknown, reg: AccountNames = LEGACY_ACCOUNTS): { accounts: Record<Account, AccountUsage>; gpt: AccountUsage } {
+export function parseDeckCards(json: unknown, reg: AccountNames): { accounts: Record<Account, AccountUsage>; gpt: AccountUsage } {
   const byId = cardsById(json);
   const accounts: Record<Account, AccountUsage> = {};
   for (const account of reg.all()) {
@@ -70,7 +70,7 @@ export function parseDeckCards(json: unknown, reg: AccountNames = LEGACY_ACCOUNT
   return { accounts, gpt };
 }
 
-export function parseDeckState(json: unknown, reg: AccountNames = LEGACY_ACCOUNTS): Record<Account, AccountUsage> {
+export function parseDeckState(json: unknown, reg: AccountNames): Record<Account, AccountUsage> {
   return parseDeckCards(json, reg).accounts;
 }
 

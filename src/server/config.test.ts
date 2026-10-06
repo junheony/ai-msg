@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, readDeckUrl, readProtect } from './config';
+import { testRegistry } from '../shared/accounts.testkit';
 
 describe('config', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-cfg-'));
@@ -10,10 +11,16 @@ describe('config', () => {
   it('readProtect skips comments/blank lines and validates', () => {
     const f = path.join(dir, 'protect');
     fs.writeFileSync(f, '# Desktop account\n\na\n');
-    expect(readProtect(f)).toBe('a');
+    expect(readProtect(f, testRegistry())).toBe('a');
     fs.writeFileSync(f, 'z\n');
-    expect(readProtect(f)).toBeNull();
-    expect(readProtect(path.join(dir, 'missing'))).toBeNull();
+    const warned: string[] = [];
+    expect(readProtect(f, testRegistry(), (l) => warned.push(l))).toBeNull();
+    // An id that is not a configured account protects nothing — said once, with the file and the known accounts.
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain('"z"');
+    expect(warned[0]).toContain(f);
+    expect(readProtect(path.join(dir, 'missing'), testRegistry(), (l) => warned.push(l))).toBeNull();
+    expect(warned).toHaveLength(1);
   });
 
   it('readDeckUrl trims and falls back', () => {
@@ -46,9 +53,35 @@ describe('config', () => {
       uiDir: '/repo/dist/ui',
     });
     expect(c.accounts.list()).toEqual(['a', 'b', 'c']);
-    expect(c.projectsRoots).toEqual({ a: path.join(home, '.claude/projects'), b: path.join(home, '.claude-b/projects'), c: path.join(home, '.claude-c/projects') });
+    expect(c.projectsRoots).toEqual([{ id: 'a', dir: path.join(home, '.claude/projects') }, { id: 'b', dir: path.join(home, '.claude-b/projects') }, { id: 'c', dir: path.join(home, '.claude-c/projects') }]);
     const o = loadConfig({ DECK_CONFIG_DIR: '/cfg', DECK_PORT: '9999', DECK_URL: 'http://x', CLAUDE_PROTECT: 'b', DECK_LOOPBACK_ONLY: '1', DECK_DEV_ORIGIN: 'http://localhost:5173,http://127.0.0.1:5173', DECK_UI_DIR: '/ui' }, home, '/repo');
     expect(o).toMatchObject({ configDir: '/cfg', tokenFile: '/cfg/token', port: 9999, deckUrl: 'http://x', protectedAccount: 'b', loopbackOnly: true, devOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'], uiDir: '/ui' });
+  });
+
+  it('a protected account that is not configured is ignored with one warning (env and file)', () => {
+    const home = path.join(dir, 'home2');
+    fs.mkdirSync(path.join(home, '.config', 'offload'), { recursive: true });
+    fs.mkdirSync(path.join(home, '.claude-b', 'projects'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', 'offload', 'protect'), 'c\n');
+    const logs: string[] = [];
+    expect(loadConfig({}, home, '/repo', (l) => logs.push(l)).protectedAccount).toBeNull();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatch(/보호 계정 "c".*설정에 없는/);
+    logs.length = 0;
+    fs.writeFileSync(path.join(home, '.config', 'offload', 'protect'), 'b\n');
+    expect(loadConfig({ CLAUDE_PROTECT: 'zz' }, home, '/repo', (l) => logs.push(l)).protectedAccount).toBe('b');
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('CLAUDE_PROTECT="zz"');
+    logs.length = 0;
+    expect(loadConfig({ CLAUDE_PROTECT: 'b' }, home, '/repo', (l) => logs.push(l)).protectedAccount).toBe('b');
+    expect(logs).toEqual([]);
+  });
+
+  it('a broken accounts.json stops loadConfig (the server does not start on discovered accounts)', () => {
+    const home = path.join(dir, 'home3');
+    fs.mkdirSync(path.join(home, '.config', 'deck'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', 'deck', 'accounts.json'), '{');
+    expect(() => loadConfig({}, home, '/repo', () => {})).toThrow(/accounts\.json 을 쓸 수 없어 시작하지 않습니다/);
   });
 
   it('codex bin, sessions root and attachments dir (D11)', () => {

@@ -1,4 +1,4 @@
-import { LEGACY_ACCOUNTS, type Account, type AccountNames } from '../../shared/accounts';
+import type { Account, AccountNames } from '../../shared/accounts';
 import { FABLE_MAX_PCT } from '../../shared/models';
 import type { RoutingPolicy } from '../../shared/protocol';
 import { parseIsoUtc, usageOf, type UsageSnapshot } from '../../shared/usage-types';
@@ -29,8 +29,8 @@ export type RouterInput = {
   pinned?: Account | null;
   /** How 자동 picks among eligible accounts (new sessions, cold caches); default 'balance'. */
   policy?: RoutingPolicy;
-  /** Which accounts exist, their order (ties) and labels; absent = the a/b/c defaults. */
-  accounts?: AccountNames;
+  /** Which accounts exist, their order (ties) and labels. */
+  accounts: AccountNames;
 };
 
 export type Candidate = {
@@ -72,7 +72,7 @@ function hhmm(ms: number): string {
 export function rankCandidates(input: RouterInput): { candidates: Candidate[]; excluded: Partial<Record<Account, string>> } {
   const candidates: Candidate[] = [];
   const excluded: Partial<Record<Account, string>> = {};
-  const reg = input.accounts ?? LEGACY_ACCOUNTS;
+  const reg = input.accounts;
   for (const account of reg.list()) {
     if (input.exclude?.includes(account)) { excluded[account] = '제외 지정'; continue; }
     const u = usageOf(input.usage, account);
@@ -167,14 +167,14 @@ function balanceWhy(reg: AccountNames, cands: Candidate[]): string {
 /** The policy's reason for picking `cands[0]`. */
 function bestWhy(input: RouterInput, cands: Candidate[]): string {
   const b = cands[0] as Candidate;
-  const reg = input.accounts ?? LEGACY_ACCOUNTS;
+  const reg = input.accounts;
   const drain = `리셋 임박 ${reg.label(b.account)}(주간 ${b.weeklyPct}% · ${Math.round(b.hoursToReset)}시간 뒤 리셋)`;
   if ((input.policy ?? 'balance') === 'drain') return drain;
   return isSafe(b) ? balanceWhy(reg, cands) : `안전한 후보 없음 → ${drain}`;
 }
 
 /** The server log line for a routed turn: decision, candidates and exclusions (usage numbers only, no secrets). */
-export function routeLogLine(sessionId: string | null, d: RouterDecision, accounts: AccountNames = LEGACY_ACCOUNTS): string {
+export function routeLogLine(sessionId: string | null, d: RouterDecision, accounts: AccountNames): string {
   const LABEL = (a: Account) => accounts.label(a);
   const cands = d.candidates.map((c) => `${LABEL(c.account)}${c.protected ? '(보호)' : ''} 5h ${pct5(c)} · 주간 ${c.weeklyPct}%`).join(', ');
   const ex = accounts.list().filter((a) => d.excluded[a]).map((a) => `${LABEL(a)} ${d.excluded[a]}`).join(', ');
@@ -183,7 +183,7 @@ export function routeLogLine(sessionId: string | null, d: RouterDecision, accoun
 
 /** claude-pick exit 3: least weekly among non-excluded, non-protected accounts with a weekly value, ties in the registry's order; else the registry's fallback (not protected, not home: `b` in the a/b/c set). */
 function leastWeekly(input: RouterInput): Account {
-  const reg = input.accounts ?? LEGACY_ACCOUNTS;
+  const reg = input.accounts;
   let best: { account: Account; w: number } | null = null;
   for (const account of reg.list()) {
     if (input.exclude?.includes(account) || account === input.protectedAccount) continue;
@@ -208,7 +208,7 @@ function pinBlock(input: RouterInput, pin: Account): { why: string; detail: stri
 }
 
 export function chooseAccount(input: RouterInput): RouterDecision {
-  const reg = input.accounts ?? LEGACY_ACCOUNTS;
+  const reg = input.accounts;
   const LABEL = (a: Account) => reg.label(a);
   // A pin on an account that is not active (removed or retired since) is no pin.
   const pin = input.pinned && reg.list().includes(input.pinned) ? input.pinned : null;

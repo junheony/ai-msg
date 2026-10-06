@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LEGACY_ACCOUNTS, type Account } from '../../shared/accounts';
+import type { Account } from '../../shared/accounts';
 
 export function defaultCooldownDir(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string {
   if (env.CLAUDE_PICK_COOLDOWN_DIR) return env.CLAUDE_PICK_COOLDOWN_DIR;
@@ -25,8 +25,8 @@ export function readCooldownUntilMs(dir: string, account: Account, nowMs: number
   return untilMs > nowMs ? untilMs : null;
 }
 
-/** `accounts`: the registry's active ids (absent = the a/b/c defaults); the file name is the account id. */
-export function readAllCooldownsMs(dir: string, nowMs: number, accounts: readonly Account[] = LEGACY_ACCOUNTS.list()): Partial<Record<Account, number>> {
+/** `accounts`: the registry's active ids; the file name is the account id. */
+export function readAllCooldownsMs(dir: string, nowMs: number, accounts: readonly Account[]): Partial<Record<Account, number>> {
   const out: Partial<Record<Account, number>> = {};
   for (const a of accounts) {
     const v = readCooldownUntilMs(dir, a, nowMs);

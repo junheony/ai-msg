@@ -75,9 +75,11 @@ describe('geminiEnv', () => {
       GOOGLE_GEMINI_BASE_URL: 'http://evil', GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'true', GEMINI_CLI_HOME: '/other', SEATBELT_PROFILE: 'permissive-open-yolo',
       ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o', GEMINI_SANDBOX: 'docker',
     };
-    const env = geminiEnv('g2', base, '/h');
+    const env = geminiEnv('g2', base, '/h/.config/deck');
     expect(env).toEqual({ PATH: '/bin', GEMINI_CLI_HOME: '/h/.config/deck/gemini/g2', GOOGLE_GENAI_USE_GCA: 'true', SEATBELT_PROFILE: 'permissive-open' });
-    expect(geminiEnv('g1', base, '/h').GEMINI_CLI_HOME).toBe('/h/.config/deck/gemini/g1');
+    expect(geminiEnv('g1', base, '/h/.config/deck').GEMINI_CLI_HOME).toBe('/h/.config/deck/gemini/g1');
+    // DECK_CONFIG_DIR moves the Gemini accounts with the rest of deck's files.
+    expect(geminiEnv('g1', base, '/elsewhere/deck').GEMINI_CLI_HOME).toBe('/elsewhere/deck/gemini/g1');
   });
 });
 
@@ -91,8 +93,8 @@ describe('resolveGeminiBin / geminiLoggedIn', () => {
   });
   it('logged in = the OAuth file exists (existence check only)', () => {
     const asked: string[] = [];
-    expect(geminiLoggedIn('g1', '/h', (p) => { asked.push(p); return true; })).toBe(true);
-    expect(geminiLoggedIn('g2', '/h', () => false)).toBe(false);
+    expect(geminiLoggedIn('g1', '/h/.config/deck', (p) => { asked.push(p); return true; })).toBe(true);
+    expect(geminiLoggedIn('g2', '/h/.config/deck', () => false)).toBe(false);
     expect(asked).toEqual(['/h/.config/deck/gemini/g1/.gemini/oauth_creds.json']);
   });
 });
@@ -122,7 +124,7 @@ describe('GeminiEngine with a fake gemini binary', () => {
   let bin: string;
   const req = (over: Partial<GeminiTurnRequest> = {}): GeminiTurnRequest => ({ account: 'g1', cwd: dir, resumeSessionId: null, model: 'gemini-pro', sandbox: 'read-only', prompt: '안녕\n/둘째 줄', signal: new AbortController().signal, ...over });
   const script = (s: { lines: unknown[]; exitCode?: number; hang?: boolean; stderr?: string }) => fs.writeFile(path.join(dir, 'script.json'), JSON.stringify(s));
-  const engine = (extra: NodeJS.ProcessEnv = {}) => new GeminiEngine(bin, '/home/test', { seatbelt: false, baseEnv: { PATH: process.env.PATH, FAKE_SCRIPT: path.join(dir, 'script.json'), FAKE_LOG: path.join(dir, 'log.json'), ...extra } });
+  const engine = (extra: NodeJS.ProcessEnv = {}) => new GeminiEngine(bin, '/home/test/.config/deck', { seatbelt: false, baseEnv: { PATH: process.env.PATH, FAKE_SCRIPT: path.join(dir, 'script.json'), FAKE_LOG: path.join(dir, 'log.json'), ...extra } });
   const collect = async (it: AsyncIterable<EngineEvent>) => { const out: EngineEvent[] = []; for await (const e of it) out.push(e); return out; };
   const log = async () => JSON.parse(await fs.readFile(path.join(dir, 'log.json'), 'utf8')) as { argv: string[]; cwd: string; stdin: string; env: Record<string, string> };
 
@@ -182,7 +184,7 @@ describe('GeminiEngine with a fake gemini binary', () => {
   });
 
   it('a missing binary is a failed result, not a crash', async () => {
-    const e = new GeminiEngine(path.join(dir, 'nope'), '/home/test', { seatbelt: false, baseEnv: {} });
+    const e = new GeminiEngine(path.join(dir, 'nope'), '/home/test/.config/deck', { seatbelt: false, baseEnv: {} });
     expect((await collect(e.runTurn(req()))).at(-1)).toMatchObject({ ok: false, errorText: expect.stringContaining('gemini 실행 실패') });
   });
 });

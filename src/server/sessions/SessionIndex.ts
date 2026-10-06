@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { Account } from '../../shared/accounts';
+import { rootList, type Account, type ProjectsRoots } from '../../shared/accounts';
 import type { BranchLink } from '../../shared/branches';
 import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry, SessionHolder } from '../../shared/session-types';
 import { findCopies, resolveCopies, type PrefixFn, type SessionCopy } from './copies';
@@ -157,7 +157,7 @@ export class SessionIndex {
    * `home`: Claude Desktop's profile — between truly diverged copies with equal timestamps, deck's copy wins.
    * `holders`: which Claude sessions a process outside deck holds open (`heldBy`); re-read on every (re)group.
    */
-  constructor(private readonly opts: { roots: Record<Account, string>; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; codexArchivedRoot?: string; meta?: SessionMetaView; home?: Account | null; holders?: { heldBy(sessionId: string): SessionHolder | null } }) {
+  constructor(private readonly opts: { roots: ProjectsRoots; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; codexArchivedRoot?: string; meta?: SessionMetaView; home?: Account | null; holders?: { heldBy(sessionId: string): SessionHolder | null } }) {
     this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot, undefined, opts.codexArchivedRoot ?? null) : null;
   }
 
@@ -223,7 +223,7 @@ export class SessionIndex {
 
   /** `codexInBackground`: do not wait for the (slow) Codex rollout read; `onChange` fires once it is done. */
   async refresh(opts: { codexInBackground?: boolean } = {}): Promise<void> {
-    const all = (await Promise.all(Object.entries(this.opts.roots).map(([a, root]) => scanProfile(a, root)))).flat();
+    const all = (await Promise.all(rootList(this.opts.roots).map((r) => scanProfile(r.id, r.dir)))).flat();
     this.entries = all;
     // The same id in several profiles/dirs: the copy containing the others wins; truly diverged → latest conversation timestamp.
     const byId = new Map<string, SessionEntry[]>();

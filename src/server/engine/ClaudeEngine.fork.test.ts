@@ -3,11 +3,12 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeEngine, buildOptions } from './ClaudeEngine';
 import type { EngineEvent, TurnRequest } from './Engine';
 import { fakeSdk, sdk } from './fakeSdk';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 function req(over: Partial<TurnRequest> = {}): TurnRequest {
   return { account: 'c', cwd: '/w', resumeSessionId: 'parent', model: 'opus', prompt: '고친 질문', signal: new AbortController().signal, onPermission: async () => 'once', ...over };
 }
-const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
 
 describe('메시지 편집 갈래: fork options', () => {
   it('forkAt resumes the parent as a fork cut at that entry', () => {

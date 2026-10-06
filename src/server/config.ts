@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LEGACY_ACCOUNTS, type Account, type AccountNames, type AccountRegistry } from '../shared/accounts';
+import type { Account, AccountNames, AccountRegistry, AccountRoot } from '../shared/accounts';
 import { loadAccountRegistry } from './accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
 import { resolveGeminiBin } from './engine/GeminiEngine';
@@ -23,14 +23,14 @@ export type DeckConfig = {
   port: number;
   loopbackOnly: boolean;
   devOrigins: string[];
-  /** `projects` dir of every configured account (retired included). */
-  projectsRoots: Record<Account, string>;
+  /** `projects` dir of every configured account (retired included), in configured order. */
+  projectsRoots: readonly AccountRoot[];
   uiDir: string;
   /** Deviation (added per review I5): extra Host-header names (e.g. Tailscale MagicDNS) allowed in addition to loopback/CGNAT. */
   extraHosts: string[];
   /** D11: null = Codex disabled (no `codex` binary found). */
   codexBin: string | null;
-  /** null = Gemini disabled (no `gemini` binary found). Accounts live under ~/.config/deck/gemini/<g1|g2>. */
+  /** null = Gemini disabled (no `gemini` binary found). Accounts live under `<configDir>/gemini/<g1|g2>`. */
   geminiBin: string | null;
   /** `$CODEX_HOME/sessions` (rollout files; read-only for deck). */
   codexSessionsRoot: string;
@@ -67,14 +67,16 @@ export type DeckConfig = {
   vapidSubject: string | null;
 };
 
-/** ~/.config/offload/protect: comment lines start with '#'; first non-blank token must be a configured account (absent `accounts` = a|b|c). */
-export function readProtect(file: string, accounts: AccountNames = LEGACY_ACCOUNTS): Account | null {
+/** ~/.config/offload/protect: comment lines start with '#'; the first non-blank token must be a configured account — any other is no protection, and `warn` is told once. */
+export function readProtect(file: string, accounts: AccountNames, warn: (line: string) => void = () => {}): Account | null {
   try {
     for (const raw of fs.readFileSync(file, 'utf8').split('\n')) {
       const line = raw.trim();
       if (!line || line.startsWith('#')) continue;
       const tok = line.split(/\s+/)[0];
-      return accounts.has(tok) ? tok : null;
+      if (accounts.has(tok)) return tok;
+      warn(`deck: 보호 계정 "${tok}"(${file})는 설정에 없는 계정이라 무시합니다 — 보호 계정 없이 시작합니다 (계정: ${accounts.all().join(', ')})`);
+      return null;
     }
   } catch {
     // missing file
@@ -107,10 +109,13 @@ export function repoRootDefault(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), repoRoot: string = repoRootDefault()): DeckConfig {
+/** Throws `AccountsFileError` when `<configDir>/accounts.json` is there and cannot be used. `log`: startup notes (skipped profile dirs, an unknown protected account). */
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), repoRoot: string = repoRootDefault(), log: (line: string) => void = (l) => console.error(l)): DeckConfig {
   const configDir = env.DECK_CONFIG_DIR || path.join(home, '.config', 'deck');
-  const accounts = loadAccountRegistry({ configDir, homeDir: home });
-  const protectedAccount = accounts.has(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'), accounts);
+  const accounts = loadAccountRegistry({ configDir, homeDir: home, log });
+  // CLAUDE_PROTECT wins over the file; a value that is not a configured account falls through to the file, with a warning.
+  if (env.CLAUDE_PROTECT && !accounts.has(env.CLAUDE_PROTECT)) log(`deck: CLAUDE_PROTECT="${env.CLAUDE_PROTECT}" 는 설정에 없는 계정이라 무시합니다 (계정: ${accounts.all().join(', ')})`);
+  const protectedAccount = accounts.has(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'), accounts, log);
   return {
     home,
     configDir,

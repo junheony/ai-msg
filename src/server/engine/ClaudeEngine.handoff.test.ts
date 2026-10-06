@@ -3,11 +3,12 @@ import type { HookCallbackMatcher, Options } from '@anthropic-ai/claude-agent-sd
 import { ClaudeEngine, KEEP_PLANNING_MESSAGE, NO_TOOLS_MESSAGE, buildOptions } from './ClaudeEngine';
 import type { EngineEvent, TurnRequest } from './Engine';
 import { fakeSdk, sdk } from './fakeSdk';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 function req(over: Partial<TurnRequest> = {}): TurnRequest {
   return { account: 'c', cwd: '/w', resumeSessionId: 's1', model: 'opus', prompt: 'note', signal: new AbortController().signal, onPermission: async () => 'once', ...over };
 }
-const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
 const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1' } as never;
 
 async function runHook(o: Options): Promise<unknown> {

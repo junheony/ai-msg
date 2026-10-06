@@ -1,4 +1,4 @@
-import { LEGACY_ACCOUNTS, type Account, type AccountNames } from '../../shared/accounts';
+import type { Account, AccountNames } from '../../shared/accounts';
 import type { EngineChoice, EngineKind } from '../../shared/models';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { WEEKLY_SWITCH_PCT, rankCandidates } from './AccountRouter';
@@ -16,7 +16,7 @@ export type EngineInput = {
   cooldownUntilMs: Partial<Record<Account, number>>;
   protectedAccount: Account | null;
   /** Absent = the a/b/c defaults. */
-  accounts?: AccountNames;
+  accounts: AccountNames;
 };
 
 function hhmm(ms: number): string {
@@ -40,5 +40,5 @@ export function chooseEngine(i: EngineInput): { engine: EngineKind; reason: stri
   const claudeRem = best ? 100 - best.weeklyPct : 0;
   const gptRem = 100 - gw;
   if (gptRem >= claudeRem + GPT_MARGIN_PCT) return { engine: 'codex', reason: `자동 · GPT 여유 ${gptRem}% ≥ Claude 최선 ${claudeRem}%+${GPT_MARGIN_PCT} → GPT` };
-  return { engine: 'claude', reason: best ? `자동 · Claude ${(i.accounts ?? LEGACY_ACCOUNTS).label(best.account)} 여유 ${claudeRem}% → Claude` : '자동 · Claude' };
+  return { engine: 'claude', reason: best ? `자동 · Claude ${i.accounts.label(best.account)} 여유 ${claudeRem}% → Claude` : '자동 · Claude' };
 }

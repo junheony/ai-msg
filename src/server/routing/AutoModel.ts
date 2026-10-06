@@ -71,7 +71,7 @@ export type AutoModelInput = {
   cooldownUntilMs: Partial<Record<Account, number>>;
   protectedAccount: Account | null;
   /** Absent = the a/b/c defaults. */
-  accounts?: AccountNames;
+  accounts: AccountNames;
 };
 
 export type AutoModelDecision = { model: ClaudeModel; effort: Effort; reason: string };

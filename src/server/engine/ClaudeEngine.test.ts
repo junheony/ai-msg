@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeEngine, KEEP_PLANNING_MESSAGE, buildOptions, buildPrompt, mapSdkMessage } from './ClaudeEngine';
 import { parseQuestions, sessionAllowLabel, sessionAllowOffered, type EngineEvent, type TurnRequest } from './Engine';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 const M = (o: unknown) => o as SDKMessage;
 
@@ -11,7 +12,7 @@ function req(over: Partial<TurnRequest> = {}): TurnRequest {
 
 describe('buildOptions', () => {
   it('selects the profile env, model alias, default permission mode, user+project+local settings, streaming', () => {
-    const o = buildOptions(req({ account: 'b', model: 'fable', resumeSessionId: 'sid' }), { home: '/h', baseEnv: { PATH: '/bin', ANTHROPIC_API_KEY: 'k' }, abortController: new AbortController(), onStderr: () => {} });
+    const o = buildOptions(req({ account: 'b', model: 'fable', resumeSessionId: 'sid' }), { home: '/h', accounts: testRegistry('/h'), baseEnv: { PATH: '/bin', ANTHROPIC_API_KEY: 'k' }, abortController: new AbortController(), onStderr: () => {} });
     expect(o.cwd).toBe('/w');
     expect(o.env).toEqual({ PATH: '/bin', CLAUDE_CONFIG_DIR: '/h/.claude-b' });
     expect(o.model).toBe('claude-fable-5-1');
@@ -20,14 +21,14 @@ describe('buildOptions', () => {
     expect(o.permissionMode).toBe('default');
     expect(o.settingSources).toEqual(['user', 'project', 'local']);
     expect(o.includePartialMessages).toBe(true);
-    const a = buildOptions(req({ account: 'a' }), { home: '/h', baseEnv: { CLAUDE_CONFIG_DIR: '/h/.claude-c' }, abortController: new AbortController(), onStderr: () => {} });
+    const a = buildOptions(req({ account: 'a' }), { home: '/h', accounts: testRegistry('/h'), baseEnv: { CLAUDE_CONFIG_DIR: '/h/.claude-c' }, abortController: new AbortController(), onStderr: () => {} });
     expect(a.env).toEqual({});
     expect(a.resume).toBeUndefined();
   });
 
   it('maps permission decisions to PermissionResult', async () => {
     const seen: string[] = [];
-    const mk = (d: 'once' | 'session' | 'deny') => buildOptions(req({ onPermission: async (p) => { seen.push(p.toolName + ':' + p.toolUseId); return d; } }), { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} });
+    const mk = (d: 'once' | 'session' | 'deny') => buildOptions(req({ onPermission: async (p) => { seen.push(p.toolName + ':' + p.toolUseId); return d; } }), { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} });
     const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1' } as never;
     expect(await mk('once').canUseTool!('Bash', { command: 'ls' }, ctx)).toEqual({ behavior: 'allow' });
     // No suggestions from the SDK → nothing scoped to remember: a plain one-time allow.
@@ -38,7 +39,7 @@ describe('buildOptions', () => {
 });
 
 describe('buildOptions: model version and effort', () => {
-  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
   it('passes the exact model id and the per-turn effort as Options.effort', () => {
     const o = buildOptions(req({ model: 'opus', effort: 'xhigh' }), deps);
     expect(o.model).toBe('claude-opus-5-5');
@@ -54,7 +55,7 @@ describe('buildOptions: model version and effort', () => {
 
 describe('buildOptions: allow for this session (review I4)', () => {
   const suggestions = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'git status' }], behavior: 'allow', destination: 'session' }];
-  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
 
   it('returns the SDK suggestions as updatedPermissions and relays the prompt details', async () => {
     const seen: unknown[] = [];
@@ -89,7 +90,7 @@ const REAL_BASH_SUGGESTIONS = [
 ];
 
 describe('buildOptions: 이 세션 never persists outside the session', () => {
-  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
   const answer = async (suggestions: unknown[], extra: Record<string, unknown> = {}) => {
     const o = buildOptions(req({ onPermission: async () => 'session' }), deps);
     const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1', suggestions, ...extra } as never;
@@ -217,7 +218,7 @@ describe('ClaudeEngine.runTurn', () => {
         yield M({ type: 'result', subtype: 'success', is_error: true, result: 'limit hit', usage: {}, session_id: 's9' });
       })();
     };
-    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: { PATH: '/bin' } });
+    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', accounts: testRegistry('/h'), baseEnv: { PATH: '/bin' } });
     const events: EngineEvent[] = [];
     for await (const e of eng.runTurn(req({ prompt: 'p', account: 'a' }))) events.push(e);
     expect(events[0]).toEqual({ kind: 'init', sessionId: 's9', model: 'claude-opus-5-5' });
@@ -233,7 +234,7 @@ describe('ClaudeEngine.runTurn', () => {
       yield M({ type: 'system', subtype: 'init', session_id: 's1', model: 'm', cwd: '/w' });
       throw new Error('Claude Code process exited with code 1');
     })();
-    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: {} });
+    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', accounts: testRegistry('/h'), baseEnv: {} });
     const events: EngineEvent[] = [];
     for await (const e of eng.runTurn(req())) events.push(e);
     const r = events.at(-1) as Extract<EngineEvent, { kind: 'result' }>;
@@ -247,7 +248,7 @@ describe('ClaudeEngine.runTurn', () => {
     const queryFn = () => { called = true; return (async function* () { /* nothing */ })(); };
     const ac = new AbortController();
     ac.abort();
-    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: {} });
+    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', accounts: testRegistry('/h'), baseEnv: {} });
     const events: EngineEvent[] = [];
     for await (const e of eng.runTurn(req({ signal: ac.signal }))) events.push(e);
     expect(called).toBe(false);
@@ -256,7 +257,7 @@ describe('ClaudeEngine.runTurn', () => {
 
   it('turns a thrown error without a result into a failed result', async () => {
     const queryFn = () => (async function* () { yield M({ type: 'system', subtype: 'init', session_id: 's1', model: 'm' }); throw new Error('process exited'); })();
-    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: {} });
+    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', accounts: testRegistry('/h'), baseEnv: {} });
     const events: EngineEvent[] = [];
     for await (const e of eng.runTurn(req())) events.push(e);
     expect(events.at(-1)).toMatchObject({ kind: 'result', ok: false, sessionId: 's1', errorText: expect.stringContaining('process exited') });
@@ -275,7 +276,7 @@ describe('ClaudeEngine.runTurn — context size', () => {
       yield M({ type: 'assistant', parent_tool_use_id: 'agent', message: { content: [], usage: u(9, 9000, 9000) } });
       yield M({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's', usage: u(3, 250, 60), modelUsage: { 'claude-opus-5-5': { contextWindow: 1_000_000 }, 'claude-haiku-4-5': { contextWindow: 200_000 } } });
     })();
-    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', baseEnv: {} });
+    const eng = new ClaudeEngine({ queryFn: queryFn as never, home: '/h', accounts: testRegistry('/h'), baseEnv: {} });
     const events: EngineEvent[] = [];
     for await (const e of eng.runTurn(req())) events.push(e);
     const res = events.find((e) => e.kind === 'result');
@@ -316,7 +317,7 @@ describe('ClaudeEngine with attachments', () => {
       pulled++; // reached only if the engine keeps pulling after the result
       yield M({ type: 'system', subtype: 'init', session_id: 's', model: 'm' });
     };
-    const engine = new ClaudeEngine({ queryFn, home: '/h', baseEnv: {}, readFile: async () => Buffer.from('png') });
+    const engine = new ClaudeEngine({ queryFn, home: '/h', accounts: testRegistry('/h'), baseEnv: {}, readFile: async () => Buffer.from('png') });
     const out: EngineEvent[] = [];
     for await (const e of engine.runTurn(req({ prompt: 'what?', attachments: [img] }))) out.push(e);
     expect((seen[0] as SDKUserMessage).message.content).toHaveLength(2);
@@ -330,7 +331,7 @@ describe('ClaudeEngine with attachments', () => {
       seen.push(((await first(p.prompt)) as SDKUserMessage).message.content);
       yield M({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's', usage: {} });
     };
-    const engine = new ClaudeEngine({ queryFn, home: '/h', baseEnv: {}, readFile: async () => { throw new Error('must not read'); } });
+    const engine = new ClaudeEngine({ queryFn, home: '/h', accounts: testRegistry('/h'), baseEnv: {}, readFile: async () => { throw new Error('must not read'); } });
     for await (const _ of engine.runTurn(req({ prompt: 'x', attachments: [doc] }))) void _;
     expect(seen).toEqual(['x\n\n첨부 파일: /att/d1-n.md']);
   });
@@ -338,7 +339,7 @@ describe('ClaudeEngine with attachments', () => {
   it('a failed image read ends the turn as a failed result, not a throw', async () => {
     let called = false;
     const queryFn = async function* () { called = true; yield M({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's', usage: {} }); };
-    const engine = new ClaudeEngine({ queryFn, home: '/h', baseEnv: {}, readFile: async () => { throw new Error('ENOENT: gone'); } });
+    const engine = new ClaudeEngine({ queryFn, home: '/h', accounts: testRegistry('/h'), baseEnv: {}, readFile: async () => { throw new Error('ENOENT: gone'); } });
     const out: EngineEvent[] = [];
     for await (const e of engine.runTurn(req({ attachments: [img] }))) out.push(e);
     expect(called).toBe(false);
@@ -366,7 +367,7 @@ describe('AskUserQuestion (D8)', () => {
   it('a malformed AskUserQuestion is denied without asking and reported through onQuestionMalformed (for the audit)', async () => {
     const asked: unknown[] = [];
     const malformed: unknown[] = [];
-    const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+    const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
     const ctx = { signal: new AbortController().signal, toolUseID: 'tu9', requestId: 'r9' } as never;
     const dup = { questions: [QUESTIONS[0], QUESTIONS[0]] };
     const o = buildOptions(req({ onQuestion: async (q) => { asked.push(q); return { x: 'y' }; }, onQuestionMalformed: async (input) => { malformed.push(input); } }), deps);
@@ -377,7 +378,7 @@ describe('AskUserQuestion (D8)', () => {
 
   it('canUseTool routes AskUserQuestion to onQuestion and returns the answers as updatedInput; no answer → deny', async () => {
     const asked: unknown[] = [];
-    const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+    const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
     const ctx = { signal: new AbortController().signal, toolUseID: 'tu9', requestId: 'r9' } as never;
     const o = buildOptions(req({ onQuestion: async (q) => { asked.push(q); return { 'Which color?': 'blue' }; } }), deps);
     expect(await o.canUseTool!('AskUserQuestion', { questions: QUESTIONS }, ctx)).toEqual({ behavior: 'allow', updatedInput: { questions: QUESTIONS, answers: { 'Which color?': 'blue' } } });
@@ -392,7 +393,7 @@ describe('AskUserQuestion (D8)', () => {
 });
 
 describe('자동 승인 (autoApprove)', () => {
-  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
   const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1' } as never;
 
   it('on: every tool is allowed at once without asking, each reported for the audit; AskUserQuestion still asks', async () => {
@@ -424,7 +425,7 @@ describe('자동 승인 (autoApprove)', () => {
 });
 
 describe('permission modes and the plan card (ExitPlanMode)', () => {
-  const deps = { home: '/h', baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
+  const deps = { home: '/h', accounts: testRegistry('/h'), baseEnv: {}, abortController: new AbortController(), onStderr: () => {} };
   const ctx = { signal: new AbortController().signal, toolUseID: 'tu1', requestId: 'r1' } as never;
 
   it('passes the session mode to the SDK (absent = default)', () => {

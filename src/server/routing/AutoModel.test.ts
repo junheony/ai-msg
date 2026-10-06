@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
 import { chooseAutoModel, classifyPrompt } from './AutoModel';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-10-01T03:00:00Z');
 
@@ -13,7 +14,7 @@ function usage(a: AccountUsage, b: AccountUsage = a, c: AccountUsage = a): Usage
 }
 
 const auto = (text: string, u: UsageSnapshot = usage(acct(30)), attachmentCount = 0) =>
-  chooseAutoModel({ text, attachmentCount, usage: u, nowMs: NOW, cooldownUntilMs: {}, protectedAccount: null });
+  chooseAutoModel({ text, attachmentCount, usage: u, nowMs: NOW, cooldownUntilMs: {}, protectedAccount: null, accounts: testRegistry() });
 
 describe('classifyPrompt', () => {
   it.each([

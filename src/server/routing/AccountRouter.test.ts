@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRegistry, type Account } from '../../shared/accounts';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
+import { testRegistry } from '../../shared/accounts.testkit';
 import { chooseAccount, rankCandidates, routeLogLine, type RouterInput } from './AccountRouter';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -41,6 +42,7 @@ function input(over: Partial<RouterInput>): RouterInput {
     cooldownUntilMs: {},
     protectedAccount: null,
     needFable: false,
+    accounts: testRegistry(),
     // The tables below pin the old "리셋 임박 먼저 소진" policy: they are the proof it is unchanged.
     policy: 'drain',
     ...over,
@@ -335,7 +337,7 @@ describe('chooseAccount · default policy (no policy given = balance)', () => {
     const d = chooseAccount(dflt({ protectedAccount: 'a', usage }));
     expect(d.account).toBe('b');
     expect(d.reason).toMatch(/C 5h 값 없음/);
-    expect(routeLogLine(null, d)).toMatch(/C 5h \? · 주간 10%/);
+    expect(routeLogLine(null, d, testRegistry())).toMatch(/C 5h \? · 주간 10%/);
     // Unknown 5h but the only safe account: picked over the protected one and over unsafe ones.
     expect(chooseAccount(dflt({ protectedAccount: 'a', usage: snap({ s: 0, w: 0 }, { s: 85, w: 30 }, { s: null, w: 10 }) })).account).toBe('c');
   });
@@ -344,12 +346,12 @@ describe('chooseAccount · default policy (no policy given = balance)', () => {
 describe('routeLogLine', () => {
   it('one line: short session id, account, reason, candidates and exclusions', () => {
     const d = chooseAccount(input({ policy: 'balance', protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ s: 0, w: 0 }, { s: 10, w: 22, resetH: 18 }, { s: 0, w: 0, resetH: 138 }) }));
-    const line = routeLogLine('0123456789abcdef', d);
+    const line = routeLogLine('0123456789abcdef', d, testRegistry());
     expect(line).toMatch(/^deck: route 01234567 → C \(새 세션 · 분산: 5h C 0% < B 10%\)/);
     expect(line).toMatch(/후보 C 5h 0% · 주간 0%, B 5h 10% · 주간 22%/);
     expect(line).toMatch(/제외 A 쿨다운/);
     expect(line).not.toMatch(/\n/);
-    expect(routeLogLine(null, d)).toMatch(/^deck: route 새 세션 → C/);
+    expect(routeLogLine(null, d, testRegistry())).toMatch(/^deck: route 새 세션 → C/);
   });
 });
 

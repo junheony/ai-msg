@@ -353,7 +353,7 @@ export function deniedCalls(m: SDKMessage, inputs: Map<string, unknown>): { tool
 
 export function buildOptions(
   req: TurnRequest,
-  deps: { home: string; /** Absent = the a/b/c profiles under `home`. */ accounts?: Pick<AccountRegistry, 'env'>; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void; /** false: DECK_STEER=0 (no echo flag). */ steer?: boolean; /** Shared with the stream loop (denials it sees); a fresh one by default. */ audit?: ToolAudit },
+  deps: { home: string; accounts: Pick<AccountRegistry, 'env'>; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void; /** false: DECK_STEER=0 (no echo flag). */ steer?: boolean; /** Shared with the stream loop (denials it sees); a fresh one by default. */ audit?: ToolAudit },
 ): Options {
   // Audit: canUseTool is asked only about calls that need a decision; an allow rule, the mode (acceptEdits) or a tool
   // that needs no permission runs the rest without it. Those are reported from the after-hooks, denials also from the
@@ -369,7 +369,7 @@ export function buildOptions(
   };
   return {
     cwd: req.cwd,
-    env: (deps.accounts ?? legacyRegistry(deps.home)).env(req.account, deps.baseEnv),
+    env: deps.accounts.env(req.account, deps.baseEnv),
     model: MODEL_ARG[req.model],
     // sdk.d.ts Options.effort?: EffortLevel ('low' | 'medium' | 'high' | 'xhigh' | 'max'), "works with adaptive thinking".
     ...(req.effort ? { effort: req.effort } : {}),

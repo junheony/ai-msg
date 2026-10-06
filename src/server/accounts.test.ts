@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { discoverProfileNames, loadAccountRegistry } from './accounts';
+import { AccountsFileError, discoverProfileNames, loadAccountRegistry } from './accounts';
 
 describe('account registry loader', () => {
   let home: string;
@@ -32,7 +32,7 @@ describe('account registry loader', () => {
     const r = load();
     expect(r.list()).toEqual(['a', 'b', 'c']);
     expect(r.home).toBe('a');
-    expect(r.projectsRoots()).toEqual({ a: path.join(home, '.claude/projects'), b: path.join(home, '.claude-b/projects'), c: path.join(home, '.claude-c/projects') });
+    expect(r.projectsRoots()).toEqual([{ id: 'a', dir: path.join(home, '.claude/projects') }, { id: 'b', dir: path.join(home, '.claude-b/projects') }, { id: 'c', dir: path.join(home, '.claude-c/projects') }]);
     expect(r.list().map((a) => r.cardId(a))).toEqual(['claude:main', 'claude:second', 'claude:third']);
     expect('CLAUDE_CONFIG_DIR' in r.env('a', { CLAUDE_CONFIG_DIR: '/x' })).toBe(false);
     expect(r.env('b', {}).CLAUDE_CONFIG_DIR).toBe(path.join(home, '.claude-b'));
@@ -44,8 +44,10 @@ describe('account registry loader', () => {
     profile('.claude-b');
     profile('.claude-backup', null);
     profile('.claude-mem', null);
+    profile('.claude-d', null);
     expect(discoverProfileNames(home)).toEqual(['.claude', '.claude-b']);
     expect(load().list()).toEqual(['a', 'b']);
+    expect(logs).toEqual([]);
   });
 
   it('a symlinked profile directory counts', () => {
@@ -53,6 +55,40 @@ describe('account registry loader', () => {
     profile('elsewhere');
     fs.symlinkSync(path.join(home, 'elsewhere'), path.join(home, '.claude-w'));
     expect(load().list()).toEqual(['a', 'w']);
+  });
+
+  it('backup-looking profile directories are not accounts: one log line each, with the accounts.json entry', () => {
+    profile('.claude', null);
+    profile('.claude-b');
+    for (const n of ['.claude-backup', '.claude-2', '.claude-old', '.claude-main']) profile(n);
+    const r = load();
+    expect(r.list()).toEqual(['a', 'b']);
+    expect(logs).toHaveLength(4);
+    expect(logs.find((l) => l.includes('.claude-old'))).toContain('{"id":"old","configDir":"~/.claude-old"}');
+    for (const l of logs) expect(l).toContain('accounts.json');
+  });
+
+  it('discovery never throws: a one-letter profile that is an alias of another (symlink) is skipped with a log', () => {
+    profile('.claude', null);
+    profile('.claude-b');
+    fs.symlinkSync(path.join(home, '.claude-b'), path.join(home, '.claude-d'));
+    fs.symlinkSync(path.join(home, '.claude'), path.join(home, '.claude-e'));
+    fs.mkdirSync(path.join(home, '.claude', 'projects'));
+    const r = load();
+    expect(r.list()).toEqual(['a', 'b']);
+    expect(logs).toHaveLength(2);
+    expect(logs.join('\n')).toMatch(/계정 d .*건너/);
+    expect(logs.join('\n')).toMatch(/계정 e .*건너/);
+  });
+
+  it('~/.claude-B (upper case) is account b with its real directory name', () => {
+    profile('.claude', null);
+    profile('.claude-B');
+    const r = load();
+    expect(r.list()).toEqual(['a', 'b']);
+    expect(r.profileDir('b')).toBe(path.join(home, '.claude-B'));
+    expect(r.env('b', {}).CLAUDE_CONFIG_DIR).toBe(path.join(home, '.claude-B'));
+    expect(logs).toEqual([]);
   });
 
   it('an empty or unreadable home still yields account a', () => {
@@ -86,25 +122,35 @@ describe('account registry loader', () => {
     ['unknown version', JSON.stringify({ version: 2, accounts: [{ id: 'a' }] })],
     ['bad id', JSON.stringify({ version: 1, accounts: [{ id: 'A' }] })],
     ['duplicate id', JSON.stringify({ version: 1, accounts: [{ id: 'a' }, { id: 'a' }] })],
+    ['duplicate card', JSON.stringify({ version: 1, accounts: [{ id: 'a' }, { id: 'main', card: 'claude:main' }] })],
     ['missing home', JSON.stringify({ version: 1, home: 'z', accounts: [{ id: 'a' }] })],
     ['wrong field type', JSON.stringify({ version: 1, accounts: [{ id: 'a', retired: 'yes' }] })],
     ['no active account', JSON.stringify({ version: 1, accounts: [{ id: 'a', retired: true }] })],
-  ])('%s: logs why and falls back to discovery (the server still starts)', (_name, text) => {
+    ['same dir by ..', JSON.stringify({ version: 1, accounts: [{ id: 'a' }, { id: 'w', configDir: '~/x/../.claude' }] })],
+  ])('%s: refuses to start with the file path and the reason — never falls back to discovery', (_name, text) => {
     profile('.claude', null);
     profile('.claude-b');
     writeConfig(text);
-    const r = load();
-    expect(r.list()).toEqual(['a', 'b']);
-    expect(r.home).toBe('a');
-    expect(logs).toHaveLength(1);
-    expect(logs[0]).toContain(path.join(configDir, 'accounts.json'));
-    expect(logs[0]).toContain('기본 발견');
+    let err: unknown;
+    try { load(); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(AccountsFileError);
+    expect((err as Error).message).toContain(path.join(configDir, 'accounts.json'));
+    expect((err as Error).message).toMatch(/시작하지 않습니다 — .+/);
+    expect(logs).toEqual([]);
   });
 
-  it('an accounts.json that is a directory (unreadable) also falls back with a log', () => {
+  it('an accounts.json that cannot be read (a directory, EACCES) refuses to start too', () => {
     profile('.claude', null);
     fs.mkdirSync(path.join(configDir, 'accounts.json'));
-    expect(load().list()).toEqual(['a']);
-    expect(logs).toHaveLength(1);
+    expect(load).toThrow(AccountsFileError);
+    expect(load).toThrow(/EISDIR/);
+  });
+
+  it('two entries naming the same directory through a symlink refuse to start', () => {
+    profile('.claude', null);
+    profile('.claude-b');
+    fs.symlinkSync(path.join(home, '.claude-b'), path.join(home, 'alias'));
+    writeConfig(JSON.stringify({ version: 1, accounts: [{ id: 'a' }, { id: 'b' }, { id: 'w', configDir: '~/alias' }] }));
+    expect(load).toThrow(/configDir/);
   });
 });

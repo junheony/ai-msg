@@ -6,6 +6,7 @@ import path from 'node:path';
 import { AttachmentStore } from './attachments/AttachmentStore';
 import { loadOrCreateToken } from './auth';
 import { bindAddresses, tailscaleDnsName, tailscaleIPv4s } from './bind';
+import { AccountsFileError } from './accounts';
 import { loadConfig, repoRootDefault } from './config';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { CodexEngine } from './engine/CodexEngine';
@@ -60,7 +61,7 @@ async function main(): Promise<void> {
   const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
   codexUsage.start();
   // 사용량 view: incremental token usage index over every transcript/rollout; first scan runs in the background.
-  const usageHistory = new UsageIndex({ projectsRoots: cfg.projectsRoots, codexSessionsRoot: cfg.codexSessionsRoot, indexFile: cfg.usageIndexFile, legacyIndexFile: cfg.usageIndexV1File });
+  const usageHistory = new UsageIndex({ projectsRoots: Object.fromEntries(cfg.projectsRoots.map((r) => [r.id, r.dir])), codexSessionsRoot: cfg.codexSessionsRoot, indexFile: cfg.usageIndexFile, legacyIndexFile: cfg.usageIndexV1File });
   usageHistory.start();
   const attachments = new AttachmentStore(cfg.attachmentsDir);
   await attachments.init();
@@ -70,8 +71,8 @@ async function main(): Promise<void> {
   // D11: Codex is optional; without the binary the UI hides the GPT option and 'auto' means Claude.
   const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
   // Gemini: explicit engine only; an account counts as logged in once its OAuth file exists (never read).
-  const geminiLogin = (a: GeminiAccount) => geminiLoggedIn(a, cfg.home);
-  const gemini = cfg.geminiBin ? { engine: new GeminiEngine(cfg.geminiBin, cfg.home), loggedIn: geminiLogin } : null;
+  const geminiLogin = (a: GeminiAccount) => geminiLoggedIn(a, cfg.configDir);
+  const gemini = cfg.geminiBin ? { engine: new GeminiEngine(cfg.geminiBin, cfg.configDir), loggedIn: geminiLogin } : null;
   const geminiStatus = () => ({ available: gemini !== null, loggedIn: Object.fromEntries(GEMINI_ACCOUNTS.map((a) => [a, gemini !== null && geminiLogin(a)])) as Record<GeminiAccount, boolean> });
 
   // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) or by a fork reach it through this.
@@ -135,4 +136,9 @@ async function main(): Promise<void> {
   installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown });
 }
 
-main().catch((err: unknown) => { console.error('deck: 시작 실패', err); process.exit(1); });
+main().catch((err: unknown) => {
+  // A broken accounts.json: the message already says which file, why, and what to do — no stack.
+  if (err instanceof AccountsFileError) console.error(err.message);
+  else console.error('deck: 시작 실패', err);
+  process.exit(1);
+});

@@ -3,6 +3,7 @@ import { UsageService, parseDeckState, parseDeckCards } from './UsageService';
 import { buildRegistry } from '../../shared/accounts';
 import { remainingPct, usageOf, emptySnapshot } from '../../shared/usage-types';
 import { rankCandidates } from '../routing/AccountRouter';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 const LIVE = {
   generatedAt: '2026-09-30T12:27:02.000Z',
@@ -20,7 +21,7 @@ const LIVE = {
 
 describe('parseDeckState', () => {
   it('maps cards to accounts, rows by label prefix, missing card → down', () => {
-    const acc = parseDeckState(LIVE);
+    const acc = parseDeckState(LIVE, testRegistry());
     expect(acc.a!.status).toBe('ok');
     expect(acc.a!.fiveHour).toEqual({ usedPct: 13, resetsAt: '2026-09-30T15:09:59.684Z' });
     expect(acc.a!.weekly?.usedPct).toBe(7);
@@ -35,14 +36,14 @@ describe('parseDeckState', () => {
   it('first label match wins even when its value is missing (claude-pick rows_of)', () => {
     const acc = parseDeckState({ cards: [{ id: 'claude:main', status: 'ok', rows: [
       { label: 'Weekly (7d)', used: null }, { label: 'Weekly (7d) · 2', used: 50 },
-      { label: 'Session (5h)', used: 20 }, { label: 'Session (5h) old', used: 90 } ] }] });
+      { label: 'Session (5h)', used: 20 }, { label: 'Session (5h) old', used: 90 } ] }] }, testRegistry());
     expect(acc.a!.weekly).toBeNull();
     expect(acc.a!.fiveHour?.usedPct).toBe(20);
   });
 
   it('tolerates garbage', () => {
-    expect(parseDeckState(null).a!.status).toBe('down');
-    expect(parseDeckState({ cards: [{ id: 'claude:main', status: 'ok', rows: [{ label: 'Weekly (7d)', used: 'x' }] }] }).a!.weekly).toBeNull();
+    expect(parseDeckState(null, testRegistry()).a!.status).toBe('down');
+    expect(parseDeckState({ cards: [{ id: 'claude:main', status: 'ok', rows: [{ label: 'Weekly (7d)', used: 'x' }] }] }, testRegistry()).a!.weekly).toBeNull();
   });
 });
 
@@ -186,7 +187,7 @@ describe('UsageService', () => {
     const s = svc(async () => ({ ok: true, json: async () => expired }), () => new Date(nowMs));
     await s.pollOnce();
     s.noteTurnOk('a');
-    const rank = (needFable: boolean) => rankCandidates({ current: null, usage: s.routingSnapshot(), nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: {}, protectedAccount: null, needFable });
+    const rank = (needFable: boolean) => rankCandidates({ current: null, usage: s.routingSnapshot(), nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: {}, protectedAccount: null, needFable, accounts: testRegistry() });
     // No fresh observation: still down for routing.
     expect(rank(false).excluded.a).toBe('잔여량 정보 없음');
     s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 9, resetsAt: null } });
@@ -249,9 +250,9 @@ describe('GPT usage (D5)', () => {
   const codexSetup = { id: 'codex', status: 'setup_needed', fetchedAt: '2026-09-30T06:14:10.724Z', rows: [{ label: 'Weekly (7d)', used: 100, note: 'plan: pro · limit reached' }], error: 'HTTP 401', hint: 'codex login' };
 
   it('parses the codex card when ok; setup_needed is down with no rows (they are stale and wrong)', () => {
-    expect(parseDeckCards({ cards: [codexOk] }).gpt).toEqual({ status: 'ok', fetchedAt: '2026-09-30T12:00:00Z', fiveHour: null, weekly: { usedPct: 40, resetsAt: '2026-10-03T18:10:34.000Z' }, fable: null });
-    expect(parseDeckCards({ cards: [codexSetup] }).gpt).toEqual({ status: 'down', fetchedAt: '2026-09-30T06:14:10.724Z', fiveHour: null, weekly: null, fable: null });
-    expect(parseDeckCards({ cards: [] }).gpt.status).toBe('down');
+    expect(parseDeckCards({ cards: [codexOk] }, testRegistry()).gpt).toEqual({ status: 'ok', fetchedAt: '2026-09-30T12:00:00Z', fiveHour: null, weekly: { usedPct: 40, resetsAt: '2026-10-03T18:10:34.000Z' }, fable: null });
+    expect(parseDeckCards({ cards: [codexSetup] }, testRegistry()).gpt).toEqual({ status: 'down', fetchedAt: '2026-09-30T06:14:10.724Z', fiveHour: null, weekly: null, fable: null });
+    expect(parseDeckCards({ cards: [] }, testRegistry()).gpt.status).toBe('down');
   });
 
   it('applyTurn("gpt") corrects the snapshot until the deck card is newer', async () => {

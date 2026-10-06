@@ -6,8 +6,11 @@ export type Account = string;
 
 export const ACCOUNT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,15}$/;
 
-/** Ids that already mean another seat or usage source (`Seat`, `UsageSource`), or an Object.prototype member (ids key plain objects): never a Claude account. */
-export const RESERVED_ACCOUNT_IDS: readonly string[] = ['gpt', 'g1', 'g2', 'codex', 'all', 'constructor'];
+/**
+ * Never a Claude account: ids that already mean another seat or usage source (`Seat`, `UsageSource`), the words the
+ * UI and the wire use for "no account" (`auto`, `none`, a stringified null), and an Object.prototype member (ids key plain objects).
+ */
+export const RESERVED_ACCOUNT_IDS: readonly string[] = ['gpt', 'g1', 'g2', 'codex', 'all', 'auto', 'none', 'null', 'undefined', 'constructor'];
 
 /** One entry of `<configDir>/accounts.json`. */
 export type AccountSpec = {
@@ -45,12 +48,22 @@ export interface AccountNames {
   fallback(protect: Account | null): Account;
 }
 
+/** One account's `projects` dir. A list, not an object keyed by id: object keys that look like numbers do not keep their order. */
+export type AccountRoot = { id: Account; dir: string };
+
+/** What the session readers take: the registry's list, or an id → dir object (tests; its key order is the order). */
+export type ProjectsRoots = readonly AccountRoot[] | Readonly<Record<Account, string>>;
+
+export function rootList(roots: ProjectsRoots): readonly AccountRoot[] {
+  return Array.isArray(roots) ? (roots as readonly AccountRoot[]) : Object.entries(roots as Record<Account, string>).map(([id, dir]) => ({ id, dir }));
+}
+
 export interface AccountRegistry extends AccountNames {
   /** Throws for an id that is not configured (never guess a profile: the turn would bill another account). */
   profileDir(id: Account): string;
   projectsDir(id: Account): string;
   /** `projects` dir of every configured account (retired included), in configured order. */
-  projectsRoots(): Record<Account, string>;
+  projectsRoots(): readonly AccountRoot[];
   /**
    * Environment for one SDK turn. Copies `base`, removes every token variable (env tokens override the config dir
    * and would silently bill another account) and the base-URL / Bedrock / Vertex / entrypoint variables, and selects
@@ -68,18 +81,30 @@ const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_A
 /** Inherited from a parent Claude Code / proxy setup, these would send the turn elsewhere or mislabel it. */
 const ROUTING_VARS = ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_ENTRYPOINT'] as const;
 
+/** `~` → the home dir, then what `path.resolve` does to an absolute path (`.`, `..`, `//`, trailing `/`); a relative path is returned as it is. */
 function expandDir(dir: string, homeDir: string): string {
   const d = dir === '~' ? homeDir : dir.startsWith('~/') ? `${homeDir}/${dir.slice(2)}` : dir;
-  return d.length > 1 ? d.replace(/\/+$/, '') : d;
+  if (!d.startsWith('/')) return d;
+  const out: string[] = [];
+  for (const part of d.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') out.pop();
+    else out.push(part);
+  }
+  return `/${out.join('/')}`;
 }
 
 /**
  * The registry for a parsed config. Throws (with the reason) on an id that is not `ACCOUNT_ID_RE` or is reserved,
  * a duplicate id / profile dir / card, a relative profile dir, a `home` that is not an active account, or no active account.
+ * Two profile dirs are the same when their normalized paths are, or — with `canonical` (the server passes realpath) —
+ * when their canonical forms are. The canonical form is only compared: the CLI gets the configured spelling, because
+ * CLAUDE_CONFIG_DIR names the keychain entry.
  */
-export function buildRegistry(config: AccountsConfig, opts: { homeDir: string }): AccountRegistry {
-  const homeDir = opts.homeDir.length > 1 ? opts.homeDir.replace(/\/+$/, '') : opts.homeDir;
-  const defaultDir = `${homeDir}/.claude`;
+export function buildRegistry(config: AccountsConfig, opts: { homeDir: string; canonical?: (dir: string) => string }): AccountRegistry {
+  const homeDir = expandDir(opts.homeDir, opts.homeDir);
+  const canonical = opts.canonical ?? ((d: string) => d);
+  const defaultDir = expandDir(`${homeDir}/.claude`, homeDir);
   type Entry = { id: Account; label: string; dir: string; card: string; retired: boolean };
   const byId = new Map<Account, Entry>();
   const dirs = new Map<string, Account>();
@@ -92,11 +117,12 @@ export function buildRegistry(config: AccountsConfig, opts: { homeDir: string })
     const dir = expandDir(spec.configDir ?? (id === 'a' ? defaultDir : `${homeDir}/.claude-${id}`), homeDir);
     if (!dir.startsWith('/')) throw new Error(`계정 ${id} 의 configDir "${dir}" 는 절대 경로(또는 ~/…)여야 합니다`);
     const card = spec.card ?? LEGACY_CARD.get(id) ?? `claude:${id}`;
-    const sameDir = dirs.get(dir);
-    if (sameDir !== undefined) throw new Error(`계정 ${sameDir} 와 ${id} 의 configDir 이 같습니다: ${dir}`);
+    const real = canonical(dir);
+    const sameDir = dirs.get(real);
+    if (sameDir !== undefined) throw new Error(`계정 ${sameDir} 와 ${id} 의 configDir 이 같은 디렉터리입니다: ${dir}${real === dir ? '' : ` (→ ${real})`}`);
     const sameCard = cards.get(card);
     if (sameCard !== undefined) throw new Error(`계정 ${sameCard} 와 ${id} 의 card 가 같습니다: ${card}`);
-    dirs.set(dir, id);
+    dirs.set(real, id);
     cards.set(card, id);
     byId.set(id, { id, label: spec.label || id.toUpperCase(), dir, card, retired: spec.retired === true });
   }
@@ -112,6 +138,7 @@ export function buildRegistry(config: AccountsConfig, opts: { homeDir: string })
     return e;
   };
   const get = (id: Account): Entry | undefined => (typeof id === 'string' ? byId.get(id) : undefined);
+  const roots: readonly AccountRoot[] = all.map((id) => ({ id, dir: `${known(id).dir}/projects` }));
   return {
     list: () => active,
     all: () => all,
@@ -124,7 +151,7 @@ export function buildRegistry(config: AccountsConfig, opts: { homeDir: string })
     fallback: (protect) => active.find((id) => id !== protect && id !== home) ?? active.find((id) => id !== protect) ?? first,
     profileDir: (id) => known(id).dir,
     projectsDir: (id) => `${known(id).dir}/projects`,
-    projectsRoots: () => Object.fromEntries(all.map((id) => [id, `${known(id).dir}/projects`])),
+    projectsRoots: () => roots,
     env: (id, base) => {
       const dir = known(id).dir;
       const env: Record<string, string | undefined> = { ...base };
@@ -138,21 +165,32 @@ export function buildRegistry(config: AccountsConfig, opts: { homeDir: string })
 
 /**
  * The config used when there is no accounts.json, from the names of the profile directories found in the home dir:
- * `.claude` → a, `.claude-<x>` → x (x an id, not reserved; `.claude-a` loses to `.claude`), sorted by id.
- * Home = a, else the first. Nothing found = a alone (`~/.claude` appears at the first login).
+ * `.claude` → a, `.claude-<one letter>` → that letter in lower case (`configDir` keeps the real name when it differs),
+ * sorted by id. Nothing else is taken for an account — `.claude-backup`, `.claude-2`, `.claude-old` are what people
+ * name copies — and each such name gets one `note` line with the accounts.json entry that would add it. So do
+ * `.claude-a` (a is `~/.claude`) and a second spelling of a letter. Home = a, else the first. Nothing found = a alone
+ * (`~/.claude` appears at the first login).
  */
-export function defaultAccountsConfig(profileNames: readonly string[]): AccountsConfig {
-  const ids = new Set<string>();
-  for (const name of profileNames) {
-    if (name === '.claude') ids.add('a');
-    else if (name.startsWith('.claude-')) {
-      const id = name.slice('.claude-'.length);
-      if (ACCOUNT_ID_RE.test(id) && id !== 'a' && !RESERVED_ACCOUNT_IDS.includes(id)) ids.add(id);
-    }
+export function defaultAccountsConfig(profileNames: readonly string[], note: (line: string) => void = () => {}): AccountsConfig {
+  const found = new Map<string, AccountSpec>();
+  const skip = (name: string, why: string, id: string | null) =>
+    note(`deck: ~/${name} 은 ${why} — 계정으로 쓰려면 accounts.json 에 추가하세요: ${JSON.stringify({ id: id ?? '<id>', configDir: `~/${name}` })}`);
+  // The exact lower-case spelling first, so `.claude-b` wins over `.claude-B`.
+  const names = [...new Set(profileNames)].sort((x, y) => Number(x !== x.toLowerCase()) - Number(y !== y.toLowerCase()) || (x < y ? -1 : 1));
+  for (const name of names) {
+    if (name === '.claude') found.set('a', { id: 'a' });
+    if (!name.startsWith('.claude-') || name.length === '.claude-'.length) continue;
+    const suffix = name.slice('.claude-'.length);
+    const id = suffix.toLowerCase();
+    const usable = ACCOUNT_ID_RE.test(id) && !RESERVED_ACCOUNT_IDS.includes(id);
+    if (!/^[a-z]$/.test(id)) skip(name, '자동으로 계정으로 쓰지 않습니다(자동 발견은 ~/.claude 와 ~/.claude-<한 글자>만)', usable ? id : null);
+    else if (id === 'a') skip(name, '자동으로 계정으로 쓰지 않습니다(계정 a 는 ~/.claude)', null);
+    else if (found.has(id)) skip(name, `건너뜁니다(계정 ${id} 는 이미 ~/.claude-${id})`, null);
+    else found.set(id, name === `.claude-${id}` ? { id } : { id, configDir: `~/${name}` });
   }
-  if (ids.size === 0) ids.add('a');
-  const sorted = [...ids].sort();
-  return { version: 1, home: ids.has('a') ? 'a' : (sorted[0] as string), accounts: sorted.map((id) => ({ id })) };
+  if (found.size === 0) found.set('a', { id: 'a' });
+  const sorted = [...found.keys()].sort();
+  return { version: 1, home: found.has('a') ? 'a' : (sorted[0] as string), accounts: sorted.map((id) => found.get(id) as AccountSpec) };
 }
 
 /** The a/b/c registry deck had before accounts.json. Server code gets its registry from `loadAccountRegistry`; this is the default for callers that pass none (tests). */
@@ -201,14 +239,14 @@ export function isGeminiAccount(x: unknown): x is GeminiAccount {
   return x === 'g1' || x === 'g2';
 }
 
-/** g1 → ~/.config/deck/gemini/g1: gemini-cli keeps everything (OAuth file, settings, chats) under `$GEMINI_CLI_HOME/.gemini`. */
-export function geminiHome(account: GeminiAccount, home: string): string {
-  return `${home}/.config/deck/gemini/${account}`;
+/** g1 → `<deck config dir>/gemini/g1` (`~/.config/deck/gemini/g1` unless DECK_CONFIG_DIR): gemini-cli keeps everything (OAuth file, settings, chats) under `$GEMINI_CLI_HOME/.gemini`. */
+export function geminiHome(account: GeminiAccount, configDir: string): string {
+  return `${configDir}/gemini/${account}`;
 }
 
 /** The OAuth file gemini-cli writes after "Login with Google". deck only checks that it exists — never reads it. */
-export function geminiCredFile(account: GeminiAccount, home: string): string {
-  return `${geminiHome(account, home)}/.gemini/oauth_creds.json`;
+export function geminiCredFile(account: GeminiAccount, configDir: string): string {
+  return `${geminiHome(account, configDir)}/.gemini/oauth_creds.json`;
 }
 
 /** Who ran a turn: a Claude account, the single ChatGPT Pro account, or a Gemini account. */
@@ -243,13 +281,13 @@ const GEMINI_VARS = [
 
 /**
  * Environment for one gemini-cli turn: the base env minus every Anthropic/OpenAI/Google token and routing variable,
- * GEMINI_CLI_HOME pinned to the account's dir, and GOOGLE_GENAI_USE_GCA so headless runs use the account's
+ * GEMINI_CLI_HOME pinned to the account's dir (under the deck config dir), and GOOGLE_GENAI_USE_GCA so headless runs use the account's
  * "Login with Google" OAuth file. deck never reads that file.
  */
-export function geminiEnv(account: GeminiAccount, base: NodeJS.ProcessEnv, home: string): Record<string, string | undefined> {
+export function geminiEnv(account: GeminiAccount, base: NodeJS.ProcessEnv, configDir: string): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...base };
   for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...OPENAI_VARS, ...GEMINI_VARS]) delete env[v];
-  env.GEMINI_CLI_HOME = geminiHome(account, home);
+  env.GEMINI_CLI_HOME = geminiHome(account, configDir);
   env.GOOGLE_GENAI_USE_GCA = 'true';
   // macOS seatbelt: writes only to the workspace, tmp/cache and the account's .gemini dir.
   env.SEATBELT_PROFILE = 'permissive-open';

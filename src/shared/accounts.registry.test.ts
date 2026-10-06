@@ -20,7 +20,7 @@ describe('defaultAccountsConfig (no accounts.json)', () => {
     expect(r.list().map((a) => r.label(a))).toEqual(['A', 'B', 'C']);
     expect(r.list().map((a) => r.profileDir(a))).toEqual([`${H}/.claude`, `${H}/.claude-b`, `${H}/.claude-c`]);
     expect(r.list().map((a) => r.cardId(a))).toEqual(['claude:main', 'claude:second', 'claude:third']);
-    expect(r.projectsRoots()).toEqual({ a: `${H}/.claude/projects`, b: `${H}/.claude-b/projects`, c: `${H}/.claude-c/projects` });
+    expect(r.projectsRoots()).toEqual([{ id: 'a', dir: `${H}/.claude/projects` }, { id: 'b', dir: `${H}/.claude-b/projects` }, { id: 'c', dir: `${H}/.claude-c/projects` }]);
     const base = { PATH: '/bin', CLAUDE_CONFIG_DIR: '/elsewhere', ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: 'u' };
     expect(r.env('a', base)).toEqual({ PATH: '/bin' });
     expect(r.env('b', base)).toEqual({ PATH: '/bin', CLAUDE_CONFIG_DIR: `${H}/.claude-b` });
@@ -28,13 +28,36 @@ describe('defaultAccountsConfig (no accounts.json)', () => {
     expect(base.ANTHROPIC_API_KEY).toBe('k');
   });
 
-  it('a fourth profile gets claude:<id>; names that are not ids, reserved seats and a second "a" are ignored', () => {
-    const cfg = defaultAccountsConfig(['.claude', '.claude-work', '.claude-b', '.claude-creds-sync.log', '.claude.json', '.claude-', '.claude-UPPER', '.claude-gpt', '.claude-g1', '.claude-codex', '.claude-a', '.claudex', '.claude-0123456789abcdefg']);
-    expect(cfg.accounts.map((a) => a.id)).toEqual(['a', 'b', 'work']);
+  it('only ~/.claude and one-letter ~/.claude-<a-z> are accounts; every other ~/.claude-* is named once with the accounts.json entry to add', () => {
+    const notes: string[] = [];
+    const cfg = defaultAccountsConfig(['.claude', '.claude-work', '.claude-b', '.claude-backup', '.claude-2', '.claude-UPPER', '.claude-gpt', '.claude-a', '.claudex', '.claude-'], (l) => notes.push(l));
+    expect(cfg.accounts).toEqual([{ id: 'a' }, { id: 'b' }]);
+    expect(notes.filter((n) => n.includes('.claude-work'))).toHaveLength(1);
+    expect(notes.find((n) => n.includes('.claude-work'))).toContain('accounts.json');
+    expect(notes.find((n) => n.includes('.claude-work'))).toContain('{"id":"work","configDir":"~/.claude-work"}');
+    expect(notes.find((n) => n.includes('.claude-2'))).toContain('{"id":"2","configDir":"~/.claude-2"}');
+    expect(notes.find((n) => n.includes('.claude-UPPER'))).toContain('{"id":"upper","configDir":"~/.claude-UPPER"}');
+    // A reserved or impossible id: the entry shows a placeholder id.
+    expect(notes.find((n) => n.includes('.claude-gpt'))).toContain('"configDir":"~/.claude-gpt"');
+    expect(notes.find((n) => n.includes('.claude-gpt'))).not.toContain('"id":"gpt"');
+    expect(notes.some((n) => n.includes('.claude-a'))).toBe(true);
+    expect(notes.some((n) => n.includes('.claudex'))).toBe(false);
+    expect(notes).toHaveLength(6);
+  });
+
+  it('an upper-case one-letter suffix is the lower-case id and keeps the real directory name; a second spelling of the same letter is skipped', () => {
+    const notes: string[] = [];
+    const cfg = defaultAccountsConfig(['.claude', '.claude-B', '.claude-c'], (l) => notes.push(l));
+    expect(cfg.accounts).toEqual([{ id: 'a' }, { id: 'b', configDir: '~/.claude-B' }, { id: 'c' }]);
+    expect(notes).toEqual([]);
     const r = buildRegistry(cfg, { homeDir: H });
-    expect(r.cardId('work')).toBe('claude:work');
-    expect(r.profileDir('work')).toBe(`${H}/.claude-work`);
-    expect(r.label('work')).toBe('WORK');
+    expect(r.list()).toEqual(['a', 'b', 'c']);
+    expect(r.profileDir('b')).toBe(`${H}/.claude-B`);
+    expect(r.cardId('b')).toBe('claude:second');
+    const both = defaultAccountsConfig(['.claude-B', '.claude-b', '.claude'], (l) => notes.push(l));
+    expect(both.accounts).toEqual([{ id: 'a' }, { id: 'b' }]);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain('.claude-B');
   });
 
   it('without ~/.claude the first account is home; with nothing at all it is a alone', () => {
@@ -81,7 +104,7 @@ describe('buildRegistry', () => {
     expect(r.isRetired('c')).toBe(true);
     expect(r.isRetired('a')).toBe(false);
     expect(r.profileDir('c')).toBe(`${H}/.claude-c`);
-    expect(r.projectsRoots()).toEqual({ a: `${H}/.claude/projects`, b: `${H}/.claude-b/projects`, c: `${H}/.claude-c/projects` });
+    expect(r.projectsRoots()).toEqual([{ id: 'a', dir: `${H}/.claude/projects` }, { id: 'b', dir: `${H}/.claude-b/projects` }, { id: 'c', dir: `${H}/.claude-c/projects` }]);
   });
 
   it('has() only accepts configured ids', () => {
@@ -121,6 +144,7 @@ describe('buildRegistry', () => {
     expect(bad([{ id: 'Bad' }])).toThrow(/Bad/);
     expect(bad([{ id: 'gpt' }])).toThrow(/gpt/);
     expect(bad([{ id: 'codex' }])).toThrow(/codex/);
+    for (const id of ['auto', 'null', 'undefined', 'none']) expect(bad([{ id }])).toThrow(new RegExp(id));
     expect(bad([{ id: 'a' }], 'z')).toThrow(/home.*z/);
     expect(bad([{ id: 'a' }, { id: 'b', retired: true }], 'b')).toThrow(/home.*b/);
     expect(bad([])).toThrow(/계정/);
