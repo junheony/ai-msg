@@ -15,6 +15,7 @@ import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
+import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'c'.repeat(64);
 const COOKIE = `deck_session=${cookieValueFor(TOKEN)}`;
@@ -35,14 +36,14 @@ beforeAll(async () => {
   const old = new Date(Date.now() - 10 * 60_000);
   await fs.utimes(files.cli, old, old);
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
-  const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root });
+  const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root });
   await index.refresh();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const runner = new TurnRunner({ attachments: null, engine: new StubEngine(async () => []), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: root });
+  const runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new StubEngine(async () => []), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: root });
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: true, cwdRoots: [base] });
+  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: true, cwdRoots: [base] });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;

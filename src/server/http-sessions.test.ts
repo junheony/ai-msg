@@ -11,6 +11,7 @@ import { SessionIndex } from './sessions/SessionIndex';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
 import { TranscriptSearch } from './sessions/search';
 import { UsageService } from './usage/UsageService';
+import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'f'.repeat(64);
 const ID1 = '11111111-1111-4111-8111-111111111111';
@@ -36,9 +37,9 @@ beforeAll(async () => {
   await fs.mkdir(path.join(root, '-w-p'), { recursive: true });
   await fs.writeFile(path.join(root, '-w-p', `${ID1}.jsonl`), JSON.stringify({ type: 'user', cwd: '/w/p', message: { role: 'user', content: 'how do I rotate the token' } }) + '\n');
   const meta = new SessionMetaStore(path.join(dir, 'session-meta.json'));
-  index = new SessionIndex({ roots: { a: path.join(dir, 'a'), b: root, c: path.join(dir, 'c') }, pinnedFile: path.join(dir, 'p.json'), meta });
+  index = new SessionIndex({ roots: rootsOf({ a: path.join(dir, 'a'), b: root, c: path.join(dir, 'c') }), pinnedFile: path.join(dir, 'p.json'), meta });
   await index.refresh();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
   const commands = new SlashCommandCache();
   commands.record(ID1, '/w/p', ['compact', 'mine']);
   server = http.createServer(createRequestHandler({

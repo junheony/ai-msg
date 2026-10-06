@@ -44,7 +44,7 @@ describe('UsagePanel', () => {
   it('without a fixed now, the countdown ticks every 30 s', () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
-    const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
+    const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
     render(<UsagePanel usage={u} current={null} />);
     expect(screen.getByTestId('a-fiveHour').textContent).toContain('2시간 0분');
     act(() => { vi.advanceTimersByTime(60_000); });
@@ -127,7 +127,7 @@ describe('UsagePanel header layout (styles.css)', () => {
   const usage = css.slice(css.indexOf('/* === usage header === */'), css.indexOf('/* === chat polish === */'));
   it('never scrolls the cards sideways; below 1280px the cards drop to their own row in four equal columns', () => {
     expect(usage).not.toMatch(/overflow-x:\s*auto/);
-    expect(usage).toMatch(/\.usage-panel \{[^}]*grid-template-columns: repeat\(4, minmax\(0,/);
+    expect(usage).toMatch(/\.usage-panel \{[^}]*grid-template-columns: repeat\(var\(--usage-cards, 4\), minmax\(0,/);
     const two = usage.slice(usage.indexOf('@media (max-width: 1279.98px)'));
     expect(two).toMatch(/\.topbar \{[^}]*flex-wrap: wrap/);
     expect(two).toMatch(/\.usage-card \{[^}]*flex: 1 1 0/);

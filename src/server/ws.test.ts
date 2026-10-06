@@ -20,6 +20,7 @@ import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
 import { PermissionBroker, QuestionBroker, attachWebSocket } from './ws';
+import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'f'.repeat(64);
 const COOKIE = `deck_session=${cookieValueFor(TOKEN)}`;
@@ -56,9 +57,9 @@ beforeAll(async () => {
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ws-work-')));
   meta = new SessionMetaStore(path.join(base, 'session-meta.json'));
-  index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), meta });
+  index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), meta });
   await index.refresh();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
   await usage.pollOnce();
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
@@ -103,13 +104,13 @@ beforeAll(async () => {
   });
   store2 = new AttachmentStore(path.join(base, 'att'));
   await store2.init();
-  const runner = new TurnRunner({ attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
+  const runner = new TurnRunner({ accounts: testRegistry(), attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
   pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
   settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2, meta, acceptedRefs: new AcceptedRefs(null) });
+  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2, meta, acceptedRefs: new AcceptedRefs(null) });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { ACCOUNTS, SEAT_LABEL, type Seat } from '../../shared/accounts';
+import { useEffect, useState, type CSSProperties } from 'react';
+import type { Seat } from '../../shared/accounts';
+import { useAccounts } from '../accounts';
 import { ClaudeMark, OpenAIMark } from './EngineMark';
-import { emptyAccountUsage, parseIsoUtc, remainingPct, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, parseIsoUtc, remainingPct, usageOf, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 type WindowKey = 'fiveHour' | 'weekly' | 'fable';
 const WINDOWS: { key: WindowKey; name: string }[] = [
@@ -90,6 +91,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
   seat: Seat; u: AccountUsage; windows: { key: WindowKey; name: string }[]; current: boolean; now: number;
   pop: Pop | null; onPop: (p: Pop | null) => void; hint?: string; onOpenHistory?: () => void;
 }) {
+  const label = useAccounts().label(seat);
   const at = (el: HTMLElement, pinned: boolean): Pop => {
     const r = el.getBoundingClientRect();
     return { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6, pinned };
@@ -113,7 +115,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
       role="button"
       tabIndex={0}
       aria-expanded={open}
-      aria-label={`${SEAT_LABEL[seat]} 잔여량${current ? ' (현재)' : ''}`}
+      aria-label={`${label} 잔여량${current ? ' (현재)' : ''}`}
       onMouseEnter={(e) => { if (!pop?.pinned) onPop(at(e.currentTarget, false)); }}
       onMouseLeave={() => { if (!pop?.pinned) onPop(null); }}
       onClick={(e) => { e.stopPropagation(); onPop(open && pop?.pinned ? null : at(e.currentTarget, true)); }}
@@ -125,7 +127,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
       {current && <span className="usage-dot" aria-hidden="true" />}
       <div className="usage-id">
         {seat === 'gpt' ? <OpenAIMark className="usage-mark gpt" /> : <ClaudeMark className="usage-mark claude" />}
-        <span className="usage-letter">{SEAT_LABEL[seat]}</span>
+        <span className="usage-letter" title={label}>{label}</span>
       </div>
       <span className={`usage-sum ${worst ? levelClass(worst.w) : 'none'}`} aria-hidden="true" title={worst ? `가장 적게 남은 한도 · ${worst.name} ${worst.rem}%` : '잔여량 알 수 없음'}>
         {!worst ? '—' : worst.rem === 0 ? '소진' : <>{worst.rem}<small>%</small></>}
@@ -141,7 +143,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
       </div>
       {open && (
         <div className="usage-pop" role="tooltip" style={{ left: pop.x, top: pop.y }}>
-          <div className="usage-pop-title">{SEAT_LABEL[seat]} 계정{current ? ' · 현재' : ''}</div>
+          <div className="usage-pop-title">{label} 계정{current ? ' · 현재' : ''}</div>
           {hint && <div className="usage-pop-row hint">{hint}</div>}
           {windows.map(({ key, name }) => {
             const w = u[key];
@@ -167,6 +169,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
 
 export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory }: { usage: UsageSnapshot | null; current: Seat | null; now?: number; onOpenHistory?: () => void }) {
   const now = useClock(fixedNow);
+  const { active } = useAccounts();
   const [pop, setPop] = useState<Pop | null>(null);
   useEffect(() => {
     if (!pop?.pinned) return;
@@ -177,10 +180,13 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory }: { u
   }, [pop?.pinned]);
   if (!usage) return <div className="usage-panel"><span className="usage-loading">잔여량 불러오는 중…</span></div>;
   const gpt = usage.gpt ?? emptyAccountUsage();
+  // One card per active account and one for GPT: the grid's column count. Past four cards there is no room for the rows
+  // of numbers: the compact card (label over the lowest remaining %) at every width.
+  const cards = active.length + 1;
   return (
-    <div className="usage-panel">
-      {ACCOUNTS.map((a) => (
-        <SeatCard key={a} seat={a} u={usage.accounts[a]} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />
+    <div className="usage-panel" {...(cards > 4 ? { 'data-dense': '' } : {})} style={{ '--usage-cards': cards } as CSSProperties}>
+      {active.map(({ id: a }) => (
+        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />
       ))}
       <SeatCard
         seat="gpt" u={gpt} windows={GPT_WINDOWS} current={current === 'gpt'} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory}

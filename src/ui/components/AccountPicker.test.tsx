@@ -12,10 +12,10 @@ import { TurnBadge } from './TurnBadge';
 Element.prototype.scrollIntoView = () => {};
 
 function usage(): UsageSnapshot {
-  const u = emptySnapshot(new Date('2026-10-02T00:00:00Z'));
+  const u = emptySnapshot(new Date('2026-10-02T00:00:00Z'), ['a', 'b', 'c']);
   const w = (usedPct: number) => ({ usedPct, resetsAt: null });
-  u.accounts.a = { ...u.accounts.a, status: 'ok', fiveHour: w(12), weekly: w(70) };
-  u.accounts.b = { ...u.accounts.b, status: 'ok', fiveHour: w(40), weekly: w(60) };
+  u.accounts.a = { ...u.accounts.a!, status: 'ok', fiveHour: w(12), weekly: w(70) };
+  u.accounts.b = { ...u.accounts.b!, status: 'ok', fiveHour: w(40), weekly: w(60) };
   return u;
 }
 

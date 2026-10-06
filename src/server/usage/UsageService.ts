@@ -1,5 +1,7 @@
-import { ACCOUNTS, CARD_ID, type Account, type UsageSeat } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, parseIsoUtc, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import fs from 'node:fs';
+import path from 'node:path';
+import { type Account, type AccountNames, type UsageSeat } from '../../shared/accounts';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits };
@@ -49,11 +51,13 @@ function cardsById(json: unknown): Map<string, Record<string, unknown>> {
   return byId;
 }
 
-export function parseDeckCards(json: unknown): { accounts: Record<Account, AccountUsage>; gpt: AccountUsage } {
+/** One entry per account of `reg` (retired ones too: their usage stays visible). */
+export function parseDeckCards(json: unknown, reg: AccountNames): { accounts: Record<Account, AccountUsage>; gpt: AccountUsage } {
   const byId = cardsById(json);
-  const accounts: Record<Account, AccountUsage> = { a: emptyAccountUsage(), b: emptyAccountUsage(), c: emptyAccountUsage() };
-  for (const account of ACCOUNTS) {
-    const card = byId.get(CARD_ID[account]);
+  const accounts: Record<Account, AccountUsage> = {};
+  for (const account of reg.all()) {
+    accounts[account] = emptyAccountUsage();
+    const card = byId.get(reg.cardId(account));
     if (!card) continue;
     const status = card.status === 'ok' ? 'ok' : card.status === 'stale' ? 'stale' : 'down';
     accounts[account] = { status, fetchedAt: str(card.fetchedAt), ...rowsOf(card) };
@@ -68,8 +72,8 @@ export function parseDeckCards(json: unknown): { accounts: Record<Account, Accou
   return { accounts, gpt };
 }
 
-export function parseDeckState(json: unknown): Record<Account, AccountUsage> {
-  return parseDeckCards(json).accounts;
+export function parseDeckState(json: unknown, reg: AccountNames): Record<Account, AccountUsage> {
+  return parseDeckCards(json, reg).accounts;
 }
 
 export class UsageService {
@@ -88,14 +92,85 @@ export class UsageService {
   private readonly intervalMs: number;
   private readonly timeoutMs: number;
   private readonly now: () => Date;
+  private readonly reg: AccountNames;
+  private readonly sourceFile: string | null;
+  private readonly strict: boolean | null;
+  private readonly log: (line: string) => void;
+  /** usage-deck has answered at least once (this run, or an earlier one: `sourceFile`). */
+  private deckSeen = false;
+  /** `sourceFile` is there and unreadable: read as seen (the strict side), written again by the next answer. */
+  private recordBroken = false;
+  private firstAttemptDone = false;
 
-  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date }) {
+  /**
+   * `accounts`: the registry.
+   * `usageSourceFile` (`<configDir>/usage-source.json`) and `strict` (`DECK_USAGE_STRICT`: true → 'deck', false → 'none',
+   * null → by the record) decide the snapshot's `usageSource`; with neither, the snapshot has none (= 'deck').
+   */
+  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; log?: (line: string) => void }) {
     this.url = opts.deckUrl.replace(/\/+$/, '') + '/api/state';
     this.fetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
     this.intervalMs = opts.intervalMs ?? 60_000;
     this.timeoutMs = opts.timeoutMs ?? 6_000;
     this.now = opts.now ?? (() => new Date());
-    this.snap = emptySnapshot(this.now());
+    this.reg = opts.accounts;
+    this.sourceFile = opts.usageSourceFile ?? null;
+    this.strict = opts.strict ?? null;
+    this.log = opts.log ?? (() => {});
+    if (this.sourceFile) this.readRecord(this.sourceFile);
+    this.snap = this.withSource(emptySnapshot(this.now(), this.reg.all()));
+  }
+
+  private readRecord(file: string): void {
+    let text: string;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      this.recordBroken = true;
+      this.log(`deck: ${file} 을 읽을 수 없어 usage-deck 이 있는 설치로 봅니다 — ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    let at: unknown;
+    try {
+      at = (JSON.parse(text) as { deckSeenAt?: unknown } | null)?.deckSeenAt;
+    } catch {
+      at = undefined;
+    }
+    if (typeof at === 'string' && !Number.isNaN(Date.parse(at))) { this.deckSeen = true; return; }
+    this.recordBroken = true;
+    this.log(`deck: ${file} 의 내용을 읽을 수 없어 usage-deck 이 있는 설치로 봅니다 (usage-deck 이 다음에 응답하면 다시 씁니다)`);
+  }
+
+  /** usage-deck answered: the first time ever, that is written down (atomically, 0600) and never again. */
+  private noteDeckSeen(): void {
+    if (this.deckSeen) return;
+    this.deckSeen = true;
+    if (!this.sourceFile) return;
+    const tmp = `${this.sourceFile}.${process.pid}.tmp`;
+    try {
+      fs.mkdirSync(path.dirname(this.sourceFile), { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify({ deckSeenAt: this.now().toISOString() }), { mode: 0o600 });
+      fs.renameSync(tmp, this.sourceFile);
+      this.recordBroken = false;
+    } catch (err) {
+      fs.rmSync(tmp, { force: true });
+      this.log(`deck: ${this.sourceFile} 을 쓰지 못했습니다 — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** null = not judged here (no record file and no switch): the snapshot carries no `usageSource`. */
+  private source(): 'deck' | 'none' | null {
+    if (this.strict !== null) return this.strict ? 'deck' : 'none';
+    if (!this.sourceFile) return null;
+    // Before the first fetch attempt has ended nothing is known yet: the strict side.
+    return this.deckSeen || this.recordBroken || !this.firstAttemptDone ? 'deck' : 'none';
+  }
+
+  private withSource(s: UsageSnapshot): UsageSnapshot {
+    const usageSource = this.source();
+    if (usageSource === null) return s;
+    return { ...s, usageSource };
   }
 
   /** What the UI shows: the real card status (a setup_needed card stays 'down', so the re-login signal is kept). */
@@ -109,9 +184,10 @@ export class UsageService {
    */
   routingSnapshot(): UsageSnapshot {
     let accounts: UsageSnapshot['accounts'] | null = null;
-    for (const a of ACCOUNTS) {
-      const u = this.lift(a, this.snap.accounts[a]);
-      if (u !== this.snap.accounts[a]) (accounts ??= { ...this.snap.accounts })[a] = u;
+    for (const a of this.reg.all()) {
+      const cur = usageOf(this.snap, a);
+      const u = this.lift(a, cur);
+      if (u !== cur) (accounts ??= { ...this.snap.accounts })[a] = u;
     }
     return accounts ? { ...this.snap, accounts } : this.snap;
   }
@@ -122,12 +198,12 @@ export class UsageService {
   }
 
   private publish(next: UsageSnapshot): void {
-    this.snap = next;
-    for (const cb of this.listeners) cb(next);
+    this.snap = this.withSource(next);
+    for (const cb of this.listeners) cb(this.snap);
   }
 
   private seatOf(s: UsageSnapshot, seat: UsageSeat): AccountUsage {
-    return seat === 'gpt' ? (s.gpt ?? emptyAccountUsage()) : s.accounts[seat];
+    return seat === 'gpt' ? (s.gpt ?? emptyAccountUsage()) : usageOf(s, seat);
   }
 
   /**
@@ -199,15 +275,20 @@ export class UsageService {
     try {
       const res = await this.fetchFn(this.url, { signal: ac.signal });
       if (!res.ok) throw new Error(`deck HTTP not ok`);
-      const parsed = parseDeckCards(await res.json());
+      const json = await res.json();
+      const parsed = parseDeckCards(json, this.reg);
+      // usage-deck's own answer (a `cards` list), not just anything listening on that port.
+      if (json && typeof json === 'object' && Array.isArray((json as { cards?: unknown }).cards)) this.noteDeckSeen();
+      this.firstAttemptDone = true;
       const accounts = { ...parsed.accounts };
-      for (const a of ACCOUNTS) accounts[a] = this.overlay(a, accounts[a]);
+      for (const a of this.reg.all()) accounts[a] = this.overlay(a, usageOf(parsed, a));
       this.publish({ generatedAt: this.now().toISOString(), deckReachable: true, accounts, gpt: this.withCredits(this.overlay('gpt', parsed.gpt)) });
     } catch {
+      this.firstAttemptDone = true;
       // Spec §8: deck unreachable → keep last values, show them as stale.
       const stale = (u: AccountUsage): AccountUsage => ({ ...u, status: u.status === 'ok' ? 'stale' : u.status });
       const accounts = { ...this.snap.accounts };
-      for (const a of ACCOUNTS) accounts[a] = stale(accounts[a]);
+      for (const a of this.reg.all()) accounts[a] = stale(usageOf(this.snap, a));
       this.publish({ generatedAt: this.now().toISOString(), deckReachable: false, accounts, gpt: stale(this.seatOf(this.snap, 'gpt')) });
     } finally {
       clearTimeout(t);

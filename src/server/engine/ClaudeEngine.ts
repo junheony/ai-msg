@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import { query, type HookInput, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { accountEnv } from '../../shared/accounts';
+import type { AccountRegistry } from '../../shared/accounts';
 import { IMAGE_TYPES, promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage, type TaskStatus, type TaskUpdate, type TaskUsage, type TurnPhase, type TurnUsage } from '../../shared/turn-types';
 import { MODEL_ARG } from '../routing/ModelPolicy';
@@ -353,7 +353,7 @@ export function deniedCalls(m: SDKMessage, inputs: Map<string, unknown>): { tool
 
 export function buildOptions(
   req: TurnRequest,
-  deps: { home: string; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void; /** false: DECK_STEER=0 (no echo flag). */ steer?: boolean; /** Shared with the stream loop (denials it sees); a fresh one by default. */ audit?: ToolAudit },
+  deps: { home: string; accounts: Pick<AccountRegistry, 'env'>; baseEnv: NodeJS.ProcessEnv; abortController: AbortController; onStderr: (s: string) => void; /** false: DECK_STEER=0 (no echo flag). */ steer?: boolean; /** Shared with the stream loop (denials it sees); a fresh one by default. */ audit?: ToolAudit },
 ): Options {
   // Audit: canUseTool is asked only about calls that need a decision; an allow rule, the mode (acceptEdits) or a tool
   // that needs no permission runs the rest without it. Those are reported from the after-hooks, denials also from the
@@ -369,7 +369,7 @@ export function buildOptions(
   };
   return {
     cwd: req.cwd,
-    env: accountEnv(req.account, deps.baseEnv, deps.home),
+    env: deps.accounts.env(req.account, deps.baseEnv),
     model: MODEL_ARG[req.model],
     // sdk.d.ts Options.effort?: EffortLevel ('low' | 'medium' | 'high' | 'xhigh' | 'max'), "works with adaptive thinking".
     ...(req.effort ? { effort: req.effort } : {}),
@@ -592,6 +592,7 @@ export function noteCommands(m: SDKMessage, fallbackCwd: string, onCommands: Com
 export class ClaudeEngine implements Engine {
   private readonly queryFn: QueryFn;
   private readonly home: string;
+  private readonly accounts: Pick<AccountRegistry, 'env'>;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly readFile: ReadFile;
   private readonly bgMaxMs: number;
@@ -600,9 +601,10 @@ export class ClaudeEngine implements Engine {
   /** Kill switch (DECK_STEER=0 → false): no `onLive().steer`, no echo flag; follow-ups and per-uuid bookkeeping stay. */
   private readonly steer: boolean;
 
-  constructor(opts: { queryFn?: QueryFn; home?: string; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number; onCommands?: CommandsListener; steer?: boolean } = {}) {
+  constructor(opts: { queryFn?: QueryFn; home?: string; accounts: Pick<AccountRegistry, 'env'>; baseEnv?: NodeJS.ProcessEnv; readFile?: ReadFile; bgMaxMs?: number; bgGraceMs?: number; onCommands?: CommandsListener; steer?: boolean }) {
     this.queryFn = opts.queryFn ?? ((p) => query(p));
     this.home = opts.home ?? os.homedir();
+    this.accounts = opts.accounts;
     this.baseEnv = opts.baseEnv ?? process.env;
     this.readFile = opts.readFile ?? ((p) => fs.readFile(p));
     this.bgMaxMs = opts.bgMaxMs ?? BG_MAX_MS;
@@ -668,7 +670,7 @@ export class ClaudeEngine implements Engine {
     const audit = toolAudit(req);
     // Tool inputs by call id (for a permission_denied frame, which carries none); emptied at each result.
     const toolInputs = new Map<string, unknown>();
-    const options = buildOptions(req, { home: this.home, baseEnv: this.baseEnv, abortController, steer: this.steer, audit, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
+    const options = buildOptions(req, { home: this.home, accounts: this.accounts, baseEnv: this.baseEnv, abortController, steer: this.steer, audit, onStderr: (s) => { stderrTail = (stderrTail + s).slice(-STDERR_MAX); } });
     const write = async (f: { text: string; attachments: Attachment[] }, steerId: string | null): Promise<boolean> => {
       if (input.closed) return false;
       // Counted before the first await: the loop decides whether to close right after a result,

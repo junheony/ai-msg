@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MAX_TITLE_CHARS, SessionMetaStore } from './SessionMetaStore';
 import { SessionIndex } from './SessionIndex';
+import { rootsOf } from '../../shared/accounts.testkit';
 
 const ID1 = '11111111-1111-4111-8111-111111111111';
 const ID2 = '22222222-2222-4222-8222-222222222222';
@@ -75,7 +76,7 @@ describe('SessionMetaStore', () => {
     await fs.mkdir(path.join(root, '-w-p'), { recursive: true });
     await fs.writeFile(path.join(root, '-w-p', `${ID1}.jsonl`), JSON.stringify({ type: 'user', cwd: '/w/p', message: { role: 'user', content: 'first prompt' } }) + '\n');
     const meta = new SessionMetaStore(path.join(dir, 'm.json'));
-    const index = new SessionIndex({ roots: { a: path.join(dir, 'a'), b: root, c: path.join(dir, 'c') }, pinnedFile: path.join(dir, 'p.json'), meta });
+    const index = new SessionIndex({ roots: rootsOf({ a: path.join(dir, 'a'), b: root, c: path.join(dir, 'c') }), pinnedFile: path.join(dir, 'p.json'), meta });
     await index.refresh();
     expect(index.projects()[0]!.sessions[0]).toMatchObject({ title: 'first prompt' });
     expect(index.projects()[0]!.sessions[0]!.archived).toBeUndefined();
@@ -134,7 +135,7 @@ describe('SessionMetaStore', () => {
     await fs.mkdir(path.join(root, '-w-p'), { recursive: true });
     for (const id of [ID1, ID2]) await fs.writeFile(path.join(root, '-w-p', `${id}.jsonl`), JSON.stringify({ type: 'user', cwd: '/w/p', message: { role: 'user', content: `p ${id.slice(0, 1)}` } }) + '\n');
     const meta = new SessionMetaStore(path.join(dir, 'm.json'));
-    const index = new SessionIndex({ roots: { a: path.join(dir, 'a'), b: root, c: path.join(dir, 'c') }, pinnedFile: path.join(dir, 'p.json'), meta });
+    const index = new SessionIndex({ roots: rootsOf({ a: path.join(dir, 'a'), b: root, c: path.join(dir, 'c') }), pinnedFile: path.join(dir, 'p.json'), meta });
     await index.refresh();
     const byId = () => new Map(index.projects()[0]!.sessions.map((e) => [e.sessionId, e]));
     expect(byId().get(ID1)!.nextSession).toBeUndefined();

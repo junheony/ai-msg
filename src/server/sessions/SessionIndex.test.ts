@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MAX_RECENT_FOLDERS, SessionIndex, groupProjects, readPinned, readRecent, scanProfile } from './SessionIndex';
 import type { SessionEntry } from '../../shared/session-types';
+import { rootsOf } from '../../shared/accounts.testkit';
 
 const L = (o: unknown) => JSON.stringify(o) + '\n';
 const ID1 = '11111111-1111-4111-8111-111111111111';
@@ -63,7 +64,7 @@ describe('groupProjects', () => {
   });
 
   it('projects(extra) groups extra (Codex) entries under their cwd without touching the cached grouping', async () => {
-    const idx = new SessionIndex({ roots: { a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' }, pinnedFile: '/nonexistent/p.json' });
+    const idx = new SessionIndex({ roots: rootsOf({ a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' }), pinnedFile: '/nonexistent/p.json' });
     await idx.refresh();
     expect(idx.projects()).toEqual([]);
     const gpt: SessionEntry = { ...e(ID1, 'a', '/w/gpt', 5), account: 'gpt', engine: 'codex', sandbox: 'read-only' };
@@ -84,7 +85,7 @@ describe('readPinned + SessionIndex', () => {
     const pinnedFile = path.join(ra, 'projects.json');
     expect(await readPinned(pinnedFile)).toEqual([]);
     await fs.writeFile(pinnedFile, JSON.stringify([{ cwd: '/w/one', name: 'One' }]));
-    const idx = new SessionIndex({ roots: { a: ra, b: rb, c: rc }, pinnedFile });
+    const idx = new SessionIndex({ roots: rootsOf({ a: ra, b: rb, c: rc }), pinnedFile });
     await idx.refresh();
     expect(idx.lookup(ID1)?.account).toBe('b');
     expect(idx.lookup('nope')).toBeNull();
@@ -111,7 +112,7 @@ describe('recent folders (F1)', () => {
     const recentFile = path.join(dir, 'cfg', 'recent-folders.json');
     expect(await readRecent(recentFile)).toEqual([]);
     const roots = { a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' };
-    const idx = new SessionIndex({ roots, pinnedFile: '/nonexistent/p.json', recentFile });
+    const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: '/nonexistent/p.json', recentFile });
     await idx.refresh();
     await idx.addRecent('/w/one');
     await idx.addRecent('/w/two');
@@ -120,7 +121,7 @@ describe('recent folders (F1)', () => {
     for (let i = 0; i < MAX_RECENT_FOLDERS + 5; i++) await idx.addRecent(`/w/n${i}`);
     expect(idx.recent()).toHaveLength(MAX_RECENT_FOLDERS);
     expect(idx.recent()[0]).toBe(`/w/n${MAX_RECENT_FOLDERS + 4}`);
-    const again = new SessionIndex({ roots, pinnedFile: '/nonexistent/p.json', recentFile });
+    const again = new SessionIndex({ roots: rootsOf(roots), pinnedFile: '/nonexistent/p.json', recentFile });
     await again.refresh();
     expect(again.recent()).toEqual(idx.recent());
     expect((await fs.stat(recentFile)).mode & 0o777).toBe(0o600);
@@ -165,7 +166,7 @@ describe('NFC/NFD paths (작업)', () => {
   it('addRecent and readRecent dedupe across spellings', async () => {
     const dir = await mkRoot();
     const recentFile = path.join(dir, 'r.json');
-    const idx = new SessionIndex({ roots: { a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' }, pinnedFile: '/nonexistent/p.json', recentFile });
+    const idx = new SessionIndex({ roots: rootsOf({ a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' }), pinnedFile: '/nonexistent/p.json', recentFile });
     await idx.refresh();
     await idx.addRecent(NFD);
     expect(await idx.addRecent(NFC)).toEqual([NFC]);
@@ -181,7 +182,7 @@ describe('SessionIndex heldBy (process holders)', () => {
     await writeSession(roots.a, '-Users-x-proj', ID1, '/Users/x/proj', 'held', 2_000_000);
     await writeSession(roots.a, '-Users-x-proj', ID2, '/Users/x/proj', 'free', 1_000_000);
     const held = new Map<string, 'desktop' | 'other'>([[ID1, 'desktop']]);
-    const idx = new SessionIndex({ roots, pinnedFile: path.join(root, 'pinned.json'), holders: { heldBy: (id) => held.get(id) ?? null } });
+    const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(root, 'pinned.json'), holders: { heldBy: (id) => held.get(id) ?? null } });
     await idx.refresh();
     const byId = () => Object.fromEntries(idx.projects().flatMap((p) => p.sessions).map((s) => [s.sessionId, s]));
     expect(byId()[ID1]?.heldBy).toBe('desktop');
@@ -211,7 +212,7 @@ describe('SessionIndex.touch', () => {
     const c = await mkRoot();
     const f1 = await writeSession(b, '-w-p', ID1, '/w/p', 'one', 1_000_000);
     await writeSession(b, '-w-p', ID2, '/w/p', 'two', 2_000_000);
-    const idx = new SessionIndex({ roots: { a, b, c }, pinnedFile: '/nonexistent/p.json' });
+    const idx = new SessionIndex({ roots: rootsOf({ a, b, c }), pinnedFile: '/nonexistent/p.json' });
     await idx.refresh();
     expect(idx.projects()[0]?.sessions.map((s) => s.sessionId)).toEqual([ID2, ID1]);
     expect(await idx.touch()).toBe(false);

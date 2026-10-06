@@ -11,6 +11,7 @@ import { SubscriptionStore } from './push/SubscriptionStore';
 import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageService } from './usage/UsageService';
+import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'e'.repeat(64);
 let base = '';
@@ -21,9 +22,9 @@ let build: string | null = null;
 beforeAll(async () => {
   uiDir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ui-'));
   const roots = { a: path.join(uiDir, 'a'), b: path.join(uiDir, 'b'), c: path.join(uiDir, 'c') };
-  const index = new SessionIndex({ roots, pinnedFile: path.join(uiDir, 'p.json') });
+  const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(uiDir, 'p.json') });
   await index.refresh();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
   const attachments = new AttachmentStore(path.join(uiDir, 'att'));
   await attachments.init();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir, usage, index, devOrigins: ['http://dev.local'], attachments, build: () => build }));
@@ -142,7 +143,7 @@ describe('http', () => {
 
   it('a 500 returns a generic body and keeps the detail in the server log', async () => {
     const roots = { a: path.join(uiDir, 'a'), b: path.join(uiDir, 'b'), c: path.join(uiDir, 'c') };
-    const index = new SessionIndex({ roots, pinnedFile: path.join(uiDir, 'p.json') });
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(uiDir, 'p.json') });
     const usage = { snapshot: () => { throw new Error('SECRET-DETAIL /Users/alice/.claude-b'); } } as unknown as UsageService;
     const s2 = http.createServer(createRequestHandler({ token: TOKEN, uiDir, usage, index }));
     await new Promise<void>((r) => s2.listen(0, '127.0.0.1', r));
@@ -257,9 +258,9 @@ describe('folder picker routes (F1)', () => {
     await fs.writeFile(path.join(home, 'Documents', 'secret.txt'), 'x');
     await fs.symlink(outside, path.join(home, 'out-link'));
     const roots = { a: path.join(home, 'na'), b: path.join(home, 'nb'), c: path.join(home, 'nc') };
-    idx = new SessionIndex({ roots, pinnedFile: path.join(home, 'p.json'), recentFile: path.join(home, 'cfg', 'recent-folders.json') });
+    idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(home, 'p.json'), recentFile: path.join(home, 'cfg', 'recent-folders.json') });
     await idx.refresh();
-    const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
     s3 = http.createServer(createRequestHandler({ token: TOKEN, uiDir: home, usage, index: idx, home, onIndexChanged: () => { changed++; } }));
     await new Promise<void>((r) => s3.listen(0, '127.0.0.1', r));
     b2 = `http://127.0.0.1:${(s3.address() as { port: number }).port}`;
@@ -321,11 +322,11 @@ describe('POST /api/pins (F2)', () => {
   beforeAll(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-pinhttp-'));
     const roots = { a: path.join(dir, 'a'), b: path.join(dir, 'b'), c: path.join(dir, 'c') };
-    const idx = new SessionIndex({ roots, pinnedFile: path.join(dir, 'p.json') });
+    const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(dir, 'p.json') });
     await idx.refresh();
     pins = new PinStore(path.join(dir, 'pins.json'));
     await pins.load();
-    const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
     s4 = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index: idx, pins, onIndexChanged: () => { changed++; } }));
     await new Promise<void>((r) => s4.listen(0, '127.0.0.1', r));
     b3 = `http://127.0.0.1:${(s4.address() as { port: number }).port}`;
@@ -465,9 +466,9 @@ describe('PWA + Web Push over http', () => {
     await fs.writeFile(path.join(dir, 'sw.js'), 'self.addEventListener("push", () => {});');
     await fs.writeFile(path.join(dir, 'manifest.webmanifest'), '{"name":"deck"}');
     const roots = { a: path.join(dir, 'a'), b: path.join(dir, 'b'), c: path.join(dir, 'c') };
-    const index = new SessionIndex({ roots, pinnedFile: path.join(dir, 'p.json') });
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(dir, 'p.json') });
     await index.refresh();
-    const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
     const store = new SubscriptionStore(path.join(dir, 'subs.json'));
     const notifier = new PushNotifier({ store, vapid: { publicKey: 'PUBKEY_b64url', privateKey: 'never-sent' }, subject: `https://${HOST}`, titleOf: () => 't', send });
     s3 = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index, extraHosts: [HOST], push: { notifier, store } }));

@@ -1,9 +1,24 @@
+import type { Account, AccountNames } from './accounts';
+
 /** Token usage history (사용량 view): where the tokens were spent, per day × source × model family. */
 
-/** a/b/c = the three Claude profiles; codex = the ChatGPT account's Codex rollouts. */
-export type UsageSource = 'a' | 'b' | 'c' | 'codex';
-export const USAGE_SOURCES: readonly UsageSource[] = ['a', 'b', 'c', 'codex'];
-export const USAGE_SOURCE_LABEL: Record<UsageSource | 'all', string> = { a: 'A', b: 'B', c: 'C', codex: 'GPT', all: '합계' };
+/** The ChatGPT account's Codex rollouts. */
+export const CODEX_SOURCE = 'codex';
+/**
+ * A Claude account id (which ones exist is configuration — `AccountRegistry` — plus accounts the index still holds
+ * usage for) or `CODEX_SOURCE`. `'all'` (the global total) and `'codex'` are reserved account ids, so they never collide.
+ */
+export type UsageSource = Account | typeof CODEX_SOURCE;
+
+/** The sources to show for these Claude accounts, Codex last. */
+export function usageSources(accounts: readonly Account[]): UsageSource[] {
+  return [...accounts, CODEX_SOURCE];
+}
+
+/** Tab / legend label: the account's label (an id that is not configured shows as `ID`), `GPT` for Codex, `합계` for the total. */
+export function usageSourceLabel(source: UsageSource | 'all', names: Pick<AccountNames, 'label'>): string {
+  return source === 'all' ? '합계' : source === CODEX_SOURCE ? 'GPT' : names.label(source);
+}
 
 export type ModelFamily = 'opus' | 'sonnet' | 'fable' | 'haiku' | 'gpt' | 'other';
 export const MODEL_FAMILIES: readonly ModelFamily[] = ['opus', 'sonnet', 'fable', 'haiku', 'gpt', 'other'];
@@ -18,7 +33,15 @@ export type TokenCounts = { input: number; output: number; cacheRead: number; ca
  */
 export type UsageRow = TokenCounts & { day: string; source: UsageSource | 'all'; family: ModelFamily };
 
-export type UsageHistory = { generatedAt: string; days: number; lastScanAt: string | null; scanning: boolean; rows: UsageRow[] };
+export type UsageHistory = {
+  generatedAt: string;
+  days: number;
+  lastScanAt: string | null;
+  scanning: boolean;
+  /** Every source the index has a place for, in index order (accounts that left the configuration included), Codex last. Absent from a server that only knows a/b/c. */
+  sources?: UsageSource[];
+  rows: UsageRow[];
+};
 
 /**
  * 추정 단가 (USD per million tokens), the one place prices live. Claude: claude-api skill model table

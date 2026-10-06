@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNTS, CARD_ID, SEAT_LABEL, accountEnv, codexEnv, profileDir, projectsDir } from './accounts';
+import { codexEnv } from './accounts';
+import { testRegistry } from './accounts.testkit';
+
+const reg = testRegistry('/Users/x');
+const accountEnv = (account: string, base: NodeJS.ProcessEnv) => reg.env(account, base);
 
 describe('accounts', () => {
   it('maps accounts to usage-deck card ids', () => {
-    expect(ACCOUNTS).toEqual(['a', 'b', 'c']);
-    expect(CARD_ID).toEqual({ a: 'claude:main', b: 'claude:second', c: 'claude:third' });
+    expect(reg.list()).toEqual(['a', 'b', 'c']);
+    expect(Object.fromEntries(reg.list().map((a) => [a, reg.cardId(a)]))).toEqual({ a: 'claude:main', b: 'claude:second', c: 'claude:third' });
   });
 
   it('profile dirs follow the ~/.claude, ~/.claude-b, ~/.claude-c rule', () => {
-    expect(profileDir('a', '/Users/x')).toBe('/Users/x/.claude');
-    expect(profileDir('b', '/Users/x')).toBe('/Users/x/.claude-b');
-    expect(profileDir('c', '/Users/x')).toBe('/Users/x/.claude-c');
-    expect(projectsDir('c', '/Users/x')).toBe('/Users/x/.claude-c/projects');
+    expect(reg.profileDir('a')).toBe('/Users/x/.claude');
+    expect(reg.profileDir('b')).toBe('/Users/x/.claude-b');
+    expect(reg.profileDir('c')).toBe('/Users/x/.claude-c');
+    expect(reg.projectsDir('c')).toBe('/Users/x/.claude-c/projects');
   });
 
   it('strips every token variable and sets CLAUDE_CONFIG_DIR for b/c only', () => {
@@ -22,23 +26,23 @@ describe('accounts', () => {
       ANTHROPIC_AUTH_TOKEN: 'auth',
       CLAUDE_CONFIG_DIR: '/somewhere/else',
     };
-    const a = accountEnv('a', base, '/Users/x');
+    const a = accountEnv('a', base);
     expect(a.PATH).toBe('/bin');
     expect('CLAUDE_CONFIG_DIR' in a).toBe(false);
     expect('CLAUDE_CODE_OAUTH_TOKEN' in a).toBe(false);
     expect('ANTHROPIC_API_KEY' in a).toBe(false);
     expect('ANTHROPIC_AUTH_TOKEN' in a).toBe(false);
 
-    const b = accountEnv('b', base, '/Users/x');
+    const b = accountEnv('b', base);
     expect(b.CLAUDE_CONFIG_DIR).toBe('/Users/x/.claude-b');
     expect('ANTHROPIC_API_KEY' in b).toBe(false);
-    expect(accountEnv('c', base, '/Users/x').CLAUDE_CONFIG_DIR).toBe('/Users/x/.claude-c');
+    expect(accountEnv('c', base).CLAUDE_CONFIG_DIR).toBe('/Users/x/.claude-c');
   });
 
   it('also strips variables that reroute or relabel the child (base URL, Bedrock, Vertex, entrypoint)', () => {
     const base = { PATH: '/bin', ANTHROPIC_BASE_URL: 'http://proxy', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' };
     for (const acct of ['a', 'b'] as const) {
-      const env = accountEnv(acct, base, '/Users/x');
+      const env = accountEnv(acct, base);
       expect(env.PATH).toBe('/bin');
       for (const k of ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_ENTRYPOINT']) expect(k in env).toBe(false);
     }
@@ -46,7 +50,7 @@ describe('accounts', () => {
 
   it('does not mutate the base env', () => {
     const base = { ANTHROPIC_API_KEY: 'key' };
-    accountEnv('a', base, '/Users/x');
+    accountEnv('a', base);
     expect(base.ANTHROPIC_API_KEY).toBe('key');
   });
 
@@ -55,7 +59,7 @@ describe('accounts', () => {
     expect(env).toEqual({ PATH: '/bin', CODEX_HOME: '/h/.codex' });
   });
 
-  it('seat labels', () => {
-    expect(SEAT_LABEL).toEqual({ a: 'A', b: 'B', c: 'C', gpt: 'GPT', g1: 'G1', g2: 'G2' });
+  it('account labels', () => {
+    expect(reg.list().map((a) => reg.label(a))).toEqual(['A', 'B', 'C']);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { GPT_MARGIN_PCT, chooseEngine, type EngineInput } from './EngineChoice';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const win = (usedPct: number) => ({ usedPct, resetsAt: new Date(NOW + 84 * 3_600_000).toISOString() });
@@ -15,7 +16,7 @@ function usage(claudeWeekly: [number, number, number], gptWeekly: number | null,
 }
 
 function input(over: Partial<EngineInput>): EngineInput {
-  return { choice: 'auto', usage: usage([40, 50, 60], 20), nowMs: NOW, codexAvailable: true, gptCooldownUntilMs: null, cooldownUntilMs: {}, protectedAccount: null, ...over };
+  return { choice: 'auto', usage: usage([40, 50, 60], 20), nowMs: NOW, codexAvailable: true, gptCooldownUntilMs: null, cooldownUntilMs: {}, protectedAccount: null, accounts: testRegistry(), ...over };
 }
 
 describe('chooseEngine (D3)', () => {
@@ -49,5 +50,29 @@ describe('chooseEngine (D3)', () => {
     // credits cost money: auto never opens on GPT because of them, even with every Claude account spent
     expect(chooseEngine(input({ usage: u }))).toEqual({ engine: 'claude', reason: '자동 · GPT 주간 100% → Claude' });
     expect(chooseEngine(input({ usage: withCredits(usage([96, 97, 98], 100)) })).engine).toBe('claude');
+  });
+});
+
+describe("chooseEngine — usage-deck 을 본 적 없는 설치 (usageSource: 'none')", () => {
+  const unknownClaude = (source?: 'deck' | 'none'): UsageSnapshot => {
+    const u = usage([40, 50, 60], 20);
+    const down = { status: 'down' as const, fetchedAt: null, fiveHour: null, weekly: null, fable: null };
+    return { ...u, accounts: { a: down, b: down, c: down }, ...(source ? { usageSource: source } : {}) };
+  };
+
+  it('자동: Claude usage unknown is not 0% room — Claude, even with codex installed and GPT room known', () => {
+    expect(chooseEngine(input({ usage: unknownClaude('none') }))).toEqual({ engine: 'claude', reason: '자동 · Claude 잔여량 불명 → Claude' });
+    // Every unknown account cooling down: nothing to run on, GPT has room.
+    expect(chooseEngine(input({ usage: unknownClaude('none'), cooldownUntilMs: { a: NOW + 60_000, b: NOW + 60_000, c: NOW + 60_000 } })).engine).toBe('codex');
+  });
+
+  it('자동: known Claude candidates are compared as before', () => {
+    expect(chooseEngine(input({ usage: { ...usage([40, 50, 60], 20), usageSource: 'none' } }))).toEqual(chooseEngine(input({ usage: usage([40, 50, 60], 20) })));
+    expect(chooseEngine(input({ usage: { ...usage([40, 50, 60], 20), usageSource: 'none' } })).engine).toBe('codex');
+  });
+
+  it('with usage-deck the unknown Claude side still loses to a known GPT', () => {
+    expect(chooseEngine(input({ usage: unknownClaude() })).engine).toBe('codex');
+    expect(chooseEngine(input({ usage: unknownClaude('deck') })).engine).toBe('codex');
   });
 });

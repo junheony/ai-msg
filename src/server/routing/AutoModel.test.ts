@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
 import { chooseAutoModel, classifyPrompt } from './AutoModel';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-10-01T03:00:00Z');
 
@@ -13,7 +14,7 @@ function usage(a: AccountUsage, b: AccountUsage = a, c: AccountUsage = a): Usage
 }
 
 const auto = (text: string, u: UsageSnapshot = usage(acct(30)), attachmentCount = 0) =>
-  chooseAutoModel({ text, attachmentCount, usage: u, nowMs: NOW, cooldownUntilMs: {}, protectedAccount: null });
+  chooseAutoModel({ text, attachmentCount, usage: u, nowMs: NOW, cooldownUntilMs: {}, protectedAccount: null, accounts: testRegistry() });
 
 describe('classifyPrompt', () => {
   it.each([
@@ -93,5 +94,41 @@ describe('chooseAutoModel', () => {
     const down: AccountUsage = { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null };
     expect(auto('버그 고쳐줘', usage(down)).model).toBe('opus');
     expect(auto('보안 취약점 검토해줘', usage(down)).model).toBe('opus');
+  });
+});
+
+describe("chooseAutoModel — usage-deck 을 본 적 없는 설치 (usageSource: 'none')", () => {
+  const down: AccountUsage = { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null };
+  const lax = (u: UsageSnapshot): UsageSnapshot => ({ ...u, usageSource: 'none' });
+
+  it('unknown usage keeps Fable, and the reason says the usage is unknown', () => {
+    const r = auto('보안 취약점 검토해줘', lax(usage(down)));
+    expect(r).toMatchObject({ model: 'fable', effort: 'high' });
+    expect(r.reason).toContain('Fable 잔여량 모름');
+    expect(r.reason).not.toContain('Opus');
+    // Known 5h/weekly from a turn, no Fable row: still Fable.
+    expect(auto('보안 취약점 검토해줘', lax(usage(acct(30, null)))).model).toBe('fable');
+    expect(auto('버그 고쳐줘', lax(usage(down))).model).toBe('opus');
+  });
+
+  it('a known Fable ≥ 80% everywhere still falls back to Opus', () => {
+    const r = auto('보안 취약점 검토해줘', lax(usage(acct(30, 85))));
+    expect(r.model).toBe('opus');
+    expect(r.reason).toContain('Fable 80%↑ → Opus');
+  });
+
+  it('every account cooling down: Opus, and the reason names the cooldown, not usage-deck', () => {
+    const cooldownUntilMs = { a: NOW + 60_000, b: NOW + 60_000, c: NOW + 60_000 };
+    const r = chooseAutoModel({ text: '보안 취약점 검토해줘', attachmentCount: 0, usage: lax(usage(down)), nowMs: NOW, cooldownUntilMs, protectedAccount: null, accounts: testRegistry() });
+    expect(r.model).toBe('opus');
+    expect(r.reason).toContain('모든 계정 쿨다운 → Opus');
+    expect(r.reason).not.toContain('usage-deck');
+  });
+
+  it("with usage-deck: unknown Fable → Opus, and the reason says it is unknown (not '80%↑')", () => {
+    const r = auto('보안 취약점 검토해줘', usage(down));
+    expect(r.model).toBe('opus');
+    expect(r.reason).toContain('Fable 잔여량 모름(usage-deck 값 없음) → Opus');
+    expect(r.reason).not.toContain('80%↑');
   });
 });

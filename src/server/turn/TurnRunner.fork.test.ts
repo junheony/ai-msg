@@ -11,6 +11,7 @@ import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { writeCooldown } from '../routing/cooldown';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const PARENT = '22222222-2222-4222-8222-222222222222';
@@ -20,15 +21,15 @@ async function setup(engine: StubEngine, extra: Partial<TurnRunnerDeps> = {}) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-fork-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
-  const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'projects.json') });
+  const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'projects.json') });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
-  const runner = new TurnRunner({
-    engine, index, store, usage, cooldownDir: path.join(base, 'cooldown'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots,
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
+  const runner = new TurnRunner({ accounts: testRegistry(),
+    engine, index, store, usage, cooldownDir: path.join(base, 'cooldown'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots),
     codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), now: () => NOW, maxRetries: 0, ...extra,
   });
-  const dir = path.join(roots.c, '-w-one');
+  const dir = path.join(roots.c!, '-w-one');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, `${PARENT}.jsonl`);
   await fs.writeFile(file, [{ type: 'user', uuid: 'u0', parentUuid: null, cwd: '/w/one', message: { role: 'user', content: '첫 질문' } }, { type: 'assistant', uuid: 'a0', parentUuid: 'u0', message: { id: 'm', role: 'assistant', content: [{ type: 'text', text: '답' }] } }].map((r) => JSON.stringify(r)).join('\n') + '\n');
@@ -42,7 +43,7 @@ async function setup(engine: StubEngine, extra: Partial<TurnRunnerDeps> = {}) {
 async function roomyUsage(weekly: Record<string, number> = {}) {
   const resetsAt = new Date(NOW + 3_600_000).toISOString();
   const card = (id: string) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Session (5h)', used: 10, resetsAt }, { label: 'Weekly (7d)', used: weekly[id] ?? 10, resetsAt }, { label: 'Fable (7d)', used: 0, resetsAt }] });
-  const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }), now: () => new Date(NOW) });
+  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }

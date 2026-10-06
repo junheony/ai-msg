@@ -12,6 +12,7 @@ import { DESKTOP_ID, writeFixtures } from '../sessions/codexFixtures';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { TurnRunner, type TurnSink } from './TurnRunner';
+import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 let base: string;
 let work: string;
@@ -28,7 +29,7 @@ afterEach(async () => { await fs.rm(base, { recursive: true, force: true }); });
 
 async function setup(opts: { autoApprove?: boolean } = {}) {
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
-  const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root });
+  const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root });
   await index.refresh();
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
@@ -41,10 +42,10 @@ async function setup(opts: { autoApprove?: boolean } = {}) {
       for (const e of evs) yield e;
     },
   };
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
-  const runner = new TurnRunner({
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
+  const runner = new TurnRunner({ accounts: testRegistry(),
     engine: new StubEngine(async () => []), codex, attachments: null, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null,
-    auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codexSessionsRoot: root, defaultPermissionMode: () => (opts.autoApprove ? 'bypassPermissions' : 'default'),
+    auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codexSessionsRoot: root, defaultPermissionMode: () => (opts.autoApprove ? 'bypassPermissions' : 'default'),
     findRollout: async () => { throw new Error('the imported rollout is already known'); }, readRateLimits: async () => null,
   });
   const msgs: ServerMessage[] = [];

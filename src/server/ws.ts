@@ -3,9 +3,9 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
-import { isGeminiAccount } from '../shared/accounts';
+import { isGeminiAccount, type AccountNames } from '../shared/accounts';
 import { defaultSandbox, IMPORTED_DEFAULT_MODEL } from '../shared/models';
-import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
@@ -125,6 +125,8 @@ export type WsDeps = {
   build?: string | null | (() => string | null);
   /** D11: false hides the GPT engine in the UI and makes 'auto' mean Claude. */
   codexAvailable: boolean;
+  /** The configured Claude accounts: rides hello (`accounts`), and an account pin must be one of its active ids. */
+  accounts: AccountNames;
   /** Read on every hello, so a login done while deck runs shows up on the next connect. Absent = no Gemini. */
   geminiStatus?: () => GeminiStatus;
   readCodexHistory?: typeof readCodexTranscript;
@@ -507,6 +509,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         : undefined;
 
   /** `checked`: this send already waited for the foreign-write check of its session's held-open process. */
+  const accounts = deps.accounts;
+  /** Why this account cannot be pinned (the schema only checks an id's shape), or null. */
+  const pinRefusal = (id: string): string | null =>
+    !accounts.has(id) ? `설정에 없는 계정이라 고정할 수 없습니다: ${id} (쓸 수 있는 계정: ${accounts.list().join(', ')})`
+      : accounts.isRetired(id) ? `뺀 계정(retired)이라 고정할 수 없습니다: ${id} (쓸 수 있는 계정: ${accounts.list().join(', ')})`
+        : null;
+
   const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
     const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
@@ -515,6 +524,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (!checked) syncHolders();
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
+    const badPin = msg.sessionId === null && msg.accountPin ? pinRefusal(msg.accountPin) : null;
+    if (badPin) { send(ws, { type: 'error', turnId: null, message: badPin, ...ref }); return; }
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
     // Idempotency: a send this session already took (or is taking) under this ref — a resent queue copy, a duplicated tab — runs once.
     const dup = msg.sessionId && msg.clientRef ? refusal(msg.sessionId, msg.clientRef) : undefined;
@@ -856,7 +867,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: [...FEATURES], ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: [...FEATURES], accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
     // hello carried the last scan's flags; a changed scan follows as an index message.
@@ -929,7 +940,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             .then(() => broadcast(indexMsg()))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
           break;
-        case 'set_account_pin':
+        case 'set_account_pin': {
+          const badPin = msg.pin === null ? null : pinRefusal(msg.pin);
+          if (badPin) { send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: badPin }); break; }
           void deps.runner.setAccountPin(msg.sessionId, msg.pin)
             .then((ok) => {
               if (ok) broadcast({ type: 'account_pin', sessionId: msg.sessionId, pin: msg.pin });
@@ -937,6 +950,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `계정 고정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
+        }
         case 'set_permission_mode':
           void deps.runner.setPermissionMode(msg.sessionId, msg.mode)
             .then((ok) => {

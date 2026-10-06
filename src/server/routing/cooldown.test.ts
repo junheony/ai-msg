@@ -27,7 +27,7 @@ describe('cooldown', () => {
     expect(readCooldownUntilMs(dir, 'c', now)).toBe(now + 5000);
     fs.writeFileSync(path.join(dir, 'a'), 'soon\n');
     expect(readCooldownUntilMs(dir, 'a', now)).toBeNull();
-    expect(readAllCooldownsMs(dir, now)).toEqual({ b: Math.floor((now + 3_600_000) / 1000) * 1000, c: now + 5000 });
+    expect(readAllCooldownsMs(dir, now, ['a', 'b', 'c'])).toEqual({ b: Math.floor((now + 3_600_000) / 1000) * 1000, c: now + 5000 });
   });
 
   it('rejects what Python float() rejects', () => {

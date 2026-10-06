@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ServerMessage } from '../../src/shared/protocol';
-import { SEAT_LABEL } from '../../src/shared/accounts';
 import { collect, startDeck, type Deck } from './harness';
 
 type Result = Extract<ServerMessage, { type: 'turn_result' }>;
@@ -25,7 +24,7 @@ describe('deck e2e: AskUserQuestion on Claude B (D8)', () => {
     expect(result.ok).toBe(true);
     expect(result.badge!.account).toBe('b');
     expect(result.text.trim().toLowerCase()).toContain('blue');
-    console.log(`e2e question turn on ${SEAT_LABEL[result.badge!.account]}: "${result.text.trim()}"`);
+    console.log(`e2e question turn on ${result.badge!.account.toUpperCase()}: "${result.text.trim()}"`);
     ws.close();
   });
 });

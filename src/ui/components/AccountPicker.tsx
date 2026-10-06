@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePopoverPlacement } from './usePopoverPlacement';
-import { ACCOUNTS, type Account, type Seat } from '../../shared/accounts';
+import { isGeminiAccount, type Account, type Seat } from '../../shared/accounts';
+import { useAccounts } from '../accounts';
+import { usageOf } from '../../shared/usage-types';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
-
-const NAME: Record<Account, string> = { a: 'A (Desktop)', b: 'B', c: 'C' };
 
 /** Small pin glyph: the account picker when pinned, and a turn badge whose account came from the pin. */
 export function PinIcon({ title }: { title?: string }) {
@@ -49,8 +49,12 @@ export function AccountPicker({ pin, current, usage, onPin }: {
     return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  const cur = current === 'a' || current === 'b' || current === 'c' ? current.toUpperCase() : null;
-  const label = pin ? pin.toUpperCase() : cur ? `자동 · ${cur}` : '자동';
+  const names = useAccounts();
+  const cur = current !== null && current !== 'gpt' && !isGeminiAccount(current) ? names.label(current) : null;
+  // An account that left the configuration shows its id, grey; a retired one its label, dimmed.
+  const curLook = cur !== null && current !== null ? names.look(current).kind : 'active';
+  const pinName = pin ? `${names.label(pin)}${names.home?.id === pin ? ' (Desktop)' : ''}` : '';
+  const label = pin ? names.label(pin) : cur ? `자동 · ${cur}` : '자동';
   const choose = (p: Account | null) => { setOpen(false); if (p !== pin) onPin(p); };
   const item = (value: Account | null, name: string, desc: string) => (
     <button key={value ?? 'auto'} type="button" role="menuitemradio" aria-checked={value === pin} className={`mp-item ${value === pin ? 'on' : ''}`} onClick={() => choose(value)}>
@@ -70,14 +74,14 @@ export function AccountPicker({ pin, current, usage, onPin }: {
         className={`mp-button ${open ? 'open' : ''} ${pin ? 'pinned' : ''}`}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`계정: ${pin ? `${NAME[pin]} 고정` : label}`}
+        aria-label={`계정: ${pin ? `${pinName} 고정` : label}`}
         title="이 세션의 계정 (자동 = 턴마다 라우터가 고름)"
         data-testid="account-picker"
         onClick={() => setOpen((o) => !o)}
       >
         {pin && <PinIcon />}
         {/* "자동 · B": a narrow composer keeps only the seat letter. */}
-        <span className="mp-label">{!pin && cur ? <><span className="mp-label-extra">자동 · </span>{cur}</> : label}</span>
+        <span className="mp-label">{!pin && cur ? <><span className="mp-label-extra">자동 · </span><span className={curLook === 'active' ? undefined : `acct-${curLook}`}>{cur}</span></> : label}</span>
         <span className="mp-caret" aria-hidden="true">⌄</span>
       </button>
       {open && (
@@ -85,7 +89,7 @@ export function AccountPicker({ pin, current, usage, onPin }: {
           <div className="mp-section" role="group" aria-label="계정">
             <div className="mp-head">이 세션의 계정</div>
             {item(null, '자동', '턴마다 잔여량과 캐시를 보고 고름')}
-            {ACCOUNTS.map((a) => item(a, NAME[a], pct(usage?.accounts[a])))}
+            {names.active.map((a) => item(a.id, `${a.label}${a.home ? ' (Desktop)' : ''}`, pct(usage ? usageOf(usage, a.id) : undefined)))}
           </div>
         </div>
       )}

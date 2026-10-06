@@ -459,7 +459,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
    (bars drop out when a card gets narrow); on a phone the cards stack into mini cards (letter on top, numbers below). */
 .topbar { height: 70px; }
 .usage-panel {
-  display: grid; grid-auto-flow: column; grid-template-columns: repeat(4, minmax(0, 240px)); grid-auto-columns: auto;
+  display: grid; grid-auto-flow: column; grid-template-columns: repeat(var(--usage-cards, 4), minmax(0, 240px)); grid-auto-columns: auto;
   align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; height: 100%;
 }
 .usage-loading { color: var(--muted); font-size: calc(13.5px * var(--font-scale, 1)); white-space: nowrap; }
@@ -483,7 +483,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .engine-mark { display: inline-block; width: 1em; height: 1em; margin-right: .4em; vertical-align: -.14em; line-height: 1; text-align: center; flex-shrink: 0; }
 .engine-mark.codex { color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
 .engine-mark-svg { display: block; width: 100%; height: 100%; }
-.usage-letter { font-size: calc(15px * var(--font-scale, 1)); font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
+.usage-letter { min-width: 1ch; max-width: 7ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: calc(15px * var(--font-scale, 1)); font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
 .usage-card.gpt .usage-letter { font-size: calc(11.5px * var(--font-scale, 1)); letter-spacing: .5px; color: var(--fg); }
 .usage-card.current .usage-letter { color: var(--accent); }
 .usage-rows { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
@@ -701,7 +701,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .turn-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
 .turn-foot:empty { display: none; }
 .turn-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: calc(12px * var(--font-scale, 1)); color: var(--faint); min-width: 0; }
-.turn-badge .acct { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: calc(11px * var(--font-scale, 1)); font-weight: 700; }
+.turn-badge .acct { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; box-sizing: border-box; white-space: nowrap; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: calc(11px * var(--font-scale, 1)); font-weight: 700; }
 .tb-model { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-weight: 500; }
 .tb-tokens { display: inline-flex; flex-wrap: wrap; gap: 0 10px; font-variant-numeric: tabular-nums; }
 .tb-tokens b { font-weight: 550; color: var(--muted); }
@@ -1693,4 +1693,61 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .composer-send { gap: 3px; }
   .composer-send .ctx-gauge { padding: 0 2px; }
   .composer-row { padding-left: 8px; padding-right: 8px; gap: 4px; }
+}
+
+/* === accounts (any number) === */
+/* Account colours by position in the configured list (`data-acct-idx`, 8 and up wrap around). The first three are the
+   accent a/b/c always had; later accounts get their own hue. */
+:root {
+  --acct-0: var(--accent); --acct-1: var(--accent); --acct-2: var(--accent);
+  --acct-3: #6aa3e8; --acct-4: #5fbf8f; --acct-5: #b08ae6; --acct-6: #d9a441; --acct-7: #e085ab;
+  --acct-soft: 14%;
+}
+:root[data-theme="light"] { --acct-3: #2a78d6; --acct-4: #1b8f63; --acct-5: #7b55c7; --acct-6: #a87400; --acct-7: #c2487e; --acct-soft: 12%; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --acct-3: #2a78d6; --acct-4: #1b8f63; --acct-5: #7b55c7; --acct-6: #a87400; --acct-7: #c2487e; --acct-soft: 12%; } }
+[data-acct-idx="0"] { --acct: var(--acct-0); } [data-acct-idx="1"] { --acct: var(--acct-1); } [data-acct-idx="2"] { --acct: var(--acct-2); } [data-acct-idx="3"] { --acct: var(--acct-3); }
+[data-acct-idx="4"] { --acct: var(--acct-4); } [data-acct-idx="5"] { --acct: var(--acct-5); } [data-acct-idx="6"] { --acct: var(--acct-6); } [data-acct-idx="7"] { --acct: var(--acct-7); }
+.turn-badge .acct[data-acct-idx] { color: var(--acct); background: color-mix(in srgb, var(--acct) var(--acct-soft), transparent); }
+/* An account taken out of the configuration (retired): its label, dimmed. One the configuration no longer has: its id, grey. */
+.turn-badge .acct.acct-retired { opacity: .55; }
+.turn-badge .acct.acct-unknown { color: var(--muted); background: color-mix(in srgb, var(--muted) 16%, transparent); font-weight: 600; }
+.mp-label .acct-retired { opacity: .55; }
+.mp-label .acct-unknown { color: var(--muted); }
+.uv-tabs button.acct-retired { opacity: .6; }
+.uv-tabs button.acct-unknown { color: var(--faint); }
+
+/* Two-row top bar (above the compact layouts): one or two cards do not stretch across the whole row (four cards never reach this width). */
+@media (min-width: 1100.02px) and (max-width: 1279.98px) { .usage-card { max-width: 320px; } }
+
+/* Compact cards with a longer label: the label gives way (ellipsis), the number keeps its width. */
+@media (max-width: 1100px) {
+  .usage-card { grid-template-columns: minmax(0, 1fr) auto; }
+  .usage-id { overflow: hidden; }
+  .usage-letter { min-width: 0; max-width: none; text-align: left; }
+}
+
+/* More than four cards (four accounts + GPT and up): no room for the rows of numbers, so at every width a card is the
+   label over the lowest remaining %, over thin bars (5h · 주간 · Fable); the tap popover has the numbers. */
+.usage-panel[data-dense] .usage-card { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 3px; align-items: center; row-gap: 2px; padding: 4px 6px 5px; border-radius: 9px; cursor: pointer; overflow: hidden; }
+.usage-panel[data-dense] .usage-dot { top: 4px; right: 4px; width: 5px; height: 5px; }
+.usage-panel[data-dense] .usage-id { flex-direction: row; justify-content: flex-start; gap: 3px; min-width: 0; height: auto; overflow: hidden; }
+.usage-panel[data-dense] .usage-mark { width: 12px; height: 12px; }
+.usage-panel[data-dense] .usage-letter { min-width: 0; max-width: none; text-align: left; font-size: calc(13px * var(--font-scale, 1)); line-height: 14px; }
+.usage-panel[data-dense] .usage-card.gpt .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
+.usage-panel[data-dense] .usage-sum { display: block; justify-self: start; min-width: 0; overflow: hidden; white-space: nowrap; line-height: 1.2; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
+.usage-panel[data-dense] .usage-sum small { margin-left: 1px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
+.usage-panel[data-dense] .usage-sum.warn { color: var(--warn); }
+.usage-panel[data-dense] .usage-sum.danger { color: var(--danger); }
+.usage-panel[data-dense] .usage-sum.none { color: var(--faint); font-weight: 500; }
+.usage-panel[data-dense] .usage-rows { grid-column: 1; flex-direction: row; gap: 3px; height: 3px; }
+.usage-panel[data-dense] .usage-row, .usage-panel[data-dense] .usage-row.spent, .usage-panel[data-dense] .usage-row.credits { display: block; flex: 1 1 0; height: 3px; min-width: 0; border-radius: 2px; background: var(--track); overflow: hidden; }
+.usage-panel[data-dense] .usage-row.credits { display: none; }
+.usage-panel[data-dense] .usage-row.spent { background: color-mix(in srgb, var(--danger) 60%, transparent); }
+.usage-panel[data-dense] .usage-label, .usage-panel[data-dense] .usage-value, .usage-panel[data-dense] .usage-pill, .usage-panel[data-dense] .usage-credits { display: none; }
+.usage-panel[data-dense] .usage-bar { display: block; height: 100%; border-radius: 0; background: transparent; }
+.usage-panel[data-dense] .usage-bar > i { border-radius: 2px; }
+@media (max-width: 1100px) { .usage-panel[data-dense] .usage-mark { display: none; } }
+@media (max-width: 720px) {
+  .usage-panel[data-dense] .usage-card { padding: 4px 4px 5px; }
+  .usage-panel[data-dense] .usage-sum small { display: none; }
 }

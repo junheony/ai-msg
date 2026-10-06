@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isAccount, projectsDir, type Account } from '../shared/accounts';
+import type { Account, AccountNames, AccountRegistry, AccountRoot } from '../shared/accounts';
+import { loadAccountRegistry } from './accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
 import { resolveGeminiBin } from './engine/GeminiEngine';
 import { defaultCooldownDir } from './routing/cooldown';
@@ -15,18 +16,21 @@ export type DeckConfig = {
   stateFile: string;
   auditFile: string;
   deckUrl: string;
+  /** Claude accounts: `<configDir>/accounts.json`, else the profiles found in the home dir. */
+  accounts: AccountRegistry;
   protectedAccount: Account | null;
   cooldownDir: string;
   port: number;
   loopbackOnly: boolean;
   devOrigins: string[];
-  projectsRoots: Record<Account, string>;
+  /** `projects` dir of every configured account (retired included), in configured order. */
+  projectsRoots: readonly AccountRoot[];
   uiDir: string;
   /** Deviation (added per review I5): extra Host-header names (e.g. Tailscale MagicDNS) allowed in addition to loopback/CGNAT. */
   extraHosts: string[];
   /** D11: null = Codex disabled (no `codex` binary found). */
   codexBin: string | null;
-  /** null = Gemini disabled (no `gemini` binary found). Accounts live under ~/.config/deck/gemini/<g1|g2>. */
+  /** null = Gemini disabled (no `gemini` binary found). Accounts live under `<configDir>/gemini/<g1|g2>`. */
   geminiBin: string | null;
   /** `$CODEX_HOME/sessions` (rollout files; read-only for deck). */
   codexSessionsRoot: string;
@@ -55,20 +59,28 @@ export type DeckConfig = {
   /** Web Push: VAPID keypair (0600, generated once) and browser subscriptions (0600). */
   vapidFile: string;
   pushSubscriptionsFile: string;
-  /** 사용량 view: token usage aggregates + per-file read offsets. */
+  /** 사용량 view: token usage aggregates + per-file read offsets (index format 2). */
+  /** `{"deckSeenAt": "<ISO>"}`: written once, the first time usage-deck answers (see UsageService). */
+  usageSourceFile: string;
+  /** `DECK_USAGE_STRICT`: `1` = always treat unknown usage as with usage-deck (Fable → Opus), `0` = never; null = by `usageSourceFile`. */
+  usageStrict: boolean | null;
   usageIndexFile: string;
+  /** The format-1 index a build before configurable accounts wrote: converted once into `usageIndexFile`, never written. */
+  usageIndexV1File: string;
   /** VAPID `sub` claim override (`DECK_VAPID_SUBJECT`, https: or mailto:); default derived from the MagicDNS name. */
   vapidSubject: string | null;
 };
 
-/** ~/.config/offload/protect: comment lines start with '#'; first non-blank token must be a|b|c. */
-export function readProtect(file: string): Account | null {
+/** ~/.config/offload/protect: comment lines start with '#'; the first non-blank token must be a configured account — any other is no protection, and `warn` is told once. */
+export function readProtect(file: string, accounts: AccountNames, warn: (line: string) => void = () => {}): Account | null {
   try {
     for (const raw of fs.readFileSync(file, 'utf8').split('\n')) {
       const line = raw.trim();
       if (!line || line.startsWith('#')) continue;
       const tok = line.split(/\s+/)[0];
-      return isAccount(tok) ? tok : null;
+      if (accounts.has(tok)) return tok;
+      warn(`deck: 보호 계정 "${tok}"(${file})는 설정에 없는 계정이라 무시합니다 — 보호 계정 없이 시작합니다 (계정: ${accounts.all().join(', ')})`);
+      return null;
     }
   } catch {
     // missing file
@@ -101,12 +113,17 @@ export function repoRootDefault(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), repoRoot: string = repoRootDefault()): DeckConfig {
+/** Throws `AccountsFileError` when `<configDir>/accounts.json` is there and cannot be used. `log`: startup notes (skipped profile dirs, an unknown protected account). */
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), repoRoot: string = repoRootDefault(), log: (line: string) => void = (l) => console.error(l)): DeckConfig {
   const configDir = env.DECK_CONFIG_DIR || path.join(home, '.config', 'deck');
-  const protectedAccount = isAccount(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'));
+  const accounts = loadAccountRegistry({ configDir, homeDir: home, log });
+  // CLAUDE_PROTECT wins over the file; a value that is not a configured account falls through to the file, with a warning.
+  if (env.CLAUDE_PROTECT && !accounts.has(env.CLAUDE_PROTECT)) log(`deck: CLAUDE_PROTECT="${env.CLAUDE_PROTECT}" 는 설정에 없는 계정이라 무시합니다 (계정: ${accounts.all().join(', ')})`);
+  const protectedAccount = accounts.has(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'), accounts, log);
   return {
     home,
     configDir,
+    accounts,
     tokenFile: path.join(configDir, 'token'),
     pinnedFile: path.join(configDir, 'projects.json'),
     stateFile: path.join(configDir, 'session-state.json'),
@@ -117,7 +134,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     port: Number(env.DECK_PORT) || 9320,
     loopbackOnly: env.DECK_LOOPBACK_ONLY === '1',
     devOrigins: (env.DECK_DEV_ORIGIN ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-    projectsRoots: { a: projectsDir('a', home), b: projectsDir('b', home), c: projectsDir('c', home) },
+    projectsRoots: accounts.projectsRoots(),
     uiDir: env.DECK_UI_DIR || path.join(repoRoot, 'dist', 'ui'),
     extraHosts: (env.DECK_EXTRA_HOSTS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     codexBin: resolveCodexBin(env, home),
@@ -136,7 +153,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     backupRetentionDays: Number(env.DECK_BACKUP_RETENTION_DAYS) > 0 ? Number(env.DECK_BACKUP_RETENTION_DAYS) : 30,
     vapidFile: path.join(configDir, 'vapid.json'),
     pushSubscriptionsFile: path.join(configDir, 'push-subscriptions.json'),
-    usageIndexFile: path.join(configDir, 'usage-index.json'),
+    usageSourceFile: path.join(configDir, 'usage-source.json'),
+    usageStrict: env.DECK_USAGE_STRICT === '1' ? true : env.DECK_USAGE_STRICT === '0' ? false : null,
+    usageIndexFile: path.join(configDir, 'usage-index-v2.json'),
+    usageIndexV1File: path.join(configDir, 'usage-index.json'),
     vapidSubject: /^(https:|mailto:)/.test(env.DECK_VAPID_SUBJECT ?? '') ? env.DECK_VAPID_SUBJECT! : null,
   };
 }

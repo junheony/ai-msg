@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ClientMessageSchema } from './protocol';
+import { LEGACY_ACCOUNTS, buildRegistry } from './accounts';
+import { ClientMessageSchema, FEATURES, accountInfos } from './protocol';
 
 describe('ClientMessageSchema', () => {
   it('accepts valid messages', () => {
@@ -67,5 +68,40 @@ describe('ClientMessageSchema: handoff', () => {
     expect(ClientMessageSchema.safeParse({ ...base, handoff: 'yes' }).success).toBe(false);
     expect(ClientMessageSchema.safeParse({ ...base, handoffFrom: '' }).success).toBe(false);
     expect(ClientMessageSchema.safeParse({ ...base, handoffFrom: 'a'.repeat(201) }).success).toBe(false);
+  });
+});
+
+describe('account ids on the wire', () => {
+  const send = { type: 'send', sessionId: null, cwd: '/w', text: 'hi' };
+  const pin = (p: unknown) => ClientMessageSchema.safeParse({ type: 'set_account_pin', sessionId: 's', pin: p }).success;
+
+  it('any id of the configured shape passes (a fourth account, a named one): which exist is checked by the server', () => {
+    for (const id of ['d', 'work', 'team-2', 'x_1', '9', 'a'.repeat(16)]) {
+      expect(ClientMessageSchema.safeParse({ ...send, accountPin: id }).success).toBe(true);
+      expect(pin(id)).toBe(true);
+    }
+  });
+
+  it('a malformed id is refused by the schema', () => {
+    for (const id of ['', 'D', 'Work', '-a', '_a', 'a b', 'a/b', '../x', 'a'.repeat(17), 'é', 1, {}, ['a']]) {
+      expect(ClientMessageSchema.safeParse({ ...send, accountPin: id }).success).toBe(false);
+      expect(pin(id)).toBe(false);
+    }
+  });
+
+  it('the other seats and reserved names are not account ids', () => {
+    for (const id of ['gpt', 'g1', 'g2', 'codex', 'all', 'constructor']) expect(pin(id)).toBe(false);
+  });
+
+  it('FEATURES names accounts; accountInfos lists every configured account in order with label, home and retired', () => {
+    expect(FEATURES).toContain('accounts');
+    const reg = buildRegistry({ version: 1, accounts: [{ id: 'b', label: 'Work' }, { id: 'a' }, { id: 'old', retired: true }, { id: 'd' }], home: 'b' }, { homeDir: '/tmp/none' });
+    expect(accountInfos(reg)).toEqual([
+      { id: 'b', label: 'Work', home: true, retired: false },
+      { id: 'a', label: 'A', home: false, retired: false },
+      { id: 'old', label: 'OLD', home: false, retired: true },
+      { id: 'd', label: 'D', home: false, retired: false },
+    ]);
+    expect(accountInfos(LEGACY_ACCOUNTS).map((a) => [a.id, a.label, a.home, a.retired])).toEqual([['a', 'A', true, false], ['b', 'B', false, false], ['c', 'C', false, false]]);
   });
 });

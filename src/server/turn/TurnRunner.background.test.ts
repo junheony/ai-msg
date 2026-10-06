@@ -11,6 +11,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 
@@ -21,16 +22,17 @@ async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments'>> & { read
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
   const deps: TurnRunnerDeps = {
-    engine: new ClaudeEngine({ queryFn: f.queryFn, readFile: over.readFile ?? (async () => Buffer.from('')) }),
+    accounts: testRegistry(),
+    engine: new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: over.readFile ?? (async () => Buffer.from('')) }),
     usage,
-    index: new SessionIndex({ roots, pinnedFile: path.join(base, 'projects.json') }),
+    index: new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'projects.json') }),
     store,
     cooldownDir: path.join(base, 'cooldown'),
     protectedAccount: 'a',
     auditFile: path.join(base, 'audit.log'),
-    projectsRoots: roots,
+    projectsRoots: rootsOf(roots),
     codex: null,
     attachments: over.attachments ?? null,
     codexSessionsRoot: path.join(base, 'codex-sessions'),

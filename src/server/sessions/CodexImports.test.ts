@@ -5,6 +5,7 @@ import path from 'node:path';
 import { CODEX_ARCHIVED_NOTICE, CWD_MISSING_NOTICE, CodexRolloutIndex, importBlockReason, isDeckTestCwd, readRolloutHead, readThreadNames, rolloutRecentlyActive } from './CodexImports';
 import { SessionIndex } from './SessionIndex';
 import { CLI_ID, DESKTOP_ID, GONE_ID, SUB_ID, assistant, jsonl, meta, user, writeFixtures } from './codexFixtures';
+import { rootsOf } from '../../shared/accounts.testkit';
 
 let base: string;
 let root: string;
@@ -211,7 +212,7 @@ describe('SessionIndex with codexRoot', () => {
   it('lists imported threads under their project, and not again once deck runs the thread', async () => {
     await writeFixtures(root, work);
     const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
-    const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root });
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root });
     await index.refresh();
     const project = index.projects().find((p) => p.cwd === work);
     expect(project?.sessions.map((s) => s.sessionId).sort()).toEqual([DESKTOP_ID, CLI_ID]);
@@ -297,7 +298,7 @@ describe('SessionIndex: Codex names and rollout time on listed sessions', () => 
     const { cli } = await writeFixtures(root, work);
     await fs.writeFile(path.join(base, 'session_index.jsonl'), nameLine(DESKTOP_ID, 'Tin Robot') + '\n' + nameLine(CLI_ID, 'Paper Kite') + '\n');
     const renamed = new Map<string, string>();
-    const index = new SessionIndex({ roots: roots(), pinnedFile: path.join(base, 'p.json'), codexRoot: root, meta: { title: (id) => renamed.get(id) ?? null, isArchived: () => false } });
+    const index = new SessionIndex({ roots: rootsOf(roots()), pinnedFile: path.join(base, 'p.json'), codexRoot: root, meta: { title: (id) => renamed.get(id) ?? null, isArchived: () => false } });
     await index.refresh();
     const own = [ownEntry(cli, 1)];
     expect(find(index, DESKTOP_ID, own)).toMatchObject({ title: 'Tin Robot', imported: true });
@@ -314,7 +315,7 @@ describe('SessionIndex: Codex names and rollout time on listed sessions', () => 
 
   it('a deck-owned Codex session is at least as recent as its rollout file, and follows it on the next refresh', async () => {
     const { cli } = await writeFixtures(root, work);
-    const index = new SessionIndex({ roots: roots(), pinnedFile: path.join(base, 'p.json'), codexRoot: root });
+    const index = new SessionIndex({ roots: rootsOf(roots()), pinnedFile: path.join(base, 'p.json'), codexRoot: root });
     const t1 = new Date('2026-10-02T03:00:00.000Z');
     await fs.utimes(cli, t1, t1);
     await index.refresh();
@@ -349,7 +350,7 @@ describe('SessionIndex with codexArchivedRoot', () => {
     const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
     await fs.writeFile(path.join(base, 'p.json'), JSON.stringify([{ cwd: work, name: 'work' }]));
     const meta0 = { title: () => null, isArchived: () => false };
-    const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root, codexArchivedRoot: arch, meta: meta0 });
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root, codexArchivedRoot: arch, meta: meta0 });
     await index.refresh();
     const projects = index.projects();
     expect(projects[0]).toMatchObject({ cwd: work, pinned: true });
@@ -365,7 +366,7 @@ describe('SessionIndex.freshCodexImport', () => {
     const arch = path.join(base, 'archived_sessions');
     await fs.mkdir(arch);
     const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
-    const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root, codexArchivedRoot: arch });
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root, codexArchivedRoot: arch });
     await index.refresh();
     let changes = 0;
     index.onChange = () => { changes++; };
@@ -410,7 +411,7 @@ describe('SessionIndex codexInBackground', () => {
     const root = path.join(base, 'codex');
     await writeFixtures(root, work);
     const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
-    const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json'), codexRoot: root });
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root });
     const changed = new Promise<void>((r) => { index.onChange = r; });
     await index.refresh({ codexInBackground: true });
     expect(index.codexImport(DESKTOP_ID)).toBeNull();

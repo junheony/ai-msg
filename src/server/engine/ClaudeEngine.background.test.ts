@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ClaudeEngine } from './ClaudeEngine';
 import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { fakeSdk, sdk } from './fakeSdk';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 function req(over: Partial<TurnRequest> = {}): TurnRequest {
   return { account: 'c', cwd: '/w', resumeSessionId: null, model: 'opus', prompt: 'hi', signal: new AbortController().signal, onPermission: async () => 'once', ...over };
@@ -42,7 +43,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
   it('without background tasks the input closes right after the result (one-shot as before)', async () => {
     const f = fakeSdk();
     f.push(sdk.init(), sdk.delta('ok'), sdk.result('ok'));
-    const evs = await reader(new ClaudeEngine({ queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req())).rest();
+    const evs = await reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req())).rest();
     expect(evs.map((e) => e.kind)).toEqual(['init', 'delta', 'result']);
     expect(f.inputs.map(textOf)).toEqual(['hi']);
     await new Promise((r) => setTimeout(r, 0));
@@ -51,7 +52,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
 
   it('keeps the process open while a task is live and streams the continuation after it settles', async () => {
     const f = fakeSdk();
-    const r = reader(new ClaudeEngine({ queryFn: f.queryFn }).runTurn(req()));
+    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn }).runTurn(req()));
     f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'explore repo' }, { id: 'amb', desc: 'monitor', ambient: true }]), sdk.delta('started'), sdk.result('started'));
     expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: ['explore repo'] });
     expect(await r.until('result')).toMatchObject({ ok: true, text: 'started' });
@@ -78,7 +79,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
   it('a follow-up written through onLive is answered in the same process without a continue marker', async () => {
     const f = fakeSdk();
     let live: LiveInput | null = null;
-    const r = reader(new ClaudeEngine({ queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ onLive: (l) => { live = l; } })));
+    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ onLive: (l) => { live = l; } })));
     f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'build' }]), sdk.result('first'));
     await r.until('result');
     expect(await live!.send({ text: 'and also this', attachments: [] })).toBe(true);
@@ -98,7 +99,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
 
   it('ends after the grace window when the task set empties but no continuation comes', async () => {
     const f = fakeSdk();
-    const r = reader(new ClaudeEngine({ queryFn: f.queryFn, bgGraceMs: 20 }).runTurn(req()));
+    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, bgGraceMs: 20 }).runTurn(req()));
     f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'x' }]), sdk.result('r'));
     await r.until('result');
     f.push(sdk.bgLevel([]));
@@ -109,7 +110,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
 
   it('caps the wait and says so', async () => {
     const f = fakeSdk();
-    const r = reader(new ClaudeEngine({ queryFn: f.queryFn, bgMaxMs: 20 }).runTurn(req()));
+    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, bgMaxMs: 20 }).runTurn(req()));
     f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'forever' }]), sdk.result('r'));
     await r.until('result');
     const rest = await r.rest();
@@ -121,7 +122,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
   it('abort while waiting stops the process and clears the background status', async () => {
     const f = fakeSdk();
     const ac = new AbortController();
-    const r = reader(new ClaudeEngine({ queryFn: f.queryFn }).runTurn(req({ signal: ac.signal })));
+    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn }).runTurn(req({ signal: ac.signal })));
     f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'x' }]), sdk.result('r'));
     await r.until('result');
     ac.abort();
@@ -132,7 +133,7 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
 
   it('falls back to task_started / task_notification when no level signal is sent', async () => {
     const f = fakeSdk();
-    const r = reader(new ClaudeEngine({ queryFn: f.queryFn }).runTurn(req()));
+    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn }).runTurn(req()));
     f.push(sdk.init(), sdk.taskStarted('t1', 'review'), sdk.taskStarted('t2', 'inline', false), sdk.result('r'));
     expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: ['review'] });
     await r.until('result');

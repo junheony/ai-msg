@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeEngine } from './ClaudeEngine';
 import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { fakeSdk, sdk } from './fakeSdk';
+import { testRegistry } from '../../shared/accounts.testkit';
 
 function req(over: Partial<TurnRequest> = {}): TurnRequest {
   return { account: 'c', cwd: '/w', resumeSessionId: null, model: 'opus', prompt: 'hi', signal: new AbortController().signal, onPermission: async () => 'once', ...over };
@@ -37,7 +38,7 @@ function reader(it: AsyncIterable<EngineEvent>) {
 /** A result as the real CLI reports it: the uuids of the user messages the turn consumed. */
 const answered = (text: string, uuids: string[]) => ({ ...sdk.result(text), user_message_uuids: uuids });
 const tick = () => new Promise((r) => setTimeout(r, 5));
-const engine = (f: ReturnType<typeof fakeSdk>, over: ConstructorParameters<typeof ClaudeEngine>[0] = {}) => new ClaudeEngine({ queryFn: f.queryFn, readFile: async () => Buffer.from(''), ...over });
+const engine = (f: ReturnType<typeof fakeSdk>, over: Partial<ConstructorParameters<typeof ClaudeEngine>[0]> = {}) => new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from(''), ...over });
 
 afterEach(() => vi.restoreAllMocks());
 

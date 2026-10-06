@@ -18,6 +18,21 @@ describe('SessionStateStore', () => {
     expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
   });
 
+  it('keeps entries whose account or pin is not a configured account (the file is not checked against the registry)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const gone = { sessionId: 'x', cwd: '/w', account: 'zz', projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' as const, accountPin: 'old' };
+    const kept = { sessionId: 'y', cwd: '/w', account: 'b', projectDir: '/q', lastTurnAtMs: 6, justCompacted: false, defaultModel: 'opus' as const };
+    const s = new SessionStateStore(file);
+    await s.load();
+    await s.set(gone);
+    await s.set(kept);
+    const s2 = new SessionStateStore(file);
+    await s2.load();
+    expect(s2.get('x')).toEqual(gone);
+    expect(s2.get('y')).toEqual(kept);
+  });
+
   it('account pin: persisted across reload, kept by later set() calls, cleared with null', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
     const file = path.join(dir, 'session-state.json');

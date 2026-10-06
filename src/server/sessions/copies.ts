@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ACCOUNTS, type Account } from '../../shared/accounts';
+import type { Account, ProjectsRoots } from '../../shared/accounts';
 import { isAncestor } from './SessionMover';
 
 /** One profile's copy of a session transcript. */
@@ -60,9 +60,9 @@ export async function lastConversationAt(file: string): Promise<number> {
  * `projectDir` (deck copies keep the dir name). The copy at `projectDir` itself comes first. A copy in a
  * differently spelled dir (e.g. an old NFD-era name) is not one resume picks and is ignored.
  */
-export async function findCopies(roots: Record<Account, string>, sessionId: string, projectDir: string, account: Account): Promise<SessionCopy[]> {
+export async function findCopies(roots: ProjectsRoots, sessionId: string, projectDir: string, account: Account): Promise<SessionCopy[]> {
   const name = path.basename(projectDir);
-  const dirs: [Account, string][] = [[account, projectDir], ...ACCOUNTS.map((a): [Account, string] => [a, path.join(roots[a], name)])];
+  const dirs: [Account, string][] = [[account, projectDir], ...roots.map((r): [Account, string] => [r.id, path.join(r.dir, name)])];
   const seen = new Set<string>();
   const out: SessionCopy[] = [];
   for (const [acc, dir] of dirs) {

@@ -118,7 +118,7 @@ export class GeminiEngine {
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly seatbelt: boolean;
 
-  constructor(readonly bin: string, private readonly home: string, opts: { spawnFn?: SpawnFn; baseEnv?: NodeJS.ProcessEnv; seatbelt?: boolean } = {}) {
+  constructor(readonly bin: string, /** deck's config dir: the accounts live under `<configDir>/gemini/`. */ private readonly configDir: string, opts: { spawnFn?: SpawnFn; baseEnv?: NodeJS.ProcessEnv; seatbelt?: boolean } = {}) {
     this.spawnFn = opts.spawnFn ?? ((b, args, o) => nodeSpawn(b, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'] }));
     this.baseEnv = opts.baseEnv ?? process.env;
     // gemini-cli's `-s` is sandbox-exec on macOS; elsewhere it needs docker/podman, so only the approval mode guards.
@@ -135,7 +135,7 @@ export class GeminiEngine {
       yield mapper.result(false, ZERO_USAGE, '잘못된 세션 ID 형식');
       return;
     }
-    const child = this.spawnFn(this.bin, geminiArgs(req, this.seatbelt), { cwd: req.cwd, env: geminiEnv(req.account, this.baseEnv, this.home) });
+    const child = this.spawnFn(this.bin, geminiArgs(req, this.seatbelt), { cwd: req.cwd, env: geminiEnv(req.account, this.baseEnv, this.configDir) });
     let stderrTail = '';
     child.stderr?.on('data', (chunk: Buffer | string) => { stderrTail = (stderrTail + String(chunk)).slice(-STDERR_MAX); });
     child.stdin?.on('error', () => {});
@@ -194,6 +194,6 @@ export function resolveGeminiBin(env: NodeJS.ProcessEnv, home: string, existsFn:
 }
 
 /** Logged in = the account's OAuth file exists. Existence only: deck never opens it. */
-export function geminiLoggedIn(account: GeminiAccount, home: string, existsFn: (p: string) => boolean = fs.existsSync): boolean {
-  return existsFn(geminiCredFile(account, home));
+export function geminiLoggedIn(account: GeminiAccount, configDir: string, existsFn: (p: string) => boolean = fs.existsSync): boolean {
+  return existsFn(geminiCredFile(account, configDir));
 }

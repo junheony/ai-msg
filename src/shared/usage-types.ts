@@ -18,9 +18,11 @@ export type AccountUsage = {
 export type UsageSnapshot = {
   generatedAt: string;
   deckReachable: boolean;
+  /** By account id. An account may be missing (snapshot from before it was configured): read with `usageOf`. */
   accounts: Record<Account, AccountUsage>;
   /** ChatGPT Pro (usage-deck card `codex`); status 'down' = unknown (D5). Optional only for Plan 1 test literals. */
   gpt?: AccountUsage;
+  /** 'none' = this install has never had an answer from usage-deck: unknown usage alone does not change the model or engine. Absent = 'deck'. */ usageSource?: 'deck' | 'none';
 };
 
 export function remainingPct(w: UsageWindow | null): number | null {
@@ -32,11 +34,17 @@ export function emptyAccountUsage(): AccountUsage {
   return { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null };
 }
 
-export function emptySnapshot(now: Date): UsageSnapshot {
+/** An account's usage; one the snapshot does not carry is unknown ('down'). */
+export function usageOf(s: Pick<UsageSnapshot, 'accounts'>, account: Account): AccountUsage {
+  return (Object.hasOwn(s.accounts, account) ? s.accounts[account] : undefined) ?? emptyAccountUsage();
+}
+
+/** `accounts`: the ids to carry (the server passes its registry's). */
+export function emptySnapshot(now: Date, accounts: readonly Account[]): UsageSnapshot {
   return {
     generatedAt: now.toISOString(),
     deckReachable: false,
-    accounts: { a: emptyAccountUsage(), b: emptyAccountUsage(), c: emptyAccountUsage() },
+    accounts: Object.fromEntries(accounts.map((a) => [a, emptyAccountUsage()])),
     gpt: emptyAccountUsage(),
   };
 }

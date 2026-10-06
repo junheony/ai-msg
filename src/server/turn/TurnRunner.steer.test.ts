@@ -13,6 +13,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 
@@ -22,7 +23,7 @@ async function usableAccounts(): Promise<UsageService> {
   const card = (id: string) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [
     { label: 'Session (5h)', used: 5, resetsAt }, { label: 'Weekly (7d)', used: 5, resetsAt }, { label: 'Fable (7d)', used: 5, resetsAt }] });
   const state = { cards: [card('claude:main'), card('claude:second'), card('claude:third')] };
-  const u = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
+  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }
@@ -34,16 +35,17 @@ async function setup(over: Partial<TurnRunnerDeps> = {}) {
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
   const deps: TurnRunnerDeps = {
-    engine: new ClaudeEngine({ queryFn: f.queryFn, readFile: async () => Buffer.from('') }),
+    accounts: testRegistry(),
+    engine: new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from('') }),
     usage,
-    index: new SessionIndex({ roots, pinnedFile: path.join(base, 'projects.json') }),
+    index: new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'projects.json') }),
     store,
     cooldownDir: path.join(base, 'cooldown'),
     protectedAccount: 'a',
     auditFile: path.join(base, 'audit.log'),
-    projectsRoots: roots,
+    projectsRoots: rootsOf(roots),
     codex: null,
     attachments: null,
     codexSessionsRoot: path.join(base, 'codex-sessions'),
@@ -195,7 +197,7 @@ describe('TurnRunner: steering a running Claude turn', () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     const g = fakeSdk();
-    const engine = new ClaudeEngine({ queryFn: g.queryFn, readFile: async () => { await gate; return Buffer.from('png'); } });
+    const engine = new ClaudeEngine({ accounts: testRegistry(), queryFn: g.queryFn, readFile: async () => { await gate; return Buffer.from('png'); } });
     const att = { id: 'att_1', name: 'a.png', mediaType: 'image/png', size: 3, path: '/tmp/a.png', isImage: true, createdAtMs: NOW };
     const { msgs, sink, ac, runner } = await setup({ engine, attachments: { resolve: () => ({ found: [att], missing: [] }) } as unknown as TurnRunnerDeps['attachments'] });
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
@@ -212,7 +214,7 @@ describe('TurnRunner: steering a running Claude turn', () => {
 
   it('DECK_STEER=0 (engine steer: false): no live steer, so steer() refuses; follow-up bookkeeping still closes the process', async () => {
     const g = fakeSdk();
-    const { msgs, sink, runner } = await setup({ engine: new ClaudeEngine({ queryFn: g.queryFn, readFile: async () => Buffer.from(''), steer: false }) });
+    const { msgs, sink, runner } = await setup({ engine: new ClaudeEngine({ accounts: testRegistry(), queryFn: g.queryFn, readFile: async () => Buffer.from(''), steer: false }) });
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => g.inputs.length === 1, 'prompt written');
     g.push(sdk.init('s1'));

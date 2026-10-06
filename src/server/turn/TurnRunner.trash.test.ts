@@ -8,6 +8,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { TurnRunner } from './TurnRunner';
+import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-10-02T12:00:00Z');
 const SID = '44444444-4444-4444-8444-444444444444';
@@ -21,14 +22,14 @@ async function setup() {
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') });
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
-  const runner = new TurnRunner({
+  const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json') });
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+  const runner = new TurnRunner({ accounts: testRegistry(),
     engine: new StubEngine(async () => []), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: 'a', auditFile: path.join(base, 'audit.log'),
-    projectsRoots: roots, codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), homeAccount: 'a', now: () => NOW,
+    projectsRoots: rootsOf(roots), codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), homeAccount: 'a', now: () => NOW,
   });
   const put = async (a: Account, mtimeMs: number) => {
-    const f = path.join(roots[a], DIR, `${SID}.jsonl`);
+    const f = path.join(roots[a]!, DIR, `${SID}.jsonl`);
     await fs.mkdir(path.dirname(f), { recursive: true });
     await fs.writeFile(f, line);
     await fs.utimes(f, mtimeMs / 1000, mtimeMs / 1000);
