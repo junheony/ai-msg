@@ -125,6 +125,8 @@ export type ChatProps = {
   onDismissNotice?: (message: string) => void;
   /** View-only session (e.g. an imported Codex thread whose folder is gone): the composer is disabled and shows this reason. */
   readOnly?: string | null;
+  /** A line above the composer (the server will refuse a send here, and says why itself). */
+  composerNote?: string | null;
   /** The session's history is on its way: a placeholder instead of a blank transcript. */
   loading?: boolean;
 };
@@ -524,6 +526,7 @@ export function Chat(p: ChatProps) {
         )}
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
         {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} />}
+        {p.composerNote && <div className="pane-notice notice composer-note" role="status" data-testid="composer-note"><span className="pane-notice-text">{p.composerNote}</span></div>}
         <div className={`composer ${drag && !p.readOnly ? 'dragover' : ''}`}>
           {suggest.popup}
           <textarea

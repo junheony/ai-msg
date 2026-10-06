@@ -15,7 +15,7 @@ export function usageSources(accounts: readonly Account[]): UsageSource[] {
   return [...accounts, CODEX_SOURCE];
 }
 
-/** Tab / legend label: the account's label (an id that is not configured shows as `ID`), `GPT` for Codex, `합계` for the total. */
+/** Tab / legend label: the account's label (an id that is not configured shows as it is), `GPT` for Codex, `합계` for the total. */
 export function usageSourceLabel(source: UsageSource | 'all', names: Pick<AccountNames, 'label'> = LEGACY_ACCOUNTS): string {
   return source === 'all' ? '합계' : source === CODEX_SOURCE ? 'GPT' : names.label(source);
 }

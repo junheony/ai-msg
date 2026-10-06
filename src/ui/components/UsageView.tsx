@@ -181,10 +181,13 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
   const rows = data?.rows ?? [];
   const week = weekStart(today);
   const month = addDays(today, -(CHART_DAYS - 1));
-  const weekly = weeklyRows(rows, view);
+  // The picked tab may leave (a removed account whose rows aged out) and come back: 합계 meanwhile, the pick is kept.
+  const tabs = usageTabs(names, data);
+  const shown = tabs.includes(view) ? view : 'all';
+  const weekly = weeklyRows(rows, shown);
 
   return (
-    <div className="usage-view" role="dialog" aria-modal="true" aria-label="토큰 사용량">
+    <div className="usage-shown" role="dialog" aria-modal="true" aria-label="토큰 사용량">
       <div className="uv-inner">
         <header className="uv-head">
           <h2>사용량</h2>
@@ -192,23 +195,24 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
           <button type="button" className="uv-btn uv-close" onClick={onClose} aria-label="닫기">닫기</button>
         </header>
         <div className="uv-tabs" role="tablist" aria-label="계정">
-          {usageTabs(names, data).map((v) => {
-            const kind = v === 'all' || v === CODEX_SOURCE ? 'active' : names.look(v).kind;
-            return <button key={v} type="button" role="tab" aria-selected={view === v} className={`${view === v ? 'on' : ''}${kind === 'active' ? '' : ` acct-${kind}`}`} onClick={() => setView(v)}>{usageSourceLabel(v, names)}</button>;
+          {tabs.map((v) => {
+            const state = v === 'all' || v === CODEX_SOURCE ? null : names.state(v);
+            const label = usageSourceLabel(v, names);
+            return <button key={v} type="button" role="tab" aria-selected={shown === v} className={`${shown === v ? 'on' : ''}${state ? ` acct-${names.look(v).kind}` : ''}`} {...(state ? { title: `${label} (${state})`, 'aria-label': `${label} (${state})` } : {})} onClick={() => setView(v)}>{label}</button>;
           })}
         </div>
         {error && <div className="uv-note error">{error}</div>}
         {data?.scanning && <div className="uv-note">기록을 읽는 중입니다 — 처음에는 몇 분 걸릴 수 있어요. 숫자가 계속 늘어납니다.</div>}
-        {view === 'all' && <div className="uv-note muted">합계는 여러 계정에 복사된 같은 메시지를 한 번만 셉니다. 비용은 API 단가 기준 추정치이며, GPT(Codex)는 구독에 포함되어 환산값이 실제 청구액이 아닙니다.</div>}
-        {view === 'codex' && <div className="uv-note muted">GPT(Codex) 사용량은 ChatGPT 구독에 포함됩니다. 금액은 공개 단가가 없어 임의 단가로 환산한 대략적인 추정치입니다.</div>}
+        {shown === 'all' && <div className="uv-note muted">합계는 여러 계정에 복사된 같은 메시지를 한 번만 셉니다. 비용은 API 단가 기준 추정치이며, GPT(Codex)는 구독에 포함되어 환산값이 실제 청구액이 아닙니다.</div>}
+        {shown === 'codex' && <div className="uv-note muted">GPT(Codex) 사용량은 ChatGPT 구독에 포함됩니다. 금액은 공개 단가가 없어 임의 단가로 환산한 대략적인 추정치입니다.</div>}
         <section className="uv-tiles">
-          <Tile label="오늘" sub={view === 'codex'} s={sumRows(rows, view, (d) => d === today)} />
-          <Tile label="이번 주" sub={view === 'codex'} s={sumRows(rows, view, (d) => d >= week && d <= today)} />
-          <Tile label="30일" sub={view === 'codex'} s={sumRows(rows, view, (d) => d >= month && d <= today)} />
+          <Tile label="오늘" sub={shown === 'codex'} s={sumRows(rows, shown, (d) => d === today)} />
+          <Tile label="이번 주" sub={shown === 'codex'} s={sumRows(rows, shown, (d) => d >= week && d <= today)} />
+          <Tile label="30일" sub={shown === 'codex'} s={sumRows(rows, shown, (d) => d >= month && d <= today)} />
         </section>
         <section>
           <h3>일별 (최근 {CHART_DAYS}일)</h3>
-          <DailyChart data={dailyStacks(rows, view, today, CHART_DAYS)} />
+          <DailyChart data={dailyStacks(rows, shown, today, CHART_DAYS)} />
         </section>
         <section>
           <h3>주별</h3>
@@ -228,7 +232,7 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
                     <td>{fmtTokens(sum.cacheWrite)}</td>
                     <td><b>{fmtTokens(totalTokens(sum))}</b></td>
                     <td>{fmtPct(cacheHitPct(sum))}</td>
-                    <td>{view === 'codex' ? fmtSubscriptionCost(sum.cost) : fmtCost(sum.cost)}</td>
+                    <td>{shown === 'codex' ? fmtSubscriptionCost(sum.cost) : fmtCost(sum.cost)}</td>
                   </tr>
                 ))}
               </tbody>

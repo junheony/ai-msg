@@ -510,7 +510,7 @@ export function App() {
             unread={state.unread}
             waiting={[...state.pending, ...state.questions].map((c) => c.sessionId).filter((id): id is string => !!id)}
             onOpenSettings={() => setSettingsOpen(true)}
-            avatar={footAccount ? accounts.label(footAccount).slice(0, 1).toUpperCase() : 'D'}
+            avatar={footAccount ? ([...accounts.label(footAccount)][0] ?? '').toUpperCase() : 'D'}
             avatarTitle={footAccount ? `deck · ${footAccount === 'gpt' ? 'GPT' : `계정 ${accounts.label(footAccount)}`}` : 'deck'}
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },

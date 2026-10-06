@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Effort, ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
-import type { ClientMessage } from '../../shared/protocol';
+import { isGeminiAccount } from '../../shared/accounts';
+import type { AccountInfo, ClientMessage } from '../../shared/protocol';
+import { LEGACY_ACCOUNT_LIST, activePin, useAccounts } from '../accounts';
+import { has } from '../features';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
 import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
@@ -75,9 +78,9 @@ export function startHandoff(pane: PaneState, dispatch: (a: Action) => void, sen
 
 /**
  * 메시지 편집 갈래: `text` replaces user message `n` (shown as `original`) of the pane's Claude session. The pane turns
- * into the new branch session at once (same cwd, pin and model); the server forks the transcript and the meta links it.
+ * into the new branch session at once (same cwd, pin — when its account can still run a turn — and model); the server forks the transcript and the meta links it.
  */
-export function startBranch(pane: PaneState, n: number, text: string, original: string, dispatch: (a: Action) => void, send: (m: ClientMessage) => void): void {
+export function startBranch(pane: PaneState, n: number, text: string, original: string, dispatch: (a: Action) => void, send: (m: ClientMessage) => void, accounts: readonly AccountInfo[] = LEGACY_ACCOUNT_LIST): void {
   const s = pane.session;
   if (!s?.sessionId || pane.activeTurnId !== null || pane.awaitingStart) return;
   const model = paneModel(pane);
@@ -86,7 +89,7 @@ export function startBranch(pane: PaneState, n: number, text: string, original: 
   dispatch({ type: 'branch_edit', n, text, paneId: pane.id, clientRef });
   send({
     type: 'send', sessionId: null, cwd: s.cwd, text, ...modelField(pane, model), ...(effort ? { effort } : {}), engine: 'claude',
-    ...(s.accountPin ? { accountPin: s.accountPin } : {}),
+    ...(activePin(accounts, s.accountPin) ? { accountPin: s.accountPin } : {}),
     branch: { from: s.sessionId, n, ...(original ? { expect: original } : {}) },
     clientRef,
   });
@@ -252,6 +255,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const entry = s?.sessionId ? projects.flatMap((p) => p.sessions).find((x) => x.sessionId === s.sessionId) : undefined;
   // 메시지 편집 갈래: Claude sessions with an id; otherwise 편집 puts the text in the composer (the note says why).
   const canBranch = canHandoff;
+  // The server refuses to resume a session whose account was retired or is not configured any more: said before the send.
+  const on = s?.sessionId && s.account && s.account !== 'gpt' && !isGeminiAccount(s.account) && has('accounts') ? s.account : null;
+  const names = useAccounts();
+  const gone = on ? names.look(on).kind : null;
   const editNote = !s?.sessionId ? '아직 저장되지 않은 새 세션이라 입력창에 넣습니다' : s.engine === 'codex' || s.engine === 'gemini' ? 'GPT·Gemini 세션은 대화를 갈라 편집할 수 없어 입력창에 넣습니다' : busy ? '실행 중에는 입력창에 넣습니다' : null;
   // Stable while the index and the session stay the same, so the memoized transcript does not re-render on every delta.
   const openRef = useRef(onOpenSession);
@@ -333,7 +340,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           attachments={pane.attachments}
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
-          onBranch={canBranch ? (n, text, original) => { branchUndo.current = { sessionId: s.sessionId!, cwd: s.cwd, title: s.title }; startBranch(pane, n, text, original, dispatch, send); } : undefined}
+          onBranch={canBranch ? (n, text, original) => { branchUndo.current = { sessionId: s.sessionId!, cwd: s.cwd, title: s.title }; startBranch(pane, n, text, original, dispatch, send, names.all); } : undefined}
           editNote={editNote}
           versions={versions}
           onHandoff={canHandoff ? () => startHandoff(pane, dispatch, send) : undefined}
@@ -344,6 +351,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           nextSession={link(entry?.nextSession ?? null)}
           notices={pane.notices?.filter((n) => n.sessionId === null || n.sessionId === s.sessionId)}
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
+          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : null}
           readOnly={entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : null}
           onInterrupt={interrupt}
           onStopBackground={(turnId) => { dispatch({ type: 'interrupt_sent', turnId, paneId: pane.id }); send({ type: 'interrupt', turnId }); }}

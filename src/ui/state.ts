@@ -8,7 +8,7 @@ import { handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
-import { LEGACY_ACCOUNT_LIST, accountListOf, seatLabel } from './accounts';
+import { LEGACY_ACCOUNT_LIST, accountListOf, activePin, sameAccountList, seatLabel } from './accounts';
 import { has } from './features';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
@@ -687,7 +687,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const queuePaused = next.queuePaused || ((mine || pane.activeTurnId === msg.turnId) && !msg.ok);
       const ended = pane.activeTurnId === msg.turnId;
       const done: PaneState = { ...next, session, myTurns, queuePaused, activeTurnId: ended ? null : pane.activeTurnId, ...(ended ? { runStartedAt: null, progress: null } : {}) };
-      return pane.handoff?.turnId === msg.turnId ? afterHandoffNote(done, msg.ok) : done;
+      return pane.handoff?.turnId === msg.turnId ? afterHandoffNote(done, msg.ok, accounts) : done;
     }
     case 'error': {
       // This session's open_session failed while messages wait for its history: they stop waiting — ordinary queue items,
@@ -732,15 +732,15 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
  * "<old title> (이어서)", with the first message (note included) in the composer. Nothing is sent until the user does.
  * A failed or empty note leaves the pane on the old session (the turn shows its error).
  */
-function afterHandoffNote(pane: PaneState, ok: boolean): PaneState {
+function afterHandoffNote(pane: PaneState, ok: boolean, accounts: readonly AccountInfo[]): PaneState {
   const h = pane.handoff!;
   const item = pane.items.findLast((it) => it.kind === 'assistant' && it.turnId === h.turnId);
   const note = item?.kind === 'assistant' ? item.text.trim() : '';
   if (!ok || !note) return { ...pane, handoff: null };
   return {
     ...pane,
-    // The old session's account pin carries over (rides the new session's first send).
-    session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null, ...(pane.session?.accountPin ? { accountPin: pane.session.accountPin } : {}), ...(pane.session?.permissionMode ? { permissionMode: pane.session.permissionMode } : {}) },
+    // The old session's account pin carries over (rides the new session's first send) — unless its account cannot run a turn any more.
+    session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null, ...(activePin(accounts, pane.session?.accountPin) ? { accountPin: pane.session!.accountPin } : {}), ...(pane.session?.permissionMode ? { permissionMode: pane.session.permissionMode } : {}) },
     engine: 'claude',
     items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [],
     // Messages queued meanwhile stay, paused: they were meant for the old session (held ones are parked with it: onServer).
@@ -792,8 +792,19 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
 
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
-    case 'hello':
-      return applySettings({ ...state, connected: true, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts: has('accounts') ? accountListOf(msg.accounts) : LEGACY_ACCOUNT_LIST, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(mapPanes(state, msg), msg.projects) }, msg.settings);
+    case 'hello': {
+      const listed = has('accounts') ? accountListOf(msg.accounts) : LEGACY_ACCOUNT_LIST;
+      // The same list as before keeps its identity (nothing drawn from it renders again).
+      const accounts = sameAccountList(state.accounts, listed) ? state.accounts : listed;
+      // A new session waiting with a pin this server cannot run on (its list changed, or the pin was restored from an older
+      // one): back to 자동, said once. An existing session's pin is the server's.
+      const panes = mapPanes(state, msg).map((p) => {
+        const pin = p.session?.sessionId === null ? p.session.accountPin : null;
+        if (!pin || activePin(accounts, pin)) return p;
+        return withNotice({ ...p, session: { ...p.session!, accountPin: null } }, { sessionId: null, message: `고정해 둔 계정(${seatLabel(accounts, pin)})을 지금 쓸 수 없어 자동으로 바꿨습니다`, level: 'notice' });
+      });
+      return applySettings({ ...state, connected: true, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
+    }
     case 'settings': return applySettings(state, msg.settings);
     // A mode the user picked before the id arrived wins: it is on its way to the server.
     case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && !p.session.permissionModePending ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
@@ -957,7 +968,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return updatePane({ ...state, parked: split.parked }, p.id, () => ({
         ...p,
         // The server forks in the parent's mode; the pane shows that mode until the fork's own arrives.
-        session: { sessionId: null, cwd: p.session!.cwd, account: null, title: p.session!.title, engine: 'claude', sandbox: null, ...(p.session!.accountPin ? { accountPin: p.session!.accountPin } : {}), ...(p.session!.permissionMode ? { permissionMode: p.session!.permissionMode } : {}) },
+        session: { sessionId: null, cwd: p.session!.cwd, account: null, title: p.session!.title, engine: 'claude', sandbox: null, ...(activePin(state.accounts, p.session!.accountPin) ? { accountPin: p.session!.accountPin } : {}), ...(p.session!.permissionMode ? { permissionMode: p.session!.permissionMode } : {}) },
         items: [...kept, { kind: 'user', text: action.text, n: action.n }],
         // A refused fork keeps its text (paused in the queue); messages queued for the parent stay, paused.
         activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: { text: action.text, attachments: [], branch: true },
