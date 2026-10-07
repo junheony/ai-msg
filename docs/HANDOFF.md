@@ -1,8 +1,9 @@
-# HANDOFF — deck (갱신 2026-10-06 오후)
+# HANDOFF — deck (갱신 2026-10-07)
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 이 저장소는 비공개 원본(원격 없음)이고, 공개본은 `scripts/export-public.sh` 로 뽑아 따로 올린다.
 
 ## 다음 할 일 (2026-10-06 오후)
+- **재부팅으로 서버 꺼짐 (2026-10-07 13:40)**: 맥이 04:41 에 재부팅됐다(패닉 보고서·OS 업데이트 흔적 없음). 셸에서 띄운 서버(pid 56716)가 같이 꺼졌고 `/tmp/deck-relaunch.sh`·`/tmp/deck-migrate-fable.py` 도 지워졌다. launchd `com.deck.server` 는 `~/Documents` 아래 `run.sh` 를 못 읽어(TCC, 전체 디스크 접근 없음) 종료 코드 126 으로 10초마다 재시도 중이고 `deck.log` 에 두 줄씩 쌓인다. 13:39 에 `run.sh` 와 같은 방식(`~/.config/deck/env` 로드 + `node --import tsx src/server/main.ts`)으로 셸에서 nohup 시작(pid 9267, PPID 1). 전체 디스크 접근 권한을 주기 전까지는 재부팅할 때마다 손으로 띄워야 한다(권한은 사용자 몫).
 
 - **파일 작업 카드 접기 (2026-10-06 17:00)**: 대화 안의 Edit/Write 카드가 diff 전체를 펼쳐 보여 화면을 차지했다. 이제 `DiffCard folded`(`<details>` + `<summary class="diff-head">`)로 경로·새 파일·+N −M 한 줄만 보이고 누르면 펼쳐진다. 승인 카드(PermissionCard)와 사이드 패널의 diff 는 그대로 펼쳐진 `<div>` 다. 모델 고정 수정(`868d028`)은 16:49 재시작으로 반영됐고(`new server healthy (pid 56716)`, 12개 세션 fable 전환 확인), 이 세션도 Fable 5.1 로 돈다. UI 만 바뀌어 `vite build` 뒤 새로고침으로 반영됐다(서버 재시작 없음). 공개 저장소 `junheony/quarterdeck` 에 `868d028`+`a44ae8b` 를 `df2ee08` 로 올렸다(17:25).
 - **모델 고정 수정 (2026-10-06 16:40)**: Desktop 에서 가져온 세션은 기본 모델이 Opus 로 저장돼(`IMPORTED_DEFAULT_MODEL`) 피커가 늘 Opus 였고, 피커에서 고른 모델은 세션에 저장되지 않았다. 지금은 가져온 세션도 Fable 이 기본이다. 보낼 때 고른 모델이 세션의 기본값으로 저장되고, `turn_started.sessionModel` 로 다른 창·기기에 알린다. 이미 Opus 로 저장된 가져온 세션 12개(모두 첫 entrypoint `claude-desktop`)는 재시작 사이에 `/tmp/deck-migrate-fable.py` 로 fable 로 바꿨다(백업 `~/.config/deck/session-state.json.bak-*`). 재시작은 `RELAUNCH_PRESTART` 훅(마이그레이션 + `vite build`)을 붙인 `/tmp/deck-relaunch.sh`, 대체 빌드는 `/tmp/deck-fallback`(`470b11e`, dist 복사본). `deck.log` 의 `[migrate-fable …]`·`[relaunch …]` 줄로 결과를 본다. 공개 저장소에는 `df2ee08` 로 올라갔다.
