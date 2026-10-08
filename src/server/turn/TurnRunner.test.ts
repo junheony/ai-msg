@@ -258,12 +258,13 @@ describe('TurnRunner', () => {
     });
     const c = await ctx(eng);
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
-    expect(eng.calls.map((r) => r.account)).toEqual(['b', 'c', 'a']);
+    // b limited → a (protected, but the one account with room; c is at weekly 91) → a's auth fails → c.
+    expect(eng.calls.map((r) => r.account)).toEqual(['b', 'a', 'c']);
     expect(readCooldownUntilMs(c.deps.cooldownDir, 'b', NOW)).toBe(NOW + 3_600_000);
-    expect(readCooldownUntilMs(c.deps.cooldownDir, 'c', NOW)).toBe(NOW + 6 * 3_600_000);
-    expect(msgsOf(c, 'turn_retry')).toMatchObject([{ fromAccount: 'b', toAccount: 'c', attempt: 1 }, { fromAccount: 'c', toAccount: 'a', attempt: 2 }]);
-    expect(c.moves.map((m) => (m as { targetProjectsRoot: string }).targetProjectsRoot)).toEqual([c.roots.c, c.roots.a]);
-    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'a' } });
+    expect(readCooldownUntilMs(c.deps.cooldownDir, 'a', NOW)).toBe(NOW + 6 * 3_600_000);
+    expect(msgsOf(c, 'turn_retry')).toMatchObject([{ fromAccount: 'b', toAccount: 'a', attempt: 1 }, { fromAccount: 'a', toAccount: 'c', attempt: 2 }]);
+    expect(c.moves.map((m) => (m as { targetProjectsRoot: string }).targetProjectsRoot)).toEqual([c.roots.a, c.roots.c]);
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'c' } });
 
     const eng3 = new StubEngine(() => [failResult('usage limit reached')]);
     const c3 = await ctx(eng3);
