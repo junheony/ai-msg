@@ -1,5 +1,8 @@
 import type { ClientMessage, ServerMessage } from '../shared/protocol';
 
+/** Server message kinds beyond the base set this UI handles: told with every open_session (docs/protocol.md rule 3). */
+const ACCEPTS = ['sandbox'];
+
 /**
  * Review M10: a browser cannot see the HTTP status of a refused upgrade, so after every close
  * the session is checked with /api/me; a 401 hands back to the login screen instead of
@@ -50,7 +53,7 @@ export function createSocket(
   return {
     send(m) {
       if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-      ws.send(JSON.stringify(m));
+      ws.send(JSON.stringify(m.type === 'open_session' ? { ...m, accepts: ACCEPTS } : m));
       return true;
     },
     reconnect() {

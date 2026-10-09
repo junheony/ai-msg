@@ -1,6 +1,6 @@
 import { loadDraft, saveDraft } from '../autoReload';
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ComponentProps, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
+import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus } from '../../shared/protocol';
 import type { UsageSnapshot } from '../../shared/usage-types';
@@ -84,6 +84,8 @@ export type ChatProps = {
   onEffort: (e: Effort | null) => void;
   onEngine: (e: EngineChoice) => void;
   onSandbox: (s: CodexSandbox) => void;
+  /** An existing GPT session ('sessionSandbox' servers): its sandbox chip becomes a picker; absent = a read-only tag. */
+  onSessionSandbox?: (s: CodexSandbox) => void;
   onAttach: (a: UploadedAttachment) => void;
   onUnattach: (id: string) => void;
   /** 이 세션은 B 써 (Claude sessions): the pinned account (null = 자동), the account it runs on, usage for the menu. */
@@ -482,7 +484,13 @@ export function Chat(p: ChatProps) {
           {folder && <span className="folder-chip chat-subtitle" title={p.cwd}>{folder}</span>}
         </div>
         <div className="chat-head-chips">
-          {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
+          {!p.isNew && p.sessionEngine === 'codex' && (p.onSessionSandbox
+            ? (
+              <Pick className="chip sandbox" label={`GPT · 샌드박스: ${SANDBOX_LABEL[p.sessionSandbox ?? DEFAULT_SANDBOX]}`} value={p.sessionSandbox ?? DEFAULT_SANDBOX} onChange={(e) => p.onSessionSandbox?.(e.target.value as CodexSandbox)} title="GPT 샌드박스 (승인 카드 없음 · 다음 턴부터 적용)" aria-label="샌드박스" data-testid="session-sandbox-select">
+                {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{SANDBOX_LABEL[s]}</option>)}
+              </Pick>
+            )
+            : <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? DEFAULT_SANDBOX]}</span>)}
           {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${PERM_MODE_HINT[permMode]}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}
           {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
         </div>
@@ -593,7 +601,7 @@ export function Chat(p: ChatProps) {
                 </Pick>
               )}
               {engineSelect && effectiveEngine !== 'claude' && (
-                <Pick className="sandbox" label={sandboxLabel[p.sandbox]} value={p.sandbox} onChange={(e) => p.onSandbox(e.target.value as CodexSandbox)} title={effectiveEngine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 없음 · 세션 생성 후 변경 불가)'} aria-label="샌드박스" data-testid="sandbox-select">
+                <Pick className="sandbox" label={sandboxLabel[p.sandbox]} value={p.sandbox} onChange={(e) => p.onSandbox(e.target.value as CodexSandbox)} title={effectiveEngine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 카드 없음 · 세션을 만든 뒤에도 바꿀 수 있음)'} aria-label="샌드박스" data-testid="sandbox-select">
                   {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{sandboxLabel[s]}</option>)}
                 </Pick>
               )}

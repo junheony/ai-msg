@@ -82,6 +82,26 @@ describe('Chat', () => {
     expect(screen.queryByTestId('engine-select')).toBeNull();
   });
 
+  it('an existing Codex session: the sandbox chip is the same picker as a new one (with onSessionSandbox) and sends the pick', () => {
+    const onSessionSandbox = vi.fn();
+    renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'read-only', model: 'gpt-6-sol', onSessionSandbox });
+    const pick = screen.getByTestId('session-sandbox-select') as HTMLSelectElement;
+    expect(pick.value).toBe('read-only');
+    expect(within(pick).getAllByRole('option').map((o) => o.textContent)).toEqual(['읽기 전용', '작업폴더 쓰기 · 네트워크']);
+    expect(pick.parentElement!.querySelector('.pick-label')!.textContent).toBe('GPT · 샌드박스: 읽기 전용');
+    fireEvent.change(pick, { target: { value: 'workspace-write' } });
+    expect(onSessionSandbox).toHaveBeenCalledWith('workspace-write');
+    expect(screen.queryByTestId('engine-select')).toBeNull();
+    cleanup();
+    // Without the handler (an older server, or a Claude / Gemini session) the chip stays a tag.
+    renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'workspace-write', model: 'gpt-6-sol' });
+    expect(screen.queryByTestId('session-sandbox-select')).toBeNull();
+    expect(screen.getByText('GPT · 샌드박스: 작업폴더 쓰기 · 네트워크')).toBeTruthy();
+    cleanup();
+    renderChat([], false, vi.fn(), { sessionEngine: 'gemini', sessionSandbox: 'read-only', model: 'gemini-pro', onSessionSandbox });
+    expect(screen.queryByTestId('session-sandbox-select')).toBeNull();
+  });
+
   it('Gemini: option only with gemini-cli; disabled with 로그인 필요 until an account has credentials; Gemini models without effort', () => {
     const out = { available: true, loggedIn: { g1: false, g2: false } };
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false, gemini: out });

@@ -11,7 +11,8 @@ class FakeWS {
   onmessage: ((ev: { data: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   constructor(public url: string) { FakeWS.instances.push(this); }
-  send() {}
+  sent: string[] = [];
+  send(d: string) { this.sent.push(d); }
   close() { this.onclose?.({ code: 1006 }); }
 }
 
@@ -65,6 +66,15 @@ describe('createSocket', () => {
     expect(s.send({ type: 'interrupt', turnId: 't' })).toBe(false);
     FakeWS.instances[0]!.readyState = FakeWS.OPEN;
     expect(s.send({ type: 'interrupt', turnId: 't' })).toBe(true);
+  });
+
+  it('open_session says which newer server message kinds this UI understands (sandbox); other messages go as they are', () => {
+    const s = createSocket(() => {}, () => {});
+    const w = FakeWS.instances[0]!;
+    w.readyState = FakeWS.OPEN;
+    s.send({ type: 'open_session', sessionId: 's1' });
+    s.send({ type: 'interrupt', turnId: 't' });
+    expect(w.sent.map((d) => JSON.parse(d))).toEqual([{ type: 'open_session', sessionId: 's1', accepts: ['sandbox'] }, { type: 'interrupt', turnId: 't' }]);
   });
 
   it('wake() during the backoff wait opens a new socket at once and resets the delay', async () => {

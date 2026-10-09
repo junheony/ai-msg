@@ -1,5 +1,5 @@
 import type { Account, Seat } from '../shared/accounts';
-import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
+import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type DeckSettings, type SessionFacts, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
@@ -581,7 +581,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       // history's header would have settled is settled — the queue, and the session's server-side settings.
       const sess = pane.session;
       if (sess?.sessionId !== msg.sessionId) return pane;
-      const session = { ...sess, ...(msg.accountPin !== undefined ? { accountPin: msg.accountPin } : {}), ...(msg.permissionMode && !sess.permissionModePending ? { permissionMode: msg.permissionMode } : {}) };
+      const session = { ...sess, ...(msg.accountPin !== undefined ? { accountPin: msg.accountPin } : {}), ...(msg.permissionMode && !sess.permissionModePending ? { permissionMode: msg.permissionMode } : {}), ...(msg.sandbox ? { sandbox: msg.sandbox } : {}) };
       return { ...pane, ...(msg.acceptedRefs ? settleQueue(pane, msg, []) : {}), session, ...(msg.sessionModel && sess.engine === 'claude' && !pane.modelPicked ? { model: msg.sessionModel } : {}) };
     }
     case 'turn_started': {
@@ -831,15 +831,18 @@ export function paneMode(pane: PaneState, defaultMode: PermMode | null): PermMod
   return pane.session?.permissionMode ?? defaultMode ?? 'default';
 }
 
-/** 자동 승인 changes the default sandbox of new GPT sessions; panes still on the old default follow it. */
+/**
+ * Server settings. 자동 승인 changes the default sandbox of new Gemini sessions only (Gemini panes still on the old default
+ * follow it); the GPT default is always workspace-write (DEFAULT_SANDBOX).
+ */
 function applySettings(state: AppState, settings: DeckSettings | undefined): AppState {
   if (!settings) return state;
   if (settings.defaultPermissionMode !== state.defaultPermMode) state = { ...state, defaultPermMode: settings.defaultPermissionMode };
   if ((settings.routingPolicy ?? 'balance') !== state.routingPolicy) state = { ...state, routingPolicy: settings.routingPolicy ?? 'balance' };
   if (settings.autoApprove === state.autoApprove) return state;
-  const from = defaultSandbox(state.autoApprove ?? false);
-  const to = defaultSandbox(settings.autoApprove);
-  return { ...state, autoApprove: settings.autoApprove, panes: state.panes.map((p) => (p.sandbox === from ? { ...p, sandbox: to } : p)) };
+  const from = defaultGeminiSandbox(state.autoApprove ?? false);
+  const to = defaultGeminiSandbox(settings.autoApprove);
+  return { ...state, autoApprove: settings.autoApprove, panes: state.panes.map((p) => (p.engine === 'gemini' && p.sandbox === from ? { ...p, sandbox: to } : p)) };
 }
 
 function onServer(state: AppState, msg: ServerMessage): AppState {
@@ -861,6 +864,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     // A mode the user picked before the id arrived wins: it is on its way to the server.
     case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && !p.session.permissionModePending ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
     case 'account_pin': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, accountPin: msg.pin } } : p)) };
+    case 'sandbox': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && p.session.sandbox !== msg.sandbox ? { ...p, session: { ...p.session, sandbox: msg.sandbox } } : p)) };
     case 'usage': return { ...state, usage: msg.usage };
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
     case 'history': case 'catchup': {
@@ -1048,7 +1052,11 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model, modelPicked: true }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
     case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
-    case 'set_engine': return updatePane(state, action.paneId, (p) => ({ ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model) }));
+    case 'set_engine': return updatePane(state, action.paneId, (p) => ({
+      ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model),
+      // Gemini keeps its own default (plan unless 자동 승인); leaving Gemini goes back to the GPT default.
+      ...(action.engine === 'gemini' && p.engine !== 'gemini' ? { sandbox: defaultGeminiSandbox(state.autoApprove ?? false) } : action.engine !== 'gemini' && p.engine === 'gemini' ? { sandbox: DEFAULT_SANDBOX } : {}),
+    }));
     case 'set_sandbox': return updatePane(state, action.paneId, (p) => ({ ...p, sandbox: action.sandbox }));
     case 'set_account_pin': return updatePane(state, action.paneId, (p) => (p.session ? { ...p, session: { ...p.session, accountPin: action.pin } } : p));
     case 'set_permission_mode': return updatePane(state, action.paneId, (p) => {
@@ -1067,7 +1075,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'add_pane': {
       if (state.panes.length >= MAX_PANES) return state;
       const n = Math.max(...state.panes.map((p) => Number(p.id.slice(1)) || 0)) + 1;
-      const pane = { ...newPane(`p${n}`), sandbox: defaultSandbox(state.autoApprove ?? false) };
+      const pane = newPane(`p${n}`);
       return { ...state, panes: [...state.panes, pane], activePaneId: pane.id };
     }
     case 'close_pane': {

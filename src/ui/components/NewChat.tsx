@@ -32,7 +32,7 @@ const FolderIcon = () => (
   </svg>
 );
 
-/** The engine and sandbox the new session opens with (D2/D3: fixed once it exists). */
+/** The engine and sandbox the new session opens with (D3: the engine is fixed once it exists; a GPT sandbox can change later). */
 export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
 
 /** Same markup as Chat's composer picker (`.pick`: ellipsizing label over a transparent native select), so the rows match. */
@@ -164,7 +164,7 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
                 )}
                 {engineSelect && engine !== 'claude' && (
                   <Pick className="sandbox" label={sandboxLabel[sandbox]} value={sandbox} onChange={(e) => { const v = e.target.value as CodexSandbox; setSandbox(v); onSandbox?.(v); }}
-                    title={engine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 없음 · 세션 생성 후 변경 불가)'} aria-label="샌드박스" data-testid="sandbox-select">
+                    title={engine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 카드 없음 · 세션을 만든 뒤에도 바꿀 수 있음)'} aria-label="샌드박스" data-testid="sandbox-select">
                     {CODEX_SANDBOXES.map((x) => <option key={x} value={x}>{sandboxLabel[x]}</option>)}
                   </Pick>
                 )}

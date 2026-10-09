@@ -385,6 +385,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .pick::after { content: "⌄"; position: absolute; right: 7px; top: 50%; transform: translateY(-62%); font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); pointer-events: none; }
 .pick select option { background: var(--panel); color: var(--fg); }
 .pick.sandbox { color: var(--warn); }
+/* An existing GPT session's sandbox chip as a picker: chip-sized, the ⌄ inside. */
+.chat-head-chips .pick.chip { height: 22px; max-width: 100%; padding-right: 18px; font-size: calc(12px * var(--font-scale, 1)); }
 .send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: calc(15px * var(--font-scale, 1)); font-weight: 700; flex-shrink: 0; transition: transform .1s ease, filter .15s ease; }
 .send:hover:not(:disabled) { filter: brightness(1.08); }
 .send:active:not(:disabled) { transform: scale(.94); }

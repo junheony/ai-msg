@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { Effort, ModelChoice } from '../../shared/models';
+import type { CodexSandbox, Effort, ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { isGeminiAccount } from '../../shared/accounts';
 import type { AccountInfo, ClientMessage } from '../../shared/protocol';
@@ -426,6 +426,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onEffort={onEffort}
           onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })}
           onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })}
+          {...(s.sessionId && s.engine === 'codex' && has('sessionSandbox') ? {
+            // D2: an existing GPT session's sandbox lives on the server (its next turn uses it). The chip follows the server's
+            // `sandbox` answer (the sender gets it too), so a refusal leaves it as it was.
+            onSessionSandbox: (sandbox: CodexSandbox) => { send({ type: 'set_sandbox', sessionId: s.sessionId!, sandbox }); },
+          } : {})}
           accountPin={s.accountPin ?? null}
           account={s.account}
           usage={app.usage ?? null}

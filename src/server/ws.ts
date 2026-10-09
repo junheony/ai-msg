@@ -4,7 +4,7 @@ import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, type AccountNames } from '../shared/accounts';
-import { defaultSandbox, IMPORTED_DEFAULT_MODEL, type EngineKind } from '../shared/models';
+import { DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, type CodexSandbox, type EngineKind } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
@@ -238,6 +238,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
 
   const send = (ws: WebSocket, msg: ServerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
+  /** Sockets whose UI asked for `sandbox` messages (open_session.accepts, protocol rule 3: an older UI never gets one). */
+  const sandboxAware = new WeakSet<WebSocket>();
+  const broadcastSandbox = (sessionId: string, sandbox: CodexSandbox) => { for (const c of clients) if (sandboxAware.has(c)) send(c, { type: 'sandbox', sessionId, sandbox }); };
   const notify = (msg: ServerMessage) => { try { deps.notify?.(msg); } catch (err) { console.error('deck: push hook failed', errMsg(err)); } };
   const broadcastAndNotify = (msg: ServerMessage) => { broadcast(msg); notify(msg); };
   const broker = new PermissionBroker(broadcastAndNotify);
@@ -840,7 +843,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (!seen.has(sessionId)) seen.set(sessionId, { at: Date.now(), clean: new Map() });
     const st = deps.store.get(sessionId);
     const claude = st && !isCodexState(st) && !isGeminiState(st) ? { accountPin: st.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st.defaultModel } : {};
-    send(ws, { type: 'catchup', sessionId, ...claude, ...runningOf(sessionId) });
+    const sandbox = !sandboxAware.has(ws) ? null : st ? (isCodexState(st) ? st.sandbox : null) : deps.runner.importSandboxOf(sessionId);
+    send(ws, { type: 'catchup', sessionId, ...claude, ...(sandbox ? { sandbox } : {}), ...runningOf(sessionId) });
     for (const e of tail) ws.send(e.data);
     return true;
   };
@@ -874,7 +878,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (imported) {
         view(ws, sessionId);
         const messages = await (deps.readCodexImportHistory ?? readCodexTranscriptTail)(imported.file).catch(() => []);
-        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: defaultSandbox(deps.settings?.get().autoApprove ?? false), messages, ...runningOf(sessionId) });
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: deps.runner.importSandboxOf(sessionId) ?? DEFAULT_SANDBOX, messages, ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t) replay(ws, t, sessionId);
         const age = await rolloutActiveAgeMs(imported.file);
@@ -974,6 +978,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           break;
         }
         case 'open_session':
+          if (msg.accepts?.includes('sandbox')) sandboxAware.add(ws);
           syncHolders();
           if (!(msg.after && catchUp(ws, msg.sessionId, msg.after))) openSession(ws, msg.sessionId);
           break;
@@ -1011,6 +1016,14 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               if (msg.mode === 'bypassPermissions') for (const m of broker.pending()) if (m.sessionId === msg.sessionId && m.toolName !== 'ExitPlanMode') broker.resolve(m.requestId, 'once');
             })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `권한 모드를 저장하지 못했습니다: ${errMsg(err)}` }));
+          break;
+        case 'set_sandbox':
+          void deps.runner.setSandbox(msg.sessionId, msg.sandbox)
+            .then((ok) => {
+              if (ok) broadcastSandbox(msg.sessionId, msg.sandbox);
+              else send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `샌드박스는 GPT 세션에서만 바꿀 수 있습니다: ${msg.sessionId}` });
+            })
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `샌드박스를 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
         case 'set_settings': {
           const store = deps.settings;

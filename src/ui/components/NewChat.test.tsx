@@ -26,7 +26,7 @@ describe('NewChat', () => {
     render(<NewChat projects={projects} onStart={onStart} />);
     const go = screen.getByLabelText('빈 새 대화 열기');
     fireEvent.click(go);
-    expect(onStart).toHaveBeenCalledWith('/w', 'w', '', [], { engine: 'claude', sandbox: 'read-only' });
+    expect(onStart).toHaveBeenCalledWith('/w', 'w', '', [], { engine: 'claude', sandbox: 'workspace-write' });
   });
 
   it('picked and pasted attachments ride the first message', async () => {
@@ -45,7 +45,7 @@ describe('NewChat', () => {
     expect(onStart).toHaveBeenCalledWith('/w', 'w', '이거 봐줘', [
       { id: 'id-shot.png', name: 'shot.png', size: 1, isImage: true },
       { id: 'id-notes.md', name: 'notes.md', size: 1, isImage: false },
-    ], { engine: 'claude', sandbox: 'read-only' });
+    ], { engine: 'claude', sandbox: 'workspace-write' });
   });
 
   it('attachments alone still send (with the attachment-only text); a removed one does not', async () => {
@@ -56,7 +56,7 @@ describe('NewChat', () => {
     await waitFor(() => expect(screen.getAllByLabelText('첨부 제거')).toHaveLength(2));
     fireEvent.click(screen.getAllByLabelText('첨부 제거')[0]!);
     fireEvent.click(screen.getByLabelText(/^보내기/));
-    expect(onStart).toHaveBeenCalledWith('/w', 'w', '첨부 파일을 확인해 주세요.', [{ id: 'b.txt', name: 'b.txt', size: 1, isImage: false }], { engine: 'claude', sandbox: 'read-only' });
+    expect(onStart).toHaveBeenCalledWith('/w', 'w', '첨부 파일을 확인해 주세요.', [{ id: 'b.txt', name: 'b.txt', size: 1, isImage: false }], { engine: 'claude', sandbox: 'workspace-write' });
   });
 
   it('restores its draft (per draftKey), saves on change and clears it on send', () => {
@@ -68,7 +68,7 @@ describe('NewChat', () => {
     fireEvent.change(box, { target: { value: '고친 글' } });
     expect(loadDraft('new:p1')).toBe('고친 글');
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(onStart).toHaveBeenCalledWith('/w', 'w', '고친 글', [], { engine: 'claude', sandbox: 'read-only' });
+    expect(onStart).toHaveBeenCalledWith('/w', 'w', '고친 글', [], { engine: 'claude', sandbox: 'workspace-write' });
     expect(loadDraft('new:p1')).toBe('');
   });
 
@@ -95,13 +95,15 @@ describe('NewChat', () => {
     fireEvent.change(engine, { target: { value: 'codex' } });
     expect(onEngine).toHaveBeenCalledWith('codex');
     const sandbox = screen.getByTestId('sandbox-select') as HTMLSelectElement;
-    expect(sandbox.value).toBe('read-only');
-    fireEvent.change(sandbox, { target: { value: 'workspace-write' } });
-    expect(onSandbox).toHaveBeenCalledWith('workspace-write');
-    expect(sandbox.parentElement!.querySelector('.pick-label')!.textContent).toBe('작업폴더 쓰기(네트워크 차단)');
+    // 다 붙여: workspace-write with network is the default; read-only stays selectable.
+    expect(sandbox.value).toBe('workspace-write');
+    expect(sandbox.parentElement!.querySelector('.pick-label')!.textContent).toBe('작업폴더 쓰기 · 네트워크');
+    fireEvent.change(sandbox, { target: { value: 'read-only' } });
+    expect(onSandbox).toHaveBeenCalledWith('read-only');
+    expect(sandbox.parentElement!.querySelector('.pick-label')!.textContent).toBe('읽기 전용');
     fireEvent.change(screen.getByLabelText('첫 메시지'), { target: { value: '고쳐줘' } });
     fireEvent.click(screen.getByLabelText(/^보내기/));
-    expect(onStart).toHaveBeenCalledWith('/w', 'w', '고쳐줘', [], { engine: 'codex', sandbox: 'workspace-write' });
+    expect(onStart).toHaveBeenCalledWith('/w', 'w', '고쳐줘', [], { engine: 'codex', sandbox: 'read-only' });
   });
 
   it('starts from the pane engine/sandbox; Gemini shows its own sandbox labels and needs a login', () => {

@@ -590,20 +590,50 @@ describe('panes (D6)', () => {
 });
 
 describe('reducer: 자동 승인 and Desktop sessions', () => {
-  it('hello/settings set autoApprove; panes still on the default sandbox follow it, an explicit pick stays; new panes use it', () => {
-    let s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: true }, settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions' }, desktop: [{ sessionId: 'd1', account: 'a', title: 'T', cwd: '/w/x', project: 'x', lastModified: 1 }] }]);
-    expect(s.autoApprove).toBe(true);
+  it('hello/settings set autoApprove; a new GPT session starts on workspace-write either way and an explicit pick stays', () => {
+    let s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: true }, settings: { autoApprove: false, defaultPermissionMode: 'default' }, desktop: [{ sessionId: 'd1', account: 'a', title: 'T', cwd: '/w/x', project: 'x', lastModified: 1 }] }]);
+    expect(s.autoApprove).toBe(false);
     expect(s.desktop.map((d) => d.sessionId)).toEqual(['d1']);
+    s = reducer(s, { type: 'set_engine', engine: 'codex', paneId: s.panes[0]!.id });
     expect(s.panes[0]!.sandbox).toBe('workspace-write');
     s = reducer(s, { type: 'add_pane' });
-    expect(s.panes[1]!.sandbox).toBe('workspace-write');
+    s = reducer(s, { type: 'set_engine', engine: 'codex', paneId: s.panes[1]!.id });
     s = reducer(s, { type: 'set_sandbox', sandbox: 'read-only', paneId: s.panes[1]!.id });
+    s = play([{ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions' } }], s);
+    expect(s.autoApprove).toBe(true);
+    expect(s.panes.map((p) => p.sandbox)).toEqual(['workspace-write', 'read-only']);
     s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } }], s);
-    expect(s.autoApprove).toBe(false);
-    expect(s.panes.map((p) => p.sandbox)).toEqual(['read-only', 'read-only']);
-    s = reducer(s, { type: 'set_sandbox', sandbox: 'workspace-write', paneId: s.panes[1]!.id });
+    expect(s.panes.map((p) => p.sandbox)).toEqual(['workspace-write', 'read-only']);
+  });
+
+  it('a new Gemini session keeps its 자동 승인 default (off → plan/read-only, on → auto_edit/workspace-write); leaving Gemini goes back to the GPT default', () => {
+    let s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: true }, settings: { autoApprove: false, defaultPermissionMode: 'default' }, desktop: [] }]);
+    const id = s.panes[0]!.id;
+    s = reducer(s, { type: 'set_engine', engine: 'gemini', paneId: id });
+    expect(s.panes[0]!.sandbox).toBe('read-only');
+    // 자동 승인 on: a Gemini pane still on the old default follows; a GPT pane does not move.
+    s = reducer(s, { type: 'add_pane' });
+    s = reducer(s, { type: 'set_engine', engine: 'codex', paneId: s.panes[1]!.id });
     s = play([{ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions' } }], s);
     expect(s.panes.map((p) => p.sandbox)).toEqual(['workspace-write', 'workspace-write']);
+    s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } }], s);
+    expect(s.panes.map((p) => p.sandbox)).toEqual(['read-only', 'workspace-write']);
+    s = reducer(s, { type: 'set_engine', engine: 'codex', paneId: id });
+    expect(s.panes[0]!.sandbox).toBe('workspace-write');
+  });
+
+  it('an existing GPT session\'s sandbox follows the server: the `sandbox` broadcast and catchup update every pane showing it', () => {
+    const codexHistory = (sandbox: 'read-only' | 'workspace-write'): ServerMessage => ({ type: 'history', sessionId: 'g1', cwd: '/w', account: 'gpt', engine: 'codex', sandbox, messages: [], runningTurnId: null });
+    let s = play([codexHistory('read-only')], openedOn('g1'));
+    expect(pane(s).session?.sandbox).toBe('read-only');
+    s = play([{ type: 'sandbox', sessionId: 'g1', sandbox: 'workspace-write' }], s);
+    expect(pane(s).session?.sandbox).toBe('workspace-write');
+    // A reconnect that only catches up carries it too.
+    s = play([{ type: 'catchup', sessionId: 'g1', sandbox: 'read-only', runningTurnId: null }], s);
+    expect(pane(s).session?.sandbox).toBe('read-only');
+    // Another session's broadcast does nothing here.
+    const same = play([{ type: 'sandbox', sessionId: 'other', sandbox: 'workspace-write' }], s);
+    expect(pane(same).session).toBe(pane(s).session);
   });
 });
 
