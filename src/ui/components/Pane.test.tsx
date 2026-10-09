@@ -44,6 +44,14 @@ describe('Pane (D6)', () => {
     expect(screen.getAllByText('허용 1회')).toHaveLength(1);
   });
 
+  it('new-chat screen: engine picker shows with codex available and choosing GPT dispatches set_engine', () => {
+    const dispatch = vi.fn();
+    const pane: PaneState = { ...newPane('p1') };
+    render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: true, projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] }} active closable={false} dispatch={dispatch} send={() => {}} onClose={() => {}} onStartChat={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
+    expect(dispatch).toHaveBeenCalledWith({ type: 'set_engine', engine: 'codex', paneId: 'p1' });
+  });
+
   it('PF11: switching the engine picker to GPT on a new session shows the sandbox picker and GPT models', () => {
     let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
     s = { ...s, codexAvailable: true };

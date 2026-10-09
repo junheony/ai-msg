@@ -279,7 +279,33 @@ export type AppState = {
   parked: Record<string, { cwd: string; queue: QueueItem[] }>;
   /** The server's hello arrived on this socket (false from a disconnect until then): the queue runner waits for it. */
   ready: boolean;
+  /**
+   * The transcripts of sessions a pane left lately (open another, clear, close), oldest first (`RECENT_SESSIONS_MAX`):
+   * reopening one shows them at once, `loading`, instead of a skeleton, until its history replaces them. Memory only.
+   */
+  recent: Record<string, ChatItem[]>;
 };
+
+/** How many left sessions keep their transcript in `AppState.recent` (a phone switching back and forth sees no skeleton). */
+export const RECENT_SESSIONS_MAX = 5;
+
+/**
+ * The pane's transcript as kept for a revisit, history-shaped: the live part goes (a streaming item, a send still waiting
+ * for its turn — the history or the turn's own events bring them back), and turn ids are cleared so a later turn event
+ * never streams into a kept item. The session goes to the newest end; the oldest beyond the max is let go.
+ */
+function remember(recent: AppState['recent'], p: PaneState | undefined): AppState['recent'] {
+  const sid = p?.session?.sessionId;
+  if (!p || !sid || !p.items.length) return recent;
+  let items = p.items.filter((it) => !(it.kind === 'assistant' && it.streaming));
+  const last = items[items.length - 1];
+  if (p.awaitingStart && p.awaitingSend && last?.kind === 'user' && last.text === p.awaitingSend.text) items = items.slice(0, -1);
+  items = items.map((it) => (it.kind === 'assistant' && it.turnId !== null ? { ...it, turnId: null } : it));
+  const { [sid]: _old, ...rest } = recent;
+  const keys = Object.keys(rest);
+  for (const k of keys.slice(0, Math.max(0, keys.length - RECENT_SESSIONS_MAX + 1))) delete rest[k];
+  return { ...rest, [sid]: items };
+}
 
 export const MAX_PANES = 5;
 
@@ -287,7 +313,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false };
+export const initialState: AppState = { connected: false, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false, recent: {} };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -513,11 +539,21 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const base = pane.awaitingStart && pane.awaitingRef !== null && pane.awaitingSend ? requeue({ ...pane, items }, pane.awaitingSend, 'lost') : { ...pane, items };
       // Messages refused by the restarting server may go out now: in a new session (no history to check) at once, else after its history.
       const held = base.queue.map((q) => (q.restart === 'hold' && sid ? { ...q, restart: 'hello' as const } : q));
-      const next: PaneState = { ...base, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, bg, ...run, queue: release(held, (q) => q.restart === 'hold') };
+      // 7b: a new session reloaded mid first turn — the id arrived only at turn_result before; a 'catchup'-era server
+      // names it in hello.running, so the pane adopts it here and App's open_session (shown()) fetches the running turn.
+      const adopt = pane.session && sid === null && live?.sessionId ? { session: { ...pane.session, sessionId: live.sessionId }, loading: true } : {};
+      // A turn that ended meanwhile (or one restored by hydrate that the server no longer runs) is not this pane's to wait on.
+      const ended = !live && pane.activeTurnId ? { myTurns: base.myTurns.filter((t) => t !== pane.activeTurnId) } : {};
+      const next: PaneState = { ...base, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, bg, ...run, queue: release(held, (q) => q.restart === 'hold'), ...adopt, ...ended };
       // Steers in flight across a reconnect: their answer went to the old socket, so they may have gone in — queued again, paused.
       return unsteer(next, () => true);
     }
     case 'activity': {
+      // 7b: the server broadcasts activity as soon as a new session's id is known (Claude init), well before turn_result:
+      // this pane's own turn adopts it now, so a reload from here on restores through the normal history path.
+      // `!==` also follows a retry on another account that produced a different id.
+      const own = pane.activeTurnId && pane.myTurns.includes(pane.activeTurnId) ? msg.sessions.find((x) => x.turnId === pane.activeTurnId) : undefined;
+      if (own && pane.session && pane.session.sessionId !== own.sessionId) return { ...pane, session: { ...pane.session, sessionId: own.sessionId } };
       const sid = pane.session?.sessionId;
       if (!sid) return pane;
       const act = msg.sessions.find((a) => a.sessionId === sid);
@@ -888,6 +924,9 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       return { ...state, parked, panes, pending: state.pending.filter((p) => p.turnId !== msg.turnId), questions: state.questions.filter((q) => q.turnId !== msg.turnId) };
     }
     case 'error': {
+      // An answer to a card already resolved elsewhere (this device missed the resolved message): the card goes, and
+      // nothing else — no error bar, and no pane's wait or loading placeholder is touched.
+      if (msg.requestId !== undefined) return { ...state, pending: state.pending.filter((p) => p.requestId !== msg.requestId), questions: state.questions.filter((q) => q.requestId !== msg.requestId) };
       // About one session (e.g. its history could not be read): the bar of the panes showing it, if any; else app-wide.
       // already_accepted: nothing failed (a resent copy was refused) — no error bar.
       if (msg.code === 'already_accepted') return { ...state, panes: mapPanes(state, msg) };
@@ -948,7 +987,9 @@ export function reducer(state: AppState, action: Action): AppState {
       // Opening the session the pane already shows (a reload of it) keeps its queue and pending send as they are.
       const pane = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
       const same = !!pane && action.sessionId !== null && pane.session?.sessionId === action.sessionId;
-      const s = same ? state : park(state, action.paneId);
+      const s = { ...(same ? state : park(state, action.paneId)), recent: remember(state.recent, pane) };
+      // Shown until the history (asked for again on every open) replaces them.
+      const cached = action.sessionId !== null ? s.recent[action.sessionId] : undefined;
       // Messages kept with this session (park; a new session: with its folder) come back, paused — and stay kept.
       const key = parkKey(action.sessionId, action.cwd);
       const back = s.parked[key]?.queue.map((q): QueueItem => ({ ...q, kept: true }));
@@ -956,7 +997,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return updatePane({ ...s, parked: back ? parked : s.parked, unread: action.sessionId ? s.unread.filter((u) => u !== action.sessionId) : s.unread }, action.paneId, (p) => ({
         ...p,
         session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
-        items: [], activeTurnId: null, myTurns: [], attachments: [], ...ACTIVITY_RESET, loading: action.sessionId !== null,
+        items: cached ?? [], activeTurnId: null, myTurns: [], attachments: [], ...ACTIVITY_RESET, loading: action.sessionId !== null,
         ...(same
           ? { queue: [...p.queue, ...(back ?? [])], queuePaused: p.queuePaused || !!back }
           : { awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: back ?? [], queuePaused: !!back, queueSendNow: null,
@@ -1019,7 +1060,7 @@ export function reducer(state: AppState, action: Action): AppState {
     });
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
-    case 'clear_pane': return updatePane(park(state, action.paneId), action.paneId, (p) => ({
+    case 'clear_pane': return updatePane({ ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId))) }, action.paneId, (p) => ({
       ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET, loading: false,
       handoff: null, handoffFrom: null, prefill: null, notices: [],
     }));
@@ -1032,7 +1073,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'close_pane': {
       if (state.panes.length <= 1) return state;
       const panes = state.panes.filter((p) => p.id !== action.paneId);
-      return { ...park(state, action.paneId), panes, activePaneId: state.activePaneId === action.paneId ? panes[0]!.id : state.activePaneId };
+      return { ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((p) => p.id === action.paneId)), panes, activePaneId: state.activePaneId === action.paneId ? panes[0]!.id : state.activePaneId };
     }
     case 'focus_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);

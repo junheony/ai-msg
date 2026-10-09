@@ -1042,6 +1042,28 @@ describe('TurnRunner: permission modes', () => {
     expect(order).toEqual(['result newM', 'mode newM acceptEdits']);
   });
 
+  it('a new session takes a mode and a pin set once init named it (before it has stored state)', async () => {
+    const live: string[] = [];
+    let runner!: TurnRunner;
+    let during: [boolean, boolean] | null = null;
+    const eng = new StubEngine((req) => (async function* () {
+      req.onLive?.({ send: async () => true, setPermissionMode: async (m) => { live.push(m); return true; } });
+      yield { kind: 'init' as const, sessionId: 'bornM', model: 'claude-opus-5-5' };
+      during = [await runner.setPermissionMode('bornM', 'plan'), await runner.setAccountPin('bornM', 'c')];
+      expect(runner.permissionModeOf('bornM')).toBe('plan');
+      yield okResult('bornM');
+    })());
+    const told: [string, string][] = [];
+    const c = await ctx(eng, { onPermissionMode: (s, m) => told.push([s, m]) });
+    runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'x', permissionMode: 'default' }, c.sink);
+    expect(during).toEqual([true, true]);
+    expect(live).toEqual(['plan']);
+    expect(c.deps.store.get('bornM')).toMatchObject({ mode: 'plan', accountPin: 'c' });
+    // The turn_result's re-announcement carries the new mode, not the one the turn started in.
+    expect(told).toEqual([['bornM', 'plan']]);
+  });
+
   it('이 세션 with a setMode acceptEdits suggestion while in plan: deck follows the SDK into acceptEdits and says so', async () => {
     const eng = new StubEngine(async (req) => {
       await req.onPermission({ toolName: 'Write', input: { file_path: '/w/one/p.txt' }, toolUseId: 'tu', suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] });

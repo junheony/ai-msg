@@ -100,6 +100,56 @@ describe('send_failed (sent while disconnected)', () => {
   });
 });
 
+describe('7b: a new session learns its id before turn_result', () => {
+  const SID = '22222222-2222-4222-8222-222222222222';
+  const act = (sessionId: string, turnId: string): ServerMessage => ({ type: 'activity', sessions: [{ sessionId, cwd: '/w', turnId, running: true, bg: 0, forMs: 10 }] });
+
+  it('activity naming this pane\'s own running turn gives the pane the session id', () => {
+    let s = reducer(opened(null), { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = play([started('t1', 'r1', null)], s);
+    expect(pane(s).session?.sessionId).toBeNull();
+    s = play([act(SID, 't1')], s);
+    expect(pane(s).session?.sessionId).toBe(SID);
+    expect(pane(s).activeTurnId).toBe('t1');
+    // A retry on another account that produced a different id is followed too.
+    s = play([act('33333333-3333-4333-8333-333333333333', 't1')], s);
+    expect(pane(s).session?.sessionId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('activity for a turn that is not this pane\'s own leaves the pane alone', () => {
+    let s = reducer(opened(null), { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = play([started('t1', 'r1', null), act(SID, 't-other')], s);
+    expect(pane(s).session?.sessionId).toBeNull();
+  });
+
+  it('hello.running naming the pane\'s turn with an id (reload mid first turn) adopts it and marks the pane loading', () => {
+    let s = reducer(opened(null), { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = play([started('t1', 'r1', null)], s);
+    s = play([{ ...hello, running: [{ turnId: 't1', sessionId: SID, cwd: '/w' }] }], s);
+    expect(pane(s).session).toMatchObject({ sessionId: SID, cwd: '/w' });
+    expect(pane(s).activeTurnId).toBe('t1');
+    expect(pane(s).loading).toBe(true);
+  });
+
+  it('hello without an id for the turn (older server) changes nothing about the session', () => {
+    let s = reducer(opened(null), { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = play([started('t1', 'r1', null)], s);
+    s = play([{ ...hello, running: [{ turnId: 't1', sessionId: null, cwd: '/w' }] }], s);
+    expect(pane(s).session?.sessionId).toBeNull();
+    expect(pane(s).loading).toBeFalsy();
+  });
+
+  it('hello that no longer runs the pane\'s turn (restored by hydrate) drops it from myTurns too', () => {
+    let s = reducer(opened(null), { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = play([started('t1', 'r1', null)], s);
+    expect(pane(s)).toMatchObject({ activeTurnId: 't1', myTurns: ['t1'] });
+    s = { ...s, panes: s.panes.map((p) => ({ ...p, myTurns: ['t-old', 't1'] })) };
+    s = play([hello], s);
+    expect(pane(s).activeTurnId).toBeNull();
+    expect(pane(s).myTurns).toEqual(['t-old']);
+  });
+});
+
 describe('pane_notice', () => {
   it('adds a bar for the pane\'s session', () => {
     const s = reducer(opened('s1'), { type: 'pane_notice', paneId: 'p0', message: 'x' });

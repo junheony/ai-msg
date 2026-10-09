@@ -4,7 +4,7 @@ import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, type AccountNames } from '../shared/accounts';
-import { defaultSandbox, IMPORTED_DEFAULT_MODEL } from '../shared/models';
+import { defaultSandbox, IMPORTED_DEFAULT_MODEL, type EngineKind } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
@@ -184,7 +184,7 @@ export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
 /** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
 export const CATCHUP_IDLE_MS = 10 * 60_000;
 
-type Turn = RunningTurn & { origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null };
+type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -407,22 +407,28 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   };
 
   /**
+   * The turn's session got (or changed) its id: busy under it, linked and announced once, and on every device's activity
+   * (hello.running too) — a device reloaded mid first turn finds the session by its turn id.
+   */
+  const adopt = (turn: Turn, sid: string | null | undefined) => {
+    if (!sid || turn.sessionId === sid) return;
+    turn.sessionId = sid;
+    if (!busy.has(sid)) busy.set(sid, turn.turnId);
+    if (turn.fresh) {
+      turn.fresh = false;
+      if (turn.handoffFrom) void linkHandoff(turn.handoffFrom, sid).finally(() => announceSession(sid));
+      else if (turn.branch) { const b = turn.branch; void linkBranch(sid, b.parent, b.n).finally(() => announceSession(sid)); }
+      else announceSession(sid);
+    }
+    broadcastActivity();
+  };
+
+  /**
    * Turn events reach the socket that started the turn and sockets viewing its session — nobody else. Once the session
    * has an id every event is numbered (`pos`) and kept for a while, so a device that was away can ask for what it missed.
    */
   const emitTurn = (turn: Turn, msg: ServerMessage) => {
-    const sid = 'sessionId' in msg ? msg.sessionId : null;
-    if (sid && turn.sessionId !== sid) {
-      turn.sessionId = sid;
-      if (!busy.has(sid)) busy.set(sid, turn.turnId);
-      if (turn.fresh) {
-        turn.fresh = false;
-        if (turn.handoffFrom) void linkHandoff(turn.handoffFrom, sid).finally(() => announceSession(sid));
-        else if (turn.branch) { const b = turn.branch; void linkBranch(sid, b.parent, b.n).finally(() => announceSession(sid)); }
-        else announceSession(sid);
-      }
-      broadcastActivity();
-    }
+    adopt(turn, 'sessionId' in msg ? msg.sessionId : null);
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
     if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
     let out = msg;
@@ -649,10 +655,14 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       unrecorded = null;
     };
     const sink: TurnSink = {
+      // The CLI named the session: known now, not only with the first event that carries the id. The send's ref is
+      // recorded under it at once (a device reloaded mid first turn drops its maybe-sent copy instead of sending it again).
+      sessionKnown: (sid) => { adopt(turn, sid); if (started) accepted(sid); },
       emit: (m) => {
         if (m.type === 'turn_started') {
           if (turn.current !== m.turnId) turn.since = Date.now();
           turn.current = m.turnId;
+          if (m.engine) turn.engine = m.engine;
           turn.log.progress = null;
           turn.log.text = null;
           // Every device viewing the session gets the prompt with each start (retries included); the sending pane skips it.
@@ -681,8 +691,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           // one only takes the ref back (a second, app-wide banner with the same text would just repeat it).
           if (m.turnId !== null && aliases.has(m.turnId)) return;
         }
-        // A new session's ref, once it has an id. Today's client never asks (a new session is not deduped: no history to
-        // open); kept so a later client that does finds it.
+        // A new session's ref, once it has an id (normally sessionKnown recorded it already).
         if (m.type === 'turn_result' && started) accepted(m.sessionId);
         if (m.type === 'turn_result' && m.turnId === turn.current) { turn.current = null; turn.log.progress = null; if (turn.afterRelease.length) drainWaiting(); queueMicrotask(() => { if (turns.get(turnId) === turn) endHeld(turn); }); }
         if (m.type === 'turn_background') turn.bg = m.tasks.length ? { msg: m, at: Date.now() } : null;
@@ -875,6 +884,16 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         if (blocked) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported.cwd, message: blocked });
         return;
       }
+      // A new session's first turn running before its transcript is on disk (a device reloaded mid first turn): the
+      // running turn alone — its prompt, streaming item and replay; the transcript comes with the next open.
+      const live = entry ? undefined : turns.get(busy.get(sessionId) ?? '');
+      if (live) {
+        view(ws, sessionId);
+        send(ws, { type: 'history', sessionId, cwd: live.cwd, account: null, ...(live.engine ? { engine: live.engine } : {}), sandbox: null, messages: [], ...runningOf(sessionId) });
+        replay(ws, live, sessionId);
+        if (live.current && live.log.text) send(ws, { ...live.log.text, sessionId });
+        return;
+      }
       if (!entry) { send(ws, { type: 'error', turnId: null, sessionId, code: 'not_found', message: `세션을 찾을 수 없습니다: ${sessionId}` }); return; }
       view(ws, sessionId);
       // PF5: `st` is narrowed to a Claude state (or null) by the Codex return above.
@@ -916,10 +935,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           startTurn(ws, msg);
           break;
         case 'permission_response':
-          if (!broker.resolve(msg.requestId, msg.decision)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다' });
+          if (!broker.resolve(msg.requestId, msg.decision)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다', requestId: msg.requestId });
           break;
         case 'question_response':
-          if (!questions.resolve(msg.requestId, msg.answers)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 질문입니다' });
+          if (!questions.resolve(msg.requestId, msg.answers)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 질문입니다', requestId: msg.requestId });
           break;
         case 'watch_turn':
           turns.get(msg.turnId)?.watchers.add(ws);

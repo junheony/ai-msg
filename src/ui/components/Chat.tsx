@@ -131,6 +131,8 @@ export type ChatProps = {
   composerNote?: string | null;
   /** The session's history is on its way: a placeholder instead of a blank transcript. */
   loading?: boolean;
+  /** The socket is up (absent = yes): queue chips say whether a held message waits for a reconnect or a restart. */
+  connected?: boolean;
 };
 
 const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
@@ -204,6 +206,27 @@ export function touchEnterIsNewline(): boolean {
 
 const NO_AGENTS: Record<string, AgentInfo> = {};
 
+/**
+ * React keys for the shown items that survive a history reload (cached items → the server's list, the same session
+ * reopened): transcript items carry no ids, so each is keyed by the last user message's ordinal (`n`, unique per session)
+ * plus its offset after it. A row added or dropped in one turn moves only that turn's keys, so an expanded card
+ * (<details>, edit box) further down keeps its state. An item's key never changes while it streams.
+ */
+export function messageKeys(items: ChatItem[]): string[] {
+  const used = new Set<string>();
+  let anchor = '^';
+  let k = 0;
+  return items.map((it) => {
+    if (it.kind === 'user' && it.n !== undefined && !used.has(`u${it.n}`)) {
+      anchor = `u${it.n}`;
+      k = 0;
+      used.add(anchor);
+      return anchor;
+    }
+    return `${anchor}+${++k}`;
+  });
+}
+
 /** The header badge's compact form when the pane is narrow (CSS swaps them; the badge never clips mid-glyph). */
 const PERM_MODE_SHORT: Record<PermMode, string> = { default: '묻기', acceptEdits: '편집 승인', plan: '계획', bypassPermissions: '자동 승인' };
 const WarnIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z" /><path d="M8 6.6v3M8 11.6v.1" /></svg>;
@@ -251,6 +274,7 @@ export function Chat(p: ChatProps) {
   // Set between compositionstart/end: some browsers report isComposing late or not at all.
   const composing = useRef(false);
   const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
+  const keys = useMemo(() => messageKeys(shown), [shown]);
   const todos = useMemo(() => latestTodos(p.items), [p.items]);
 
   // Review M12: a failed last turn can be re-sent as-is.
@@ -498,9 +522,11 @@ export function Chat(p: ChatProps) {
             {[72, 46, 88, 60].map((w, i) => <span key={i} className={`skeleton-line ${i % 2 ? 'mine' : ''}`} style={{ width: `${w}%` }} aria-hidden="true" />)}
           </div>
         )}
+        {/* Reopened from the recent cache: the kept transcript shows while the fresh history is on its way. */}
+        {p.loading && p.items.length > 0 && <div className="chat-refreshing" role="status" data-testid="chat-refreshing">불러오는 중…</div>}
         <AgentContext.Provider value={agentCtx}>
           <MessageActionsContext.Provider value={msgActions}>
-            {shown.map((it, i) => <MessageView key={i} item={it} cwd={p.cwd} last={i === shown.length - 1} />)}
+            {shown.map((it, i) => <MessageView key={keys[i]} item={it} cwd={p.cwd} last={i === shown.length - 1} />)}
           </MessageActionsContext.Provider>
         </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
@@ -518,7 +544,7 @@ export function Chat(p: ChatProps) {
       <div className="composer-wrap">
         {todos && todos.length > 0 && <TodoPanel todos={todos} />}
         {p.queue && p.queue.length > 0 && (
-          <QueueChips queue={p.queue} paused={!!p.queuePaused} onEdit={(id, t) => p.onQueueEdit?.(id, t)} onRemove={(id) => p.onQueueRemove?.(id)} onClear={() => p.onQueueClear?.()} onResume={() => p.onQueueResume?.()}{...(p.onQueueSendNow ? { onSendNow: p.onQueueSendNow } : {})} />
+          <QueueChips queue={p.queue} paused={!!p.queuePaused} onEdit={(id, t) => p.onQueueEdit?.(id, t)} onRemove={(id) => p.onQueueRemove?.(id)} onClear={() => p.onQueueClear?.()} onResume={() => p.onQueueResume?.()}{...(p.connected !== undefined ? { connected: p.connected } : {})}{...(p.onQueueSendNow ? { onSendNow: p.onQueueSendNow } : {})} />
         )}
         {(p.busy || p.bg) && (
           <div className="activity-bar">

@@ -226,7 +226,7 @@ export type ServerMessage =
   | ({ type: 'steer_delivered'; steerId: string; prompt: TurnPrompt; /** Re-sent after `history` to a device that opened the session mid-turn (the transcript may already show it). */ replay?: true } & TurnScope)
   /** A steer did not go in (no running Claude turn, process closed, retry/failover): the sending device sends it after the turn. */
   | ({ type: 'steer_rejected'; steerId: string; message: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode } & TurnScope)
-  | { type: 'error'; turnId: string | null; message: string; pos?: StreamPos; clientRef?: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string };
+  | { type: 'error'; turnId: string | null; message: string; pos?: StreamPos; clientRef?: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string; /** An answer to this permission / question card came too late (another device answered it first): the card goes, nothing is shown. */ requestId?: string };
 
 /**
  * 'draining': the server is about to restart (USR2) — the device sends the refused message again once it reconnects.

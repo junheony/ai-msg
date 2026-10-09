@@ -57,6 +57,28 @@ describe('persist (ux-state)', () => {
     expect(hydrate(initialState, parseUi(snapshotUi(afterSend, { collapsed: [], drawer: false }))).panes[0]).toMatchObject({ handoffFrom: { sessionId: SID }, prefill: null });
   });
 
+  it('7b: a new session reloaded mid first turn keeps that turn: hello.running names it (with the id once the server knows it) and the turn adopts the pane', () => {
+    const SID = '22222222-2222-4222-8222-222222222222';
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'w · 새 세션' });
+    s = reducer(s, { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = reducer(s, { type: 'server', msg: { type: 'turn_started', turnId: 't1', sessionId: null, cwd: '/w', account: 'a', model: 'opus', reason: '', attempt: 0, clientRef: 'r1' } });
+    const ui = parseUi(JSON.parse(JSON.stringify(snapshotUi(s, { collapsed: [], drawer: false }))));
+    expect(ui!.panes[0]).toMatchObject({ session: { sessionId: null }, turnId: 't1' });
+    let h = hydrate(initialState, ui);
+    expect(h.panes[0]).toMatchObject({ session: { sessionId: null, cwd: '/w' }, activeTurnId: 't1', myTurns: ['t1'] });
+    // The reconnect finds it running (the existing hello path keeps it; App sends watch_turn for it).
+    h = reducer(h, { type: 'server', msg: { type: 'hello', usage: { accounts: {} } as never, projects: [], running: [{ turnId: 't1', sessionId: SID, cwd: '/w' }], codex: { available: false } } });
+    expect(h.panes[0]!.activeTurnId).toBe('t1');
+    // Its result re-points the pane at the real session (this pane started it).
+    h = reducer(h, { type: 'server', msg: { type: 'turn_result', turnId: 't1', sessionId: SID, cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null } });
+    expect(h.panes[0]!.session).toMatchObject({ sessionId: SID });
+    // Only an id-less session's turn is kept; a pane with an id re-finds its turn by the id. Bad values are dropped.
+    expect(snapshotUi(h, { collapsed: [], drawer: false }).panes[0]).not.toHaveProperty('turnId');
+    const bad = parseUi({ v: 1, panes: [{ session: { sessionId: null, cwd: '/w', title: 't', engine: 'claude' }, turnId: 7 }, { session: { sessionId: SID, cwd: '/w', title: 't', engine: 'claude' }, turnId: 't9' }], active: 0, collapsed: [], drawer: false });
+    expect(bad!.panes.map((p) => p.turnId)).toEqual([undefined, undefined]);
+    expect(hydrate(initialState, bad).panes.map((p) => p.activeTurnId)).toEqual([null, null]);
+  });
+
   it('an id-less session keeps its account pin across a reload (it rides the first send); bad or id-ful pins are not restored', () => {
     const store = memStore();
     let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: '작업 (이어서)' });

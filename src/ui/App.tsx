@@ -8,6 +8,7 @@ import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
 import { Login } from './components/Login';
 import { NotifyMenu } from './components/NotifyMenu';
 import { SettingsView } from './components/SettingsView';
+import { Toasts, type ToastItem } from './components/Toasts';
 import { postPin, postPinOrder } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
@@ -118,6 +119,18 @@ export function App() {
     const t = setTimeout(() => setUndo(null), UNDO_MS);
     return () => clearTimeout(t);
   }, [undo]);
+  // The reducer keeps one app-wide `error` slot (many writers: server errors, show_error, refused steers…). Each value
+  // it takes moves into the toast stack and the slot is cleared at once, so errors stack instead of overwriting one
+  // another, and the same text arriving twice is two toasts (a slot left set would not change, so no second one).
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const toastSeq = useRef(0);
+  useEffect(() => {
+    if (state.error === null) return;
+    const text = state.error;
+    setToasts((t) => [...t, { id: ++toastSeq.current, text, kind: 'error' }]);
+    dispatch({ type: 'dismiss_error' });
+  }, [state.error]);
+  const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const onShortcut = useRef<(id: ShortcutId) => void>(() => {});
   /** ⌘1 … ⌘9: set by the sidebar — opens the nth 고정됨 row it shows, as a click on it would; false when there is none. */
   const openPinned = useRef<(index: number, peek?: boolean) => boolean>(() => false);
@@ -214,6 +227,9 @@ export function App() {
         setBuildId(build);
         if (noticeBuild(build, () => reducer(latest.current, { type: 'server', msg }))) return;
         refreshIndex.current?.request();
+        // shown() reads latest.current, which the dispatch above updates only on the next render: apply the hello now so
+        // a new session's id adopted from hello.running (7b) is among the sessions re-opened.
+        latest.current = reducer(latest.current, { type: 'server', msg });
         // A 'catchup' server is asked only for what came after this device's last event (it sends the whole history if it cannot tell).
         tracker.hello();
         for (const p of latest.current.panes) {
@@ -485,7 +501,7 @@ export function App() {
         </div>
       )}
       {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
-      {state.error && <div className="banner error" onClick={() => dispatch({ type: 'dismiss_error' })}>{state.error} (클릭해서 닫기)</div>}
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
       {(orphanPerms.length > 0 || orphanQs.length > 0) && (
         <div className="global-cards">
           {orphanPerms.map((p) => <PermissionCard key={p.requestId} req={p} onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })} />)}

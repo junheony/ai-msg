@@ -5,6 +5,7 @@ import { isGeminiAccount } from '../../shared/accounts';
 import type { AccountInfo, ClientMessage } from '../../shared/protocol';
 import { LEGACY_ACCOUNT_LIST, activePin, useAccounts } from '../accounts';
 import { has } from '../features';
+import { newChatDraftKey } from '../drafts';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
 import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
@@ -170,7 +171,7 @@ export type SessionActions = {
 
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'gemini' | 'usage' | 'projects' | 'defaultPermMode'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'usage' | 'projects' | 'defaultPermMode'>>;
   active: boolean;
   closable: boolean;
   dispatch: (a: Action) => void;
@@ -353,6 +354,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           questions={cardsForPane(pane, app.questions)}
           activeTurnId={pane.activeTurnId}
           busy={busy}
+          connected={app.connected ?? true}
           title={s.title}
           titleMenu={titleMenu}
           loading={!!pane.loading}
@@ -450,7 +452,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         <>
           {close && <div className="chat-head"><span className="spacer" />{close}</div>}
           {onStartChat
-            ? <NewChat projects={projects} defaultCwd={newChatCwd ?? null} onStart={onStartChat} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}
+            ? <NewChat projects={projects} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} gemini={app.gemini ?? null}
+                onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })} onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}
                 modelPicker={<ModelPicker models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} />} />
             : <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>}
         </>

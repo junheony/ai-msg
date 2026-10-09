@@ -223,6 +223,23 @@ describe('reducer', () => {
     expect(s.pending[0]).toMatchObject({ sessionId: 's', cwd: '/w' });
   });
 
+  it('an "already resolved" error naming a card removes that card only, with no error and no pane touched', () => {
+    const req: ServerMessage = { type: 'permission_request', turnId: 't', sessionId: 's', cwd: '/w', requestId: 'r1', toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' };
+    const other: ServerMessage = { ...req, requestId: 'r2' } as ServerMessage;
+    const q: ServerMessage = { type: 'question_request', turnId: 't', sessionId: 's', cwd: '/w', requestId: 'q1', questions: [{ question: 'Which?', header: 'H', options: [{ label: 'a', description: '' }], multiSelect: false }] };
+    let s = reducer(initialState, { type: 'add_pane' });
+    s = reducer(s, { type: 'open', sessionId: null, cwd: '/w', title: 'n', paneId: 'p0' });
+    s = reducer(s, { type: 'sent', text: 'a', paneId: 'p0' });
+    s = { ...s, panes: s.panes.map((p) => ({ ...p, loading: true })) };
+    const before = s.panes;
+    s = play([req, other, q, { type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다', requestId: 'r1' }], s);
+    expect(s.pending.map((p) => p.requestId)).toEqual(['r2']);
+    s = play([{ type: 'error', turnId: null, message: '이미 처리된 질문입니다', requestId: 'q1' }], s);
+    expect(s.questions).toEqual([]);
+    expect(s.error).toBeNull();
+    expect(s.panes).toBe(before);
+  });
+
   it('hello restores 중단 for a turn still running on the open session and clears a finished one', () => {
     const s0 = play([historyOf('s')], openedOn('s'));
     const s1 = play([{ type: 'hello', usage, projects: [], running: [{ turnId: 'tr', sessionId: 's', cwd: '/w' }], codex: { available: false } }], s0);
