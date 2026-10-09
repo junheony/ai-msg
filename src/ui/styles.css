@@ -109,8 +109,9 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .note { color: var(--warn); font-size: calc(13px * var(--font-scale, 1)); }
 .center { display: flex; align-items: center; justify-content: center; height: 100%; }
 .spark { color: var(--accent); font-weight: 700; display: inline-block; line-height: 1; }
-/* The Claude star (ClaudeMark): an SVG sized by the font, never a ✳ glyph (drawn as a green emoji on many systems). */
-.claude-mark { display: inline-block; width: 1em; height: 1em; vertical-align: -.125em; flex-shrink: 0; }
+/* The Claude star (ClaudeMark) and the deck chip (DeckMark, the brand): SVGs sized by the font, never a ✳ glyph
+ * (drawn as a green emoji on many systems). */
+.claude-mark, .deck-mark { display: inline-block; width: 1em; height: 1em; vertical-align: -.125em; flex-shrink: 0; }
 svg.spark { transform-box: fill-box; transform-origin: center; }
 .spark.spin { animation: spark-spin 2.4s linear infinite; }
 @keyframes spark-spin { to { transform: rotate(360deg); } }
