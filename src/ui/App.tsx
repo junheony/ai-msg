@@ -26,6 +26,8 @@ import { useIsPhone } from './useIsPhone';
 import { usePrefs } from './usePrefs';
 import { nextTheme, type Theme } from './prefs';
 import { createSocket } from './ws';
+import { useStartWatch } from './useStartWatch';
+import { OPEN_REQUEST_MISSING, OPEN_REQUEST_WAIT_MS, openRequestStep } from './openRequest';
 import { composerOf, focusComposer, routeContext, routeKey } from './composerFocus';
 import { tabTitle } from './tabTitle';
 import { useIndexRefresh, type IndexRefresh } from './indexRefresh';
@@ -226,7 +228,9 @@ export function App() {
   }, [authed]);
 
   // Only once this socket's hello is in: a send between onopen and hello would be requeued by that hello.
-  useQueueRunner(state.panes, state.ready, dispatch, (m) => sock.current?.send(m), state.defaultPermMode);
+  useQueueRunner(state.panes, state.ready, dispatch, (m) => (sock.current ? sock.current.send(m) : false), state.defaultPermMode);
+  // 시작하는 중… for START_STALL_MS on a socket that looks open: it is likely dead — a fresh one's hello requeues the send.
+  useStartWatch(state.panes, state.connected, () => sock.current?.reconnect());
   useTabTitle(state.activity.some((a) => a.running) || state.panes.some((p) => p.activeTurnId !== null), state.panes.find((p) => p.id === state.activePaneId)?.session?.title ?? null);
   // Composer focus after opening a chat / 새 채팅 / a pane switch: run after the commit so the pane's textarea exists.
   // No pane id: whichever pane is active then (a new split's id is only known after the reducer).
@@ -256,12 +260,22 @@ export function App() {
     sw.addEventListener('message', onMsg);
     return () => sw.removeEventListener('message', onMsg);
   }, []);
+  // A session not in the index yet (a new session's first turn) waits for the next index, at most OPEN_REQUEST_WAIT_MS.
+  const openMiss = useRef<{ id: string; projects: AppState['projects']; timer: ReturnType<typeof setTimeout> } | null>(null);
   useEffect(() => {
     if (!openReq || !state.connected) return;
-    if (openById.current(openReq) || state.projects.length > 0) {
+    const settle = (error: boolean) => {
+      if (openMiss.current) clearTimeout(openMiss.current.timer);
+      openMiss.current = null;
       setOpenReq(null);
       if (window.location.search) window.history.replaceState(null, '', '/');
-    }
+      if (error) dispatch({ type: 'show_error', message: OPEN_REQUEST_MISSING });
+    };
+    if (openMiss.current && openMiss.current.id !== openReq) { clearTimeout(openMiss.current.timer); openMiss.current = null; }
+    const step = openRequestStep({ found: openById.current(openReq), projects: state.projects, missedIn: openMiss.current?.projects ?? null });
+    if (step === 'done') settle(false);
+    else if (step === 'fail') settle(true);
+    else if (step === 'miss') openMiss.current = { id: openReq, projects: state.projects, timer: setTimeout(() => settle(true), OPEN_REQUEST_WAIT_MS) };
   }, [openReq, state.connected, state.projects]);
 
   useEffect(() => {
@@ -330,7 +344,8 @@ export function App() {
   if (authed === null) return <div className="center">확인 중…</div>;
   if (!authed) return <Login onLoggedIn={() => setAuthed(true)} />;
 
-  const send = (m: ClientMessage) => sock.current?.send(m) ?? false;
+  // No socket yet counts as not connected; otherwise the socket's own answer (`false` = not connected).
+  const send = (m: ClientMessage) => (sock.current ? sock.current.send(m) : false);
   /**
    * Pane-changing actions (open / close): the server's per-socket view set must shrink too, so every session
    * no pane views after the action gets a close_session (T9 prerequisite b; duplicate-session panes keep it).

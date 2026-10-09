@@ -66,6 +66,8 @@ export type ChatProps = {
   uploadFn?: UploadFn;
   onSend: (text: string) => void;
   onInterrupt: () => void;
+  /** 취소 on 시작하는 중… (busy, no turn yet): stop waiting; the text goes back into the composer. */
+  onCancelStart?: () => void;
   /** Stops the background work held by that turn's process (interrupt by its turn id). */
   onStopBackground?: (turnId: string) => void;
   /** Stops one background task (Query.stopTask). */
@@ -520,7 +522,7 @@ export function Chat(p: ChatProps) {
         )}
         {(p.busy || p.bg) && (
           <div className="activity-bar">
-            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} progress={p.progress ?? null} live={live} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} /> : <span className="spacer" />}
+            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} progress={p.progress ?? null} live={live} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
             {p.bg && <BackgroundPill bg={p.bg} onStopTask={p.onStopTask} onStopAll={() => p.onStopBackground?.(p.bg!.turnId)} />}
           </div>
         )}

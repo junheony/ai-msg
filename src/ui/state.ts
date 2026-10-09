@@ -4,7 +4,7 @@ import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type DeckSettings, type Session
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
-import { handoffFirstMessage, handoffTitle } from '../shared/handoff';
+import { HANDOFF_PROMPT, handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
@@ -40,6 +40,8 @@ export type SentFile = { id: string; name: string; isImage: boolean };
 /*
  * Queue state machine (messages are never dropped unless they provably went in):
  *   queued ──send──▶ awaitingSend (sent; waits for turn_started under its clientRef)
+ *     the socket was down (send_failed) → back at the head, restart 'hold' (never left, so no maybeSent)
+ *     취소 (cancel_start)      → the text goes back into the composer; a late turn_started is shown as another device's
  *     turn_started            → gone from the queue (it is a bubble now)
  *     error 'draining'        → back at the head, restart 'hold' (after other held items): the old server only refuses
  *     error 'already_accepted' → dropped: the server has this ref already (a resent copy), so it never runs twice
@@ -160,21 +162,23 @@ const sameUserText = (it: ChatItem, text: string) => {
 
 /**
  * A send that got no turn_started back goes into the queue again, at the head, and its bubble (if nothing came after it)
- * is taken back — so it is never lost. `how`: 'refused' = it did not go in ('draining': held, sent after the reconnect;
- * else paused); 'lost' = the socket died first, so it may have gone in: checked against the history by its ordinal, or
+ * is taken back — so it is never lost. `how`: 'refused' = it did not go in ('draining', or 'offline' = never left the
+ * device: held, sent after the reconnect; else paused); 'lost' = the socket died first, so it may have gone in: checked against the history by its ordinal, or
  * paused when that cannot be told (no ordinal, a new session, a branch).
  */
-function requeue(pane: PaneState, back: NonNullable<PaneState['awaitingSend']>, how: 'draining' | 'refused' | 'lost'): PaneState {
+function requeue(pane: PaneState, back: NonNullable<PaneState['awaitingSend']>, how: 'draining' | 'offline' | 'refused' | 'lost'): PaneState {
   const last = pane.items[pane.items.length - 1];
   const items = last?.kind === 'user' && last.text === back.text ? pane.items.slice(0, -1) : pane.items;
   const sid = pane.session?.sessionId;
+  // 'offline': the frame never left (socket down) — held exactly like a draining refusal, sent after the next hello.
+  const held = how === 'draining' || how === 'offline';
   const mark: Pick<QueueItem, 'restart' | 'maybeSent'> | null = back.branch ? null
-    : how === 'draining' ? { restart: 'hold' }
+    : held ? { restart: 'hold' }
     : how === 'lost' && sid && back.n !== undefined ? { restart: 'hello', maybeSent: back.n }
     : null;
   const item: QueueItem = { id: nextQueueId(), text: back.text, attachments: back.attachments.map((f) => ({ ...f, size: 0 })), ...mark, ...(pane.awaitingRef ? { ref: pane.awaitingRef } : {}), ...(back.at !== undefined ? { at: back.at } : {}) };
   // A second draining refusal goes after the messages already held, so they keep their order.
-  const at = how === 'draining' ? pane.queue.filter((q) => q.restart).length : 0;
+  const at = held ? pane.queue.filter((q) => q.restart).length : 0;
   const queue = [...pane.queue.slice(0, at), item, ...pane.queue.slice(at)];
   return { ...pane, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, queue, queuePaused: mark ? pane.queuePaused : true };
 }
@@ -324,7 +328,13 @@ export type Action =
   /** This client sent `interrupt` for turn `turnId`. */
   | { type: 'interrupt_sent'; turnId: string; paneId?: string }
   /** A steer got no answer (send failed, or none came in time): an ordinary queue item again (paused if it may have gone in). */
-  | { type: 'steer_lost'; steerId: string; paneId?: string; /** The send itself failed: it never left, so the queue need not pause. */ unsent?: boolean };
+  | { type: 'steer_lost'; steerId: string; paneId?: string; /** The send itself failed: it never left, so the queue need not pause. */ unsent?: boolean }
+  /** 취소 on 시작하는 중…: the pane stops waiting for its send's turn_started; the text goes back into the composer. */
+  | { type: 'cancel_start'; paneId?: string }
+  /** The `sent` under `clientRef` never left (socket down): held in the queue for the next reconnect instead. */
+  | { type: 'send_failed'; clientRef: string; paneId?: string }
+  /** A bar in the pane about its session (e.g. a stop that could not be sent). */
+  | { type: 'pane_notice'; message: string; paneId?: string };
 
 const withN = (n: number | undefined) => (n !== undefined ? { n } : {});
 
@@ -1056,6 +1066,29 @@ export function reducer(state: AppState, action: Action): AppState {
       if (action.unsent) return { ...p, queue: p.queue.map(({ steer, ...q }) => (steer === action.steerId ? q : { ...q, ...(steer ? { steer } : {}) })) };
       return unsteer(p, (id) => id === action.steerId);
     });
+    case 'cancel_start': return updatePane(state, action.paneId, (p) => {
+      if (!p.awaitingStart) return p;
+      const back = p.awaitingSend;
+      const idle = p.activeTurnId === null ? { runStartedAt: null, progress: null } : {};
+      // A branch edit goes back with its session (Pane's branch_undo carries the queue): kept there, paused.
+      if (back?.branch) return { ...requeue(p, back, 'refused'), ...idle };
+      // The awaitingRef is dropped: a turn_started for it later (the server did take it) is shown as another device's.
+      const text = back?.text ?? HANDOFF_PROMPT;
+      const last = p.items[p.items.length - 1];
+      const items = last?.kind === 'user' && last.text === text ? p.items.slice(0, -1) : p.items;
+      const restore = back ? { prefill: back.text || null, attachments: [...p.attachments, ...back.attachments.filter((f) => !p.attachments.some((a) => a.id === f.id)).map((f) => ({ ...f, size: 0 }))] } : {};
+      return { ...p, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, handoff: null, ...restore, ...idle };
+    });
+    case 'send_failed': return updatePane(state, action.paneId, (p) => {
+      if (!p.awaitingStart || p.awaitingRef !== action.clientRef) return p;
+      const idle = p.activeTurnId === null ? { runStartedAt: null, progress: null } : {};
+      if (p.awaitingSend) return { ...requeue(p, p.awaitingSend, 'offline'), ...idle };
+      // The handoff note is not a message of the user's: nothing to queue — the pane stays where it was.
+      const last = p.items[p.items.length - 1];
+      const items = last?.kind === 'user' && last.text === HANDOFF_PROMPT ? p.items.slice(0, -1) : p.items;
+      return withNotice({ ...p, items, awaitingStart: false, awaitingRef: null, handoff: null, ...idle }, { sessionId: p.session?.sessionId ?? null, message: '연결이 끊겨 보내지 못했습니다 — 다시 연결된 뒤 시도하세요', level: 'notice' });
+    });
+    case 'pane_notice': return updatePane(state, action.paneId, (p) => withNotice(p, { sessionId: p.session?.sessionId ?? null, message: action.message, level: 'notice' }));
   }
 }
 

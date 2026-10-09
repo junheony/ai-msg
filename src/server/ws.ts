@@ -173,7 +173,7 @@ type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T
  * What a device opening the session mid-turn needs besides the transcript: the latest state of each
  * task (subagent cards), the subagents' tool calls so far (bounded), and the status row's progress.
  */
-type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null; /** Steers delivered in the running segment (the transcript may lag behind them). */ steers: TurnMsg<'steer_delivered'>[] };
+type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null; /** Steers delivered in the running segment (the transcript may lag behind them). */ steers: TurnMsg<'steer_delivered'>[]; /** The text block streaming now, as one delta (see record). */ text: TurnMsg<'delta'> | null };
 const MAX_REPLAY_SUBS = 500;
 /**
  * Catch-up: how much of a running process's event stream is kept for devices that come back (`open_session.after`).
@@ -475,7 +475,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     } else if (m.type === 'sub_tool_call' || m.type === 'sub_tool_result') {
       log.subs.push(m);
       if (log.subs.length > MAX_REPLAY_SUBS) log.subs.splice(0, log.subs.length - MAX_REPLAY_SUBS);
+    } else if (m.type === 'delta') {
+      log.text = log.text ? { ...log.text, ...m, text: log.text.text + m.text } : m;
     } else if (m.type === 'turn_progress') {
+      // A phase change is a new content block starting: the text block before it is finished, and finished blocks are
+      // what the CLI has written to the transcript (block by block), which `history` carries.
+      if (m.phase !== log.progress?.phase) log.text = null;
       log.progress = m;
     } else if (m.type === 'steer_delivered') {
       // The steer is in the process's input now: accepted (not when runner.steer resolved — the process may end first).
@@ -489,7 +494,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     } else if (m.type === 'turn_result') {
       // The segment's transcript is complete now.
       log.steers = [];
+      log.text = null;
     }
+    // These follow the end of a text block too (a fallback for a producer without progress events).
+    if (m.type === 'thinking' || m.type === 'tool_call' || m.type === 'tool_result' || m.type === 'steer_delivered') log.text = null;
   };
   /** After `history`: the running turn's tasks, subagent calls, progress and background work, as of now. */
   const replay = (ws: WebSocket, t: Turn, sessionId: string) => {
@@ -602,7 +610,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -646,6 +654,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (turn.current !== m.turnId) turn.since = Date.now();
           turn.current = m.turnId;
           turn.log.progress = null;
+          turn.log.text = null;
           // Every device viewing the session gets the prompt with each start (retries included); the sending pane skips it.
           const prompt = prompts.get(m.turnId);
           const withPrompt = prompt ? { ...m, prompt } : m;
@@ -790,6 +799,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     seen.set(sessionId, { at, clean: new Map(clean) });
     send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, ...runningOf(sessionId) });
     if (t) replay(ws, t, sessionId);
+    // The CLI writes a text block to the transcript only once it is finished: the one streaming now is in memory only, and
+    // without it the pane's streaming item would start mid-sentence at the next delta. Claude only (a Codex delta is a
+    // whole item its rollout already has). After the replayed steers: the text is what streamed since the latest one.
+    if (t?.current && t.log.text) send(ws, { ...t.log.text, sessionId });
   };
   /**
    * `open_session.after`: true when the device was answered without reading anything again — `catchup`, then the events
