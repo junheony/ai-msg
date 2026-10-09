@@ -135,7 +135,16 @@ export function App() {
   // A 대화 내용 검색 hit being opened: once its pane has loaded the transcript, scroll to the message containing it.
   const [scrollTo, setScrollTo] = useState<{ paneId: string; sessionId: string; snippet: string; match: string; until: number } | null>(null);
 
-  useEffect(() => { void fetch('/api/me').then((r) => setAuthed(r.ok)); }, []);
+  // An unreachable server (a phone that just woke up, no network yet) is retried, not left at 확인 중… for good.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      fetch('/api/me').then((r) => { if (!cancelled) setAuthed(r.ok); }, () => { if (!cancelled) timer = setTimeout(check, 3000); });
+    };
+    check();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, []);
 
   /** A build id from the server (a hello, or /api/build) against the first hello's: reload when nothing is at stake (true), else offer the pill. */
   const noticeBuild = (build: string | null, nextState: () => AppState): boolean => {
@@ -210,9 +219,10 @@ export function App() {
         }
       }
     }, (value) => { if (!value) tracker.cancel(); dispatch({ type: 'connected', value }); }, () => setAuthed(false));
-    const onVis = () => { if (!document.hidden) tracker.visible(); };
+    const onVis = () => { if (document.hidden) return; sock.current?.wake(); tracker.visible(); };
     document.addEventListener('visibilitychange', onVis);
-    return () => { document.removeEventListener('visibilitychange', onVis); tracker.cancel(); catchup.current = null; sock.current?.close(); };
+    window.addEventListener('online', onVis);
+    return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('online', onVis); tracker.cancel(); catchup.current = null; sock.current?.close(); };
   }, [authed]);
 
   // Only once this socket's hello is in: a send between onopen and hello would be requeued by that hello.

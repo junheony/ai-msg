@@ -10,7 +10,7 @@ vi.mock('./ws', () => ({
   createSocket: (onMessage: (m: unknown) => void, onStatus: (v: boolean) => void) => {
     sock.onMessage = onMessage;
     onStatus(true);
-    return { send: (m: unknown) => { sock.frames.push(m); }, close: () => {} };
+    return { send: (m: unknown) => { sock.frames.push(m); }, wake: () => {}, close: () => {} };
   },
 }));
 
@@ -392,5 +392,23 @@ describe('App new build without a server restart', () => {
     expect(labels[2]).toMatch(/^테마: /);
     expect(labels[3]).toMatch(/^단축키/);
     expect(labels[4]).toBe('새로고침');
+  });
+});
+
+describe('App boot', () => {
+  beforeEach(() => { localStorage.clear(); sock.frames = []; sock.onMessage = null; vi.useFakeTimers({ shouldAdvanceTime: true }); });
+  afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it('boot: an unreachable server is retried, not left at 확인 중…', async () => {
+    const fetchFn = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockImplementation(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchFn);
+    render(<App />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(screen.getByText('확인 중…')).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    await waitFor(() => expect(screen.queryByText('확인 중…')).toBeNull());
+    expect(fetchFn.mock.calls.filter((c) => c[0] === '/api/me').length).toBe(2);
   });
 });
