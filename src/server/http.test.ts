@@ -130,6 +130,23 @@ describe('http', () => {
     expect(await (await fetch(`${base}/assets/%2e%2e/%2e%2e/package.json`)).text()).toBe('<html>deck</html>');
   });
 
+  // 2026-10-10: macOS started refusing ~/Documents to the running server (EPERM on open) and the unhandled
+  // stream 'error' took the whole process down. A file that exists but cannot be read answers 500, nothing more.
+  it.skipIf(process.getuid?.() === 0)('a UI file that exists but cannot be opened answers 500 and the server keeps serving', async () => {
+    await fs.writeFile(path.join(uiDir, 'index.html'), '<html>deck</html>');
+    const locked = path.join(uiDir, 'locked.png');
+    await fs.writeFile(locked, 'x');
+    await fs.chmod(locked, 0o000);
+    try {
+      const res = await fetch(`${base}/locked.png`);
+      expect(res.status).toBe(500);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(await (await fetch(`${base}/`)).text()).toBe('<html>deck</html>');
+    } finally {
+      await fs.chmod(locked, 0o600);
+    }
+  });
+
   it('every response carries CSP, nosniff and no-referrer — static, API, and error responses', async () => {
     const CSP = "default-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
     await fs.writeFile(path.join(uiDir, 'index.html'), '<html>deck</html>');

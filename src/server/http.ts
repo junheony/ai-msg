@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import type http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { pipeline } from 'node:stream';
 import type { SessionEntry } from '../shared/session-types';
 import { AttachmentTooLarge, IMAGE_TYPES, MAX_ATTACHMENT_BYTES, isAttachmentId, type AttachmentStore } from './attachments/AttachmentStore';
 import { DirError, listDirs, resolveUnderHome } from './dirs';
@@ -200,8 +201,14 @@ function serveStatic(uiDir: string, urlPath: string, res: http.ServerResponse): 
   const rel = path.relative(root, file);
   // PWA: the service worker and manifest are revalidated every time so a new build takes over promptly.
   const cache = rel === 'index.html' ? 'no-store' : rel === 'sw.js' || rel === 'manifest.webmanifest' ? 'no-cache' : 'public, max-age=3600';
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': cache, ...(rel === 'sw.js' ? { 'service-worker-allowed': '/' } : {}) });
-  fs.createReadStream(file).pipe(res);
+  // Headers only once the file is open: macOS TCC can start refusing ~/Documents to a running server
+  // (EPERM on open), and an unhandled stream 'error' would take the whole process down.
+  const src = fs.createReadStream(file);
+  src.once('error', () => { if (!res.headersSent) json(res, 500, { error: '파일을 읽지 못했습니다' }); });
+  src.once('open', () => {
+    res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': cache, ...(rel === 'sw.js' ? { 'service-worker-allowed': '/' } : {}) });
+    pipeline(src, res, () => {});
+  });
 }
 
 /**
