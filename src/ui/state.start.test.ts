@@ -54,6 +54,41 @@ describe('cancel_start (시작하는 중… 취소)', () => {
   });
 });
 
+describe('turn_queued (the send waits behind a background segment)', () => {
+  const queued = (clientRef: string, sessionId = 's1'): ServerMessage => ({ type: 'turn_queued', turnId: 'tq', sessionId, cwd: '/w', clientRef, behind: '백그라운드 계속' });
+
+  it('records what the wait is behind, for the pane whose ref it names only', () => {
+    let s = reducer(opened('s1'), { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = play([queued('other')], s);
+    expect(pane(s).awaitingBehind).toBeNull();
+    s = play([queued('r1')], s);
+    expect(pane(s)).toMatchObject({ awaitingStart: true, awaitingRef: 'r1', awaitingBehind: '백그라운드 계속' });
+  });
+
+  it('a pane that is not waiting ignores it', () => {
+    const s = opened('s1');
+    expect(play([queued('r1')], s)).toEqual(s);
+  });
+
+  it('turn_started for the ref ends the wait and clears it; so does cancel_start', () => {
+    let s = reducer(opened('s1'), { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = play([queued('r1'), started('t1', 'r1')], s);
+    expect(pane(s)).toMatchObject({ awaitingStart: false, awaitingBehind: null, activeTurnId: 't1' });
+
+    let c = reducer(opened('s1'), { type: 'sent', text: 'hi', clientRef: 'r2' });
+    c = play([queued('r2')], c);
+    c = reducer(c, { type: 'cancel_start', paneId: 'p0' });
+    expect(pane(c)).toMatchObject({ awaitingStart: false, awaitingBehind: null, prefill: 'hi' });
+  });
+
+  it('a socket that dies while queued: the hello requeues the send as lost and nothing of the wait remains', () => {
+    let s = reducer(opened('s1'), { type: 'sent', text: 'hi', clientRef: 'r1' });
+    s = play([queued('r1'), hello], s);
+    expect(pane(s)).toMatchObject({ awaitingStart: false, awaitingRef: null, awaitingBehind: null });
+    expect(pane(s).queue.map((q) => q.text)).toEqual(['hi']);
+  });
+});
+
 describe('send_failed (sent while disconnected)', () => {
   it('no bubble, no wait: one held queue item that the next hello sends', () => {
     let s = reducer(opened('s1'), { type: 'sent', text: 'hi', clientRef: 'r1' });

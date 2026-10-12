@@ -139,7 +139,9 @@ export type FollowUpParams = { turnId: string; text: string; attachments?: strin
 /** The mutable "which deck turn is the process working for now" — permission cards and events follow it. */
 type Cursor = { turnId: string };
 
-type LiveSession = { submit(f: FollowUpParams, attachments: Attachment[]): boolean; /** When the process was started: it has read nothing another process wrote after this. */ since: number; /** Per transcript copy: the offset the foreign-write check found clean up to. */ clean: Map<string, number> };
+/** How a follow-up was taken: written to the process now, or held in deck until the streaming segment's result (`queuedBehind` = that segment's reason). */
+export type FollowUpTaken = { queuedBehind: string | null };
+type LiveSession = { submit(f: FollowUpParams, attachments: Attachment[]): FollowUpTaken; /** Takes a follow-up still waiting in the queue back out (by its clientRef): its turn id, or null when none waits under that ref (already sent in, or never queued). */ cancelQueued(clientRef: string): string | null; /** When the process was started: it has read nothing another process wrote after this. */ since: number; /** Per transcript copy: the offset the foreign-write check found clean up to. */ clean: Map<string, number> };
 
 /** What 이 세션 accepted: allow rules as rule strings and added directories (its acceptEdits becomes the session's mode). */
 type SessionGrants = { rules: string[]; dirs: string[] };
@@ -258,9 +260,9 @@ export class TurnRunner {
    * user turn; the background tasks keep running). While a background continuation is streaming
    * the message waits in deck and goes in right after that continuation's result. Same process,
    * so the account and model stay those of the running process. False = no such process
-   * (the caller refuses the send as busy).
+   * (the caller refuses the send as busy); else how it was taken (`queuedBehind`: the segment it waits for).
    */
-  followUp(sessionId: string, f: FollowUpParams): boolean {
+  followUp(sessionId: string, f: FollowUpParams): false | FollowUpTaken {
     const entry = this.live.get(sessionId);
     if (!entry) return false;
     let attachments: Attachment[] = [];
@@ -270,6 +272,15 @@ export class TurnRunner {
       attachments = r.found;
     }
     return entry.submit(f, attachments);
+  }
+
+  /**
+   * Withdraws a follow-up that still waits behind a streaming segment (the device's 취소 while turn_queued). The turn id
+   * it was taken under when it was still in the queue; null once it went into the process (its turn_started is on its
+   * way or already out) or when the session holds no process.
+   */
+  cancelQueued(sessionId: string, clientRef: string): string | null {
+    return this.live.get(sessionId)?.cancelQueued(clientRef) ?? null;
   }
 
   /**
@@ -1008,9 +1019,15 @@ export class TurnRunner {
         since: startedAt,
         clean: new Map(),
         submit: (f, attachments) => {
-          if (seg) queue.push({ f, attachments });
-          else sendFollowUp(f, attachments);
-          return true;
+          // While a segment streams the message waits here (the sender is told which segment: ws turn_queued).
+          if (seg) { queue.push({ f, attachments }); return { queuedBehind: seg.reason }; }
+          sendFollowUp(f, attachments);
+          return { queuedBehind: null };
+        },
+        cancelQueued: (clientRef) => {
+          const i = queue.findIndex((q) => q.f.clientRef === clientRef);
+          if (i < 0) return null;
+          return queue.splice(i, 1)[0]!.f.turnId;
         },
       });
     }

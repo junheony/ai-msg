@@ -246,6 +246,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
   /** Sockets whose UI asked for `sandbox` messages (open_session.accepts, protocol rule 3: an older UI never gets one). */
   const sandboxAware = new WeakSet<WebSocket>();
+  /** Sockets whose UI asked for `turn_queued` (a follow-up waiting behind a streaming segment; an older UI shows 시작하는 중… meanwhile). */
+  const queuedAware = new WeakSet<WebSocket>();
   const broadcastSandbox = (sessionId: string, sandbox: CodexSandbox) => { for (const c of clients) if (sandboxAware.has(c)) send(c, { type: 'sandbox', sessionId, sandbox }); };
   const notify = (msg: ServerMessage) => { try { deps.notify?.(msg); } catch (err) { console.error('deck: push hook failed', errMsg(err)); } };
   const broadcastAndNotify = (msg: ServerMessage) => { broadcast(msg); notify(msg); };
@@ -650,7 +652,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         ...(msg.clientRef ? { clientRef: msg.clientRef } : {}),
       });
       // Accepted once its turn_started comes (the sink's alias branch): that is when the process takes it in.
-      if (joined) { if (msg.clientRef) base.pendingRefs.add(msg.clientRef); return; }
+      if (joined) {
+        if (msg.clientRef) base.pendingRefs.add(msg.clientRef);
+        // Waiting in deck behind a streaming segment: the sending pane shows that instead of 시작하는 중… (and does not
+        // suspect its socket). Not through emitTurn: no stream position, nothing to replay — the turn_started settles it.
+        if (joined.queuedBehind && msg.clientRef && queuedAware.has(ws)) send(ws, { type: 'turn_queued', turnId: followId, sessionId: sid, cwd: base.cwd, clientRef: msg.clientRef, behind: joined.queuedBehind });
+        return;
+      }
       aliases.delete(followId);
       prompts.delete(followId);
       // The turn already sent its result and the process is only closing (no background work to join):
@@ -1017,6 +1025,15 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             .catch((err: unknown) => reject(`실행 중인 턴에 넣지 못했습니다: ${errMsg(err)}`));
           break;
         }
+        case 'cancel_queued': {
+          // 취소 on a send the device was told waits behind a segment (turn_queued): out of the queue before it goes in.
+          // Too late (it went in, or the process ended) changes nothing: its turn_started / error settles the device.
+          // Only a socket showing the session (pendingRefs are in its history, so any viewer could name the ref).
+          const base = viewing.get(ws)?.has(msg.sessionId) ? turns.get(busy.get(msg.sessionId) ?? '') : undefined;
+          const withdrawn = base ? deps.runner.cancelQueued(msg.sessionId, msg.clientRef) : null;
+          if (base && withdrawn) { base.pendingRefs.delete(msg.clientRef); aliases.delete(withdrawn); prompts.delete(withdrawn); endHeld(base); }
+          break;
+        }
         case 'interrupt': {
           // A continuation's or follow-up's id stops the process it runs in (and its background work).
           const base = baseOf(msg.turnId);
@@ -1032,6 +1049,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         }
         case 'open_session':
           if (msg.accepts?.includes('sandbox')) sandboxAware.add(ws);
+          if (msg.accepts?.includes('turn_queued')) queuedAware.add(ws);
           syncHolders();
           if (!(msg.after && catchUp(ws, msg.sessionId, msg.after))) openSession(ws, msg.sessionId);
           break;

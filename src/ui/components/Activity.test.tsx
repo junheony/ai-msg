@@ -54,6 +54,19 @@ describe('StatusRow', () => {
     expect(screen.queryByText('취소')).toBeNull();
     expect(screen.getByText('중단')).toBeTruthy();
   });
+
+  it('queued behind a segment: says what it waits for instead of 시작하는 중…, still with 취소; ignored once started', () => {
+    const onCancel = vi.fn();
+    render(<StatusRow startedAt={Date.now()} started={false} progress={null} live={null} onCancel={onCancel} queuedBehind="백그라운드 계속" />);
+    const s = screen.getByTestId('turn-status');
+    expect(s.textContent).toContain('백그라운드 계속 뒤에서 기다리는 중');
+    expect(s.textContent).not.toContain('시작하는 중…');
+    fireEvent.click(screen.getByText('취소'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<StatusRow startedAt={Date.now()} started progress={null} live={null} onInterrupt={() => {}} queuedBehind="백그라운드 계속" />);
+    expect(screen.getByTestId('turn-status').textContent).not.toContain('기다리는 중');
+  });
 });
 
 describe('AgentCard', () => {

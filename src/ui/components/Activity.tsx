@@ -73,10 +73,12 @@ const IDLE_VERBS = ['생각 중…', '작업 중…', '살펴보는 중…', '�
  * Desktop-style live line above the composer while a turn runs: spinner, what it is doing now, m:ss,
  * output tokens, tool count and a stop button. Owns the 1s timer so nothing else re-renders per tick.
  */
-export function StatusRow({ startedAt, started, progress, live, onInterrupt, onCancel }: {
+export function StatusRow({ startedAt, started, queuedBehind = null, progress, live, onInterrupt, onCancel }: {
   startedAt: number | null;
   /** turn_started arrived (false = 시작하는 중…). */
   started: boolean;
+  /** Not started because the server holds the send behind a streaming segment (its reason, e.g. 백그라운드 계속). */
+  queuedBehind?: string | null;
   progress: { outputTokens: number; phase: TurnPhase } | null;
   live: Assistant | null;
   onInterrupt?: () => void;
@@ -87,7 +89,7 @@ export function StatusRow({ startedAt, started, progress, live, onInterrupt, onC
   const ms = startedAt === null ? 0 : now - startedAt;
   const running = live ? live.toolCalls.findLast((c) => c.result === null) : undefined;
   const tool = running ? toolVerb(running) : null;
-  const verb = !started ? '시작하는 중…' : tool ? tool.verb : progress ? PHASE_VERB[progress.phase] : IDLE_VERBS[Math.floor(ms / 6000) % IDLE_VERBS.length]!;
+  const verb = !started ? (queuedBehind ? `${queuedBehind} 뒤에서 기다리는 중 — 끝나면 이어서 보냄` : '시작하는 중…') : tool ? tool.verb : progress ? PHASE_VERB[progress.phase] : IDLE_VERBS[Math.floor(ms / 6000) % IDLE_VERBS.length]!;
   const tools = live ? live.toolCalls.length : 0;
   return (
     <div className="turn-status" role="status" data-testid="turn-status">

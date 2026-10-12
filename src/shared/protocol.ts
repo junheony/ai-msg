@@ -64,6 +64,12 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
   }),
   z.object({ type: z.literal('interrupt'), turnId: z.string().min(1) }),
+  /**
+   * 취소 on a send the server answered with `turn_queued`: take it out of the session's queue before it goes in. No
+   * reply — too late (already in) and the ref's turn_started arrives as usual. Only sent after a `turn_queued`, so any
+   * server that sent one understands it.
+   */
+  z.object({ type: z.literal('cancel_queued'), sessionId: z.string().min(1), clientRef: z.string().min(1).max(CLIENT_REF_MAX) }),
   /** Stop one background task of a running turn (the rest of the turn keeps going). */
   z.object({ type: z.literal('stop_task'), turnId: z.string().min(1), taskId: z.string().min(1).max(200) }),
   /**
@@ -206,6 +212,12 @@ export type ServerMessage =
   | { type: 'question_resolved'; requestId: string; answers: QuestionAnswers | null }
   /** Non-terminal note about a running turn (e.g. a refused session move). */
   | ({ type: 'turn_notice'; message: string } & TurnScope)
+  /**
+   * The send was taken by the session's held-open process but waits in deck while a segment streams (`behind` = that
+   * segment's reason, e.g. 백그라운드 계속): its turn_started comes with that segment's result. Only to the sending socket,
+   * and only when it asked for the kind (open_session.accepts, rule 3).
+   */
+  | { type: 'turn_queued'; turnId: string; sessionId: string; cwd: string; clientRef: string; behind: string }
   /** A hook sent the model a message mid-turn (e.g. a Stop hook made it keep going): a muted row in the turn. `event`: Stop, PreToolUse… */
   | ({ type: 'turn_system'; source: string; label: string; text: string } & TurnScope)
   /** A background task (run_in_background Bash, backgrounded agent) settled during the turn; drives a push, the UI ignores it. */

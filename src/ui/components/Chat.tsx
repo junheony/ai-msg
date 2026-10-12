@@ -74,6 +74,8 @@ export type ChatProps = {
   onStopTask?: (taskId: string) => void;
   /** Status row: when the running turn started (client clock), its output tokens and phase. */
   runStartedAt?: number | null;
+  /** The pending send waits in the server behind a streaming segment (turn_queued.behind): the status row says so instead of 시작하는 중…. */
+  awaitingBehind?: string | null;
   progress?: { outputTokens: number; phase: TurnPhase } | null;
   /** Subagent cards by Agent call id; the background pill. */
   agents?: Record<string, AgentInfo>;
@@ -556,7 +558,7 @@ export function Chat(p: ChatProps) {
         )}
         {(p.busy || p.bg) && (
           <div className="activity-bar">
-            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} progress={p.progress ?? null} live={live} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
+            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} queuedBehind={p.activeTurnId ? null : p.awaitingBehind ?? null} progress={p.progress ?? null} live={live} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
             {p.bg && <BackgroundPill bg={p.bg} onStopTask={p.onStopTask} onStopAll={() => p.onStopBackground?.(p.bg!.turnId)} />}
           </div>
         )}

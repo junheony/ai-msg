@@ -45,6 +45,9 @@ export type SentFile = { id: string; name: string; isImage: boolean };
  *   queued ──send──▶ awaitingSend (sent; waits for turn_started under its clientRef)
  *     the socket was down (send_failed) → back at the head, restart 'hold' (never left, so no maybeSent)
  *     취소 (cancel_start)      → the text goes back into the composer; a late turn_started is shown as another device's
+ *     turn_queued (its ref)   → still awaitingSend, with `awaitingBehind` = the segment it waits for (shown instead of
+ *                               시작하는 중…, and no stall reconnect: the server has it); 취소 then also sends cancel_queued
+ *                               so the server drops it — too late and the ref's turn_started shows it as another device's
  *     turn_started            → gone from the queue (it is a bubble now)
  *     error 'draining'        → back at the head, restart 'hold' (after other held items): the old server only refuses
  *     error 'already_accepted' → dropped: the server has this ref already (a resent copy), so it never runs twice
@@ -183,7 +186,7 @@ function requeue(pane: PaneState, back: NonNullable<PaneState['awaitingSend']>, 
   // A second draining refusal goes after the messages already held, so they keep their order.
   const at = held ? pane.queue.filter((q) => q.restart).length : 0;
   const queue = [...pane.queue.slice(0, at), item, ...pane.queue.slice(at)];
-  return { ...pane, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, queue, queuePaused: mark ? pane.queuePaused : true };
+  return { ...pane, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, queue, queuePaused: mark ? pane.queuePaused : true };
 }
 
 /** Steer-flagged items back to ordinary (paused) queue items: their answer was lost, so they may or may not have gone in. */
@@ -208,6 +211,8 @@ export type PaneState = {
   awaitingRef: string | null;
   /** What that pending send carried (not for a handoff note): queued again if the server refuses it before its turn starts. */
   awaitingSend: { text: string; attachments: SentFile[]; /** the user-message ordinal it gets (nextUserN) */ n?: number; /** when it was sent (ms) */ at?: number; /** 메시지 편집 갈래: re-sent only by the user */ branch?: true } | null;
+  /** The server took that pending send but holds it behind a streaming segment (turn_queued.behind, e.g. 백그라운드 계속): shown instead of 시작하는 중…. Meaningful only while awaitingStart. */
+  awaitingBehind: string | null;
   model: ModelChoice;
   /** The user picked `model` for this pane's session (or sent a new session with it): sent with every turn. Otherwise an existing session gets no model (it runs on its own default) and the picker shows that default. */
   modelPicked: boolean;
@@ -315,7 +320,7 @@ function remember(recent: AppState['recent'], p: PaneState | undefined): AppStat
 export const MAX_PANES = 5;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
 export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false, recent: {} };
@@ -564,7 +569,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const adopt = pane.session && sid === null && live?.sessionId ? { session: { ...pane.session, sessionId: live.sessionId }, loading: true } : {};
       // A turn that ended meanwhile (or one restored by hydrate that the server no longer runs) is not this pane's to wait on.
       const ended = !live && pane.activeTurnId ? { myTurns: base.myTurns.filter((t) => t !== pane.activeTurnId) } : {};
-      const next: PaneState = { ...base, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, bg, ...run, queue: release(held, (q) => q.restart === 'hold'), ...adopt, ...ended };
+      const next: PaneState = { ...base, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, bg, ...run, queue: release(held, (q) => q.restart === 'hold'), ...adopt, ...ended };
       // Steers in flight across a reconnect: their answer went to the old socket, so they may have gone in — queued again, paused.
       return unsteer(next, () => true);
     }
@@ -593,7 +598,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       // This pane's send is listed as accepted, so its turn_started is behind us (it came ahead of a gap in the stream and
       // was not applied, or with the old socket): the pane stops waiting for it, and the turn running now is its own.
       const mine = pane.awaitingStart && pane.awaitingRef !== null && !!msg.acceptedRefs?.includes(pane.awaitingRef);
-      const started = mine ? { awaitingStart: false, awaitingRef: null, awaitingSend: null, ...(msg.runningTurnId && !pane.myTurns.includes(msg.runningTurnId) ? { myTurns: [...pane.myTurns, msg.runningTurnId] } : {}) } : {};
+      const started = mine ? { awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, ...(msg.runningTurnId && !pane.myTurns.includes(msg.runningTurnId) ? { myTurns: [...pane.myTurns, msg.runningTurnId] } : {}) } : {};
       return { ...pane, ...started, ...settleQueue(pane, msg, items), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
     }
     case 'catchup': {
@@ -617,7 +622,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
         // A new GPT/Gemini session runs under the sandbox this pane sent with its first turn (Pane: `sandbox: pane.sandbox`).
         // Nothing else tells the pane until the session is reopened — the chip would show the read-only default meanwhile.
         const sandbox = sess.sessionId === null && engine !== 'claude' ? { sandbox: pane.sandbox } : {};
-        p = { ...pane, awaitingStart: false, awaitingRef: null, awaitingSend: null, myTurns: [...pane.myTurns, msg.turnId], session: { ...sess, engine, ...sandbox } };
+        p = { ...pane, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, myTurns: [...pane.myTurns, msg.turnId], session: { ...sess, engine, ...sandbox } };
       }
       if (p.handoff && p.handoff.turnId === null && msg.clientRef !== undefined && msg.clientRef === p.handoff.ref) p = { ...p, handoff: { ...p.handoff, turnId: msg.turnId } };
       if (!belongs(p, msg)) return p;
@@ -634,6 +639,11 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const follow = msg.sessionModel && !p.modelPicked && (msg.engine ?? 'claude') === 'claude' ? { model: msg.sessionModel } : {};
       return { ...p, items, activeTurnId: msg.turnId, runStartedAt, progress: p.activeTurnId === msg.turnId ? p.progress : null, ...follow };
     }
+    // The server holds this pane's send behind a streaming segment: said on the status row instead of 시작하는 중…
+    // (matched by the send's ref only — the turn id is new to the pane until its turn_started).
+    case 'turn_queued':
+      if (!pane.awaitingStart || pane.awaitingRef === null || msg.clientRef !== pane.awaitingRef) return pane;
+      return { ...pane, awaitingBehind: msg.behind };
     case 'turn_progress':
       if (!belongs(pane, msg) || msg.turnId !== pane.activeTurnId) return pane;
       return { ...pane, progress: { outputTokens: msg.outputTokens, phase: msg.phase } };
@@ -793,11 +803,11 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
         console.warn('deck: message already went in — not sent again:', back?.text);
         const last = withItem.items[withItem.items.length - 1];
         const items = back && last?.kind === 'user' && last.text === back.text ? withItem.items.slice(0, -1) : withItem.items;
-        return { ...withItem, items, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, ...idle, ...handoff };
+        return { ...withItem, items, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, ...idle, ...handoff };
       }
       // Refused before its turn started (an older server names the turn it never started): back into the queue (requeue).
       const back = (msg.turnId === null || !pane.myTurns.includes(msg.turnId)) && pane.awaitingRef !== null ? pane.awaitingSend : null;
-      if (!back) return { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0, ...idle, ...handoff };
+      if (!back) return { ...withItem, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, queuePaused: withItem.queuePaused || withItem.queue.length > 0, ...idle, ...handoff };
       return { ...requeue(withItem, back, msg.code === 'draining' ? 'draining' : 'refused'), activeTurnId, ...idle, ...handoff };
     }
     default:
@@ -820,7 +830,7 @@ function afterHandoffNote(pane: PaneState, ok: boolean, accounts: readonly Accou
     // The old session's account pin carries over (rides the new session's first send) — unless its account cannot run a turn any more.
     session: { sessionId: null, cwd: h.cwd, account: null, title: handoffTitle(h.title), engine: 'claude', sandbox: null, ...(activePin(accounts, pane.session?.accountPin) ? { accountPin: pane.session!.accountPin } : {}), ...(pane.session?.permissionMode ? { permissionMode: pane.session.permissionMode } : {}) },
     engine: 'claude',
-    items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [],
+    items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [],
     // Messages queued meanwhile stay, paused: they were meant for the old session (held ones are parked with it: onServer).
     queue: pane.queue.filter((q) => !isHeld(q)), queuePaused: pane.queuePaused || pane.queue.some((q) => !isHeld(q)),
     ...ACTIVITY_RESET,
@@ -926,7 +936,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       return { ...state, panes };
     }
     case 'thinking': case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
-    case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result':
+    case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result': case 'turn_queued':
       return { ...state, panes: mapPanes(state, msg) };
     case 'steer_delivered': case 'steer_rejected': {
       const kept = msg.type === 'steer_rejected' && msg.code === 'in_flight' && state.panes.some((p) => p.queue.some((q) => q.steer === msg.steerId));
@@ -1030,7 +1040,7 @@ export function reducer(state: AppState, action: Action): AppState {
         items: cached ?? [], activeTurnId: null, myTurns: [], attachments: [], ...ACTIVITY_RESET, loading: action.sessionId !== null,
         ...(same
           ? { queue: [...p.queue, ...(back ?? [])], queuePaused: p.queuePaused || !!back }
-          : { awaitingStart: false, awaitingRef: null, awaitingSend: null, queue: back ?? [], queuePaused: !!back, queueSendNow: null,
+          : { awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, queue: back ?? [], queuePaused: !!back, queueSendNow: null,
               // Another session: its model is its own again (history shows it); a new one starts on the default unless picked.
               modelPicked: false, ...(action.sessionId === null && !p.modelPicked && engineOf(p.model) === 'claude' ? { model: DEFAULT_MODEL } : {}) }),
         handoff: null, handoffFrom: null, prefill: null, notices: [],
@@ -1058,7 +1068,7 @@ export function reducer(state: AppState, action: Action): AppState {
         session: { sessionId: null, cwd: p.session!.cwd, account: null, title: p.session!.title, engine: 'claude', sandbox: null, ...(activePin(state.accounts, p.session!.accountPin) ? { accountPin: p.session!.accountPin } : {}), ...(p.session!.permissionMode ? { permissionMode: p.session!.permissionMode } : {}) },
         items: [...kept, { kind: 'user', text: action.text, n: action.n }],
         // A refused fork keeps its text (paused in the queue); messages queued for the parent stay, paused.
-        activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: { text: action.text, attachments: [], branch: true },
+        activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: { text: action.text, attachments: [], branch: true }, awaitingBehind: null,
         queue: split.queue, queuePaused: p.queuePaused || split.queue.length > 0,
         ...ACTIVITY_RESET, runStartedAt: Date.now(), handoff: null, handoffFrom: null, prefill: null, notices: [],
       }));
@@ -1070,7 +1080,7 @@ export function reducer(state: AppState, action: Action): AppState {
         // A new session is sent with the picker's model: the session keeps sending it.
         ...(p.session?.sessionId === null ? { modelPicked: true } : {}),
         items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(n) }],
-        awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [], ...withN(n), at: Date.now() }, attachments: [], queuePaused: action.keepPaused ? p.queuePaused : false, prefill: null,
+        awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingBehind: null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [], ...withN(n), at: Date.now() }, attachments: [], queuePaused: action.keepPaused ? p.queuePaused : false, prefill: null,
         ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
         ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
       };
@@ -1095,7 +1105,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
     case 'clear_pane': return updatePane({ ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId))) }, action.paneId, (p) => ({
-      ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET, loading: false,
+      ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET, loading: false,
       handoff: null, handoffFrom: null, prefill: null, notices: [],
     }));
     case 'add_pane': {
@@ -1152,7 +1162,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const last = p.items[p.items.length - 1];
       const items = last?.kind === 'user' && last.text === text ? p.items.slice(0, -1) : p.items;
       const restore = back ? { prefill: back.text || null, attachments: [...p.attachments, ...back.attachments.filter((f) => !p.attachments.some((a) => a.id === f.id)).map((f) => ({ ...f, size: 0 }))] } : {};
-      return { ...p, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, handoff: null, ...restore, ...idle };
+      return { ...p, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, handoff: null, ...restore, ...idle };
     });
     case 'send_failed': return updatePane(state, action.paneId, (p) => {
       if (!p.awaitingStart || p.awaitingRef !== action.clientRef) return p;
@@ -1161,7 +1171,7 @@ export function reducer(state: AppState, action: Action): AppState {
       // The handoff note is not a message of the user's: nothing to queue — the pane stays where it was.
       const last = p.items[p.items.length - 1];
       const items = last?.kind === 'user' && last.text === HANDOFF_PROMPT ? p.items.slice(0, -1) : p.items;
-      return withNotice({ ...p, items, awaitingStart: false, awaitingRef: null, handoff: null, ...idle }, { sessionId: p.session?.sessionId ?? null, message: '연결이 끊겨 보내지 못했습니다 — 다시 연결된 뒤 시도하세요', level: 'notice' });
+      return withNotice({ ...p, items, awaitingStart: false, awaitingRef: null, awaitingBehind: null, handoff: null, ...idle }, { sessionId: p.session?.sessionId ?? null, message: '연결이 끊겨 보내지 못했습니다 — 다시 연결된 뒤 시도하세요', level: 'notice' });
     });
     case 'pane_notice': return updatePane(state, action.paneId, (p) => withNotice(p, { sessionId: p.session?.sessionId ?? null, message: action.message, level: 'notice' }));
   }

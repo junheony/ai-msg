@@ -68,13 +68,13 @@ describe('createSocket', () => {
     expect(s.send({ type: 'interrupt', turnId: 't' })).toBe(true);
   });
 
-  it('open_session says which newer server message kinds this UI understands (sandbox); other messages go as they are', () => {
+  it('open_session says which newer server message kinds this UI understands (sandbox, turn_queued); other messages go as they are', () => {
     const s = createSocket(() => {}, () => {});
     const w = FakeWS.instances[0]!;
     w.readyState = FakeWS.OPEN;
     s.send({ type: 'open_session', sessionId: 's1' });
     s.send({ type: 'interrupt', turnId: 't' });
-    expect(w.sent.map((d) => JSON.parse(d))).toEqual([{ type: 'open_session', sessionId: 's1', accepts: ['sandbox'] }, { type: 'interrupt', turnId: 't' }]);
+    expect(w.sent.map((d) => JSON.parse(d))).toEqual([{ type: 'open_session', sessionId: 's1', accepts: ['sandbox', 'turn_queued'] }, { type: 'interrupt', turnId: 't' }]);
   });
 
   it('wake() during the backoff wait opens a new socket at once and resets the delay', async () => {
