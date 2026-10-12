@@ -105,7 +105,7 @@ describe('BackgroundPill', () => {
   it('lists tasks with type and age; 중지 stops one task, 모두 중지 all', () => {
     const onStopTask = vi.fn();
     const onStopAll = vi.fn();
-    render(<BackgroundPill bg={{ turnId: 't1', tasks: ['sleep 20', 'explore'], detail: [{ id: 'k', description: 'sleep 20', type: 'local_bash', ageMs: 12_000 }, { id: 'g', description: 'explore', type: 'local_agent', ageMs: 0 }], receivedAt: Date.now(), canStop: true }} onStopTask={onStopTask} onStopAll={onStopAll} />);
+    render(<BackgroundPill bg={{ turnId: 't1', tasks: ['sleep 20', 'explore'], detail: [{ id: 'k', description: 'sleep 20', type: 'local_bash', ageMs: 12_000 }, { id: 'g', description: 'explore', type: 'local_agent', ageMs: 0 }], receivedAt: Date.now(), canStop: true, last: null }} onStopTask={onStopTask} onStopAll={onStopAll} />);
     expect(screen.getByTestId('bg-pill').textContent).toContain('백그라운드 작업 2개');
     fireEvent.click(screen.getByTestId('bg-pill'));
     const pop = screen.getByTestId('bg-popover');
@@ -122,7 +122,7 @@ describe('BackgroundPill', () => {
   it('the pill itself shows how long the oldest task has run, ticking while closed', () => {
     vi.useFakeTimers();
     try {
-      render(<BackgroundPill bg={{ turnId: 't1', tasks: ['scan', 'explore'], detail: [{ id: 'k', description: 'scan', type: 'local_bash', ageMs: 33 * 60_000 }, { id: 'g', description: 'explore', type: 'local_agent', ageMs: 5_000 }], receivedAt: Date.now(), canStop: true }} onStopAll={() => {}} />);
+      render(<BackgroundPill bg={{ turnId: 't1', tasks: ['scan', 'explore'], detail: [{ id: 'k', description: 'scan', type: 'local_bash', ageMs: 33 * 60_000 }, { id: 'g', description: 'explore', type: 'local_agent', ageMs: 5_000 }], receivedAt: Date.now(), canStop: true, last: null }} onStopAll={() => {}} />);
       expect(screen.getByTestId('bg-pill').textContent).toContain('33:00');
       act(() => { vi.advanceTimersByTime(61_000); });
       expect(screen.getByTestId('bg-pill').textContent).toContain('34:01');
@@ -134,15 +134,38 @@ describe('BackgroundPill', () => {
   it('without detail (older server) the pill counts from when it appeared', () => {
     vi.useFakeTimers();
     try {
-      render(<BackgroundPill bg={{ turnId: 't1', tasks: ['build'], detail: [], receivedAt: Date.now() - 90_000, canStop: false }} onStopAll={() => {}} />);
+      render(<BackgroundPill bg={{ turnId: 't1', tasks: ['build'], detail: [], receivedAt: Date.now() - 90_000, canStop: false, last: null }} onStopAll={() => {}} />);
       expect(screen.getByTestId('bg-pill').textContent).toContain('1:30');
     } finally {
       vi.useRealTimers();
     }
   });
 
+  it('shows the last subagent activity: how long ago on the pill, what it was in the popover', () => {
+    vi.useFakeTimers();
+    try {
+      const now = Date.now();
+      const { rerender } = render(<BackgroundPill bg={{ turnId: 't1', tasks: ['forensics'], detail: [{ id: 'k', description: 'forensics', type: 'local_agent', ageMs: 60_000 }], receivedAt: now, canStop: true, last: { kind: 'call', at: now - 8_000, name: 'Bash', input: { command: 'cast call 0x5d78' } } }} onStopAll={() => {}} />);
+      expect(screen.getByTestId('bg-pill').textContent).toContain('활동 8초 전');
+      fireEvent.click(screen.getByTestId('bg-pill'));
+      expect(screen.getByTestId('bg-popover').textContent).toContain('Bash cast call 0x5d78');
+      act(() => { vi.advanceTimersByTime(90_000); });
+      expect(screen.getByTestId('bg-pill').textContent).toContain('활동 1분 전');
+      rerender(<BackgroundPill bg={{ turnId: 't1', tasks: ['forensics'], detail: [], receivedAt: now, canStop: true, last: { kind: 'task', at: Date.now(), text: 'Trace 0x0a38 BAY source' } }} onStopAll={() => {}} />);
+      expect(screen.getByTestId('bg-pill').textContent).toContain('방금 활동');
+      expect(screen.getByTestId('bg-popover').textContent).toContain('Trace 0x0a38 BAY source');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('without any activity seen yet the pill shows only the clock', () => {
+    render(<BackgroundPill bg={{ turnId: 't1', tasks: ['build'], detail: [], receivedAt: Date.now(), canStop: false, last: null }} onStopAll={() => {}} />);
+    expect(screen.getByTestId('bg-pill').textContent).not.toContain('활동');
+  });
+
   it('without per-task stop (older server) only 모두 중지 is offered', () => {
-    render(<BackgroundPill bg={{ turnId: 't1', tasks: ['build'], detail: [], receivedAt: Date.now(), canStop: false }} onStopAll={() => {}} />);
+    render(<BackgroundPill bg={{ turnId: 't1', tasks: ['build'], detail: [], receivedAt: Date.now(), canStop: false, last: null }} onStopAll={() => {}} />);
     fireEvent.click(screen.getByTestId('bg-pill'));
     expect(screen.queryByText('중지')).toBeNull();
     expect(screen.getByText('모두 중지')).toBeTruthy();

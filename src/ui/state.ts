@@ -30,7 +30,10 @@ export type AgentInfo = {
   startedAt: number; endedAt: number | null; usage: TaskUsage | null; lastToolName: string | null; calls: AgentCall[];
 };
 /** The pane's background work (one process per session): `receivedAt` + `detail[].ageMs` gives each task's age now. */
-export type PaneBackground = { turnId: string; tasks: string[]; detail: BgTaskInfo[]; receivedAt: number; canStop: boolean };
+/** The newest thing the background work was seen doing (a subagent's tool call or a task's description), and when. */
+export type BgActivity = { kind: 'call'; name: string; input: unknown } | { kind: 'task'; text: string };
+export type BgLastActivity = BgActivity & { at: number };
+export type PaneBackground = { turnId: string; tasks: string[]; detail: BgTaskInfo[]; receivedAt: number; canStop: boolean; /** null until the first event of the held turn arrives. */ last: BgLastActivity | null };
 
 export type PendingPermission = Omit<Extract<ServerMessage, { type: 'permission_request' }>, 'type'>;
 export type PendingQuestion = Omit<Extract<ServerMessage, { type: 'question_request' }>, 'type'>;
@@ -435,6 +438,21 @@ function belongs(pane: PaneState, msg: TurnMsg): boolean {
   return msg.sessionId !== null && msg.sessionId === pane.session.sessionId;
 }
 
+/**
+ * A subagent / task event while background work holds the pane's process open: the pill's "last activity" moves to
+ * now (the time it was received — a reconnect's catch-up replays stamp as now too), and shows `what` when the event
+ * says something (a result alone only refreshes the time). The event's turnId is not compared with the pill's: the
+ * server stamps events with the current segment's id (`t1:bg1` once a 백그라운드 계속 segment opened, a follow-up's
+ * own id), while the pill keeps the id of its last turn_background — and the pane has one process, so everything
+ * `belongs` is that process's activity.
+ */
+function bgSeen(pane: PaneState, _msg: TurnMsg, what: BgActivity | null): PaneState {
+  if (!pane.bg) return pane;
+  const at = Date.now();
+  const last: BgLastActivity = what ? { ...what, at } : pane.bg.last ? { ...pane.bg.last, at } : { kind: 'task', at, text: '' };
+  return { ...pane, bg: { ...pane.bg, last } };
+}
+
 /** The first reply text / tool call after thinking closes it: its elapsed time is fixed. */
 function endThinking(it: AssistantItem): AssistantItem {
   const t = it.thinking;
@@ -621,6 +639,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       return { ...pane, progress: { outputTokens: msg.outputTokens, phase: msg.phase } };
     case 'task_update': {
       if (!belongs(pane, msg)) return pane;
+      pane = bgSeen(pane, msg, msg.description ? { kind: 'task', text: msg.description } : null);
       // A patch (task_updated) has no Agent call id: find the card by task id.
       const id = msg.toolUseId ?? Object.keys(pane.agents).find((k) => pane.agents[k]!.taskId === msg.taskId);
       if (!id) return pane;
@@ -640,17 +659,20 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
     }
     case 'task_done': {
       if (!belongs(pane, msg)) return pane;
+      pane = bgSeen(pane, msg, null);
       const id = msg.toolUseId ?? (msg.taskId ? Object.keys(pane.agents).find((k) => pane.agents[k]!.taskId === msg.taskId) : undefined);
       if (!id || !pane.agents[id]) return pane;
       return withAgent(pane, id, (a) => ({ ...a, status: msg.status, endedAt: a.endedAt ?? Date.now(), ...(msg.usage ? { usage: msg.usage } : {}) }));
     }
     case 'sub_tool_call': {
       if (!belongs(pane, msg)) return pane;
+      pane = bgSeen(pane, msg, { kind: 'call', name: msg.name, input: msg.input });
       const id = agentFor(pane.agents, msg.parentToolUseId) ?? msg.parentToolUseId;
       return withAgent(pane, id, (a) => (a.calls.some((c) => c.toolUseId === msg.toolUseId) ? a : { ...a, calls: [...a.calls, { toolUseId: msg.toolUseId, name: msg.name, input: msg.input, done: false, isError: false }] }));
     }
     case 'sub_tool_result': {
       if (!belongs(pane, msg)) return pane;
+      pane = bgSeen(pane, msg, null);
       const id = agentFor(pane.agents, msg.parentToolUseId);
       if (!id) return pane;
       return withAgent(pane, id, (a) => ({ ...a, calls: a.calls.map((c) => (c.toolUseId === msg.toolUseId ? { ...c, done: true, isError: msg.isError } : c)) }));
@@ -713,7 +735,9 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       if (!belongs(pane, msg)) return pane;
       // One pill per pane (one process per session); [] clears it.
       if (!msg.tasks.length) return pane.bg ? { ...pane, bg: null } : pane;
-      return { ...pane, bg: { turnId: msg.turnId, tasks: msg.tasks, detail: msg.detail ?? [], receivedAt: Date.now(), canStop: msg.canStop === true } };
+      // The task set changed (one finished, one started; the id may now be a continuation segment's): what was last seen
+      // is still the newest thing seen.
+      return { ...pane, bg: { turnId: msg.turnId, tasks: msg.tasks, detail: msg.detail ?? [], receivedAt: Date.now(), canStop: msg.canStop === true, last: pane.bg?.last ?? null } };
     }
     case 'turn_notice': {
       if (!belongs(pane, msg)) return pane;

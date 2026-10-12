@@ -27,6 +27,15 @@ export function clock(ms: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
+/** How long ago, coarsely: 방금 (under 5 s), N초 전, N분 전, N시간 전. */
+export function ago(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 5) return '방금';
+  if (s < 60) return `${s}초 전`;
+  if (s < 3600) return `${Math.floor(s / 60)}분 전`;
+  return `${Math.floor(s / 3600)}시간 전`;
+}
+
 /** 950 → "950", 1234 → "1.2k", 25300 → "25k". */
 export function tokens(n: number): string {
   if (n < 1000) return String(Math.round(n));
@@ -198,15 +207,20 @@ export function BackgroundPill({ bg, onStopTask, onStopAll }: { bg: PaneBackgrou
   const rows = bg.detail.length ? bg.detail.map((d) => ({ id: d.id, description: d.description, type: d.type, ms: now - bg.receivedAt + d.ageMs })) : bg.tasks.map((t, i) => ({ id: null as string | null, description: t, type: '', ms: null as number | null, key: i }));
   const n = rows.length;
   const oldestMs = bg.detail.length ? now - bg.receivedAt + Math.max(...bg.detail.map((d) => d.ageMs)) : now - bg.receivedAt;
+  const last = bg.last;
+  // Tense-free (the call may be over, or still running after minutes): "Bash cast call 0x5d…", "Read lib.ts".
+  const lastText = !last ? '' : last.kind === 'task' ? last.text : (({ arg }) => (arg ? `${last.name} ${arg}` : last.name))(toolVerb({ name: last.name, input: last.input }));
+  const seen = last ? (now - last.at < 5_000 ? '방금 활동' : `활동 ${ago(now - last.at)}`) : '';
   return (
     <div className="bg-pill-wrap" ref={ref}>
-      <button type="button" className={`bg-pill ${open ? 'open' : ''}`} onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" data-testid="bg-pill">
+      <button type="button" className={`bg-pill ${open ? 'open' : ''}`} onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" data-testid="bg-pill" title={lastText || undefined}>
         <span className="pulse-dot" aria-hidden="true" />
-        <span className="bg-pill-label"><span className="bg-pill-word">백그라운드</span><span className="bg-pill-long"> 작업</span> {n}개<span className="bg-pill-clock"> · {clock(oldestMs)}</span></span>
+        <span className="bg-pill-label"><span className="bg-pill-word">백그라운드</span><span className="bg-pill-long"> 작업</span> {n}개<span className="bg-pill-clock"> · {clock(oldestMs)}</span>{seen && <span className="bg-pill-seen"> · {seen}</span>}</span>
       </button>
       {open && (
         <div className="bg-popover" role="dialog" aria-label="백그라운드 작업" data-testid="bg-popover">
           <div className="bg-pop-head">백그라운드 작업 {n}개</div>
+          {seen && <div className="bg-pop-seen" title={lastText}>마지막 {seen}{lastText ? ` · ${lastText}` : ''}</div>}
           <ul className="bg-list">
             {rows.map((r, i) => (
               <li key={r.id ?? i}>
