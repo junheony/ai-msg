@@ -178,13 +178,15 @@ export function AgentCard({ call, live }: { call: ToolCallItem; live: boolean })
 const TYPE_LABEL: Record<string, string> = { local_bash: '명령', local_agent: '에이전트', mcp_task: 'MCP', local_workflow: '워크플로', remote_agent: '원격 에이전트' };
 
 /**
- * "백그라운드 작업 N개" pill with a pulsing dot; click opens the task list (each with its age, status and
- * 중지 when the process can stop one task) and 모두 중지.
+ * "백그라운드 작업 N개 · m:ss" pill with a pulsing dot — the clock is the oldest task's run time (or, without per-task
+ * detail, how long the pill has been up) and ticks while the pill is closed too, so a long hold reads as alive rather
+ * than stuck; click opens the task list (each with its age, status and 중지 when the process can stop one task) and
+ * 모두 중지.
  */
 export function BackgroundPill({ bg, onStopTask, onStopAll }: { bg: PaneBackground; onStopTask?: (taskId: string) => void; onStopAll: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const now = useNow(open);
+  const now = useNow(true);
   useEffect(() => {
     if (!open) return;
     const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
@@ -195,11 +197,12 @@ export function BackgroundPill({ bg, onStopTask, onStopAll }: { bg: PaneBackgrou
   }, [open]);
   const rows = bg.detail.length ? bg.detail.map((d) => ({ id: d.id, description: d.description, type: d.type, ms: now - bg.receivedAt + d.ageMs })) : bg.tasks.map((t, i) => ({ id: null as string | null, description: t, type: '', ms: null as number | null, key: i }));
   const n = rows.length;
+  const oldestMs = bg.detail.length ? now - bg.receivedAt + Math.max(...bg.detail.map((d) => d.ageMs)) : now - bg.receivedAt;
   return (
     <div className="bg-pill-wrap" ref={ref}>
       <button type="button" className={`bg-pill ${open ? 'open' : ''}`} onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" data-testid="bg-pill">
         <span className="pulse-dot" aria-hidden="true" />
-        <span className="bg-pill-label"><span className="bg-pill-word">백그라운드</span><span className="bg-pill-long"> 작업</span> {n}개</span>
+        <span className="bg-pill-label"><span className="bg-pill-word">백그라운드</span><span className="bg-pill-long"> 작업</span> {n}개<span className="bg-pill-clock"> · {clock(oldestMs)}</span></span>
       </button>
       {open && (
         <div className="bg-popover" role="dialog" aria-label="백그라운드 작업" data-testid="bg-popover">

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { AgentInfo, ToolCallItem } from '../state';
 import { AgentContext, BackgroundPill, StatusRow, agentStatus, clock, tokens, toolVerb } from './Activity';
 import { ToolCalls } from './ToolCallView';
@@ -117,6 +117,28 @@ describe('BackgroundPill', () => {
     fireEvent.click(within(pop).getByText('모두 중지'));
     expect(onStopAll).toHaveBeenCalled();
     expect(screen.queryByTestId('bg-popover')).toBeNull();
+  });
+
+  it('the pill itself shows how long the oldest task has run, ticking while closed', () => {
+    vi.useFakeTimers();
+    try {
+      render(<BackgroundPill bg={{ turnId: 't1', tasks: ['scan', 'explore'], detail: [{ id: 'k', description: 'scan', type: 'local_bash', ageMs: 33 * 60_000 }, { id: 'g', description: 'explore', type: 'local_agent', ageMs: 5_000 }], receivedAt: Date.now(), canStop: true }} onStopAll={() => {}} />);
+      expect(screen.getByTestId('bg-pill').textContent).toContain('33:00');
+      act(() => { vi.advanceTimersByTime(61_000); });
+      expect(screen.getByTestId('bg-pill').textContent).toContain('34:01');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('without detail (older server) the pill counts from when it appeared', () => {
+    vi.useFakeTimers();
+    try {
+      render(<BackgroundPill bg={{ turnId: 't1', tasks: ['build'], detail: [], receivedAt: Date.now() - 90_000, canStop: false }} onStopAll={() => {}} />);
+      expect(screen.getByTestId('bg-pill').textContent).toContain('1:30');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('without per-task stop (older server) only 모두 중지 is offered', () => {
