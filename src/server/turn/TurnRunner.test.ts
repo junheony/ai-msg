@@ -129,6 +129,29 @@ describe('TurnRunner', () => {
     expect(eng4.calls[0]).toMatchObject({ account: 'b' });
   });
 
+  it('a pin at the Fable cap: a Fable turn goes where Fable has room and says so; with no such account it stays and warns', async () => {
+    // a: Fable 85% (cap 80); b: Fable 3%; c: Fable 20% → the pinned Fable turn runs on b, as a Fable turn, pin kept.
+    const roomy = await usageWith([20, 15, 85], [0, 2, 3], [13, 13, 20]);
+    const eng = new StubEngine(() => ok('pinned1'));
+    const c = await ctx(eng, {}, roomy);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', accountPin: 'a' }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ account: 'b', model: 'fable' });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ account: 'b', reason: expect.stringMatching(/^고정 A Fable 85% → /) });
+    expect(msgsOf(c, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 Fable 85%(상한 80%) — 이번 턴은 B 로 (고정은 유지 · 계정 칩에서 풀면 매 턴 자동으로 고릅니다)']);
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ badge: { account: 'b' } });
+    expect((msgsOf(c, 'turn_result')[0] as { badge: { pinned?: boolean } }).badge.pinned).toBeUndefined();
+    expect(c.deps.store.get('pinned1')).toMatchObject({ account: 'b', accountPin: 'a' });
+
+    // Nobody else has Fable room: the pin holds, the user is told why, and the model follows a's own Fable value (Opus).
+    const capped = await usageWith([20, 15, 85], [0, 2, 88], [13, 13, 90]);
+    const eng2 = new StubEngine(() => ok('pinned2'));
+    const d = await ctx(eng2, {}, capped);
+    await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi', accountPin: 'a' }, d.sink);
+    expect(eng2.calls[0]).toMatchObject({ account: 'a', model: 'opus' });
+    expect(msgsOf(d, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 고정 · Fable 85%(상한 80%) — 대신 쓸 계정이 없어 그대로 A 로']);
+    expect(msgsOf(d, 'turn_result')[0]).toMatchObject({ badge: { account: 'a', pinned: true, model: 'opus', modelNote: 'Fable 85% 이상 → Opus 로 대체' } });
+  });
+
   it('new session in a symlinked cwd: projectDir comes from the CLI-reported (real) cwd', async () => {
     let c!: Ctx;
     const eng = new StubEngine(async (req) => {

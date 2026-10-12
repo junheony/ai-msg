@@ -205,6 +205,70 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
     // Unpinned, the same new session goes by the ranking (b has the better score).
     expect(chooseAccount(input({ current: null, protectedAccount: 'a' })).account).toBe('b');
   });
+
+  // 2026-10-12: sessions pinned to A on 10-09 (B·C over the Fable cap then) kept burning A at Fable 85% for days after
+  // B·C had reset — the pin skipped the cap the router applies to every unpinned turn.
+  it('a Fable turn on a pin at the Fable cap goes to an account with Fable room this turn (the pin stays)', () => {
+    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    const d = chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: true, policy: 'balance', usage }));
+    expect(d.account).toBe('b');
+    expect(d.pinned).toBeUndefined();
+    expect(d.pinBlocked).toBe('Fable 85%(상한 80%)');
+    expect(d.pinWarn).toBeUndefined();
+    expect(d.reason).toMatch(/^고정 A Fable 85% → /);
+    expect(d.asOpus).toBeUndefined(); // B has Fable room: the turn stays a Fable turn
+    // The same pin for a non-Fable turn is honoured as before: the cap is about Fable only.
+    expect(chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: false, usage }))).toMatchObject({ account: 'a', pinned: true });
+    // Below the cap: honoured.
+    const below = snap({ s: 20, w: 15, f: 79 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    expect(chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, usage: below }))).toMatchObject({ account: 'a', pinned: true });
+    // Unknown Fable value on the pin: not a known cap → honoured (the unpinned router would call it 'Fable 값 없음').
+    const unknown = snap({ s: 20, w: 15, f: null }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    expect(chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, usage: unknown }))).toMatchObject({ account: 'a', pinned: true });
+  });
+
+  it('a pin at the Fable cap with no other Fable-eligible account stays — and says so, so the user can unpin', () => {
+    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 88 }, { s: 13, w: 13, f: null });
+    const d = chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: true, usage }));
+    expect(d).toMatchObject({ account: 'a', pinned: true, switched: false });
+    expect(d.pinBlocked).toBeUndefined();
+    expect(d.asOpus).toBeUndefined(); // the model follows a's own Fable value in resolveModel, not a router decision
+    expect(d.pinWarn).toBe('Fable 85%(상한 80%) — 대신 쓸 계정이 없어 그대로');
+    expect(d.reason).toBe('고정 A · Fable 85%(상한 80%) · 대안 없음');
+    // No warning when the pin is fine.
+    expect(chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, usage: snap({ f: 10 }, { f: 88 }, { f: null }) })).pinWarn).toBeUndefined();
+  });
+
+  it('a pin at the Fable cap whose only Fable-eligible alternative is itself past the 5h switch threshold: holds, warns, keeps the pin mark', () => {
+    // b has Fable room but 5h 85% — the router would not move a session onto it; a is not ≥95, so it stays. The pin
+    // then holds as a pin (pinned, pinWarn), not as a silent "A 유지" from the recursion.
+    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 85, w: 2, f: 3 }, { s: 13, w: 13, f: 90 });
+    const d = chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: true, policy: 'balance', usage }));
+    expect(d).toMatchObject({ account: 'a', pinned: true, switched: false, pinWarn: 'Fable 85%(상한 80%) — 대신 쓸 계정이 없어 그대로' });
+    expect(d.pinBlocked).toBeUndefined();
+    expect(d.reason).toBe('고정 A · Fable 85%(상한 80%) · 대안 없음');
+    // A new (current-less) pinned session has no "stay" to fall back on: b is the best candidate, so it yields.
+    const fresh = chooseAccount(input({ current: null, pinned: 'a', needFable: true, policy: 'balance', usage }));
+    expect(fresh).toMatchObject({ account: 'b', pinBlocked: 'Fable 85%(상한 80%)' });
+  });
+
+  it('retry after a failure on the account the pin yielded to: the next alternative, or the pin when none is left', () => {
+    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    const next = chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, policy: 'balance', usage, exclude: ['b'] }));
+    expect(next).toMatchObject({ account: 'c', pinBlocked: 'Fable 85%(상한 80%)' });
+    const none = chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, policy: 'balance', usage, exclude: ['b', 'c'] }));
+    expect(none).toMatchObject({ account: 'a', pinned: true, pinWarn: 'Fable 85%(상한 80%) — 대신 쓸 계정이 없어 그대로' });
+  });
+
+  it("an edit-fork's parent account (pinIsParent) is not a user pin: the Fable cap neither moves it nor warns", () => {
+    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    const d = chooseAccount(input({ current: 'a', pinned: 'a', pinIsParent: true, needFable: true, policy: 'balance', usage }));
+    expect(d).toMatchObject({ account: 'a', pinned: true, reason: '고정 A' });
+    expect(d.pinBlocked).toBeUndefined();
+    expect(d.pinWarn).toBeUndefined();
+    // ≥95 still moves it, as before.
+    expect(chooseAccount(input({ current: 'a', pinned: 'a', pinIsParent: true, needFable: true, usage: snap({ s: 96, f: 85 }, { f: 3 }, { f: 20 }) })).pinBlocked).toBe('한도 도달');
+  });
 });
 
 describe('chooseAccount · 고르게 분산 (balance)', () => {

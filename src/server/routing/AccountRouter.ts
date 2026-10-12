@@ -27,6 +27,11 @@ export type RouterInput = {
   exclude?: Account[];
   /** 이 세션은 B 써: the session's pinned account (null/absent = 자동). Used unless unusable — even the protected one. */
   pinned?: Account | null;
+  /**
+   * `pinned` is not the user's pin but an edit-fork's parent account (the fork stays there unless it is unusable):
+   * the Fable cap does not move it and no pin warning is produced. Default false = a user pin.
+   */
+  pinIsParent?: boolean;
   /** How 자동 picks among eligible accounts (new sessions, cold caches); default 'balance'. */
   policy?: RoutingPolicy;
   /** Which accounts exist, their order (ties) and labels. */
@@ -59,8 +64,10 @@ export type RouterDecision = {
   unknown?: Account[];
   /** The account is the session's pinned one, chosen because of the pin. */
   pinned?: boolean;
-  /** The pinned account was unusable this turn (e.g. '한도 도달'); `account` is the router's own choice. */
+  /** The pinned account was unusable this turn (e.g. '한도 도달', 'Fable 85%(상한 80%)'); `account` is the router's own choice. */
   pinBlocked?: string;
+  /** The pin is honoured although the router would not pick it (Fable at the cap, nowhere else with room): shown to the user. */
+  pinWarn?: string;
   /**
    * This Fable turn was routed as an Opus turn, and why: set exactly when `reason` says "→ Opus". The runner runs Opus
    * then, so the reason and the model come from this one decision. Without it the model follows the account's own
@@ -244,6 +251,13 @@ function leastWeekly(input: RouterInput): Account {
   return best?.account ?? reg.fallback(input.protectedAccount);
 }
 
+/** A user pin's known Fable value at or over the cap, for a Fable turn; null otherwise (a fork's parent account never). */
+function pinFableOver(input: RouterInput, pin: Account): number | null {
+  if (!input.needFable || input.pinIsParent) return null;
+  const f = usageOf(input.usage, pin).fable?.usedPct;
+  return typeof f === 'number' && f >= FABLE_MAX_PCT ? f : null;
+}
+
 /** Why the pinned account cannot take this turn (≥95%, cooldown, already failed this turn); null = usable. */
 function pinBlock(input: RouterInput, pin: Account): { why: string; detail: string } | null {
   if (input.exclude?.includes(pin)) return { why: '이번 턴 실패', detail: '이번 턴 실패' };
@@ -266,9 +280,20 @@ export function chooseAccount(input: RouterInput): RouterDecision {
     // A pin skips warm-cache and threshold switching (and the ranking altogether: it is the user's explicit choice).
     const block = pinBlock(input, pin);
     if (!block) {
+      // A pin means "this account", not "whatever it costs": for a Fable turn, a pin at the Fable cap yields this turn
+      // to the router's own choice — when that choice is another account taking the turn as a Fable turn (not the pin
+      // itself for want of a roomy alternative, not an Opus fallback). Otherwise the pin holds and the user is told.
+      // (2026-10-12: pins set while B·C were capped kept burning A at Fable 85% for days after they had reset.)
+      const over = pinFableOver(input, pin);
+      if (over !== null) {
+        const d = chooseAccount({ ...input, pinned: null, exclude: [...(input.exclude ?? []), pin] });
+        if (d.account !== pin && !d.asOpus) return { ...d, pinBlocked: `Fable ${over}%(상한 ${FABLE_MAX_PCT}%)`, reason: `고정 ${LABEL(pin)} Fable ${over}% → ${d.reason}` };
+      }
       const ranked = rankCandidates(input);
       const switched = input.current !== null && input.current !== pin;
-      return { ...ranked, account: pin, switched, pinned: true, reason: `고정 ${LABEL(pin)}${switched ? ' 전환' : ''}` };
+      const warn = over === null ? undefined : `Fable ${over}%(상한 ${FABLE_MAX_PCT}%) — 대신 쓸 계정이 없어 그대로`;
+      const reason = warn ? `고정 ${LABEL(pin)}${switched ? ' 전환' : ''} · Fable ${over}%(상한 ${FABLE_MAX_PCT}%) · 대안 없음` : `고정 ${LABEL(pin)}${switched ? ' 전환' : ''}`;
+      return { ...ranked, account: pin, switched, pinned: true, reason, ...(warn ? { pinWarn: warn } : {}) };
     }
     // Unusable: the router's own choice for this turn only (the pin stays).
     const d = chooseAccount({ ...input, pinned: null, exclude: [...(input.exclude ?? []), pin] });
