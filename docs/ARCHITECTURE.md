@@ -37,7 +37,7 @@ The *home* account (top-level `home`) is the single profile Claude Desktop uses;
 
 1. **Engine.** A new session's engine is decided once (`routing/EngineChoice.ts`): Claude, Codex, or *auto*, which opens on Codex only when Codex has clearly more weekly room than the best Claude account. Gemini is never chosen automatically. An existing session keeps its engine, because the engines' session formats differ.
 2. **Account** (Claude only, `routing/AccountRouter.ts`), decided for every turn:
-   - a pinned session uses its pin unless that account is excluded;
+   - a pinned session uses its pin unless that account is excluded (≥95%, cooldown, failed this turn) or — for a Fable turn — at the Fable cap while the router's own choice is another account taking it as a Fable turn (`pinBlocked`; the pin stays). At the cap with nowhere else to go the pin holds and `pinWarn` tells the user. An edit-fork's parent account is passed as `pinned` with `pinIsParent`: it holds at the Fable cap like before;
    - a session stays on its account while the prompt cache is warm (`WARM_MS`, 55 minutes);
    - it must switch at 80% of the 5-hour window, 85% of the weekly window, or during a cooldown;
    - accounts at 95% or more, in cooldown, or with stale usage data are not candidates;

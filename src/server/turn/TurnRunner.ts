@@ -1332,7 +1332,7 @@ export class TurnRunner {
       justCompacted: state?.justCompacted ?? false,
       cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()),
     };
-    let first = chooseAccount(forkFrom ? { ...routeInput, pinned: forkFrom } : routeInput);
+    let first = chooseAccount(forkFrom ? { ...routeInput, pinned: forkFrom, pinIsParent: true } : routeInput);
     // A fork whose pin is unusable stays on the parent's account like an unpinned one (a cold cache must not send it,
     // and a copy of the parent, to a third account); only if that one is unusable too is the parent copied elsewhere.
     let forkWhy: string | undefined;
@@ -1359,7 +1359,11 @@ export class TurnRunner {
     const elsewhereAge = state && !forkAt ? await this.openElsewhere(state) : null;
     if (state && elsewhereAge !== null) early.push(elsewhereNotice({ engine: 'claude', title: deps.index.lookup(state.sessionId)?.title ?? null, ageMs: elsewhereAge }));
     deps.routeLog?.(routeLogLine(state?.sessionId ?? null, { ...first, account, reason }, this.accounts));
-    if (pin && first.pinBlocked && account !== pin) early.push(`${this.label(pin)} 계정 ${first.pinBlocked} — 이번 턴은 ${this.label(account)} 로 (고정은 유지)`);
+    // The Fable-cap case adds how to stop seeing this every turn; a limit or cooldown passes by itself.
+    if (pin && first.pinBlocked && account !== pin) early.push(`${this.label(pin)} 계정 ${first.pinBlocked} — 이번 턴은 ${this.label(account)} 로 (고정은 유지${first.pinBlocked.startsWith('Fable') ? ' · 계정 칩에서 풀면 매 턴 자동으로 고릅니다' : ''})`);
+    // The pin held although the router would not have picked it (Fable at the cap, no room elsewhere): say so every turn.
+    // (The model then follows the account's own Fable value, as always: at the cap → Opus, said by the badge's modelNote.)
+    if (pin && first.pinWarn && account === pin) early.push(`${this.label(pin)} 계정 고정 · ${first.pinWarn} ${this.label(pin)} 로`);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];

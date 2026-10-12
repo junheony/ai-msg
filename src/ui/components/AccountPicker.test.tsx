@@ -14,7 +14,7 @@ Element.prototype.scrollIntoView = () => {};
 function usage(): UsageSnapshot {
   const u = emptySnapshot(new Date('2026-10-02T00:00:00Z'), ['a', 'b', 'c']);
   const w = (usedPct: number) => ({ usedPct, resetsAt: null });
-  u.accounts.a = { ...u.accounts.a!, status: 'ok', fiveHour: w(12), weekly: w(70) };
+  u.accounts.a = { ...u.accounts.a!, status: 'ok', fiveHour: w(12), weekly: w(70), fable: w(85) };
   u.accounts.b = { ...u.accounts.b!, status: 'ok', fiveHour: w(40), weekly: w(60) };
   return u;
 }
@@ -31,9 +31,9 @@ describe('AccountPicker', () => {
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
     expect(items.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['자동', 'A (Desktop)', 'B', 'C']);
     expect(items[0]!.getAttribute('aria-checked')).toBe('true');
-    expect(items[1]!.textContent).toContain('5h 12% · 주간 70%');
-    expect(items[2]!.textContent).toContain('5h 40% · 주간 60%');
-    expect(items[3]!.textContent).toContain('5h —% · 주간 —%');
+    expect(items[1]!.textContent).toContain('5h 12% · 주간 70% · Fable 85%');
+    expect(items[2]!.textContent).toContain('5h 40% · 주간 60% · Fable —%');
+    expect(items[3]!.textContent).toContain('5h —% · 주간 —% · Fable —%');
     fireEvent.click(items[2]!);
     expect(onPin).toHaveBeenCalledWith('b');
     expect(screen.queryByTestId('account-menu')).toBeNull();

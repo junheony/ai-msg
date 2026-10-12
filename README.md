@@ -141,7 +141,7 @@ Cautions:
 
 ### How a turn gets an account
 
-1. A pinned session uses its pinned account unless that account is at its limit or cooling down.
+1. A pinned session uses its pinned account unless that account is at its limit or cooling down — or, for a Fable turn, at the Fable cap (80%) while another account has Fable room; that turn runs there, the pin stays, and a notice says so. At the cap with no such account the pin holds (the model then follows the account's own Fable value, i.e. Opus) and a notice says that too.
 2. Otherwise the session stays on its current account while the prompt cache is warm (last turn less than 55 minutes ago).
 3. It switches when the current account passes 80% of the 5-hour window or 85% of the weekly window, or is cooling down. Accounts at 95% or more are excluded.
 4. New sessions and cold sessions go to the best candidate. The policy is a setting: *balance* (default; lowest 5-hour usage first) or *drain* (the account whose weekly window resets soonest first).

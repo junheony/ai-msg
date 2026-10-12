@@ -15,10 +15,12 @@ export function PinIcon({ title }: { title?: string }) {
   );
 }
 
+/** 5h · 주간 · Fable — the Fable value is shown so a pin on an account at the Fable cap is visible where the pin is set. */
 function pct(u: AccountUsage | undefined): string {
   const f = u?.fiveHour?.usedPct;
   const w = u?.weekly?.usedPct;
-  return `5h ${f ?? '—'}% · 주간 ${w ?? '—'}%`;
+  const fb = u?.fable?.usedPct;
+  return `5h ${f ?? '—'}% · 주간 ${w ?? '—'}% · Fable ${fb ?? '—'}%`;
 }
 
 /**
