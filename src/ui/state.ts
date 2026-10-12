@@ -248,6 +248,8 @@ const withNotice = (p: PaneState, n: PaneNotice): PaneState => ({ ...p, notices:
 
 export type AppState = {
   connected: boolean;
+  /** Start (ms) of the current outage — set by the first disconnect, kept while retries fail, null once connected. */
+  disconnectedSince: number | null;
   usage: UsageSnapshot | null;
   /** The server's Claude accounts (hello.accounts, retired included); a/b/c until a hello says otherwise — read through `uiAccounts`. */
   accounts: readonly AccountInfo[];
@@ -313,11 +315,11 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false, recent: {} };
+export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false, recent: {} };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
-  | { type: 'connected'; value: boolean }
+  | { type: 'connected'; value: boolean; /** When `value` is false: the time (ms) it was noticed; the first one of an outage is kept. */ at?: number }
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
   /** 메시지 편집 갈래: the pane becomes a new session holding its history before user message `n`, then `text` (the send is under way). */
   | { type: 'branch_edit'; n: number; text: string; paneId?: string; clientRef?: string }
@@ -858,7 +860,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
         if (!pin || activePin(accounts, pin)) return p;
         return withNotice({ ...p, session: { ...p.session!, accountPin: null } }, { sessionId: null, message: `고정해 둔 계정(${seatLabel(accounts, pin)})을 지금 쓸 수 없어 자동으로 바꿨습니다`, level: 'notice' });
       });
-      return applySettings({ ...state, connected: true, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
+      return applySettings({ ...state, connected: true, disconnectedSince: null, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
     }
     case 'settings': return applySettings(state, msg.settings);
     // A mode the user picked before the id arrived wins: it is on its way to the server.
@@ -985,7 +987,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const records = action.sentFiles;
       return { ...next, panes: next.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, items: restoreSentFiles(p.items, records) } : p)) };
     }
-    case 'connected': return { ...state, connected: action.value, ...(action.value ? {} : { ready: false }) };
+    case 'connected': return { ...state, connected: action.value, disconnectedSince: action.value ? null : state.disconnectedSince ?? action.at ?? Date.now(), ...(action.value ? {} : { ready: false }) };
     // Prompts stay: they belong to their own session and the card says which (review I3).
     case 'open': {
       // Opening the session the pane already shows (a reload of it) keeps its queue and pending send as they are.

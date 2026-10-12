@@ -1102,6 +1102,22 @@ describe('message queue (ux-state)', () => {
       expect(s.ready).toBe(false);
     });
 
+    it('disconnectedSince: set by the first disconnect (kept across retries), cleared by connected or a hello', () => {
+      let s = reducer(initialState, { type: 'connected', value: true });
+      expect(s.disconnectedSince).toBeNull();
+      s = reducer(s, { type: 'connected', value: false, at: 1000 });
+      expect(s.disconnectedSince).toBe(1000);
+      // Each failed reconnect reports false again: the start of the outage does not move.
+      s = reducer(s, { type: 'connected', value: false, at: 5000 });
+      expect(s.disconnectedSince).toBe(1000);
+      s = reducer(s, { type: 'connected', value: true });
+      expect(s.disconnectedSince).toBeNull();
+      s = reducer(s, { type: 'connected', value: false, at: 9000 });
+      s = play([hello], s);
+      expect(s.connected).toBe(true);
+      expect(s.disconnectedSince).toBeNull();
+    });
+
     it('L1: messages waiting for a history that fails (open_session error) become ordinary paused items; 이어서 보내기 releases holds', () => {
       let s = lostSend('계속', ['old']);
       s = play([{ type: 'error', turnId: null, message: '세션을 찾을 수 없습니다: s1', sessionId: 's1' }], s);

@@ -12,7 +12,7 @@ export function createSocket(
   onMessage: (m: ServerMessage) => void,
   onStatus: (connected: boolean) => void,
   onUnauthed: () => void = () => {},
-): { /** `false`: not connected, nothing sent. */ send(m: ClientMessage): boolean; /** Drops the current socket (it stopped answering) and connects anew, without waiting for its close. */ reconnect(): void; /** The page is back in view or the network is back: skips the reconnect wait (or the check before it) and connects now; nothing when connected or connecting. */ wake(): void; close(): void } {
+): { /** `false`: not connected, nothing sent. */ send(m: ClientMessage): boolean; /** Drops the current socket (it stopped answering) and connects anew, without waiting for its close. */ reconnect(): void; /** The page is back in view or the network is back: skips the reconnect wait (or the check before it) and connects now; nothing when connected or connecting. */ wake(): void; /** The user asked (다시 시도): like wake(), but a socket stuck in CONNECTING is dropped for a fresh one instead of being waited on. */ retry(): void; close(): void } {
   let ws: WebSocket | null = null;
   let closed = false;
   let delay = 1000;
@@ -50,26 +50,38 @@ export function createSocket(
   };
   open();
 
+  const clearWait = () => { if (pending !== undefined) { clearTimeout(pending); pending = undefined; } };
+  const reconnect = () => {
+    if (closed || !ws) return;
+    const old = ws;
+    old.onopen = old.onmessage = old.onclose = old.onerror = null;
+    old.close();
+    // A wait set by the old socket's close must not open a second socket next to this one.
+    clearWait();
+    delay = 1000;
+    onStatus(false);
+    open();
+  };
+  const wake = () => {
+    if (closed) return;
+    // A phone back from the background must not sit out a wait of up to 10 s that was set while it slept.
+    if (pending !== undefined) { clearWait(); delay = 1000; open(); }
+    else if (checking) wakeRequested = true;
+  };
+
   return {
     send(m) {
       if (!ws || ws.readyState !== WebSocket.OPEN) return false;
       ws.send(JSON.stringify(m.type === 'open_session' ? { ...m, accepts: ACCEPTS } : m));
       return true;
     },
-    reconnect() {
-      if (closed || !ws) return;
-      const old = ws;
-      old.onopen = old.onmessage = old.onclose = old.onerror = null;
-      old.close();
-      onStatus(false);
-      open();
-    },
-    wake() {
+    reconnect,
+    wake,
+    retry() {
       if (closed) return;
-      // A phone back from the background must not sit out a wait of up to 10 s that was set while it slept.
-      if (pending !== undefined) { clearTimeout(pending); pending = undefined; delay = 1000; open(); }
-      else if (checking) wakeRequested = true;
+      if (pending !== undefined || checking) { wake(); return; }
+      reconnect();
     },
-    close() { closed = true; if (pending !== undefined) clearTimeout(pending); pending = undefined; ws?.close(); },
+    close() { closed = true; clearWait(); ws?.close(); },
   };
 }
