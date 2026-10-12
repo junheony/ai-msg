@@ -3,6 +3,13 @@
 const CACHE = 'deck-shell-v2'; // v2: new app icon under the same /icons/ names
 const MAX_ASSETS = 80;
 
+/* Shown only when the server is unreachable AND no shell is cached yet (first open, or after the cache was cleared):
+ * says what is wrong in words, retries by itself, and offers a button — not a bare "오프라인입니다". */
+const OFFLINE_HTML = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>deck · 연결 안 됨</title>
+<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font:16px/1.5 -apple-system,system-ui,sans-serif;background:#1f1e1c;color:#e7e5e1;padding:24px;text-align:center}@media(prefers-color-scheme:light){body{background:#f5f4f0;color:#1f1e1c}}main{max-width:28em}h1{font-size:19px;margin:0 0 10px}p{margin:0 0 18px;opacity:.75;font-size:14px}button{font:inherit;font-weight:600;padding:10px 18px;border-radius:10px;border:0;background:#d6a24a;color:#1f1e1c;cursor:pointer}</style></head>
+<body><main><h1>deck 서버에 연결할 수 없습니다</h1><p>서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 10초마다 다시 시도합니다.</p><button onclick="location.reload()">지금 다시 시도</button></main>
+<script>setTimeout(function(){location.reload()},10000)</script></body></html>`;
+
 self.addEventListener('install', () => self.skipWaiting());
 
 self.addEventListener('activate', (event) => {
@@ -40,7 +47,7 @@ self.addEventListener('fetch', (event) => {
         return res;
       } catch {
         const cached = await caches.match('/');
-        return cached || new Response('deck: 오프라인입니다', { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+        return cached || new Response(OFFLINE_HTML, { status: 503, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       }
     })());
     return;

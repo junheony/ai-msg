@@ -103,6 +103,56 @@ describe('createSocket', () => {
     expect(FakeWS.instances).toHaveLength(2);
   });
 
+  it('retry() during the backoff wait connects now, without a second socket from the cleared timer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true })));
+    const sock = createSocket(() => {}, () => {});
+    FakeWS.instances[0]!.onclose?.({ code: 1006 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWS.instances).toHaveLength(1);
+    sock.retry();
+    expect(FakeWS.instances).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(FakeWS.instances).toHaveLength(2);
+  });
+
+  it('retry() on a socket stuck in CONNECTING drops it and opens a new one (a tap on the 다시 시도 button)', () => {
+    const status: boolean[] = [];
+    const sock = createSocket(() => {}, (v) => status.push(v));
+    const stuck = FakeWS.instances[0]!;
+    expect(stuck.readyState).toBe(0);
+    sock.retry();
+    expect(FakeWS.instances).toHaveLength(2);
+    expect(stuck.onclose).toBeNull();
+    // The second one answers: connected once, no stray status from the first.
+    FakeWS.instances[1]!.readyState = 1;
+    FakeWS.instances[1]!.onopen?.();
+    expect(status).toEqual([false, true]);
+  });
+
+  it('retry() while the /api/me check is out waits for it (one socket), and does nothing after close()', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true })));
+    const sock = createSocket(() => {}, () => {});
+    FakeWS.instances[0]!.onclose?.({ code: 1006 });
+    sock.retry();
+    expect(FakeWS.instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWS.instances).toHaveLength(2);
+    sock.close();
+    sock.retry();
+    expect(FakeWS.instances).toHaveLength(2);
+  });
+
+  it('reconnect() during the backoff wait clears the wait: one new socket, not two', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true })));
+    const sock = createSocket(() => {}, () => {});
+    FakeWS.instances[0]!.onclose?.({ code: 1006 });
+    await vi.advanceTimersByTimeAsync(0);
+    sock.reconnect();
+    expect(FakeWS.instances).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(FakeWS.instances).toHaveLength(2);
+  });
+
   it('wake() while connected does nothing', async () => {
     const sock = createSocket(() => {}, () => {});
     FakeWS.instances[0]!.readyState = 1;

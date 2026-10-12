@@ -24,6 +24,13 @@ import { findSession } from './push';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
 import { isMacPlatform, isTypingTarget, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
+
+/** Disconnected this long → the 서버 응답 없음 bar (short blips during a restart stay at 재연결 중…). */
+const DOWN_NOTICE_MS = 20_000;
+const DOWN_TICK_MS = 10_000;
+/** Boot /api/me misses (3 s apart) before 확인 중… turns into 서버 응답 없음. */
+const BOOT_NOTICE_FAILS = 5;
+const hhmm = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 import { usePrefs } from './usePrefs';
 import { nextTheme, type Theme } from './prefs';
 import { createSocket } from './ws';
@@ -84,6 +91,17 @@ export function App() {
   const firstBuild = useRef<string | null | undefined>(undefined);
   const [newBuild, setNewBuild] = useState(false);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
+  // Down for a while: the header dot alone says nothing (on a phone it is all there is), so after DOWN_NOTICE_MS a bar
+  // says since when the server stopped answering and offers 다시 시도. `now` ticks only while disconnected.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (state.connected || state.disconnectedSince === null) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), DOWN_TICK_MS);
+    return () => clearInterval(t);
+  }, [state.connected, state.disconnectedSince]);
+  const downSince = !state.connected && state.disconnectedSince !== null && now - state.disconnectedSince >= DOWN_NOTICE_MS ? state.disconnectedSince : null;
+  const retryNow = () => { sock.current?.retry(); setNow(Date.now()); };
   const latest = useRef(state);
   latest.current = state;
   /** 고정됨 reorder requests: only the newest one's answer is applied. */
@@ -151,11 +169,13 @@ export function App() {
   const [scrollTo, setScrollTo] = useState<{ paneId: string; sessionId: string; snippet: string; match: string; until: number } | null>(null);
 
   // An unreachable server (a phone that just woke up, no network yet) is retried, not left at 확인 중… for good.
+  // After BOOT_NOTICE_FAILS misses the screen says so (the server is down, not the app hanging) and offers a reload.
+  const [bootFails, setBootFails] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const check = () => {
-      fetch('/api/me').then((r) => { if (!cancelled) setAuthed(r.ok); }, () => { if (!cancelled) timer = setTimeout(check, 3000); });
+      fetch('/api/me').then((r) => { if (!cancelled) setAuthed(r.ok); }, () => { if (!cancelled) { setBootFails((n) => n + 1); timer = setTimeout(check, 3000); } });
     };
     check();
     return () => { cancelled = true; clearTimeout(timer); };
@@ -236,7 +256,7 @@ export function App() {
           if (p.activeTurnId && msg.running.some((r) => r.turnId === p.activeTurnId)) sock.current?.send({ type: 'watch_turn', turnId: p.activeTurnId });
         }
       }
-    }, (value) => { if (!value) tracker.cancel(); dispatch({ type: 'connected', value }); }, () => setAuthed(false));
+    }, (value) => { if (!value) tracker.cancel(); dispatch({ type: 'connected', value, at: Date.now() }); }, () => setAuthed(false));
     const onVis = () => { if (document.hidden) return; sock.current?.wake(); tracker.visible(); };
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('online', onVis);
@@ -357,7 +377,16 @@ export function App() {
   }, [scrollTo, state.panes]);
 
   const accounts = useMemo(() => uiAccounts(state.accounts), [state.accounts]);
-  if (authed === null) return <div className="center">확인 중…</div>;
+  if (authed === null) {
+    if (bootFails < BOOT_NOTICE_FAILS) return <div className="center">확인 중…</div>;
+    return (
+      <div className="center boot-wait" role="status">
+        <div>서버 응답 없음 — 3초마다 다시 시도합니다</div>
+        <div className="boot-wait-hint">deck 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 연결되면 자동으로 들어갑니다.</div>
+        <button type="button" className="text-btn" onClick={() => location.reload()}>지금 다시 시도</button>
+      </div>
+    );
+  }
   if (!authed) return <Login onLoggedIn={() => setAuthed(true)} />;
 
   // No socket yet counts as not connected; otherwise the socket's own answer (`false` = not connected).
@@ -482,9 +511,17 @@ export function App() {
           <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen(true)} title="토큰 사용량 기록 (주별·일별)">사용량</button>
           {!phone && <button type="button" className="text-btn split" onClick={addPane} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>+ 분할</button>}
           <NotifyMenu />
-          <span className={`conn ${state.connected ? 'on' : 'off'}`} title={state.connected ? '연결됨' : '재연결 중…'}>{state.connected ? '연결됨' : '재연결 중…'}</span>
+          {state.connected
+            ? <span className="conn on" title="연결됨">연결됨</span>
+            : <button type="button" className="conn off" onClick={retryNow} title={downSince !== null ? `서버 응답 없음 · ${hhmm(downSince)}부터 — 눌러서 다시 시도` : '재연결 중… — 눌러서 지금 다시 시도'}>{downSince !== null ? '서버 응답 없음' : '재연결 중…'}</button>}
         </div>
       </header>
+      {downSince !== null && (
+        <div className="conn-down" role="status">
+          <span>서버 응답 없음 · {hhmm(downSince)}부터 — 연결되면 자동으로 이어집니다</span>
+          <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
+        </div>
+      )}
       {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
       {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} onOpenUsage={() => setUsageOpen(true)} onClose={() => setSettingsOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)} onOpenHit={openHit} searchFn={searchTranscripts} />}

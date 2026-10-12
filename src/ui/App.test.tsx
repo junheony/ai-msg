@@ -5,12 +5,13 @@ import type { ClientMessage, ServerMessage } from '../shared/protocol';
 
 Element.prototype.scrollIntoView = () => {};
 
-const sock = vi.hoisted(() => ({ frames: [] as unknown[], onMessage: null as ((m: unknown) => void) | null }));
+const sock = vi.hoisted(() => ({ frames: [] as unknown[], onMessage: null as ((m: unknown) => void) | null, onStatus: null as ((v: boolean) => void) | null, retries: 0 }));
 vi.mock('./ws', () => ({
   createSocket: (onMessage: (m: unknown) => void, onStatus: (v: boolean) => void) => {
     sock.onMessage = onMessage;
+    sock.onStatus = onStatus;
     onStatus(true);
-    return { send: (m: unknown) => { sock.frames.push(m); }, wake: () => {}, close: () => {} };
+    return { send: (m: unknown) => { sock.frames.push(m); }, wake: () => {}, reconnect: () => {}, retry: () => { sock.retries += 1; }, close: () => {} };
   },
 }));
 
@@ -410,6 +411,40 @@ describe('App boot', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
     await waitFor(() => expect(screen.queryByText('확인 중…')).toBeNull());
     expect(fetchFn.mock.calls.filter((c) => c[0] === '/api/me').length).toBe(2);
+  });
+
+  it('boot: a server that keeps not answering is named as the cause (서버 응답 없음), with a retry button', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    render(<App />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(screen.getByText('확인 중…')).toBeTruthy();
+    // Misses at 0, 3, 6, 9 s: four — still 확인 중…; the fifth (12 s) names the cause.
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000 * 3 + 100); });
+    expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(screen.getByText(/서버 응답 없음 — 3초마다 다시 시도합니다/)).toBeTruthy();
+    expect(screen.getByText('지금 다시 시도')).toBeTruthy();
+  });
+
+  it('a long disconnect shows since when the server stopped answering and offers 다시 시도; reconnecting clears it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    vi.setSystemTime(new Date(2026, 9, 11, 0, 25, 0));
+    sock.retries = 0;
+    await boot();
+    expect(screen.getByText('연결됨')).toBeTruthy();
+    act(() => sock.onStatus!(false));
+    // A short blip (a restart) stays at 재연결 중…
+    expect(screen.getByText('재연결 중…')).toBeTruthy();
+    expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(21_000); });
+    expect(screen.getByText(/서버 응답 없음 · 00:25부터/)).toBeTruthy();
+    // Both the bar's button and the header chip retry now.
+    fireEvent.click(screen.getByText('다시 시도'));
+    fireEvent.click(screen.getByTitle(/눌러서 다시 시도/));
+    expect(sock.retries).toBe(2);
+    act(() => sock.onStatus!(true));
+    expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
+    expect(screen.getByText('연결됨')).toBeTruthy();
   });
 });
 
