@@ -73,7 +73,7 @@ New Claude sessions ask before each tool call that needs a decision. Auto-approv
 ```bash
 scripts/install-launchd.sh              # install a user LaunchAgent (com.deck.server) and start it
 scripts/install-launchd.sh --uninstall
-npm run restart                         # graceful restart: running turns finish first
+npm run restart                         # graceful restart: refused while turns or background work run, or when already draining (--force)
 ```
 
 The service reads environment variables from `~/.config/deck/env` (`KEY=value` lines). The file is read as a shell script (`scripts/launchd/run.sh` sources it), so keep it writable by you only (`chmod 600`).
@@ -169,7 +169,7 @@ All settings are environment variables. None is required.
 | `DECK_LOOPBACK_ONLY` | unset | `1` = listen on `127.0.0.1` only, even when Tailscale is up. |
 | `DECK_EXTRA_HOSTS` | empty | Comma-separated extra names accepted in the `Host` header. |
 | `DECK_STEER` | on | `0` = messages sent during a turn are queued for after it instead of injected. |
-| `DECK_DRAIN_MAX_MIN` | `15` | On graceful restart, minutes to wait for running turns. |
+| `DECK_DRAIN_MAX_MIN` | `15` | On graceful restart, minutes to wait for running turns and live background work (subagents, Monitor); work still running then is cut, announced in its session, and told to the model on the next turn (a note added to its first prompt by a hook). |
 | `DECK_BG_MAX_MIN` | `120` | Minutes a CLI process may stay open for background tasks after its turn. |
 | `DECK_BACKUP_RETENTION_DAYS` | `30` | Age at which fork backups and trashed sessions are deleted. |
 | `DECK_USAGE_STRICT` | unset | `1` = unknown quota means Opus / engine switch, `0` = never. Unset: decided by `usage-source.json`. |

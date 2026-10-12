@@ -50,7 +50,7 @@ beforeAll(async () => {
   const settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, acceptedRefs: new AcceptedRefs(null) });
+  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, acceptedRefs: new AcceptedRefs(null), activityFile: path.join(base, 'activity.json') });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -59,8 +59,8 @@ beforeAll(async () => {
 afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
 
 /** A socket that buffers everything from connection time; `next(pred)` waits for the next matching message. */
-async function client() {
-  const ws = new WebSocket(wsUrl, { headers: { Origin: origin, Cookie: COOKIE } });
+async function client(url = wsUrl, org = origin) {
+  const ws = new WebSocket(url, { headers: { Origin: org, Cookie: COOKIE } });
   const got: ServerMessage[] = [];
   let read = 0;
   let wake: (() => void) | null = null;
@@ -107,6 +107,10 @@ describe('ws: sessions held open for background work', () => {
     fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'explore' }]), sdk.result('launched', S));
     expect(await a.next('turn_background')).toMatchObject({ turnId: base1.turnId, tasks: ['explore'] });
     await a.next('turn_result', (m) => m.turnId === base1.turnId);
+    // What restart.sh reads: the session's live background work, written a moment after it changed.
+    const activity = async () => JSON.parse(await fs.readFile(path.join(base, 'activity.json'), 'utf8')) as { pid: number; updatedAt: string; sessions: unknown[] };
+    await vi.waitFor(async () => expect((await activity()).sessions).toEqual([{ sessionId: S, cwd, running: false, bg: 1, tasks: ['explore'] }]), { timeout: 2000 });
+    expect(await activity()).toMatchObject({ pid: process.pid, updatedAt: expect.any(String) });
 
     // A second tab opening the session sees the pending work, but no running turn.
     const b = await client();
@@ -281,61 +285,170 @@ describe('ws: sessions held open for background work', () => {
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
   });
-  it('interrupting a follow-up stops the whole process; drain refuses new sends, ends held-open processes and waits only on running turns', async () => {
+  it('drain waits on running turns and live background work, ends only processes waiting with nothing left, and still takes messages into live processes', async () => {
     const S = '44444444-4444-4444-8444-444444444444';
     const cwd = await seed(S, 'bg2');
-    fake = fakeSdk();
+    const f1 = (fake = fakeSdk());
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     const t = await a.next('turn_started');
-    fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', S));
+    f1.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', S));
     await a.next('turn_background');
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     expect(wsApi.activeTurns()).toBe(1);
 
     a.send({ type: 'send', sessionId: S, cwd, text: 'next', clientRef: 'r2' });
     const fu = await a.next('turn_started', (m) => m.clientRef === 'r2');
-    // Two more sessions: one only held open for background work, one still running its prompt.
-    const held = await (async () => {
-      const id = '55555555-5555-4555-8555-555555555555';
+    // More sessions: one held open for live background work, one held open with its work already done (waiting for a
+    // continuation that may never come), one still running its prompt.
+    const hold = async (id: string, name: string, ref: string) => {
       const f = (fake = fakeSdk());
-      a.send({ type: 'send', sessionId: id, cwd: await seed(id, 'bg3'), text: 'go', clientRef: 'h' });
-      const t = await a.next('turn_started', (m) => m.clientRef === 'h');
+      a.send({ type: 'send', sessionId: id, cwd: await seed(id, name), text: 'go', clientRef: ref });
+      const t = await a.next('turn_started', (m) => m.clientRef === ref);
       f.push(sdk.init(id), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', id));
       await a.next('turn_result', (m) => m.turnId === t.turnId);
-      return { id, f };
-    })();
+      return { id, f, turnId: t.turnId };
+    };
+    const held = await hold('55555555-5555-4555-8555-555555555555', 'bg3', 'h');
+    const idle = await hold('57575757-5757-4757-8757-575757575757', 'bg5', 'i');
+    idle.f.push(sdk.bgLevel([]));
+    await a.next('turn_background', (m) => m.turnId === idle.turnId && m.tasks.length === 0);
     const S3 = '56565656-5656-4656-8656-565656565656';
     const fake3 = (fake = fakeSdk());
     a.send({ type: 'send', sessionId: S3, cwd: await seed(S3, 'bg4'), text: 'busy', clientRef: 'r3b' });
     const t3 = await a.next('turn_started', (m) => m.clientRef === 'r3b');
     fake3.push(sdk.init(S3), sdk.delta('working'));
     await a.next('delta', (m) => m.turnId === t3.turnId);
-    expect(wsApi.activeTurns()).toBe(3);
+    expect(wsApi.activeTurns()).toBe(4);
 
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     wsApi.drain();
+    expect(log.mock.calls.map((c) => String(c[0]))).toEqual([expect.stringMatching(/^deck: 재시작 대기 — 백그라운드 작업이 있는 세션 2개: 44444444\(build\) 55555555\(build\)$/)]);
+    log.mockRestore();
     expect(await a.next('error', (m) => m.message === DRAINING_MESSAGE)).toMatchObject({ turnId: null, code: 'draining' });
-    // The held-open process is ended at once (a restart must not wait on it) without failing any turn; the running ones stay.
-    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(2));
+    // Only the process with nothing left to wait for is ended (without failing any turn); live background work stays.
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(3));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(wsApi.activeTurns()).toBe(3);
     expect(held.f.inputs.length).toBe(1);
     expect(a.got.filter((m) => m.type === 'turn_result' && !m.ok)).toEqual([]);
-    // A turn that finishes with background work while draining is not held open either.
+    // A turn that finishes with background work while draining stays held open too.
     fake3.push(sdk.bgLevel([{ id: 'y', desc: 'later' }]), sdk.result('launched too', S3));
     expect(await a.next('turn_result', (m) => m.turnId === t3.turnId)).toMatchObject({ ok: true });
-    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(1));
-    expect(a.got.filter((m) => m.type === 'turn_result' && !m.ok)).toEqual([]);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(wsApi.activeTurns()).toBe(3);
+    // A send that needs a new process is refused…
     a.send({ type: 'send', sessionId: null, cwd, text: 'new', clientRef: 'r3' });
     expect(await a.next('error', (m) => m.clientRef === 'r3')).toMatchObject({ message: DRAINING_MESSAGE, code: 'draining' });
-    // A steer refused while draining says why, so the device sends it again after the restart.
+    // …but one to a process held open goes in as its follow-up.
+    a.send({ type: 'send', sessionId: held.id, cwd, text: 'status?', clientRef: 'h2' });
+    expect(await a.next('turn_started', (m) => m.clientRef === 'h2')).toMatchObject({ reason: '백그라운드 대기 중 이어 보냄' });
+    await vi.waitFor(() => expect(held.f.inputs.length).toBe(2));
+    // A steer into a running turn is not refused for the restart.
     a.send({ type: 'steer', turnId: fu.turnId, steerId: 'k9', text: 'more' });
-    expect(await a.next('steer_rejected', (m) => m.steerId === 'k9')).toMatchObject({ message: DRAINING_MESSAGE, code: 'draining' });
+    await vi.waitFor(() => expect(f1.inputs.length).toBe(3));
+    expect(a.got.some((m) => m.type === 'steer_rejected' && m.steerId === 'k9')).toBe(false);
 
     a.send({ type: 'interrupt', turnId: fu.turnId });
-    expect(await a.next('turn_background', (m) => m.tasks.length === 0)).toMatchObject({ turnId: fu.turnId });
+    expect(await a.next('turn_background', (m) => m.tasks.length === 0 && m.turnId === fu.turnId)).toMatchObject({ turnId: fu.turnId });
     expect(await a.next('turn_result', (m) => m.turnId === fu.turnId)).toMatchObject({ ok: false, errorText: '중단됨' });
+    a.send({ type: 'interrupt', turnId: held.turnId });
+    a.send({ type: 'interrupt', turnId: t3.turnId });
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
   });
+});
 
+/** A server of its own (a drained one stays drained) on the shared store and index; `foreign` = what foreignWrites answers. */
+async function ownServer() {
+  const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
+  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
+  const r = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  const own = { foreign: false };
+  vi.spyOn(r, 'foreignWrites').mockImplementation(async () => own.foreign);
+  const pins = new PinStore(path.join(base, 'pins.json'));
+  await pins.load();
+  const settings = new SettingsStore(path.join(base, 'settings.json'));
+  await settings.load();
+  const activityFile = path.join(await fs.mkdtemp(path.join(base, 'own-')), 'activity.json');
+  const srv = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
+  const api = attachWebSocket([srv], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner: r, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, acceptedRefs: new AcceptedRefs(null), activityFile });
+  await new Promise<void>((res) => srv.listen(0, '127.0.0.1', res));
+  const { port } = srv.address() as { port: number };
+  const org = `http://127.0.0.1:${port}`;
+  return { api, own, activityFile, client: () => client(`ws://127.0.0.1:${port}/ws`, org), close: () => { api.close(); srv.close(); } };
+}
+
+describe('ws: drain and held processes', () => {
+  /** A session whose process is held open for live background work ('build'). */
+  async function held(s: Awaited<ReturnType<typeof ownServer>>, a: Awaited<ReturnType<typeof client>>, id: string, name: string) {
+    const cwd = await seed(id, name);
+    const f = (fake = fakeSdk());
+    a.send({ type: 'send', sessionId: id, cwd, text: 'go', clientRef: `${name}-go` });
+    const t = await a.next('turn_started', (m) => m.clientRef === `${name}-go`);
+    f.push(sdk.init(id), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', id));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    return { f, cwd, turnId: t.turnId };
+  }
+
+  it('a message queued behind the continuation of a drained held process is delivered when it ends without work (not cut as 중단됨)', async () => {
+    const s = await ownServer();
+    const a = await s.client();
+    await a.next('hello');
+    const S = '61616161-6161-4161-8161-616161616161';
+    const h = await held(s, a, S, 'dr1');
+    vi.spyOn(console, 'log').mockImplementationOnce(() => {});
+    s.api.drain();
+    await a.next('error', (m) => m.message === DRAINING_MESSAGE);
+    // The background work ends; its continuation streams…
+    h.f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('built'));
+    const bg = await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
+    await a.next('delta', (m) => m.turnId === bg.turnId);
+    // …a message comes in meanwhile and is queued behind it…
+    a.send({ type: 'send', sessionId: S, cwd: h.cwd, text: 'M', clientRef: 'm1' });
+    await vi.waitFor(() => expect(s.api.activeTurns()).toBe(1));
+    await new Promise((r) => setTimeout(r, 20));
+    // …and the continuation ends with no background work left: M goes in rather than the process being ended.
+    h.f.push(sdk.result('built', S));
+    expect(await a.next('turn_result', (m) => m.turnId === bg.turnId)).toMatchObject({ ok: true });
+    const m = await a.next('turn_started', (x) => x.clientRef === 'm1');
+    await vi.waitFor(() => expect(h.f.inputs.length).toBe(2));
+    h.f.push(sdk.result('done M', S));
+    expect(await a.next('turn_result', (x) => x.turnId === m.turnId)).toMatchObject({ ok: true, text: 'done M' });
+    expect(a.got.filter((x) => x.type === 'error' && x.clientRef === 'm1')).toEqual([]);
+    // Nothing left to wait for after M: the drained process ends now.
+    await vi.waitFor(() => expect(s.api.activeTurns()).toBe(0));
+    a.close();
+    s.close();
+  });
+
+  it('a foreign write found while draining refuses the send (draining) and leaves the held process and its work alone; activity.json says draining; close removes it', async () => {
+    const s = await ownServer();
+    const a = await s.client();
+    await a.next('hello');
+    const S = '62626262-6262-4262-8262-626262626262';
+    const h = await held(s, a, S, 'dr2');
+    vi.spyOn(console, 'log').mockImplementationOnce(() => {});
+    s.api.drain();
+    await a.next('error', (m) => m.message === DRAINING_MESSAGE);
+    // Written by drain itself (well inside the 200 ms debounce of a change), not with the next change.
+    const activity = async () => JSON.parse(await fs.readFile(s.activityFile, 'utf8')) as { draining: boolean; sessions: unknown[] };
+    await vi.waitFor(async () => expect(await activity()).toMatchObject({ draining: true, sessions: [{ sessionId: S, running: false, bg: 1, tasks: ['build'] }] }), { timeout: 150, interval: 5 });
+
+    s.own.foreign = true;
+    a.send({ type: 'send', sessionId: S, cwd: h.cwd, text: 'N', clientRef: 'n1' });
+    expect(await a.next('error', (m) => m.clientRef === 'n1')).toMatchObject({ message: DRAINING_MESSAGE, code: 'draining' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(s.api.activeTurns()).toBe(1);
+    expect(h.f.state.inputClosed).toBe(false);
+    expect(a.got.some((m) => m.type === 'turn_notice' && m.sessionId === S)).toBe(false);
+    expect(a.got.filter((m) => m.type === 'turn_result' && !m.ok)).toEqual([]);
+
+    a.send({ type: 'interrupt', turnId: h.turnId });
+    await vi.waitFor(() => expect(s.api.activeTurns()).toBe(0));
+    a.close();
+    s.close();
+    await expect(fs.stat(s.activityFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });
