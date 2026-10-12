@@ -12,6 +12,8 @@ type SessionBase = {
   justCompacted: boolean;
   /** First prompt (≤ 80 chars) for the sidebar; Codex sessions have no jsonl title to read. */
   title?: string;
+  /** 서버 재시작으로 백그라운드 작업이 끊긴 기록; 다음 턴이 읽고 지운다. */
+  interrupted?: { atMs: number; tasks: string[] };
 };
 
 export type ClaudeSessionState = SessionBase & {

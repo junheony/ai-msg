@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
@@ -156,6 +157,8 @@ export type WsDeps = {
   /** …and at most this many bytes (default CATCHUP_KEEP_BYTES), idle for at most this long (default CATCHUP_IDLE_MS). */
   catchupKeepBytes?: number;
   catchupIdleMs?: number;
+  /** Where the running turns and background tasks are written on each change (scripts/restart.sh reads it); absent = not written. */
+  activityFile?: string;
 };
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -193,7 +196,7 @@ export type WsHandle = {
   broadcast(msg: ServerMessage): void;
   broadcastIndex(): void;
   close(): void;
-  /** Graceful restart: refuse new sends from now on (running turns and their background work go on). */
+  /** Graceful restart: from now on refuse sends that need a new process (running turns, their background work and follow-ups into them go on). */
   drain(): void;
   /** Turns still running, including processes held open for background work. */
   activeTurns(): number;
@@ -219,11 +222,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   });
   let draining = false;
   /**
-   * A process held open between turns (background tasks, DECK_BG_MAX_MIN) is not work in progress: when the server is
-   * draining it is ended now — the same way a recycle ends one — or it would sit out the whole drain window and then
-   * take the real turns down with it at the deadline.
+   * While draining, only a process waiting with no work left is ended at once (the 10-09 incident: such processes sat
+   * out the whole drain window and took the real turns down with them at the deadline). A process held open for live
+   * background tasks (subagents, Monitor; DECK_BG_MAX_MIN) is work in progress: the drain waits for it, and the deadline
+   * ends it like a running turn (abortAll, SHUTDOWN_ABORT). Nor is one with a send on its way in (pendingRefs: a
+   * follow-up queued behind the turn that just ended).
    */
-  const endHeld = (t: Turn) => { if (draining && t.current === null && !t.recycling) { t.recycling = true; t.ac.abort(); } };
+  const endHeld = (t: Turn) => { if (draining && t.current === null && t.bg === null && t.pendingRefs.size === 0 && !t.recycling) { t.recycling = true; t.ac.abort(); } };
   /**
    * Review I2: one turn per session. Keyed by sessionId; a new session is keyed by
    * `new:<turnId>` until the CLI reports its id, then by that id as well.
@@ -248,19 +253,52 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const questions = new QuestionBroker(broadcastAndNotify);
   const unsubscribeUsage = deps.usage.onChange((usage) => broadcast({ type: 'usage', usage }));
   /** Every session with a turn streaming or background work held open (sidebar dots, tab title on all devices). */
+  const shownTurns = () => [...turns.values()].filter((t): t is Turn & { sessionId: string } => t.sessionId !== null && (t.current !== null || (t.bg?.msg.tasks.length ?? 0) > 0));
   const activity = (): SessionActivity[] => {
     const now = Date.now();
-    return [...turns.values()]
-      .filter((t): t is Turn & { sessionId: string } => t.sessionId !== null && (t.current !== null || (t.bg?.msg.tasks.length ?? 0) > 0))
+    return shownTurns()
       .map((t) => ({ sessionId: t.sessionId, cwd: t.cwd, turnId: t.current ?? t.turnId, running: t.current !== null, bg: t.bg?.msg.tasks.length ?? 0, forMs: t.current !== null ? Math.max(0, now - t.since) : 0 }));
   };
-  let activitySig = '[]';
+  // The task names are in it too: work swapped for other work of the same count is still a change (activityFile lists them).
+  let activitySig = '[[],[]]';
   const broadcastActivity = () => {
     const sessions = activity();
-    const sig = JSON.stringify(sessions.map(({ forMs: _f, ...rest }) => rest));
+    const sig = JSON.stringify([sessions.map(({ forMs: _f, ...rest }) => rest), shownTurns().map((t) => t.bg?.msg.tasks ?? [])]);
     if (sig === activitySig) return;
     activitySig = sig;
     broadcast({ type: 'activity', sessions });
+    if (deps.activityFile && !activityTimer && !activityClosed) activityTimer = setTimeout(writeActivity, 200);
+  };
+  /** `activityFile` (scripts/restart.sh reads it): what is running now, written atomically a moment after it changed. */
+  let activityTimer: ReturnType<typeof setTimeout> | null = null;
+  let activityWrite: Promise<void> = Promise.resolve();
+  let activityError: string | null = null;
+  /** After close(): the file is gone and is not written again. */
+  let activityClosed = false;
+  const writeActivity = () => {
+    activityTimer = null;
+    const file = deps.activityFile;
+    if (!file || activityClosed) return;
+    const data = JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      pid: process.pid,
+      draining,
+      sessions: shownTurns().map((t) => ({ sessionId: t.sessionId, cwd: t.cwd, running: t.current !== null, bg: t.bg?.msg.tasks.length ?? 0, tasks: t.bg?.msg.tasks ?? [] })),
+    });
+    const tmp = `${file}.${process.pid}.tmp`;
+    activityWrite = activityWrite.then(async () => {
+      if (activityClosed) return;
+      try {
+        await fs.writeFile(tmp, data, { mode: 0o600 });
+        if (activityClosed) { await fs.rm(tmp, { force: true }); return; }
+        await fs.rename(tmp, file);
+        activityError = null;
+      } catch (err) {
+        await fs.rm(tmp, { force: true }).catch(() => {});
+        const m = errMsg(err);
+        if (m !== activityError) { activityError = m; console.error('deck: activity 파일 쓰기 실패', m); }
+      }
+    });
   };
   const running = (): RunningTurn[] => [...turns.values()].filter((t) => t.current !== null).map(({ current, sessionId, cwd }) => ({ turnId: current!, sessionId, cwd }));
 
@@ -557,7 +595,6 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const fromKnown = isPinnableId(hf) && (!!deps.store.get(hf) || !!deps.index.lookup(hf));
     const badPin = msg.sessionId === null && msg.accountPin && !msg.branch && !fromKnown ? pinRefusal(msg.accountPin) : null;
     if (badPin) { send(ws, { type: 'error', turnId: null, message: badPin, ...ref }); return; }
-    if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
     // Idempotency: a send this session already took (or is taking) under this ref — a resent queue copy, a duplicated tab — runs once.
     const dup = msg.sessionId && msg.clientRef ? refusal(msg.sessionId, msg.clientRef) : undefined;
     if (dup) { send(ws, { type: 'error', turnId: null, ...dup, ...ref }); return; }
@@ -586,7 +623,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         void check.then((foreign) => {
           if (base.outside === check) base.outside = null;
           // No socket check: the message was sent, and neither a follow-up nor a new turn needs its sender connected.
-          if (foreign && !base.recycling && base.current === null && turns.get(busy.get(sid) ?? '') === base) {
+          const live = !base.recycling && base.current === null && turns.get(busy.get(sid) ?? '') === base;
+          // While draining a new process is not started: the held one is left alone (its background work goes on) and
+          // the send is refused like any that needs a new process — the device sends it again after the restart.
+          if (foreign && live && draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
+          if (foreign && live) {
             base.recycling = true;
             const stopped = base.bg?.msg.tasks.length ?? 0;
             if (stopped > 0) {
@@ -618,6 +659,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref });
       return;
     }
+    // Draining refuses only a send that needs a new process: one joining a live process (follow-up above) still goes in.
+    if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
     const turnId = randomUUID();
     const ac = new AbortController();
     const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
@@ -691,6 +734,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         // ended): no longer going in, and taken back if its turn_started recorded it.
         if (m.type === 'error' && m.clientRef) {
           turn.pendingRefs.delete(m.clientRef);
+          // That send no longer keeps a drained process up (endHeld).
+          queueMicrotask(() => { if (turns.get(turnId) === turn) endHeld(turn); });
           const sid = m.sessionId ?? turn.sessionId;
           if (sid) deps.acceptedRefs?.remove(sid, m.clientRef);
           // A follow-up whose turn_started went out: its failed turn_result already shows the error in the chat, so this
@@ -960,7 +1005,6 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           // Into the running Claude turn's process; refused (the device sends it after the turn) when there is none.
           const turn = turns.get(baseOf(msg.turnId));
           const reject = (message: string, code?: RefusalCode) => send(ws, { type: 'steer_rejected', turnId: msg.turnId, sessionId: turn?.sessionId ?? null, cwd: turn?.cwd ?? '', steerId: msg.steerId, message, ...(code ? { code } : {}) });
-          if (draining) { reject(DRAINING_MESSAGE, 'draining'); break; }
           const dup = turn?.sessionId ? refusal(turn.sessionId, msg.steerId) : undefined;
           if (dup) { reject(dup.message, dup.code); break; }
           if (!turn || turn.current === null) { reject('실행 중인 턴이 없어 끝난 뒤 보냅니다'); break; }
@@ -1056,8 +1100,14 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (draining) return;
       draining = true;
       broadcast({ type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining' });
-      // A process held open between turns (background tasks, DECK_BG_MAX_MIN) is not work in progress: end it now,
-      // or it would sit out the whole drain window and then take the real turns down with it at the deadline.
+      // restart.sh reads `draining` from the activity file: written now, not with the next change.
+      if (deps.activityFile && !activityClosed) { if (activityTimer) clearTimeout(activityTimer); writeActivity(); }
+      const waiting = [...turns.values()].filter((t) => (t.bg?.msg.tasks.length ?? 0) > 0);
+      if (waiting.length) {
+        const list = waiting.map((t) => { const s = t.bg!.msg.tasks.join('·'); return `${(t.sessionId ?? t.turnId).slice(0, 8)}(${s.length > 60 ? `${s.slice(0, 60)}…` : s})`; }).join(' ');
+        console.log(`deck: 재시작 대기 — 백그라운드 작업이 있는 세션 ${waiting.length}개: ${list}`);
+      }
+      // Only processes waiting with no work left end now (see endHeld); live background work is waited for.
       for (const t of turns.values()) endHeld(t);
     },
     /** Processes still up (running a prompt, or closing after `drain` ended them): the restart waits for these. */
@@ -1069,6 +1119,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     close() {
       unsubscribeUsage();
       if (outsideTimer) clearInterval(outsideTimer);
+      if (activityTimer) { clearTimeout(activityTimer); activityTimer = null; }
+      activityClosed = true;
+      // Gone at once: a stale file must not make restart.sh refuse (or trust) a server that is no longer this one.
+      if (deps.activityFile) fsSync.rmSync(deps.activityFile, { force: true });
       for (const c of clients) c.close();
       wss.close();
     },

@@ -367,6 +367,15 @@ export function buildOptions(
     if (input.hook_event_name === 'PreToolUse') await audit.report(input, 'deny', 'deck');
     return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const, permissionDecisionReason: NO_TOOLS_MESSAGE } };
   };
+  // deck's note rides the process's first user prompt only, as that prompt's additionalContext (sdk.d.ts
+  // UserPromptSubmitHookSpecificOutput): the system prompt — and so the prompt cache — stays as on every other turn, and
+  // follow-ups, continuations and steers into the same process do not get it again.
+  let noteSent = false;
+  const note = async (input: HookInput) => {
+    if (input.hook_event_name !== 'UserPromptSubmit' || noteSent || !req.systemNote) return {};
+    noteSent = true;
+    return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit' as const, additionalContext: req.systemNote } };
+  };
   return {
     cwd: req.cwd,
     env: deps.accounts.env(req.account, deps.baseEnv),
@@ -397,6 +406,7 @@ export function buildOptions(
     ...(req.allowDirs?.length ? { additionalDirectories: req.allowDirs } : {}),
     hooks: {
       ...(req.noTools ? { PreToolUse: [{ hooks: [noTools] }] } : {}),
+      ...(req.systemNote ? { UserPromptSubmit: [{ hooks: [note] }] } : {}),
       PostToolUse: [{ hooks: [after('allow')] }],
       PostToolUseFailure: [{ hooks: [after('allow')] }],
       PermissionDenied: [{ hooks: [after('deny')] }],

@@ -801,7 +801,7 @@ export class TurnRunner {
     return ages.length ? Math.min(...ages) : null;
   }
 
-  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, forkAt: string | null, sink: TurnSink, grants: SessionGrants, modeRef: ModeRef, attachments: Attachment[], cur: Cursor): Promise<Attempt> {
+  private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, forkAt: string | null, sink: TurnSink, grants: SessionGrants, modeRef: ModeRef, attachments: Attachment[], cur: Cursor, systemNote?: string): Promise<Attempt> {
     const scope = () => ({ turnId: cur.turnId, sessionId: out.sessionId, cwd });
     // The effort applies to the resolved model (a Fable → Opus downgrade keeps it when Opus supports it).
     const effort = effortFor(model, p.effort);
@@ -872,6 +872,7 @@ export class TurnRunner {
       },
       onLive: (l) => { out.live = l; this.inputs.set(p.turnId, l); },
       ...(p.handoff ? { noTools: true } : {}),
+      ...(systemNote ? { systemNote } : {}),
     });
     const rest = events[Symbol.asyncIterator]();
     // A fork's id is the one init reports, never the parent's.
@@ -951,6 +952,18 @@ export class TurnRunner {
     let n = 0;
     let steered = 0;
     let tasks = a.bgTasks;
+    // The server's drain deadline (SHUTDOWN_ABORT) cutting background work: said in the pane — unless the turn was cut
+    // before its result, whose turn_result already says so — and kept for the session's next turn (the model is told then).
+    // `live` is the work before the abort (the engine clears the tasks once the process is gone).
+    const abortedBefore = sink.signal.aborted;
+    let live = tasks;
+    let cutSaid = false;
+    const shutdown = () => sink.signal.aborted && sink.signal.reason === SHUTDOWN_ABORT && live.length > 0;
+    const sayCut = () => {
+      if (cutSaid || abortedBefore || !shutdown()) return;
+      cutSaid = true;
+      sink.emit({ type: 'turn_notice', ...scope(), message: `서버가 다시 시작되어 백그라운드 작업 ${live.length}개가 중단됨: ${live.join(', ')}` });
+    };
     const queue: { f: FollowUpParams; attachments: Attachment[] }[] = [];
     const open = (turnId: string, reason: string, modelNote: string | null, clientRef?: string) => {
       seg = { turnId, reason, modelNote };
@@ -1016,7 +1029,7 @@ export class TurnRunner {
         if ((ev.kind === 'continue' && !seg) || (needSeg && !seg)) openBackground();
         switch (ev.kind) {
           case 'steer_delivered': this.steerDelivered(p.turnId, ev.id, sink, scope()); break;
-          case 'background': tasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks, ...this.bgExtra(p.turnId, ev.detail) }); break;
+          case 'background': if (sink.signal.aborted) sayCut(); else live = ev.tasks; tasks = ev.tasks; sink.emit({ type: 'turn_background', ...scope(), tasks, ...this.bgExtra(p.turnId, ev.detail) }); break;
           case 'progress': if (seg) sink.emit({ type: 'turn_progress', ...scope(), outputTokens: ev.outputTokens, phase: ev.phase }); break;
           case 'sub_tool_call': sink.emit({ type: 'sub_tool_call', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
@@ -1036,11 +1049,13 @@ export class TurnRunner {
             if (s) {
               sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(ev.errorText, ev.stderr) });
             }
-            await saveState(ev.ok);
-            this.mirrorSoon(sessionId, sink, s?.turnId ?? cur.turnId);
-            // Sent before the engine resumes, so it sees the message outstanding and keeps the input open.
+            // Sent before the engine resumes, so it sees the message outstanding and keeps the input open — and before any
+            // await: its turn_started refills ws's `current` in this same tick, so the microtask that ends a held process
+            // while draining (ws endHeld) does not take the queued message down with it.
             const q = queue.shift();
             if (q) sendFollowUp(q.f, q.attachments);
+            await saveState(ev.ok);
+            this.mirrorSoon(sessionId, sink, s?.turnId ?? cur.turnId);
             break;
           }
           case 'init': case 'compact': case 'continue': break;
@@ -1051,8 +1066,17 @@ export class TurnRunner {
       this.live.delete(sessionId);
       const s = seg as Seg | null;
       if (s) sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: s.reason, usage: ZERO_USAGE, modelNote: s.modelNote }, errorText: sink.signal.aborted ? abortedText(sink.signal) : '결과 없이 끝났습니다' });
-      for (const q of queue) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
+      // Cut by the restart deadline: code draining, so the device holds the message and sends it again after the restart.
+      const dropped = sink.signal.reason === SHUTDOWN_ABORT ? { code: 'draining' as const } : {};
+      for (const q of queue) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...dropped, ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
+      sayCut();
       if (tasks.length) sink.emit({ type: 'turn_background', ...scope(), tasks: [], detail: [] });
+      if (shutdown()) {
+        const st = this.deps.store.get(sessionId);
+        if (st && !isCodexState(st) && !isGeminiState(st)) {
+          await this.deps.store.set({ ...st, interrupted: { atMs: this.now(), tasks: [...live] } }).catch((err: unknown) => console.error('deck: 끊긴 작업 기록 실패', err instanceof Error ? err.message : err));
+        }
+      }
     }
   }
 
@@ -1364,6 +1388,19 @@ export class TurnRunner {
     // The pin held although the router would not have picked it (Fable at the cap, no room elsewhere): say so every turn.
     // (The model then follows the account's own Fable value, as always: at the cap → Opus, said by the badge's modelNote.)
     if (pin && first.pinWarn && account === pin) early.push(`${this.label(pin)} 계정 고정 · ${first.pinWarn} ${this.label(pin)} 로`);
+    // Background work the last restart cut (followThrough): said in the pane and told to the model (UserPromptSubmit
+    // additionalContext), forgotten only once a turn got through (res.ok below) — a turn that fails before the model saw
+    // the note leaves it for the next one. A handoff-note turn (no tools) leaves it alone. Not a fork's (the parent's).
+    const carried = state && !forkAt ? state.interrupted : undefined;
+    const cut = p.handoff ? undefined : carried;
+    let systemNote: string | undefined;
+    if (cut) {
+      const d = new Date(cut.atMs);
+      const hm = d.toTimeString().slice(0, 5);
+      const at = d.toDateString() === new Date(this.now()).toDateString() ? hm : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`;
+      early.push(`${at} 서버 재시작으로 백그라운드 작업 ${cut.tasks.length}개가 끊겼습니다: ${cut.tasks.join(', ')} — 모델에게 알렸습니다`);
+      systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 deck 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${cut.tasks.length}개는 끊겨 결과가 오지 않습니다: ${cut.tasks.map((t) => `"${t}"`).join(', ')}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
+    }
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];
@@ -1394,7 +1431,7 @@ export class TurnRunner {
 
       const cur: Cursor = { turnId: p.turnId };
       const startedAt = this.now();
-      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, forkAt, sink, grants, modeRef, attachments, cur);
+      const a = await this.attempt(p, account, model, cwd, state?.sessionId ?? null, forkAt, sink, grants, modeRef, attachments, cur, systemNote);
       const res: EngineResult = a.result ?? { kind: 'result', sessionId: a.sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
       const sessionId = a.sessionId ?? shownId();
       const forked = forkAt !== null;
@@ -1413,8 +1450,16 @@ export class TurnRunner {
           mode: modeRef.mode,
           // Taken only by a new entry (a new session's pin); an existing entry keeps its stored pin.
           ...(pin ? { accountPin: pin } : {}),
+          // Kept until a turn got the note through (cleared just below).
+          ...(carried ? { interrupted: carried } : {}),
         };
         await deps.store.set(state);
+        if (cut && res.ok) {
+          const st = deps.store.get(sessionId);
+          if (st && !isCodexState(st) && !isGeminiState(st)) { const { interrupted: _told, ...kept } = st; await deps.store.set(kept); }
+          const { interrupted: _was, ...rest } = state;
+          state = rest;
+        }
         // A pin picked once the new session's id was known (it had no state to take it then).
         const bornPin = this.bornPins.get(p.turnId);
         if (bornPin !== undefined) {

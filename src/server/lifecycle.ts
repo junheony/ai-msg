@@ -1,7 +1,9 @@
 /**
  * Graceful restart. SIGTERM (launchd stop / kickstart -k) and SIGUSR2 (`npm run restart`) drain:
- * new sends are refused, running turns — and processes held open for background work — may finish
- * for up to `maxMs`, then whatever is left is aborted and the process exits so the supervisor
+ * sends that need a new process are refused; running turns and processes whose background work
+ * (subagents, Monitor) is still live may finish for up to `maxMs` (a process held open with no work
+ * left is ended at once — ws.ts endHeld); then whatever is left is aborted (SHUTDOWN_ABORT: the pane
+ * says so and the session's next turn tells the model) and the process exits so the supervisor
  * (launchd KeepAlive) starts it again. A second signal, or SIGINT, skips the wait.
  */
 
@@ -66,7 +68,7 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
   const graceful = (sig: NodeJS.Signals) => {
     if (draining) { now(sig); return; }
     draining = true;
-    log(`deck: ${sig} — 새 턴을 받지 않고 진행 중인 작업을 기다린 뒤 종료합니다 (다시 보내면 즉시 종료)`);
+    log(`deck: ${sig} — 새 턴을 받지 않고 진행 중인 턴과 살아 있는 백그라운드 작업을 기다린 뒤 종료합니다 — 작업 없는 대기 프로세스는 바로 끊음 (다시 보내면 즉시 종료)`);
     void drain(target, o).then((r) => exit(`${sig}:${r}`), () => exit(`${sig}:error`));
   };
   host.on('SIGTERM', () => graceful('SIGTERM'));

@@ -51,6 +51,22 @@ describe('buildOptions: model version and effort', () => {
     expect(buildOptions(req(), deps).extraArgs).toEqual({ 'replay-user-messages': null });
     expect(buildOptions(req(), { ...deps, steer: false }).extraArgs).toBeUndefined();
   });
+
+  it("carries deck's note on the process's first user prompt only (UserPromptSubmit additionalContext), never in the system prompt", async () => {
+    const o = buildOptions(req({ systemNote: '[deck] note' }), deps);
+    expect(o.systemPrompt).toBeUndefined();
+    const hook = o.hooks?.UserPromptSubmit?.[0]?.hooks[0];
+    expect(hook).toBeDefined();
+    const input = { hook_event_name: 'UserPromptSubmit', prompt: 'hi', session_id: 's', transcript_path: '/t', cwd: '/w' } as never;
+    const opts = { signal: new AbortController().signal };
+    expect(await hook!(input, undefined, opts)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: '[deck] note' } });
+    // A follow-up, continuation or steer into the same process: nothing more.
+    const again = (await hook!(input, undefined, opts)) as { hookSpecificOutput?: { additionalContext?: string } };
+    expect(again.hookSpecificOutput?.additionalContext).toBeUndefined();
+    const plain = buildOptions(req(), deps);
+    expect(plain.systemPrompt).toBeUndefined();
+    expect(plain.hooks?.UserPromptSubmit).toBeUndefined();
+  });
 });
 
 describe('buildOptions: allow for this session (review I4)', () => {

@@ -219,6 +219,8 @@ export type TurnRequest = {
    * settings allow rule would run without asking) and canUseTool. The tool list is left as is so the cached prompt still hits.
    */
   noTools?: boolean;
+  /** deck 의 메모(모델만 본다): 이 프로세스의 첫 사용자 프롬프트에만 UserPromptSubmit 훅의 additionalContext 로 붙는다. */
+  systemNote?: string;
 };
 
 export interface Engine {
