@@ -14,6 +14,7 @@ import { SlashCommandCache } from './engine/slashCommands';
 import { FileLister } from './files';
 import { GeminiEngine, geminiLoggedIn } from './engine/GeminiEngine';
 import { createRequestHandler } from './http';
+import { installCrashHandlers } from './crash';
 import { installGracefulShutdown } from './lifecycle';
 import { PushNotifier } from './push/PushNotifier';
 import { SubscriptionStore } from './push/SubscriptionStore';
@@ -135,6 +136,8 @@ async function main(): Promise<void> {
   };
   installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown });
 }
+
+installCrashHandlers(process, { log: (line) => console.error(line), exit: (code) => process.exit(code) });
 
 main().catch((err: unknown) => {
   // A broken accounts.json: the message already says which file, why, and what to do — no stack.

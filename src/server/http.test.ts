@@ -132,6 +132,32 @@ describe('http', () => {
 
   // 2026-10-10: macOS started refusing ~/Documents to the running server (EPERM on open) and the unhandled
   // stream 'error' took the whole process down. A file that exists but cannot be read answers 500, nothing more.
+  it('a throw before the async part of the handler answers 500 instead of escaping to the process', () => {
+    const roots = { a: path.join(uiDir, 'a'), b: path.join(uiDir, 'b'), c: path.join(uiDir, 'c') };
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(uiDir, 'p.json') });
+    const usage = { snapshot: () => ({}) } as unknown as UsageService;
+    const handler = createRequestHandler({ token: TOKEN, uiDir, usage, index });
+    const headers: Record<string, unknown> = {};
+    let status = 0;
+    let body = '';
+    const res = {
+      setHeader: (k: string, v: unknown) => { headers[k] = v; },
+      writeHead: (s: number, h: Record<string, unknown>) => { status = s; Object.assign(headers, h); },
+      end: (b?: unknown) => { body = String(b ?? ''); },
+      get headersSent() { return status !== 0; },
+      destroy: () => {},
+    } as unknown as http.ServerResponse;
+    // `headers.host` is the first thing the handler reads; make it blow up the way a hostile/odd request object might.
+    const req = { url: '/', method: 'GET', headers: new Proxy({}, { get: (_t, k) => { if (k === 'host') throw new Error('SECRET-DETAIL'); return undefined; } }) } as unknown as http.IncomingMessage;
+    const orig = console.error;
+    const logged: unknown[] = [];
+    console.error = (...a: unknown[]) => { logged.push(a); };
+    try { expect(() => handler(req, res)).not.toThrow(); } finally { console.error = orig; }
+    expect(status).toBe(500);
+    expect(body).toBe(JSON.stringify({ error: '서버 내부 오류' }));
+    expect(logged.flat().map(String).join(' ')).toContain('SECRET-DETAIL');
+  });
+
   it.skipIf(process.getuid?.() === 0)('a UI file that exists but cannot be opened answers 500 and the server keeps serving', async () => {
     await fs.writeFile(path.join(uiDir, 'index.html'), '<html>deck</html>');
     const locked = path.join(uiDir, 'locked.png');

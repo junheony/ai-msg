@@ -265,7 +265,7 @@ export function createRequestHandler(deps: HttpDeps) {
   const devOrigins = deps.devOrigins ?? [];
   const extraHosts = deps.extraHosts ?? [];
   const home = deps.home ?? os.homedir();
-  return (req: http.IncomingMessage, res: http.ServerResponse): void => {
+  const handle = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
     // Deviation (added per review I5): DNS-rebinding defence — reject any Host deck
     // doesn't itself bind to, even though an attacker-controlled Host would still
@@ -526,5 +526,14 @@ export function createRequestHandler(deps: HttpDeps) {
       if (!res.headersSent) json(res, 500, { error: '서버 내부 오류' });
       else res.destroy();
     });
+  };
+  // The part before the async block (host check, URL parse, cookie) runs synchronously inside http's 'request' event:
+  // a throw there would be an uncaught exception — one bad request must not take the server down.
+  return (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    try { handle(req, res); } catch (err) {
+      console.error('deck http: 500', req.method, req.url, err);
+      if (!res.headersSent) json(res, 500, { error: '서버 내부 오류' });
+      else res.destroy();
+    }
   };
 }
