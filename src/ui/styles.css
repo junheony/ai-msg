@@ -502,7 +502,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-letter { min-width: 1ch; max-width: 7ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: calc(15px * var(--font-scale, 1)); font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
 .usage-card.gpt .usage-letter { font-size: calc(11.5px * var(--font-scale, 1)); letter-spacing: .5px; color: var(--fg); }
 .usage-card.current .usage-letter { color: var(--accent); }
-.usage-rows { display: grid; grid-template-columns: 36px minmax(0, 1fr) max-content max-content; column-gap: 0; row-gap: 1px; align-items: center; flex: 1 1 auto; min-width: 0; }
+.usage-rows { display: grid; grid-template-columns: minmax(36px, max-content) minmax(0, 1fr) max-content max-content; column-gap: 0; row-gap: 1px; align-items: center; flex: 1 1 auto; min-width: 0; }
 .usage-card.stale .usage-rows, .usage-card.down .usage-rows { opacity: .55; }
 .usage-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: 0; align-items: center; height: 16px; min-width: 0; white-space: nowrap; }
 .usage-label { margin-right: 8px; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); overflow: hidden; }
@@ -510,7 +510,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ok); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
 .usage-row.warn .usage-bar > i { background: var(--warn); }
 .usage-row.danger .usage-bar > i { background: var(--danger); }
-.usage-value { justify-self: end; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
+.usage-value { justify-self: end; min-width: 38px; text-align: right; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
 .usage-value small { margin-left: 1px; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
 .usage-row.warn .usage-value { color: var(--warn); }
 .usage-row.danger .usage-value { color: var(--danger); }
@@ -525,7 +525,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-reset { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .usage-stale { flex-shrink: 0; padding: 2px 8px; border-radius: 9px; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
 /* Short countdown next to a card's fullest window (always on, desktop); the 다음 tag = where the active session's next turn goes. */
-.usage-cd { margin-left: 5px; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
+.usage-cd { margin-left: 5px; min-width: 48px; text-align: right; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
 .usage-next { position: absolute; top: -7px; left: 8px; padding: 0 6px; height: 14px; line-height: 14px; border-radius: 7px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 600; white-space: nowrap; color: var(--accent); background: var(--sidebar); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); pointer-events: auto; }
 /* Top bar status chips (작업 현황, 재시작 대기, 재시작됨): small muted pills like the stale tag. */
 .top-chip { flex-shrink: 0; padding: 2px 8px; border: 0; border-radius: 9px; font: inherit; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -549,7 +549,7 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
 @container usage-card (max-width: 200px) { .usage-cd { display: none; } }
 @container usage-card (max-width: 156px) {
   .usage-bar { display: none; }
-  .usage-rows { grid-template-columns: 36px minmax(0, 1fr); }
+  .usage-rows { grid-template-columns: minmax(36px, max-content) minmax(0, 1fr); }
 }
 
 /* Two rows (< 1280px): logo + actions on top, the four cards in equal columns underneath.
