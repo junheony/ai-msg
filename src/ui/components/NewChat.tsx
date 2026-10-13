@@ -7,10 +7,11 @@ import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn 
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
 import { touchEnterIsNewline } from './Chat';
+import { PinIcon } from './icons';
 import { useAutoGrow } from '../useAutoGrow';
 import { clearDraft, loadDraft, saveDraft } from '../drafts';
 
-const RECENT_CARDS = 4;
+const RECENT_CARDS = 10;
 
 export function greeting(hour: number): string {
   if (hour >= 5 && hour < 11) return '좋은 아침이에요';
@@ -47,11 +48,13 @@ function Pick({ className, label, children, ...rest }: { className?: string; lab
 
 /**
  * The empty pane, Desktop-style: greeting, a composer card (auto-growing text; [+] attach, project chip, model, ↑ in
- * its bottom row) and the latest sessions as compact cards. Everything is reachable here, so the phone does not need
+ * its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, uploadFn, modelPicker, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, onEngine, onSandbox }: {
+export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSession, now, uploadFn, modelPicker, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, onEngine, onSandbox }: {
   projects: ProjectEntry[];
+  /** Pinned session ids in pin order (AppState.pins): shown above 최근 대화 and left out of it. */
+  pins?: string[];
   /** Preselected project (the pane's last one); falls back to the first listed. */
   defaultCwd?: string | null;
   /** Opens a new session in `cwd`; non-empty `text` is sent as its first message, with `attachments`. */
@@ -89,10 +92,12 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
   const project = projects.find((p) => p.cwd === cwd) ?? null;
   const pinned = projects.filter((p) => p.pinned);
   const others = projects.filter((p) => !p.pinned);
-  const recent = projects.flatMap((p) => p.sessions.map((s) => ({ s, name: p.name }))).filter(({ s }) => !s.archived)
+  const live = projects.flatMap((p) => p.sessions.map((s) => ({ s, name: p.name }))).filter(({ s }) => !s.archived)
     .sort((a, b) => b.s.lastModified - a.s.lastModified)
-    .filter((r, i, all) => all.findIndex((x) => x.s.sessionId === r.s.sessionId) === i)
-    .slice(0, RECENT_CARDS);
+    .filter((r, i, all) => all.findIndex((x) => x.s.sessionId === r.s.sessionId) === i);
+  const pinnedCards = [...new Set(pins)].flatMap((id) => live.find((r) => r.s.sessionId === id) ?? []);
+  const pinSet = new Set(pins);
+  const recent = live.filter((r) => !pinSet.has(r.s.sessionId)).slice(0, RECENT_CARDS);
   const t = now ?? Date.now();
 
   // Auto-grow: the card follows the text up to the CSS max-height, then the textarea scrolls.
@@ -120,6 +125,12 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
     return all.filter((a) => a.id !== id);
   });
   const option = (p: ProjectEntry) => <option key={p.cwd} value={p.cwd}>{p.name}</option>;
+  const card = ({ s, name }: (typeof live)[number], open: NonNullable<typeof onOpenSession>, pin: boolean) => (
+    <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => open(s.sessionId, s.cwd, s.title)}>
+      <span className="newchat-card-title">{pin && <span className="newchat-card-pin"><PinIcon filled /></span>}<EngineMark engine={engineOf(s)} decorative />{s.title}</span>
+      <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
+    </button>
+  );
   const sendLabel = hasDraft ? '보내기 — 새 대화로 시작 (Enter)' : '빈 새 대화 열기';
 
   return (
@@ -174,17 +185,16 @@ export function NewChat({ projects, defaultCwd, onStart, onOpenSession, now, upl
             </div>
           </form>
         )}
+        {pinnedCards.length > 0 && onOpenSession && (
+          <section className="newchat-recent newchat-pinned" aria-label="고정된 대화">
+            <h2 className="muted">고정됨</h2>
+            <div className="newchat-cards">{pinnedCards.map((r) => card(r, onOpenSession, true))}</div>
+          </section>
+        )}
         {recent.length > 0 && onOpenSession && (
           <section className="newchat-recent" aria-label="최근 대화">
             <h2 className="muted">최근 대화</h2>
-            <div className="newchat-cards">
-              {recent.map(({ s, name }) => (
-                <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => onOpenSession(s.sessionId, s.cwd, s.title)}>
-                  <span className="newchat-card-title"><EngineMark engine={engineOf(s)} decorative />{s.title}</span>
-                  <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
-                </button>
-              ))}
-            </div>
+            <div className="newchat-cards">{recent.map((r) => card(r, onOpenSession, false))}</div>
           </section>
         )}
       </div>

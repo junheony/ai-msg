@@ -10,6 +10,7 @@ import { usePinReorder } from '../pinOrder';
 import { BlockedDeleteItem, MenuList, deleteBlockedReason } from './SessionMenu';
 import { isMacPlatform, isPlainMod, pinKeyLabel } from '../shortcuts';
 import { hasOpenModal } from '../autoReload';
+import { PinIcon } from './icons';
 
 /** Sessions shown per project before "더 보기". */
 export const FOLD_AT = 5;
@@ -459,15 +460,6 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         </div>
       )}
     </aside>
-  );
-}
-
-function PinIcon({ filled }: { filled: boolean }) {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
-      <path d="M6 1.75h4l-.5 4.5 2.5 2.5v1H4v-1l2.5-2.5z" />
-      <path d="M8 9.75v4.5" strokeLinecap="round" />
-    </svg>
   );
 }
 

@@ -21,6 +21,29 @@ describe('NewChat', () => {
     expect(screen.getByText('codex one').querySelector('.engine-mark')?.getAttribute('title')).toBe('Codex (GPT)');
   });
 
+  const sess = (sessionId: string, lastModified: number, extra: Record<string, unknown> = {}) =>
+    ({ sessionId, account: 'a', cwd: '/w', projectDir: '/p', file: '/f', title: `t-${sessionId}`, lastModified, sizeBytes: 1, ...extra });
+  const many = (n: number, extra: Record<string, unknown>[] = []) =>
+    [{ cwd: '/w', name: 'w', pinned: true, sessions: [...Array.from({ length: n }, (_, i) => sess(`s${i}`, 100 - i)), ...extra] }] as unknown as ProjectEntry[];
+  const titles = (label: string) => Array.from(screen.getByRole('region', { name: label }).querySelectorAll('.newchat-card-title')).map((e) => e.textContent);
+
+  it('고정됨 lists pinned sessions in pin order (archived left out) and 최근 대화 the 10 newest others', () => {
+    const onOpenSession = vi.fn();
+    render(<NewChat projects={many(14, [sess('old', 1, { archived: true })])} pins={['s5', 'old', 's0', 'gone', 's5']} onStart={vi.fn()} onOpenSession={onOpenSession} now={1000} />);
+    expect(titles('고정된 대화')).toEqual(['t-s5', 't-s0']);
+    expect(screen.getByRole('region', { name: '고정된 대화' }).querySelectorAll('.newchat-card-pin svg')).toHaveLength(2);
+    expect(titles('최근 대화')).toEqual(['t-s1', 't-s2', 't-s3', 't-s4', 't-s6', 't-s7', 't-s8', 't-s9', 't-s10', 't-s11']);
+    expect(screen.getByRole('region', { name: '최근 대화' }).querySelector('.newchat-card-pin')).toBeNull();
+    fireEvent.click(screen.getByText('t-s5'));
+    expect(onOpenSession).toHaveBeenCalledWith('s5', '/w', 't-s5');
+  });
+
+  it('no pins: no 고정됨 section', () => {
+    render(<NewChat projects={many(3)} pins={[]} onStart={vi.fn()} onOpenSession={vi.fn()} now={1000} />);
+    expect(screen.queryByRole('region', { name: '고정된 대화' })).toBeNull();
+    expect(titles('최근 대화')).toEqual(['t-s0', 't-s1', 't-s2']);
+  });
+
   it('the ↑ button opens an empty new session when nothing is typed', () => {
     const onStart = vi.fn();
     render(<NewChat projects={projects} onStart={onStart} />);

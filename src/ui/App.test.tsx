@@ -512,6 +512,34 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
   const chipText = () => screen.getByTestId('work-chip').querySelector('.chip-long')!.textContent;
   const PREVIEW = ['routePreview'];
 
+  it('사용량 toggles the usage sheet; ✕ hands focus back to the button', async () => {
+    await boot();
+    const btn = screen.getByRole('button', { name: '사용량' });
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    btn.focus();
+    fireEvent.click(btn);
+    expect(screen.getByRole('dialog', { name: '토큰 사용량' })).toBeTruthy();
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    expect(btn.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('닫기');
+    fireEvent.click(btn);
+    expect(screen.queryByRole('dialog', { name: '토큰 사용량' })).toBeNull();
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(btn);
+    fireEvent.click(within(screen.getByRole('dialog', { name: '토큰 사용량' })).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('dialog', { name: '토큰 사용량' })).toBeNull();
+    expect(document.activeElement).toBe(btn);
+  });
+
+  it('설정 → 사용량 보기: closing the usage sheet lands focus on the top bar 사용량 button', async () => {
+    await boot();
+    act(() => { window.dispatchEvent(new Event('deck:open-settings')); });
+    fireEvent.click(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '사용량 보기' }));
+    expect(screen.queryByRole('dialog', { name: '설정' })).toBeNull();
+    fireEvent.click(within(screen.getByRole('dialog', { name: '토큰 사용량' })).getByRole('button', { name: '닫기' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '사용량' }));
+  });
+
   it('작업 현황: zeros are left out, nothing at all hides the chip, 승인 대기 is emphasised', async () => {
     await boot();
     activity([]);

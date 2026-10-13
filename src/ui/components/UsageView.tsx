@@ -4,6 +4,7 @@ import {
   type ModelFamily, type TokenCounts, type UsageHistory, type UsageRow, type UsageSource,
 } from '../../shared/token-usage';
 import { useAccounts, type UiAccounts } from '../accounts';
+import { Sheet } from './Dialogs';
 
 type View = UsageSource | 'all';
 type Sum = TokenCounts & { cost: number };
@@ -171,11 +172,6 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
     const id = setTimeout(() => void load(false), 5000);
     return () => clearTimeout(id);
   }, [data, load]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const today = localDay(now ?? new Date());
   const rows = data?.rows ?? [];
@@ -187,12 +183,12 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
   const weekly = weeklyRows(rows, shown);
 
   return (
-    <div className="usage-shown" role="dialog" aria-modal="true" aria-label="토큰 사용량">
+    <Sheet className="usage-view" label="토큰 사용량" onClose={onClose}>
       <div className="uv-inner">
         <header className="uv-head">
           <h2>사용량</h2>
-          <button type="button" className="uv-btn" onClick={() => void load(true)} disabled={busy}>{busy ? '읽는 중…' : '새로고침'}</button>
-          <button type="button" className="uv-btn uv-close" onClick={onClose} aria-label="닫기">닫기</button>
+          <button type="button" className="icon-btn sheet-btn" onClick={() => void load(true)} disabled={busy} aria-busy={busy} aria-label="새로고침" title={busy ? '읽는 중…' : '새로고침'}>↻</button>
+          <button type="button" className="icon-btn sheet-btn" onClick={onClose} aria-label="닫기" title="닫기 (Esc)" autoFocus>✕</button>
         </header>
         <div className="uv-tabs" role="tablist" aria-label="계정">
           {tabs.map((v) => {
@@ -241,6 +237,6 @@ export function UsageView({ onClose, fetchFn = fetch, now }: { onClose: () => vo
         </section>
         {data?.lastScanAt && <div className="uv-foot muted">마지막 갱신 {new Date(data.lastScanAt).toLocaleString('ko-KR')} · 10분마다 자동 갱신</div>}
       </div>
-    </div>
+    </Sheet>
   );
 }

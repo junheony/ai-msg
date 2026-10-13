@@ -674,7 +674,7 @@ export function App() {
             </span>
           )}
           {!phone && state.restartedAt !== null && <button type="button" className="top-chip" onClick={() => dispatch({ type: 'dismiss_restart' })} title="서버가 다시 시작됐습니다 — 눌러서 닫기">재시작됨 {hhmm(state.restartedAt)}</button>}
-          <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen(true)} title="토큰 사용량 기록 (주별·일별)">사용량</button>
+          <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={usageOpen} data-sheet-return="" title="토큰 사용량 기록 (주별·일별)">사용량</button>
           {!phone && <button type="button" className="text-btn split" onClick={addPane} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>+ 분할</button>}
           <NotifyMenu />
           {state.connected
