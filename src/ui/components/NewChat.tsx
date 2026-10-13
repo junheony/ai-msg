@@ -3,7 +3,7 @@ import { CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, 
 import type { GeminiStatus } from '../../shared/protocol';
 import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
-import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
+import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
 import { touchEnterIsNewline } from './Chat';
@@ -87,7 +87,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const onUploaded = useCallback((a: UploadedAttachment) => setAttachments((all) => (all.some((x) => x.id === a.id) ? all : [...all, a])), []);
-  const { addFiles, uploading, error } = useUploads({ uploadFn: uploadFn ?? uploadFile, current: attachments.length, onUploaded });
+  const { addFiles, onPaste, uploading, error, pastedTexts } = usePasteUploads({ uploadFn: uploadFn ?? uploadFile, attachments, onUploaded, onUploadFailed: (t) => setText((v) => { const nv = v + t; saveDraft(draftKey, nv); return nv; }) });
   const cwd = picked ?? (defaultCwd && projects.some((p) => p.cwd === defaultCwd) ? defaultCwd : projects[0]?.cwd ?? null);
   const project = projects.find((p) => p.cwd === cwd) ?? null;
   const pinned = projects.filter((p) => p.pinned);
@@ -145,13 +145,13 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
             onDrop={(e) => { e.preventDefault(); setDrag(false); const files = filesFrom(e.dataTransfer); if (files.length) void addFiles(files); }}>
             <textarea ref={taRef} value={text} onChange={(e) => edit(e.target.value)} rows={2} placeholder="무엇을 도와드릴까요?" aria-label="첫 메시지"
               name="deck-message" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore="" data-lpignore="true"
-              onPaste={(e) => { const files = filesFrom(e.clipboardData); if (files.length) { e.preventDefault(); void addFiles(files); } }}
+              onPaste={onPaste}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (!e.shiftKey && !e.altKey && !touchEnterIsNewline()))) { e.preventDefault(); start(); }
               }} />
             {(attachments.length > 0 || uploading > 0 || error) && (
-              <div className="newchat-files"><AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} /></div>
+              <div className="newchat-files"><AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} pastedTexts={pastedTexts} /></div>
             )}
             <div className="newchat-row">
               <AttachMenu onFiles={(f) => void addFiles(f)} />

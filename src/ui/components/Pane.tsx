@@ -11,6 +11,8 @@ import { linksOf, versionsAt } from '../../shared/branches';
 import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
 import { Chat, modelChoices, type ChatProps } from './Chat';
+import { RegenerateContext, type Regenerate } from './MessageView';
+import { replyTurn, type ReplyTurn } from '../replyTurn';
 import { ModelPicker } from './ModelPicker';
 import { ForkMenu } from './ForkMenu';
 import { NewChat } from './NewChat';
@@ -58,14 +60,14 @@ export type SendFn = (m: ClientMessage) => unknown;
  * A send that never left (socket down) becomes a held queue item at once (`send_failed`), dispatched in the same tick as
  * `sent` so React renders neither a bubble nor 시작하는 중… for it.
  */
-export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: SendFn, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string): void {
+export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: SendFn, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string, opts: { keepAttachments?: boolean } = {}): void {
   const s = pane.session;
   if (!s) return;
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
   const ids = attachments.map((a) => a.id);
   const clientRef = ref ?? nextClientRef();
-  dispatch({ type: 'sent', text, paneId: pane.id, attachments: attachments.map((a) => ({ id: a.id, name: a.name, isImage: a.isImage })), clientRef, ...(keepPaused ? { keepPaused } : {}) });
+  dispatch({ type: 'sent', text, paneId: pane.id, attachments: attachments.map((a) => ({ id: a.id, name: a.name, isImage: a.isImage })), clientRef, ...(keepPaused ? { keepPaused } : {}), ...(opts.keepAttachments ? { keepAttachments: true } : {}) });
   const sent = send({
     type: 'send', sessionId: s.sessionId, cwd: s.cwd, text, ...modelField(pane, model),
     ...(effort ? { effort } : {}),
@@ -93,15 +95,15 @@ export function startHandoff(pane: PaneState, dispatch: (a: Action) => void, sen
  * 메시지 편집 갈래: `text` replaces user message `n` (shown as `original`) of the pane's Claude session. The pane turns
  * into the new branch session at once (same cwd, pin — when its account can still run a turn — and model); the server forks the transcript and the meta links it.
  */
-export function startBranch(pane: PaneState, n: number, text: string, original: string, dispatch: (a: Action) => void, send: SendFn, accounts: readonly AccountInfo[] = LEGACY_ACCOUNT_LIST): void {
+export function startBranch(pane: PaneState, n: number, text: string, original: string, dispatch: (a: Action) => void, send: SendFn, accounts: readonly AccountInfo[] = LEGACY_ACCOUNT_LIST, /** 다시 생성 with another model: this branch's send (the caller sets the pane's picker to it, since the branch keeps it as its default). */ modelOverride?: ModelChoice): void {
   const s = pane.session;
   if (!s?.sessionId || pane.activeTurnId !== null || pane.awaitingStart) return;
-  const model = paneModel(pane);
+  const model = modelOverride ?? paneModel(pane);
   const effort = paneEffort(pane, model);
   const clientRef = nextClientRef();
   dispatch({ type: 'branch_edit', n, text, paneId: pane.id, clientRef });
   const sent = send({
-    type: 'send', sessionId: null, cwd: s.cwd, text, ...modelField(pane, model), ...(effort ? { effort } : {}), engine: 'claude',
+    type: 'send', sessionId: null, cwd: s.cwd, text, ...(modelOverride ? { model } : modelField(pane, model)), ...(effort ? { effort } : {}), engine: 'claude',
     ...(activePin(accounts, s.accountPin) ? { accountPin: s.accountPin } : {}),
     branch: { from: s.sessionId, n, ...(original ? { expect: original } : {}) },
     clientRef,
@@ -325,6 +327,34 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       openRef.current?.(u.sessionId, u.cwd, u.title);
     }
   }, [pane.awaitingStart, pane.myTurns.length, pane.session?.sessionId]);
+  // 다시 생성 under a reply (MessageView). Stable while the session, its models and the busy state stay: the items are
+  // read when asked, so a streaming delta re-renders no message. Not where a send would be refused (read-only, account gone).
+  const blocked = !!entry?.codexArchived || !!(entry?.imported && entry.cwdMissing) || gone === 'retired' || gone === 'unknown';
+  const latest = useRef({ pane, send, accounts: names.all, defaultMode: app.defaultPermMode ?? null });
+  latest.current = { pane, send, accounts: names.all, defaultMode: app.defaultPermMode ?? null };
+  const sessionEngine = s?.engine ?? 'claude';
+  const regenModels = useMemo(() => modelChoices(sessionEngine).filter((m) => m !== 'auto'), [sessionEngine]);
+  const regenBranch = canBranch && !blocked;
+  // GPT / Gemini cannot branch; their last prompt goes again with the picked model (their sessions keep their own model).
+  const regenRetry = !!sid && (s?.engine === 'codex' || s?.engine === 'gemini') && !busy && !blocked;
+  const regen = useMemo<Regenerate | null>(() => {
+    if (!sid) return null;
+    const branch = (turn: ReplyTurn, m?: ModelChoice) => {
+      const { pane: p, send: out, accounts } = latest.current;
+      const ps = p.session;
+      if (!ps?.sessionId) return;
+      branchUndo.current = { sessionId: ps.sessionId, cwd: ps.cwd, title: ps.title };
+      startBranch(p, turn.n, turn.text, turn.text, dispatch, out, accounts, m);
+      if (m) dispatch({ type: 'set_model', model: m, paneId: p.id });
+    };
+    const retryWith = (m: ModelChoice) => {
+      const { pane: p, send: out, defaultMode } = latest.current;
+      const prompt = ([...p.items].reverse().find((it) => it.kind === 'user') as { text: string } | undefined)?.text;
+      if (!prompt || prompt === HANDOFF_PROMPT) return;
+      sendFromPane({ ...p, model: m, modelPicked: true }, prompt, [], dispatch, out, defaultMode, false, undefined, { keepAttachments: true });
+    };
+    return { turnOf: (item) => replyTurn(latest.current.pane.items, item), ...(regenBranch ? { branch } : {}), ...(regenRetry ? { retryWith } : {}), models: regenModels, current: model };
+  }, [sid, regenBranch, regenRetry, regenModels, model]);
   // A session deck lists gets the full menu; one only Claude Desktop lists (not in deck's projects) can be pinned.
   const pinned = !!sid && !!sessionActions?.pins.includes(sid);
   const titleMenu: ChatProps['titleMenu'] = !sid || !sessionActions ? undefined : entry
@@ -348,6 +378,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     <section ref={sectionRef} className={`pane ${active ? 'active' : ''}${side && s ? ' with-side' : ''}`} data-testid={`pane-${pane.id}`} data-pane={pane.id} onMouseDownCapture={focus} onFocusCapture={focus}>
       <SidePanelContext.Provider value={s ? openSide : null}>
       {s ? (
+        <RegenerateContext.Provider value={regen}>
         <Chat
           items={pane.items}
           pending={cardsForPane(pane, app.pending)}
@@ -462,6 +493,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             dispatch({ type: 'unattach', id, paneId: pane.id });
           }}
         />
+        </RegenerateContext.Provider>
       ) : (
         <>
           {close && <div className="chat-head"><span className="spacer" />{close}</div>}

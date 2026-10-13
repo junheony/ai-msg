@@ -448,7 +448,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .folder-picker input { height: var(--phone-tap); }
 }
 @media (hover: none) { .pin-btn { opacity: .5; } .pin-btn.on { opacity: 1; } .project-head .icon-btn { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
 /* === desktop-sessions & permissions === */
 /* Permission / question cards: never wider than their pane (300px panes, phones). */
@@ -1911,3 +1910,29 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
 /* A list of image paths (`- \`a.png\``) lays its thumbnails side by side, wrapping; text items stay rows. */
 .markdown li:has(> .file-thumb:only-child), .markdown li:has(> p > .file-thumb:only-child) { display: inline-block; vertical-align: top; margin-right: 4px; }
 .markdown li:has(> p > .file-thumb:only-child) > p { margin: 0; }
+
+/* 붙여넣은 텍스트: a long paste is a chip (pasted-N.txt); click shows its text in a small fixed popover. */
+.chip.attachment.pasted { max-width: 240px; }
+.chip.attachment.pasted .pasted-open { all: unset; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.attachment.pasted .pasted-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.paste-preview { position: fixed; z-index: 40; width: min(480px, calc(100vw - 16px)); max-height: 50vh; overflow: auto; overscroll-behavior: contain; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
+.paste-preview pre { font-size: calc(12px * var(--font-scale, 1)); }
+
+/* === reduced motion ===
+   One place for 동작 줄이기: message slide-in (msg-in), toasts (toast-in), the 검색 hit flash, the sidebar slide / peek,
+   the phone drawer, pulses and spinners — and pseudo-elements (the 재연결 중 dot's pulse, summary carets); the earlier
+   `*` rule was folded into this one. The per-component reduced-motion lines above stay; this one covers all.
+   The 검색 hit keeps a still highlight for its 2 s instead of the fade, so the found message is still marked. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .msg.search-flash { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+}
+
+/* === 다시 생성 / 긴 사용자 메시지 접기 ===
+   The ⌄ beside 다시 생성 opens a small model menu (the composer picker's look). A user message over 12 lines / 1200
+   characters shows about 8 lines, fading out, with 더 보기 / 접기 under it (no animation: nothing to reduce). */
+.msg-act.regen-caret { min-width: 20px; padding: 0 2px; margin-left: -2px; }
+.regen-pop { width: 220px; }
+.msg.user pre.folded { max-height: calc(1.6em * 8 + 20px); overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 65%, transparent); mask-image: linear-gradient(to bottom, #000 65%, transparent); }
+.fold-toggle { margin-top: -2px; padding: 2px 8px; border-radius: 7px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
+.fold-toggle:hover { background: var(--hover); color: var(--fg); }

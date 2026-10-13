@@ -71,6 +71,29 @@ describe('NewChat', () => {
     ], { engine: 'claude', sandbox: 'workspace-write' });
   });
 
+  it('long text pastes become 붙여넣은 텍스트 chips (pasted-1/2.txt, preview, ×) riding the first message; short text stays in the box', async () => {
+    const onStart = vi.fn();
+    const uploadFn = vi.fn(async (f: File) => ({ id: `id-${f.name}`, name: f.name, size: f.size, isImage: false }));
+    render(<NewChat projects={projects} onStart={onStart} uploadFn={uploadFn} />);
+    const box = screen.getByLabelText('첫 메시지') as HTMLTextAreaElement;
+    const paste = (text: string) => fireEvent.paste(box, { clipboardData: { files: [], getData: (t: string) => (t === 'text/plain' ? text : '') } });
+    expect(paste('짧은 글')).toBe(true);
+    expect(uploadFn).not.toHaveBeenCalled();
+    const long = Array.from({ length: 30 }, (_, i) => `l${i}`).join('\n');
+    expect(paste(long)).toBe(false);
+    paste('z'.repeat(2000));
+    await waitFor(() => expect(screen.getAllByTestId('pasted-chip')).toHaveLength(2));
+    expect(uploadFn.mock.calls.map((c) => c[0].name)).toEqual(['pasted-1.txt', 'pasted-2.txt']);
+    expect(screen.getAllByTestId('pasted-chip')[0]!.textContent).toContain(`30줄 · ${long.length}자`);
+    fireEvent.click(screen.getAllByTitle('붙여넣은 내용 보기')[0]!);
+    expect(screen.getByRole('dialog', { name: '붙여넣은 텍스트 미리보기' }).textContent).toBe(long);
+    fireEvent.click(screen.getAllByLabelText('첨부 제거')[1]!);
+    expect(screen.getAllByTestId('pasted-chip')).toHaveLength(1);
+    fireEvent.change(box, { target: { value: '요약해줘' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onStart).toHaveBeenCalledWith('/w', 'w', '요약해줘', [{ id: 'id-pasted-1.txt', name: 'pasted-1.txt', size: long.length, isImage: false }], { engine: 'claude', sandbox: 'workspace-write' });
+  });
+
   it('attachments alone still send (with the attachment-only text); a removed one does not', async () => {
     const onStart = vi.fn();
     const uploadFn = vi.fn(async (f: File) => ({ id: f.name, name: f.name, size: f.size, isImage: false }));

@@ -1,23 +1,30 @@
 /** Global keyboard shortcuts: ⌘ on Mac, Ctrl elsewhere. */
-export type ShortcutId = 'palette' | 'help' | 'new-chat' | 'new-pane' | 'prev-session' | 'next-session' | 'toggle-sidebar' | 'settings';
+export type ShortcutId = 'palette' | 'help' | 'new-chat' | 'new-pane' | 'prev-session' | 'next-session' | 'toggle-sidebar' | 'settings' | 'prev-pane' | 'next-pane' | 'close-pane';
 
 /**
  * By physical key (`code`), so a Korean input source still matches. `typing`: also fires while a text field
- * has focus — ⌘[ / ⌘] do not (they would yank the user out of a half-written message).
+ * has focus — ⌘[ / ⌘] do not (they would yank the user out of a half-written message). `alt`: also needs ⌥ (Alt).
+ *
+ * Pane keys avoid the browsers' own: ⌘⌥←/→ switches tabs in Chrome / Firefox (and Ctrl+Alt+←/→ switches workspaces on
+ * Linux desktops), so panes step on ⌘⌥[ / ⌘⌥]; ⌘⇧W closes the window in Safari / Chrome (a page cannot keep it), so a
+ * pane closes on ⌘⇧X.
  */
-const BINDINGS: { id: ShortcutId; code: string; shift: boolean; typing: boolean; keys: string; label: string }[] = [
+const BINDINGS: { id: ShortcutId; code: string; shift: boolean; alt?: boolean; typing: boolean; keys: string; label: string }[] = [
   { id: 'palette', code: 'KeyK', shift: false, typing: true, keys: 'K', label: '명령 팔레트 · 세션 검색' },
   { id: 'new-chat', code: 'KeyN', shift: false, typing: true, keys: 'N', label: '새 대화 (지금 패널의 프로젝트)' },
   { id: 'new-pane', code: 'KeyO', shift: true, typing: true, keys: '⇧O', label: '새 분할 패널' },
   { id: 'prev-session', code: 'BracketLeft', shift: false, typing: false, keys: '[', label: '이전 세션 (목록 위)' },
   { id: 'next-session', code: 'BracketRight', shift: false, typing: false, keys: ']', label: '다음 세션 (목록 아래)' },
+  { id: 'prev-pane', code: 'BracketLeft', shift: false, alt: true, typing: true, keys: '⌥[', label: '이전 패널 (왼쪽)' },
+  { id: 'next-pane', code: 'BracketRight', shift: false, alt: true, typing: true, keys: '⌥]', label: '다음 패널 (오른쪽)' },
+  { id: 'close-pane', code: 'KeyX', shift: true, typing: true, keys: '⇧X', label: '지금 패널 닫기 (마지막 패널은 그대로)' },
   { id: 'toggle-sidebar', code: 'Backslash', shift: false, typing: true, keys: '\\', label: '사이드바 열기/닫기' },
   { id: 'settings', code: 'Comma', shift: false, typing: true, keys: ',', label: '설정' },
   { id: 'help', code: 'Slash', shift: false, typing: true, keys: '/', label: '단축키 보기' },
 ];
 
 /** `code` fallback from `key` for synthetic events / old browsers. */
-const KEY_TO_CODE: Record<string, string> = { k: 'KeyK', n: 'KeyN', o: 'KeyO', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '/': 'Slash', ',': 'Comma' };
+const KEY_TO_CODE: Record<string, string> = { k: 'KeyK', n: 'KeyN', o: 'KeyO', x: 'KeyX', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '/': 'Slash', ',': 'Comma' };
 
 export function isMacPlatform(nav: { platform?: string; userAgent?: string } | undefined = typeof navigator === 'undefined' ? undefined : navigator): boolean {
   return /Mac|iPhone|iPad|iPod/i.test(nav?.platform || nav?.userAgent || '');
@@ -39,10 +46,12 @@ export type ShortcutKey = Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrl
 export function matchShortcut(e: ShortcutKey, opts: { mac: boolean; typing: boolean }): ShortcutId | null {
   if (e.isComposing || e.keyCode === 229) return null;
   const mod = opts.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
-  if (!mod || e.altKey) return null;
+  if (!mod) return null;
   const code = e.code || KEY_TO_CODE[e.key.toLowerCase()] || '';
-  const b = BINDINGS.find((x) => x.code === code && x.shift === e.shiftKey);
+  const b = BINDINGS.find((x) => x.code === code && x.shift === e.shiftKey && !!x.alt === e.altKey);
   if (!b || (opts.typing && !b.typing)) return null;
+  // Ctrl+Alt off a Mac is AltGr on many layouts: in a text field that key types a character, so it stays the field's.
+  if (b.alt && !opts.mac && opts.typing) return null;
   return b.id;
 }
 
@@ -72,5 +81,5 @@ export function pinKeyLabel(index: number, mac: boolean): string | null {
 /** Cheat-sheet rows: key label with the platform's modifier. */
 export function shortcutList(mac: boolean): { id: ShortcutId; keys: string; label: string }[] {
   const mod = mac ? '⌘' : 'Ctrl+';
-  return BINDINGS.map((b) => ({ id: b.id, keys: `${mod}${b.keys}`, label: b.label }));
+  return BINDINGS.map((b) => ({ id: b.id, keys: `${mod}${mac || !b.alt ? b.keys : b.keys.replace('⌥', 'Alt+')}`, label: b.label }));
 }

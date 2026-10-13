@@ -190,6 +190,95 @@ describe('desktop-like navigation', () => {
     expect(screen.queryByRole('status')).toBeNull();
   });
 
+  it('보관 offers 되돌리기 for 8 s; 되돌리기 unarchives through the same meta call', async () => {
+    await boot();
+    const row = within(sidebar()).getByText('two').closest('li')!;
+    fireEvent.click(within(row).getByLabelText('세션 메뉴'));
+    fireEvent.click(within(row).getByText('보관'));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('보관했어요'));
+    const metas = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/meta') || String(c[0]).includes('session-meta'));
+    expect(metas().length).toBe(1);
+    expect(String(metas()[0]![1]?.body)).toContain('"archived":true');
+    fireEvent.click(screen.getByText('되돌리기'));
+    await waitFor(() => expect(metas().length).toBe(2));
+    expect(String(metas()[1]![1]?.body)).toContain('"archived":false');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('보관 while a 삭제 undo shows keeps the 삭제 toast (the archive can be undone from the archived list)', async () => {
+    await boot();
+    const two = within(sidebar()).getByText('two').closest('li')!;
+    fireEvent.click(within(two).getByLabelText('세션 메뉴'));
+    fireEvent.click(within(two).getByText('삭제…'));
+    fireEvent.click(within(screen.getByRole('alertdialog', { name: '대화 삭제' })).getByText('삭제'));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('삭제됨'));
+    const metas = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/meta') || String(c[0]).includes('session-meta'));
+    const one = within(sidebar()).getByText('one').closest('li')!;
+    fireEvent.click(within(one).getByLabelText('세션 메뉴'));
+    fireEvent.click(within(one).getByText('보관'));
+    await waitFor(() => expect(metas().length).toBe(1));
+    await act(async () => {});
+    expect(screen.getByRole('status').textContent).toContain('삭제됨');
+    expect(screen.getByRole('status').textContent).not.toContain('보관했어요');
+  });
+
+  it('보관 toast goes away by itself after 8 s', async () => {
+    // Fake the clock before boot so every timer the app arms (including the toast's) is on the fake clock.
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await boot();
+      const row = within(sidebar()).getByText('two').closest('li')!;
+      fireEvent.click(within(row).getByLabelText('세션 메뉴'));
+      fireEvent.click(within(row).getByText('보관'));
+      await waitFor(() => expect(screen.getByRole('status').textContent).toContain('보관했어요'));
+      // The toast is in the DOM before its passive effect (which arms the 8 s timer) has run; under load that effect
+      // can lag until the next scheduler tick. Flush it first so the clock below actually counts against the timer.
+      await act(async () => {});
+      act(() => { vi.advanceTimersByTime(7_000); });
+      expect(screen.queryByRole('status')).not.toBeNull();
+      act(() => { vi.advanceTimersByTime(1_500); });
+      expect(screen.queryByRole('status')).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('⋯ 새 탭에서 열기 opens the session link in a new tab', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    await boot();
+    const row = within(sidebar()).getByText('two').closest('li')!;
+    fireEvent.click(within(row).getByLabelText('세션 메뉴'));
+    fireEvent.click(within(row).getByText('새 탭에서 열기'));
+    expect(open).toHaveBeenCalledWith(`${window.location.origin}/?session=s2`, '_blank', 'noopener');
+    expect(within(row).queryByRole('menu')).toBeNull();
+  });
+
+  it('Ctrl+Alt+[ / ] step the active pane (wrapping); Ctrl+⇧X closes it, never the last one', async () => {
+    await boot();
+    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByText(/^\+ 분할/));
+    const panes = () => screen.getAllByTestId(/^pane-/);
+    const activeIndex = () => panes().findIndex((p) => p.classList.contains('active'));
+    expect(panes()).toHaveLength(3);
+    expect(activeIndex()).toBe(2);
+    press('BracketRight', { altKey: true });
+    expect(activeIndex()).toBe(0);
+    press('BracketLeft', { altKey: true });
+    expect(activeIndex()).toBe(2);
+    press('BracketLeft', { altKey: true });
+    expect(activeIndex()).toBe(1);
+    const middle = panes()[1]!.dataset.testid;
+    press('KeyX', { shiftKey: true });
+    expect(panes()).toHaveLength(2);
+    expect(panes().some((p) => p.dataset.testid === middle)).toBe(false);
+    press('KeyX', { shiftKey: true });
+    press('KeyX', { shiftKey: true });
+    expect(panes()).toHaveLength(1);
+    press('Slash');
+    const help = screen.getByRole('dialog', { name: '단축키' }).textContent ?? '';
+    expect(help).toContain('Ctrl+Alt+[');
+    expect(help).toContain('Ctrl+⇧X');
+  });
+
   it('refuses 삭제 of a session with a turn running here', async () => {
     await boot();
     fireEvent.click(within(sidebar()).getByText('two'));

@@ -8,6 +8,7 @@ import type { ServerMessage } from '../../shared/protocol';
 import type { Attachment, AttachmentStore } from '../attachments/AttachmentStore';
 import { ClaudeEngine } from '../engine/ClaudeEngine';
 import { fakeSdk, sdk } from '../engine/fakeSdk';
+import { readCooldownUntilMs } from '../routing/cooldown';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
@@ -16,14 +17,14 @@ import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 
-async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments'>> & { readFile?: (p: string) => Promise<Buffer> } = {}) {
+async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' | 'move'>> & { readFile?: (p: string) => Promise<Buffer> } = {}) {
   const f = fakeSdk();
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trbg-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
+  const usage = over.usage ?? new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
   /** The SDK options of each process started. */
   const options: (Options | undefined)[] = [];
   const deps: TurnRunnerDeps = {
@@ -41,13 +42,31 @@ async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments'>> & { read
     codexSessionsRoot: path.join(base, 'codex-sessions'),
     now: () => NOW,
     maxRetries: 0,
+    ...(over.move ? { move: over.move } : {}),
   };
   const msgs: ServerMessage[] = [];
   const ac = new AbortController();
   const sink: TurnSink = { emit: (m) => msgs.push(m), askPermission: async () => 'once', askQuestion: async () => null, signal: ac.signal };
   const runner = new TurnRunner(deps);
-  return { f, msgs, sink, ac, runner, store, options };
+  return { f, msgs, sink, ac, runner, store, options, deps };
 }
+
+/** Usage cards for a/b/c: a new session routes to b; with b out, a (protected, the one other account with room — c is at weekly 91). */
+async function usageCards(): Promise<UsageService> {
+  const resetsAt = new Date(NOW + 36 * 3_600_000).toISOString();
+  const card = (id: string, s: number, w: number, fb: number) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [
+    { label: 'Session (5h)', used: s, resetsAt }, { label: 'Weekly (7d)', used: w, resetsAt }, { label: 'Fable (7d)', used: fb, resetsAt }] });
+  const state = { cards: [card('claude:main', 13, 7, 0), card('claude:second', 2, 3, 4), card('claude:third', 0, 91, 27)] };
+  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
+  await u.pollOnce();
+  return u;
+}
+
+/** A session move that always succeeds (the fake SDK writes no transcript to move). */
+const okMove: NonNullable<TurnRunnerDeps['move']> = async (o) => ({ ok: true, targetDir: path.join(o.targetProjectsRoot, path.basename(o.sourceProjectDir)), targetFile: '', copied: [] });
+
+const LIMIT_TEXT = "You've hit your session limit · resets 3:50am (Asia/Seoul)";
+const limited = { ...sdk.result('', 's1'), is_error: true, result: LIMIT_TEXT };
 
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 200; i++) {
@@ -319,5 +338,83 @@ describe('TurnRunner: background work after the turn result', () => {
     await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     expect(msgs.map((m) => m.type)).toEqual(['turn_started', 'delta', 'turn_result']);
     expect(runner.followUp('s1', { turnId: 'f', text: 'x' })).toBe(false);
+  });
+
+  describe('a segment hitting a limit goes on on another account', () => {
+    it('a background continuation: cooldown, turn_retry + notice, a new turn on the other account told what was cut; no failed result', async () => {
+      const { f, msgs, sink, runner, store, options, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+      f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      expect(of(msgs, 'turn_started')[0]).toMatchObject({ account: 'b' });
+      f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('half'), limited);
+      await waitFor(() => f.state.calls === 2, 'the continuation process');
+      f.push(sdk.init('s1'), sdk.delta('resumed'), sdk.result('resumed', 's1'));
+      await done;
+
+      expect(readCooldownUntilMs(deps.cooldownDir, 'b', NOW)).toBe(NOW + 3_600_000);
+      expect(of(msgs, 'turn_retry')).toMatchObject([{ turnId: 't1:bg1', sessionId: 's1', fromAccount: 'b', toAccount: 'a', attempt: 1, reason: expect.stringMatching(/^사용 한도 도달 · 03:50 리셋 → /) }]);
+      expect(of(msgs, 'turn_notice').map((m) => m.message)).toContain('B 계정 사용 한도 도달 (03:50 리셋) — A 계정으로 이어서 진행합니다');
+      expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.account])).toEqual([['t1', 'b'], ['t1:bg1', 'b'], ['t1:bg1', 'a']]);
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok])).toEqual([['t1', true], ['t1:bg1', true]]);
+      expect(of(msgs, 'turn_result')[1]).toMatchObject({ text: 'resumed', badge: { account: 'a' } });
+      const at = new Date(NOW).toTimeString().slice(0, 5);
+      expect(of(msgs, 'turn_notice').map((m) => m.message)).toContain(`${at} B 계정 사용 한도 도달로 이전 프로세스가 끝났습니다 — 다른 계정에서 이어갑니다 (모델에게 알렸습니다)`);
+      expect(await promptNote(options[1])).toContain(`${at} 에 B 계정 사용 한도 도달로`);
+      expect(JSON.stringify(f.inputs.at(-1))).toContain('이어서 진행해 주세요.');
+      expect(store.get('s1')).toMatchObject({ account: 'a' });
+      expect(store.get('s1')).not.toHaveProperty('interrupted');
+    });
+
+    it('a follow-up: sent again under its own turn id and text on the other account; background work cut with it is told to the model', async () => {
+      const { f, msgs, sink, runner, options, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+      f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      expect(runner.followUp('s1', { turnId: 'f1', text: 'status?', clientRef: 'r1' })).toEqual({ queuedBehind: null });
+      await waitFor(() => f.inputs.length === 2, 'follow-up written');
+      f.push(limited);
+      await waitFor(() => f.state.calls === 2, 'the retry process');
+      f.push(sdk.init('s1'), sdk.result('fine', 's1'));
+      await done;
+
+      expect(readCooldownUntilMs(deps.cooldownDir, 'b', NOW)).toBe(NOW + 3_600_000);
+      expect(of(msgs, 'turn_retry')).toMatchObject([{ turnId: 'f1', fromAccount: 'b', toAccount: 'a' }]);
+      expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.account])).toEqual([['t1', 'b'], ['f1', 'b'], ['f1', 'a']]);
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok])).toEqual([['t1', true], ['f1', true]]);
+      expect(JSON.stringify(f.inputs.at(-1))).toContain('status?');
+      expect(await promptNote(options[1])).toEqual(expect.stringContaining('B 계정 사용 한도 도달로 종료되었고, 그때 돌고 있던 백그라운드 작업 1개는 끊겨 결과가 오지 않습니다: "build"'));
+      expect(of(msgs, 'error')).toEqual([]);
+    });
+
+    it('any other failure of a segment just ends it as failed (no cooldown, no retry)', async () => {
+      const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+      f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(sdk.bgLevel([]), sdk.notifyUser(), { ...sdk.result('', 's1'), is_error: true, result: 'boom' });
+      await done;
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, expect.stringContaining('boom')]]);
+      expect(of(msgs, 'turn_retry')).toEqual([]);
+      expect(readCooldownUntilMs(deps.cooldownDir, 'b', NOW)).toBeNull();
+      expect(f.state.calls).toBe(1);
+    });
+
+    it('with no account left (one hop per other account) the segment ends as failed and a queued follow-up is refused', async () => {
+      const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
+      f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('half'));
+      await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+      expect(runner.followUp('s1', { turnId: 'f2', text: 'next', clientRef: 'r2' })).toEqual({ queuedBehind: '백그라운드 계속' });
+      f.push(limited);
+      await done;
+      expect(readCooldownUntilMs(deps.cooldownDir, 'b', NOW)).toBe(NOW + 3_600_000);
+      expect(of(msgs, 'turn_retry')).toEqual([]);
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, 'B 계정 사용 한도 도달 · 03:50 리셋 · 대안 계정 없음']]);
+      expect(of(msgs, 'error')).toEqual([expect.objectContaining({ turnId: 'f2', clientRef: 'r2' })]);
+      expect(f.state.calls).toBe(1);
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent } from 'react';
 import { MAX_ATTACHMENTS_PER_TURN, MAX_ATTACHMENT_BYTES } from '../shared/protocol';
 import type { UploadedAttachment } from './state';
 
@@ -29,6 +29,23 @@ export async function uploadFile(file: File, fetchFn: typeof fetch = fetch): Pro
   // ux-state: the composer previews the local file (blob: is allowed by the CSP img-src); the server's sniff decides.
   const previewUrl = j.isImage && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : undefined;
   return { id: j.id, name: j.name, size: j.size, isImage: j.isImage, ...(previewUrl ? { previewUrl } : {}) };
+}
+
+/** A paste this long (either limit) becomes a `pasted-N.txt` attachment chip instead of composer text. */
+export const PASTE_CHIP_MIN_CHARS = 1500;
+export const PASTE_CHIP_MIN_LINES = 25;
+
+export function lineCount(text: string): number {
+  return text.split(/\r\n|\r|\n/).length;
+}
+
+export function isLongPaste(text: string): boolean {
+  return text.length >= PASTE_CHIP_MIN_CHARS || lineCount(text) >= PASTE_CHIP_MIN_LINES;
+}
+
+/** The model sees pasted text as `pasted-1.txt`, `pasted-2.txt`, … (numbered within one message). */
+export function pastedFileName(n: number): string {
+  return `pasted-${n}.txt`;
 }
 
 /** Files of a paste/drop; null-safe. */
@@ -75,4 +92,58 @@ export function useUploads({ uploadFn, current, onUploaded }: { uploadFn: Upload
     }
   }, [uploadFn, current, onUploaded]);
   return { addFiles, uploading, error };
+}
+
+/**
+ * A composer's uploads plus its paste handling: pasted files attach; a long text paste (isLongPaste, wherever the caret
+ * is) goes up as `pasted-N.txt` (numbered within the message, restarting once no attachment is left) and its text is
+ * kept by attachment id in `pastedTexts` for the chip's preview (memory only, never persisted). Short text pastes as usual.
+ * A long paste whose upload fails goes to `onUploadFailed` (the composer puts the text back), so nothing pasted is lost.
+ */
+export function usePasteUploads({ uploadFn, attachments, onUploaded, onUploadFailed, disabled = false }: { uploadFn: UploadFn; attachments: UploadedAttachment[]; onUploaded: (a: UploadedAttachment) => void; onUploadFailed?: (text: string) => void; disabled?: boolean }) {
+  const pastedFiles = useRef(new WeakMap<File, string>());
+  const pasteSeq = useRef(0);
+  const [pastedTexts, setPastedTexts] = useState<Record<string, string>>({});
+  const uploadWithText: UploadFn = async (f) => {
+    let a: UploadedAttachment;
+    try {
+      a = await uploadFn(f);
+    } catch (err) {
+      const text = pastedFiles.current.get(f);
+      if (text !== undefined) onUploadFailed?.(text);
+      throw err;
+    }
+    const t = pastedFiles.current.get(f);
+    if (t !== undefined) setPastedTexts((m) => ({ ...m, [a.id]: t }));
+    return a;
+  };
+  const { addFiles: upload, uploading, error } = useUploads({ uploadFn: uploadWithText, current: attachments.length, onUploaded });
+  // Once nothing is uploading, texts of removed chips go (all of them, and the numbering restarts, when none is left).
+  useEffect(() => {
+    if (uploading !== 0) return;
+    if (attachments.length === 0) pasteSeq.current = 0;
+    setPastedTexts((m) => {
+      const ids = Object.keys(m);
+      const keep = ids.filter((id) => attachments.some((a) => a.id === id));
+      return keep.length === ids.length ? m : Object.fromEntries(keep.map((id) => [id, m[id]!]));
+    });
+  }, [attachments, uploading]);
+  const addFiles = async (files: File[]) => { if (!disabled) await upload(files); };
+  const onPaste = (e: ClipboardEvent<HTMLElement>) => {
+    const files = filesFrom(e.clipboardData);
+    if (files.length) { e.preventDefault(); void addFiles(files); return; }
+    // iOS Safari too: plain getData.
+    const pasted = e.clipboardData?.getData?.('text/plain') ?? '';
+    if (!pasted || !isLongPaste(pasted) || disabled) return;
+    // No room for another attachment: it pastes as plain text instead.
+    if (attachments.length + uploading >= MAX_ATTACHMENTS_PER_TURN) return;
+    e.preventDefault();
+    const used = attachments.map((a) => /^pasted-(\d+)\.txt$/.exec(a.name)?.[1]).filter(Boolean).map(Number);
+    const n = Math.max(pasteSeq.current, ...used) + 1;
+    pasteSeq.current = n;
+    const file = new File([pasted], pastedFileName(n), { type: 'text/plain' });
+    pastedFiles.current.set(file, pasted);
+    void addFiles([file]);
+  };
+  return { addFiles, onPaste, uploading, error, pastedTexts };
 }

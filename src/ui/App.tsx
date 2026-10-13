@@ -56,6 +56,8 @@ import { has, setFeatures } from './features';
 const VIEW_KEY = 'deck.sidebarView';
 const HIDDEN_KEY = 'deck.sidebarHidden';
 const UNDO_MS = 10_000;
+/** 보관 되돌리기 toast: shorter than 삭제's (보관 is milder and also undone from the 보관됨 list). */
+const ARCHIVE_UNDO_MS = 8_000;
 /** How often a visible page asks /api/build (it also asks whenever it becomes visible). */
 const BUILD_CHECK_MS = 5 * 60_000;
 const MAC = isMacPlatform();
@@ -238,10 +240,11 @@ export function App() {
   /** The empty pane's preselected project, by pane (the project it showed before ⌘N / a delete). */
   const [newChatCwd, setNewChatCwd] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState<{ s: SessionEntry; which?: string } | null>(null);
-  const [undo, setUndo] = useState<{ trashId: string; title: string; which?: string } | null>(null);
+  // One undo toast at a time: 삭제 (restore from the trash) or 보관 (unarchive).
+  const [undo, setUndo] = useState<{ kind: 'trash'; trashId: string; title: string; which?: string } | { kind: 'archive'; sessionId: string } | null>(null);
   useEffect(() => {
     if (!undo) return;
-    const t = setTimeout(() => setUndo(null), UNDO_MS);
+    const t = setTimeout(() => setUndo(null), undo.kind === 'archive' ? ARCHIVE_UNDO_MS : UNDO_MS);
     return () => clearTimeout(t);
   }, [undo]);
   // The reducer keeps one app-wide `error` slot (many writers: server errors, show_error, refused steers…). Each value
@@ -646,6 +649,21 @@ export function App() {
     apply({ type: 'add_pane' });
     openIn(latest.current.activePaneId, sessionId, cwd, title);
   };
+  /** ⌘⌥[ / ⌘⌥]: the pane to the left / right becomes active (wrapping). A phone shows one pane: nothing to step. */
+  const stepPane = (dir: -1 | 1) => {
+    const panes = state.panes;
+    if (phone || panes.length < 2) return;
+    const i = panes.findIndex((p) => p.id === active.id);
+    const next = panes[(i + dir + panes.length) % panes.length]!;
+    dispatch({ type: 'focus_pane', paneId: next.id });
+    requestFocus(next.id);
+  };
+  /** ⌘⇧X: the active pane closes as its ✕ would (a running turn keeps running, as with ✕); the last pane stays. */
+  const closeActivePane = () => {
+    if (phone || state.panes.length < 2) return;
+    apply({ type: 'close_pane', paneId: active.id });
+    requestFocus();
+  };
   onShortcut.current = (id) => {
     if (id === 'palette') { setHelpOpen(false); setPaletteOpen((o) => !o); }
     else if (id === 'help') { setPaletteOpen(false); setHelpOpen((o) => !o); }
@@ -655,6 +673,8 @@ export function App() {
     else if (id === 'next-session') stepSession(1);
     else if (id === 'toggle-sidebar') toggleSidebar();
     else if (id === 'settings') { setPaletteOpen(false); setHelpOpen(false); setSettingsOpen((o) => !o); }
+    else if (id === 'prev-pane' || id === 'next-pane') stepPane(id === 'prev-pane' ? -1 : 1);
+    else if (id === 'close-pane') closeActivePane();
   };
   const mod = MAC ? '⌘' : 'Ctrl+';
   const actions: PaletteAction[] = [
@@ -681,13 +701,16 @@ export function App() {
     setConfirmDelete(null);
     trashSession(s.sessionId).then(({ trashId }) => {
       for (const p of latest.current.panes) if (p.session?.sessionId === s.sessionId) { setNewChatCwd((m) => ({ ...m, [p.id]: s.cwd })); apply({ type: 'clear_pane', paneId: p.id }); }
-      setUndo({ trashId, title: s.title, ...(which ? { which } : {}) });
+      setUndo({ kind: 'trash', trashId, title: s.title, ...(which ? { which } : {}) });
     }, showError('삭제 실패'));
   };
   // The sidebar ⋯ menu and the chat title ⌄ menu share these.
   const togglePin = (sessionId: string, pinned: boolean) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), showError('고정 실패')); };
   const renameSession = (sessionId: string, title: string | null) => { postSessionMeta(sessionId, { title }).catch(showError('이름 바꾸기 실패')); };
-  const archiveSession = (sessionId: string, archived: boolean) => { postSessionMeta(sessionId, { archived }).catch(showError('보관 실패')); };
+  const archiveSession = (sessionId: string, archived: boolean) => {
+    // A 삭제 undo still showing keeps its slot: the archive can be undone from the archived list anyway.
+    postSessionMeta(sessionId, { archived }).then(() => { if (archived) setUndo((u) => (u?.kind === 'trash' ? u : { kind: 'archive', sessionId })); }, showError('보관 실패'));
+  };
   const sessionActions = { pins: state.pins, onRename: renameSession, onTogglePin: togglePin, onArchive: archiveSession, onDelete: (s: SessionEntry) => askDelete(s) };
   const footAccount = active.session?.account ?? null;
   const orphanPerms = orphanCards(state.panes, state.pending);
@@ -746,10 +769,17 @@ export function App() {
         <ConfirmDialog title="대화 삭제" danger confirmLabel="삭제" onCancel={cancelDelete} onConfirm={() => doDelete(confirmDelete.s, confirmDelete.which)}
           message={`“${confirmDelete.s.title}”${confirmDelete.which ? ` (${confirmDelete.which})` : ''} 을(를) 목록에서 지울까요? 파일은 휴지통(session-trash)으로 옮겨지고 바로 되돌릴 수 있어요.`} />
       )}
-      {undo && (
+      {undo?.kind === 'trash' && (
         <div className="toast" role="status">
           <span>“{undo.title.length > 40 ? `${undo.title.slice(0, 40)}…` : undo.title}”{undo.which ? ` (${undo.which})` : ''} 삭제됨</span>
           <button type="button" className="text-btn" onClick={() => { const { trashId } = undo; setUndo(null); restoreSession(trashId).catch(showError('되돌리기 실패')); }}>되돌리기</button>
+          <button type="button" className="icon-btn" aria-label="닫기" onClick={() => setUndo(null)}>✕</button>
+        </div>
+      )}
+      {undo?.kind === 'archive' && (
+        <div className="toast" role="status">
+          <span>보관했어요</span>
+          <button type="button" className="text-btn" onClick={() => { const { sessionId } = undo; setUndo(null); postSessionMeta(sessionId, { archived: false }).catch(showError('되돌리기 실패')); }}>되돌리기</button>
           <button type="button" className="icon-btn" aria-label="닫기" onClick={() => setUndo(null)}>✕</button>
         </div>
       )}

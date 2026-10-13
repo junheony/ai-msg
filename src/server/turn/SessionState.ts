@@ -12,8 +12,11 @@ type SessionBase = {
   justCompacted: boolean;
   /** First prompt (≤ 80 chars) for the sidebar; Codex sessions have no jsonl title to read. */
   title?: string;
-  /** 서버 재시작으로 백그라운드 작업이 끊긴 기록; 다음 턴이 읽고 지운다. */
-  interrupted?: { atMs: number; tasks: string[] };
+  /**
+   * 서버 재시작으로 백그라운드 작업이 끊긴 기록; 다음 턴이 읽고 지운다. `cause`: 재시작이 아닌 원인(예: "C 계정 사용 한도 도달" —
+   * 백그라운드 세그먼트가 한도로 끝나 다른 계정에서 이어갈 때).
+   */
+  interrupted?: { atMs: number; tasks: string[]; cause?: string };
 };
 
 export type ClaudeSessionState = SessionBase & {

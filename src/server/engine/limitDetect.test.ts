@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COOLDOWN_MS, classifyFailure } from './limitDetect';
+import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetHint } from './limitDetect';
 
 describe('classifyFailure', () => {
   it('returns null for a successful turn even if a warning was seen', () => {
@@ -12,6 +12,9 @@ describe('classifyFailure', () => {
     expect(classifyFailure({ ok: false, errorText: "You've hit your usage limit. Resets at 3pm", errorKind: null, rateLimitStatus: null })).toBe('limit');
     expect(classifyFailure({ ok: false, errorText: 'API Error: 429 rate limit reached', errorKind: null, rateLimitStatus: null })).toBe('limit');
     expect(classifyFailure({ ok: false, errorText: 'Claude usage limit reached', errorKind: null, rateLimitStatus: null })).toBe('limit');
+    // The CLI's 5-hour wording (2026-10): "session limit".
+    expect(classifyFailure({ ok: false, errorText: "You've hit your session limit · resets 3:50am (Asia/Seoul)", errorKind: null, rateLimitStatus: null })).toBe('limit');
+    expect(classifyFailure({ ok: false, errorText: "You've hit your limit", errorKind: null, rateLimitStatus: null })).toBe('limit');
   });
 
   it('detects Codex turn.failed JSON-blob limits (429 status, usage_limit_reached, rate_limit_exceeded)', () => {
@@ -48,5 +51,29 @@ describe('classifyFailure', () => {
 
   it('cooldowns: limit 1h, auth 6h, other none', () => {
     expect(COOLDOWN_MS).toEqual({ limit: 3_600_000, auth: 21_600_000, other: 0 });
+  });
+});
+
+describe('limitResetHint', () => {
+  it('reads the reset time as 24-hour HH:MM', () => {
+    expect(limitResetHint("You've hit your session limit · resets 3:50am (Asia/Seoul)")).toBe('03:50 리셋');
+    expect(limitResetHint("You've hit your usage limit. Resets at 3pm")).toBe('15:00 리셋');
+    expect(limitResetHint('resets 12am')).toBe('00:00 리셋');
+    expect(limitResetHint('resets 12:30pm')).toBe('12:30 리셋');
+    expect(limitResetHint('resets at 15:05')).toBe('15:05 리셋');
+  });
+
+  it('null when no time is named', () => {
+    expect(limitResetHint(null)).toBeNull();
+    expect(limitResetHint("You've hit your session limit")).toBeNull();
+    expect(limitResetHint('resets in 5 hours')).toBeNull();
+    expect(limitResetHint('resets 3 times')).toBeNull();
+  });
+});
+
+describe('failureLabel', () => {
+  it('says what failed', () => {
+    expect(failureLabel('limit')).toBe('사용 한도 도달');
+    expect(failureLabel('auth')).toBe('인증 실패');
   });
 });
