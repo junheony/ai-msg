@@ -5,7 +5,10 @@ import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
 import { usePrefs } from '../usePrefs';
-import { SidePanelContext, filePathIn } from '../sidePanel';
+import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
+import { has } from '../features';
+import { rawFileUrl } from '../sessionApi';
+import { baseName, useFileMenu } from './FileMenu';
 import type { ChatItem, SentFile } from '../state';
 import { CopyButton } from './CopyButton';
 import { EditIcon, RetryIcon } from './icons';
@@ -49,21 +52,53 @@ function decodeSafe(s: string): string {
   try { return decodeURIComponent(s); } catch { return s; }
 }
 
-/** A file path in a reply: a button opening it in the side panel when the pane has one, else `fallback`. */
+/**
+ * A file path in a reply: a button opening it in the side panel when the pane has one, else `fallback`. Right-click /
+ * long press opens the file menu. In an assistant reply (FileRootContext set) an image of the session folder shows as
+ * a thumbnail instead, back to the chip if it fails to load (403/404, an older server).
+ */
 function FileLink({ path, fallback, children }: { path: string | null; fallback: ReactNode; children: ReactNode }) {
   const open = useContext(SidePanelContext);
+  const root = useContext(FileRootContext);
+  const [broken, setBroken] = useState(false);
+  const menu = useFileMenu(path);
   if (!path || !open) return <>{fallback}</>;
-  return <button type="button" className="file-link" title={`${path} — 사이드 패널에서 열기`} onClick={() => open({ kind: 'file', path })}>{children}</button>;
+  // Thumbnails need the server's raw route ('fileRaw'); an older server gets the plain chip (the panel preview still works).
+  if (root !== null && !broken && has('fileRaw') && viewFor(path) === 'image' && inSessionFolder(path, root)) {
+    const name = baseName(path);
+    return (
+      <>
+        <button type="button" className="file-thumb" title={`${path} — 사이드 패널에서 크게 보기`} onClick={() => open({ kind: 'file', path })} {...menu.bind}>
+          <img src={rawFileUrl(root, path)} alt={name} loading="lazy" onError={() => setBroken(true)} />
+          <span className="file-thumb-cap">{name}</span>
+        </button>
+        {menu.node}
+      </>
+    );
+  }
+  return (
+    <>
+      <button type="button" className="file-link" title={`${path} — 사이드 패널에서 열기`} onClick={() => open({ kind: 'file', path })} {...menu.bind}>{children}</button>
+      {menu.node}
+    </>
+  );
 }
 
 /**
- * Review I8: model output must not make the browser fetch attacker URLs, so a markdown image
- * becomes a plain link the user can choose to open.
+ * Review I8: model output must not make the browser fetch attacker URLs, so a markdown image becomes a plain link the
+ * user can choose to open. Only a path inside the session folder (fetched through deck's own /api/file) is a thumbnail.
  */
+function MdImage({ src, alt }: { src?: unknown; alt?: string }) {
+  const root = useContext(FileRootContext);
+  const s = typeof src === 'string' ? src : undefined;
+  const link = <a href={s} title={s} rel="noreferrer noopener" target="_blank">🖼 {alt || s || '이미지'}</a>;
+  const path = s && root !== null && !/^[a-z][\w+.-]*:/i.test(s) && !s.startsWith('//') ? filePathIn(decodeSafe(s)) : null;
+  if (!path || viewFor(path) !== 'image' || !inSessionFolder(path, root!)) return link;
+  return <FileLink path={path} fallback={link}>🖼 {alt || path}</FileLink>;
+}
+
 const MD_COMPONENTS: Components = {
-  img: ({ src, alt }) => (
-    <a href={typeof src === 'string' ? src : undefined} title={typeof src === 'string' ? src : undefined} rel="noreferrer noopener" target="_blank">🖼 {alt || (typeof src === 'string' ? src : '이미지')}</a>
-  ),
+  img: ({ src, alt }) => <MdImage src={src} alt={alt} />,
   a: ({ href, children }) => <FileLink path={href && !/^[a-z][\w+.-]*:/i.test(href) && !href.startsWith('#') ? filePathIn(decodeSafe(href)) : null} fallback={<a href={href} title={href} rel="noreferrer noopener" target="_blank">{children}</a>}>{children}</FileLink>,
   // Inline code naming a file opens it in the pane's side panel (fenced code ends with a newline, so it never matches).
   code: ({ className, children }) => {
@@ -326,6 +361,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   const retry = last && !item.streaming ? actions.onRetry : undefined;
   const hasActions = !item.streaming && (!!item.text || !!retry);
   return (
+    <FileRootContext.Provider value={cwd || null}>
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}`}>
       {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
       {item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
@@ -347,5 +383,6 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
         </div>
       )}
     </div>
+    </FileRootContext.Provider>
   );
 });

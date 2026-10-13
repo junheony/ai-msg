@@ -13,6 +13,7 @@ import { mergeToolRuns } from '../toolRuns';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { EngineMark } from './EngineMark';
+import { FolderChip } from './FileMenu';
 import { AccountPicker } from './AccountPicker';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
@@ -483,7 +484,7 @@ export function Chat(p: ChatProps) {
               </MenuList>
             )}
           </span>
-          {folder && <span className="folder-chip chat-subtitle" title={p.cwd}>{folder}</span>}
+          {folder && p.cwd && <FolderChip cwd={p.cwd} name={folder} />}
         </div>
         <div className="chat-head-chips">
           {!p.isNew && p.sessionEngine === 'codex' && (p.onSessionSandbox

@@ -161,7 +161,7 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - routePreview: `route_preview` asks are answered with `route_preview` (and again after usage changes).
  * - highlights: GET /api/highlights answers (세션 하이라이트, events.jsonl).
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**

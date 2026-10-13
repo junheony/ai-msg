@@ -2,6 +2,7 @@ import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, type Account } from '../shared/acc
 import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { ATTACHMENT_ID, MAX_ATTACHMENTS_PER_TURN } from '../shared/protocol';
 import { MAX_PANES, newPane, nextQueueId, parkKey, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
+import { paneSize } from './paneResize';
 
 /**
  * ux-state: UI state that survives a reload (localStorage, per browser — phone and desktop are independent).
@@ -20,7 +21,7 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
  * `turnId`: an id-less session's first turn still running — after a reload `hello.running` finds it by this id (with the
  * session id once the server knows it) and the pane follows it (`watch_turn`); an id-ful pane re-finds its turn by the id.
  */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string };
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -75,6 +76,8 @@ function pane(x: unknown): PersistedPane {
     ...(pending && shortStr(x.prefill, 100_000) && x.prefill ? { prefill: x.prefill } : {}),
     ...(pending && typeof x.accountPin === 'string' && ACCOUNT_ID_RE.test(x.accountPin) && !RESERVED_ACCOUNT_IDS.includes(x.accountPin) ? { accountPin: x.accountPin } : {}),
     ...(pending && shortStr(x.turnId, 200) && x.turnId ? { turnId: x.turnId } : {}),
+    // Older saves have no weight; a bad one falls back to 1 (an equal column).
+    ...(x.size !== undefined && paneSize(x.size) !== 1 ? { size: paneSize(x.size) } : {}),
   };
 }
 
@@ -104,6 +107,7 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
       ...(p.session && p.session.sessionId === null && p.prefill ? { prefill: p.prefill } : {}),
       ...(p.session && p.session.sessionId === null && p.session.accountPin ? { accountPin: p.session.accountPin } : {}),
       ...(p.session && p.session.sessionId === null && p.activeTurnId ? { turnId: p.activeTurnId } : {}),
+      ...(paneSize(p.size) !== 1 ? { size: paneSize(p.size) } : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
@@ -128,6 +132,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
     handoffFrom: p.handoffFrom ?? null, prefill: p.prefill ?? null,
     // A first turn running at the reload: hello keeps it if the server still runs it (App then watches it), else drops it.
     ...(p.turnId ? { activeTurnId: p.turnId, myTurns: [p.turnId] } : {}),
+    ...(p.size !== undefined ? { size: p.size } : {}),
     // Its history is asked for again once the socket is up: loading until it arrives.
     ...(p.session?.sessionId ? { loading: true } : {}),
   }));

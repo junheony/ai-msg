@@ -96,6 +96,8 @@ The UI changes on rebuild and the server on restart, so a new UI talks to an old
 
 Current features: `sessionModel`, `abortLabel`, `catchup`, `accounts`, `sessionSandbox`, `routePreview`.
 
+Session-folder files over HTTP: `GET /api/file` (preview), `GET /api/file?raw=1` (original bytes) and `POST /api/reveal` (Finder on the server Mac) share one check path, `openSessionPath` in `src/server/files.ts`.
+
 ## Catch-up
 
 A turn runs to completion on the server whether or not any browser is connected.

@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DirError } from './dirs';
-import { FileLister, FileReadError, isDeniedPath, readSessionFile } from './files';
+import { FileLister, FileReadError, isDeniedPath, openSessionFileRaw, rawContentType, readSessionFile, revealSessionPath } from './files';
 
 async function home(): Promise<string> {
   return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-files-')));
@@ -166,5 +166,57 @@ describe('readSessionFile', () => {
     expect(await status(read('src'))).toBe(400);
     expect(await status(read('missing.ts'))).toBe(404);
     expect(await status(read(''))).toBe(400);
+  });
+});
+
+describe('openSessionFileRaw / revealSessionPath (same check as the preview)', () => {
+  async function setup() {
+    const h = await home();
+    const p = path.join(h, 'proj');
+    await fs.mkdir(path.join(p, 'sub'), { recursive: true });
+    await fs.writeFile(path.join(p, 'a.txt'), 'abc');
+    return { h, p };
+  }
+  const status = async (pr: Promise<unknown>) => { try { await pr; return 200; } catch (e) { if (e instanceof FileReadError) return e.status; if (e instanceof DirError) return 400; throw e; } };
+
+  it('raw: open handle of the checked file, size, type; refuses hard links, folders and the size cap', async () => {
+    const { h, p } = await setup();
+    const r = await openSessionFileRaw({ home: h, roots: [h], cwd: p, file: 'a.txt' });
+    try {
+      expect(r).toMatchObject({ path: path.join(p, 'a.txt'), name: 'a.txt', size: 3, contentType: 'text/plain; charset=utf-8' });
+      expect((await r.fh.readFile()).toString()).toBe('abc');
+    } finally { await r.fh.close(); }
+    await fs.writeFile(path.join(h, 'secret.txt'), 'x');
+    await fs.link(path.join(h, 'secret.txt'), path.join(p, 'alias.txt'));
+    expect(await status(openSessionFileRaw({ home: h, roots: [h], cwd: p, file: 'alias.txt' }))).toBe(403);
+    expect(await status(openSessionFileRaw({ home: h, roots: [h], cwd: p, file: 'sub' }))).toBe(400);
+    expect(await status(openSessionFileRaw({ home: h, roots: [h], cwd: p, file: 'a.txt', max: 2 }))).toBe(413);
+  });
+
+  it('rawContentType: sniffed images win, active content is text/plain, unknown is octet-stream', () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(rawContentType('x.txt', png)).toBe('image/png');
+    expect(rawContentType('x.png', Buffer.from('<html>'))).toBe('application/octet-stream');
+    for (const n of ['x.svg', 'X.SVG', 'x.html', 'x.htm', 'x.js', 'x.md']) expect(rawContentType(n, Buffer.from('a')), n).toBe('text/plain; charset=utf-8');
+    expect(rawContentType('x.pdf', Buffer.from('%PDF'))).toBe('application/pdf');
+    expect(rawContentType('x', Buffer.from('a'))).toBe('application/octet-stream');
+  });
+
+  it('reveal: execFile open -R for a file and for a folder (never a plain open: it would launch bundles); 501 off macOS; 500 when open fails; 403 outside', async () => {
+    const { h, p } = await setup();
+    const calls: string[][] = [];
+    const exec = (cmd: string, args: string[], cb: (err: Error | null) => void) => { calls.push([cmd, ...args]); cb(null); };
+    await revealSessionPath({ home: h, roots: [h], cwd: p, file: 'a.txt', platform: 'darwin', execFile: exec });
+    await revealSessionPath({ home: h, roots: [h], cwd: p, file: 'sub', platform: 'darwin', execFile: exec });
+    expect(calls).toEqual([['open', '-R', path.join(p, 'a.txt')], ['open', '-R', path.join(p, 'sub')]]);
+    calls.length = 0;
+    expect(await status(revealSessionPath({ home: h, roots: [h], cwd: p, file: 'a.txt', platform: 'linux', execFile: exec }))).toBe(501);
+    expect(await status(revealSessionPath({ home: h, roots: [h], cwd: p, file: '../x', platform: 'darwin', execFile: exec }))).toBe(403);
+    expect(calls).toEqual([]);
+    const failing = (_c: string, _a: string[], cb: (err: Error | null) => void) => cb(new Error('boom'));
+    expect(await status(revealSessionPath({ home: h, roots: [h], cwd: p, file: 'a.txt', platform: 'darwin', execFile: failing }))).toBe(500);
+    // Through the lister (http uses this).
+    const lister = new FileLister({ home: h, roots: [h], platform: 'win32', execFile: exec });
+    await expect(lister.reveal(p, 'a.txt')).rejects.toMatchObject({ status: 501, message: '서버가 macOS 가 아니라 Finder 를 열 수 없습니다' });
   });
 });

@@ -155,10 +155,12 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
       }}
     >
       {current && <span className="usage-dot" aria-hidden="true" />}
-      {next && <span className="usage-next" data-testid={`next-${seat}`} title={`다음 턴: ${next.reason}`}>{next.asOpus ? '다음 · Opus' : '다음'}</span>}
       <div className="usage-id">
         {seat === 'gpt' ? <OpenAIMark className="usage-mark gpt" /> : <ClaudeMark className="usage-mark claude" />}
         <span className="usage-letter" title={label}>{label}</span>
+        {/* Next-turn routing preview: the account (and model) the next message of the active pane will go to. Inside the id
+            column, never overhanging the card — the cards fill the top bar's height, so an overhang gets clipped. */}
+        {next && <span className="usage-next" data-testid={`next-${seat}`} title={`다음 턴은 이 계정으로 갑니다: ${next.reason}`}>{next.asOpus ? '다음 턴 · Opus' : '다음 턴'}</span>}
       </div>
       <span className={`usage-sum ${worst ? levelClass(worst.w) : 'none'}`} aria-hidden="true" title={worst ? `가장 적게 남은 한도 · ${worst.name} ${worst.rem}%` : '잔여량 알 수 없음'}>
         {!worst ? '—' : worst.rem === 0 ? '소진' : <>{worst.rem}<small>%</small></>}
