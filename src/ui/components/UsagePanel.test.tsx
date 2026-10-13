@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { UsagePanel, countdown, creditsText, resetStamp } from './UsagePanel';
+import { UsagePanel, countdown, creditsText, fullestWindow, resetStamp, shortCountdown } from './UsagePanel';
 import type { UsageSnapshot } from '../../shared/usage-types';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -137,5 +137,68 @@ describe('UsagePanel header layout (styles.css)', () => {
     let depth = 0;
     for (const ch of css.replace(/\/\*[\s\S]*?\*\//g, '')) { if (ch === '{') depth++; if (ch === '}') depth--; expect(depth).toBeGreaterThanOrEqual(0); }
     expect(depth).toBe(0);
+  });
+});
+
+describe('UsagePanel short reset countdown and 다음 tag', () => {
+  afterEach(() => { cleanup(); });
+  const at = (ms: number) => new Date(NOW + ms).toISOString();
+
+  it('shortCountdown: 분 / 시간 / 일 후, 리셋됨 once passed, nothing without a reset time', () => {
+    expect(shortCountdown(at(47 * 60_000 + 30_000), NOW)).toBe('47분 후');
+    expect(shortCountdown(at(20_000), NOW)).toBe('1분 후');
+    expect(shortCountdown(at(3.5 * 3_600_000), NOW)).toBe('3시간 후');
+    expect(shortCountdown(at(23.9 * 3_600_000), NOW)).toBe('23시간 후');
+    expect(shortCountdown(at(2.2 * 86_400_000), NOW)).toBe('2일 후');
+    expect(shortCountdown(at(-1), NOW)).toBe('리셋됨');
+    expect(shortCountdown(at(0), NOW)).toBe('리셋됨');
+    expect(shortCountdown(null, NOW)).toBe('');
+  });
+
+  it('shortCountdown: boundaries — 59분 / 60분, 1일 N시간 under 48 hours, a bad ISO string shows nothing', () => {
+    expect(shortCountdown(at(59 * 60_000 + 59_000), NOW)).toBe('59분 후');
+    expect(shortCountdown(at(60 * 60_000), NOW)).toBe('1시간 후');
+    expect(shortCountdown(at(24 * 3_600_000), NOW)).toBe('1일 후');
+    expect(shortCountdown(at(29.5 * 3_600_000), NOW)).toBe('1일 5시간 후');
+    expect(shortCountdown(at(47 * 3_600_000 + 59 * 60_000), NOW)).toBe('1일 23시간 후');
+    expect(shortCountdown(at(48 * 3_600_000), NOW)).toBe('2일 후');
+    expect(shortCountdown('not a date', NOW)).toBe('');
+    expect(shortCountdown('2026-13-45T99:00:00Z', NOW)).toBe('');
+  });
+
+  it('fullestWindow: highest usedPct, ties 5h > 주간 > Fable', () => {
+    const all = ['fiveHour', 'weekly', 'fable'] as const;
+    const w = (usedPct: number) => ({ usedPct, resetsAt: null });
+    expect(fullestWindow({ status: 'ok', fetchedAt: null, fiveHour: w(10), weekly: w(60), fable: w(30) }, [...all])).toBe('weekly');
+    expect(fullestWindow({ status: 'ok', fetchedAt: null, fiveHour: w(50), weekly: w(50), fable: w(50) }, [...all])).toBe('fiveHour');
+    expect(fullestWindow({ status: 'ok', fetchedAt: null, fiveHour: null, weekly: w(40), fable: w(40) }, [...all])).toBe('weekly');
+    expect(fullestWindow({ status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null }, [...all])).toBeNull();
+  });
+
+  it('each card shows the short countdown only on its fullest window', () => {
+    const u: UsageSnapshot = { generatedAt: 'x', deckReachable: true, accounts: {
+      a: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 20, resetsAt: at(47 * 60_000 + 1) }, weekly: { usedPct: 70, resetsAt: at(2.5 * 86_400_000) }, fable: { usedPct: 5, resetsAt: at(3_600_000) } },
+      b: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 30, resetsAt: at(3 * 3_600_000 + 1) }, weekly: { usedPct: 30, resetsAt: at(86_400_000) }, fable: null },
+      c: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 90, resetsAt: null }, weekly: { usedPct: 10, resetsAt: at(1000) }, fable: null },
+    } };
+    render(<UsagePanel usage={u} current={null} now={NOW} />);
+    expect(screen.getByTestId('a-weekly-cd').textContent).toBe('2일 후');
+    expect(screen.queryByTestId('a-fiveHour-cd')).toBeNull();
+    expect(screen.queryByTestId('a-fable-cd')).toBeNull();
+    expect(screen.getByTestId('b-fiveHour-cd').textContent).toBe('3시간 후');
+    expect(screen.queryByTestId('b-weekly-cd')).toBeNull();
+    expect(document.querySelector('[data-testid^="c-"][data-testid$="-cd"]')).toBeNull(); // fullest window has no reset time
+  });
+
+  it('다음 tag on the routed Claude card, Opus noted, reason in the title', () => {
+    const { rerender } = render(<UsagePanel usage={usage} current="a" now={NOW} next={{ account: 'b', reason: '5h 여유 많음' }} />);
+    const tag = screen.getByTestId('next-b');
+    expect(tag.textContent).toBe('다음');
+    expect(tag.title).toBe('다음 턴: 5h 여유 많음');
+    expect(screen.queryByTestId('next-a')).toBeNull();
+    rerender(<UsagePanel usage={usage} current="a" now={NOW} next={{ account: 'c', reason: 'r', asOpus: true }} />);
+    expect(screen.getByTestId('next-c').textContent).toBe('다음 · Opus');
+    rerender(<UsagePanel usage={usage} current="a" now={NOW} next={null} />);
+    expect(screen.queryByTestId(/^next-/)).toBeNull();
   });
 });

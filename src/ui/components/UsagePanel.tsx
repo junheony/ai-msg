@@ -24,6 +24,32 @@ export function countdown(resetsAt: string | null, now: number): string {
   return h >= 24 ? `${Math.floor(h / 24)}일 ${h % 24}시간 후 리셋` : `${h}시간 ${m}분 후 리셋`;
 }
 
+/**
+ * The always-on short form next to a card's fullest window: "47분 후", "3시간 후", "1일 5시간 후" (under 48 hours the
+ * hours still count), "2일 후", "리셋됨"; '' without a (readable) reset time.
+ */
+export function shortCountdown(resetsAt: string | null, now: number): string {
+  if (!resetsAt) return '';
+  const ms = parseIsoUtc(resetsAt) - now;
+  if (Number.isNaN(ms)) return '';
+  if (ms <= 0) return '리셋됨';
+  const h = Math.floor(ms / 3_600_000);
+  if (h >= 48) return `${Math.floor(h / 24)}일 후`;
+  if (h >= 24) return h > 24 ? `1일 ${h - 24}시간 후` : '1일 후';
+  if (h >= 1) return `${h}시간 후`;
+  return `${Math.max(1, Math.floor(ms / 60_000))}분 후`;
+}
+
+/** The window whose short countdown a card shows: the highest usedPct, ties 5h > 주간 > Fable; null when no window has a value. */
+export function fullestWindow(u: AccountUsage, keys: WindowKey[]): WindowKey | null {
+  let best: { key: WindowKey; pct: number } | null = null;
+  for (const key of (['fiveHour', 'weekly', 'fable'] as const).filter((k) => keys.includes(k))) {
+    const pct = u[key]?.usedPct;
+    if (typeof pct === 'number' && (!best || pct > best.pct)) best = { key, pct };
+  }
+  return best?.key ?? null;
+}
+
 /** Absolute local reset time, e.g. "10/3 09:00" (an exhausted window needs a when, not a countdown). */
 export function resetStamp(resetsAt: string | null): string {
   if (!resetsAt) return '';
@@ -63,7 +89,7 @@ function useClock(fixed: number | undefined, periodMs = 30_000): number {
 type Pop = { seat: Seat; x: number; y: number; pinned: boolean };
 
 /** One window row: label · rounded bar · remaining %; a spent window collapses into a muted "소진 · reset" pill. */
-function WindowRow({ seat, name, k, w, now }: { seat: Seat; name: string; k: WindowKey; w: UsageWindow | null; now: number }) {
+function WindowRow({ seat, name, k, w, now, short }: { seat: Seat; name: string; k: WindowKey; w: UsageWindow | null; now: number; /** Show the short countdown next to the % (the card's fullest window). */ short?: boolean }) {
   const rem = remainingPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
   const title = rem === null ? `${name} · 알 수 없음` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}`;
@@ -80,16 +106,18 @@ function WindowRow({ seat, name, k, w, now }: { seat: Seat; name: string; k: Win
     <div data-testid={`${seat}-${k}`} className={`usage-row ${levelClass(w)}`} title={title}>
       <span className="usage-label">{name}</span>
       <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
-      <span className="usage-value">{rem === null ? '—' : <>{rem}<small>%</small></>}</span>
+      <span className="usage-value">{rem === null ? '—' : <>{rem}<small>%</small></>}{short && w?.resetsAt && <small className="usage-cd" data-testid={`${seat}-${k}-cd`}>{shortCountdown(w.resetsAt, now)}</small>}</span>
       {reset && <span className="usage-reset">{reset}</span>}
     </div>
   );
 }
 
 /** One seat as a small card: mark + letter, then aligned rows; reset times on hover (title) and in a tap popover. */
-function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHistory }: {
+function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHistory, next }: {
   seat: Seat; u: AccountUsage; windows: { key: WindowKey; name: string }[]; current: boolean; now: number;
   pop: Pop | null; onPop: (p: Pop | null) => void; hint?: string; onOpenHistory?: () => void;
+  /** The active session's next turn would run here (route_preview). */
+  next?: RouteNext | null;
 }) {
   const label = useAccounts().label(seat);
   const at = (el: HTMLElement, pinned: boolean): Pop => {
@@ -100,6 +128,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
   const credits = seat === 'gpt' ? creditsText(u.credits) : null;
   // Compact layouts (phone, tablet) show one number per seat: the least left of 5h / 주간, the windows that gate every model.
   // Fable only gates Fable (a spent Fable must not read "소진" for the whole seat); its bar still shows.
+  const fullest = fullestWindow(u, windows.map((w) => w.key));
   let worst: { name: string; w: UsageWindow; rem: number } | null = null;
   for (const { key, name } of windows) {
     if (key === 'fable') continue;
@@ -125,6 +154,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
       }}
     >
       {current && <span className="usage-dot" aria-hidden="true" />}
+      {next && <span className="usage-next" data-testid={`next-${seat}`} title={`다음 턴: ${next.reason}`}>{next.asOpus ? '다음 · Opus' : '다음'}</span>}
       <div className="usage-id">
         {seat === 'gpt' ? <OpenAIMark className="usage-mark gpt" /> : <ClaudeMark className="usage-mark claude" />}
         <span className="usage-letter" title={label}>{label}</span>
@@ -133,7 +163,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
         {!worst ? '—' : worst.rem === 0 ? '소진' : <>{worst.rem}<small>%</small></>}
       </span>
       <div className="usage-rows">
-        {windows.map(({ key, name }) => <WindowRow key={key} seat={seat} name={name} k={key} w={u[key]} now={now} />)}
+        {windows.map(({ key, name }) => <WindowRow key={key} seat={seat} name={name} k={key} w={u[key]} now={now} short={key === fullest} />)}
         {credits && (
           <div data-testid="gpt-credits" className="usage-row credits" title="ChatGPT 크레딧 잔액 — 주간 한도가 끝난 뒤 쓰는 유료 크레딧">
             <span className="usage-label">크레딧</span>
@@ -167,7 +197,10 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
   );
 }
 
-export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory }: { usage: UsageSnapshot | null; current: Seat | null; now?: number; onOpenHistory?: () => void }) {
+/** Where the active session's next turn would go (route_preview), as the card tag shows it. */
+export type RouteNext = { account: Seat; reason: string; asOpus?: boolean };
+
+export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next = null }: { usage: UsageSnapshot | null; current: Seat | null; now?: number; onOpenHistory?: () => void; next?: RouteNext | null }) {
   const now = useClock(fixedNow);
   const { active } = useAccounts();
   const [pop, setPop] = useState<Pop | null>(null);
@@ -186,7 +219,7 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory }: { u
   return (
     <div className="usage-panel" {...(cards > 4 ? { 'data-dense': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})} style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}>
       {active.map(({ id: a }) => (
-        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />
+        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} next={next?.account === a ? next : null} />
       ))}
       <SeatCard
         seat="gpt" u={gpt} windows={GPT_WINDOWS} current={current === 'gpt'} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory}

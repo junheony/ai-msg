@@ -107,7 +107,7 @@ describe('TurnRunner: background work after the turn result', () => {
     f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
     await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
 
-    expect(runner.followUp('s1', { turnId: 'f1', text: 'status?', clientRef: 'r1', model: 'sonnet' })).toBe(true);
+    expect(runner.followUp('s1', { turnId: 'f1', text: 'status?', clientRef: 'r1', model: 'sonnet' })).toEqual({ queuedBehind: null });
     await waitFor(() => f.inputs.length === 2, 'follow-up written');
     expect(of(msgs, 'turn_started').at(-1)).toMatchObject({ turnId: 'f1', clientRef: 'r1', reason: '백그라운드 대기 중 이어 보냄' });
     f.push(sdk.delta('still building'), sdk.result('still building', 's1'));
@@ -117,7 +117,8 @@ describe('TurnRunner: background work after the turn result', () => {
     // Background finishes; while its continuation streams, another message arrives and is queued.
     f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('built'));
     await waitFor(() => of(msgs, 'delta').some((m) => m.text === 'built'), 'continuation output');
-    expect(runner.followUp('s1', { turnId: 'f2', text: 'ship it' })).toBe(true);
+    // Taken, but held in deck until the continuation's result: the caller is told which segment it waits behind.
+    expect(runner.followUp('s1', { turnId: 'f2', text: 'ship it' })).toEqual({ queuedBehind: '백그라운드 계속' });
     await new Promise((r) => setTimeout(r, 5));
     expect(f.inputs).toHaveLength(2);
     f.push(sdk.result('built', 's1'));
@@ -128,6 +129,30 @@ describe('TurnRunner: background work after the turn result', () => {
     expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.text])).toEqual([['t1', 'launched'], ['f1', 'still building'], ['t1:bg1', 'built'], ['f2', 'shipped']]);
   });
 
+  it('cancelQueued takes a waiting follow-up back out by its clientRef; one already in, an unknown ref or no process: null', async () => {
+    const { f, msgs, sink, runner } = await setup();
+    expect(runner.cancelQueued('s1', 'r1')).toBeNull();
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('built'));
+    await waitFor(() => of(msgs, 'delta').some((m) => m.text === 'built'), 'continuation output');
+    expect(runner.followUp('s1', { turnId: 'f1', text: 'first', clientRef: 'r1' })).toEqual({ queuedBehind: '백그라운드 계속' });
+    expect(runner.followUp('s1', { turnId: 'f2', text: 'second', clientRef: 'r2' })).toEqual({ queuedBehind: '백그라운드 계속' });
+    expect(runner.cancelQueued('s1', 'nope')).toBeNull();
+    expect(runner.cancelQueued('s1', 'r1')).toBe('f1');
+    expect(runner.cancelQueued('s1', 'r1')).toBeNull();
+    f.push(sdk.result('built', 's1'));
+    await waitFor(() => f.inputs.length === 2, 'the remaining follow-up written after the continuation');
+    expect(of(msgs, 'turn_started').map((m) => m.turnId)).toEqual(['t1', 't1:bg1', 'f2']);
+    // Already handed to the process: nothing to withdraw.
+    expect(runner.cancelQueued('s1', 'r2')).toBeNull();
+    f.push(sdk.result('done', 's1'));
+    await done;
+    expect(of(msgs, 'turn_result').map((m) => m.turnId)).toEqual(['t1', 't1:bg1', 'f2']);
+    expect(of(msgs, 'error')).toEqual([]);
+  });
+
   it('stop while a continuation streams ends it as 중단됨 and refuses the queued follow-up with its clientRef', async () => {
     const { f, msgs, sink, ac, runner } = await setup();
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
@@ -135,7 +160,7 @@ describe('TurnRunner: background work after the turn result', () => {
     await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
     f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('working'));
     await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
-    expect(runner.followUp('s1', { turnId: 'f1', text: 'next', clientRef: 'r9' })).toBe(true);
+    expect(runner.followUp('s1', { turnId: 'f1', text: 'next', clientRef: 'r9' })).toEqual({ queuedBehind: '백그라운드 계속' });
     ac.abort();
     await done;
     expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 't1:bg1', ok: false, errorText: '중단됨' });
@@ -151,7 +176,7 @@ describe('TurnRunner: background work after the turn result', () => {
     await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
     f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('working'));
     await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
-    expect(runner.followUp('s1', { turnId: 'f1', text: 'next', clientRef: 'r9' })).toBe(true);
+    expect(runner.followUp('s1', { turnId: 'f1', text: 'next', clientRef: 'r9' })).toEqual({ queuedBehind: '백그라운드 계속' });
     ac.abort(SHUTDOWN_ABORT);
     await done;
     expect(of(msgs, 'error')).toEqual([expect.objectContaining({ turnId: 'f1', clientRef: 'r9', code: 'draining' })]);
@@ -167,7 +192,7 @@ describe('TurnRunner: background work after the turn result', () => {
     await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
     f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('built'));
     await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
-    expect(runner.followUp('s1', { turnId: 'f1', text: 'ship it', clientRef: 'r1' })).toBe(true);
+    expect(runner.followUp('s1', { turnId: 'f1', text: 'ship it', clientRef: 'r1' })).toEqual({ queuedBehind: '백그라운드 계속' });
     f.push(sdk.result('built', 's1'));
     await waitFor(() => f.inputs.length === 2, 'queued follow-up written');
     expect(seen).toEqual([false, true]);
@@ -183,7 +208,7 @@ describe('TurnRunner: background work after the turn result', () => {
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
     await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
-    expect(runner.followUp('s1', { turnId: 'f1', text: 'look', attachments: ['i1'], clientRef: 'r1' })).toBe(true);
+    expect(runner.followUp('s1', { turnId: 'f1', text: 'look', attachments: ['i1'], clientRef: 'r1' })).toEqual({ queuedBehind: null });
     await waitFor(() => of(msgs, 'error').length === 1, 'refusal');
     expect(of(msgs, 'turn_started').at(-1)).toMatchObject({ turnId: 'f1', clientRef: 'r1' });
     expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 'f1', ok: false, errorText: '메시지를 보내지 못했습니다' });

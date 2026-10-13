@@ -18,7 +18,9 @@ export function useStartWatch(panes: PaneState[], connected: boolean, reconnect:
   const since = useRef(new Map<string, number | 'fired'>());
   const go = useRef(reconnect);
   go.current = reconnect;
-  const waits = connected ? panes.filter((p) => p.awaitingStart).map((p) => `${p.id}\n${p.awaitingRef ?? ''}`) : [];
+  // A send the server answered with turn_queued (held behind a streaming segment) is known to have arrived: its
+  // turn_started comes with that segment's result, however long it streams — no stall to suspect.
+  const waits = connected ? panes.filter((p) => p.awaitingStart && !p.awaitingBehind).map((p) => `${p.id}\n${p.awaitingRef ?? ''}`) : [];
   const key = waits.join('\t');
   useEffect(() => {
     const m = since.current;

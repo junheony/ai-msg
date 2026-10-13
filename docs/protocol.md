@@ -20,8 +20,11 @@
 | `catchup` | 턴 이벤트에 `pos` 를 붙이고 `open_session.after` 에 답한다 | 재연결 때 전체 기록을 다시 받음 |
 | `accounts` | `hello.accounts` 로 Claude 계정 목록(`{ id, label, home, retired }`, 설정 순서, 뺀 계정 포함)을 알린다 | 계정은 a/b/c, A 가 Desktop |
 | `sessionSandbox` | `set_sandbox` 로 기존 GPT 세션의 샌드박스를 바꾸고, `open_session.accepts` 에 `'sandbox'` 를 넣은 소켓에만 `sandbox` 메시지로 알린다. `catchup.sandbox` 도 채운다 | 기존 GPT 세션의 샌드박스 칩은 표시만 |
+| `routePreview` | `route_preview{sessionId, cwd?, model?}` 에 `route_preview{sessionId, account, reason, asOpus?}` 로 답한다(Claude 세션만; GPT·Gemini·모르는 id·뺀 계정 세션, 새 세션의 `자동` 은 답 없음). 소켓마다 마지막 요청을 기억해 사용량이 바뀌어 답이 달라지면 다시 보낸다. `sessionId: null` 에 `cwd` 가 없으면 요청 철회 | 상단 사용량 카드에 `다음` 표시 없음(요청도 보내지 않음) |
 
 기능을 더할 때: `FEATURES` 에 이름을 더하고, UI 는 `has()` 로 갈라 쓰고, 이 표에 한 줄 더한다. 배포된 이름은 지우지 않는다.
+
+기능 이름 없이 `open_session.accepts` 로만 여는 서버 메시지(규칙 3): `'sandbox'`(위 표), `'turn_queued'` — 백그라운드 작업으로 열어 둔 프로세스에 보낸 메시지가 스트리밍 중인 구간(`백그라운드 계속` 등) 뒤에서 기다릴 때 보낸 소켓에만 `turn_queued{clientRef, behind}` 를 보낸다(옛 UI 는 `시작하는 중…` 그대로). 그 메시지의 취소는 `cancel_queued{sessionId, clientRef}` 로 서버 큐에서도 뺀다(답 없음; 이미 들어갔으면 그 ref 의 `turn_started` 가 평소처럼 온다).
 
 계정 고정(`send.accountPin`, `set_account_pin.pin`)의 id 는 모양(`ACCOUNT_ID_RE`, `src/shared/accounts.ts`)만 스키마에서 보고, 어떤 계정이 있는지는 서버가 처리할 때 설정으로 확인한다. 설정에 없는 id 와 뺀 계정(retired)은 `error` 로 거절한다. 옛 UI 가 보내는 a/b/c 는 그대로 통과한다.
 

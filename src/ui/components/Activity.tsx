@@ -27,6 +27,15 @@ export function clock(ms: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
+/** How long ago, coarsely: 방금 (under 5 s), N초 전, N분 전, N시간 전. */
+export function ago(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 5) return '방금';
+  if (s < 60) return `${s}초 전`;
+  if (s < 3600) return `${Math.floor(s / 60)}분 전`;
+  return `${Math.floor(s / 3600)}시간 전`;
+}
+
 /** 950 → "950", 1234 → "1.2k", 25300 → "25k". */
 export function tokens(n: number): string {
   if (n < 1000) return String(Math.round(n));
@@ -64,10 +73,12 @@ const IDLE_VERBS = ['생각 중…', '작업 중…', '살펴보는 중…', '�
  * Desktop-style live line above the composer while a turn runs: spinner, what it is doing now, m:ss,
  * output tokens, tool count and a stop button. Owns the 1s timer so nothing else re-renders per tick.
  */
-export function StatusRow({ startedAt, started, progress, live, onInterrupt, onCancel }: {
+export function StatusRow({ startedAt, started, queuedBehind = null, progress, live, onInterrupt, onCancel }: {
   startedAt: number | null;
   /** turn_started arrived (false = 시작하는 중…). */
   started: boolean;
+  /** Not started because the server holds the send behind a streaming segment (its reason, e.g. 백그라운드 계속). */
+  queuedBehind?: string | null;
   progress: { outputTokens: number; phase: TurnPhase } | null;
   live: Assistant | null;
   onInterrupt?: () => void;
@@ -78,7 +89,7 @@ export function StatusRow({ startedAt, started, progress, live, onInterrupt, onC
   const ms = startedAt === null ? 0 : now - startedAt;
   const running = live ? live.toolCalls.findLast((c) => c.result === null) : undefined;
   const tool = running ? toolVerb(running) : null;
-  const verb = !started ? '시작하는 중…' : tool ? tool.verb : progress ? PHASE_VERB[progress.phase] : IDLE_VERBS[Math.floor(ms / 6000) % IDLE_VERBS.length]!;
+  const verb = !started ? (queuedBehind ? `${queuedBehind} 뒤에서 기다리는 중 — 끝나면 이어서 보냄` : '시작하는 중…') : tool ? tool.verb : progress ? PHASE_VERB[progress.phase] : IDLE_VERBS[Math.floor(ms / 6000) % IDLE_VERBS.length]!;
   const tools = live ? live.toolCalls.length : 0;
   return (
     <div className="turn-status" role="status" data-testid="turn-status">
@@ -178,13 +189,15 @@ export function AgentCard({ call, live }: { call: ToolCallItem; live: boolean })
 const TYPE_LABEL: Record<string, string> = { local_bash: '명령', local_agent: '에이전트', mcp_task: 'MCP', local_workflow: '워크플로', remote_agent: '원격 에이전트' };
 
 /**
- * "백그라운드 작업 N개" pill with a pulsing dot; click opens the task list (each with its age, status and
- * 중지 when the process can stop one task) and 모두 중지.
+ * "백그라운드 작업 N개 · m:ss" pill with a pulsing dot — the clock is the oldest task's run time (or, without per-task
+ * detail, how long the pill has been up) and ticks while the pill is closed too, so a long hold reads as alive rather
+ * than stuck; click opens the task list (each with its age, status and 중지 when the process can stop one task) and
+ * 모두 중지.
  */
 export function BackgroundPill({ bg, onStopTask, onStopAll }: { bg: PaneBackground; onStopTask?: (taskId: string) => void; onStopAll: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const now = useNow(open);
+  const now = useNow(true);
   useEffect(() => {
     if (!open) return;
     const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
@@ -195,15 +208,21 @@ export function BackgroundPill({ bg, onStopTask, onStopAll }: { bg: PaneBackgrou
   }, [open]);
   const rows = bg.detail.length ? bg.detail.map((d) => ({ id: d.id, description: d.description, type: d.type, ms: now - bg.receivedAt + d.ageMs })) : bg.tasks.map((t, i) => ({ id: null as string | null, description: t, type: '', ms: null as number | null, key: i }));
   const n = rows.length;
+  const oldestMs = bg.detail.length ? now - bg.receivedAt + Math.max(...bg.detail.map((d) => d.ageMs)) : now - bg.receivedAt;
+  const last = bg.last;
+  // Tense-free (the call may be over, or still running after minutes): "Bash cast call 0x5d…", "Read lib.ts".
+  const lastText = !last ? '' : last.kind === 'task' ? last.text : (({ arg }) => (arg ? `${last.name} ${arg}` : last.name))(toolVerb({ name: last.name, input: last.input }));
+  const seen = last ? (now - last.at < 5_000 ? '방금 활동' : `활동 ${ago(now - last.at)}`) : '';
   return (
     <div className="bg-pill-wrap" ref={ref}>
-      <button type="button" className={`bg-pill ${open ? 'open' : ''}`} onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" data-testid="bg-pill">
+      <button type="button" className={`bg-pill ${open ? 'open' : ''}`} onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" data-testid="bg-pill" title={lastText || undefined}>
         <span className="pulse-dot" aria-hidden="true" />
-        <span className="bg-pill-label"><span className="bg-pill-word">백그라운드</span><span className="bg-pill-long"> 작업</span> {n}개</span>
+        <span className="bg-pill-label"><span className="bg-pill-word">백그라운드</span><span className="bg-pill-long"> 작업</span> {n}개<span className="bg-pill-clock"> · {clock(oldestMs)}</span>{seen && <span className="bg-pill-seen"> · {seen}</span>}</span>
       </button>
       {open && (
         <div className="bg-popover" role="dialog" aria-label="백그라운드 작업" data-testid="bg-popover">
           <div className="bg-pop-head">백그라운드 작업 {n}개</div>
+          {seen && <div className="bg-pop-seen" title={lastText}>마지막 {seen}{lastText ? ` · ${lastText}` : ''}</div>}
           <ul className="bg-list">
             {rows.map((r, i) => (
               <li key={r.id ?? i}>

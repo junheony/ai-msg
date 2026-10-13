@@ -64,6 +64,12 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
   }),
   z.object({ type: z.literal('interrupt'), turnId: z.string().min(1) }),
+  /**
+   * 취소 on a send the server answered with `turn_queued`: take it out of the session's queue before it goes in. No
+   * reply — too late (already in) and the ref's turn_started arrives as usual. Only sent after a `turn_queued`, so any
+   * server that sent one understands it.
+   */
+  z.object({ type: z.literal('cancel_queued'), sessionId: z.string().min(1), clientRef: z.string().min(1).max(CLIENT_REF_MAX) }),
   /** Stop one background task of a running turn (the rest of the turn keeps going). */
   z.object({ type: z.literal('stop_task'), turnId: z.string().min(1), taskId: z.string().min(1).max(200) }),
   /**
@@ -92,6 +98,14 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * sessions start in; `autoApprove` is the legacy switch (true = bypassPermissions, false = default).
    */
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional() }),
+  /**
+   * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
+   * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),
+   * without running one. Answered with `route_preview` (Claude sessions only; GPT / Gemini and unknown ids get no
+   * answer); the server remembers the socket's last ask and answers it again after a usage change that changes the answer.
+   * `sessionId: null` with no `cwd` withdraws the ask (the pane left Claude): nothing more is sent.
+   */
+  z.object({ type: z.literal('route_preview'), sessionId: z.string().min(1).max(200).nullable(), cwd: z.string().min(1).max(4096).optional(), model: z.enum(['sonnet', 'opus', 'fable', 'auto']).optional() }),
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
@@ -143,8 +157,10 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - abortLabel: a user's interrupt ends the turn with exactly '중단됨' (never the SDK's own text).
  * - catchup: turn events carry `pos`; `open_session.after` is answered with `catchup` when possible.
  * - accounts: `hello.accounts` lists the configured Claude accounts; account pins take any of its active ids.
+ * - sessionSandbox: `set_sandbox` changes an existing GPT session's sandbox (announced to sockets that accept 'sandbox').
+ * - routePreview: `route_preview` asks are answered with `route_preview` (and again after usage changes).
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**
@@ -206,6 +222,12 @@ export type ServerMessage =
   | { type: 'question_resolved'; requestId: string; answers: QuestionAnswers | null }
   /** Non-terminal note about a running turn (e.g. a refused session move). */
   | ({ type: 'turn_notice'; message: string } & TurnScope)
+  /**
+   * The send was taken by the session's held-open process but waits in deck while a segment streams (`behind` = that
+   * segment's reason, e.g. 백그라운드 계속): its turn_started comes with that segment's result. Only to the sending socket,
+   * and only when it asked for the kind (open_session.accepts, rule 3).
+   */
+  | { type: 'turn_queued'; turnId: string; sessionId: string; cwd: string; clientRef: string; behind: string }
   /** A hook sent the model a message mid-turn (e.g. a Stop hook made it keep going): a muted row in the turn. `event`: Stop, PreToolUse… */
   | ({ type: 'turn_system'; source: string; label: string; text: string } & TurnScope)
   /** A background task (run_in_background Bash, backgrounded agent) settled during the turn; drives a push, the UI ignores it. */
@@ -217,7 +239,10 @@ export type ServerMessage =
   /** A subagent's own tool call / result, under the Agent call `parentToolUseId` (never in the main transcript). */
   | ({ type: 'sub_tool_call'; parentToolUseId: string; toolUseId: string; name: string; input: unknown } & TurnScope)
   | ({ type: 'sub_tool_result'; parentToolUseId: string; toolUseId: string; isError: boolean } & TurnScope)
-  | { type: 'activity'; sessions: SessionActivity[] }
+  /** `draining`: the server is waiting for running work before a restart. `serverStartedAt`: when this server process started (ms, fixed) — a change after a reconnect means it restarted. */
+  | { type: 'activity'; sessions: SessionActivity[]; draining?: boolean; serverStartedAt?: number }
+  /** The answer to a `route_preview` ask (and again after each usage change): the account the next turn would take and why. */
+  | { type: 'route_preview'; sessionId: string | null; account: Account; reason: string; asOpus?: boolean }
   | ({ type: 'turn_retry'; fromAccount: Account; toAccount: Account; reason: string; attempt: number } & TurnScope)
   /**
    * Background tasks (Agent run_in_background, background Bash) live in the turn's process, one

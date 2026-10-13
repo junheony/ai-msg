@@ -18,6 +18,9 @@ import { QuestionCard } from './components/QuestionCard';
 import { Sidebar, type SidebarView } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
 import { UsageView } from './components/UsageView';
+import { WorkStatus } from './components/WorkStatus';
+import { isGeminiAccount } from '../shared/accounts';
+import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
@@ -28,6 +31,11 @@ import { useIsPhone } from './useIsPhone';
 /** Disconnected this long → the 서버 응답 없음 bar (short blips during a restart stay at 재연결 중…). */
 const DOWN_NOTICE_MS = 20_000;
 const DOWN_TICK_MS = 10_000;
+/** Hidden sidebar peek: dwell on the left edge this long before it slides out; this long outside it before it goes. */
+const PEEK_OPEN_MS = 150;
+const PEEK_CLOSE_MS = 300;
+/** How long the 재시작됨 chip stays after a reconnect found a new server process (a click closes it sooner). */
+const RESTARTED_CHIP_MS = 10 * 60_000;
 /** Boot /api/me misses (3 s apart) before 확인 중… turns into 서버 응답 없음. */
 const BOOT_NOTICE_FAILS = 5;
 const hhmm = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -36,7 +44,7 @@ import { nextTheme, type Theme } from './prefs';
 import { createSocket } from './ws';
 import { useStartWatch } from './useStartWatch';
 import { OPEN_REQUEST_MISSING, OPEN_REQUEST_WAIT_MS, openRequestStep } from './openRequest';
-import { composerOf, focusComposer, routeContext, routeKey } from './composerFocus';
+import { composerOf, finePointer, focusComposer, hasOpenPopup, routeContext, routeKey } from './composerFocus';
 import { tabTitle } from './tabTitle';
 import { useIndexRefresh, type IndexRefresh } from './indexRefresh';
 import { createCatchup, type Catchup } from './catchup';
@@ -56,6 +64,29 @@ function readLocal(key: string): string | null {
 }
 function writeLocal(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* storage unavailable: not kept */ }
+}
+
+/**
+ * What to ask route_preview for the pane (a Claude session, or a new chat set to Claude); null = no 다음 tag. `model` is
+ * what a send would carry (as Pane's modelField): none for an existing session the user picked no model for.
+ */
+function routePreviewAsk(pane: AppState['panes'][number]): { key: string; sessionId: string | null; cwd: string; model?: ClaudeModel | 'auto' } | null {
+  const s = pane.session;
+  if (!s) return null;
+  const claude = s.sessionId === null ? pane.engine === 'claude' && !s.accountPin : s.engine ? s.engine === 'claude' : s.account !== 'gpt' && !(s.account && isGeminiAccount(s.account));
+  if (!claude) return null;
+  const picked = s.sessionId === null || pane.modelPicked;
+  const model = picked && (pane.model === 'auto' || isClaudeModel(pane.model)) ? pane.model : undefined;
+  return { key: `${s.sessionId ?? ''}|${s.cwd}|${s.account ?? ''}|${s.accountPin ?? ''}|${model ?? ''}`, sessionId: s.sessionId, cwd: s.cwd, ...(model ? { model } : {}) };
+}
+
+/** The last server process start this tab saw, and the 재시작됨 chip it showed (sessionStorage: survives a reload). */
+const SERVER_START_KEY = 'deck.serverStart';
+function loadServerStart(): { startedAt: number | null; restartedAt: number | null } {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(SERVER_START_KEY) ?? 'null') as { startedAt?: unknown; restartedAt?: unknown } | null;
+    return { startedAt: typeof v?.startedAt === 'number' ? v.startedAt : null, restartedAt: typeof v?.restartedAt === 'number' ? v.restartedAt : null };
+  } catch { return { startedAt: null, restartedAt: null }; }
 }
 
 /** Every non-archived session once (the copy in the index), newest first — the 최근 order ⌘[ / ⌘] walk. */
@@ -86,7 +117,11 @@ export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   // ux-state: panes, pickers, folded sidebar groups and the drawer come back after a reload (persist.ts).
   const saved = useMemo(() => loadUi(), []);
-  const [state, dispatch] = useReducer(reducer, saved, (ui) => hydrate(initialState, ui, loadQueues()));
+  const [state, dispatch] = useReducer(reducer, saved, (ui) => {
+    // A reload (often the automatic one after a restart) compares the first activity with the server this tab saw last.
+    const start = loadServerStart();
+    return hydrate({ ...initialState, serverStartedAt: start.startedAt, restartedAt: start.restartedAt }, ui, loadQueues());
+  });
   const [collapsed, setCollapsed] = useState<string[]>(() => saved?.collapsed ?? []);
   const firstBuild = useRef<string | null | undefined>(undefined);
   const [newBuild, setNewBuild] = useState(false);
@@ -128,6 +163,75 @@ export function App() {
   const [sidebarHidden, setSidebarHidden] = useState(() => readLocal(HIDDEN_KEY) === '1');
   useEffect(() => { writeLocal(VIEW_KEY, sidebarView); }, [sidebarView]);
   useEffect(() => { writeLocal(HIDDEN_KEY, sidebarHidden ? '1' : '0'); }, [sidebarHidden]);
+  // Peek: with the sidebar hidden (desktop), resting the pointer on the window's left edge (or on ☰) slides it out over
+  // the panes; leaving it slides it back. A rename field or an open menu inside keeps it out until that is done.
+  const [peek, setPeek] = useState(false);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sidebarWrap = useRef<HTMLDivElement>(null);
+  /** Closed by Esc / a click while the pointer still rests on it: no reopening until the pointer has left. */
+  const peekLatch = useRef(false);
+  const tucked = !phone && sidebarHidden;
+  // Hover only means something with a mouse / trackpad: a touch screen keeps ☰ / ⌘\ to show it.
+  const peekable = tucked && finePointer() && window.matchMedia('(hover: hover)').matches;
+  const clearPeekTimer = () => { if (peekTimer.current) { clearTimeout(peekTimer.current); peekTimer.current = null; } };
+  const armPeek = (e: { buttons: number }) => {
+    // A drag (text selection, pin reorder) passing the edge is no request to see the sidebar.
+    if (peekLatch.current || e.buttons !== 0) return;
+    clearPeekTimer();
+    peekTimer.current = setTimeout(() => { peekTimer.current = null; setPeek(true); }, PEEK_OPEN_MS);
+  };
+  const unlatchPeek = () => { peekLatch.current = false; };
+  /** Esc / a click inside: closes at once and latches until the pointer leaves. */
+  const closePeek = () => {
+    clearPeekTimer();
+    if (peek) peekLatch.current = true;
+    setPeek(false);
+  };
+  const leavePeek = () => {
+    clearPeekTimer();
+    const tryClose = () => {
+      peekTimer.current = setTimeout(() => {
+        const wrap = sidebarWrap.current;
+        const focus = document.activeElement;
+        const busy = !!wrap && (!!wrap.querySelector('.session-menu') || (!!focus && wrap.contains(focus) && focus.matches('input, textarea')));
+        if (busy) tryClose(); else { peekTimer.current = null; setPeek(false); }
+      }, PEEK_CLOSE_MS);
+    };
+    tryClose();
+  };
+  useEffect(() => { if (!peekable) { clearPeekTimer(); setPeek(false); peekLatch.current = false; } }, [peekable]);
+  useEffect(() => clearPeekTimer, []);
+  useEffect(() => {
+    if (!peek) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+      const wrap = sidebarWrap.current;
+      if (e.target instanceof Element && e.target.matches('input, textarea') && wrap?.contains(e.target)) return;
+      // A menu / modal / palette open (a row menu inside, or ⌘/ help opened over the peek): that Esc is its own.
+      if (hasOpenPopup()) return;
+      // Taken: the pane's side panel and its Esc (stop the running turn) must not fire with it (both skip a
+      // defaultPrevented Esc; Pane's ESC_OWNERS lists the peek too).
+      e.preventDefault();
+      clearPeekTimer();
+      peekLatch.current = true;
+      setPeek(false);
+    };
+    // Capture: runs before the bubble-phase Esc handlers (side panel, dialogs), so one Esc closes only the topmost thing.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [peek]);
+  // The latch's fallback: a pointer that left without a mouseleave (the sidebar slid out from under it) is noticed on its next move.
+  useEffect(() => {
+    if (!peekable) return;
+    const onMove = (e: MouseEvent) => {
+      if (!peekLatch.current) return;
+      const t = e.target;
+      if (t instanceof Element && (sidebarWrap.current?.contains(t) || t.closest('.sidebar-hotzone, .sidebar-toggle'))) return;
+      peekLatch.current = false;
+    };
+    window.addEventListener('mousemove', onMove);
+    return () => window.removeEventListener('mousemove', onMove);
+  }, [peekable]);
   /** The empty pane's preselected project, by pane (the project it showed before ⌘N / a delete). */
   const [newChatCwd, setNewChatCwd] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState<{ s: SessionEntry; which?: string } | null>(null);
@@ -376,6 +480,36 @@ export function App() {
     return () => cancelAnimationFrame(id);
   }, [scrollTo, state.panes]);
 
+  useEffect(() => {
+    if (state.restartedAt === null) return;
+    const t = setTimeout(() => dispatch({ type: 'dismiss_restart' }), RESTARTED_CHIP_MS);
+    return () => clearTimeout(t);
+  }, [state.restartedAt]);
+  useEffect(() => {
+    try {
+      if (state.serverStartedAt === null) sessionStorage.removeItem(SERVER_START_KEY);
+      else sessionStorage.setItem(SERVER_START_KEY, JSON.stringify({ startedAt: state.serverStartedAt, restartedAt: state.restartedAt }));
+    } catch { /* storage unavailable: a reload forgets it */ }
+  }, [state.serverStartedAt, state.restartedAt]);
+  // 다음 턴 미리보기 ('routePreview' servers): asked for the active pane's Claude session whenever it (or its account,
+  // pin or model) changes and on each connect; the server answers again by itself after usage changes. Leaving Claude
+  // withdraws the ask, so nothing more comes for it.
+  const activePane = state.panes.find((p) => p.id === state.activePaneId) ?? state.panes[0]!;
+  const previewKey = routePreviewAsk(activePane);
+  const previewAsked = useRef(false);
+  useEffect(() => {
+    if (!state.ready) { previewAsked.current = false; return; }
+    if (!has('routePreview')) return;
+    dispatch({ type: 'clear_route_preview' });
+    if (previewKey) {
+      sock.current?.send({ type: 'route_preview', sessionId: previewKey.sessionId, cwd: previewKey.cwd, ...(previewKey.model ? { model: previewKey.model } : {}) });
+      previewAsked.current = true;
+    } else if (previewAsked.current) {
+      sock.current?.send({ type: 'route_preview', sessionId: null });
+      previewAsked.current = false;
+    }
+  }, [state.ready, previewKey?.key]);
+
   const accounts = useMemo(() => uiAccounts(state.accounts), [state.accounts]);
   if (authed === null) {
     if (bootFails < BOOT_NOTICE_FAILS) return <div className="center">확인 중…</div>;
@@ -406,7 +540,7 @@ export function App() {
   const openIn = (paneId: string, sessionId: string | null, cwd: string, title: string) => {
     apply({ type: 'open', sessionId, cwd, title, paneId });
     if (sessionId) { catchup.current?.forget(sessionId); send({ type: 'open_session', sessionId }); }
-    setDrawer(false);
+    setDrawer(false); closePeek();
     requestFocus(paneId);
   };
   openById.current = (sessionId) => {
@@ -426,7 +560,7 @@ export function App() {
     if (cwd) setNewChatCwd((m) => ({ ...m, [paneId]: cwd }));
     if (pane?.session) apply({ type: 'clear_pane', paneId });
     dispatch({ type: 'focus_pane', paneId });
-    setDrawer(false);
+    setDrawer(false); closePeek();
     requestFocus(paneId);
   };
   const startChat = (paneId: string, cwd: string, name: string, text: string, attachments: UploadedAttachment[] = []) => {
@@ -437,7 +571,7 @@ export function App() {
   };
   const openHit = (h: SearchHit) => {
     if (active.session?.sessionId !== h.sessionId) openIn(active.id, h.sessionId, h.cwd, h.title);
-    else setDrawer(false);
+    else { setDrawer(false); closePeek(); }
     setScrollTo({ paneId: active.id, sessionId: h.sessionId, snippet: h.snippet, match: h.snippet.slice(h.matchStart, h.matchStart + h.matchLength), until: Date.now() + 15_000 });
   };
   const stepSession = (dir: -1 | 1) => {
@@ -448,6 +582,17 @@ export function App() {
   };
   const toggleSidebar = () => { if (phone) setDrawer((d) => !d); else setSidebarHidden((h) => !h); };
   const addPane = () => { if (!phone) { dispatch({ type: 'add_pane' }); requestFocus(); } };
+  /**
+   * ⋯ 분할 보기로 열기: a new pane, then the session in it — even one another pane already shows (the same session in two
+   * panes is allowed). `apply` moves latest.current on at once, so the new pane's id is read from there.
+   * This rests on add_pane's id being deterministic (`p${max+1}`): the reducer run again by React makes the same id.
+   */
+  const openSplit = (sessionId: string, cwd: string, title: string) => {
+    if (phone) return;
+    if (latest.current.panes.length >= MAX_PANES) { dispatch({ type: 'show_error', message: `분할 보기는 최대 ${MAX_PANES}개까지 열 수 있어요` }); return; }
+    apply({ type: 'add_pane' });
+    openIn(latest.current.activePaneId, sessionId, cwd, title);
+  };
   onShortcut.current = (id) => {
     if (id === 'palette') { setHelpOpen(false); setPaletteOpen((o) => !o); }
     else if (id === 'help') { setPaletteOpen(false); setHelpOpen((o) => !o); }
@@ -493,6 +638,14 @@ export function App() {
   const footAccount = active.session?.account ?? null;
   const orphanPerms = orphanCards(state.panes, state.pending);
   const orphanQs = orphanCards(state.panes, state.questions);
+  const waitingCards = [...state.pending, ...state.questions].map((c) => ({ sessionId: c.sessionId, cwd: c.cwd, turnId: c.turnId }));
+  /** A session's name for the 작업 현황 list: its title, else its folder, else its id's first 8 characters. */
+  const titleOf = (sessionId: string, cwd: string | null) => paletteSessions.find((x) => x.sessionId === sessionId)?.title
+    ?? state.panes.find((p) => p.session?.sessionId === sessionId)?.session?.title
+    ?? (cwd ? cwd.split('/').filter(Boolean).pop() : undefined)
+    ?? sessionId.slice(0, 8);
+  const preview = previewKey && state.routePreview && state.routePreview.sessionId === previewKey.sessionId ? state.routePreview : null;
+  const busySessions = state.activity.filter((a) => a.running || a.bg > 0).length;
 
   return (
     <AccountsContext value={accounts}>
@@ -500,14 +653,27 @@ export function App() {
       <header className="topbar">
         {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
-        {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar}>☰</button>}
+        {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         <span className="brand"><DeckMark className="spark" />deck</span>
         <button type="button" className="text-btn palette-open" onClick={() => setPaletteOpen(true)} title={`세션 검색 · 명령 (${mod}K)`} aria-label="세션 검색 · 명령">
           <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="4.75" /><path d="m10.5 10.5 3.25 3.25" /></svg>
           {!phone && <><span>검색</span><kbd>{mod}K</kbd></>}
         </button>
-        <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} />
+        <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} next={!phone ? preview : null} />
         <div className="topbar-end">
+          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onOpen={(r) => {
+            if (r.sessionId) { if (!openById.current(r.sessionId) && r.cwd) openIn(active.id, r.sessionId, r.cwd, r.title); return; }
+            // 새 대화: the pane whose turn the card belongs to.
+            const pane = state.panes.find((p) => p.activeTurnId === r.turnId || p.myTurns.includes(r.turnId ?? ''));
+            if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); requestFocus(pane.id); }
+          }} />}
+          {!phone && state.draining && (
+            <span className="top-chip warn" role="status" title="서버가 재시작을 준비 중입니다 — 돌고 있는 작업이 끝나면 다시 시작합니다">
+              <span className="chip-long">{busySessions > 0 ? `재시작 대기 중 · 작업 ${busySessions}개 기다림` : '재시작 중…'}</span>
+              <span className="chip-short" aria-hidden="true">{busySessions > 0 ? `재시작 대기 · ${busySessions}` : '재시작 중…'}</span>
+            </span>
+          )}
+          {!phone && state.restartedAt !== null && <button type="button" className="top-chip" onClick={() => dispatch({ type: 'dismiss_restart' })} title="서버가 다시 시작됐습니다 — 눌러서 닫기">재시작됨 {hhmm(state.restartedAt)}</button>}
           <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen(true)} title="토큰 사용량 기록 (주별·일별)">사용량</button>
           {!phone && <button type="button" className="text-btn split" onClick={addPane} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>+ 분할</button>}
           <NotifyMenu />
@@ -547,11 +713,18 @@ export function App() {
       )}
       <div className="body">
         {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
-        <div className={`sidebar-wrap ${phone ? 'drawer' : ''} ${drawer ? 'open' : ''} ${!phone && sidebarHidden ? 'hidden' : ''}`}>
+        {peekable && <div className="sidebar-hotzone" data-testid="sidebar-hotzone" aria-hidden="true" onMouseEnter={peek ? undefined : armPeek} onMouseLeave={() => { unlatchPeek(); if (!peek) clearPeekTimer(); }} />}
+        <div
+          ref={sidebarWrap}
+          className={`sidebar-wrap ${phone ? 'drawer' : ''} ${drawer ? 'open' : ''} ${tucked ? 'hidden' : ''} ${peek ? 'peek' : ''}`}
+          onMouseEnter={peek ? clearPeekTimer : undefined}
+          onMouseLeave={peekable ? () => { unlatchPeek(); if (peek) leavePeek(); } : undefined}
+        >
           <Sidebar
             projects={state.projects}
             currentSessionId={active.session?.sessionId ?? null}
             onOpen={(sessionId, cwd, title) => openIn(active.id, sessionId, cwd, title)}
+            {...(phone ? {} : { onOpenSplit: openSplit, splitBlocked: state.panes.length >= MAX_PANES ? `분할 보기는 최대 ${MAX_PANES}개까지예요` : null })}
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
             pins={state.pins}

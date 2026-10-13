@@ -249,6 +249,7 @@ function InlineEdit({ initial, coarse, onCancel, onSubmit }: { initial: string; 
         ref={ta}
         className="inline-edit"
         aria-label="메시지 편집"
+        autoCorrect="off" autoCapitalize="off" spellCheck={false} autoComplete="off"
         value={text}
         rows={Math.min(12, Math.max(2, text.split('\n').length))}
         onChange={(e) => setText(e.target.value)}

@@ -577,3 +577,40 @@ describe('Sidebar rows: Claude parity (icon left, quiet trailing meta)', () => {
     expect(first.querySelector('.row-end .session-meta')!.textContent).toMatch(/^one · /);
   });
 });
+
+describe('Sidebar ⋯ 분할 보기로 열기', () => {
+  afterEach(cleanup);
+  const s = (id: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1 });
+  const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'one')] }];
+  const desktop = [{ sessionId: 'd1', account: 'a' as const, title: 'desk', cwd: '/d', project: 'dp', lastModified: stamp() }];
+
+  it('sits after 이름 바꾸기 and opens the row in a split; a Desktop row offers it too', () => {
+    const onOpenSplit = vi.fn();
+    const onOpen = vi.fn();
+    render(<Sidebar projects={projects} desktop={desktop} view="projects" currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} onRename={noop} onTogglePin={noop} onOpenSplit={onOpenSplit} />);
+    fireEvent.click(screen.getByText('one').closest('li')!.querySelector('[aria-label="세션 메뉴"]')!);
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '분할 보기로 열기', '맨 위에 고정']);
+    fireEvent.click(screen.getByRole('menuitem', { name: '분할 보기로 열기' }));
+    expect(onOpenSplit).toHaveBeenCalledWith('s1', '/w', 'one');
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(screen.getByText('desk').closest('li')!.querySelector('[aria-label="세션 메뉴"]')!);
+    fireEvent.click(screen.getByRole('menuitem', { name: '분할 보기로 열기' }));
+    expect(onOpenSplit).toHaveBeenLastCalledWith('d1', '/d', 'desk');
+  });
+
+  it('all panes in use: shown disabled with the reason; absent without onOpenSplit', () => {
+    const onOpenSplit = vi.fn();
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onRename={noop} onOpenSplit={onOpenSplit} splitBlocked="최대 5개" />);
+    fireEvent.click(screen.getByLabelText('세션 메뉴'));
+    const item = screen.getByRole('menuitem', { name: '분할 보기로 열기' });
+    expect(item.getAttribute('aria-disabled')).toBe('true');
+    expect(item.getAttribute('title')).toBe('최대 5개');
+    fireEvent.click(item);
+    expect(onOpenSplit).not.toHaveBeenCalled();
+    cleanup();
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onRename={noop} />);
+    fireEvent.click(screen.getByLabelText('세션 메뉴'));
+    expect(screen.queryByRole('menuitem', { name: '분할 보기로 열기' })).toBeNull();
+  });
+});

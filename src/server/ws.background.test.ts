@@ -142,6 +142,80 @@ describe('ws: sessions held open for background work', () => {
     b.close();
   });
 
+  it('a send during a 백그라운드 계속 segment: the sender that accepts turn_queued is told it waits behind that segment; an older UI is not', async () => {
+    const S = '34343434-3434-4343-8343-343434343434';
+    const cwd = await seed(S, 'bgq');
+    fake = fakeSdk();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
+    const base1 = await a.next('turn_started');
+    fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'explore' }]), sdk.result('launched', S));
+    await a.next('turn_result', (m) => m.turnId === base1.turnId);
+    // The background work ends and its continuation streams.
+    fake.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('working'));
+    const cont = await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
+
+    const b = await client();
+    await b.next('hello');
+    b.send({ type: 'open_session', sessionId: S, accepts: ['turn_queued'] });
+    await b.next('history');
+    // Another accepting viewer of the same session: the notice is the sender's alone.
+    const d = await client();
+    await d.next('hello');
+    d.send({ type: 'open_session', sessionId: S, accepts: ['turn_queued'] });
+    await d.next('history');
+    b.send({ type: 'send', sessionId: S, cwd, text: 'first', clientRef: 'q-1' });
+    expect(await b.next('turn_queued')).toMatchObject({ sessionId: S, cwd, clientRef: 'q-1', behind: '백그라운드 계속' });
+    expect(b.got.some((m) => m.type === 'turn_started' && m.clientRef === 'q-1')).toBe(false);
+
+    // Negative control: a socket that did not ask for the kind gets no turn_queued, only the turn_started later.
+    const c = await client();
+    await c.next('hello');
+    c.send({ type: 'open_session', sessionId: S });
+    await c.next('history');
+    c.send({ type: 'send', sessionId: S, cwd, text: 'second', clientRef: 'q-2' });
+    // A third one, withdrawn while it waits (취소): never reaches the process, and its ref is no longer pending.
+    b.send({ type: 'send', sessionId: S, cwd, text: 'third', clientRef: 'q-3' });
+    await b.next('turn_queued', (m) => m.clientRef === 'q-3');
+    b.send({ type: 'cancel_queued', sessionId: S, clientRef: 'q-3' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(c.got.filter((m) => m.type === 'turn_queued')).toEqual([]);
+    expect(d.got.filter((m) => m.type === 'turn_queued')).toEqual([]);
+    expect(a.got.filter((m) => m.type === 'turn_queued')).toEqual([]);
+    // A socket that never opened the session cannot withdraw anything by naming a ref.
+    const g = await client();
+    await g.next('hello');
+    g.send({ type: 'cancel_queued', sessionId: S, clientRef: 'q-2' });
+    await new Promise((r) => setTimeout(r, 50));
+    g.close();
+    const e = await client();
+    await e.next('hello');
+    e.send({ type: 'open_session', sessionId: S });
+    expect((await e.next('history')).pendingRefs).toEqual(['q-1', 'q-2']);
+    e.close();
+
+    // The segment's result lets the first queued send in (its turn_started carries the ref); the second follows that result.
+    fake.push(sdk.result('working', S));
+    await a.next('turn_result', (m) => m.turnId === cont.turnId);
+    const q1 = await b.next('turn_started', (m) => m.clientRef === 'q-1');
+    expect(q1.reason).toBe('백그라운드 대기 중 이어 보냄');
+    fake.push(sdk.result('one', S));
+    await b.next('turn_result', (m) => m.turnId === q1.turnId);
+    const q2 = await c.next('turn_started', (m) => m.clientRef === 'q-2');
+    fake.push(sdk.result('two', S));
+    await c.next('turn_result', (m) => m.turnId === q2.turnId);
+    expect(c.got.filter((m) => m.type === 'turn_queued')).toEqual([]);
+    // Nothing else goes in: the withdrawn send is gone and the process, with no work left, ends.
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    expect(fake.inputs).toHaveLength(3); // go, first, second
+    expect([...a.got, ...b.got, ...c.got, ...d.got].some((m) => m.type === 'turn_started' && m.clientRef === 'q-3')).toBe(false);
+    a.close();
+    b.close();
+    c.close();
+    d.close();
+  });
+
   it('steer: refused with no running turn; into a running turn it reaches every viewer as steer_delivered with its prompt', async () => {
     const S = '55555555-5555-4555-8555-555555555555';
     const cwd = await seed(S, 'steer1');

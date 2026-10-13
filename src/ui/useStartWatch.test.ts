@@ -41,6 +41,20 @@ describe('useStartWatch', () => {
     expect(reconnect).toHaveBeenCalledTimes(1);
   });
 
+  it('a wait the server answered with turn_queued is not a stall: no reconnect however long the segment streams', () => {
+    const reconnect = vi.fn();
+    const { rerender } = renderHook(({ panes, connected }) => useStartWatch(panes, connected, reconnect), { initialProps: { panes: [waiting('r1')], connected: true } });
+    vi.advanceTimersByTime(START_STALL_MS / 2);
+    rerender({ panes: [{ ...waiting('r1'), awaitingBehind: '백그라운드 계속' }], connected: true });
+    vi.advanceTimersByTime(START_STALL_MS * 10);
+    expect(reconnect).not.toHaveBeenCalled();
+    // Negative control: the same wait without the server's answer still fires.
+    rerender({ panes: [newPane('p0')], connected: true });
+    rerender({ panes: [waiting('r1')], connected: true });
+    vi.advanceTimersByTime(START_STALL_MS);
+    expect(reconnect).toHaveBeenCalledTimes(1);
+  });
+
   it('another pane starting to wait does not push back the first one\'s deadline', () => {
     const reconnect = vi.fn();
     const { rerender } = renderHook(({ panes }) => useStartWatch(panes, true, reconnect), { initialProps: { panes: [waiting('r1')] } });

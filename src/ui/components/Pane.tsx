@@ -44,8 +44,8 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
   return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
 }
 
-/** Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the folder picker. */
-const ESC_OWNERS = '[role="tooltip"], .sidebar-wrap.drawer.open, .folder-picker';
+/** Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the hidden sidebar's peek, the folder picker. */
+const ESC_OWNERS = '[role="tooltip"], .sidebar-wrap.drawer.open, .sidebar-wrap.peek, .folder-picker';
 
 /**
  * The socket's send: `false` = not connected, nothing went out (createSocket). Anything else counts as sent, so a caller
@@ -388,10 +388,19 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : null}
           readOnly={entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : null}
           onInterrupt={interrupt}
-          onCancelStart={() => dispatch({ type: 'cancel_start', paneId: pane.id })}
+          onCancelStart={() => {
+            // Waiting in the server's queue (turn_queued): take it back out there too, or it would run after the 취소.
+            // Disconnected: the server still has it, so the wait stays (the next hello checks it against the history).
+            if (pane.awaitingBehind && pane.awaitingRef && s.sessionId && send({ type: 'cancel_queued', sessionId: s.sessionId, clientRef: pane.awaitingRef }) === false) {
+              dispatch({ type: 'show_error', message: '연결이 끊겨 취소하지 못했습니다 — 다시 연결되면 상태를 확인합니다' });
+              return;
+            }
+            dispatch({ type: 'cancel_start', paneId: pane.id });
+          }}
           onStopBackground={(turnId) => { sendInterrupt(turnId); }}
           onStopTask={(taskId) => { if (pane.bg) send({ type: 'stop_task', turnId: pane.bg.turnId, taskId }); }}
           runStartedAt={pane.runStartedAt}
+          awaitingBehind={pane.awaitingBehind}
           progress={pane.progress}
           agents={pane.agents}
           bg={pane.bg}

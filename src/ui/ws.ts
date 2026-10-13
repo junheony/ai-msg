@@ -1,7 +1,7 @@
 import type { ClientMessage, ServerMessage } from '../shared/protocol';
 
 /** Server message kinds beyond the base set this UI handles: told with every open_session (docs/protocol.md rule 3). */
-const ACCEPTS = ['sandbox'];
+const ACCEPTS = ['sandbox', 'turn_queued'];
 
 /**
  * Review M10: a browser cannot see the HTTP status of a refused upgrade, so after every close
