@@ -109,9 +109,9 @@ describe('reducer: background work (turn_background, 백그라운드 계속)', (
   it('an activity snapshot without background work for the session clears a lingering pill (missed empty turn_background)', () => {
     let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
     s = play([{ type: 'turn_background', turnId: 't1', ...scope, tasks: ['sleep 20'] }], s);
-    s = play([{ type: 'activity', sessions: [{ sessionId: 's1', cwd: '/w', turnId: 't1', running: false, bg: 1, forMs: 0 }] }], s);
+    s = play([{ type: 'activity', sessions: [{ sessionId: 's1', cwd: '/w', turnId: 't1', running: false, bg: 1, forMs: 0 }], serverStartedAt: 1 }], s);
     expect(s.panes[0]!.bg).not.toBeNull();
-    s = play([{ type: 'activity', sessions: [] }], s);
+    s = play([{ type: 'activity', sessions: [], serverStartedAt: 1 }], s);
     expect(s.panes[0]!.bg).toBeNull();
   });
 });
@@ -151,9 +151,9 @@ describe('reducer: live activity (status row, agent cards, sidebar)', () => {
     s = play([{ type: 'activity', sessions: [
       { sessionId: 's1', cwd: '/w', turnId: 't1', running: true, bg: 0, forMs: 0 },
       { sessionId: 's2', cwd: '/w', turnId: 't2', running: true, bg: 0, forMs: 0 },
-    ] }], s);
+    ], serverStartedAt: 1 }], s);
     expect(s.activity).toHaveLength(2);
-    s = play([{ type: 'activity', sessions: [] }], s);
+    s = play([{ type: 'activity', sessions: [], serverStartedAt: 1 }], s);
     expect(s.unread).toEqual(['s2']);
     s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
     expect(s.unread).toEqual([]);

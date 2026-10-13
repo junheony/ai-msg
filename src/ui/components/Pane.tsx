@@ -44,8 +44,8 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
   return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
 }
 
-/** Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the folder picker. */
-const ESC_OWNERS = '[role="tooltip"], .sidebar-wrap.drawer.open, .folder-picker';
+/** Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the hidden sidebar's peek, the folder picker. */
+const ESC_OWNERS = '[role="tooltip"], .sidebar-wrap.drawer.open, .sidebar-wrap.peek, .folder-picker';
 
 /**
  * The socket's send: `false` = not connected, nothing went out (createSocket). Anything else counts as sent, so a caller

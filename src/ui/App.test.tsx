@@ -20,10 +20,11 @@ import { App } from './App';
 const usage = { generatedAt: 'x', deckReachable: true, accounts: { a: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null }, b: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null }, c: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null } } } as const;
 const entry = (sessionId: string, title: string) => ({ sessionId, account: 'b' as const, cwd: '/w', projectDir: '/p', title, lastModified: Date.now(), sizeBytes: 1 });
 
-async function boot() {
+const hello = (features?: string[]) => ({ type: 'hello', usage, projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two')] }], running: [], codex: { available: false }, ...(features ? { features } : {}) } as unknown as ServerMessage);
+async function boot(features?: string[]) {
   render(<App />);
   await waitFor(() => expect(sock.onMessage).not.toBeNull());
-  server({ type: 'hello', usage, projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two')] }], running: [], codex: { available: false } } as unknown as ServerMessage);
+  server(hello(features));
 }
 function server(msg: ServerMessage) { act(() => sock.onMessage!(msg)); }
 const frames = () => sock.frames as ClientMessage[];
@@ -83,6 +84,20 @@ describe('App split view (D6)', () => {
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(4);
     expect(panes.style.getPropertyValue('--cols')).toBe('4');
     expect(split.disabled).toBe(false);
+  });
+
+  it('⋯ 분할 보기로 열기: a new pane opens the session — also one another pane already shows', async () => {
+    await boot();
+    openSession('one');
+    const row = within(document.querySelector('.sidebar') as HTMLElement).getByText('one').closest('li')!;
+    fireEvent.click(row.querySelector('[aria-label="세션 메뉴"]')!);
+    fireEvent.click(screen.getByRole('menuitem', { name: '분할 보기로 열기' }));
+    const panes = screen.getAllByTestId(/^pane-/);
+    expect(panes).toHaveLength(2);
+    expect(panes[1]!.classList.contains('active')).toBe(true);
+    expect(within(panes[1]!).getByTitle('one')).toBeTruthy();
+    expect(within(panes[0]!).getByTitle('one')).toBeTruthy();
+    expect(frames().filter((f) => f.type === 'open_session').map((f) => (f as { sessionId: string }).sessionId)).toEqual(['s1', 's1']);
   });
 
   it('T9 (b): switching a pane to another session or closing it sends close_session only for sessions no pane still views', async () => {
@@ -484,5 +499,225 @@ describe('App error toasts', () => {
     server({ type: 'error', turnId: null, message: 'same' } as ServerMessage);
     server({ type: 'error', turnId: null, message: 'same' } as ServerMessage);
     expect(toasts()).toHaveLength(2);
+  });
+});
+
+describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
+  beforeEach(() => { localStorage.clear(); sessionStorage.clear(); sock.frames = []; sock.onMessage = null; vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 }))); });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); (window as { matchMedia?: unknown }).matchMedia = undefined; });
+
+  const act1 = (sessionId: string, running: boolean, bg: number) => ({ sessionId, cwd: '/w', turnId: `t-${sessionId}`, running, bg, forMs: 0 });
+  const activity = (sessions: ReturnType<typeof act1>[], extra: Record<string, unknown> = {}) => server({ type: 'activity', sessions, serverStartedAt: 1, ...extra } as ServerMessage);
+  const permission = (sessionId: string | null, n = 0, cwd = '/w') => server({ type: 'permission_request', requestId: `r-${sessionId}-${n}`, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, turnId: `t-${sessionId}`, sessionId, cwd } as ServerMessage);
+  const chipText = () => screen.getByTestId('work-chip').querySelector('.chip-long')!.textContent;
+  const PREVIEW = ['routePreview'];
+
+  it('작업 현황: zeros are left out, nothing at all hides the chip, 승인 대기 is emphasised', async () => {
+    await boot();
+    activity([]);
+    expect(screen.queryByTestId('work-chip')).toBeNull();
+    activity([act1('s1', true, 0)]);
+    expect(chipText()).toBe('실행 중 1');
+    activity([act1('s1', true, 0), act1('s2', false, 2)]);
+    expect(chipText()).toBe('실행 중 1 · 백그라운드 1');
+    expect(screen.getByTestId('work-chip').querySelector('.chip-short')!.textContent).toBe('▶1 · ⏸1');
+    permission('s3');
+    const chip = screen.getByTestId('work-chip');
+    expect(chipText()).toBe('실행 중 1 · 백그라운드 1 · 승인 대기 1');
+    expect(chip.querySelector('.chip-long b.work-wait')!.textContent).toBe('승인 대기 1');
+    expect(chip.getAttribute('aria-haspopup')).toBe('dialog');
+  });
+
+  it('작업 현황: 승인 대기 counts sessions (two cards of one = 1) and wins over 실행 중 / 백그라운드', async () => {
+    await boot();
+    activity([act1('s1', true, 0), act1('s2', false, 1)]);
+    permission('s1', 0);
+    permission('s1', 1);
+    expect(chipText()).toBe('백그라운드 1 · 승인 대기 1');
+    permission('s2');
+    expect(chipText()).toBe('승인 대기 2');
+    expect(screen.getByTestId('work-chip').title).toMatch(/승인 대기인 세션은 실행 중·백그라운드에 세지 않습니다/);
+    fireEvent.click(screen.getByTestId('work-chip'));
+    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button');
+    expect(rows.map((r) => r.textContent)).toEqual(['one승인 대기', 'two승인 대기']);
+  });
+
+  it('작업 현황: a click lists the sessions (승인 대기 first) and a row opens its session', async () => {
+    await boot();
+    activity([act1('s1', true, 0)]);
+    permission('s2');
+    fireEvent.click(screen.getByTestId('work-chip'));
+    const pop = screen.getByRole('dialog', { name: '작업 현황' });
+    const rows = within(pop).getAllByRole('button');
+    expect(rows.map((r) => r.textContent)).toEqual(['two승인 대기', 'one실행 중']);
+    sock.frames = [];
+    fireEvent.click(rows[0]!);
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
+    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+  });
+
+  it('작업 현황: a session that only waits for approval (not in the list) opens in its folder', async () => {
+    await boot();
+    permission('s9', 0, '/w/other');
+    fireEvent.click(screen.getByTestId('work-chip'));
+    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button');
+    expect(rows.map((r) => r.textContent)).toEqual(['other승인 대기']);
+    sock.frames = [];
+    fireEvent.click(rows[0]!);
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's9' });
+  });
+
+  it('작업 현황: a card of a new chat (no session id yet) is a 새 대화 row', async () => {
+    await boot();
+    permission(null);
+    expect(chipText()).toBe('승인 대기 1');
+    fireEvent.click(screen.getByTestId('work-chip'));
+    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button');
+    expect(rows.map((r) => r.textContent)).toEqual(['새 대화승인 대기']);
+    fireEvent.click(rows[0]!);
+    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+  });
+
+  it('작업 현황: Escape closes the list and gives focus back to the chip', async () => {
+    await boot();
+    activity([act1('s1', true, 0)]);
+    const chip = screen.getByTestId('work-chip');
+    fireEvent.click(chip);
+    expect(chip.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+    expect(document.activeElement).toBe(chip);
+    expect(chip.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('작업 현황: when everything finishes with the list open, the list is gone and does not come back with new work', async () => {
+    await boot();
+    activity([act1('s1', true, 0)]);
+    fireEvent.click(screen.getByTestId('work-chip'));
+    expect(screen.getByRole('dialog', { name: '작업 현황' })).toBeTruthy();
+    activity([]);
+    expect(screen.queryByTestId('work-chip')).toBeNull();
+    activity([act1('s2', true, 0)]);
+    expect(screen.getByTestId('work-chip').getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+  });
+
+  it('작업 현황 and server chips are desktop only', async () => {
+    mockMatchMedia(true);
+    await boot();
+    activity([act1('s1', true, 0)], { draining: true });
+    expect(screen.queryByTestId('work-chip')).toBeNull();
+    expect(screen.queryByText(/재시작 대기 중/)).toBeNull();
+  });
+
+  it('draining: 재시작 대기 중 · 작업 N개 기다림 (short: 재시작 대기 · N), or 재시작 중… when nothing is left', async () => {
+    await boot();
+    activity([act1('s1', true, 0), act1('s2', false, 1)], { draining: true });
+    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 대기 중 · 작업 2개 기다림');
+    expect(screen.getByRole('status').querySelector('.chip-short')!.textContent).toBe('재시작 대기 · 2');
+    activity([], { draining: true });
+    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 중…');
+    activity([]);
+    expect(screen.queryByText('재시작 중…')).toBeNull();
+  });
+
+  it('재시작됨 HH:MM appears only when serverStartedAt changes, and goes on click or after 10 minutes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await boot();
+    activity([], { serverStartedAt: 100 });
+    expect(screen.queryByText(/재시작됨/)).toBeNull();
+    activity([], { serverStartedAt: 100 });
+    expect(screen.queryByText(/재시작됨/)).toBeNull();
+    activity([], { serverStartedAt: 200 });
+    fireEvent.click(screen.getByText(/^재시작됨 \d\d:\d\d$/));
+    expect(screen.queryByText(/재시작됨/)).toBeNull();
+    activity([], { serverStartedAt: 300 });
+    expect(screen.getByText(/재시작됨/)).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(10 * 60_000 + 1); });
+    expect(screen.queryByText(/재시작됨/)).toBeNull();
+  });
+
+  it('an older server\'s activity without serverStartedAt shows no 재시작됨 chip (and no NaN:NaN)', async () => {
+    await boot();
+    activity([], { serverStartedAt: 100 });
+    activity([], { serverStartedAt: undefined });
+    activity([], { serverStartedAt: undefined });
+    expect(screen.queryByText(/재시작됨/)).toBeNull();
+    expect(document.body.textContent).not.toContain('NaN');
+    activity([], { serverStartedAt: 100 }); // the start it had is kept: still the same server
+    expect(screen.queryByText(/재시작됨/)).toBeNull();
+  });
+
+  it('재시작됨 survives a reload: the first activity after it is compared with the server this tab saw last', async () => {
+    await boot();
+    activity([], { serverStartedAt: 100 });
+    cleanup(); // the reload: the page goes, sessionStorage stays
+    sock.onMessage = null;
+    await boot();
+    activity([], { serverStartedAt: 200 });
+    expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
+    cleanup(); // a second reload keeps the chip that was showing
+    sock.onMessage = null;
+    await boot();
+    expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
+    activity([], { serverStartedAt: 200 });
+    fireEvent.click(screen.getByText(/^재시작됨/));
+    cleanup();
+    sock.onMessage = null;
+    await boot();
+    expect(screen.queryByText(/재시작됨/)).toBeNull();
+  });
+
+  it('reconnect: disconnect → hello → activity from a new process shows 재시작됨 and asks route_preview again', async () => {
+    await boot(PREVIEW);
+    openSession('one');
+    activity([], { serverStartedAt: 100 });
+    sock.frames = [];
+    act(() => sock.onStatus!(false));
+    server(hello(PREVIEW));
+    activity([], { serverStartedAt: 200 });
+    expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
+    expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
+  });
+
+  it('다음 턴: an open Claude session asks route_preview and its answer tags that account', async () => {
+    await boot(PREVIEW);
+    openSession('one');
+    expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
+    server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: '5h 여유', asOpus: true } as ServerMessage);
+    const tag = screen.getByTestId('next-c');
+    expect(tag.textContent).toBe('다음 · Opus');
+    expect(tag.title).toContain('5h 여유');
+    server({ type: 'route_preview', sessionId: 'other', account: 'a', reason: 'x' } as ServerMessage);
+    expect(screen.queryByTestId(/^next-/)).toBeNull(); // an answer for another session is not shown
+  });
+
+  it('다음 턴: moving to a GPT session withdraws the ask ({ sessionId: null }, no cwd)', async () => {
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    server({ ...hello(PREVIEW), projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), { ...entry('g1', 'gee'), account: 'gpt' }] }] } as ServerMessage);
+    openSession('one');
+    server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: 'r' } as ServerMessage);
+    sock.frames = [];
+    openSession('gee');
+    server({ type: 'history', sessionId: 'g1', cwd: '/w', account: 'gpt', engine: 'codex', messages: [], runningTurnId: null } as ServerMessage);
+    // Until its history says which engine it is, the session is asked about (the server has no answer for GPT).
+    expect(frames().filter((f) => f.type === 'route_preview').at(-1)).toEqual({ type: 'route_preview', sessionId: null });
+    sock.frames = [];
+    server({ type: 'usage', usage } as unknown as ServerMessage);
+    expect(frames().some((f) => f.type === 'route_preview')).toBe(false);
+    expect(screen.queryByTestId(/^next-/)).toBeNull();
+  });
+
+  it('다음 턴: a server without the routePreview feature is never asked', async () => {
+    await boot();
+    openSession('one');
+    expect(frames().some((f) => f.type === 'route_preview')).toBe(false);
+  });
+
+  it('다음 턴: no session, no ask and no tag', async () => {
+    await boot(PREVIEW);
+    expect(frames().some((f) => f.type === 'route_preview')).toBe(false);
+    expect(screen.queryByTestId(/^next-/)).toBeNull();
   });
 });

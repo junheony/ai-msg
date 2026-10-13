@@ -34,7 +34,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat, footMenu, avatar, avatarTitle }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
   /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
@@ -85,6 +85,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onDelete?: (s: SessionEntry, which?: string) => void;
   /** 새 세션 (the floating pill bottom right, as in Claude): same as ⌘N — a new chat in the current pane's folder. */
   onNewChat?: () => void;
+  /** ⋯ 분할 보기로 열기: the session in a new split pane. Absent = no such item (a phone). */
+  onOpenSplit?: (sessionId: string, cwd: string, title: string) => void;
+  /** Why 분할 보기로 열기 cannot run now (all panes in use): the item shows disabled with this as its title. */
+  splitBlocked?: string | null;
 }) {
   const [localView, setLocalView] = useState<SidebarView>(viewProp ?? 'projects');
   const view = viewProp ?? localView;
@@ -127,7 +131,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const q = query.trim().toLowerCase();
   const match = (s: SessionEntry) => !q || s.title.toLowerCase().includes(q);
   const inView = (s: { archived?: boolean }) => (showArchived ? !!s.archived : !s.archived);
-  const canEdit = !!(onRename || onArchive || onDelete);
+  const canEdit = !!(onRename || onArchive || onDelete || onOpenSplit);
 
   // 대화 내용 검색: debounced; a stale answer (query changed meanwhile) is dropped.
   const fullQ = query.trim();
@@ -154,6 +158,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     return () => { window.removeEventListener('mousedown', close); window.removeEventListener('keydown', onKey); };
   }, [menu]);
 
+  const splitItem = (t: { sessionId: string; cwd: string; title: string }) => onOpenSplit && (splitBlocked
+    ? <button type="button" role="menuitem" aria-disabled="true" title={splitBlocked}>분할 보기로 열기</button>
+    : <button type="button" role="menuitem" onClick={() => { setMenu(null); onOpenSplit(t.sessionId, t.cwd, t.title); }}>분할 보기로 열기</button>);
   const startEdit = (s: SessionEntry, key: string) => { if (!onRename) return; setMenu(null); setEditing({ id: key, text: s.title }); };
   const commitEdit = (s: SessionEntry, key: string) => {
     if (!editing || editing.id !== key) return;
@@ -265,6 +272,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <MenuList onClose={() => setMenu(null)}>
             {which && <div className="session-menu-which muted" data-testid="session-menu-which">{which}</div>}
             {onRename && <button type="button" role="menuitem" onClick={() => startEdit(target, key)}>이름 바꾸기</button>}
+            {splitItem(target)}
             {/* Touch screens hide the row's pin button (it ate the title's width); pinning lives here too. */}
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {/* Archived in Codex: only the Codex app can unarchive it. */}
@@ -290,10 +298,12 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <span className="session-title"><EngineMark engine="claude" decorative />{d.title}</span>
           <span className="row-end">
           <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {status([d.sessionId]) ?? ago(d.lastModified, now)}</span>
+          {(onTogglePin || onOpenSplit) && (
+            <button type="button" className="row-more-btn" aria-keyshortcuts={onTogglePin ? reorderKeys(group) : undefined} aria-label="세션 메뉴" title={[onOpenSplit && '분할 보기로 열기', onTogglePin && '고정'].filter(Boolean).join(' · ')} aria-haspopup="menu" aria-expanded={menu === key}
+              onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
+          )}
           {onTogglePin && (
             <>
-              <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="고정" aria-haspopup="menu" aria-expanded={menu === key}
-                onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
               <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-keyshortcuts={reorderKeys(group)} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(d.sessionId, !on); }}>
                 <PinIcon filled={on} />
               </button>
@@ -302,9 +312,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           </span>
         </span>
         {keyHint && <kbd className="pin-key" aria-hidden="true">{keyHint}</kbd>}
-        {menu === key && onTogglePin && (
+        {menu === key && (onTogglePin || onOpenSplit) && (
           <MenuList onClose={() => setMenu(null)}>
-            <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(d.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>
+            {splitItem(d)}
+            {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(d.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
           </MenuList>
         )}
       </li>

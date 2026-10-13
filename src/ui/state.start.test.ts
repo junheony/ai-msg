@@ -137,7 +137,7 @@ describe('send_failed (sent while disconnected)', () => {
 
 describe('7b: a new session learns its id before turn_result', () => {
   const SID = '22222222-2222-4222-8222-222222222222';
-  const act = (sessionId: string, turnId: string): ServerMessage => ({ type: 'activity', sessions: [{ sessionId, cwd: '/w', turnId, running: true, bg: 0, forMs: 10 }] });
+  const act = (sessionId: string, turnId: string): ServerMessage => ({ type: 'activity', sessions: [{ sessionId, cwd: '/w', turnId, running: true, bg: 0, forMs: 10 }], serverStartedAt: 1 });
 
   it('activity naming this pane\'s own running turn gives the pane the session id', () => {
     let s = reducer(opened(null), { type: 'sent', text: 'hi', clientRef: 'r1' });

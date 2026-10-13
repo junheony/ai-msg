@@ -6,6 +6,7 @@ import { PREVIEW_FRAME_SRC, SidePanel } from './SidePanel';
 import { newPane, type PaneState } from '../state';
 import { Markdown } from './MessageView';
 import { SidePanelContext } from '../sidePanel';
+import { CopyButton } from './CopyButton';
 
 Element.prototype.scrollIntoView = () => {};
 
@@ -97,5 +98,32 @@ describe('html block with md-render highlighting', () => {
     expect(screen.getByLabelText('코드 복사')).toBeTruthy();
     fireEvent.click(screen.getByText('미리보기'));
     expect(open).toHaveBeenCalledWith({ kind: 'html', title: 'HTML 미리보기', html: '<b class="x">hi</b>' });
+  });
+});
+
+describe('SidePanel header buttons (narrow panel)', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  it('복사 / 경로 복사 carry an icon a narrow panel can show alone, named by title and aria-label; ✕ is the outlined close', async () => {
+    mockFetch({ path: '/w/a.ts', size: 2, kind: 'text', text: 'a\n' });
+    render(<SidePanel doc={{ kind: 'file', path: '/w/a.ts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    await screen.findByTestId('side-text');
+    for (const name of ['내용 복사', '경로 복사']) {
+      const b = screen.getByRole('button', { name });
+      expect(b.classList.contains('copy-compact')).toBe(true);
+      expect(b.getAttribute('title')).toBe(name);
+      expect(b.querySelector('.copy-compact-icon svg')).not.toBeNull();
+      expect(b.querySelector('.copy-compact-caption')!.textContent).toBe(name === '경로 복사' ? '경로 복사' : '복사');
+    }
+    expect(screen.getByRole('button', { name: '사이드 패널 닫기' }).classList.contains('side-close')).toBe(true);
+  });
+
+  it('CopyButton elsewhere (code blocks, message actions) is unchanged', () => {
+    render(<><CopyButton text="x" /><CopyButton text="y" icon label="코드 복사" /></>);
+    const text = screen.getByRole('button', { name: '복사' });
+    expect(text.className).toBe('code-copy');
+    expect(text.textContent).toBe('복사');
+    expect(text.querySelector('svg')).toBeNull();
+    expect(screen.getByRole('button', { name: '코드 복사' }).classList.contains('copy-compact')).toBe(false);
   });
 });

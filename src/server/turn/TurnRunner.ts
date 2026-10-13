@@ -13,7 +13,7 @@ import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
 import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
-import { chooseAccount, routeLogLine } from '../routing/AccountRouter';
+import { chooseAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
 import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
@@ -132,6 +132,9 @@ type Attempt = {
   result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean; initCwd: string | null;
   rest: AsyncIterator<EngineEvent>; live: LiveInput | null; bgTasks: string[];
 };
+
+/** What the next Claude turn of a session would be routed to (previewRoute): no turn is run, nothing is moved or stored. */
+export type RoutePreview = { account: Account; asOpus?: boolean; reason: string };
 
 /** A user message for a session whose process is still open for background work (see `followUp`). */
 export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string };
@@ -1342,6 +1345,55 @@ export class TurnRunner {
     }
   }
 
+  /**
+   * The router's input for a Claude turn on `state` (null = a new session) wanting `wanted`, pinned to `askedPin`: reads
+   * usage, settings and cooldown files only. The turn path and previewRoute both route from it.
+   */
+  private claudeRoute(state: ClaudeSessionState | null, wanted: ClaudeModel, askedPin: Account | null) {
+    const { deps } = this;
+    // A pin on an account that is not active (removed or retired since) is no pin.
+    const pin = askedPin && this.accounts.list().includes(askedPin) ? askedPin : null;
+    const routerBase = { usage: deps.usage.routingSnapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance', accounts: this.accounts };
+    const routeInput: RouterInput = {
+      ...routerBase,
+      current: state?.account ?? null,
+      lastTurnAtMs: state?.lastTurnAtMs ?? null,
+      justCompacted: state?.justCompacted ?? false,
+      cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()),
+    };
+    return { pin, routerBase, routeInput };
+  }
+
+  /**
+   * Where the next turn of Claude session `sessionId` (null = a new Claude session) would go if it were sent now with
+   * `model` (absent = no model picked): the model is resolved as the turn resolves it (a picked Claude model, else the
+   * session's stored default; a new session 자동 would need the prompt chooseAutoModel reads, so it has no preview), then
+   * the same router input and decision as the turn's first routing, from the stored state (the copy check a real turn
+   * runs first may still move it). null for GPT / Gemini sessions, unknown ids — a new session just before and after its
+   * first turn has no stored state yet, so it is null too — and a session whose account is retired or no longer
+   * configured. No side effects.
+   */
+  previewRoute(sessionId: string | null, model?: ClaudeModel | 'auto'): RoutePreview | null {
+    const { deps } = this;
+    let state: ClaudeSessionState | null = null;
+    if (sessionId) {
+      const st = deps.store.get(sessionId);
+      if (st && (isCodexState(st) || isGeminiState(st))) return null;
+      if (st) state = st;
+      else {
+        const e = deps.index.lookup(sessionId);
+        if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return null;
+        state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
+      }
+      if (!this.accounts.list().includes(state.account)) return null;
+    } else if (model === 'auto') return null;
+    // As runClaudeTurn: a picked Claude model, else the session's default, else (a new session) DEFAULT_MODEL.
+    const wanted = (isClaudeModel(model) ? model : null) ?? state?.defaultModel ?? DEFAULT_MODEL;
+    const { routeInput } = this.claudeRoute(state, wanted, state?.accountPin ?? null);
+    const d = chooseAccount(routeInput);
+    return { account: d.account, reason: d.reason, ...(d.asOpus ? { asOpus: true } : {}) };
+  }
+
   /** The Claude turn proper; resolves (after any background follow-through) with the session's final state. */
   private async runClaudeTurn(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], early: string[], newSessionModel?: ClaudeModel): Promise<ClaudeSessionState | null> {
     const { deps } = this;
@@ -1357,22 +1409,13 @@ export class TurnRunner {
     let forkAt = p.fork && state?.sessionId === p.fork.from ? p.fork.at : null;
     // A fork takes the parent's pin (the pane sends the same one; it covers a pin set a moment before the edit).
     const askedPin = state ? (state.accountPin ?? (forkAt ? p.accountPin : null) ?? null) : (p.accountPin ?? null);
-    // A pin on an account that is not active (removed or retired since) is no pin.
-    const pin = askedPin && this.accounts.list().includes(askedPin) ? askedPin : null;
     const shownId = () => (forkAt ? null : (state?.sessionId ?? null));
     const done = () => (forkAt ? null : state);
-    const routerBase = { usage: deps.usage.routingSnapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance', accounts: this.accounts };
+    const { pin, routerBase, routeInput } = this.claudeRoute(state, wanted, askedPin);
 
     // An unpinned edit-fork runs on the parent's own account (it is not moved for a branch) unless that account is
     // unusable; a pinned one routes like any turn of the session, copying the parent to the pinned account.
     const forkFrom = forkAt && state && !pin ? state.account : null;
-    const routeInput = {
-      ...routerBase,
-      current: state?.account ?? null,
-      lastTurnAtMs: state?.lastTurnAtMs ?? null,
-      justCompacted: state?.justCompacted ?? false,
-      cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()),
-    };
     let first = chooseAccount(forkFrom ? { ...routeInput, pinned: forkFrom, pinIsParent: true } : routeInput);
     // A fork whose pin is unusable stays on the parent's account like an unpinned one (a cold cache must not send it,
     // and a copy of the parent, to a third account); only if that one is unusable too is the parent copied elsewhere.

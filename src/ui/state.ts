@@ -294,7 +294,17 @@ export type AppState = {
    * reopening one shows them at once, `loading`, instead of a skeleton, until its history replaces them. Memory only.
    */
   recent: Record<string, ChatItem[]>;
+  /** The server is waiting for running work before a restart (activity.draining). */
+  draining: boolean;
+  /** The connected server process's start (activity.serverStartedAt); null until one said. */
+  serverStartedAt: number | null;
+  /** Set when a reconnect found a different server process (its start, ms) — the 재시작됨 chip; null once dismissed. */
+  restartedAt: number | null;
+  /** The server's latest answer to route_preview: where the next turn of that session would go. */
+  routePreview: RoutePreview | null;
 };
+
+export type RoutePreview = Omit<Extract<ServerMessage, { type: 'route_preview' }>, 'type'>;
 
 /** How many left sessions keep their transcript in `AppState.recent` (a phone switching back and forth sees no skeleton). */
 export const RECENT_SESSIONS_MAX = 5;
@@ -323,7 +333,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false, recent: {} };
+export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -349,6 +359,9 @@ export type Action =
   | { type: 'close_pane'; paneId: string }
   | { type: 'focus_pane'; paneId: string }
   | { type: 'dismiss_error' }
+  | { type: 'dismiss_restart' }
+  /** A new route_preview ask went out: the last answer (for another ask) is dropped until its own comes. */
+  | { type: 'clear_route_preview' }
   /** `message` omitted = all of the pane's bars. */
   | { type: 'dismiss_notice'; paneId?: string; message?: string }
   | { type: 'set_pins'; pins: string[] }
@@ -948,7 +961,14 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       const focused = state.panes.find((p) => p.id === state.activePaneId)?.session?.sessionId ?? null;
       const finished = state.activity.filter((a) => a.running && !msg.sessions.some((n) => n.sessionId === a.sessionId && n.running)).map((a) => a.sessionId);
       const add = finished.filter((sid) => sid !== focused && !state.unread.includes(sid));
-      return { ...state, activity: msg.sessions, unread: add.length ? [...state.unread, ...add] : state.unread, panes: mapPanes(state, msg) };
+      // An older server sends no serverStartedAt: nothing is compared and no 재시작됨 chip shows.
+      const at = typeof msg.serverStartedAt === 'number' ? msg.serverStartedAt : null;
+      const restarted = at !== null && state.serverStartedAt !== null && at !== state.serverStartedAt;
+      return { ...state, activity: msg.sessions, unread: add.length ? [...state.unread, ...add] : state.unread, panes: mapPanes(state, msg), draining: msg.draining === true, serverStartedAt: at ?? state.serverStartedAt, restartedAt: restarted ? at : state.restartedAt };
+    }
+    case 'route_preview': {
+      const { type: _t, ...preview } = msg;
+      return { ...state, routePreview: preview };
     }
     // Pane-scoped: a turn's notes, else the bar of the panes showing that session. Other sessions' notices are ignored.
     case 'turn_notice': case 'turn_system':
@@ -1126,6 +1146,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, activePaneId: action.paneId, unread: sid && state.unread.includes(sid) ? state.unread.filter((u) => u !== sid) : state.unread };
     }
     case 'dismiss_error': return { ...state, error: null };
+    case 'dismiss_restart': return { ...state, restartedAt: null };
+    case 'clear_route_preview': return state.routePreview ? { ...state, routePreview: null } : state;
     case 'dismiss_notice': return updatePane(state, action.paneId, (p) => (p.notices?.length ? { ...p, notices: action.message === undefined ? [] : p.notices.filter((n) => n.message !== action.message) } : p));
     case 'set_pins': return { ...state, pins: action.pins };
     case 'show_error': return { ...state, error: action.message };

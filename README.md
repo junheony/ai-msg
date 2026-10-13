@@ -18,11 +18,11 @@ The name: a quarterdeck is where the captain commands the ship. Internal identif
 ## Features
 
 - **Chat shell** — streaming markdown, collapsible tool calls, diff view, thinking blocks, todo panel, image and file attachments, slash-command and file-path completion.
-- **Split view** — 2 to 4 panes, each an independent session. On narrow screens: one pane and a drawer sidebar.
+- **Split view** — 2 to 4 panes, each an independent session. On narrow screens: one pane and a drawer sidebar. On desktop `⌘\` hides the sidebar; resting the pointer on the window's left edge then slides it out over the panes until the pointer leaves.
 - **Session list** — reads the Claude Code transcripts already on disk, grouped by project folder. Pin, rename, archive, search, fork, delete (with undo), export to Markdown.
 - **Claude Desktop mirroring** — a session that ran on another account's profile is copied back to the home profile, so Claude Desktop and `claude --resume` see the same conversation. Sessions currently held open by another `claude` process are marked.
 - **Account routing** — every Claude turn gets an account based on usage, cache warmth and cooldowns. A session can be pinned to one account. One account can be marked *protected* (ranked like the others; last only on a tie).
-- **Usage panel** — remaining 5-hour / weekly / Fable windows per account, plus a token-usage history view built from local transcripts.
+- **Usage panel** — remaining 5-hour / weekly / Fable windows per account (with a short countdown to the fullest window's reset, and a *다음* tag on the account the open session's next turn would use), plus a token-usage history view built from local transcripts. On desktop the top bar also shows running / background / waiting-for-approval work and the server's restart state.
 - **Permissions** — approval cards (once / this session / deny), per-session permission modes, `AskUserQuestion` cards, and an audit log of every decision.
 - **Steer and queue** — a message sent while a turn runs is injected at the next tool boundary, or queued for after the turn.
 - **Reconnect catch-up** — turns keep running on the server when a browser disconnects; a reconnecting device receives only the events it missed.

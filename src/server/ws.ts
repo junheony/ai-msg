@@ -5,7 +5,7 @@ import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, type AccountNames } from '../shared/accounts';
-import { DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, type CodexSandbox, type EngineKind } from '../shared/models';
+import { DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
@@ -159,7 +159,12 @@ export type WsDeps = {
   catchupIdleMs?: number;
   /** Where the running turns and background tasks are written on each change (scripts/restart.sh reads it); absent = not written. */
   activityFile?: string;
+  /** When this server process started (ms); rides every `activity` message. Default: when this module loaded. */
+  serverStartedAt?: number;
 };
+
+/** This process's start (ms), fixed for its life: a device that sees another value after a reconnect knows the server restarted. */
+const SERVER_STARTED_AT = Date.now();
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -253,7 +258,29 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const broadcastAndNotify = (msg: ServerMessage) => { broadcast(msg); notify(msg); };
   const broker = new PermissionBroker(broadcastAndNotify);
   const questions = new QuestionBroker(broadcastAndNotify);
-  const unsubscribeUsage = deps.usage.onChange((usage) => broadcast({ type: 'usage', usage }));
+  /** Each socket's last route_preview ask: answered again after a usage change, unless the answer is what it last got. */
+  const routeAsk = new Map<WebSocket, { sessionId: string | null; model?: ClaudeModel | 'auto' }>();
+  /** The last route_preview sent to each socket (JSON): a usage change that leaves it as it is sends nothing. */
+  const routeSent = new Map<WebSocket, string>();
+  const sendRoutePreview = (ws: WebSocket) => {
+    const ask = routeAsk.get(ws);
+    if (!ask) return;
+    try {
+      const p = deps.runner.previewRoute(ask.sessionId, ask.model);
+      if (!p) { routeSent.delete(ws); return; }
+      const msg: ServerMessage = { type: 'route_preview', sessionId: ask.sessionId, account: p.account, reason: p.reason, ...(p.asOpus ? { asOpus: true } : {}) };
+      const sig = JSON.stringify(msg);
+      if (routeSent.get(ws) === sig) return;
+      routeSent.set(ws, sig);
+      send(ws, msg);
+    } catch (err) {
+      console.error('deck: route preview failed', errMsg(err));
+    }
+  };
+  const unsubscribeUsage = deps.usage.onChange((usage) => {
+    broadcast({ type: 'usage', usage });
+    for (const ws of routeAsk.keys()) sendRoutePreview(ws);
+  });
   /** Every session with a turn streaming or background work held open (sidebar dots, tab title on all devices). */
   const shownTurns = () => [...turns.values()].filter((t): t is Turn & { sessionId: string } => t.sessionId !== null && (t.current !== null || (t.bg?.msg.tasks.length ?? 0) > 0));
   const activity = (): SessionActivity[] => {
@@ -263,12 +290,14 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   };
   // The task names are in it too: work swapped for other work of the same count is still a change (activityFile lists them).
   let activitySig = '[[],[]]';
+  const serverStartedAt = deps.serverStartedAt ?? SERVER_STARTED_AT;
+  const activityMsg = (sessions = activity()): ServerMessage => ({ type: 'activity', sessions, ...(draining ? { draining: true } : {}), serverStartedAt });
   const broadcastActivity = () => {
     const sessions = activity();
     const sig = JSON.stringify([sessions.map(({ forMs: _f, ...rest }) => rest), shownTurns().map((t) => t.bg?.msg.tasks ?? [])]);
     if (sig === activitySig) return;
     activitySig = sig;
-    broadcast({ type: 'activity', sessions });
+    broadcast(activityMsg(sessions));
     if (deps.activityFile && !activityTimer && !activityClosed) activityTimer = setTimeout(writeActivity, 200);
   };
   /** `activityFile` (scripts/restart.sh reads it): what is running now, written atomically a moment after it changed. */
@@ -979,6 +1008,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
     send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: [...FEATURES], accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
+    // hello's `activity` is the session list only: whether the server is draining, and since when it runs, come here.
+    send(ws, activityMsg());
     for (const m of broker.pending()) send(ws, m);
     for (const m of questions.pending()) send(ws, m);
     // hello carried the last scan's flags; a changed scan follows as an index message.
@@ -1096,6 +1127,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `샌드박스를 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
+        case 'route_preview':
+          // A fresh ask is always answered (the pane dropped the last answer when it asked); null with no cwd withdraws it.
+          routeSent.delete(ws);
+          if (msg.sessionId === null && msg.cwd === undefined) { routeAsk.delete(ws); break; }
+          routeAsk.set(ws, { sessionId: msg.sessionId, ...(msg.model ? { model: msg.model } : {}) });
+          sendRoutePreview(ws);
+          break;
         case 'set_settings': {
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
@@ -1108,7 +1146,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
     });
 
-    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); historyAt.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
+    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); routeAsk.delete(ws); routeSent.delete(ws); historyAt.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
   });
 
   return {
@@ -1118,6 +1156,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (draining) return;
       draining = true;
       broadcast({ type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining' });
+      // Every device shows 재시작 대기 중 at once, not with the next change of the running work.
+      broadcast(activityMsg());
       // restart.sh reads `draining` from the activity file: written now, not with the next change.
       if (deps.activityFile && !activityClosed) { if (activityTimer) clearTimeout(activityTimer); writeActivity(); }
       const waiting = [...turns.values()].filter((t) => (t.bg?.msg.tasks.length ?? 0) > 0);

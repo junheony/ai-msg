@@ -576,6 +576,9 @@ export function Chat(p: ChatProps) {
             onCompositionStart={() => { composing.current = true; }}
             onCompositionEnd={() => { composing.current = false; }}
             onPaste={onPaste}
+            // Safari (web app) honours these; Chrome ignores them. Without them Safari auto-capitalises the first
+            // letter, swaps words with autocorrect and underlines code — prompts are not prose.
+            autoCorrect="off" autoCapitalize="off" spellCheck={false}
             disabled={!!p.readOnly}
             placeholder={p.readOnly ? p.readOnly : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
             aria-label="메시지"

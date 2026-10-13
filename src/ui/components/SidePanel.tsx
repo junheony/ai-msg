@@ -127,10 +127,10 @@ export function SidePanel({ doc, cwd, sessionId, onClose, onOpen }: {
       <div className="side-head">
         <span className="side-path" title={fullPath ?? shownPath}>{shownPath}</span>
         <span className="spacer" />
-        {text !== null && <CopyButton text={text} label="내용 복사" />}
-        {fullPath && <CopyButton text={fullPath} label="경로 복사" caption="경로 복사" />}
+        {text !== null && <CopyButton text={text} label="내용 복사" compact />}
+        {fullPath && <CopyButton text={fullPath} label="경로 복사" caption="경로 복사" compact />}
         {doc.kind !== 'pick' && <button type="button" className="icon-btn" aria-label="새로고침" title="새로고침" onClick={() => setReload((n) => n + 1)}>↻</button>}
-        <button type="button" className="icon-btn" aria-label="사이드 패널 닫기" title="닫기 (Esc)" onClick={onClose}>✕</button>
+        <button type="button" className="icon-btn side-close" aria-label="사이드 패널 닫기" title="닫기 (Esc)" onClick={onClose}>✕</button>
       </div>
       {tabs.length > 1 && (
         <div className="side-tabs" role="tablist">

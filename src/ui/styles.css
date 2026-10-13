@@ -526,6 +526,21 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-credits { grid-column: 2 / -1; justify-self: start; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
 .usage-reset { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .usage-stale { flex-shrink: 0; padding: 2px 8px; border-radius: 9px; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+/* Short countdown next to a card's fullest window (always on, desktop); the 다음 tag = where the active session's next turn goes. */
+.usage-value small.usage-cd { margin-left: 5px; font-weight: 500; color: var(--muted); }
+.usage-next { position: absolute; top: -7px; left: 8px; padding: 0 6px; height: 14px; line-height: 14px; border-radius: 7px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 600; white-space: nowrap; color: var(--accent); background: var(--sidebar); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); pointer-events: auto; }
+/* Top bar status chips (작업 현황, 재시작 대기, 재시작됨): small muted pills like the stale tag. */
+.top-chip { flex-shrink: 0; padding: 2px 8px; border: 0; border-radius: 9px; font: inherit; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+button.top-chip { cursor: pointer; }
+button.top-chip:hover { background: var(--hover); color: var(--fg); }
+.top-chip.warn { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+.work-wait { font-weight: 600; color: var(--warn); }
+.work-pop { min-width: 260px; max-width: min(340px, calc(100vw - 16px)); box-sizing: border-box; }
+/* A top chip's short form (two-row top bar, < 1280px) is hidden until the bar narrows. */
+.top-chip .chip-short { display: none; }
+.usage-pop-row.work-row { box-sizing: border-box; width: calc(100% + 8px); border: 0; background: none; font: inherit; text-align: left; cursor: pointer; border-radius: 6px; padding: 0 4px; margin: 0 -4px; }
+.usage-pop-row.work-row:hover { background: var(--hover); color: var(--fg); }
+.work-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-pop { position: fixed; z-index: 40; min-width: 220px; padding: 9px 11px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: calc(13.5px * var(--font-scale, 1)); cursor: default; }
 .usage-pop-title { margin-bottom: 4px; font-weight: 600; color: var(--fg-strong); }
 .usage-pop-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.75; color: var(--muted); }
@@ -533,6 +548,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-pop-row b { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--fg); }
 /* A narrow card keeps its colored numbers and drops the bars; the exhausted pill keeps only "소진". */
 @container usage-card (max-width: 210px) { .usage-pill-at { display: none; } }
+@container usage-card (max-width: 200px) { .usage-value small.usage-cd { display: none; } }
 @container usage-card (max-width: 156px) {
   .usage-bar { display: none; }
   .usage-row { grid-template-columns: 36px minmax(0, 1fr); }
@@ -550,10 +566,16 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .usage-stale { order: 2; }
   .usage-card { order: 10; flex: 1 1 0; }
   .usage-loading { order: 10; flex: 1 0 100%; padding: 4px 0 6px; }
+  /* The top row is shared with the logo and actions: chips take their short form and may shrink (ellipsis). */
+  .topbar-end { min-width: 0; flex-shrink: 1; }
+  .top-chip { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .top-chip .chip-long { display: none; }
+  .top-chip .chip-short { display: inline; }
 }
 
 /* Phone: mini cards — mark + letter on top, then "label · number" rows; a tap opens the detail popover. */
 @media (max-width: 720px) {
+  .usage-value small.usage-cd { display: none; }
   .topbar { column-gap: 5px; padding: 0 6px 6px; }
   .topbar > .menu { margin-left: -4px; }
   .topbar > .brand { display: inline-flex; height: 46px; margin-right: 2px; }
@@ -936,7 +958,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* === sync-writeback === */
 /* Session header 갈라짐 menu (deck and Desktop copies diverged). */
 .fork { position: relative; }
-.fork-btn { color: var(--danger); }
+.fork-btn { color: var(--danger); white-space: nowrap; }
 .fork-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 280px; max-width: calc(100vw - 16px); padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); }
 .fork-pop .btn { text-align: left; }
 .fork-hint { margin: 0; color: var(--muted); font-size: calc(12.5px * var(--font-scale, 1)); line-height: 1.45; }
@@ -1203,7 +1225,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .plan-body { max-height: 50vh; overflow: auto; margin: 6px 0; }
 .default-perm { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 6px; font-size: calc(13.5px * var(--font-scale, 1)); color: var(--fg); }
 /* nav-palette: ⌘K palette, dialogs, undo toast, sidebar view toggle, new-chat screen. */
-.sidebar-wrap.hidden { display: none; }
+/* Hidden sidebar peek (desktop): kept laid out off-screen so it can slide in over the panes from the left edge. */
+.body { position: relative; }
+.sidebar-wrap.hidden { position: absolute; top: 0; left: 0; bottom: 0; z-index: 20; visibility: hidden; transform: translateX(-100%); transition: transform .18s cubic-bezier(.2, .8, .2, 1), visibility 0s linear .18s; }
+.sidebar-wrap.hidden.peek { visibility: visible; transform: none; box-shadow: 6px 0 18px rgba(0, 0, 0, .18); transition: transform .18s cubic-bezier(.2, .8, .2, 1), visibility 0s; }
+.sidebar-hotzone { position: absolute; top: 0; left: 0; bottom: 0; width: 3px; z-index: 19; }
+@media (prefers-reduced-motion: reduce) { .sidebar-wrap.hidden, .sidebar-wrap.hidden.peek { transition: none; } }
 .palette-open kbd, .palette-hint, .shortcut-list kbd { font-family: var(--mono); font-size: calc(11px * var(--font-scale, 1)); padding: 1px 5px; border-radius: 4px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); background: transparent; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .35); }
 .palette, .modal { width: 100%; max-width: 600px; display: flex; flex-direction: column; border-radius: 12px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); overflow: hidden; }
@@ -1301,8 +1328,18 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .side-splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: var(--line-strong); }
 .side-splitter:hover::after, .side-splitter:active::after { width: 2px; background: var(--accent); }
 .side-wrap { flex: 0 0 auto; min-width: 0; display: flex; }
-.side-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-raised); }
+.side-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-raised); container: side / inline-size; }
 .side-head { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 6px 0 12px; flex-shrink: 0; border-bottom: 1px solid var(--line); }
+/* The path gives way, the buttons never wrap or squeeze; a narrow panel turns 복사 / 경로 복사 into copy icons. */
+.side-head .code-copy, .side-head .icon-btn { white-space: nowrap; flex-shrink: 0; }
+.copy-compact { display: inline-flex; align-items: center; justify-content: center; }
+.copy-compact-icon { display: none; }
+/* A failed copy keeps its words (복사 실패): an icon alone would not say it. */
+@container side (max-width: 360px) {
+  .side-head .copy-compact:not([data-state="fail"]) { width: 26px; padding: 0; }
+  .side-head .copy-compact:not([data-state="fail"]) .copy-compact-icon { display: inline-flex; }
+  .side-head .copy-compact:not([data-state="fail"]) .copy-compact-caption { display: none; }
+}
 .side-head .spacer { flex: 1; }
 .side-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: calc(12.5px * var(--font-scale, 1)); color: var(--fg); }
 .side-tabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); flex-shrink: 0; }
@@ -1436,9 +1473,16 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .attach-item:hover, .attach-item:focus-visible { background: var(--hover); outline: none; }
 @media (max-width: 720px), (pointer: coarse) { .attach-item { min-height: var(--phone-tap); padding: 0 14px 0 12px; } }
 
+/* Close ✕ (the split pane's, the side panel's): outlined in the text colour so it reads on any header. */
+.icon-btn.pane-close, .icon-btn.side-close { color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
+.icon-btn.pane-close:hover, .icon-btn.side-close:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 /* Pane header: the title sizes to its text (no dead gap before the chips) and ellipsizes; the folder chip gives way
    first. The permission badge never shrinks or clips — a narrow pane swaps it for its compact form instead. */
 .pane { container: pane / inline-size; }
+/* The chat column is its own `pane` container (the nearest one wins): beside an open side panel (.pane.with-side) the
+   chat is much narrower than the pane, and its header / composer must fold by the column's width, not the pane's.
+   The new-chat screen (no .chat) still measures the pane. */
+.chat { container: pane / inline-size; }
 .chat-head-main > .chat-title-wrap { flex: 0 1 auto; min-width: 0; }
 .chat-title-wrap > .chat-title { min-width: 0; max-width: 100%; }
 .chat-title > span:first-child { min-width: 2.5em; }

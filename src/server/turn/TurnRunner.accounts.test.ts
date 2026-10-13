@@ -228,3 +228,89 @@ describe('TurnRunner · 이유 문구와 실행 모델 (최종 리뷰)', () => {
     expect(badge).toMatchObject({ model: 'opus', modelNote: 'Fable 잔여량 모름(usage-deck 값 없음) → Opus 로 대체' });
   });
 });
+
+describe('TurnRunner.previewRoute · 다음 턴 미리보기', () => {
+  const rows = (s: number, w: number, f: number) => [{ label: 'Session (5h)', used: s, resetsAt: null }, { label: 'Weekly (7d)', used: w, resetsAt: null }, { label: 'Fable (7d)', used: f, resetsAt: null }];
+  const deck = (pcts: [number, number, number][]): FetchLike => async () => ({ ok: true, json: async () => ({ cards: ['claude:main', 'claude:second', 'claude:third'].map((id, i) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: rows(...pcts[i]!) })) }) });
+  const accounts = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+
+  it('a new session: the same account and reason as the turn that follows, with nothing run or stored', async () => {
+    const c = await setup(accounts, null, { fetchFn: deck([[90, 50, 10], [10, 20, 10], [40, 30, 10]]) });
+    const p = c.runner.previewRoute(null);
+    expect(c.engine.calls).toEqual([]);
+    expect(c.store.get(NEW)).toBeNull();
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'go' }, c.sink);
+    const started = of(c.msgs, 'turn_started')[0]!;
+    expect(p).toMatchObject({ account: started.account, reason: started.reason });
+    expect(p?.account).toBe('b');
+  });
+
+  it('an existing session: matches the routing of its next turn (stay, and moved off a full account)', async () => {
+    const c = await setup(accounts, null, { fetchFn: deck([[30, 20, 10], [10, 20, 10], [40, 30, 10]]) });
+    await c.seed('a', c.rootOf('a'));
+    const stay = c.runner.previewRoute(SID);
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
+    expect(stay).toMatchObject({ account: of(c.msgs, 'turn_started')[0]!.account, reason: of(c.msgs, 'turn_started')[0]!.reason });
+
+    const d = await setup(accounts, null, { fetchFn: deck([[99, 20, 10], [10, 20, 10], [40, 30, 10]]) });
+    await d.seed('a', d.rootOf('a'));
+    const moved = d.runner.previewRoute(SID);
+    expect(d.store.get(SID)).toMatchObject({ account: 'a' }); // the preview moves nothing
+    await d.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'go' }, d.sink);
+    const started = of(d.msgs, 'turn_started')[0]!;
+    expect(moved).toMatchObject({ account: started.account, reason: started.reason });
+    expect(moved?.account).not.toBe('a');
+  });
+
+  it('a picked Opus / Sonnet: the same model resolution and decision as the turn sent with it', async () => {
+    // A is warm but out of Fable: the session's own default (Fable) would leave it, a picked Opus / Sonnet stays.
+    const pcts: [number, number, number][] = [[30, 20, 95], [10, 20, 10], [40, 30, 10]];
+    for (const model of ['opus', 'sonnet'] as const) {
+      const c = await setup(accounts, null, { fetchFn: deck(pcts) });
+      await c.store.set({ ...(await c.seed('a', c.rootOf('a'))), defaultModel: 'fable' });
+      const p = c.runner.previewRoute(SID, model);
+      await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'go', model }, c.sink);
+      const started = of(c.msgs, 'turn_started')[0]!;
+      expect(p).toMatchObject({ account: started.account, reason: started.reason });
+      expect(p?.account).toBe('a');
+    }
+    const d = await setup(accounts, null, { fetchFn: deck(pcts) });
+    await d.store.set({ ...(await d.seed('a', d.rootOf('a'))), defaultModel: 'fable' });
+    const own = d.runner.previewRoute(SID);
+    const auto = d.runner.previewRoute(SID, 'auto'); // 자동 on a later turn keeps the session's model
+    await d.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'go' }, d.sink);
+    const started = of(d.msgs, 'turn_started')[0]!;
+    expect(own).toMatchObject({ account: started.account, reason: started.reason });
+    expect(auto).toEqual(own);
+    expect(own?.account !== 'a' || own?.asOpus === true).toBe(true); // Fable is not taken on A as it is
+  });
+
+  it('a new session: a picked model routes like its first turn; 자동 has no preview (it needs the prompt)', async () => {
+    const pcts: [number, number, number][] = [[50, 50, 10], [10, 20, 95], [40, 30, 10]];
+    for (const model of ['fable', 'sonnet'] as const) {
+      const c = await setup(accounts, null, { fetchFn: deck(pcts) });
+      const p = c.runner.previewRoute(null, model);
+      await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'go', model }, c.sink);
+      const started = of(c.msgs, 'turn_started')[0]!;
+      expect(p).toMatchObject({ account: started.account, reason: started.reason });
+    }
+    const c = await setup(accounts, null, { fetchFn: deck(pcts) });
+    expect(c.runner.previewRoute(null, 'auto')).toBeNull();
+  });
+
+  it('a session on a retired or no longer configured account gets no preview', async () => {
+    const c = await setup([{ id: 'a' }, { id: 'old', retired: true }]);
+    await c.seed('old', c.rootOf('old'));
+    expect(c.runner.previewRoute(SID)).toBeNull();
+    const d = await setup(accounts);
+    await d.store.set({ ...(await d.seed('a', d.rootOf('a'))), account: 'gone' as Account });
+    expect(d.runner.previewRoute(SID)).toBeNull();
+  });
+
+  it('GPT / Gemini sessions and unknown ids get no preview', async () => {
+    const c = await setup(accounts);
+    await c.store.set({ sessionId: 'cx1', cwd: '/w/one', projectDir: '', engine: 'codex', defaultModel: 'gpt-6-sol', sandbox: 'read-only', rolloutFile: null, lastTurnAtMs: null, justCompacted: false } as unknown as ClaudeSessionState);
+    expect(c.runner.previewRoute('cx1')).toBeNull();
+    expect(c.runner.previewRoute('nope')).toBeNull();
+  });
+});
