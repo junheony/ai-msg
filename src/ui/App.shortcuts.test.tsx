@@ -202,4 +202,23 @@ describe('desktop-like navigation', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(screen.getByText(/실행 중인 대화는 삭제할 수 없어요/)).toBeTruthy();
   });
+
+  it('⇧Esc focuses the active pane composer (caret at the end); an open palette keeps its Esc', async () => {
+    await boot();
+    fireEvent.click(within(sidebar()).getByText('one'));
+    press('KeyN');
+    const pane = screen.getAllByTestId(/^pane-/)[0]!;
+    const box = within(pane).getByLabelText('첫 메시지') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '안녕' } });
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: 'Escape', shiftKey: true });
+    expect(document.activeElement).toBe(box);
+    expect(box.selectionStart).toBe(box.value.length);
+    (document.activeElement as HTMLElement).blur();
+    press('KeyK');
+    fireEvent.keyDown(document.body, { key: 'Escape', shiftKey: true });
+    expect(document.activeElement).not.toBe(box);
+    expect(screen.queryByRole('dialog', { name: '명령 팔레트' })).not.toBeNull();
+  });
 });

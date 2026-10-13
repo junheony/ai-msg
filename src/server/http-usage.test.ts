@@ -16,6 +16,7 @@ let base = '';
 let server: http.Server;
 let dir: string;
 let refreshes = 0;
+const sinces: number[] = [];
 
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-http-usage-'));
@@ -28,7 +29,7 @@ beforeAll(async () => {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
   const idx = new UsageIndex({ projectsRoots: rootsOf(roots), codexSessionsRoot: path.join(dir, 'codex'), indexFile: path.join(dir, 'usage-index.json') });
   const usageHistory = { history: (d: number) => idx.history(d), refresh: () => { refreshes++; return idx.refresh(); } };
-  server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index, usageHistory }));
+  server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index, usageHistory, highlights: { query: (since: number) => { sinces.push(since); return [{ at: since + 1, kind: 'server', sessionId: null, cwd: '', title: '서버', body: '서버 시작' }]; } } }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
@@ -53,5 +54,24 @@ describe('GET /api/usage/history', () => {
     const bad = await (await fetch(`${base}/api/usage/history?days=abc`, { headers: { cookie } })).json() as { days: number };
     expect(bad.days).toBe(30);
     expect(refreshes).toBe(1);
+  });
+});
+
+describe('GET /api/highlights', () => {
+  it('requires auth', async () => {
+    expect((await fetch(`${base}/api/highlights`)).status).toBe(401);
+  });
+
+  it('answers the events of the asked window; other hours clamp to 24', async () => {
+    const t0 = Date.now();
+    const r = await fetch(`${base}/api/highlights?hours=6`, { headers: { cookie } });
+    expect(r.status).toBe(200);
+    const body = await r.json() as { hours: number; events: { kind: string }[] };
+    expect(body.hours).toBe(6);
+    expect(body.events).toEqual([expect.objectContaining({ kind: 'server', body: '서버 시작' })]);
+    expect(Math.abs(sinces[0]! - (t0 - 6 * 3600_000))).toBeLessThan(5000);
+    for (const q of ['?hours=48', '?hours=abc', '']) {
+      expect((await (await fetch(`${base}/api/highlights${q}`, { headers: { cookie } })).json() as { hours: number }).hours).toBe(24);
+    }
   });
 });

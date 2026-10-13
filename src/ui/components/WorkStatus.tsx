@@ -43,12 +43,14 @@ export function workRows(activity: SessionActivity[], waiting: WaitingCard[], ti
  * 작업 현황 chip: 실행 중 N · 백그라운드 M · 승인 대기 K, in sessions (zeros left out; nothing at all → no chip). A click
  * lists the sessions; a row opens its session. Narrow top bars show the short form (▶N · ⏸M · !K, CSS).
  */
-export function WorkStatus({ activity, waiting, titleOf, onOpen }: {
+export function WorkStatus({ activity, waiting, titleOf, onOpen, onOpenHighlights }: {
   activity: SessionActivity[];
   /** Permission cards and questions waiting for an answer. */
   waiting: WaitingCard[];
   titleOf: (sessionId: string, cwd: string | null) => string;
   onOpen: (row: WorkRow) => void;
+  /** The popover's last row: 하이라이트 보기 →. */
+  onOpenHighlights?: () => void;
 }) {
   const [pop, setPop] = useState<{ right: number; y: number } | null>(null);
   const chip = useRef<HTMLButtonElement>(null);
@@ -100,6 +102,7 @@ export function WorkStatus({ activity, waiting, titleOf, onOpen }: {
               <b className={r.waiting ? 'work-wait' : ''}>{r.status}</b>
             </button>
           ))}
+          {onOpenHighlights && <button type="button" className="usage-pop-row work-highlights" onClick={() => { setPop(null); onOpenHighlights(); }}>하이라이트 보기 →</button>}
         </div>
       )}
     </>

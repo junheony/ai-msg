@@ -106,7 +106,8 @@ function WindowRow({ seat, name, k, w, now, short }: { seat: Seat; name: string;
     <div data-testid={`${seat}-${k}`} className={`usage-row ${levelClass(w)}`} title={title}>
       <span className="usage-label">{name}</span>
       <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
-      <span className="usage-value">{rem === null ? '—' : <>{rem}<small>%</small></>}{short && w?.resetsAt && <small className="usage-cd" data-testid={`${seat}-${k}-cd`}>{shortCountdown(w.resetsAt, now)}</small>}</span>
+      <span className="usage-value">{rem === null ? '—' : <>{rem}<small>%</small></>}</span>
+      {short && w?.resetsAt && <small className="usage-cd" data-testid={`${seat}-${k}-cd`}>{shortCountdown(w.resetsAt, now)}</small>}
       {reset && <span className="usage-reset">{reset}</span>}
     </div>
   );

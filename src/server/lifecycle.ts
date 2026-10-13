@@ -48,13 +48,20 @@ export async function drain(target: DrainTarget, o: DrainOptions): Promise<'drai
   return 'timeout';
 }
 
+/** The last step of a shutdown: wait for `flush` (queued writes such as events.jsonl), at most `timeoutMs`, then `exit` — even if it fails. */
+export function flushThenExit(flush: () => Promise<void>, exit: () => void, timeoutMs = 1500): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((r) => { timer = setTimeout(r, timeoutMs); });
+  return Promise.race([flush(), timeout]).catch(() => {}).finally(() => { clearTimeout(timer); exit(); });
+}
+
 export type SignalHost = { on(sig: NodeJS.Signals, fn: () => void): unknown };
 
 /**
  * Wires the signals: SIGTERM/SIGUSR2 → drain then `exit`; a repeat or SIGINT → abort now and `exit`.
  * `exit` runs once (it closes sockets/timers and ends the process).
  */
-export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void }): { draining: () => boolean } {
+export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void; onDrain?: () => void }): { draining: () => boolean } {
   let draining = false;
   let exited = false;
   const log = o.log ?? (() => {});
@@ -68,6 +75,7 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
   const graceful = (sig: NodeJS.Signals) => {
     if (draining) { now(sig); return; }
     draining = true;
+    try { o.onDrain?.(); } catch (err) { log(`deck: 종료 준비 기록 실패 — ${err instanceof Error ? err.message : String(err)}`); }
     log(`deck: ${sig} — 새 턴을 받지 않고 진행 중인 턴과 살아 있는 백그라운드 작업을 기다린 뒤 종료합니다 — 작업 없는 대기 프로세스는 바로 끊음 (다시 보내면 즉시 종료)`);
     void drain(target, o).then((r) => exit(`${sig}:${r}`), () => exit(`${sig}:error`));
   };

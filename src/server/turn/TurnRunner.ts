@@ -123,6 +123,11 @@ export const SHUTDOWN_ABORT = 'deck-shutdown';
 export const SHUTDOWN_ABORTED = '서버가 다시 시작되어 중단됨';
 /** The error text of an aborted turn: the user's stop (interrupt, 지금 전송; also a recycle) vs. the server shutting down. */
 export const abortedText = (signal: AbortSignal): string => (signal.reason === SHUTDOWN_ABORT ? SHUTDOWN_ABORTED : ABORTED);
+/** Told to the model once, with the first prompt of a brand-new session (systemNote; never shown in the pane). */
+export const DECK_INTRO_NOTE = '[deck] 사용자는 deck 웹 UI(대개 폰·다른 기기의 브라우저)로 이 대화를 봅니다. 파일이나 URL 을 open/xdg-open/code 로 띄우지 마세요 — 서버에서만 열리고 사용자에게는 보이지 않습니다. 보여줄 파일은 경로를 인라인 코드로 적으면 사용자가 클릭해 사이드 패널에서 봅니다(세션 폴더 안의 파일만; 밖의 파일은 핵심 내용을 답장에 옮기세요).';
+
+/** Start of the turn_notice said when the drain deadline cuts a process's background work (highlights.ts keys on it). */
+export const SHUTDOWN_CUT_NOTICE = '서버가 다시 시작되어 백그라운드 작업';
 
 /** gemini-cli's quota / 429 errors (TerminalQuotaError, RESOURCE_EXHAUSTED); matched on the CLI's result error only. */
 const GEMINI_LIMIT_RE = /\bRESOURCE_EXHAUSTED\b|exhausted your (daily )?quota|\bQuota exceeded\b|"code"\s*:\s*429\b/i;
@@ -976,7 +981,7 @@ export class TurnRunner {
     const sayCut = () => {
       if (cutSaid || abortedBefore || !shutdown()) return;
       cutSaid = true;
-      sink.emit({ type: 'turn_notice', ...scope(), message: `서버가 다시 시작되어 백그라운드 작업 ${live.length}개가 중단됨: ${live.join(', ')}` });
+      sink.emit({ type: 'turn_notice', ...scope(), message: `${SHUTDOWN_CUT_NOTICE} ${live.length}개가 중단됨: ${live.join(', ')}` });
     };
     const queue: { f: FollowUpParams; attachments: Attachment[] }[] = [];
     const open = (turnId: string, reason: string, modelNote: string | null, clientRef?: string) => {
@@ -1461,6 +1466,7 @@ export class TurnRunner {
       early.push(`${at} 서버 재시작으로 백그라운드 작업 ${cut.tasks.length}개가 끊겼습니다: ${cut.tasks.join(', ')} — 모델에게 알렸습니다`);
       systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 deck 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${cut.tasks.length}개는 끊겨 결과가 오지 않습니다: ${cut.tasks.map((t) => `"${t}"`).join(', ')}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
     }
+    if (!state?.sessionId && !forkAt && !p.handoff) systemNote = systemNote ? `${systemNote}\n\n${DECK_INTRO_NOTE}` : DECK_INTRO_NOTE;
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];

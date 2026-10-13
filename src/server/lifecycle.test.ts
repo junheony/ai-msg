@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config';
-import { drain, installGracefulShutdown, type DrainTarget } from './lifecycle';
+import { drain, flushThenExit, installGracefulShutdown, type DrainTarget } from './lifecycle';
 
 /** A fake clock + target: `finishAt[i]` is when turn i ends; abort ends all. */
 function world(finishAt: number[]) {
@@ -77,6 +77,28 @@ describe('installGracefulShutdown', () => {
     expect(exits).toEqual(['SIGTERM:drained']);
   });
 
+  it('onDrain runs once when a graceful drain starts', () => {
+    const h = host();
+    let drains = 0;
+    installGracefulShutdown(h, { drain: () => {}, activeTurns: () => 1, abortAll: () => {} }, { maxMs: 60_000, sleep: () => new Promise(() => {}), exit: () => {}, onDrain: () => { drains++; } });
+    h.fire('SIGTERM');
+    h.fire('SIGTERM');
+    expect(drains).toBe(1);
+  });
+
+  it('an onDrain that throws is logged and the drain still runs', async () => {
+    const h = host();
+    const calls: string[] = [];
+    const logs: string[] = [];
+    const exits: string[] = [];
+    installGracefulShutdown(h, { drain: () => calls.push('drain'), activeTurns: () => 0, abortAll: () => {} }, { maxMs: 60_000, log: (m) => logs.push(m), exit: (r) => exits.push(r), onDrain: () => { throw new Error('disk full'); } });
+    h.fire('SIGTERM');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(['drain']);
+    expect(exits).toEqual(['SIGTERM:drained']);
+    expect(logs.join('\n')).toContain('disk full');
+  });
+
   it('SIGINT does not wait', () => {
     const h = host();
     const calls: string[] = [];
@@ -85,6 +107,26 @@ describe('installGracefulShutdown', () => {
     h.fire('SIGINT');
     expect(calls).toEqual(['drain', 'abort']);
     expect(exits).toEqual(['SIGINT']);
+  });
+});
+
+describe('flushThenExit', () => {
+  it('exits once the flush resolves', async () => {
+    let release!: () => void;
+    const exits: number[] = [];
+    const done = flushThenExit(() => new Promise<void>((r) => { release = r; }), () => exits.push(1), 1500);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(exits).toEqual([]);
+    release();
+    await done;
+    expect(exits).toEqual([1]);
+  });
+
+  it('exits after the timeout when the flush hangs, and when it rejects', async () => {
+    const exits: string[] = [];
+    await flushThenExit(() => new Promise<void>(() => {}), () => exits.push('hang'), 10);
+    await flushThenExit(() => Promise.reject(new Error('x')), () => exits.push('reject'), 1500);
+    expect(exits).toEqual(['hang', 'reject']);
   });
 });
 

@@ -18,6 +18,7 @@ import { QuestionCard } from './components/QuestionCard';
 import { Sidebar, type SidebarView } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
 import { UsageView } from './components/UsageView';
+import { Highlights } from './components/Highlights';
 import { WorkStatus } from './components/WorkStatus';
 import { isGeminiAccount } from '../shared/accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
@@ -144,6 +145,7 @@ export function App() {
   const phone = useIsPhone();
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [highlightsOpen, setHighlightsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [buildId, setBuildId] = useState<string | null>(null);
   const [prefs, setPref] = usePrefs();
@@ -425,6 +427,25 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [phone, drawer]);
 
+  // ⇧Esc: caret to the active pane's composer (as in ChatGPT / claude.ai), even from another field or from a hardware
+  // keyboard on a touch screen. Captured so the Pane/Sheet Esc handlers never see it; popups keep their own Esc.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.isComposing || e.keyCode === 229 || e.repeat || hasOpenPopup()) return;
+      const ta = composerOf(latest.current.activePaneId);
+      if (!ta) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (document.activeElement !== ta) {
+        ta.focus({ preventScroll: true });
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
   // Global shortcuts (⌘ on Mac, Ctrl elsewhere). While a dialog is open only ⌘K (toggle) and ⌘/ get through.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -609,6 +630,7 @@ export function App() {
     ...(!phone && state.panes.length < MAX_PANES ? [{ id: 'new-pane', label: '새 분할', hint: `${mod}⇧O`, run: addPane }] : []),
     { id: 'settings', label: '설정 열기', hint: `${mod},`, run: () => window.dispatchEvent(new CustomEvent('deck:open-settings')) },
     { id: 'usage', label: '사용량 보기', run: () => setUsageOpen(true) },
+    ...(has('highlights') ? [{ id: 'highlights', label: '하이라이트 보기', run: () => setHighlightsOpen(true) }] : []),
     { id: 'theme', label: '테마 전환', run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
     { id: 'sidebar', label: phone ? '사이드바 열기' : sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기', hint: `${mod}\\`, run: toggleSidebar },
     { id: 'help', label: '단축키 보기', hint: `${mod}/`, run: () => setHelpOpen(true) },
@@ -661,7 +683,7 @@ export function App() {
         </button>
         <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} next={!phone ? preview : null} />
         <div className="topbar-end">
-          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onOpen={(r) => {
+          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={(r) => {
             if (r.sessionId) { if (!openById.current(r.sessionId) && r.cwd) openIn(active.id, r.sessionId, r.cwd, r.title); return; }
             // 새 대화: the pane whose turn the card belongs to.
             const pane = state.panes.find((p) => p.activeTurnId === r.turnId || p.myTurns.includes(r.turnId ?? ''));
@@ -675,7 +697,7 @@ export function App() {
           )}
           {!phone && state.restartedAt !== null && <button type="button" className="top-chip" onClick={() => dispatch({ type: 'dismiss_restart' })} title="서버가 다시 시작됐습니다 — 눌러서 닫기">재시작됨 {hhmm(state.restartedAt)}</button>}
           <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={usageOpen} data-sheet-return="" title="토큰 사용량 기록 (주별·일별)">사용량</button>
-          {!phone && <button type="button" className="text-btn split" onClick={addPane} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>+ 분할</button>}
+          {!phone && <button type="button" className="text-btn split" onClick={addPane} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}/${MAX_PANES}` : '+ 분할'}</button>}
           <NotifyMenu />
           {state.connected
             ? <span className="conn on" title="연결됨">연결됨</span>
@@ -689,7 +711,8 @@ export function App() {
         </div>
       )}
       {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
-      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} onOpenUsage={() => setUsageOpen(true)} onClose={() => setSettingsOpen(false)} />}
+      {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
+      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)} onOpenHit={openHit} searchFn={searchTranscripts} />}
       {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
       {confirmDelete && (

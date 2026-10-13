@@ -61,6 +61,7 @@ export function ShortcutHelp({ mac, onClose }: { mac: boolean; onClose: () => vo
           <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}Enter</kbd></dt><dd>메시지 보내기</dd></div>
           <div className="shortcut-row"><dt><kbd>⇧Tab</kbd></dt><dd>권한 모드 바꾸기 (입력창에서)</dd></div>
           <div className="shortcut-row"><dt><kbd>{mac ? '⌥' : 'Alt+'}↑/↓</kbd></dt><dd>고정 항목 순서 이동 (고정됨 줄의 버튼에서)</dd></div>
+          <div className="shortcut-row"><dt><kbd>⇧Esc</kbd></dt><dd>입력창으로 포커스</dd></div>
           <div className="shortcut-row"><dt><kbd>Esc</kbd></dt><dd>창 닫기</dd></div>
         </dl>
       </div>
