@@ -37,6 +37,21 @@ describe('SettingsView 자동 계정 선택', () => {
   });
 });
 
+describe('SettingsView 하이라이트', () => {
+  afterEach(cleanup);
+
+  it('the row shows only with onOpenHighlights (the server has the feature); a click closes Settings and opens it', () => {
+    const { rerender } = render(<SettingsView build={null} onOpenUsage={noop} onClose={noop} />);
+    expect(screen.queryByRole('button', { name: '하이라이트' })).toBeNull();
+    const onClose = vi.fn();
+    const onOpen = vi.fn();
+    rerender(<SettingsView build={null} onOpenUsage={noop} onOpenHighlights={onOpen} onClose={onClose} />);
+    fireEvent.click(screen.getByRole('button', { name: '하이라이트' }));
+    expect(onClose).toHaveBeenCalled();
+    expect(onOpen).toHaveBeenCalled();
+  });
+});
+
 describe('SettingsView sheet', () => {
   afterEach(cleanup);
 

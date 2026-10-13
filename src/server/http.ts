@@ -18,6 +18,8 @@ import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
 import type { SessionIndex } from './sessions/SessionIndex';
 import type { TurnRunner } from './turn/TurnRunner';
 import type { UsageIndex } from './usage/UsageIndex';
+import type { EventLog } from './highlights';
+import { DEFAULT_HIGHLIGHT_HOURS, HIGHLIGHT_HOURS } from '../shared/highlights';
 import type { UsageService } from './usage/UsageService';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
@@ -47,6 +49,8 @@ export type HttpDeps = {
   trash?: Pick<TurnRunner, 'trashSession' | 'restoreSession'>;
   /** Token usage history (사용량 view); absent = no /api/usage/history. */
   usageHistory?: Pick<UsageIndex, 'history' | 'refresh'>;
+  /** 하이라이트 (events.jsonl); absent = no /api/highlights. */
+  highlights?: Pick<EventLog, 'query'>;
 };
 
 /** /api/usage/history: how long `refresh=1` waits for the scan before answering with what is indexed so far. */
@@ -395,6 +399,13 @@ export function createRequestHandler(deps: HttpDeps) {
             clearTimeout(timer);
           }
           json(res, 200, deps.usageHistory.history(days));
+          return;
+        }
+        if (url.pathname === '/api/highlights' && req.method === 'GET') {
+          if (!deps.highlights) { json(res, 404, { error: 'not found' }); return; }
+          const h = Number(url.searchParams.get('hours'));
+          const hours = (HIGHLIGHT_HOURS as readonly number[]).includes(h) ? h : DEFAULT_HIGHLIGHT_HOURS;
+          json(res, 200, { hours, events: deps.highlights.query(Date.now() - hours * 3600_000) });
           return;
         }
         if (url.pathname === '/api/search' && req.method === 'GET') {

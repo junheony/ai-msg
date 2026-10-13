@@ -19,7 +19,7 @@ const KNOWN_EXT = new Set('ts tsx js jsx mjs cjs json jsonl md mdx txt py rb go 
 export function filePathIn(text: string): string | null {
   const t = text.trim();
   if (t.length > 300 || /\s/.test(t) || /^[a-z][\w+.-]*:\/\//i.test(t)) return null;
-  const m = /^((?:~\/|\/|\.{1,2}\/)?[\w@.+-]+(?:\/[\w@.+-]+)*\.([A-Za-z0-9]{1,10}))(?::\d+(?:[-:]\d+)?)?$/.exec(t);
+  const m = /^((?:~\/|\/|\.{1,2}\/)?[\p{L}\p{N}_@.+-]+(?:\/[\p{L}\p{N}_@.+-]+)*\.([A-Za-z0-9]{1,10}))(?::\d+(?:[-:]\d+)?)?$/u.exec(t);
   if (!m) return null;
   const [, p, ext] = m;
   if (!p!.includes('/') && !KNOWN_EXT.has(ext!.toLowerCase())) return null;

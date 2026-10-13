@@ -15,7 +15,8 @@ import { FileLister } from './files';
 import { GeminiEngine, geminiLoggedIn } from './engine/GeminiEngine';
 import { createRequestHandler } from './http';
 import { installCrashHandlers } from './crash';
-import { installGracefulShutdown } from './lifecycle';
+import { flushThenExit, installGracefulShutdown } from './lifecycle';
+import { EventLog } from './highlights';
 import { PushNotifier } from './push/PushNotifier';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { loadOrCreateVapid } from './push/vapid';
@@ -107,16 +108,20 @@ async function main(): Promise<void> {
   // PWA: the MagicDNS name too, so `tailscale serve` (https://<name>/ → 127.0.0.1:port) is accepted without DECK_EXTRA_HOSTS.
   const dnsName = cfg.loopbackOnly ? null : tailscaleDnsName();
   const extraHosts = [...addresses, ...(dnsName ? [dnsName] : []), ...cfg.extraHosts];
+  const titleOf = (sessionId: string | null, cwd: string) => (sessionId ? index.lookup(sessionId)?.title ?? index.codexOwned(store.codexEntries()).find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'deck';
   const push = new PushNotifier({
     store: pushSubs,
     vapid: await loadOrCreateVapid(cfg.vapidFile),
     subject: cfg.vapidSubject ?? (dnsName ? `https://${dnsName}` : 'mailto:deck@localhost.localdomain'),
-    titleOf: (sessionId, cwd) => (sessionId ? index.lookup(sessionId)?.title ?? index.codexOwned(store.codexEntries()).find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'deck',
+    titleOf,
   });
-  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory });
+  // 하이라이트: what push would announce (plus restart cuts and server start/drain), kept 7 days in events.jsonl.
+  const events = new EventLog(path.join(cfg.configDir, 'events.jsonl'), { titleOf });
+  await events.load();
+  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => push.notify(m), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
+  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); }, attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
   notifyIndex = () => ws.broadcastIndex();
   index.onChange = () => notifyIndex();
   notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });
@@ -127,14 +132,15 @@ async function main(): Promise<void> {
   for (const a of addresses) console.log(`deck: http://${a}:${cfg.port}`);
   if (dnsName) console.log(`deck: https://${dnsName}/ (tailscale serve 로 띄웠을 때 — 폰 앱·알림용)`);
   console.log(`deck: 로그인 토큰은 ${cfg.tokenFile} 에 있습니다 (내용은 출력하지 않음)`);
+  events.recordServer('서버 시작');
 
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
     ws.close(); usage.stop(); codexUsage.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
-    setTimeout(() => process.exit(0), 200);
+    void flushThenExit(() => events.flush(), () => process.exit(0));
   };
-  installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown });
+  installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });
 }
 
 installCrashHandlers(process, { log: (line) => console.error(line), exit: (code) => process.exit(code) });

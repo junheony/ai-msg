@@ -248,6 +248,7 @@ Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
 | `recent-folders.json` | Folders recently opened for new sessions. |
 | `accepted-refs.json` | References of accepted sends, so a re-sent message runs once. |
 | `audit.log` | Permission decisions. |
+| `events.jsonl` | 하이라이트: finished/failed turns, permission and question cards, background tasks, restart cuts and server start/drain, one JSON line each. Kept 7 days (older lines are dropped at start). |
 | `attachments/` | Uploaded files (`0700`; 10 MiB each, deleted after 7 days). |
 | `vapid.json`, `push-subscriptions.json` | Web Push keys and subscriptions (`0600`). |
 | `usage-index-v2.json`, `usage-index-v2.json.seen` | Token-usage aggregates and their dedupe log. An older `usage-index.json` is read once for conversion and left in place. |

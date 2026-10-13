@@ -10,7 +10,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { writeCooldown } from '../routing/cooldown';
-import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { DECK_INTRO_NOTE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -193,5 +193,32 @@ describe('TurnRunner · 메시지 편집 갈래', () => {
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', fork: { from: 'thread-1', at: 'a0' } }, c.sink);
     expect(eng.calls).toHaveLength(0);
     expect(c.msgs[0]).toMatchObject({ type: 'error', message: expect.stringContaining('편집할 Claude 세션') });
+  });
+});
+
+describe('TurnRunner · deck intro note', () => {
+  it('tells the model once on the first turn of a brand-new session, not in the pane', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const c = await setup(eng);
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: '안녕' }, c.sink);
+    expect(eng.calls[0]?.systemNote).toBe(DECK_INTRO_NOTE);
+    expect(eng.calls[0]?.systemNote).toContain('[deck] 사용자는');
+    expect(JSON.stringify(c.msgs)).not.toContain('[deck] 사용자는');
+  });
+  it('is not repeated when resuming an existing session', async () => {
+    const eng = new StubEngine(() => ok(PARENT));
+    const c = await setup(eng);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 3_600_000, justCompacted: false, defaultModel: 'sonnet' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: PARENT, text: '계속' }, c.sink);
+    expect(eng.calls[0]?.resumeSessionId).toBe(PARENT);
+    expect(eng.calls[0]?.systemNote).toBeUndefined();
+  });
+  it('is not added to a fork', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const c = await setup(eng);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 3_600_000, justCompacted: false, defaultModel: 'sonnet' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(eng.calls[0]?.forkAt).toBe('a0');
+    expect(eng.calls[0]?.systemNote).toBeUndefined();
   });
 });

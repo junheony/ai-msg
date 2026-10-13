@@ -9,6 +9,14 @@ describe('filePathIn', () => {
     expect(filePathIn('~/p/a.ts')).toBe('~/p/a.ts');
     expect(filePathIn('README.md')).toBe('README.md');
   });
+  it('accepts non-ASCII (Korean) path segments', () => {
+    const p = '~/Documents/작업/프로젝트/docs/specs/2026-10-13-design.md';
+    expect(filePathIn(p)).toBe(p);
+    expect(filePathIn(`${p}:7`)).toBe(p);
+    expect(filePathIn('문서/계획.md')).toBe('문서/계획.md');
+    expect(filePathIn('작업/노트.txt:12')).toBe('작업/노트.txt');
+    expect(filePathIn('개발.환경')).toBeNull();
+  });
   it('leaves code, versions, URLs and prose alone', () => {
     for (const t of ['console.log', 'a.b', '1.2.3', 'https://x.com/a.html', 'npm run build', 'foo', 'x.y.z()']) expect(filePathIn(t), t).toBeNull();
   });

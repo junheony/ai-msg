@@ -502,13 +502,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-letter { min-width: 1ch; max-width: 7ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: calc(15px * var(--font-scale, 1)); font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
 .usage-card.gpt .usage-letter { font-size: calc(11.5px * var(--font-scale, 1)); letter-spacing: .5px; color: var(--fg); }
 .usage-card.current .usage-letter { color: var(--accent); }
-.usage-rows { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
+.usage-rows { display: grid; grid-template-columns: 36px minmax(0, 1fr) max-content max-content; column-gap: 0; row-gap: 1px; align-items: center; flex: 1 1 auto; min-width: 0; }
 .usage-card.stale .usage-rows, .usage-card.down .usage-rows { opacity: .55; }
-.usage-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) minmax(38px, auto); align-items: center; column-gap: 8px; height: 16px; min-width: 0; white-space: nowrap; }
-.usage-row.spent, .usage-row.credits { display: flex; gap: 8px; }
-.usage-row.spent .usage-label, .usage-row.credits .usage-label { flex: 0 0 36px; }
-.usage-label { font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); overflow: hidden; }
-.usage-bar { height: 5px; min-width: 0; border-radius: 3px; background: var(--track); overflow: hidden; }
+.usage-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: 0; align-items: center; height: 16px; min-width: 0; white-space: nowrap; }
+.usage-label { margin-right: 8px; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); overflow: hidden; }
+.usage-bar { margin-right: 8px; height: 5px; min-width: 0; border-radius: 3px; background: var(--track); overflow: hidden; }
 .usage-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ok); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
 .usage-row.warn .usage-bar > i { background: var(--warn); }
 .usage-row.danger .usage-bar > i { background: var(--danger); }
@@ -527,7 +525,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-reset { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .usage-stale { flex-shrink: 0; padding: 2px 8px; border-radius: 9px; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
 /* Short countdown next to a card's fullest window (always on, desktop); the 다음 tag = where the active session's next turn goes. */
-.usage-value small.usage-cd { margin-left: 5px; font-weight: 500; color: var(--muted); }
+.usage-cd { margin-left: 5px; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
 .usage-next { position: absolute; top: -7px; left: 8px; padding: 0 6px; height: 14px; line-height: 14px; border-radius: 7px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 600; white-space: nowrap; color: var(--accent); background: var(--sidebar); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); pointer-events: auto; }
 /* Top bar status chips (작업 현황, 재시작 대기, 재시작됨): small muted pills like the stale tag. */
 .top-chip { flex-shrink: 0; padding: 2px 8px; border: 0; border-radius: 9px; font: inherit; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -548,10 +546,10 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
 .usage-pop-row b { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--fg); }
 /* A narrow card keeps its colored numbers and drops the bars; the exhausted pill keeps only "소진". */
 @container usage-card (max-width: 210px) { .usage-pill-at { display: none; } }
-@container usage-card (max-width: 200px) { .usage-value small.usage-cd { display: none; } }
+@container usage-card (max-width: 200px) { .usage-cd { display: none; } }
 @container usage-card (max-width: 156px) {
   .usage-bar { display: none; }
-  .usage-row { grid-template-columns: 36px minmax(0, 1fr); }
+  .usage-rows { grid-template-columns: 36px minmax(0, 1fr); }
 }
 
 /* Two rows (< 1280px): logo + actions on top, the four cards in equal columns underneath.
@@ -575,7 +573,7 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
 
 /* Phone: mini cards — mark + letter on top, then "label · number" rows; a tap opens the detail popover. */
 @media (max-width: 720px) {
-  .usage-value small.usage-cd { display: none; }
+  .usage-cd { display: none; }
   .topbar { column-gap: 5px; padding: 0 6px 6px; }
   .topbar > .menu { margin-left: -4px; }
   .topbar > .brand { display: inline-flex; height: 46px; margin-right: 2px; }
@@ -587,10 +585,10 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .usage-mark.gpt { width: 12px; height: 12px; }
   .usage-letter { font-size: calc(14px * var(--font-scale, 1)); }
   .usage-card.gpt .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
-  .usage-rows { gap: 0; }
-  .usage-row, .usage-row.spent, .usage-row.credits { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 4px; height: 17px; }
+  .usage-rows { grid-template-columns: auto minmax(0, 1fr); row-gap: 0; }
+  .usage-row { height: 17px; }
   .usage-bar { display: none; }
-  .usage-label { font-size: calc(11.5px * var(--font-scale, 1)); }
+  .usage-label { margin-right: 4px; font-size: calc(11.5px * var(--font-scale, 1)); }
   .usage-value { line-height: 17px; font-size: calc(13.5px * var(--font-scale, 1)); }
   .usage-value small { display: none; }
   .usage-pill { grid-column: 2; justify-self: end; height: 15px; line-height: 15px; padding: 0 6px; font-size: calc(12px * var(--font-scale, 1)); }
@@ -1093,6 +1091,30 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .uv-note { font-size: calc(14.5px * var(--font-scale, 1)); padding: 8px 12px; border-radius: 8px; background: var(--bg-raised); }
 .uv-note.error { color: var(--danger); background: var(--danger-soft); }
 .usage-view .muted { font-size: calc(14px * var(--font-scale, 1)); }
+/* 하이라이트 (Highlights.tsx): shares the usage sheet's frame, head and period tabs. */
+.hl-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.hl-filters button { min-height: 32px; padding: 0 12px; border-radius: 16px; font-size: calc(13.5px * var(--font-scale, 1)); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.hl-filters button.on { color: var(--fg-strong); background: var(--selected); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.hl-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.hl-card { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: var(--radius); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.hl-card.server { grid-column: 1 / -1; }
+.hl-head { display: flex; flex-direction: column; align-items: stretch; gap: 3px; text-align: left; padding: 4px; margin: -4px; border-radius: 6px; min-width: 0; }
+button.hl-head:hover { background: var(--hover); }
+.hl-title { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hl-meta { display: flex; gap: 8px; justify-content: space-between; color: var(--muted); font-size: calc(13px * var(--font-scale, 1)); }
+.hl-project { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hl-summary { font-size: calc(13.5px * var(--font-scale, 1)); color: var(--fg); }
+.hl-toggle { align-self: flex-start; margin-left: -8px; }
+.hl-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: calc(13px * var(--font-scale, 1)); }
+.hl-timeline li { display: grid; grid-template-columns: auto 1.2em minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.hl-timeline time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.hl-body { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hl-icon { text-align: center; font-weight: 700; }
+.hl-icon.tone-accent { color: var(--accent); }
+.hl-icon.tone-danger { color: var(--danger); }
+.hl-icon.tone-warn { color: var(--warn); }
+.hl-icon.tone-muted { color: var(--muted); }
+@media (max-width: 720px) { .hl-grid { grid-template-columns: minmax(0, 1fr); } }
 .uv-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .uv-tile { padding: 14px 16px; border-radius: var(--radius); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
 .uv-tile-label { font-size: calc(15px * var(--font-scale, 1)); color: var(--muted); }
@@ -1424,7 +1446,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .usage-sum.warn { color: var(--warn); }
   .usage-sum.danger { color: var(--danger); }
   .usage-sum.none { color: var(--faint); font-weight: 500; }
-  .usage-rows { grid-column: 1 / -1; flex-direction: row; gap: 3px; height: 3px; }
+  .usage-rows { display: flex; grid-column: 1 / -1; flex-direction: row; gap: 3px; height: 3px; }
   .usage-row, .usage-row.spent, .usage-row.credits { display: block; flex: 1 1 0; height: 3px; min-width: 0; border-radius: 2px; background: var(--track); overflow: hidden; }
   .usage-row.credits { display: none; }
   .usage-row.spent { background: color-mix(in srgb, var(--danger) 60%, transparent); }
@@ -1835,7 +1857,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-panel[data-dense] .usage-sum.warn { color: var(--warn); }
 .usage-panel[data-dense] .usage-sum.danger { color: var(--danger); }
 .usage-panel[data-dense] .usage-sum.none { color: var(--faint); font-weight: 500; }
-.usage-panel[data-dense] .usage-rows { grid-column: 1; flex-direction: row; gap: 3px; height: 3px; }
+.usage-panel[data-dense] .usage-rows { display: flex; grid-column: 1; flex-direction: row; gap: 3px; height: 3px; }
 .usage-panel[data-dense] .usage-row, .usage-panel[data-dense] .usage-row.spent, .usage-panel[data-dense] .usage-row.credits { display: block; flex: 1 1 0; height: 3px; min-width: 0; border-radius: 2px; background: var(--track); overflow: hidden; }
 .usage-panel[data-dense] .usage-row.credits { display: none; }
 .usage-panel[data-dense] .usage-row.spent { background: color-mix(in srgb, var(--danger) 60%, transparent); }

@@ -2,6 +2,36 @@
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 이 저장소는 비공개 원본(원격 없음)이고, 공개본은 `scripts/export-public.sh` 로 뽑아 따로 올린다.
 
+## 지금 상태 (2026-10-13 저녁)
+
+**한 줄:** 헤더·사이드바·사용량 시트·하이라이트·파일 링크·⇧Esc 까지 UI 와 서버 코드가 모두 커밋됐고, 서버는 재시작까지 끝나 새 코드로 돌고 있다(재시작 여부는 아래 "남은 일" 확인).
+
+### 한 일
+- **사용량 페이지 → 시트**: 상단 "사용량" 을 누르면 페이지 대신 가운데 시트(`Sheet`, 설정과 같은 틀)가 뜨고 ✕/Esc/바깥 클릭으로 닫힌다. 하이라이트도 같은 시트 틀을 쓴다.
+- **최근 대화 10개 + 고정됨 섹션**: 새 대화 화면에 최근 10개와 고정된 세션을 따로 보여 준다(중복 제거).
+- **세션 하이라이트 (6h/12h/24h)**: 작업 현황 팝오버 "하이라이트 보기 →", ⌘K, 설정에서 연다. 세션별 카드(완료·실패·승인·질문·끊김 수) → 펼치면 타임라인, 서버 시작/재시작 대기 카드. 서버는 `events.jsonl`(설정 폴더, 7일 보관)에 쌓고 `GET /api/highlights?hours=`로 준다. 사용자가 직접 멈춘 턴은 기록하지 않고, 재시작 한 번의 "끊김" 은 세션당 1건으로 합치고, 종료 때 기록 쓰기를 최대 1.5초 기다린다. 옛 서버에 붙으면 입구가 숨는다(hello `features: highlights`).
+- **분할 카운터**: 패널이 2개 이상이면 상단 버튼이 `+ 분할 2/5` 로 보인다(최대 5).
+- **파일 링크 한글 경로**: 답장 속 `~/Documents/개발/…/x.md` 처럼 한글 폴더가 낀 경로도 클릭하면 사이드 패널에서 열린다(전엔 ASCII 만 인식).
+- **새 세션 첫 턴 안내**: 모델에게 "사용자는 브라우저(원격 기기)로 보니 `open` 으로 띄우지 말고 경로를 인라인 코드로 적어라" 를 첫 턴에 한 번 넣는다(이어가기·fork 턴 제외). 전역 CLAUDE.md 에도 같은 규칙.
+- **헤더 계정 카드 정렬**: 한 카드 안의 줄들이 칸 너비를 공유(subgrid)해서 리셋 시각이 붙은 줄만 막대가 짧아지던 문제 해결. % 는 한 열, 리셋 시각은 별도 칸.
+- **⇧Esc = 입력창 포커스** (팝업·모달이 열려 있으면 양보). 단축키 도움말에 추가.
+- 그 전(같은 날 오후): 헤더 4종(작업 현황·리셋 카운트다운·재시작 상태·다음 턴 라우팅), 사이드바 hover peek, 분할 패널 좁은 헤더 깨짐, "분할 보기로 열기" 메뉴, Safari 입력창.
+
+### 남은 일
+- **서버 재시작 확인**: 이 세션이 재시작까지 했으면 `~/.config/deck/deck.log` 끝에 `새 서버 시작` 이 있고 `events.jsonl` 에 `서버 시작` 줄이 있다. 없으면 활동(`activity.json`)이 비었을 때 `scripts/restart.sh`(바쁘면 `kill -USR2 <서버 pid>` 로 drain).
+- **브라우저에서 눈으로 확인할 것**: 계정 카드 정렬(데스크톱·폰 폭), 좁은 분할 패널 헤더, 하이라이트 시트, ⇧Esc.
+- **분할 패널 드래그 순서 바꾸기 + 떠 있는 카드**: 설계만 제시됐고 시작 안 함. 범위를 사용자와 다시 확인하고 시작.
+- 사용자 답 대기(변함없음): FDA 허용, deck-uptime 텔레그램 chat id, C 계정 재로그인(10-20 전), A/B 11월 초.
+
+### 더 하면 좋을 것
+- 작업 현황 칩이 한가할 때 사라져서 상단 바에 하이라이트 입구가 없다(⌘K·설정으로만). 한가할 때도 보이는 작은 입구 검토.
+- `events.jsonl` 은 시작할 때만 정리하므로 오래 켜 두면 커진다 — 하루 1회 정리 또는 개수 상한.
+- 하이라이트 카드 제목은 기록 시점 이름으로 고정(이후 이름 바꿔도 안 바뀜).
+
+### 재현·복구용
+- 비공개 커밋: 이 섹션 아래 "다음 할 일" 의 첫 묶음 참고. 공개본은 `/tmp/deck-head` 워크트리를 새 커밋으로 옮긴 뒤 `scripts/export-public.sh` → `/tmp/quarterdeck-pub` 로 rsync → 위생 grep(`/Users/max|/home/max|Documents/개발|quant_analyzer|StandX`) 깨끗 → `hwangmc88` 로 커밋, `junheony` 로 push, gh 는 `officialsaviorofhealth` 로 복귀.
+- 테스트: `npx tsc --noEmit -p .`, `npx vitest run`(`relaunch.test.ts`·`ws.outside.test.ts` 는 부하 때 불안정 — 단독 재실행으로 확인), 실제 배포는 `npx vite build`(UI) + 서버 재시작.
+
 ## 다음 할 일 (2026-10-06 오후)
 - **헤더 4종·사이드바 hover peek·분할 헤더 깨짐·분할 보기로 열기·Safari 입력 (2026-10-13 16:45, 커밋 `6c0d861`, 공개본 `065b6e3`)**: (1) 헤더: `WorkStatus` 칩/팝오버(실행 중 N · 백그라운드 M · 승인 대기 K, 세션별, "새 대화" 행), 리셋 카운트다운 상시(`shortCountdown`), `재시작 대기 중 · 작업 N개 기다림`/`재시작됨 HH:MM`(sessionStorage `deck.serverStart`), 다음 턴 라우팅 미리보기 `다음`/`다음 · Opus` 태그. 프로토콜: `activity.draining/serverStartedAt`(선택, hello 직후·drain 시 즉시), `route_preview` 요청/응답은 FEATURES `routePreview` 뒤(소켓별 마지막 ask 기억, 사용량 바뀌어 결과가 다를 때만 재전송), `TurnRunner.claudeRoute()` 를 실제 턴과 `previewRoute()` 가 공유(부작용 없음, GPT·retired·새 세션 auto 는 null). 리뷰 13건 반영. (2) 사이드바 숨김 상태에서 왼쪽 3px hotzone/☰ hover 로 peek(`finePointer()`+`(hover:hover)` 만, `e.buttons!==0` 무시, 150ms 열고 300ms 닫음, 닫은 뒤 포인터가 떠날 때까지 래치). **Esc 는 capture 단계**에서 `hasOpenPopup()` 이면 양보, 아니면 `preventDefault` + `.sidebar-wrap.peek` 가 `Pane.tsx ESC_OWNERS` — 리뷰 HIGH "peek 중 Esc 가 실행 중 턴을 중단" 해결(대조군 테스트 있음). (3) 분할 헤더 깨짐: 원인은 `.pane { container: pane }` 이 `.pane.with-side` 전체라 파일 패널 옆 300px 채팅 칼럼에 `@container pane` 규칙이 안 걸리던 것 → `.chat` 에도 같은 이름 컨테이너(가장 가까운 것이 이김; NewChat·빈 패널은 `.chat` 밖이라 그대로), `.side-panel` 은 `side` 컨테이너(≤360px 복사 버튼 아이콘만, `CopyButton compact` opt-in, 실패 시 글자 유지), `.pane-close`/`.side-close` 항상 보이는 테두리. **jsdom 으론 컨테이너 쿼리 검증 불가 — 브라우저에서 확인 필요.** (4) 세션 ⋯ 메뉴 `분할 보기로 열기`(`onOpenSplit`/`splitBlocked`; App 은 `apply({type:'add_pane'})` 뒤 `latest.current.activePaneId` — `add_pane` id 가 `p${max+1}` 로 결정적이라 가능, 주석에 적음). (5) Safari 웹앱 타자 이상: textarea 에 `autoCorrect/autoCapitalize off, spellCheck false`(Chat·NewChat·MessageView). 테스트 166파일 1873건(`relaunch.test.ts`·`ws.outside.test.ts` 는 부하 시 flaky, 단독 통과). `vite build` 반영 → UI 쪽은 바로 보임. **서버 변경(헤더 3·4번: draining/serverStartedAt·route_preview)은 재시작 필요** — 16:45 현재 서버 pid 50221(10-12 23:15 시작, relaunch 42749 자식), activity.json 에 이 세션 running + aa198c8d bg1(16:44 배포 대기) → `restart.sh` 거부. 사용자 결정 대기: 지금 `kill -USR2 50221`(둘 다 끝나면 교체, 그동안 새 프로세스 생성은 `draining` 거절) 또는 한가할 때 `npm run restart`. **미결 설계(사용자 답 대기)**: 사용량 페이지 → 모달 시트(배경 클릭·Esc·✕, 새로고침 아이콘), 새 채팅 최근 대화 4→10 + 고정됨 섹션(`state.pins`, 중복 제외), 분할 패널 드래그 재배치+플로팅 카드.
 - **"이건 계속 시작만하는데" — 큐에 걸린 전송을 보이게 (2026-10-12 21:20)**: 증상은 보낸 메시지가 `시작하는 중… 0:10`+취소 에서 안 움직이는 것. 원인은 멈춤이 아니라 **held 프로세스의 `백그라운드 계속` 구간이 스트리밍 중일 때 보낸 메시지는 `TurnRunner.submit` 큐에 조용히 들어가 그 구간의 result 때 들어가는데**(`.omc/tmp/deck-repro.ts` 로 재현: 16.8→26.5초 대기 뒤 정상 전달) UI 에 그 신호가 없어 `useStartWatch` 가 15초마다 재접속했다(당일 11:54Z 건은 bg1 구간 66초 뒤 새 프로세스로 돌아감). 넣은 것(커밋 `6e526b4`): 서버 `turn_queued{turnId,sessionId,cwd,clientRef,behind}` — `followUp` 이 `{queuedBehind: seg.reason|null}` 을 돌려주고 ws 는 **보낸 소켓이 `open_session.accepts` 에 `'turn_queued'` 를 넣었을 때만**(규칙 3, `queuedAware` WeakSet = `sandboxAware` 패턴) 그 소켓에만 보냄. UI `PaneState.awaitingBehind`(ref 가 맞을 때만 set, `awaitingStart` 가 false 되는 모든 경로에서 null), `StatusRow` "백그라운드 계속 뒤에서 기다리는 중 — 끝나면 이어서 보냄"(취소 유지), `useStartWatch` 는 `awaitingBehind` 인 대기를 감시에서 뺌(알려진 한계: 그 사이 소켓이 반쯤 죽으면 ws close/hello 경로만 복구). **리뷰(opus) minor 반영**: 취소가 클라이언트만 바꿔 서버가 결국 실행하던 것 → 클라 `cancel_queued{sessionId,clientRef}` 추가, `TurnRunner.cancelQueued` 가 큐에서 빼고 turnId 반환(이미 들어갔으면 null → 그 ref 의 turn_started 가 "다른 기기" 처럼 붙음, 기존 동작), ws 는 `pendingRefs`/`aliases`/`prompts` 정리 + `endHeld`. `Pane.onCancelStart` 는 `awaitingBehind` 일 때만 보냄(turn_queued 를 보낸 서버는 cancel_queued 를 앎 → 기능 이름 불필요, `docs/protocol.md` 에 적음); 끊긴 상태면 취소하지 않고 오류 토스트(서버가 그대로 실행하므로). 2차 검증(sonnet) 반영: ws 핸들러는 그 세션을 보는 소켓(`viewing`)만 허용(음성 대조 테스트 g). 남긴 것(minor): 대기 중 이 pane 에 계속 구간의 turn_started 가 먼저 붙으면 StatusRow 가 그 구간의 동사·중단만 보이고 큐 라벨·취소는 숨음(큐 메시지는 그대로 들어감); `aliases`/`prompts` 정리·`endHeld` 는 테스트로 관찰 안 함. 테스트 164파일 1817건(ws: 보낸 소켓만·accepts 없는 소켓·같은 세션 다른 accepts 소켓 음성 대조·q-3 취소 후 pendingRefs/프로세스 종료; TurnRunner cancelQueued; state turn_queued/hello 정리; useStartWatch 제외+음성 대조; StatusRow 라벨). `vite build` 반영. **서버 변경이라 재시작 필요** — 21:25 시점 다른 세션 3개(3cf08150·aa198c8d·62adebb9)에 백그라운드 작업이 있어 `restart.sh` 가 거부(exit 2)하므로 강제하지 않았다. 대신 이 세션의 백그라운드 셸이 `~/.config/deck/activity.json` 을 60초마다 보다가 running/bg 가 전부 0 이면 `npm run restart` 를 한 번 실행한다(최대 2시간, 로그 `.omc/tmp/deck-restart-wait.log`). → 그 루프는 **자기 세션의 백그라운드 작업(bg1)으로 잡혀 영원히 기다리는 자가 교착**이었고(23:11 까지 `1ecf4434:bg1`), 세션 교체로 끊겼다. 23:15 "재시작해 그리고 다시하면되잖아" → 다른 세션 bg 는 이미 다 끝난 상태라 `npm run restart -- --force`(이 세션의 진행 중 턴만 드레인이 기다림)로 USR2 를 보냈다. 다음 세션: `pgrep -f src/server/main.ts` 가 27441 이 아니고 deck.log 에 `relaunch … 새 서버 시작`·curl 200 이면 끝. 교훈: 재시작 대기 루프를 deck 세션 안에서 돌리면 안 된다(OS cron/launchd 로). 미커밋 스크래치: `.omc/tmp/deck-probe.ts`·`deck-repro.ts`·로그·`repro-cwd`(지워도 됨).
