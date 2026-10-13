@@ -10,6 +10,7 @@ import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
 import { LEGACY_ACCOUNT_LIST, accountListOf, activePin, sameAccountList, seatLabel } from './accounts';
 import { has } from './features';
+import { paneSize } from './paneResize';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
 
@@ -247,6 +248,8 @@ export type PaneState = {
   notices?: PaneNotice[];
   /** The opened session's history has not arrived yet (the pane shows a loading placeholder instead of a blank). */
   loading?: boolean;
+  /** Split-view column weight (`fr`; absent = 1): the splitter between two panes trades it between them. */
+  size?: number;
 };
 
 export type PaneNotice = { sessionId: string | null; message: string; level: 'notice' | 'error' };
@@ -358,6 +361,8 @@ export type Action =
   | { type: 'clear_pane'; paneId?: string }
   | { type: 'close_pane'; paneId: string }
   | { type: 'focus_pane'; paneId: string }
+  /** Column weights by pane id (a splitter drag sends its two neighbours; 균등 sends every pane at 1); others are untouched. */
+  | { type: 'resize_panes'; sizes: Record<string, number> }
   | { type: 'dismiss_error' }
   | { type: 'dismiss_restart' }
   /** A new route_preview ask went out: the last answer (for another ask) is dropped until its own comes. */
@@ -1131,8 +1136,21 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'add_pane': {
       if (state.panes.length >= MAX_PANES) return state;
       const n = Math.max(...state.panes.map((p) => Number(p.id.slice(1)) || 0)) + 1;
-      const pane = newPane(`p${n}`);
+      // The new pane takes the average weight, so the others keep their proportions to each other.
+      const avg = state.panes.reduce((t, p) => t + paneSize(p.size), 0) / state.panes.length;
+      const pane: PaneState = { ...newPane(`p${n}`), ...(avg !== 1 ? { size: avg } : {}) };
       return { ...state, panes: [...state.panes, pane], activePaneId: pane.id };
+    }
+    case 'resize_panes': {
+      let changed = false;
+      const panes = state.panes.map((p) => {
+        if (!Object.hasOwn(action.sizes, p.id)) return p;
+        const size = paneSize(action.sizes[p.id]);
+        if (size === paneSize(p.size)) return p;
+        changed = true;
+        return { ...p, size };
+      });
+      return changed ? { ...state, panes } : state;
     }
     case 'close_pane': {
       if (state.panes.length <= 1) return state;

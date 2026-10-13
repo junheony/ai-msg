@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { ClientMessage } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import { CommandPalette, type PaletteAction, type PaletteSession } from './components/CommandPalette';
@@ -19,10 +19,11 @@ import { Sidebar, type SidebarView } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
 import { UsageView } from './components/UsageView';
 import { Highlights } from './components/Highlights';
-import { WorkStatus } from './components/WorkStatus';
+import { HighlightsBadge, ServerChip, WorkStatus } from './components/WorkStatus';
 import { isGeminiAccount } from '../shared/accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
+import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
@@ -558,6 +559,37 @@ export function App() {
     for (const sessionId of sessionsToClose(prev, next)) { catchup.current?.forget(sessionId); send({ type: 'close_session', sessionId }); }
   };
   const active = state.panes.find((p) => p.id === state.activePaneId) ?? state.panes[0]!;
+  // Splitter drag: the grid is restyled directly while the pointer moves (no re-render of every pane per frame);
+  // the weights reach the state on release, a cancelled drag puts the columns back.
+  const startPaneResize = (e: ReactPointerEvent<HTMLDivElement>, leftId: string, rightId: string) => {
+    const el = e.currentTarget;
+    const grid = el.parentElement;
+    const left = el.previousElementSibling?.getBoundingClientRect();
+    const right = el.nextElementSibling?.getBoundingClientRect();
+    if (!grid || !left || !right) return;
+    e.preventDefault();
+    el.setPointerCapture?.(e.pointerId);
+    const panes = latest.current.panes;
+    const sizes = panes.map((p) => paneSize(p.size));
+    const i = panes.findIndex((p) => p.id === leftId);
+    const startX = e.clientX;
+    const before = grid.style.gridTemplateColumns;
+    let pair: [number, number] | null = null;
+    const move = (ev: PointerEvent) => {
+      pair = resizePair([sizes[i]!, sizes[i + 1]!], [left.width, right.width], ev.clientX - startX);
+      grid.style.gridTemplateColumns = paneColumns(sizes.map((s, j) => (j === i ? pair![0] : j === i + 1 ? pair![1] : s)));
+    };
+    const end = (ev: PointerEvent) => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', end);
+      el.removeEventListener('pointercancel', end);
+      if (ev.type === 'pointercancel' || !pair) { grid.style.gridTemplateColumns = before; return; }
+      dispatch({ type: 'resize_panes', sizes: { [leftId]: pair[0], [rightId]: pair[1] } });
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  };
   const openIn = (paneId: string, sessionId: string | null, cwd: string, title: string) => {
     apply({ type: 'open', sessionId, cwd, title, paneId });
     if (sessionId) { catchup.current?.forget(sessionId); send({ type: 'open_session', sessionId }); }
@@ -683,19 +715,14 @@ export function App() {
         </button>
         <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} next={!phone ? preview : null} />
         <div className="topbar-end">
-          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={(r) => {
+          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onNewChat={() => newChat()} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={(r) => {
             if (r.sessionId) { if (!openById.current(r.sessionId) && r.cwd) openIn(active.id, r.sessionId, r.cwd, r.title); return; }
             // 새 대화: the pane whose turn the card belongs to.
             const pane = state.panes.find((p) => p.activeTurnId === r.turnId || p.myTurns.includes(r.turnId ?? ''));
             if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); requestFocus(pane.id); }
           }} />}
-          {!phone && state.draining && (
-            <span className="top-chip warn" role="status" title="서버가 재시작을 준비 중입니다 — 돌고 있는 작업이 끝나면 다시 시작합니다">
-              <span className="chip-long">{busySessions > 0 ? `재시작 대기 중 · 작업 ${busySessions}개 기다림` : '재시작 중…'}</span>
-              <span className="chip-short" aria-hidden="true">{busySessions > 0 ? `재시작 대기 · ${busySessions}` : '재시작 중…'}</span>
-            </span>
-          )}
-          {!phone && state.restartedAt !== null && <button type="button" className="top-chip" onClick={() => dispatch({ type: 'dismiss_restart' })} title="서버가 다시 시작됐습니다 — 눌러서 닫기">재시작됨 {hhmm(state.restartedAt)}</button>}
+          {!phone && has('highlights') && <HighlightsBadge ready={state.ready} running={state.activity.filter((a) => a.running).length} onOpen={() => setHighlightsOpen(true)} />}
+          {!phone && <ServerChip startedAt={state.serverStartedAt} restartedAt={state.restartedAt} draining={state.draining} busy={busySessions} onDismissRestart={() => dispatch({ type: 'dismiss_restart' })} />}
           <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={usageOpen} data-sheet-return="" title="토큰 사용량 기록 (주별·일별)">사용량</button>
           {!phone && <button type="button" className="text-btn split" onClick={addPane} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}/${MAX_PANES}` : '+ 분할'}</button>}
           <NotifyMenu />
@@ -798,15 +825,22 @@ export function App() {
             onNewChat={() => newChat()}
           />
         </div>
-        <div className="panes" data-count={phone ? 1 : state.panes.length} style={{ '--cols': phone ? 1 : state.panes.length } as CSSProperties}>
+        <div className="panes" data-count={phone ? 1 : state.panes.length} style={{ '--cols': phone ? 1 : state.panes.length, ...(!phone && state.panes.length > 1 ? { gridTemplateColumns: paneColumns(state.panes.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
           {phone && state.panes.length > 1 && (
             <div className="pane-switch">
               {state.panes.map((p, i) => <button type="button" key={p.id} className={p.id === active.id ? 'on' : ''} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
             </div>
           )}
-          {(phone ? [active] : state.panes).map((p) => (
-            <Pane key={p.id} pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+          {(phone ? [active] : state.panes).map((p, i, shown) => (
+            <Fragment key={p.id}>
+            {i > 0 && (
+              <div className="pane-splitter" role="separator" aria-orientation="vertical" aria-label="패널 폭 조절" title="드래그: 폭 조절 · 더블클릭: 균등"
+                onPointerDown={(e) => startPaneResize(e, shown[i - 1]!.id, p.id)}
+                onDoubleClick={() => dispatch({ type: 'resize_panes', sizes: Object.fromEntries(state.panes.map((x) => [x.id, 1])) })} />
+            )}
+            <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
               onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions} />
+            </Fragment>
           ))}
         </div>
       </div>

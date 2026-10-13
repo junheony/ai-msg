@@ -1531,3 +1531,37 @@ describe('permission modes', () => {
     expect(first(s).session?.permissionMode).toBe('acceptEdits');
   });
 });
+
+describe('pane widths (resize_panes)', () => {
+  const sizes = (s: AppState) => s.panes.map((p) => p.size ?? 1);
+  const three = () => reducer(reducer(initialState, { type: 'add_pane' }), { type: 'add_pane' });
+
+  it('trades weight between the two named panes only; others keep theirs', () => {
+    const s = reducer(three(), { type: 'resize_panes', sizes: { p0: 1.4, p1: 0.6 } });
+    expect(sizes(s)).toEqual([1.4, 0.6, 1]);
+  });
+
+  it('bad weights fall back to 1, tiny ones to the floor; unknown ids and no-op changes keep the state', () => {
+    const base = three();
+    expect(sizes(reducer(base, { type: 'resize_panes', sizes: { p0: -3, p1: Number.NaN, p2: 0.0001 } }))).toEqual([1, 1, 0.05]);
+    expect(reducer(base, { type: 'resize_panes', sizes: { p9: 2 } })).toBe(base);
+    expect(reducer(base, { type: 'resize_panes', sizes: { p0: 1 } })).toBe(base);
+  });
+
+  it('equalize (double-click): every pane back to 1', () => {
+    const s = reducer(three(), { type: 'resize_panes', sizes: { p0: 1.5, p1: 0.5 } });
+    expect(sizes(reducer(s, { type: 'resize_panes', sizes: { p0: 1, p1: 1, p2: 1 } }))).toEqual([1, 1, 1]);
+  });
+
+  it('add_pane gives the new pane the average weight; close_pane leaves the rest as they were', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    s = reducer(s, { type: 'resize_panes', sizes: { p0: 1.5, p1: 0.5 } });
+    s = reducer(s, { type: 'add_pane' });
+    expect(sizes(s)).toEqual([1.5, 0.5, 1]);
+    s = reducer(s, { type: 'resize_panes', sizes: { p1: 1.5, p2: 3 } });
+    s = reducer(s, { type: 'add_pane' });
+    expect(sizes(s)).toEqual([1.5, 1.5, 3, 2]);
+    s = reducer(s, { type: 'close_pane', paneId: 'p1' });
+    expect(sizes(s)).toEqual([1.5, 3, 2]);
+  });
+});

@@ -22,6 +22,7 @@
 | `sessionSandbox` | `set_sandbox` 로 기존 GPT 세션의 샌드박스를 바꾸고, `open_session.accepts` 에 `'sandbox'` 를 넣은 소켓에만 `sandbox` 메시지로 알린다. `catchup.sandbox` 도 채운다 | 기존 GPT 세션의 샌드박스 칩은 표시만 |
 | `routePreview` | `route_preview{sessionId, cwd?, model?}` 에 `route_preview{sessionId, account, reason, asOpus?}` 로 답한다(Claude 세션만; GPT·Gemini·모르는 id·뺀 계정 세션, 새 세션의 `자동` 은 답 없음). 소켓마다 마지막 요청을 기억해 사용량이 바뀌어 답이 달라지면 다시 보낸다. `sessionId: null` 에 `cwd` 가 없으면 요청 철회 | 상단 사용량 카드에 `다음` 표시 없음(요청도 보내지 않음) |
 | `highlights` | `GET /api/highlights?hours=6\|12\|24`(그 밖의 값은 24)에 `{ hours, events }` 로 답한다(세션 하이라이트, `events.jsonl` 7일치) | 작업 현황의 `하이라이트 보기 →`, ⌘K `하이라이트 보기`, 설정의 `하이라이트` 를 숨김 |
+| `fileRaw` | `GET /api/file?…&raw=1[&download=1]` 로 원본 바이트를 주고 `POST /api/reveal` 로 서버 Mac 의 Finder 를 연다(아래 "HTTP: 세션 폴더 파일") | 파일 칩·사이드 패널의 `다운로드`·`Finder 에서 보기`·`새 탭에서 크게`, 폴더 칩의 `Finder 에서 열기` 를 숨기고, 답장 안 이미지 경로는 썸네일 대신 칩으로 |
 
 기능을 더할 때: `FEATURES` 에 이름을 더하고, UI 는 `has()` 로 갈라 쓰고, 이 표에 한 줄 더한다. 배포된 이름은 지우지 않는다.
 
@@ -30,6 +31,16 @@
 계정 고정(`send.accountPin`, `set_account_pin.pin`)의 id 는 모양(`ACCOUNT_ID_RE`, `src/shared/accounts.ts`)만 스키마에서 보고, 어떤 계정이 있는지는 서버가 처리할 때 설정으로 확인한다. 설정에 없는 id 와 뺀 계정(retired)은 `error` 로 거절한다. 옛 UI 가 보내는 a/b/c 는 그대로 통과한다.
 
 ws 메시지가 아닌 것: 하이라이트(`GET /api/highlights?hours=6|12|24`, 그 밖의 값은 24 → `{ hours, events }`)는 HTTP 로만 읽는다. 서버는 `highlights` 기능(위 표)으로 알리고, 그 기능이 없는 서버면 UI 는 들어가는 곳을 보이지 않는다.
+
+## HTTP: 세션 폴더 파일
+
+HTTP 는 새 경로·쿼리만 더하고 기존 응답 모양은 바꾸지 않는다. 아래는 모두 로그인 쿠키가 필요하고(없으면 `401`), POST 는 같은 출처(`Origin` 또는 `Sec-Fetch-Site: same-origin`)여야 한다(아니면 `403`). 세 경로 모두 `GET /api/file` 미리보기와 같은 검사(`openSessionPath`, `src/server/files.ts`)를 거친다: `cwd` 가 허용 루트 안의 실제 폴더, 대상의 실제 경로(심볼릭 링크 해제)가 그 안, 비밀 파일 deny list, O_NOFOLLOW 로 열기, 연 파일과 검사한 파일의 inode 일치, 하드링크 거부. 에러는 언제나 `{ error: string }`(한국어 문구) JSON.
+
+- `GET /api/file?cwd=<절대경로|~/…>&path=<cwd 기준 상대·절대·~/ 경로>[&session=<id>]` — 미리보기(기존). `{ path, size, kind: 'text', text }` 또는 `{ path, size, kind: 'image', mediaType, base64 }`. 2MB 초과 `413`, 바이너리·UTF-8 아님 `415`.
+- `GET /api/file?cwd=…&path=…[&session=…]&raw=1[&download=1]` — 원본 바이트를 그대로 스트리밍(50MB 까지). 헤더: `Content-Type` 은 PNG/JPEG/GIF/WebP 를 내용으로 판별한 타입, 그 밖엔 확장자 기준(텍스트·코드·`svg`·`html`·`htm`·`xml` 은 모두 `text/plain; charset=utf-8`, `pdf` → `application/pdf`, 몇몇 오디오·비디오), 모르면 `application/octet-stream`. `Content-Length`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store`, `Content-Disposition: inline; filename*=UTF-8''<RFC 5987 인코딩 파일명>`(`download=1` 이면 `attachment; …`). 에러: cwd 문제 `400`, 경로 없음·폴더 `400`, 폴더 밖·deny list·하드링크 `403`, 없는 파일 `404`, 50MB 초과 `413`.
+- `POST /api/reveal` body `{ cwd: string, file: string }` — 서버 Mac 의 Finder 에서 보여 준다(파일도 폴더도 언제나 `open -R` 로 선택해 보여 준다 — 폴더를 `open` 으로 열면 `.app` 같은 번들이 실행되므로 쓰지 않는다). **서버 Mac 화면에 열리므로 원격 기기의 사용자에게는 보이지 않는다.** 성공 `204`(본문 없음). 에러: body 형식·cwd `400`, 폴더 밖·deny list `403`, 없는 경로 `404`, Finder 실행 실패 `500`, 서버가 macOS 가 아니면 `501` `{ error: '서버가 macOS 가 아니라 Finder 를 열 수 없습니다' }`.
+
+옛 서버는 `raw=1` 을 무시하고 미리보기 JSON 을 돌려주고, `/api/reveal` 에는 `404` 로 답한다. 그래서 UI 는 두 경로를 `fileRaw` 기능(위 표)이 있는 서버에서만 부른다.
 
 기능 이름이 아닌 것: 턴 뒤 목록 갱신. 서버는 실행이 끝날 때 목록이 달라졌으면 `index` 를 보내지만, 백그라운드 작업으로 프로세스가 열려 있으면 턴 결과 뒤에도 보내지 않는다. 그래서 UI 는 서버 버전과 상관없이 턴 결과 3초 안에 `index` 가 없으면 `refresh_index` 를 보낸다(`ui/indexRefresh.ts`).
 

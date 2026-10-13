@@ -313,3 +313,23 @@ describe('persist (ux-state)', () => {
     expect(loadSent('s2', bad)).toEqual([]);
   });
 });
+
+describe('persist: pane widths', () => {
+  it('round-trips the weights; equal panes store nothing extra', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    expect(snapshotUi(s, { collapsed: [], drawer: false }).panes.every((p) => !('size' in p))).toBe(true);
+    s = reducer(s, { type: 'resize_panes', sizes: { p0: 1.25, p1: 0.75 } });
+    const store = memStore();
+    saveUi(snapshotUi(s, { collapsed: [], drawer: false }), null, store);
+    expect(hydrate(initialState, loadUi(store)).panes.map((p) => p.size ?? 1)).toEqual([1.25, 0.75]);
+  });
+
+  it('an older save (no weights) and bad weights come back as equal columns', () => {
+    const p = { session: null, model: 'auto', efforts: {}, autoEffort: null, engine: 'claude', sandbox: 'read-only' };
+    const old = parseUi({ v: 1, panes: [p, p], active: 0, collapsed: [], drawer: false });
+    expect(hydrate(initialState, old).panes.map((x) => x.size ?? 1)).toEqual([1, 1]);
+    const bad = parseUi({ v: 1, panes: [{ ...p, size: 'big' }, { ...p, size: -2 }, { ...p, size: 1e9 }, { ...p, size: 0.5 }], active: 0, collapsed: [], drawer: false });
+    expect(bad?.panes.map((x) => x.size)).toEqual([undefined, undefined, undefined, 0.5]);
+    expect(hydrate(initialState, bad).panes.map((x) => x.size ?? 1)).toEqual([1, 1, 1, 0.5]);
+  });
+});

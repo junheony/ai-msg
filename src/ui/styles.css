@@ -234,9 +234,15 @@ button.conn:hover { background: var(--hover); color: var(--fg); }
 .sidebar .folder-list li { min-height: 28px; padding: 3px 8px; font-size: calc(13.5px * var(--font-scale, 1)); word-break: break-all; }
 
 /* ───────── Panes ───────── */
-/* Split = equal vertical columns (1–5), Desktop-style. Too narrow for n × min → the pane strip scrolls sideways, never the page. */
+/* Split = vertical columns (1–5), Desktop-style. Too narrow for n × min → the pane strip scrolls sideways, never the page.
+   App sets grid-template-columns inline (per-pane fr weights + 6px splitter tracks, paneResize.ts); the repeat() is the fallback. */
 .panes { --pane-min: 300px; flex: 1; display: grid; min-width: 0; min-height: 0; gap: 1px; background: var(--line); grid-template-columns: repeat(var(--cols, 1), minmax(var(--pane-min), 1fr)); grid-template-rows: minmax(0, 1fr); overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
 .panes[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+/* The splitter draws the dividing line itself, so the 1px gap would only double it. */
+.panes:has(> .pane-splitter) { gap: 0; }
+.pane-splitter { min-width: 0; cursor: col-resize; position: relative; z-index: 2; touch-action: none; background: var(--bg); }
+.pane-splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - .5px); width: 1px; background: var(--line); pointer-events: none; }
+.pane-splitter:hover::after, .pane-splitter:active::after { left: calc(50% - 1px); width: 2px; background: var(--accent); }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); position: relative; }
 .panes:not([data-count="1"]) .pane.active::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent); opacity: .5; pointer-events: none; }
 .pane-switch { display: flex; gap: 6px; padding: 6px 10px; background: var(--sidebar); border-bottom: 1px solid var(--line); }
@@ -536,6 +542,16 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
 .work-pop { min-width: 260px; max-width: min(340px, calc(100vw - 16px)); box-sizing: border-box; }
 /* A top chip's short form (two-row top bar, < 1280px) is hidden until the bar narrows. */
 .top-chip .chip-short { display: none; }
+/* Idle 작업 현황 (한가함) and the server's uptime stay a step quieter than live work. */
+.work-chip.idle, .server-uptime { color: color-mix(in srgb, var(--muted) 80%, transparent); }
+.hl-badge { color: var(--accent); }
+.hl-badge .hl-badge-short { display: none; }
+/* Narrow bar (≤ 1100px): the badge is just ✦N, the uptime chip goes (draining / 재시작됨 stay). */
+@media (max-width: 1100px) {
+  .hl-badge .hl-badge-long { display: none; }
+  .hl-badge .hl-badge-short { display: inline; }
+  .server-uptime { display: none; }
+}
 .usage-pop-row.work-row { box-sizing: border-box; width: calc(100% + 8px); border: 0; background: none; font: inherit; text-align: left; cursor: pointer; border-radius: 6px; padding: 0 4px; margin: 0 -4px; }
 .usage-pop-row.work-row:hover { background: var(--hover); color: var(--fg); }
 .work-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1879,3 +1895,19 @@ button.hl-head:hover { background: var(--hover); }
 @media (pointer: coarse) {
   .sidebar-search input, .folder-picker input, .chat-title-input, .composer textarea, .queue-item input, .inline-edit, .palette-input, .side-pick input, .question-free, .newchat-box textarea { font-size: max(16px, 1em); }
 }
+
+/* file-menu: a reply's file chip / thumbnail menu (right-click, long press), the header folder chip, inline images. */
+/* Fixed and above the phone's full-screen side panel (60), so neither a narrow pane nor the sheet clips it. */
+.session-menu.file-menu { position: fixed; z-index: 62; right: auto; min-width: 190px; max-width: calc(100vw - 16px); overflow-y: auto; }
+.file-toasts .toasts { z-index: 61; }
+/* iOS would show its own link callout on the long press that opens the deck menu. */
+.file-link, .file-thumb { -webkit-touch-callout: none; }
+button.folder-chip { cursor: pointer; text-align: left; }
+button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(--fg); }
+.file-thumb { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 100%; margin: 4px 8px 4px 0; padding: 0; vertical-align: bottom; text-align: left; border-radius: 8px; }
+.file-thumb img { display: block; max-width: 100%; max-height: 240px; height: auto; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); background: var(--hover); -webkit-user-drag: none; }
+.file-thumb:hover img { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+.file-thumb-cap { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: calc(11.5px * var(--font-scale, 1)); color: var(--muted); }
+/* A list of image paths (`- \`a.png\``) lays its thumbnails side by side, wrapping; text items stay rows. */
+.markdown li:has(> .file-thumb:only-child), .markdown li:has(> p > .file-thumb:only-child) { display: inline-block; vertical-align: top; margin-right: 4px; }
+.markdown li:has(> p > .file-thumb:only-child) > p { margin: 0; }

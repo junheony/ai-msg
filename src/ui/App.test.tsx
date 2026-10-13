@@ -88,6 +88,36 @@ describe('App split view (D6)', () => {
     expect(split.textContent).toBe('+ 분할 4/5');
   });
 
+  it('a splitter between each pair of panes: dragging trades width between its two neighbours, double-click evens them out, the widths survive a reload', async () => {
+    await boot();
+    expect(screen.queryAllByRole('separator', { name: '패널 폭 조절' })).toHaveLength(0);
+    const split = screen.getByText(/^\+ 분할/);
+    fireEvent.click(split);
+    fireEvent.click(split);
+    const bars = screen.getAllByRole('separator', { name: '패널 폭 조절' });
+    expect(bars).toHaveLength(2);
+    expect(bars[0]!.getAttribute('aria-orientation')).toBe('vertical');
+    const panes = document.querySelector('.panes') as HTMLElement;
+    expect(panes.style.gridTemplateColumns).toBe('minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr)');
+    // jsdom has no layout: each pane reports 500px wide.
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ width: 500, height: 400, left: 0, right: 500, top: 0, bottom: 400, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+    try {
+      fireEvent.pointerDown(bars[1]!, { clientX: 1000, pointerId: 1 });
+      fireEvent.pointerMove(bars[1]!, { clientX: 1100, pointerId: 1 });
+      fireEvent.pointerUp(bars[1]!, { clientX: 1100, pointerId: 1 });
+    } finally { rect.mockRestore(); }
+    expect(panes.style.gridTemplateColumns).toBe('minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1.2fr) 6px minmax(var(--pane-min), 0.8fr)');
+    const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { size?: number }[] };
+    expect(stored.panes.map((p) => p.size ?? 1).map((x) => Number(x.toFixed(4)))).toEqual([1, 1.2, 0.8]);
+    cleanup();
+    sock.onMessage = null;
+    await boot();
+    const again = document.querySelector('.panes') as HTMLElement;
+    expect(again.style.gridTemplateColumns).toContain('1.2fr');
+    fireEvent.doubleClick(screen.getAllByRole('separator', { name: '패널 폭 조절' })[0]!);
+    expect(again.style.gridTemplateColumns).toBe('minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr)');
+  });
+
   it('"+ 분할" shows no counter with one pane, then current/MAX_PANES', async () => {
     await boot();
     const split = screen.getByText(/^\+ 분할/) as HTMLButtonElement;
@@ -240,8 +270,10 @@ describe('App phone layout (D10)', () => {
     openSession('two'); // p1 -> s2
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
 
+    expect(screen.getAllByRole('separator', { name: '패널 폭 조절' })).toHaveLength(1);
     mm.setPhone(true);
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
+    expect(screen.queryAllByRole('separator', { name: '패널 폭 조절' })).toHaveLength(0);
     expect(screen.getByTestId('pane-p1')).toBeTruthy(); // active pane (p1) is the one shown
     expect(screen.queryByTestId('pane-p0')).toBeNull();
 
@@ -550,10 +582,11 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '사용량' }));
   });
 
-  it('작업 현황: zeros are left out, nothing at all hides the chip, 승인 대기 is emphasised', async () => {
+  it('작업 현황: zeros are left out, nothing at all is 한가함, 승인 대기 is emphasised', async () => {
     await boot();
     activity([]);
-    expect(screen.queryByTestId('work-chip')).toBeNull();
+    expect(chipText()).toBe('한가함');
+    expect(screen.getByTestId('work-chip').classList.contains('idle')).toBe(true);
     activity([act1('s1', true, 0)]);
     expect(chipText()).toBe('실행 중 1');
     activity([act1('s1', true, 0), act1('s2', false, 2)]);
@@ -662,10 +695,70 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     fireEvent.click(screen.getByTestId('work-chip'));
     expect(screen.getByRole('dialog', { name: '작업 현황' })).toBeTruthy();
     activity([]);
-    expect(screen.queryByTestId('work-chip')).toBeNull();
+    expect(chipText()).toMatch(/^한가함 · \d\d:\d\d 까지 작업$/);
     activity([act1('s2', true, 0)]);
     expect(screen.getByTestId('work-chip').getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+  });
+
+  it('한가함: the popover says nothing is running and offers 새 대화', async () => {
+    await boot();
+    fireEvent.click(screen.getByTestId('work-chip'));
+    const pop = screen.getByRole('dialog', { name: '작업 현황' });
+    expect(within(pop).getByText('지금 실행 중인 작업이 없어요')).toBeTruthy();
+    fireEvent.click(within(pop).getByRole('button', { name: '새 대화' }));
+    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+  });
+
+  it('하이라이트 badge: only with the feature; asks once connected, shows the 24h count, a click opens the sheet', async () => {
+    await boot();
+    expect(screen.queryByTestId('hl-badge')).toBeNull();
+    cleanup();
+    sock.onMessage = null;
+    const list = { events: [{ at: 1, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }, { at: 2, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }] };
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(JSON.stringify(list), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await boot(['highlights']);
+    await waitFor(() => expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-long')!.textContent).toBe('하이라이트 2'));
+    expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-short')!.textContent).toBe('✦ 2');
+    expect(fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24')).toHaveLength(1);
+    fireEvent.click(screen.getByTestId('hl-badge'));
+    expect(screen.getByRole('dialog', { name: '하이라이트' })).toBeTruthy();
+  });
+
+  it('하이라이트 badge: asks again 2s after a turn ends', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(JSON.stringify({ events: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await boot(['highlights']);
+    const asks = () => fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24').length;
+    await waitFor(() => expect(asks()).toBe(1));
+    expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-long')!.textContent).toBe('하이라이트');
+    activity([act1('s1', true, 0)]);
+    activity([]);
+    act(() => { vi.advanceTimersByTime(1_900); });
+    expect(asks()).toBe(1);
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(asks()).toBe(2);
+  });
+
+  it('서버 chip: uptime from serverStartedAt; draining and 재시작됨 take its place; none without a start time', async () => {
+    await boot();
+    expect(document.querySelector('.server-chip')).toBeNull();
+    activity([], { serverStartedAt: Date.now() - 3 * 3_600_000 - 60_000 });
+    const chip = screen.getByTestId('server-chip');
+    expect(chip.textContent).toBe('서버 · 3시간째');
+    expect(chip.classList.contains('server-uptime')).toBe(true);
+    expect(chip.title).toMatch(/^서버 시작 \d+\/\d+ \d\d:\d\d$/);
+    activity([act1('s1', true, 0)], { serverStartedAt: Date.now() - 3 * 3_600_000, draining: true });
+    expect(screen.queryByTestId('server-chip')).toBeNull();
+    expect(document.querySelectorAll('.server-chip')).toHaveLength(1);
+    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 대기 중 · 작업 1개 기다림');
+    activity([], { serverStartedAt: Date.now() - 60_000 });
+    expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
+    expect(screen.queryByTestId('server-chip')).toBeNull();
+    fireEvent.click(screen.getByText(/^재시작됨/));
+    expect(screen.getByTestId('server-chip').textContent).toBe('서버 · 1분째');
   });
 
   it('작업 현황 and server chips are desktop only', async () => {
@@ -674,6 +767,9 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     activity([act1('s1', true, 0)], { draining: true });
     expect(screen.queryByTestId('work-chip')).toBeNull();
     expect(screen.queryByText(/재시작 대기 중/)).toBeNull();
+    activity([], { serverStartedAt: Date.now() - 60_000 });
+    expect(document.querySelector('.server-chip')).toBeNull();
+    expect(screen.queryByTestId('hl-badge')).toBeNull();
   });
 
   it('draining: 재시작 대기 중 · 작업 N개 기다림 (short: 재시작 대기 · N), or 재시작 중… when nothing is left', async () => {

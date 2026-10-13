@@ -421,12 +421,49 @@ export function createRequestHandler(deps: HttpDeps) {
             // A known session's own folder wins over the client's cwd (a new, unsaved session only has the cwd).
             const sid = url.searchParams.get('session');
             const known = sid ? deps.index.projects(deps.extraSessions?.() ?? []).flatMap((p) => p.sessions).find((e) => e.sessionId === sid) : undefined;
-            json(res, 200, await deps.files.read(known?.cwd ?? url.searchParams.get('cwd') ?? '', url.searchParams.get('path') ?? ''));
+            const cwd = known?.cwd ?? url.searchParams.get('cwd') ?? '';
+            const file = url.searchParams.get('path') ?? '';
+            if (url.searchParams.get('raw') === '1') {
+              // Original bytes (open/download on the device): same check as the preview, streamed from the handle that was checked.
+              const r = await deps.files.openRaw(cwd, file);
+              const disposition = url.searchParams.get('download') === '1' ? 'attachment' : 'inline';
+              // RFC 5987 ext-value: encodeURIComponent leaves ' ( ) * ! which attr-char doesn't allow.
+              const name = encodeURIComponent(r.name).replace(/['()*!]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+              res.writeHead(200, {
+                'content-type': r.contentType,
+                'content-length': String(r.size),
+                'content-disposition': `${disposition}; filename*=UTF-8''${name}`,
+                'x-content-type-options': 'nosniff',
+                'cache-control': 'private, no-store',
+              });
+              // Cut at the size that was announced: a file an agent is still appending to must not overrun Content-Length.
+              if (r.size === 0) { void r.fh.close(); res.end(); return; }
+              pipeline(r.fh.createReadStream({ start: 0, end: r.size - 1 }), res, () => {});
+              return;
+            }
+            json(res, 200, await deps.files.read(cwd, file));
           } catch (err) {
             if (err instanceof DirError) { json(res, 400, { error: err.message }); return; }
             if (err instanceof FileReadError) { json(res, err.status, { error: err.message }); return; }
             throw err;
           }
+          return;
+        }
+        if (url.pathname === '/api/reveal' && req.method === 'POST') {
+          // Finder opens on the server Mac's own screen (a remote user sees nothing there); same check as /api/file.
+          if (!deps.files) { json(res, 404, { error: 'not found' }); return; }
+          let body: { cwd?: unknown; file?: unknown } = {};
+          try { body = (JSON.parse(await readBody(req)) as typeof body) ?? {}; } catch { /* invalid below */ }
+          if (typeof body.cwd !== 'string' || typeof body.file !== 'string') { json(res, 400, { error: '잘못된 요청입니다' }); return; }
+          try {
+            await deps.files.reveal(body.cwd, body.file);
+          } catch (err) {
+            if (err instanceof DirError) { json(res, 400, { error: err.message }); return; }
+            if (err instanceof FileReadError) { json(res, err.status, { error: err.message }); return; }
+            throw err;
+          }
+          res.writeHead(204, { 'cache-control': 'no-store' });
+          res.end();
           return;
         }
         if (url.pathname === '/api/files' && req.method === 'GET') {

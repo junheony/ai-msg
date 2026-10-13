@@ -10,6 +10,22 @@ export type SideDoc =
 /** Supplied by the pane; null outside one (tests, sidebar search), where paths stay plain text. */
 export const SidePanelContext = createContext<((doc: SideDoc) => void) | null>(null);
 
+/**
+ * The session folder for paths in an assistant reply (null elsewhere: user messages, the side panel's own markdown).
+ * Its presence is what lets a reply's image path render as an inline thumbnail.
+ */
+export const FileRootContext = createContext<string | null>(null);
+
+/**
+ * Review I8: an inline thumbnail may only make the browser fetch a file of the session folder through deck's own
+ * /api/file, so the path must be relative without `..`, or absolute under `cwd` (the server checks containment too).
+ */
+export function inSessionFolder(path: string, cwd: string): boolean {
+  if (path.split('/').includes('..')) return false;
+  if (path.startsWith('/')) return cwd.length > 1 && path.startsWith(`${cwd.replace(/\/+$/, '')}/`);
+  return !path.startsWith('~');
+}
+
 const KNOWN_EXT = new Set('ts tsx js jsx mjs cjs json jsonl md mdx txt py rb go rs java kt swift c h cc cpp hpp cs php sh zsh bash fish yml yaml toml ini cfg conf env css scss less html htm svg xml sql graphql proto lock png jpg jpeg gif webp vue svelte astro dockerfile makefile gradle tf lua dart ex exs erl hs ml r scala'.split(' '));
 
 /**

@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { relPath } from '../diff';
+import { has } from '../features';
 import { listFiles, readFile, type FilePreview } from '../sessionApi';
 import { viewFor, type SideDoc } from '../sidePanel';
 import { CopyButton } from './CopyButton';
 import { DiffList } from './DiffView';
+import { useFileActions } from './FileMenu';
 import { Markdown } from './MessageView';
+
+const DownloadIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" /></svg>
+);
+const FolderIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><path d="M2 4.5c0-.6.4-1 1-1h3l1.5 1.5H13c.6 0 1 .4 1 1V12c0 .6-.4 1-1 1H3c-.6 0-1-.4-1-1z" /></svg>
+);
 
 /** The iframe shell served by the server with its own sandboxing CSP (server/http.ts PREVIEW_FRAME_CSP). */
 export const PREVIEW_FRAME_SRC = '/api/preview-frame';
@@ -80,6 +89,7 @@ export function SidePanel({ doc, cwd, sessionId, onClose, onOpen }: {
   onClose: () => void;
   onOpen: (doc: SideDoc) => void;
 }) {
+  const act = useFileActions();
   const [reload, setReload] = useState(0);
   const [data, setData] = useState<{ key: string; file?: FilePreview; error?: string } | null>(null);
   const filePath = doc.kind === 'file' ? doc.path : null;
@@ -129,6 +139,12 @@ export function SidePanel({ doc, cwd, sessionId, onClose, onOpen }: {
         <span className="spacer" />
         {text !== null && <CopyButton text={text} label="내용 복사" compact />}
         {fullPath && <CopyButton text={fullPath} label="경로 복사" caption="경로 복사" compact />}
+        {filePath !== null && has('fileRaw') && (
+          <>
+            <button type="button" className="icon-btn" aria-label="다운로드" title="다운로드 (이 기기에 저장)" onClick={() => act.download(cwd, filePath)}><DownloadIcon /></button>
+            <button type="button" className="icon-btn" aria-label="Finder 에서 보기 (서버 Mac)" title="Finder 에서 보기 (서버 Mac)" onClick={() => { void act.reveal(cwd, filePath); }}><FolderIcon /></button>
+          </>
+        )}
         {doc.kind !== 'pick' && <button type="button" className="icon-btn" aria-label="새로고침" title="새로고침" onClick={() => setReload((n) => n + 1)}>↻</button>}
         <button type="button" className="icon-btn side-close" aria-label="사이드 패널 닫기" title="닫기 (Esc)" onClick={onClose}>✕</button>
       </div>
@@ -138,6 +154,7 @@ export function SidePanel({ doc, cwd, sessionId, onClose, onOpen }: {
         </div>
       )}
       <div className="side-body">{body}</div>
+      {act.node}
     </aside>
   );
 }

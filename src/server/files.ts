@@ -49,8 +49,11 @@ async function walk(root: string, max: number): Promise<string[]> {
 export class FileLister {
   private cache = new Map<string, { at: number; listing: FileListing }>();
 
-  /** `denyRoots`: folders never previewed wherever the cwd is (deck's own config dir: token, VAPID key…). */
-  constructor(private readonly opts: { home: string; roots: string[]; denyRoots?: string[]; max?: number; now?: () => number }) {}
+  /**
+   * `denyRoots`: folders never previewed wherever the cwd is (deck's own config dir: token, VAPID key…).
+   * `platform` / `execFile`: injectable for reveal() tests (default: the running OS and child_process.execFile).
+   */
+  constructor(private readonly opts: { home: string; roots: string[]; denyRoots?: string[]; max?: number; now?: () => number; platform?: NodeJS.Platform; execFile?: RevealExec }) {}
 
   async list(input: string): Promise<FileListing> {
     const cwd = await resolveUnderRoots(input, this.opts.home, this.opts.roots);
@@ -70,7 +73,21 @@ export class FileLister {
 
   /** Side panel: one file of the session folder `cwd` (see readSessionFile). */
   read(cwd: string, file: string): Promise<FilePreview> {
-    return readSessionFile({ home: this.opts.home, roots: this.opts.roots, cwd, file, ...(this.opts.denyRoots ? { denyRoots: this.opts.denyRoots } : {}) });
+    return readSessionFile(this.target(cwd, file));
+  }
+
+  /** `/api/file?raw=1`: the file's bytes (see openSessionFileRaw). */
+  openRaw(cwd: string, file: string): Promise<RawSessionFile> {
+    return openSessionFileRaw(this.target(cwd, file));
+  }
+
+  /** `POST /api/reveal` (see revealSessionPath). */
+  reveal(cwd: string, file: string): Promise<void> {
+    return revealSessionPath({ ...this.target(cwd, file), ...(this.opts.platform ? { platform: this.opts.platform } : {}), ...(this.opts.execFile ? { execFile: this.opts.execFile } : {}) });
+  }
+
+  private target(cwd: string, file: string): SessionPathOpts {
+    return { home: this.opts.home, roots: this.opts.roots, cwd, file, ...(this.opts.denyRoots ? { denyRoots: this.opts.denyRoots } : {}) };
   }
 }
 
@@ -81,9 +98,12 @@ export type FilePreview =
   | { path: string; size: number; kind: 'text'; text: string }
   | { path: string; size: number; kind: 'image'; mediaType: string; base64: string };
 
-/** A file /api/file refuses; `status` is the HTTP status, the message is shown to the user. */
+/** /api/file?raw=1: the bytes are streamed, not held in memory, so the cap is much higher than the preview's. */
+export const MAX_RAW_BYTES = 50 * 1024 * 1024;
+
+/** A file /api/file or /api/reveal refuses; `status` is the HTTP status, the message is shown to the user. */
 export class FileReadError extends Error {
-  constructor(message: string, readonly status: 400 | 403 | 404 | 413 | 415) { super(message); }
+  constructor(message: string, readonly status: 400 | 403 | 404 | 413 | 415 | 500 | 501) { super(message); }
 }
 
 /**
@@ -114,13 +134,17 @@ const IMAGE_MAGIC: { type: string; test: (b: Buffer) => boolean }[] = [
   { type: 'image/webp', test: (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP' },
 ];
 
+type SessionPathOpts = { home: string; roots: string[]; cwd: string; file: string; denyRoots?: string[] };
+type OpenedSessionPath = { real: string; fh: import('node:fs/promises').FileHandle; st: import('node:fs').Stats };
+
 /**
- * Side panel preview (`GET /api/file`): one file inside a session's folder. The cwd must resolve inside `roots`
- * (like /api/files), the file's REAL path (symlinks resolved) must lie inside that cwd, the deny list above applies
- * to both the requested and the real path, and the file is opened O_NOFOLLOW so a symlink swapped in after the
- * check is refused. Text (no NUL in the first 8 KiB, valid UTF-8) or a sniffed raster image; anything else 415.
+ * The one check every session-file route goes through (preview, raw bytes, reveal). The cwd must resolve inside
+ * `roots` (like /api/files), the target's REAL path (symlinks resolved) must lie inside that cwd, the deny list
+ * above applies to both the requested and the real path, and the target is opened O_NOFOLLOW so a symlink swapped
+ * in after the check is refused. Returns the open handle (the caller closes it); on a throw it is already closed.
+ * Directories only with `allowDir` (reveal).
  */
-export async function readSessionFile(opts: { home: string; roots: string[]; cwd: string; file: string; max?: number; denyRoots?: string[] }): Promise<FilePreview> {
+async function openSessionPath(opts: SessionPathOpts, allowDir = false): Promise<OpenedSessionPath> {
   const cwd = await resolveUnderRoots(opts.cwd, opts.home, opts.roots);
   const raw = opts.file.trim();
   if (!raw || raw.includes('\0')) throw new FileReadError('파일 경로가 필요합니다', 400);
@@ -140,11 +164,26 @@ export async function readSessionFile(opts: { home: string; roots: string[]; cwd
   try { fh = await fs.open(real, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch { throw new FileReadError('파일을 열 수 없습니다', 404); }
   try {
     const st = await fh.stat();
-    if (!st.isFile()) throw new FileReadError('파일이 아닙니다', 400);
+    const dir = allowDir && st.isDirectory();
+    if (!st.isFile() && !dir) throw new FileReadError('파일이 아닙니다', 400);
     // The opened file must still be the one checked (no swap of a parent dir in between), and a hard link to a file
-    // elsewhere (another name for a denied file) is refused.
+    // elsewhere (another name for a denied file) is refused. Directories always have nlink > 1 and can't be hard-linked.
     const again = await fs.realpath(abs).then((r) => (r === real ? fs.stat(r) : null), () => null);
-    if (!again || again.ino !== st.ino || again.dev !== st.dev || st.nlink > 1) throw new FileReadError('파일을 열 수 없습니다', 403);
+    if (!again || again.ino !== st.ino || again.dev !== st.dev || (!dir && st.nlink > 1)) throw new FileReadError('파일을 열 수 없습니다', 403);
+    return { real, fh, st };
+  } catch (err) {
+    await fh.close();
+    throw err;
+  }
+}
+
+/**
+ * Side panel preview (`GET /api/file`): one file inside a session's folder, checked by openSessionPath.
+ * Text (no NUL in the first 8 KiB, valid UTF-8) or a sniffed raster image; anything else 415.
+ */
+export async function readSessionFile(opts: SessionPathOpts & { max?: number }): Promise<FilePreview> {
+  const { real, fh, st } = await openSessionPath(opts);
+  try {
     if (st.size > (opts.max ?? MAX_PREVIEW_BYTES)) throw new FileReadError('파일이 너무 커서 미리 볼 수 없습니다 (2MB 초과)', 413);
     const buf = await fh.readFile();
     const image = IMAGE_MAGIC.find((m) => m.test(buf));
@@ -156,4 +195,67 @@ export async function readSessionFile(opts: { home: string; roots: string[]; cwd
   } finally {
     await fh.close();
   }
+}
+
+/**
+ * Raw bytes (`/api/file?raw=1`) for anything that wasn't sniffed as a raster image. Everything that a browser could
+ * render as active content from deck's origin (html, svg, xml, js…) is plain text; unknown extensions download.
+ */
+const RAW_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+};
+const RAW_TEXT_EXT = new Set([
+  '.txt', '.md', '.markdown', '.log', '.csv', '.tsv', '.json', '.jsonl', '.yaml', '.yml', '.toml', '.ini', '.conf', '.cfg',
+  '.html', '.htm', '.xhtml', '.svg', '.xml', '.css', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.swift', '.c', '.h', '.cc', '.cpp', '.hpp', '.cs', '.php', '.sh', '.zsh', '.bash',
+  '.sql', '.lua', '.r', '.vue', '.svelte', '.diff', '.patch',
+]);
+
+/** Content-Type for raw bytes: sniffed raster image, else the safe extension mapping, else octet-stream. */
+export function rawContentType(name: string, head: Buffer): string {
+  const image = IMAGE_MAGIC.find((m) => m.test(head));
+  if (image) return image.type;
+  const ext = path.extname(name).toLowerCase();
+  if (RAW_TEXT_EXT.has(ext)) return 'text/plain; charset=utf-8';
+  return RAW_TYPES[ext] ?? 'application/octet-stream';
+}
+
+export type RawSessionFile = { path: string; name: string; size: number; contentType: string; fh: import('node:fs/promises').FileHandle };
+
+/**
+ * `GET /api/file?raw=1`: the same check as the preview, then the still-open handle for streaming — the bytes sent
+ * come from the very file that was checked (no reopen by name). The caller owns `fh` (a stream with autoClose).
+ */
+export async function openSessionFileRaw(opts: SessionPathOpts & { max?: number }): Promise<RawSessionFile> {
+  const { real, fh, st } = await openSessionPath(opts);
+  try {
+    if (st.size > (opts.max ?? MAX_RAW_BYTES)) throw new FileReadError('파일이 너무 큽니다 (50MB 초과)', 413);
+    const head = Buffer.alloc(16);
+    const { bytesRead } = await fh.read(head, 0, head.length, 0);
+    return { path: real, name: path.basename(real), size: st.size, contentType: rawContentType(real, head.subarray(0, bytesRead)), fh };
+  } catch (err) {
+    await fh.close();
+    throw err;
+  }
+}
+
+export type RevealExec = (cmd: string, args: string[], cb: (err: Error | null) => void) => void;
+const defaultExec: RevealExec = (cmd, args, cb) => { execFile(cmd, args, { timeout: 10_000 }, (err) => cb(err)); };
+
+/**
+ * `POST /api/reveal`: shows a file (selected) or folder of the session in Finder. It opens on the SERVER Mac's
+ * screen — a remote user (phone, other Mac) sees nothing. Same check as the preview; no shell (execFile).
+ */
+export async function revealSessionPath(opts: SessionPathOpts & { platform?: NodeJS.Platform; execFile?: RevealExec }): Promise<void> {
+  const { real, fh, st } = await openSessionPath(opts, true);
+  await fh.close();
+  if ((opts.platform ?? process.platform) !== 'darwin') throw new FileReadError('서버가 macOS 가 아니라 Finder 를 열 수 없습니다', 501);
+  // Always reveal (`-R`), folders too: a plain `open` of a folder LAUNCHES bundles (`x.app`, `.prefPane`), and a reply
+  // can be steered into naming one. `real` is absolute (starts with /), so it can't be taken for an option.
+  void st;
+  await new Promise<void>((resolve, reject) => {
+    (opts.execFile ?? defaultExec)('open', ['-R', real], (err) => (err ? reject(new FileReadError('Finder 를 열지 못했습니다', 500)) : resolve()));
+  });
 }
