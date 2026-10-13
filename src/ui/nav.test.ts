@@ -74,6 +74,21 @@ describe('shortcuts', () => {
     expect(matchShortcut(key('KeyK', { metaKey: true }), typing)).toBe('palette');
     expect(matchShortcut(key('KeyN', { metaKey: true }), typing)).toBe('new-chat');
   });
+  it('panes: ⌘⌥[ / ⌘⌥] step, ⌘⇧X closes — also from a text field; Ctrl+Alt in a field stays AltGr', () => {
+    const m = (code: string, extra: Partial<ShortcutKey> = {}, typing = false) => matchShortcut(key(code, { metaKey: true, ...extra }), { mac: true, typing });
+    expect(m('BracketLeft', { altKey: true })).toBe('prev-pane');
+    expect(m('BracketRight', { altKey: true }, true)).toBe('next-pane');
+    expect(m('BracketLeft')).toBe('prev-session');
+    expect(m('KeyX', { shiftKey: true }, true)).toBe('close-pane');
+    expect(m('KeyX')).toBeNull();
+    expect(m('KeyW', { shiftKey: true })).toBeNull();
+    const pc = (typing: boolean) => matchShortcut(key('BracketRight', { ctrlKey: true, altKey: true }), { mac: false, typing });
+    expect(pc(false)).toBe('next-pane');
+    expect(pc(true)).toBeNull();
+    expect(shortcutList(true).find((s) => s.id === 'prev-pane')?.keys).toBe('⌘⌥[');
+    expect(shortcutList(false).find((s) => s.id === 'next-pane')?.keys).toBe('Ctrl+Alt+]');
+    expect(shortcutList(false).find((s) => s.id === 'close-pane')?.keys).toBe('Ctrl+⇧X');
+  });
   it('platform detection and cheat-sheet labels', () => {
     expect(isMacPlatform({ platform: 'MacIntel' })).toBe(true);
     expect(isMacPlatform({ platform: 'Win32' })).toBe(false);

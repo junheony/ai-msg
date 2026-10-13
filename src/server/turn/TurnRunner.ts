@@ -11,7 +11,7 @@ import type { CodexEngine } from '../engine/CodexEngine';
 import type { GeminiEngine } from '../engine/GeminiEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
-import { COOLDOWN_MS, classifyFailure } from '../engine/limitDetect';
+import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetHint } from '../engine/limitDetect';
 import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
@@ -68,6 +68,10 @@ export type TurnParams = {
    * model and grants. The parent's transcript is never written.
    */
   fork?: { from: string; at: string };
+  /** Server-internal: how many times this turn already moved on to another account after a background segment hit a limit (failoverAfterBackground). */
+  failoverHop?: number;
+  /** Server-internal (failoverAfterBackground): a follow-up's send ref, carried on its turn_started so ws records the message as taken. */
+  clientRef?: string;
 };
 
 export type TurnRunnerDeps = {
@@ -143,6 +147,21 @@ export type RoutePreview = { account: Account; asOpus?: boolean; reason: string 
 
 /** A user message for a session whose process is still open for background work (see `followUp`). */
 export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string };
+
+/**
+ * A background / follow-up segment of a held-open process ended on a limit or auth failure (followThrough): the process
+ * is closed and the work goes on on another account (failoverAfterBackground). `seg`: the failed segment; `followUp`:
+ * set when that segment was a follow-up the user sent (it is sent again); `tasks`: background work the process still
+ * had (cut with it); `queued`: follow-ups that waited behind the segment, sent after the continuation.
+ */
+type Failover = {
+  failure: 'limit' | 'auth';
+  errorText: string | null;
+  seg: { turnId: string; reason: string };
+  followUp: { f: FollowUpParams; attachments: Attachment[] } | null;
+  tasks: string[];
+  queued: { f: FollowUpParams; attachments: Attachment[] }[];
+};
 
 /** The mutable "which deck turn is the process working for now" — permission cards and events follow it. */
 type Cursor = { turnId: string };
@@ -963,11 +982,14 @@ export class TurnRunner {
    * sent meanwhile (its own turn id). Ends when the engine stream ends (no live task left, cap,
    * grace, abort).
    */
-  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants; startedAt: number }): Promise<void> {
+  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants; startedAt: number }): Promise<Failover | null> {
     const { p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt } = c;
     const scope = () => ({ turnId: cur.turnId, sessionId, cwd });
-    type Seg = { turnId: string; reason: string; modelNote: string | null };
+    type Seg = { turnId: string; reason: string; modelNote: string | null; followUp?: { f: FollowUpParams; attachments: Attachment[] } };
     let seg: Seg | null = null;
+    let failover: Failover | null = null;
+    /** Set while the process is being closed after a limit / auth failure (follow-ups queue instead of going in). */
+    let closing = false;
     let n = 0;
     let steered = 0;
     let tasks = a.bgTasks;
@@ -984,8 +1006,8 @@ export class TurnRunner {
       sink.emit({ type: 'turn_notice', ...scope(), message: `${SHUTDOWN_CUT_NOTICE} ${live.length}개가 중단됨: ${live.join(', ')}` });
     };
     const queue: { f: FollowUpParams; attachments: Attachment[] }[] = [];
-    const open = (turnId: string, reason: string, modelNote: string | null, clientRef?: string) => {
-      seg = { turnId, reason, modelNote };
+    const open = (turnId: string, reason: string, modelNote: string | null, clientRef?: string, followUp?: Seg['followUp']) => {
+      seg = { turnId, reason, modelNote, ...(followUp ? { followUp } : {}) };
       cur.turnId = turnId;
       sink.emit({ type: 'turn_started', turnId, sessionId, cwd, account, model, reason, attempt: 0, engine: 'claude', ...(clientRef ? { clientRef } : {}) });
     };
@@ -995,7 +1017,7 @@ export class TurnRunner {
     };
     const sendFollowUp = (f: FollowUpParams, attachments: Attachment[]) => {
       const note = isClaudeModel(f.model) && f.model !== model ? '백그라운드 대기 중인 프로세스의 모델 유지' : null;
-      open(f.turnId, '백그라운드 대기 중 이어 보냄', note, f.clientRef);
+      open(f.turnId, '백그라운드 대기 중 이어 보냄', note, f.clientRef, { f, attachments });
       const turnId = f.turnId;
       // Its turn_started recorded the ref as accepted: an error carrying it takes that back (ws), so a resent copy goes in.
       const failed = (errorText: string) => {
@@ -1028,7 +1050,7 @@ export class TurnRunner {
         clean: new Map(),
         submit: (f, attachments) => {
           // While a segment streams the message waits here (the sender is told which segment: ws turn_queued).
-          if (seg) { queue.push({ f, attachments }); return { queuedBehind: seg.reason }; }
+          if (seg || closing) { queue.push({ f, attachments }); return { queuedBehind: seg?.reason ?? '다른 계정으로 이어가는 중' }; }
           sendFollowUp(f, attachments);
           return { queuedBehind: null };
         },
@@ -1071,6 +1093,19 @@ export class TurnRunner {
           case 'result': {
             const s = seg as Seg | null;
             seg = null;
+            // A limit / auth failure of a segment: no turn_result here — the work goes on on another account
+            // (failoverAfterBackground says so with turn_retry, or ends the segment if no account is left).
+            const failure = !ev.ok && !sink.signal.aborted ? classifyFailure({ ok: false, errorText: ev.errorText, errorKind: ev.errorKind, rateLimitStatus: null }) : null;
+            if (s && (failure === 'limit' || failure === 'auth')) {
+              writeCooldown(this.deps.cooldownDir, account, this.now() + COOLDOWN_MS[failure]);
+              // No follow-up goes into the closing process: one arriving now waits in the queue and goes on with the rest
+              // (the queue is taken only once the process is closed, so nothing sent meanwhile is left behind).
+              closing = true;
+              this.live.delete(sessionId);
+              await a.rest.return?.();
+              failover = { failure, errorText: ev.errorText, seg: { turnId: s.turnId, reason: s.reason }, followUp: s.followUp ?? null, tasks: [...tasks], queued: queue.splice(0) };
+              break;
+            }
             if (s) {
               sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(ev.errorText, ev.stderr) });
             }
@@ -1085,6 +1120,7 @@ export class TurnRunner {
           }
           case 'init': case 'compact': case 'continue': break;
         }
+        if (failover) break;
       }
     } finally {
       flushThinking();
@@ -1103,6 +1139,7 @@ export class TurnRunner {
         }
       }
     }
+    return failover;
   }
 
   /**
@@ -1463,8 +1500,19 @@ export class TurnRunner {
       const d = new Date(cut.atMs);
       const hm = d.toTimeString().slice(0, 5);
       const at = d.toDateString() === new Date(this.now()).toDateString() ? hm : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`;
-      early.push(`${at} 서버 재시작으로 백그라운드 작업 ${cut.tasks.length}개가 끊겼습니다: ${cut.tasks.join(', ')} — 모델에게 알렸습니다`);
-      systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 deck 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${cut.tasks.length}개는 끊겨 결과가 오지 않습니다: ${cut.tasks.map((t) => `"${t}"`).join(', ')}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
+      const n = cut.tasks.length;
+      const list = cut.tasks.map((t) => `"${t}"`).join(', ');
+      if (!cut.cause) {
+        early.push(`${at} 서버 재시작으로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — 모델에게 알렸습니다`);
+        systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 deck 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
+      } else if (n) {
+        // A limit / auth failure of the held-open process (failoverAfterBackground): this turn runs on another account.
+        early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — 다른 계정에서 이어갑니다 (모델에게 알렸습니다)`);
+        systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 이 턴은 다른 계정에서 이어 갑니다. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
+      } else {
+        early.push(`${at} ${cut.cause}로 이전 프로세스가 끝났습니다 — 다른 계정에서 이어갑니다 (모델에게 알렸습니다)`);
+        systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 응답 도중 종료되었습니다. 이 턴은 다른 계정에서 이어 갑니다. 마지막으로 하던 작업이 어디까지 됐는지 확인하고 이어서 진행하되, 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
+      }
     }
     if (!state?.sessionId && !forkAt && !p.handoff) systemNote = systemNote ? `${systemNote}\n\n${DECK_INTRO_NOTE}` : DECK_INTRO_NOTE;
     const pinMark = () => (byPin ? { pinned: true } : {});
@@ -1492,7 +1540,7 @@ export class TurnRunner {
       const fable = usageOf(deps.usage.snapshot(), account).fable?.usedPct ?? null;
       const resolved = resolveModel(wantedClaude, sessionDefault, fable, deps.usage.snapshot().usageSource);
       const { model, note } = asOpus && resolved.model === 'fable' ? { model: 'opus' as const, note: `${asOpus} → Opus 로 대체` } : resolved;
-      sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: shownId(), cwd, account, model, reason, attempt, engine: 'claude', sessionModel: sessionDefault });
+      sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: shownId(), cwd, account, model, reason, attempt, engine: 'claude', sessionModel: sessionDefault, ...(p.clientRef && attempt === 0 ? { clientRef: p.clientRef } : {}) });
       flushEarly();
 
       const cur: Cursor = { turnId: p.turnId };
@@ -1547,9 +1595,13 @@ export class TurnRunner {
         announceMode();
         // Held open for background work: write back now too, not only once at the end.
         if (sessionId && a.bgTasks.length) this.mirrorSoon(sessionId, sink, p.turnId);
-        if (sessionId) await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt });
-        else await a.rest.return?.();
-        return done();
+        if (!sessionId) { await a.rest.return?.(); return done(); }
+        const need = await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt });
+        if (!need) return done();
+        await this.failoverAfterBackground(need, { p, sink, cwd, sessionId, account, model, routerBase });
+        // The continuation may have moved the session: the caller's write-back and bookkeeping read where it is now.
+        const now = deps.store.get(sessionId);
+        return now && !isCodexState(now) && !isGeminiState(now) ? now : done();
       }
       await a.rest.return?.();
       // The retry sends only the turn's own prompt: a steer still waiting in the closed process goes back to its device.
@@ -1595,5 +1647,69 @@ export class TurnRunner {
       byPin = false;
     }
     return done();
+  }
+
+  /**
+   * A segment of a held-open process (background continuation or follow-up) ended on a limit / auth failure
+   * (followThrough recorded the cooldown and closed the process): the router picks another account and the work goes on
+   * there — turn_retry on the failed segment, then the failed follow-up is sent again under its own turn id (the UI
+   * takes the new turn_started as the retry segment), or, for a background continuation, a turn that tells the model
+   * what was cut (SessionState.interrupted with its cause) and asks it to go on; the follow-ups that waited behind the
+   * segment follow. The session is moved by those turns' own routing (runClaudeTurn's relocate). At most one hop per
+   * other account (TurnParams.failoverHop); with nowhere to go the segment ends as failed.
+   */
+  private async failoverAfterBackground(need: Failover, c: { p: TurnParams; sink: TurnSink; cwd: string; sessionId: string; account: Account; model: ClaudeModel; routerBase: Omit<RouterInput, 'current' | 'lastTurnAtMs' | 'justCompacted' | 'cooldownUntilMs'> }): Promise<void> {
+    const { deps } = this;
+    const { p, sink, cwd, sessionId, account, model, routerBase } = c;
+    const why = failureLabel(need.failure);
+    const hint = limitResetHint(need.errorText);
+    const fail = (errorText: string) => {
+      sink.emit({ type: 'turn_result', turnId: need.seg.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: need.seg.reason, usage: ZERO_USAGE, modelNote: null }, errorText });
+      for (const q of need.queued) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
+    };
+    const noneLeft = `${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 대안 계정 없음`;
+    try {
+      const hop = p.failoverHop ?? 0;
+      if (hop >= this.accounts.list().length - 1) { fail(noneLeft); return; }
+      const cand = chooseAccount({
+        ...routerBase,
+        usage: deps.usage.routingSnapshot(),
+        nowMs: this.now(),
+        current: account,
+        lastTurnAtMs: null,
+        justCompacted: false,
+        cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()),
+        exclude: [account],
+      });
+      if (cand.account === account) { fail(noneLeft); return; }
+      sink.emit({ type: 'turn_retry', turnId: need.seg.turnId, sessionId, cwd, fromAccount: account, toAccount: cand.account, reason: `${why}${hint ? ` · ${hint}` : ''} → ${cand.reason}`, attempt: 1 });
+      sink.emit({ type: 'turn_notice', turnId: need.seg.turnId, sessionId, cwd, message: `${this.label(account)} 계정 ${why}${hint ? ` (${hint})` : ''} — ${this.label(cand.account)} 계정으로 이어서 진행합니다` });
+      const st = deps.store.get(sessionId);
+      if (st && !isCodexState(st) && !isGeminiState(st)) {
+        // The closed process wrote the transcript: deck's own write, not Desktop / a CLI (openElsewhere).
+        this.deckWroteAt.set(path.resolve(st.projectDir, `${sessionId}.jsonl`), this.now());
+        // What the process was doing is told to the model on the next turn: always for a background continuation (it
+        // is the continuation turn's whole point), for a resent follow-up only when background work was cut with it.
+        if (!need.followUp || need.tasks.length) await deps.store.set({ ...st, interrupted: { atMs: this.now(), tasks: need.tasks, cause: `${this.label(account)} 계정 ${why}` } });
+      }
+      const next = { cwd, sessionId, failoverHop: hop + 1 };
+      const ofFollowUp = (f: FollowUpParams): TurnParams => ({ ...next, turnId: f.turnId, text: f.text, ...(f.model ? { model: f.model } : {}), ...(f.attachments ? { attachments: f.attachments } : {}), ...(f.clientRef ? { clientRef: f.clientRef } : {}) });
+      // The continuation refused before its turn_started (attachment purged, session gone): the segment that got the
+      // turn_retry still needs an end, else the pane waits on it.
+      let started = false;
+      const watched: TurnSink = { ...sink, emit: (m) => { if (m.type === 'turn_started' && m.turnId === need.seg.turnId) started = true; sink.emit(m); } };
+      if (need.followUp) await this.run(ofFollowUp(need.followUp.f), watched);
+      else await this.run({ ...next, turnId: need.seg.turnId, text: '이어서 진행해 주세요.' }, watched);
+      if (!started) { fail(`${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 다른 계정에서 이어가지 못했습니다`); return; }
+      for (const q of need.queued) {
+        // A continuation still held open for background work takes them as follow-ups; else each is a turn of its own.
+        const live = this.live.get(sessionId);
+        if (live) { live.submit(q.f, q.attachments); continue; }
+        await this.run(ofFollowUp(q.f), sink);
+      }
+    } catch (err) {
+      console.error('deck: 한도 이어가기 실패', err instanceof Error ? err.message : err);
+      fail(`${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 다른 계정으로 이어가지 못했습니다`);
+    }
   }
 }

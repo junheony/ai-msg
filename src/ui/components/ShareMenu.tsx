@@ -8,6 +8,11 @@ export function sessionLink(sessionId: string, origin = window.location.origin):
   return `${origin}/?session=${encodeURIComponent(sessionId)}`;
 }
 
+/** 새 탭에서 열기: the same link 링크 복사 copies, in a new browser tab (which opens the session from ?session=). */
+export function openInNewTab(sessionId: string): void {
+  window.open(sessionLink(sessionId), '_blank', 'noopener');
+}
+
 function download(name: string, text: string): void {
   const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
   const a = document.createElement('a');
@@ -23,7 +28,7 @@ export type ShareOpts = { title: string; items: ChatItem[]; cwd?: string; sessio
 export type ShareAction = { key: string; label: string; disabled?: boolean; run: () => void };
 
 /**
- * The 공유 actions (system share sheet, copy / export as markdown, copy the deck link) and their brief result
+ * The 공유 actions (system share sheet, copy / export as markdown, copy the deck link, open it in a new tab) and their brief result
  * message. Used by the chat header's ⋯ menu; `after` runs once an action fires
  * (the caller closes its menu).
  */
@@ -47,5 +52,6 @@ export function useShareActions({ title, items, cwd, sessionId, assistant }: Sha
   actions.push({ key: 'copy', label: '대화 복사 (마크다운)', disabled: empty, run: () => void copyText(markdown()).then((ok) => finish(ok ? '대화를 복사했습니다' : '복사 실패')) });
   actions.push({ key: 'export', label: '마크다운으로 내보내기', disabled: empty, run: () => { download(exportFileName(title, new Date()), markdown()); finish('내보냈습니다'); } });
   if (sessionId) actions.push({ key: 'link', label: '링크 복사', run: () => void copyText(sessionLink(sessionId)).then((ok) => finish(ok ? '링크를 복사했습니다' : '복사 실패')) });
+  if (sessionId) actions.push({ key: 'tab', label: '새 탭에서 열기', run: () => { after(); openInNewTab(sessionId); } });
   return { actions, done };
 }

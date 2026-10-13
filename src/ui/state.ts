@@ -346,7 +346,7 @@ export type Action =
   | { type: 'branch_edit'; n: number; text: string; paneId?: string; clientRef?: string }
   /** A refused edit goes back to its original session: the new pane's whole queue (the edited text first) goes with it. */
   | { type: 'branch_undo'; sessionId: string; paneId?: string }
-  | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean; /** A message released after a restart: the queue's pause stays for the rest. */ keepPaused?: boolean }
+  | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean; /** A message released after a restart: the queue's pause stays for the rest. */ keepPaused?: boolean; /** 다시 생성: the composer's attachments stay (none were sent). */ keepAttachments?: boolean }
   | { type: 'set_model'; model: ModelChoice; paneId?: string }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
@@ -1105,7 +1105,7 @@ export function reducer(state: AppState, action: Action): AppState {
         // A new session is sent with the picker's model: the session keeps sending it.
         ...(p.session?.sessionId === null ? { modelPicked: true } : {}),
         items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(n) }],
-        awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingBehind: null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [], ...withN(n), at: Date.now() }, attachments: [], queuePaused: action.keepPaused ? p.queuePaused : false, prefill: null,
+        awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingBehind: null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [], ...withN(n), at: Date.now() }, attachments: action.keepAttachments ? p.attachments : [], queuePaused: action.keepPaused ? p.queuePaused : false, prefill: null,
         ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
         ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
       };

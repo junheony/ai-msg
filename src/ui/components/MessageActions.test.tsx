@@ -129,6 +129,16 @@ describe('useShareActions', () => {
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(`${window.location.origin}/?session=abc`));
   });
 
+  it('새 탭에서 열기 opens the 링크 복사 link in a new tab and closes the menu', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<ShareMenu title="제목" items={items} sessionId="abc" />);
+    fireEvent.click(screen.getByRole('button', { name: '공유' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '새 탭에서 열기' }));
+    expect(open).toHaveBeenCalledWith(sessionLink('abc'), '_blank', 'noopener');
+    expect(screen.queryByRole('menu')).toBeNull();
+    open.mockRestore();
+  });
+
   it('마크다운으로 내보내기 downloads a .md file', () => {
     const create = vi.fn(() => 'blob:x');
     Object.assign(URL, { createObjectURL: create, revokeObjectURL: vi.fn() });
@@ -156,7 +166,7 @@ describe('useShareActions', () => {
     renderChat(items);
     expect(screen.queryByRole('button', { name: '공유' })).toBeNull(); // no separate share button: Claude keeps one ⋯
     fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
-    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사']);
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기']);
     fireEvent.click(screen.getByRole('menuitem', { name: '링크 복사' }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(`${window.location.origin}/?session=s-1`));
     expect(screen.queryByRole('menu')).toBeNull();
@@ -177,7 +187,7 @@ describe('useShareActions', () => {
     expect(more.getAttribute('aria-haspopup')).toBe('menu');
     fireEvent.click(more);
     const menu = screen.getByRole('menu', { name: '채팅 메뉴' });
-    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '파일 열기', '삭제…']);
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기', '파일 열기', '삭제…']);
     expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(2);
     expect(document.activeElement).toBe(screen.getAllByRole('menuitem')[0]);
     fireEvent.keyDown(menu, { key: 'End' });

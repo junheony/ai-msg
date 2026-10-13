@@ -10,6 +10,9 @@ import { has } from '../features';
 import { rawFileUrl } from '../sessionApi';
 import { baseName, useFileMenu } from './FileMenu';
 import type { ChatItem, SentFile } from '../state';
+import { MODEL_INFO, type ModelChoice } from '../../shared/models';
+import type { ReplyTurn } from '../replyTurn';
+import { usePopoverPlacement } from './usePopoverPlacement';
 import { CopyButton } from './CopyButton';
 import { EditIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
@@ -312,6 +315,97 @@ function VersionSwitcher({ v }: { v: { index: number; count: number; go: (i: num
 }
 
 /**
+ * 다시 생성, supplied by the pane around the chat (the chat's own MessageActions do not know the session's models).
+ * `turnOf`: the user message a reply answers when it ends its turn and could be branched from (replyTurn).
+ * `branch`: runs that message again as a new branch (like 편집 with the text unchanged); `model` = that branch's model (its default from then on).
+ * `retryWith`: GPT / Gemini — the last prompt sent again with `model` for this one turn (their sessions keep their own model).
+ */
+export type Regenerate = {
+  turnOf: (item: ChatItem) => ReplyTurn | null;
+  branch?: (turn: ReplyTurn, model?: ModelChoice) => void;
+  retryWith?: (model: ModelChoice) => void;
+  /** The session's models (the composer picker's list, 자동 left out); the menu is offered only with another one to pick. */
+  models: readonly ModelChoice[];
+  current: ModelChoice;
+};
+export const RegenerateContext = createContext<Regenerate | null>(null);
+
+const CaretIcon = () => <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>;
+
+/** ⌄ next to 다시 생성: pick a model — a Claude branch keeps it as its model (`sticky`), GPT / Gemini use it for this one run. */
+function RegenModelMenu({ models, current, sticky, onPick }: { models: readonly ModelChoice[]; current: ModelChoice; sticky: boolean; onPick: (m: ModelChoice) => void }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const pos = usePopoverPlacement(open, btnRef, popRef, 240);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!popRef.current?.contains(t) && !btnRef.current?.contains(t)) setOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false); btnRef.current?.focus(); } };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return (
+    <>
+      <button ref={btnRef} type="button" className="msg-act regen-caret" aria-label="다른 모델로 다시 생성" title={sticky ? '다른 모델로 다시 생성 (새 갈래의 기본 모델이 돼요)' : '다른 모델로 다시 생성 (이번 한 번만)'} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><CaretIcon /></button>
+      {open && (
+        <div ref={popRef} className="mp-pop regen-pop" role="menu" aria-label="다시 생성할 모델" style={pos} data-testid="regen-menu">
+          <div className="mp-head">이 모델로 다시 생성</div>
+          {models.map((m) => (
+            <button key={m} type="button" role="menuitem" className={`mp-item ${m === current ? 'on' : ''}`} onClick={() => { setOpen(false); onPick(m); }}>
+              <span className="mp-text">
+                <span className="mp-name">{m === 'auto' ? '자동' : MODEL_INFO[m].name}</span>
+                {m === current && <span className="mp-desc">지금 모델</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** A long user message: folded past this many lines or characters, showing about COLLAPSED_LINES (CSS) until 더 보기. */
+const FOLD_LINES = 12;
+const FOLD_CHARS = 1200;
+
+/** The user bubble's text; a long one folds (local state, never saved) and unfolds by itself when a search jumps to it. */
+function UserText({ text }: { text: string }) {
+  const lines = text.split('\n').length;
+  const long = lines > FOLD_LINES || text.length > FOLD_CHARS;
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLPreElement>(null);
+  const viaSearch = useRef(false);
+  const folded = long && !open;
+  // App's search jump marks the message with .search-flash: a folded message opens so the hit is on screen.
+  useEffect(() => {
+    const msg = folded ? ref.current?.closest('.msg') : null;
+    if (!msg || typeof MutationObserver === 'undefined') return;
+    const mo = new MutationObserver(() => { if (msg.classList.contains('search-flash')) { viaSearch.current = true; setOpen(true); } });
+    mo.observe(msg, { attributes: true, attributeFilter: ['class'] });
+    return () => mo.disconnect();
+  }, [folded]);
+  // Unfolded by a search jump: the message grew, so it is centered again.
+  useEffect(() => {
+    if (open && viaSearch.current) {
+      viaSearch.current = false;
+      ref.current?.closest('.msg')?.scrollIntoView?.({ block: 'center' });
+    }
+  }, [open]);
+  if (!long) return <pre>{text}</pre>;
+  return (
+    <>
+      <pre ref={ref} className={folded ? 'folded' : undefined} data-testid="user-text">{text}</pre>
+      <button type="button" className="fold-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? '접기' : `더 보기 (${lines}줄)`}</button>
+    </>
+  );
+}
+
+/**
  * Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines.
  * Memoized: the composer's draft lives in Chat, so without this every keystroke re-rendered (and re-parsed the
  * markdown of) the whole transcript. Items are immutable (the reducer replaces what changes), so identity is enough.
@@ -319,6 +413,7 @@ function VersionSwitcher({ v }: { v: { index: number; count: number; go: (i: num
  */
 export const MessageView = memo(function MessageView({ item, cwd, last = false }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean }) {
   const actions = useContext(MessageActionsContext);
+  const regen = useContext(RegenerateContext);
   const [editing, setEditing] = useState(false);
   if (item.kind === 'user') {
     if (item.text === HANDOFF_PROMPT) return <div className="msg user handoff-req" title={HANDOFF_PROMPT}><pre>인계 메모 요청 (새 세션으로 이어가기)</pre></div>;
@@ -344,7 +439,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
         {system}
         <div className="msg user">
           {files.length > 0 && <AttachmentTiles files={files} />}
-          {text && <pre>{text}</pre>}
+          {text && <UserText text={text} />}
           {text && (
             <div className="msg-actions" data-testid="user-actions">
               <CopyButton icon text={text} label="메시지 복사" />
@@ -359,7 +454,14 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   if (item.kind === 'system') return <SystemRow item={item} />;
   const stopped = !!item.badge && !item.streaming && isStoppedTurn({ badge: item.badge, error: item.error, text: item.text, interrupted: !!item.interrupted });
   const retry = last && !item.streaming ? actions.onRetry : undefined;
-  const hasActions = !item.streaming && (!!item.text || !!retry);
+  // 다시 생성: the last reply keeps 재시도 (same session); an earlier one runs its prompt again as a new branch (편집, text unchanged).
+  const turn = !item.streaming && regen?.branch ? regen.turnOf(item) : null;
+  const branchFrom = turn ? regen?.branch : undefined;
+  const again = !last && turn && branchFrom ? () => branchFrom(turn) : undefined;
+  // Another model: a Claude branch (which keeps it as its model), or GPT / Gemini's last turn sent again with it this one time.
+  const pickable = regen && regen.models.some((m) => m !== regen.current);
+  const pick = !pickable || item.streaming ? undefined : turn && branchFrom ? (m: ModelChoice) => branchFrom(turn, m) : retry ? regen.retryWith : undefined;
+  const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
   return (
     <FileRootContext.Provider value={cwd || null}>
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}`}>
@@ -376,6 +478,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
             <div className="msg-actions" data-testid="turn-actions">
               {item.text && <CopyButton icon text={item.text} label="응답 복사" />}
               {retry && <button type="button" className="msg-act" aria-label="재시도" title="재시도" onClick={retry}><RetryIcon /></button>}
+              {again && <button type="button" className="msg-act" aria-label="다시 생성" title="다시 생성 — 이 답장부터 새 갈래로" onClick={again}><RetryIcon /></button>}
+              {pick && regen && <RegenModelMenu models={regen.models} current={regen.current} sticky={!!(turn && branchFrom)} onPick={pick} />}
             </div>
           )}
           {item.badge && <TurnBadge badge={item.badge} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} />}

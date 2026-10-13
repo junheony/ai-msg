@@ -8,6 +8,7 @@ import { FolderPicker } from './FolderPicker';
 import { EngineMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
 import { BlockedDeleteItem, MenuList, deleteBlockedReason } from './SessionMenu';
+import { openInNewTab } from './ShareMenu';
 import { isMacPlatform, isPlainMod, pinKeyLabel } from '../shortcuts';
 import { hasOpenModal } from '../autoReload';
 import { PinIcon } from './icons';
@@ -162,6 +163,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const splitItem = (t: { sessionId: string; cwd: string; title: string }) => onOpenSplit && (splitBlocked
     ? <button type="button" role="menuitem" aria-disabled="true" title={splitBlocked}>분할 보기로 열기</button>
     : <button type="button" role="menuitem" onClick={() => { setMenu(null); onOpenSplit(t.sessionId, t.cwd, t.title); }}>분할 보기로 열기</button>);
+  const tabItem = (sessionId: string) => <button type="button" role="menuitem" onClick={() => { setMenu(null); openInNewTab(sessionId); }}>새 탭에서 열기</button>;
   const startEdit = (s: SessionEntry, key: string) => { if (!onRename) return; setMenu(null); setEditing({ id: key, text: s.title }); };
   const commitEdit = (s: SessionEntry, key: string) => {
     if (!editing || editing.id !== key) return;
@@ -274,6 +276,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {which && <div className="session-menu-which muted" data-testid="session-menu-which">{which}</div>}
             {onRename && <button type="button" role="menuitem" onClick={() => startEdit(target, key)}>이름 바꾸기</button>}
             {splitItem(target)}
+            {tabItem(target.sessionId)}
             {/* Touch screens hide the row's pin button (it ate the title's width); pinning lives here too. */}
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {/* Archived in Codex: only the Codex app can unarchive it. */}
@@ -316,6 +319,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         {menu === key && (onTogglePin || onOpenSplit) && (
           <MenuList onClose={() => setMenu(null)}>
             {splitItem(d)}
+            {tabItem(d.sessionId)}
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(d.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
           </MenuList>
         )}

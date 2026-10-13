@@ -15,7 +15,7 @@ export const LIMIT_PATTERNS: RegExp[] = [
   /\bAPI Error: 429\b/,
   /\brate_limit_error\b/,
   /\busage limit reached\b/i,
-  /\bhit your (usage )?limit\b/i,
+  /\bhit your (usage |session )?limit\b/i,
   /\bout of (extra )?usage\b/i,
   // Codex turn.failed / error events carry the API error as a JSON blob.
   /"status"\s*:\s*429\b/,
@@ -46,4 +46,28 @@ export function classifyFailure(r: {
   if (LIMIT_PATTERNS.some((p) => p.test(text))) return 'limit';
   if (AUTH_PATTERNS.some((p) => p.test(text))) return 'auth';
   return 'other';
+}
+
+/** What the pane says for a limit/auth failure (follow-through failover notices). */
+export function failureLabel(kind: 'limit' | 'auth'): string {
+  return kind === 'limit' ? '사용 한도 도달' : '인증 실패';
+}
+
+/**
+ * The reset time in the CLI's limit text ("resets 3:50am (Asia/Seoul)", "Resets at 3pm") as "03:50 리셋" (24-hour);
+ * null when the text names none.
+ */
+export function limitResetHint(text: string | null): string | null {
+  const m = /\bresets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i.exec(text ?? '');
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = m[2] === undefined ? 0 : Number(m[2]);
+  const ampm = m[3]?.toLowerCase();
+  if (!ampm && m[2] === undefined) return null;
+  if (ampm) {
+    if (h < 1 || h > 12) return null;
+    h = (h % 12) + (ampm === 'pm' ? 12 : 0);
+  }
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')} 리셋`;
 }

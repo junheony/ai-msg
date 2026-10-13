@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type RefObject } from 'react';
 import type { UploadedAttachment } from '../state';
 import { usePopoverPlacement } from './usePopoverPlacement';
+import { lineCount } from '../upload';
 
 function kb(n: number): string {
   return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
@@ -79,18 +80,59 @@ export function AttachMenu({ onFiles }: { onFiles: (files: File[]) => void }) {
   );
 }
 
+/** A long paste sent as `pasted-N.txt`: 붙여넣은 텍스트 · N줄 · M자; click shows the text in a small popover. */
+function PastedChip({ text, onRemove }: { text: string; onRemove: () => void }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const pos = usePopoverPlacement(open, btnRef, popRef, 360, 'start');
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!popRef.current?.contains(t) && !btnRef.current?.contains(t)) setOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault(); // one Esc closes the preview only (not the side panel, not the running turn)
+      e.stopPropagation();
+      setOpen(false);
+      btnRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey, true); };
+  }, [open]);
+  const meta = `${lineCount(text).toLocaleString()}줄 · ${text.length.toLocaleString()}자`;
+  return (
+    <span className="chip attachment pasted" data-testid="pasted-chip">
+      <button ref={btnRef} type="button" className="pasted-open" aria-expanded={open} aria-haspopup="dialog" title="붙여넣은 내용 보기" onClick={() => setOpen((o) => !o)}>
+        📄 붙여넣은 텍스트 <span className="muted">{meta}</span>
+      </button>
+      <button type="button" className="chip-remove" aria-label="첨부 제거" onClick={onRemove}>✕</button>
+      {open && (
+        <div ref={popRef} className="paste-preview" role="dialog" aria-label="붙여넣은 텍스트 미리보기" style={pos}>
+          <pre>{text}</pre>
+        </div>
+      )}
+    </span>
+  );
+}
+
 /** Left cluster of the composer's bottom row: [+] attach, then the attached files as chips (`onFiles` absent: chips only). */
-export function AttachmentBar({ attachments, uploading, error, onFiles, onRemove }: {
+export function AttachmentBar({ attachments, uploading, error, onFiles, onRemove, pastedTexts }: {
   attachments: UploadedAttachment[];
   uploading: number;
   error: string | null;
   onFiles?: (files: File[]) => void;
   onRemove: (id: string) => void;
+  /** Long pastes by attachment id: shown as 붙여넣은 텍스트 chips with a preview. */
+  pastedTexts?: Record<string, string>;
 }) {
   return (
     <div className="attachment-bar">
       {onFiles && <AttachMenu onFiles={onFiles} />}
-      {attachments.map((a) => (
+      {attachments.map((a) => pastedTexts?.[a.id] !== undefined ? <PastedChip key={a.id} text={pastedTexts[a.id]!} onRemove={() => onRemove(a.id)} /> : (
         <span key={a.id} className={`chip attachment ${a.previewUrl ? 'has-thumb' : ''}`} title={a.name}>
           {a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{a.name} <span className="muted">{kb(a.size)}</span>
           <button type="button" className="chip-remove" aria-label="첨부 제거" onClick={() => onRemove(a.id)}>✕</button>

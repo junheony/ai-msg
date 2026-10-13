@@ -1,5 +1,5 @@
 import { loadDraft, saveDraft } from '../autoReload';
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ComponentProps, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus } from '../../shared/protocol';
@@ -10,7 +10,7 @@ import { latestContext } from '../context';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
-import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, useUploads, type UploadFn } from '../upload';
+import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
@@ -272,9 +272,8 @@ export function Chat(p: ChatProps) {
   useAutoGrow(taRef, text, bodyRef);
   const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
   const scroll = useStickToBottom(bodyRef, content, p.sessionId);
-  const { addFiles: upload, uploading, error } = useUploads({ uploadFn: p.uploadFn ?? uploadFile, current: p.attachments.length, onUploaded: p.onAttach });
-  // Read-only: no paste / drop / 첨부 uploads either.
-  const addFiles = async (files: File[]) => { if (!p.readOnly) await upload(files); };
+  // Read-only: no paste / drop / 첨부 uploads either. Long text pastes become 붙여넣은 텍스트 chips (pasted-N.txt).
+  const { addFiles, onPaste, uploading, error, pastedTexts } = usePasteUploads({ uploadFn: p.uploadFn ?? uploadFile, attachments: p.attachments, onUploaded: p.onAttach, onUploadFailed: (t) => setText((v) => v + t), disabled: !!p.readOnly });
   const coarse = useCoarsePointer();
   // Set between compositionstart/end: some browsers report isComposing late or not at all.
   const composing = useRef(false);
@@ -415,10 +414,6 @@ export function Chat(p: ChatProps) {
     if (e.shiftKey || e.altKey || (coarse && softKeyboardUp()) || sendKey === 'mod-enter') return;
     e.preventDefault();
     submit();
-  };
-  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = filesFrom(e.clipboardData);
-    if (files.length) { e.preventDefault(); void addFiles(files); }
   };
   // Files dropped anywhere on the pane attach (full-pane overlay while dragging); never a browser navigation. Anything
   // else dragged (text into the rename / edit / queue fields) is left to the browser. Enter/leave are counted: moving
@@ -592,7 +587,7 @@ export function Chat(p: ChatProps) {
             enterKeyHint={coarse ? 'enter' : 'send'}
           />
           {(p.attachments.length > 0 || uploading > 0 || error) && (
-            <div className="composer-files"><AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} /></div>
+            <div className="composer-files"><AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} pastedTexts={pastedTexts} /></div>
           )}
           {/* One toolbar row, as in Claude: [+] · model pill · 계정/권한 pill (they truncate, never wrap) · mic · send/stop. */}
           <div className="composer-row">

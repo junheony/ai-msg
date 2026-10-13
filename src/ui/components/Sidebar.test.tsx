@@ -507,14 +507,14 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     const more = screen.getByLabelText('세션 메뉴');
     fireEvent.click(more);
     const items = screen.getAllByRole('menuitem');
-    expect(items.map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '삭제…']);
+    expect(items.map((b) => b.textContent)).toEqual(['이름 바꾸기', '새 탭에서 열기', '맨 위에 고정', '보관', '삭제…']);
     expect(document.activeElement).toBe(items[0]);
     const menu = screen.getByRole('menu');
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(items[1]);
     fireEvent.keyDown(menu, { key: 'ArrowUp' });
     fireEvent.keyDown(menu, { key: 'ArrowUp' });
-    expect(document.activeElement).toBe(items[3]);
+    expect(document.activeElement).toBe(items[4]);
     fireEvent.keyDown(menu, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
     expect(document.activeElement).toBe(more);
@@ -589,7 +589,7 @@ describe('Sidebar ⋯ 분할 보기로 열기', () => {
     const onOpen = vi.fn();
     render(<Sidebar projects={projects} desktop={desktop} view="projects" currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} onRename={noop} onTogglePin={noop} onOpenSplit={onOpenSplit} />);
     fireEvent.click(screen.getByText('one').closest('li')!.querySelector('[aria-label="세션 메뉴"]')!);
-    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '분할 보기로 열기', '맨 위에 고정']);
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '분할 보기로 열기', '새 탭에서 열기', '맨 위에 고정']);
     fireEvent.click(screen.getByRole('menuitem', { name: '분할 보기로 열기' }));
     expect(onOpenSplit).toHaveBeenCalledWith('s1', '/w', 'one');
     expect(onOpen).not.toHaveBeenCalled();
