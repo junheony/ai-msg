@@ -60,6 +60,51 @@ describe('UsageView', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('is a sheet: ↻ refreshes, ✕ closes, a backdrop press closes and a press in the card does not', async () => {
+    const body: UsageHistory = { generatedAt: 'x', days: 84, lastScanAt: null, scanning: false, rows };
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+    const onClose = vi.fn();
+    render(<UsageView onClose={onClose} fetchFn={fetchFn} now={NOW} />);
+    const close = screen.getByRole('button', { name: '닫기' });
+    expect(close.textContent).toBe('✕');
+    expect(close.getAttribute('title')).toBe('닫기 (Esc)');
+    expect(document.activeElement).toBe(close);
+    expect(screen.queryByRole('button', { name: '새로고침' })?.textContent).toBe('↻');
+    await waitFor(() => expect((screen.getByRole('button', { name: '새로고침' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: '새로고침' }));
+    await waitFor(() => expect(fetchFn).toHaveBeenLastCalledWith('/api/usage/history?days=84&refresh=1'));
+
+    const dialog = screen.getByRole('dialog', { name: '토큰 사용량' });
+    fireEvent.mouseDown(dialog);
+    fireEvent.mouseDown(screen.getByTestId('usage-weekly'));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.mouseDown(dialog.parentElement!);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(close);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('Esc yields to a popup opened over the sheet, an Esc already taken, a held key and IME', () => {
+    const fetchFn = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const onClose = vi.fn();
+    render(<UsageView onClose={onClose} fetchFn={fetchFn} now={NOW} />);
+    const over = document.body.appendChild(document.createElement('div'));
+    over.setAttribute('role', 'dialog');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    over.remove();
+    const taken = (e: KeyboardEvent) => e.preventDefault();
+    window.addEventListener('keydown', taken, true);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    window.removeEventListener('keydown', taken, true);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape', repeat: true });
+    fireEvent.keyDown(window, { key: 'Escape', keyCode: 229 });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('shows the error when the API fails', async () => {
     const fetchFn = vi.fn(async () => new Response('{}', { status: 500 })) as unknown as typeof fetch;
     render(<UsageView onClose={() => {}} fetchFn={fetchFn} now={NOW} />);

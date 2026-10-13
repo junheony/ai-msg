@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { shortcutList } from '../shortcuts';
+import { POPUP } from '../composerFocus';
 
 function useEscape(onClose: () => void) {
   useEffect(() => {
@@ -7,6 +8,43 @@ function useEscape(onClose: () => void) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+}
+
+/**
+ * A large modal card over a dimmed backdrop (설정, 사용량): full screen on a phone. Closes on Esc and on a mousedown that
+ * starts on the backdrop. Esc yields to a popup inside the card or opened over it (later in the DOM: palette, help,
+ * confirm, another sheet), to an Esc someone already took and to a held key's repeats. Focus goes back where it was when
+ * the sheet closes, or to the top bar's `[data-sheet-return]` button when that is gone (설정 → 사용량 보기) or was nowhere.
+ */
+export function Sheet({ label, className, onClose, children }: { label: string; className: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  const [opener] = useState(() => (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null));
+  // Layout: runs before a sheet opened in the same commit (설정 → 사용량) focuses its own ✕.
+  useLayoutEffect(() => () => { (opener?.isConnected && opener !== document.body ? opener : document.querySelector<HTMLElement>('[data-sheet-return]'))?.focus(); }, [opener]);
+  useEffect(() => {
+    let owned = false;
+    // Capture: decided before the popup's own Esc handler removes it.
+    const note = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const self = ref.current;
+      owned = !!self && Array.from(document.querySelectorAll(POPUP)).some((el) => el !== self && (self.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.repeat || e.defaultPrevented || e.isComposing || e.keyCode === 229 || owned) return;
+      e.preventDefault();
+      close.current();
+    };
+    window.addEventListener('keydown', note, true);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', note, true); window.removeEventListener('keydown', onKey); };
+  }, []);
+  return (
+    <div className="sheet-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={ref} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-label={label}>{children}</div>
+    </div>
+  );
 }
 
 /** ⌘/ cheat sheet. */

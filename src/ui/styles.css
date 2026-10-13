@@ -1076,16 +1076,17 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* 사용량 view: token usage history (UsageView). Larger text than the rest of the app on purpose. */
 .usage-view { --fam-opus: #3987e5; --fam-sonnet: #d95926; --fam-fable: #199e70; --fam-haiku: #c98500; --fam-gpt: #d55181; --fam-other: #008300;
-  position: fixed; inset: 0; z-index: 90; overflow-y: auto; background: var(--bg); color: var(--fg); font-size: calc(16px * var(--font-scale, 1)); line-height: 1.5; }
+  font-size: calc(16px * var(--font-scale, 1)); line-height: 1.5; }
 :root[data-theme="light"] .usage-view { --fam-opus: #2a78d6; --fam-sonnet: #eb6834; --fam-fable: #1baf7a; --fam-haiku: #eda100; --fam-gpt: #e87ba4; --fam-other: #008300; }
 @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .usage-view { --fam-opus: #2a78d6; --fam-sonnet: #eb6834; --fam-fable: #1baf7a; --fam-haiku: #eda100; --fam-gpt: #e87ba4; --fam-other: #008300; } }
-.uv-inner { max-width: 1000px; margin: 0 auto; padding: 16px 20px 40px; display: flex; flex-direction: column; gap: 16px; }
-.uv-head { display: flex; align-items: center; gap: 8px; }
+.sheet.usage-view { width: min(900px, 100%); max-height: min(90vh, 100%); background: var(--bg); }
+.uv-inner { padding: 0 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+/* Sticky: ✕ stays in reach while the card scrolls. */
+.uv-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 14px 0 8px; margin-bottom: -8px; background: var(--bg); }
 .uv-head h2 { margin: 0 auto 0 0; font-size: calc(22px * var(--font-scale, 1)); color: var(--fg-strong); }
 .usage-view h3 { margin: 0 0 8px; font-size: calc(17px * var(--font-scale, 1)); font-weight: 600; color: var(--fg-strong); }
-.uv-btn { min-height: 40px; padding: 0 14px; border-radius: 8px; font-size: calc(15px * var(--font-scale, 1)); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.uv-btn:hover:not(:disabled) { background: var(--hover); }
-.uv-btn:disabled { opacity: .6; }
+.uv-head .sheet-btn { width: 32px; height: 32px; font-size: calc(16px * var(--font-scale, 1)); }
+.uv-head .sheet-btn:disabled { opacity: .6; }
 .uv-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .uv-tabs button { min-height: 40px; min-width: 52px; padding: 0 14px; border-radius: 20px; font-size: calc(15px * var(--font-scale, 1)); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .uv-tabs button.on { color: var(--fg-strong); background: var(--selected); box-shadow: inset 0 0 0 1.5px var(--accent); font-weight: 600; }
@@ -1124,7 +1125,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .uv-open { color: var(--fg); }
 .usage-pop-row.link button { width: 100%; text-align: left; padding: 4px 0; color: var(--accent); font-size: calc(13.5px * var(--font-scale, 1)); }
 @media (max-width: 720px) {
-  .uv-inner { padding: 12px 12px 32px; gap: 14px; }
+  .sheet.usage-view { max-height: 100%; }
+  .uv-inner { padding: 0 12px 32px; gap: 14px; }
+  .uv-head { padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+  .uv-head .sheet-btn { width: var(--phone-tap); height: var(--phone-tap); }
   .uv-tiles { grid-template-columns: 1fr; }
   .uv-tile { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 0 12px; padding: 12px 14px; }
   .uv-tile-value { font-size: calc(24px * var(--font-scale, 1)); text-align: right; }
@@ -1165,8 +1169,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* === 설정 (SettingsView) === */
 :root[data-width="wide"] { --read-width: 1040px; }
-.settings-backdrop { position: fixed; inset: 0; z-index: 95; background: rgba(0, 0, 0, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
-.settings { width: min(560px, 100%); max-height: min(720px, 100%); overflow-y: auto; padding: 16px 18px 20px; border-radius: 14px; background: var(--panel); color: var(--fg); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); display: flex; flex-direction: column; gap: 16px; }
+/* Sheet (Dialogs.tsx): the large modal card 설정 and 사용량 open in; full screen on a phone. */
+/* Under .modal-backdrop (60) and toasts (55/56): the palette, help and confirm open over a sheet. */
+.sheet-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.sheet { width: min(560px, 100%); max-height: min(720px, 100%); overflow-y: auto; border-radius: 14px; background: var(--panel); color: var(--fg); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); }
+.settings { padding: 16px 18px 20px; display: flex; flex-direction: column; gap: 16px; }
 .settings-head { display: flex; align-items: center; justify-content: space-between; }
 .settings-head h2 { margin: 0; font-size: calc(18px * var(--font-scale, 1)); color: var(--fg-strong); }
 .settings section { display: flex; flex-direction: column; gap: 10px; }
@@ -1180,7 +1187,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .settings .notify-pop { position: static; width: auto; box-shadow: none; }
 .dictate.on { color: var(--danger); animation: dictate-pulse 1.2s ease-in-out infinite; }
 @keyframes dictate-pulse { 50% { opacity: .45; } }
-@media (max-width: 720px) { .seg button { height: var(--phone-tap); } .settings-backdrop { padding: 0; align-items: stretch; } .settings { max-height: 100%; border-radius: 0; width: 100%; } }
+@media (max-width: 720px) { .seg button { height: var(--phone-tap); } .sheet-backdrop { padding: 0; align-items: stretch; } .sheet { max-height: 100%; border-radius: 0; width: 100%; } }
 .sidebar-foot { display: flex; align-items: center; gap: 4px; }
 /* Thinking disclosure (collapsed above the reply). */
 .thinking, .thinking-line { margin: 0 0 10px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
@@ -1304,6 +1311,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .newchat-card { display: flex; flex-direction: column; align-items: stretch; gap: 1px; min-width: 0; padding: 7px 11px; border-radius: 9px; text-align: left; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); }
 .newchat-card:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .newchat-card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); }
+.newchat-card-pin { display: inline-flex; vertical-align: -1px; margin-right: 4px; color: var(--accent); }
+.newchat-card-pin svg { width: 11px; height: 11px; }
 .newchat-card-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: calc(11.5px * var(--font-scale, 1)); color: var(--muted); }
 /* Narrow pane (split view, cover screen): the model label gives way first, then the card padding. */
 @container newchat (max-width: 420px) {
@@ -1474,8 +1483,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (max-width: 720px), (pointer: coarse) { .attach-item { min-height: var(--phone-tap); padding: 0 14px 0 12px; } }
 
 /* Close ✕ (the split pane's, the side panel's): outlined in the text colour so it reads on any header. */
-.icon-btn.pane-close, .icon-btn.side-close { color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
-.icon-btn.pane-close:hover, .icon-btn.side-close:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.icon-btn.pane-close, .icon-btn.side-close, .icon-btn.sheet-btn { color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
+.icon-btn.pane-close:hover, .icon-btn.side-close:hover, .icon-btn.sheet-btn:hover:not(:disabled) { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 /* Pane header: the title sizes to its text (no dead gap before the chips) and ellipsizes; the folder chip gives way
    first. The permission badge never shrinks or clips — a narrow pane swaps it for its compact form instead. */
 .pane { container: pane / inline-size; }

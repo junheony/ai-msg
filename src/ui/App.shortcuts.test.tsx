@@ -81,6 +81,10 @@ describe('desktop-like navigation', () => {
     expect(seen).toEqual(['deck:open-settings', 'deck:cycle-theme']);
     press('KeyK');
     fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Escape' });
+    // One Esc closes only the topmost: the palette took it, 설정 (opened under it) waits for the next one.
+    expect(screen.queryByRole('dialog', { name: '명령 팔레트' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: '설정' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     press('KeyK');
     press('KeyK', {}, screen.getByLabelText('세션 검색 또는 명령'));

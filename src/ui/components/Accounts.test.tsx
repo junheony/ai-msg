@@ -334,11 +334,11 @@ describe('usageTabs', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'c (설정에 없는 계정)' }));
     expect(on()).toEqual(['c']);
     expect(screen.queryByText(/합계는 여러 계정에 복사된/)).toBeNull();
-    fireEvent.click(screen.getByText('새로고침'));
+    fireEvent.click(screen.getByRole('button', { name: '새로고침' }));
     await waitFor(() => expect(tabs()).not.toContain('c'));
     expect(on()).toEqual(['합계']);
     expect(screen.getByText(/합계는 여러 계정에 복사된/)).toBeTruthy();
-    fireEvent.click(screen.getByText('새로고침'));
+    fireEvent.click(screen.getByRole('button', { name: '새로고침' }));
     await waitFor(() => expect(tabs()).toContain('c'));
     expect(on()).toEqual(['c']);
   });

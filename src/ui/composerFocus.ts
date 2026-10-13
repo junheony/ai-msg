@@ -3,7 +3,7 @@ import { isTypingTarget } from './shortcuts';
 /** The composers deck types into: an open chat's and the new-chat screen's. */
 const COMPOSER = '.composer textarea, .newchat textarea';
 /** Something on screen that owns the keyboard: a modal (palette, settings, confirm…), a popover dialog, a menu or a list. */
-const POPUP = '[aria-modal="true"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
+export const POPUP = '[aria-modal="true"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
 
 export function hasOpenPopup(root: ParentNode = document): boolean {
   return root.querySelector(POPUP) !== null;

@@ -36,3 +36,18 @@ describe('SettingsView 자동 계정 선택', () => {
     expect(onPolicy).toHaveBeenCalledWith('drain');
   });
 });
+
+describe('SettingsView sheet', () => {
+  afterEach(cleanup);
+
+  it('shares the sheet with 사용량: a backdrop press closes, a press in the card does not', () => {
+    const onClose = vi.fn();
+    render(<SettingsView build={null} onOpenUsage={noop} onClose={onClose} />);
+    const dialog = screen.getByRole('dialog', { name: '설정' });
+    expect(dialog.className).toBe('sheet settings');
+    fireEvent.mouseDown(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.mouseDown(dialog.parentElement!);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
