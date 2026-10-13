@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- Header account cards fixture for scripts/render-check.sh: the real stylesheet, hand-written markup
+     (keep in step with UsagePanel.tsx: spent pill, GPT credits, `다음` tag, current dot). -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>body { margin: 0; }</style>
+</head><body><div class="topbar" style="width:auto"><div class="usage-panel" style="--usage-cards:4">
+<div class="usage-card claude ok"><div class="usage-id"><svg class="usage-mark claude" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#d97757"/></svg><span class="usage-letter">A</span></div><div class="usage-rows">
+<div class="usage-row ok"><span class="usage-label">5h</span><span class="usage-bar"><i style="width:100%"></i></span><span class="usage-value">100<small>%</small></span></div>
+<div class="usage-row ok"><span class="usage-label">주간</span><span class="usage-bar"><i style="width:21%"></i></span><span class="usage-value">21<small>%</small></span></div>
+<div class="usage-row warn"><span class="usage-label">Fable</span><span class="usage-bar"><i style="width:14%"></i></span><span class="usage-value">14<small>%</small></span><small class="usage-cd">8시간 후</small></div>
+</div></div>
+<div class="usage-card claude ok current"><span class="usage-dot"></span><div class="usage-id"><svg class="usage-mark claude" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#d97757"/></svg><span class="usage-letter">B</span><span class="usage-next">다음 턴</span></div><div class="usage-rows">
+<div class="usage-row ok"><span class="usage-label">5h</span><span class="usage-bar"><i style="width:60%"></i></span><span class="usage-value">60<small>%</small></span></div>
+<div class="usage-row ok"><span class="usage-label">주간</span><span class="usage-bar"><i style="width:64%"></i></span><span class="usage-value">64<small>%</small></span></div>
+<div class="usage-row ok"><span class="usage-label">Fable</span><span class="usage-bar"><i style="width:50%"></i></span><span class="usage-value">50<small>%</small></span><small class="usage-cd">4일 후</small></div>
+</div></div>
+<div class="usage-card claude ok"><div class="usage-id"><svg class="usage-mark claude" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#d97757"/></svg><span class="usage-letter">C</span><span class="usage-next">다음 턴 · Opus</span></div><div class="usage-rows">
+<div class="usage-row spent danger"><span class="usage-label">5h</span><span class="usage-pill">소진<span class="usage-pill-at"> · 23:10</span></span></div>
+<div class="usage-row ok"><span class="usage-label">주간</span><span class="usage-bar"><i style="width:60%"></i></span><span class="usage-value">60<small>%</small></span></div>
+<div class="usage-row ok"><span class="usage-label">Fable</span><span class="usage-bar"><i style="width:49%"></i></span><span class="usage-value">49<small>%</small></span><small class="usage-cd">2일 후</small></div>
+</div></div>
+<div class="usage-card gpt ok"><div class="usage-id"><svg class="usage-mark gpt" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#ddd"/></svg><span class="usage-letter">GPT</span></div><div class="usage-rows">
+<div class="usage-row ok"><span class="usage-label">주간</span><span class="usage-bar"><i style="width:41%"></i></span><span class="usage-value">41<small>%</small></span><small class="usage-cd">6일 후</small></div>
+<div class="usage-row none"><span class="usage-label">5h</span><span class="usage-bar"><i style="width:0%"></i></span><span class="usage-value">—</span></div>
+<div class="usage-row credits"><span class="usage-label">크레딧</span><span class="usage-credits">3,723</span></div>
+</div></div>
+</div></div></body></html>

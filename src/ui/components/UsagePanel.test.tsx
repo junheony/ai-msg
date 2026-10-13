@@ -193,11 +193,11 @@ describe('UsagePanel short reset countdown and 다음 tag', () => {
   it('다음 tag on the routed Claude card, Opus noted, reason in the title', () => {
     const { rerender } = render(<UsagePanel usage={usage} current="a" now={NOW} next={{ account: 'b', reason: '5h 여유 많음' }} />);
     const tag = screen.getByTestId('next-b');
-    expect(tag.textContent).toBe('다음');
-    expect(tag.title).toBe('다음 턴: 5h 여유 많음');
+    expect(tag.textContent).toBe('다음 턴');
+    expect(tag.title).toBe('다음 턴은 이 계정으로 갑니다: 5h 여유 많음');
     expect(screen.queryByTestId('next-a')).toBeNull();
     rerender(<UsagePanel usage={usage} current="a" now={NOW} next={{ account: 'c', reason: 'r', asOpus: true }} />);
-    expect(screen.getByTestId('next-c').textContent).toBe('다음 · Opus');
+    expect(screen.getByTestId('next-c').textContent).toBe('다음 턴 · Opus');
     rerender(<UsagePanel usage={usage} current="a" now={NOW} next={null} />);
     expect(screen.queryByTestId(/^next-/)).toBeNull();
   });
