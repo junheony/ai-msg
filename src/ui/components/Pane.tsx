@@ -176,11 +176,19 @@ export type SessionActions = {
   onDuplicate?: (sessionId: string) => void;
 };
 
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions }: {
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions, grip, floating, onFloat, onDock }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'usage' | 'projects' | 'defaultPermMode' | 'pins'>>;
   active: boolean;
   closable: boolean;
+  /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
+  grip?: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => void };
+  /** Shown as a floating card (its ⋯ menu offers 패널에 다시 붙이기 instead of 떼기). */
+  floating?: boolean;
+  /** ⋯ 떠 있는 카드로 떼기 (desktop, docked, not the last docked pane). */
+  onFloat?: () => void;
+  /** ⋯ 패널에 다시 붙이기 (desktop, floating). */
+  onDock?: () => void;
   dispatch: (a: Action) => void;
   /** `false`: not sent (socket down). */
   send: SendFn;
@@ -279,12 +287,20 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const effort = paneEffort(pane, model);
   // 파일 (the session folder in the side panel) lives in the header's ⋯ menu, as Claude keeps its header bare.
   const fileMenu = s ? [{ label: side ? '파일 패널 닫기' : '파일 열기', run: () => setSide(side ? null : { kind: 'pick' }) }] : [];
+  // 떠 있는 카드로 떼기 / 패널에 다시 붙이기: the pane as a card over the split view and back (the grip does the same by drag).
+  if (floating && onDock) fileMenu.push({ label: '패널에 다시 붙이기', run: onDock });
+  else if (!floating && onFloat) fileMenu.push({ label: '떠 있는 카드로 떼기', run: onFloat });
   // 새 탭으로 떼어내기 (split view only): the session in a new browser tab, this pane closed. A lone pane has no such item.
   if (closable && s?.sessionId) {
     const detached = s.sessionId;
     fileMenu.push({ label: '새 탭으로 떼어내기', run: () => { openInNewTab(detached); onClose(); } });
   }
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
+  const handle = grip && (
+    <button type="button" className="icon-btn pane-grip" aria-label="패널 끌기" title={floating ? '드래그: 카드 이동 · 위 가장자리에 놓기: 패널에 붙이기' : '드래그: 순서 바꾸기 · 아래로 끌기: 카드로 떼기'} onPointerDown={grip.onPointerDown} onClick={(e) => e.preventDefault()}>
+      <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true"><circle cx="2.5" cy="2" r="1.4" fill="currentColor" /><circle cx="7.5" cy="2" r="1.4" fill="currentColor" /><circle cx="2.5" cy="7" r="1.4" fill="currentColor" /><circle cx="7.5" cy="7" r="1.4" fill="currentColor" /><circle cx="2.5" cy="12" r="1.4" fill="currentColor" /><circle cx="7.5" cy="12" r="1.4" fill="currentColor" /></svg>
+    </button>
+  );
   const busy = pane.activeTurnId !== null || pane.awaitingStart;
   const onModel = (m: ModelChoice) => dispatch({ type: 'set_model', model: m, paneId: pane.id });
   const onEffort = (e: Effort | null) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id });
@@ -409,7 +425,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           loading={!!pane.loading}
           cwd={s.cwd}
           sessionId={s.sessionId}
-          headActions={<>{desktop}{fork}{close}</>}
+          headActions={<>{desktop}{fork}{handle}{close}</>}
           headMenu={fileMenu}
           model={model}
           effort={effort}
@@ -514,7 +530,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         </RegenerateContext.Provider>
       ) : (
         <>
-          {close && <div className="chat-head"><span className="spacer" />{close}</div>}
+          {(close || handle) && <div className="chat-head"><span className="spacer" />{handle}{close}</div>}
           {onStartChat
             ? <NewChat projects={projects} pins={app.pins ?? []} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} gemini={app.gemini ?? null}
                 onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })} onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}

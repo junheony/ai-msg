@@ -10,6 +10,7 @@ import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
 import { LEGACY_ACCOUNT_LIST, accountListOf, activePin, sameAccountList, seatLabel } from './accounts';
 import { has } from './features';
+import type { FloatRect } from './paneDrag';
 import { paneSize } from './paneResize';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
@@ -250,7 +251,12 @@ export type PaneState = {
   loading?: boolean;
   /** Split-view column weight (`fr`; absent = 1): the splitter between two panes trades it between them. */
   size?: number;
+  /** A card floating over the split view (pulled off the rail); absent = docked in the grid. A phone shows it as a tab. */
+  float?: FloatRect;
 };
+
+/** The panes in the grid, left to right (floating cards excluded). */
+export const dockedPanes = (panes: readonly PaneState[]): PaneState[] => panes.filter((p) => !p.float);
 
 export type PaneNotice = { sessionId: string | null; message: string; level: 'notice' | 'error' };
 
@@ -330,7 +336,11 @@ function remember(recent: AppState['recent'], p: PaneState | undefined): AppStat
   return { ...rest, [sid]: items };
 }
 
-export const MAX_PANES = 5;
+/**
+ * Not a limit the UI shows: the grid scrolls sideways past the viewport. Only a sanity ceiling against a runaway
+ * loop or a corrupt store filling the page with panes.
+ */
+export const PANE_LIMIT = 24;
 
 export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
@@ -361,6 +371,14 @@ export type Action =
   | { type: 'clear_pane'; paneId?: string }
   | { type: 'close_pane'; paneId: string }
   | { type: 'focus_pane'; paneId: string }
+  /** A docked pane to index `to` among the other docked panes (floating cards keep their place). */
+  | { type: 'move_pane'; paneId: string; to: number }
+  /** Off the rail into a floating card at `rect`; refused for the last docked pane. */
+  | { type: 'float_pane'; paneId: string; rect: FloatRect }
+  /** A floating card back into the grid at docked index `to` (absent = the right end). */
+  | { type: 'dock_pane'; paneId: string; to?: number }
+  /** A floating card moved / resized. */
+  | { type: 'move_float'; paneId: string; rect: FloatRect }
   /** Column weights by pane id (a splitter drag sends its two neighbours; 균등 sends every pane at 1); others are untouched. */
   | { type: 'resize_panes'; sizes: Record<string, number> }
   | { type: 'dismiss_error' }
@@ -1143,12 +1161,49 @@ export function reducer(state: AppState, action: Action): AppState {
       handoff: null, handoffFrom: null, prefill: null, notices: [],
     }));
     case 'add_pane': {
-      if (state.panes.length >= MAX_PANES) return state;
+      if (state.panes.length >= PANE_LIMIT) return state;
       const n = Math.max(...state.panes.map((p) => Number(p.id.slice(1)) || 0)) + 1;
-      // The new pane takes the average weight, so the others keep their proportions to each other.
-      const avg = state.panes.reduce((t, p) => t + paneSize(p.size), 0) / state.panes.length;
+      // The new pane takes the docked panes' average weight, so those keep their proportions to each other.
+      const docked = dockedPanes(state.panes);
+      const avg = docked.length ? docked.reduce((t, p) => t + paneSize(p.size), 0) / docked.length : 1;
       const pane: PaneState = { ...newPane(`p${n}`), ...(avg !== 1 ? { size: avg } : {}) };
       return { ...state, panes: [...state.panes, pane], activePaneId: pane.id };
+    }
+    case 'move_pane': {
+      const docked = dockedPanes(state.panes);
+      const from = docked.findIndex((p) => p.id === action.paneId);
+      if (from < 0 || docked.length < 2) return state;
+      const others = docked.filter((_, i) => i !== from);
+      const to = Math.max(0, Math.min(Math.trunc(action.to), others.length));
+      if (to === from) return state;
+      const order = [...others.slice(0, to), docked[from]!, ...others.slice(to)];
+      // Floating cards keep their slots in the array; the docked ones are re-dealt in the new order.
+      let k = 0;
+      return { ...state, panes: state.panes.map((p) => (p.float ? p : order[k++]!)) };
+    }
+    case 'float_pane': {
+      const pane = state.panes.find((p) => p.id === action.paneId);
+      if (!pane || pane.float || dockedPanes(state.panes).length < 2) return state;
+      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect } : p)), activePaneId: action.paneId };
+    }
+    case 'dock_pane': {
+      const pane = state.panes.find((p) => p.id === action.paneId);
+      if (!pane?.float) return state;
+      const { float: _f, ...landed } = pane;
+      const rest = state.panes.filter((p) => p.id !== action.paneId);
+      const docked = dockedPanes(rest);
+      const to = action.to === undefined ? docked.length : Math.max(0, Math.min(Math.trunc(action.to), docked.length));
+      // Goes in just before the docked pane now at `to` (or after everything, floats included, at the end).
+      const before = docked[to];
+      const at = before ? rest.indexOf(before) : rest.length;
+      return { ...state, panes: [...rest.slice(0, at), landed, ...rest.slice(at)], activePaneId: action.paneId };
+    }
+    case 'move_float': {
+      const pane = state.panes.find((p) => p.id === action.paneId);
+      if (!pane?.float) return state;
+      const r = pane.float;
+      if (r.x === action.rect.x && r.y === action.rect.y && r.w === action.rect.w && r.h === action.rect.h) return state;
+      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect } : p)) };
     }
     case 'resize_panes': {
       let changed = false;
@@ -1162,9 +1217,12 @@ export function reducer(state: AppState, action: Action): AppState {
       return changed ? { ...state, panes } : state;
     }
     case 'close_pane': {
-      if (state.panes.length <= 1) return state;
-      const panes = state.panes.filter((p) => p.id !== action.paneId);
-      return { ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((p) => p.id === action.paneId)), panes, activePaneId: state.activePaneId === action.paneId ? panes[0]!.id : state.activePaneId };
+      if (state.panes.length <= 1 || !state.panes.some((p) => p.id === action.paneId)) return state;
+      let panes = state.panes.filter((p) => p.id !== action.paneId);
+      // The grid never empties: closing the last docked pane docks the first floating card.
+      if (!panes.some((p) => !p.float)) { const { float: _f, ...first } = panes[0]!; panes = [first, ...panes.slice(1)]; }
+      const next = dockedPanes(panes)[0]!;
+      return { ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((p) => p.id === action.paneId)), panes, activePaneId: state.activePaneId === action.paneId ? next.id : state.activePaneId };
     }
     case 'focus_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
