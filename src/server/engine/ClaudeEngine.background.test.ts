@@ -115,6 +115,8 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     await r.until('result');
     const rest = await r.rest();
     expect(rest[0]).toMatchObject({ kind: 'notice', message: expect.stringContaining('백그라운드 작업이') });
+    // The cut work by name, for the runner to record and send the session on (before the clearing background event).
+    expect(rest[1]).toEqual({ kind: 'bg_cap', tasks: ['forever'], minutes: 0 });
     expect(rest.at(-1)).toMatchObject({ kind: 'background', tasks: [] });
     expect(rest.some((e) => e.kind === 'result')).toBe(false);
   });

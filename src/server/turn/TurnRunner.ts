@@ -74,7 +74,12 @@ export type TurnParams = {
   clientRef?: string;
   /** Server-internal: this turn is the n-th automatic retry after 대안 계정 없음 (SessionState.pendingRetry, fired through ws). */
   retryHop?: number;
+  /** Server-internal (continueAfterCap): this turn is the n-th continuation deck sent by itself after the background wait limit cut the session's work. */
+  bgCapHop?: number;
 };
+
+/** The background wait limit (ClaudeEngine bgMaxMs) cutting work → at most this many continuations deck sends by itself in a row (continueAfterCap). */
+export const MAX_BG_CAP_HOPS = 2;
 
 /** 대안 계정 없음 → at most this many automatic retries of the same prompt (SessionState.pendingRetry). */
 export const MAX_RETRY_HOPS = 2;
@@ -171,6 +176,12 @@ type Failover = {
   tasks: string[];
   queued: { f: FollowUpParams; attachments: Attachment[] }[];
 };
+
+/**
+ * The held-open process was ended by the background wait limit (EngineEvent bg_cap) with work still running: the model
+ * was never told (no task notification comes from a dead process), so deck sends the session on by itself (continueAfterCap).
+ */
+type Capped = { cap: true; tasks: string[]; minutes: number };
 
 /** The mutable "which deck turn is the process working for now" — permission cards and events follow it. */
 type Cursor = { turnId: string };
@@ -1037,12 +1048,14 @@ export class TurnRunner {
    * sent meanwhile (its own turn id). Ends when the engine stream ends (no live task left, cap,
    * grace, abort).
    */
-  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants; startedAt: number }): Promise<Failover | null> {
+  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants; startedAt: number }): Promise<Failover | Capped | null> {
     const { p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt } = c;
     const scope = () => ({ turnId: cur.turnId, sessionId, cwd });
     type Seg = { turnId: string; reason: string; modelNote: string | null; followUp?: { f: FollowUpParams; attachments: Attachment[] } };
     let seg: Seg | null = null;
     let failover: Failover | null = null;
+    /** The background wait limit ended the process with this work still running (EngineEvent bg_cap). */
+    let capped: Capped | null = null;
     /** Set while the process is being closed after a limit / auth failure (follow-ups queue instead of going in). */
     let closing = false;
     let n = 0;
@@ -1142,6 +1155,8 @@ export class TurnRunner {
           case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
           case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          // Only work that was really still running counts (an abort or shutdown racing the cap is theirs to report).
+          case 'bg_cap': if (!sink.signal.aborted && (ev.tasks.length || live.length)) capped = { cap: true, tasks: ev.tasks.length ? ev.tasks : [...live], minutes: ev.minutes }; break;
           case 'system': sink.emit({ type: 'turn_system', ...scope(), source: ev.source, label: ev.label, text: redactSecrets(ev.text) }); break;
           // A background task settled while the process waits: the push (PushNotifier) fires here, not only inside the turn.
           case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
@@ -1195,7 +1210,42 @@ export class TurnRunner {
         }
       }
     }
-    return failover;
+    return failover ?? (sink.signal.aborted ? null : capped);
+  }
+
+  /**
+   * The background wait limit (ClaudeEngine bgMaxMs) ended the session's process with work still running: the model
+   * never hears of it (a dead process sends no task notification) and the session would sit until the user asks why.
+   * So the cut is recorded (SessionState.interrupted, kind 'cap' — told to the model on the next turn, as a restart's
+   * cut is) and deck sends '이어서 진행해 주세요.' itself, as a turn of the same session (routed as any turn; the UI shows
+   * it under the turn that was held open). At most MAX_BG_CAP_HOPS in a row (TurnParams.bgCapHop): a continuation whose
+   * own work hits the limit again is left for the user's next message, which still gets the note.
+   */
+  private async continueAfterCap(need: Capped, c: { p: TurnParams; sink: TurnSink; cwd: string; sessionId: string }): Promise<void> {
+    const { p, sink, cwd, sessionId } = c;
+    const st = this.deps.store.get(sessionId);
+    if (!st || isCodexState(st) || isGeminiState(st)) return;
+    const hop = (p.bgCapHop ?? 0) + 1;
+    const n = need.tasks.length;
+    const cause = `백그라운드 작업 ${need.minutes}분 한도`;
+    try {
+      // The closed process wrote the transcript: deck's own write, not Desktop / a CLI (openElsewhere).
+      this.deckWroteAt.set(path.resolve(st.projectDir, `${sessionId}.jsonl`), this.now());
+      await this.deps.store.set({ ...st, interrupted: { atMs: this.now(), tasks: need.tasks, cause, kind: 'cap' } });
+    } catch (err) {
+      console.error('deck: 끊긴 작업 기록 실패', err instanceof Error ? err.message : err);
+      return;
+    }
+    if (hop > MAX_BG_CAP_HOPS) {
+      sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId, cwd, message: `백그라운드 작업 ${n}개가 ${need.minutes}분 한도로 끊김: ${need.tasks.join(', ')} — 자동 이어가기 ${MAX_BG_CAP_HOPS}회를 다 써서 멈춥니다 (다음 메시지에 모델에게 알립니다)` });
+      return;
+    }
+    sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId, cwd, message: `백그라운드 작업 ${n}개가 ${need.minutes}분 한도로 끊김: ${need.tasks.join(', ')} — 이어서 진행하도록 자동으로 보냅니다` });
+    try {
+      await this.run({ cwd, sessionId, turnId: `${p.turnId}:cap${hop}`, text: '이어서 진행해 주세요.', bgCapHop: hop }, sink);
+    } catch (err) {
+      console.error('deck: 한도 뒤 자동 이어가기 실패', err instanceof Error ? err.message : err);
+    }
   }
 
   /**
@@ -1560,7 +1610,13 @@ export class TurnRunner {
       const at = d.toDateString() === new Date(this.now()).toDateString() ? hm : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`;
       const n = cut.tasks.length;
       const list = cut.tasks.map((t) => `"${t}"`).join(', ');
-      if (!cut.cause) {
+      if (cut.kind === 'cap') {
+        // The background wait limit cut the work (continueAfterCap): this turn is deck's own continuation, or — the auto
+        // hops used up — the user's next message, which then carries the note.
+        const auto = !!p.bgCapHop;
+        early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — ${auto ? 'deck 이 자동으로 이어갑니다' : '모델에게 알렸습니다'}`);
+        systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. ${auto ? '이 턴은 deck 이 자동으로 이어 보낸 것입니다(사용자가 보낸 메시지가 아닙니다). ' : ''}끊긴 작업이 파일 등에 남긴 부분 결과가 있으면 확인하고, 필요한 작업은 더 작은 단위로 다시 띄우거나 직접 마무리해 보고까지 끝내세요. 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
+      } else if (!cut.cause) {
         early.push(`${at} 서버 재시작으로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — 모델에게 알렸습니다`);
         systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 deck 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
       } else if (n) {
@@ -1657,7 +1713,8 @@ export class TurnRunner {
         if (!sessionId) { await a.rest.return?.(); return done(); }
         const need = await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt });
         if (!need) return done();
-        await this.failoverAfterBackground(need, { p, sink, cwd, sessionId, account, model, routerBase });
+        if ('cap' in need) await this.continueAfterCap(need, { p, sink, cwd, sessionId });
+        else await this.failoverAfterBackground(need, { p, sink, cwd, sessionId, account, model, routerBase });
         // The continuation may have moved the session: the caller's write-back and bookkeeping read where it is now.
         const now = deps.store.get(sessionId);
         return now && !isCodexState(now) && !isGeminiState(now) ? now : done();
