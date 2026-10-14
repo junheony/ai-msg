@@ -17,7 +17,9 @@ import { createRequestHandler } from './http';
 import { installCrashHandlers } from './crash';
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
 import { EventLog } from './highlights';
+import { BottleneckWatch } from './push/BottleneckWatch';
 import { PushNotifier } from './push/PushNotifier';
+import { readAllCooldownsMs } from './routing/cooldown';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { loadOrCreateVapid } from './push/vapid';
 import { PinStore } from './sessions/PinStore';
@@ -126,12 +128,23 @@ async function main(): Promise<void> {
   });
   // 하이라이트: what push would announce (plus restart cuts and server start/drain), kept 7 days in events.jsonl.
   const events = new EventLog(path.join(cfg.configDir, 'events.jsonl'), { titleOf });
+  // 병목 알림: unanswered cards and failed turns pushed again later; 대안 계정 없음 retries fired through the socket layer's send path.
+  let submitRetry: (r: { sessionId: string; cwd: string; text: string; hop: number }) => void = () => {};
+  const watch = new BottleneckWatch({
+    sendPush: (payload) => { void push.sendAll(payload); },
+    titleOf,
+    store,
+    earliestCooldownMs: () => { const v = Object.values(readAllCooldownsMs(cfg.cooldownDir, Date.now(), accounts.list())).filter((x): x is number => x !== undefined); return v.length ? Math.min(...v) : null; },
+    retry: (r) => submitRetry(r),
+  });
   await events.load();
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); }, attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
+  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); }, onUserSend: (sessionId) => watch.userSent(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
   notifyIndex = () => ws.broadcastIndex();
+  submitRetry = (r) => ws.submitRetry(r);
+  watch.rearm(store.list());
   index.onChange = () => notifyIndex();
   notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
@@ -146,7 +159,7 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    ws.close(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
+    ws.close(); watch.stop(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
     void flushThenExit(() => events.flush(), () => process.exit(0));
   };
   installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });

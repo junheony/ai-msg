@@ -17,6 +17,17 @@ type SessionBase = {
    * 백그라운드 세그먼트가 한도로 끝나 다른 계정에서 이어갈 때).
    */
   interrupted?: { atMs: number; tasks: string[]; cause?: string };
+  /**
+   * 병목 알림(BottleneckWatch): 턴이 실패한 채 멈춰 있다 — 재알림 단계(n번 보냄)를 재시작 뒤에도 이어 가려고 저장한다.
+   * 다음 턴의 시작·성공, 또는 사용자가 이 세션에 보내면 지운다(열기만 해서는 지우지 않는다 — 재연결한 탭도 다시 연다).
+   * `resetAtMs`: 오류 원문이 알려 준 한도 리셋 시각(있을 때) — 재시작 뒤에도 "HH:MM 쯤 다시 시도 가능"에 쓴다.
+   */
+  blocked?: { kind: 'turn_failed'; atMs: number; lastPushAtMs: number; n: number; summary: string; resetAtMs?: number };
+  /**
+   * 대안 계정 없음으로 실패한 턴의 자동 재시도 예약(BottleneckWatch 가 `atMs` 에 ws 의 send 경로로 넣는다). `hops`: 이번이 몇 번째
+   * 재시도인지(최대 2). 다음 턴의 시작, 또는 사용자가 먼저 보내면 지운다.
+   */
+  pendingRetry?: { text: string; atMs: number; hops: number };
 };
 
 export type ClaudeSessionState = SessionBase & {

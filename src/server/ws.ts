@@ -142,6 +142,11 @@ export type WsDeps = {
   settings?: SettingsStore;
   /** Web Push hook: sees every turn event and every permission/question card (PushNotifier picks what to send). */
   notify?: (msg: ServerMessage) => void;
+  /**
+   * The user sent to a session from a device (병목 알림 stop: BottleneckWatch.userSent). Opening one is not reported: every
+   * tab opens its sessions again when it reconnects (a restart), which is not the user acting.
+   */
+  onUserSend?: (sessionId: string) => void;
   /** Attachment metadata (name, image or not) for the prompt every viewing device is shown. */
   attachments?: { resolve(ids: string[]): { found: { id: string; name: string; isImage: boolean }[] } };
   /** 새 세션으로 이어가기: a new session sent with `handoffFrom` is linked to that session (and titled) here once it has an id. */
@@ -193,7 +198,7 @@ export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
 /** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
 export const CATCHUP_IDLE_MS = 10 * 60_000;
 
-type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null };
+type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -207,7 +212,17 @@ export type WsHandle = {
   activeTurns(): number;
   /** Ends every running turn (drain deadline). */
   abortAll(): void;
+  /**
+   * An automatic retry (BottleneckWatch, SessionState.pendingRetry): `text` sent to the session as a device's send would
+   * be (busy, follow-up and draining rules alike — not reported as the user's send), from no device. `hop` rides the turn
+   * as TurnParams.retryHop on every path (a new turn, a follow-up into a held process, a send waiting for one to close);
+   * a refusal is only logged (the booking stays for the next restart's rearm).
+   */
+  submitRetry(r: { sessionId: string; cwd: string; text: string; hop: number }): void;
 };
+
+/** The sender of a server-made send (submitRetry): never open, so nothing is sent to it and it views nothing. */
+const NO_DEVICE = { readyState: WebSocket.CLOSED } as unknown as WebSocket;
 
 export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle {
   const cwdRoots = deps.cwdRoots ?? [os.homedir()];
@@ -247,7 +262,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const pinList = () => deps.pins?.list() ?? [];
   const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList(), desktop: deps.index.desktop() });
 
-  const send = (ws: WebSocket, msg: ServerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
+  const send = (ws: WebSocket, msg: ServerMessage) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    // A refused automatic retry (draining, busy, …) has no pane to show it: the booking stays (a restart re-arms it).
+    else if (ws === NO_DEVICE && msg.type === 'error') console.warn(`deck: retry deferred — ${msg.message}`);
+  };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
   /** Sockets whose UI asked for `sandbox` messages (open_session.accepts, protocol rule 3: an older UI never gets one). */
   const sandboxAware = new WeakSet<WebSocket>();
@@ -256,6 +275,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const broadcastSandbox = (sessionId: string, sandbox: CodexSandbox) => { for (const c of clients) if (sandboxAware.has(c)) send(c, { type: 'sandbox', sessionId, sandbox }); };
   const notify = (msg: ServerMessage) => { try { deps.notify?.(msg); } catch (err) { console.error('deck: push hook failed', errMsg(err)); } };
   const broadcastAndNotify = (msg: ServerMessage) => { broadcast(msg); notify(msg); };
+  const userSent = (sessionId: string) => { try { deps.onUserSend?.(sessionId); } catch (err) { console.error('deck: user send hook failed', errMsg(err)); } };
   const broker = new PermissionBroker(broadcastAndNotify);
   const questions = new QuestionBroker(broadcastAndNotify);
   /** Each socket's last route_preview ask: answered again after a usage change, unless the answer is what it last got. */
@@ -625,7 +645,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         : null;
   };
 
-  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false) => {
+  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false, retryHop?: number) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
     const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
     // A socket that closed while its send waited (foreign-write check, recycle) still gets its message run; it just views nothing.
@@ -633,6 +653,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (!checked) syncHolders();
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
+    const hop = retryHop ? { retryHop } : {};
     // Only a pin the user picked for a new session is refused. An edit branch or a handoff carries its parent's stored pin,
     // which the runner treats as no pin when the account is not active any more. A handoff is one only when `handoffFrom`
     // (a session id) names a session deck knows — any other string does not lift the check.
@@ -658,7 +679,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // The session's process may only be waiting for background work: then the message joins it (TurnRunner.followUp).
       const base = turns.get(busy.get(msg.sessionId)!);
       const sid = msg.sessionId;
-      if (base?.recycling) { base.afterRelease.push({ ws, msg }); return; }
+      if (base?.recycling) { base.afterRelease.push({ ws, msg, ...hop }); return; }
       // deck follows the other side: a process held open for background work read the transcript when it started. If
       // Desktop / a CLI went on with the session since, a message written into it would be answered from before that —
       // the conversation forks. So that process is ended and the send starts a new one, which resumes from the newest
@@ -681,7 +702,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             }
             base.ac.abort();
           }
-          startTurn(ws, sent, true);
+          startTurn(ws, sent, true, retryHop);
         });
         return;
       }
@@ -693,6 +714,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         ...(msg.attachments ? { attachments: msg.attachments } : {}),
         ...(msg.model ? { model: msg.model } : {}),
         ...(msg.clientRef ? { clientRef: msg.clientRef } : {}),
+        ...hop,
       });
       // Accepted once its turn_started comes (the sink's alias branch): that is when the process takes it in.
       if (joined) {
@@ -706,7 +728,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       prompts.delete(followId);
       // The turn already sent its result and the process is only closing (no background work to join):
       // the UI's queue fires on that result, so run the send as soon as the lock is released instead of refusing it.
-      if (base && base.current === null) { base.afterRelease.push({ ws, msg }); return; }
+      if (base && base.current === null) { base.afterRelease.push({ ws, msg, ...hop }); return; }
       send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref });
       return;
     }
@@ -732,16 +754,16 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // that waited because deck itself ended the process). Each goes where a send would go now: the first starts the
       // session's next turn; the others wait on that turn until its process can take a follow-up or is gone.
       for (const d of turn.afterRelease.splice(0)) {
-        if (!turn.recycling && !clients.has(d.ws)) continue;
+        if (!turn.recycling && d.ws !== NO_DEVICE && !clients.has(d.ws)) continue;
         const next = d.msg.sessionId ? turns.get(busy.get(d.msg.sessionId) ?? '') : undefined;
         if (next) next.afterRelease.push(d);
-        else startTurn(d.ws, d.msg);
+        else startTurn(d.ws, d.msg, false, d.retryHop);
       }
     };
     /** Sends carried over from the turn before (see release): given to the process once it is between turns — after the runner registered it as held open, hence the microtask. */
     const drainWaiting = () => queueMicrotask(() => {
       if (turns.get(turnId) !== turn || turn.current !== null || turn.recycling) return;
-      for (const d of turn.afterRelease.splice(0)) startTurn(d.ws, d.msg);
+      for (const d of turn.afterRelease.splice(0)) startTurn(d.ws, d.msg, false, d.retryHop);
     });
     let started = false;
     /** The turn already told about the macOS folder denial (one notice per turn). */
@@ -867,6 +889,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.sessionId === null && msg.accountPin ? { accountPin: msg.accountPin } : {}),
           ...(msg.sessionId === null && msg.permissionMode ? { permissionMode: msg.permissionMode } : {}),
           ...(msg.handoff ? { handoff: true } : {}),
+          ...hop,
         }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
@@ -1043,6 +1066,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       const msg = r.data;
       switch (msg.type) {
         case 'send':
+          if (msg.sessionId) userSent(msg.sessionId);
           startTurn(ws, msg);
           break;
         case 'permission_response':
@@ -1227,6 +1251,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
       // Only processes waiting with no work left end now (see endHeld); live background work is waited for.
       for (const t of turns.values()) endHeld(t);
+    },
+    submitRetry({ sessionId, cwd, text, hop }) {
+      startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, hop);
     },
     /** Processes still up (running a prompt, or closing after `drain` ended them): the restart waits for these. */
     activeTurns: () => turns.size,

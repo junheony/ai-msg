@@ -12,7 +12,7 @@ import { readCooldownUntilMs } from '../routing/cooldown';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
-import { SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { AUTO_RETRY_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -415,6 +415,36 @@ describe('TurnRunner: background work after the turn result', () => {
       expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, 'B 계정 사용 한도 도달 · 03:50 리셋 · 대안 계정 없음']]);
       expect(of(msgs, 'error')).toEqual([expect.objectContaining({ turnId: 'f2', clientRef: 'r2' })]);
       expect(f.state.calls).toBe(1);
+      // Booked to go on by itself once the limit lifts (BottleneckWatch fires it), the hop count carried over.
+      expect(deps.store.get('s1')?.pendingRetry).toMatchObject({ text: '이어서 진행해 주세요.', hops: 1 });
+    });
+
+    it('an automatic retry that went in as a follow-up says so, and failing on a limit books its text with the next hop', async () => {
+      const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
+      f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      expect(runner.followUp('s1', { turnId: 'f1', text: '고쳐 줘', retryHop: 1 })).toEqual({ queuedBehind: null });
+      expect(of(msgs, 'turn_notice').filter((m) => m.turnId === 'f1').map((m) => m.message)).toContain(AUTO_RETRY_NOTICE);
+      f.push(limited);
+      await done;
+      expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 'f1', ok: false, errorText: expect.stringContaining('대안 계정 없음') });
+      expect(deps.store.get('s1')?.pendingRetry).toMatchObject({ text: '고쳐 줘', hops: 2 });
+    });
+
+    it('a follow-up with files failing on a limit with no account left is not booked', async () => {
+      const img: Attachment = { id: 'i1', name: 'a.png', mediaType: 'image/png', size: 1, path: '/w/a.png', isImage: true, createdAtMs: 0 };
+      const attachments = { resolve: () => ({ found: [img], missing: [] }) } as unknown as AttachmentStore;
+      const { f, msgs, sink, runner, deps } = await setup({ attachments, usage: await usageCards(), move: okMove });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
+      f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', 's1'));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      expect(runner.followUp('s1', { turnId: 'f1', text: 'look', attachments: ['i1'] })).toEqual({ queuedBehind: null });
+      await waitFor(() => of(msgs, 'turn_started').some((m) => m.turnId === 'f1'), 'follow-up start');
+      f.push(limited);
+      await done;
+      expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 'f1', ok: false, errorText: expect.stringContaining('대안 계정 없음') });
+      expect(deps.store.get('s1')).not.toHaveProperty('pendingRetry');
     });
   });
 });

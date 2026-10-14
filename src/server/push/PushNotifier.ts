@@ -1,5 +1,6 @@
 import webpush from 'web-push';
 import type { ServerMessage } from '../../shared/protocol';
+import { AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
 import type { PushSub, SubscriptionStore } from './SubscriptionStore';
 import type { VapidKeys } from './vapid';
 
@@ -30,7 +31,8 @@ export function firstLine(text: string): string {
 
 /**
  * Which server events become a push (pure, so the trigger rules are testable without a sender):
- * a finished turn, a waiting permission or question card, a background task that settled.
+ * a finished turn, a waiting permission or question card, a background task that settled. (Which finished turns are
+ * actually pushed is PushNotifier.notify's call — turnNeedsAttention; highlights take every one.)
  * Everything else (deltas, tool calls, resolutions, notices) → null.
  * Whether the user is already looking is decided by the service worker (a focused deck window suppresses it).
  */
@@ -60,6 +62,37 @@ export function selectPush(msg: ServerMessage, titleOf: (sessionId: string | nul
   }
 }
 
+/** A turn this long is worth a push even when it ends quietly. */
+export const LONG_TURN_MS = 10 * 60_000;
+/** turn_started times kept this long at most (a turn whose result never came). */
+const STARTED_KEEP_MS = 24 * 3600_000;
+/** Endings that ask the user to act (not 골라냈습니다 / 선택해서 적용했습니다 / 원하시면 언제든). */
+const ASKS_USER = /할까요|하시겠어요|하시겠습니까|골라 ?주세요|선택해 ?주세요|확인해 ?주세요|결정해 ?주세요|알려 ?주세요|말씀해 ?주세요|진행할지|\blet me know\b|\bshould i\b|\bdo you want\b/i;
+/** A heading that is, as a whole, one of these (a number before it allowed) — not 결정한 것 / 질문에 대한 답. */
+const NEEDS_HEADING = /^(?:\d+[.)]\s*)?(?:남은 일|다음 단계|결정 필요|확인 필요|todo|질문)\s*:?$/i;
+const ENDS_ASKING = /[?？][*_"'」』)\]\s]*$/;
+const LIST_PARAGRAPH = /^(?:[-*+]|\d+[.)])\s/;
+
+/**
+ * Whether a finished turn needs the user (pure): it failed; it ran LONG_TURN_MS or more; its last paragraph asks
+ * something (ends with ?, or asks to pick / confirm / tell) — a closing list is looked past to the paragraph before
+ * it; or its last heading (#…###, a bold-only line) is a 남은 일 / 다음 단계 / 결정 필요 / 확인 필요 / TODO / 질문
+ * section. Code fences are left out first. A quiet success is not pushed (it is still a highlight).
+ */
+export function turnNeedsAttention(text: string, ok: boolean, durationMs: number | null): boolean {
+  if (!ok) return true;
+  if (durationMs !== null && durationMs >= LONG_TURN_MS) return true;
+  const prose = text.replace(/```[\s\S]*?(?:```|$)/g, '');
+  const paragraphs = prose.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  for (let i = paragraphs.length - 1; i >= 0; i--) {
+    const p = paragraphs[i]!;
+    if (ENDS_ASKING.test(p) || ASKS_USER.test(p)) return true;
+    if (!LIST_PARAGRAPH.test(p)) break;
+  }
+  const heading = prose.split('\n').map((l) => l.trim()).map((l) => /^#{1,3}\s+(\S.*)$/.exec(l)?.[1] ?? /^\*\*([^*]+)\*\*:?$/.exec(l)?.[1]).filter((h) => h !== undefined).pop();
+  return heading !== undefined && NEEDS_HEADING.test(heading.trim());
+}
+
 /** Push service host only — the endpoint path is a per-device secret-ish id and stays out of logs. */
 function hostOf(endpoint: string): string {
   try { return new URL(endpoint).host; } catch { return '?'; }
@@ -80,6 +113,7 @@ export class PushNotifier {
     subject: string;
     titleOf: (sessionId: string | null, cwd: string) => string;
     send?: PushSender;
+    now?: () => number;
   }) {
     this.send = opts.send ?? ((sub, payload, o) => webpush.sendNotification(sub, payload, {
       ...o,
@@ -91,8 +125,27 @@ export class PushNotifier {
     return this.opts.vapid.publicKey;
   }
 
-  /** Fire-and-forget hook for every server event. */
+  /** When each running turn started (first turn_started of its id): a long turn's result is pushed (turnNeedsAttention). */
+  private readonly started = new Map<string, number>();
+  /** Turns deck started by itself (AUTO_RETRY_NOTICE): the user only got the failure, so the outcome is always pushed. */
+  private readonly autoRetried = new Set<string>();
+
+  /** Fire-and-forget hook for every server event. Turn results only when they need the user (turnNeedsAttention). */
   notify(msg: ServerMessage): void {
+    const now = this.opts.now?.() ?? Date.now();
+    if (msg.type === 'turn_started') {
+      for (const [id, at] of this.started) if (now - at > STARTED_KEEP_MS) { this.started.delete(id); this.autoRetried.delete(id); }
+      if (!this.started.has(msg.turnId)) this.started.set(msg.turnId, now);
+      return;
+    }
+    if (msg.type === 'turn_notice' && msg.message === AUTO_RETRY_NOTICE) { this.autoRetried.add(msg.turnId); return; }
+    if (msg.type === 'turn_result') {
+      const at = this.started.get(msg.turnId);
+      this.started.delete(msg.turnId);
+      const auto = this.autoRetried.delete(msg.turnId);
+      // A background segment (`<turnId>:bg<n>`) only when it failed.
+      if (!auto && (/:bg\d+$/.test(msg.turnId) ? msg.ok : !turnNeedsAttention(msg.text, msg.ok, at === undefined ? null : now - at))) return;
+    }
     const payload = selectPush(msg, this.opts.titleOf);
     if (payload) void this.sendAll(payload);
   }

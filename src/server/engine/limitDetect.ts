@@ -58,6 +58,21 @@ export function failureLabel(kind: 'limit' | 'auth'): string {
  * null when the text names none.
  */
 export function limitResetHint(text: string | null): string | null {
+  const t = resetClock(text);
+  return t ? `${String(t.h).padStart(2, '0')}:${String(t.min).padStart(2, '0')} 리셋` : null;
+}
+
+/** The same reset time as the next local moment at or after `nowMs` (ms); null when the text names none. */
+export function limitResetAtMs(text: string | null, nowMs: number): number | null {
+  const t = resetClock(text);
+  if (!t) return null;
+  const d = new Date(nowMs);
+  d.setHours(t.h, t.min, 0, 0);
+  if (d.getTime() < nowMs) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+
+function resetClock(text: string | null): { h: number; min: number } | null {
   const m = /\bresets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i.exec(text ?? '');
   if (!m) return null;
   let h = Number(m[1]);
@@ -69,5 +84,5 @@ export function limitResetHint(text: string | null): string | null {
     h = (h % 12) + (ampm === 'pm' ? 12 : 0);
   }
   if (h > 23 || min > 59) return null;
-  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')} 리셋`;
+  return { h, min };
 }

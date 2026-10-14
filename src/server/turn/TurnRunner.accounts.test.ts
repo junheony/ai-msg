@@ -9,7 +9,8 @@ import { StubEngine, failResult, okResult } from '../engine/StubEngine';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService, type FetchLike } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState } from './SessionState';
-import { TurnRunner, type TurnSink } from './TurnRunner';
+import { AUTO_RETRY_NOTICE, MAX_RETRY_HOPS, TurnRunner, type TurnSink } from './TurnRunner';
+import { limitResetAtMs } from '../engine/limitDetect';
 
 const NOW = Date.parse('2026-10-06T12:00:00Z');
 const SID = '55555555-5555-4555-8555-555555555555';
@@ -314,3 +315,46 @@ describe('TurnRunner.previewRoute · 다음 턴 미리보기', () => {
     expect(c.runner.previewRoute('nope')).toBeNull();
   });
 });
+
+describe('TurnRunner · 대안 계정 없음 → 자동 재시도 예약', () => {
+  const limitFail = (): EngineEvent[] => [{ kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('API Error: 429 rate_limit_error · resets 3:50am')];
+
+  it('books the prompt for the reset time (+1 min), says so on the retry turn, and stops after MAX_RETRY_HOPS', async () => {
+    const engine = new StubEngine(() => limitFail());
+    const c = await setup([{ id: 'a' }], null, { strict: false, engine });
+    await c.seed('a', c.rootOf('a'));
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: '고쳐 줘' }, c.sink);
+    expect(of(c.msgs, 'turn_result').at(-1)).toMatchObject({ ok: false, errorText: expect.stringContaining('대안 계정 없음') });
+    const booked = c.store.get(SID)?.pendingRetry;
+    expect(booked).toMatchObject({ text: '고쳐 줘', hops: 1 });
+    expect(booked!.atMs).toBe(limitResetAtMs('resets 3:50am', NOW)! + 60_000);
+
+    // The retry (hop 1) says why it runs; failing again books hop 2.
+    await c.runner.run({ turnId: 't2', cwd: '/w/one', sessionId: SID, text: '고쳐 줘', retryHop: 1 }, c.sink);
+    expect(of(c.msgs, 'turn_notice').filter((m) => m.turnId === 't2').map((m) => m.message)).toContain(AUTO_RETRY_NOTICE);
+    expect(c.store.get(SID)?.pendingRetry).toMatchObject({ hops: 2 });
+    // Hop 2 failing: nothing more is booked (the attempt's own state write dropped the old booking).
+    await c.runner.run({ turnId: 't3', cwd: '/w/one', sessionId: SID, text: '고쳐 줘', retryHop: MAX_RETRY_HOPS }, c.sink);
+    expect(c.store.get(SID)).not.toHaveProperty('pendingRetry');
+  });
+
+  it('without a reset time: a minute after the earliest cooldown ends', async () => {
+    const engine = new StubEngine(() => [{ kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('usage limit reached')]);
+    const c = await setup([{ id: 'a' }], null, { strict: false, engine });
+    await c.seed('a', c.rootOf('a'));
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
+    // The failed account was just cooled down for COOLDOWN_MS.limit (1 h).
+    expect(c.store.get(SID)?.pendingRetry).toMatchObject({ text: 'go', hops: 1, atMs: Math.ceil((NOW + 3_600_000) / 1000) * 1000 + 60_000 });
+  });
+
+  it('a handoff note and an edit fork are not booked', async () => {
+    const engine = new StubEngine(() => limitFail());
+    const c = await setup([{ id: 'a' }], null, { strict: false, engine });
+    await c.seed('a', c.rootOf('a'));
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'note', handoff: true }, c.sink);
+    await c.runner.run({ turnId: 't2', cwd: '/w/one', sessionId: null, text: 'edited', fork: { from: SID, at: 'u1' } }, c.sink);
+    expect(of(c.msgs, 'turn_result').map((m) => [m.turnId, m.ok, /대안 계정 없음/.test(m.errorText ?? '')])).toEqual([['t1', false, true], ['t2', false, true]]);
+    expect(c.store.list().filter((s) => s.pendingRetry)).toEqual([]);
+  });
+});
+

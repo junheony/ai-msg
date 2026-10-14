@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetHint } from './limitDetect';
+import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetAtMs, limitResetHint } from './limitDetect';
 
 describe('classifyFailure', () => {
   it('returns null for a successful turn even if a warning was seen', () => {
@@ -77,3 +77,14 @@ describe('failureLabel', () => {
     expect(failureLabel('auth')).toBe('인증 실패');
   });
 });
+
+describe('limitResetAtMs', () => {
+  it('the next local moment of the named reset time; null when none is named', () => {
+    const now = new Date(2026, 9, 15, 2, 0).getTime();
+    expect(limitResetAtMs('resets 3:50am (Asia/Seoul)', now)).toBe(new Date(2026, 9, 15, 3, 50).getTime());
+    // Already past today: tomorrow.
+    expect(limitResetAtMs('Resets at 1am', now)).toBe(new Date(2026, 9, 16, 1, 0).getTime());
+    expect(limitResetAtMs('rate limited', now)).toBeNull();
+  });
+});
+
