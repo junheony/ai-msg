@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { Seat } from '../../shared/accounts';
 import { useAccounts } from '../accounts';
+import { useIsPhone } from '../useIsPhone';
 import { ClaudeMark, GeminiMark, OpenAIMark } from './EngineMark';
 import { isGeminiAccount } from '../../shared/accounts';
 import { emptyAccountUsage, parseIsoUtc, remainingPct, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
@@ -292,6 +293,7 @@ export type RouteNext = { account: Seat; reason: string; asOpus?: boolean };
 export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next = null }: { usage: UsageSnapshot | null; current: Seat | null; now?: number; onOpenHistory?: () => void; next?: RouteNext | null }) {
   const now = useClock(fixedNow);
   const { active } = useAccounts();
+  const phone = useIsPhone();
   const [pop, setPop] = useState<Pop | null>(null);
   useEffect(() => {
     if (!pop?.pinned) return;
@@ -300,15 +302,19 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
     window.addEventListener('scroll', close, true);
     return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); };
   }, [pop?.pinned]);
-  if (!usage) return <div className="usage-panel"><span className="usage-loading">잔여량 불러오는 중…</span></div>;
+  // Before the first snapshot the panel already takes the shape it will have (accounts + GPT; a Gemini card may still
+  // come), so the top bar does not jump between one and two rows when the numbers arrive.
+  if (!usage) return <div className="usage-panel" data-cards={active.length + 1}><span className="usage-loading">잔여량 불러오는 중…</span></div>;
   const gpt = usage.gpt ?? emptyAccountUsage();
   // One card per active account, one for GPT, one for Gemini when it is set up: the grid's column count. Up to five cards
   // keep the rows of numbers (five go to two rows below 1600px, see styles.css); past five there is no room for them at any
-  // width: the compact card (label over the lowest remaining %). From seven cards a phone shows two rows.
+  // width: the compact card (label over the lowest remaining %). A phone has that room for four cards only. From seven
+  // cards a phone shows two rows.
   const gemini = usage.gemini ?? null;
   const cards = active.length + 1 + (gemini ? 1 : 0);
+  const dense = cards > 5 || (phone && cards > 4);
   return (
-    <div className="usage-panel" data-cards={cards} {...(cards > 5 ? { 'data-dense': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})} style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}>
+    <div className="usage-panel" data-cards={cards} {...(dense ? { 'data-dense': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})} style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}>
       {active.map(({ id: a }) => (
         <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} next={next?.account === a ? next : null} />
       ))}

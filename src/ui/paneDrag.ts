@@ -74,8 +74,11 @@ const LONG_PRESS_MS = 350;
 const TOUCH_SLOP = 8;
 const MOUSE_SLOP = 4;
 const SUPPRESS_CLICK_MS = 600;
+/** Auto-scroll while dragging: within this many px of a scrollable edge, by this much per frame. */
+export const EDGE_PX = 36;
+export const SCROLL_STEP = 10;
 
-type TabDrag = { pointerId: number; touch: boolean; from: number; to: number; startX: number; startY: number; tabs: HTMLElement[]; mids: number[]; step: number; active: boolean; timer: ReturnType<typeof setTimeout> | null; stop: () => void };
+type TabDrag = { pointerId: number; touch: boolean; from: number; to: number; startX: number; startY: number; clientX: number; dx: number; tabs: HTMLElement[]; mids: number[]; step: number; active: boolean; timer: ReturnType<typeof setTimeout> | null; raf: number | null; stop: () => void };
 
 /**
  * Horizontal drag-to-reorder for the phone's pane tabs (`<button>` children of the strip, in pane order). Touch: hold,
@@ -115,18 +118,39 @@ export function useTabReorder(count: number, onMove?: (from: number, to: number)
       d.active = true;
       d.timer = null;
       el.classList.add('tabs-reordering');
-      d.tabs[d.from]!.classList.add('tab-dragging');
       window.getSelection()?.removeAllRanges();
       if (d.touch && typeof navigator.vibrate === 'function') navigator.vibrate(8);
     };
-    const render = (d: TabDrag, dx: number) => {
-      const center = Math.min(Math.max(d.mids[d.from]! + dx, d.mids[0]!), d.mids[d.mids.length - 1]!);
+    // Positions are in the strip's content coordinates (scroll included), so a strip that scrolls under the finger
+    // keeps the slots right. The dragged tab re-asserts its class: a re-render of the strip may have replaced it.
+    const contentX = (clientX: number) => clientX - el.getBoundingClientRect().left + el.scrollLeft;
+    const render = (d: TabDrag) => {
+      const center = Math.min(Math.max(d.mids[d.from]! + d.dx, d.mids[0]!), d.mids[d.mids.length - 1]!);
       d.to = dropIndex(d.mids, d.from, center);
       d.tabs.forEach((t, i) => {
-        if (i === d.from) { t.style.transform = `translateX(${center - d.mids[d.from]!}px)`; return; }
+        if (i === d.from) { t.classList.add('tab-dragging'); t.style.transform = `translateX(${center - d.mids[d.from]!}px)`; return; }
         const k = i < d.from ? i : i - 1;
         t.style.transform = i > d.from && k < d.to ? `translateX(${-d.step}px)` : i < d.from && k >= d.to ? `translateX(${d.step}px)` : '';
       });
+    };
+    // Near either end of a strip that overflows, the strip scrolls on its own so far-off slots can be reached.
+    const autoScroll = () => {
+      const d = drag.current;
+      if (!d?.active || d.raf !== null) return;
+      const step = () => {
+        const cur = drag.current;
+        if (!cur?.active) return;
+        cur.raf = null;
+        const r = el.getBoundingClientRect();
+        const room = el.scrollWidth - el.clientWidth;
+        const dir = room <= 0 ? 0 : cur.clientX < r.left + EDGE_PX ? -1 : cur.clientX > r.right - EDGE_PX ? 1 : 0;
+        if (dir === 0 || (dir < 0 && el.scrollLeft <= 0) || (dir > 0 && el.scrollLeft >= room)) return;
+        el.scrollLeft += dir * SCROLL_STEP;
+        cur.dx = contentX(cur.clientX) - cur.startX;
+        render(cur);
+        cur.raf = requestAnimationFrame(step);
+      };
+      d.raf = requestAnimationFrame(step);
     };
     const end = (drop: boolean) => {
       const d = drag.current;
@@ -141,14 +165,16 @@ export function useTabReorder(count: number, onMove?: (from: number, to: number)
     const onMoveEv = (ev: PointerEvent) => {
       const d = drag.current;
       if (!d || ev.pointerId !== d.pointerId) return;
-      const dx = ev.clientX - el.getBoundingClientRect().left - d.startX;
+      d.clientX = ev.clientX;
+      d.dx = contentX(ev.clientX) - d.startX;
       if (!d.active) {
-        if (d.touch) { if (Math.abs(dx) > TOUCH_SLOP || Math.abs(ev.clientY - d.startY) > TOUCH_SLOP) end(false); return; }
-        if (Math.abs(dx) <= MOUSE_SLOP) return;
+        if (d.touch) { if (Math.abs(d.dx) > TOUCH_SLOP || Math.abs(ev.clientY - d.startY) > TOUCH_SLOP) end(false); return; }
+        if (Math.abs(d.dx) <= MOUSE_SLOP) return;
         start();
       }
       ev.preventDefault();
-      render(d, dx);
+      render(d);
+      if (typeof requestAnimationFrame === 'function') autoScroll();
     };
     const onUp = (ev: PointerEvent) => { if (ev.pointerId === drag.current?.pointerId) end(true); };
     const onCancel = (ev: PointerEvent) => { if (ev.pointerId === drag.current?.pointerId) end(false); };
@@ -159,12 +185,13 @@ export function useTabReorder(count: number, onMove?: (from: number, to: number)
     window.addEventListener('keydown', onKey, true);
     const touch = e.pointerType === 'touch' || e.pointerType === 'pen';
     drag.current = {
-      pointerId: e.pointerId, touch, from, to: from, startX: e.clientX - left, startY: e.clientY, tabs,
-      mids: rects.map((r) => r.left - left + r.width / 2), step: rects[from]!.width + gap, active: false,
+      pointerId: e.pointerId, touch, from, to: from, startX: e.clientX - left + el.scrollLeft, startY: e.clientY, clientX: e.clientX, dx: 0, tabs,
+      mids: rects.map((r) => r.left - left + el.scrollLeft + r.width / 2), step: rects[from]!.width + gap, active: false, raf: null,
       timer: touch ? setTimeout(start, LONG_PRESS_MS) : null,
       stop: () => {
         const d = drag.current;
         if (d?.timer) clearTimeout(d.timer);
+        if (d?.raf !== null && d?.raf !== undefined) cancelAnimationFrame(d.raf);
         window.removeEventListener('pointermove', onMoveEv);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onCancel);

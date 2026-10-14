@@ -339,10 +339,12 @@ describe('panes (D6)', () => {
     expect(s.panes.map((p) => [p.id, !!p.float])).toEqual([['p1', false], ['p0', false], ['p2', false]]);
     expect(s.activePaneId).toBe('p0');
     expect(reducer(s, { type: 'dock_pane', paneId: 'p0' })).toBe(s); // not floating
-    // Default dock slot: the right end.
+    // Default dock slot: the right end; the width is the average of the others, not the stale one it left with.
+    s = reducer(s, { type: 'resize_panes', sizes: { p1: 2.5, p0: 2, p2: 4 } });
     s = reducer(s, { type: 'float_pane', paneId: 'p1', rect });
     s = reducer(s, { type: 'dock_pane', paneId: 'p1' });
     expect(s.panes.map((p) => p.id)).toEqual(['p0', 'p2', 'p1']);
+    expect(s.panes[2]!.size).toBe(3);
   });
 
   it('closing the last docked pane docks the first floating card (the grid never empties)', () => {

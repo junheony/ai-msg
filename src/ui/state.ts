@@ -1189,9 +1189,11 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'dock_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
       if (!pane?.float) return state;
-      const { float: _f, ...landed } = pane;
+      const { float: _f, size: _s, ...bare } = pane;
       const rest = state.panes.filter((p) => p.id !== action.paneId);
       const docked = dockedPanes(rest);
+      // Its old width (fr) belongs to a grid that has since been resized: it lands at the average of the others.
+      const landed = docked.length ? { ...bare, size: docked.reduce((t, p) => t + paneSize(p.size), 0) / docked.length } : bare;
       const to = action.to === undefined ? docked.length : Math.max(0, Math.min(Math.trunc(action.to), docked.length));
       // Goes in just before the docked pane now at `to` (or after everything, floats included, at the end).
       const before = docked[to];
