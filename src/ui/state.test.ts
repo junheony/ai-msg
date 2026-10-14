@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { HANDOFF_PROMPT, handoffFirstMessage } from '../shared/handoff';
 import { nextPermMode } from '../shared/permission';
 import { ACCEPTED_REFS_TTL_MS, type ServerMessage } from '../shared/protocol';
-import { MAX_PANES, answersFor, engineOf, fromTranscript, modelFor, initialState, nextQueued, nextUserN, paneMode, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
+import { PANE_LIMIT, answersFor, engineOf, fromTranscript, modelFor, initialState, nextQueued, nextUserN, paneMode, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 
@@ -280,14 +280,16 @@ describe('reducer', () => {
 describe('panes (D6)', () => {
   const started = (turnId: string, sessionId: string | null, cwd: string): ServerMessage => ({ type: 'turn_started', turnId, sessionId, cwd, account: 'b', model: 'opus', reason: 'r', attempt: 0 });
 
-  it('add/close/focus panes within 1..5', () => {
+  it('add/close/focus panes: no user-facing ceiling (only the PANE_LIMIT sanity cap), never fewer than one', () => {
     let s = reducer(initialState, { type: 'add_pane' });
     s = reducer(s, { type: 'add_pane' });
     s = reducer(s, { type: 'add_pane' });
     s = reducer(s, { type: 'add_pane' });
-    expect(MAX_PANES).toBe(5);
     expect(s.panes.map((p) => p.id)).toEqual(['p0', 'p1', 'p2', 'p3', 'p4']);
-    expect(reducer(s, { type: 'add_pane' }).panes).toHaveLength(5);
+    expect(reducer(s, { type: 'add_pane' }).panes).toHaveLength(6);
+    let many = s;
+    for (let i = 0; i < PANE_LIMIT + 3; i++) many = reducer(many, { type: 'add_pane' });
+    expect(many.panes).toHaveLength(PANE_LIMIT);
     s = reducer(s, { type: 'close_pane', paneId: 'p4' });
     s = reducer(s, { type: 'focus_pane', paneId: 'p2' });
     expect(s.activePaneId).toBe('p2');
@@ -296,6 +298,65 @@ describe('panes (D6)', () => {
     expect(s.activePaneId).toBe('p0');
     s = reducer(reducer(s, { type: 'close_pane', paneId: 'p0' }), { type: 'close_pane', paneId: 'p1' });
     expect(reducer(s, { type: 'close_pane', paneId: 'p3' }).panes).toHaveLength(1);
+  });
+
+  it('move_pane reorders the docked panes; floating cards keep their array slots', () => {
+    let s = initialState;
+    for (let i = 0; i < 3; i++) s = reducer(s, { type: 'add_pane' }); // p0 p1 p2 p3
+    s = reducer(s, { type: 'move_pane', paneId: 'p0', to: 2 });
+    expect(s.panes.map((p) => p.id)).toEqual(['p1', 'p2', 'p0', 'p3']);
+    s = reducer(s, { type: 'move_pane', paneId: 'p3', to: 0 });
+    expect(s.panes.map((p) => p.id)).toEqual(['p3', 'p1', 'p2', 'p0']);
+    expect(reducer(s, { type: 'move_pane', paneId: 'p3', to: 0 })).toBe(s); // same place: no change
+    expect(reducer(s, { type: 'move_pane', paneId: 'nope', to: 0 })).toBe(s);
+    s = reducer(s, { type: 'move_pane', paneId: 'p3', to: 99 }); // clamped to the end
+    expect(s.panes.map((p) => p.id)).toEqual(['p1', 'p2', 'p0', 'p3']);
+    const rect = { x: 10, y: 10, w: 400, h: 300 };
+    s = reducer(s, { type: 'float_pane', paneId: 'p2', rect });
+    s = reducer(s, { type: 'move_pane', paneId: 'p3', to: 0 }); // among p1 p0 p3 → p3 p1 p0; p2 stays at index 1
+    expect(s.panes.map((p) => p.id)).toEqual(['p3', 'p2', 'p1', 'p0']);
+    expect(s.panes[1]!.float).toEqual(rect);
+  });
+
+  it('float_pane / dock_pane / move_float: a pane off the rail and back; the last docked pane never floats', () => {
+    let s = reducer(initialState, { type: 'add_pane' }); // p0 p1
+    const rect = { x: 20, y: 30, w: 420, h: 320 };
+    expect(reducer(s, { type: 'float_pane', paneId: 'p9', rect })).toBe(s);
+    s = reducer(s, { type: 'float_pane', paneId: 'p0', rect });
+    expect(s.panes[0]!.float).toEqual(rect);
+    expect(s.activePaneId).toBe('p0');
+    expect(reducer(s, { type: 'float_pane', paneId: 'p1', rect })).toBe(s); // p1 is the only docked pane
+    expect(reducer(s, { type: 'float_pane', paneId: 'p0', rect })).toBe(s); // already floating
+    const moved = { ...rect, x: 200 };
+    s = reducer(s, { type: 'move_float', paneId: 'p0', rect: moved });
+    expect(s.panes[0]!.float).toEqual(moved);
+    expect(reducer(s, { type: 'move_float', paneId: 'p0', rect: moved })).toBe(s);
+    expect(reducer(s, { type: 'move_float', paneId: 'p1', rect: moved })).toBe(s); // docked: nothing to move
+    // Another pane and a dock at index 1 (between p1 and p2).
+    s = reducer(s, { type: 'add_pane' }); // p0(float) p1 p2
+    s = reducer(s, { type: 'focus_pane', paneId: 'p2' });
+    s = reducer(s, { type: 'dock_pane', paneId: 'p0', to: 1 });
+    expect(s.panes.map((p) => [p.id, !!p.float])).toEqual([['p1', false], ['p0', false], ['p2', false]]);
+    expect(s.activePaneId).toBe('p0');
+    expect(reducer(s, { type: 'dock_pane', paneId: 'p0' })).toBe(s); // not floating
+    // Default dock slot: the right end.
+    s = reducer(s, { type: 'float_pane', paneId: 'p1', rect });
+    s = reducer(s, { type: 'dock_pane', paneId: 'p1' });
+    expect(s.panes.map((p) => p.id)).toEqual(['p0', 'p2', 'p1']);
+  });
+
+  it('closing the last docked pane docks the first floating card (the grid never empties)', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    s = reducer(s, { type: 'add_pane' }); // p0 p1 p2
+    const rect = { x: 0, y: 0, w: 400, h: 300 };
+    s = reducer(s, { type: 'float_pane', paneId: 'p1', rect });
+    s = reducer(s, { type: 'float_pane', paneId: 'p2', rect });
+    s = reducer(s, { type: 'focus_pane', paneId: 'p0' });
+    s = reducer(s, { type: 'close_pane', paneId: 'p0' });
+    expect(s.panes.map((p) => [p.id, !!p.float])).toEqual([['p1', false], ['p2', true]]);
+    expect(s.activePaneId).toBe('p1');
+    // add_pane with only floats around still averages over the docked ones (here: one).
+    expect(reducer(s, { type: 'add_pane' }).panes.at(-1)!.size).toBeUndefined();
   });
 
   it('turn events reach the pane viewing that session; history targets the matching pane', () => {

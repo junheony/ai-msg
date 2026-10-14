@@ -1,8 +1,9 @@
 import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, type Account } from '../shared/accounts';
 import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { ATTACHMENT_ID, MAX_ATTACHMENTS_PER_TURN } from '../shared/protocol';
-import { MAX_PANES, newPane, nextQueueId, parkKey, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
+import { PANE_LIMIT, newPane, nextQueueId, parkKey, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
 import { paneSize } from './paneResize';
+import { readFloat, type FloatRect } from './paneDrag';
 
 /**
  * ux-state: UI state that survives a reload (localStorage, per browser — phone and desktop are independent).
@@ -21,7 +22,7 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
  * `turnId`: an id-less session's first turn still running — after a reload `hello.running` finds it by this id (with the
  * session id once the server knows it) and the pane follows it (`watch_turn`); an id-ful pane re-finds its turn by the id.
  */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number };
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number; /** PaneState.float (absent: docked). */ float?: FloatRect };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -78,6 +79,7 @@ function pane(x: unknown): PersistedPane {
     ...(pending && shortStr(x.turnId, 200) && x.turnId ? { turnId: x.turnId } : {}),
     // Older saves have no weight; a bad one falls back to 1 (an equal column).
     ...(x.size !== undefined && paneSize(x.size) !== 1 ? { size: paneSize(x.size) } : {}),
+    ...(readFloat(x.float) ? { float: readFloat(x.float)! } : {}),
   };
 }
 
@@ -86,8 +88,10 @@ export function parseUi(raw: unknown): PersistedUi | null {
   if (!isObj(raw)) return null;
   // Only v1 exists; an unknown version is dropped rather than guessed at.
   if (raw.v !== 1) return null;
-  const panes = Array.isArray(raw.panes) ? raw.panes.slice(0, MAX_PANES).map(pane) : [];
+  const panes = Array.isArray(raw.panes) ? raw.panes.slice(0, PANE_LIMIT).map(pane) : [];
   if (!panes.length) return null;
+  // The grid never starts empty: were every saved pane a floating card, the first lands.
+  if (panes.every((p) => p.float)) delete panes[0]!.float;
   const active = Number.isInteger(raw.active) && (raw.active as number) >= 0 && (raw.active as number) < panes.length ? (raw.active as number) : 0;
   const collapsed = Array.isArray(raw.collapsed) ? raw.collapsed.filter((c): c is string => shortStr(c, 4096)).slice(0, 200) : [];
   return { v: 1, panes, active, collapsed, drawer: raw.drawer === true };
@@ -108,6 +112,7 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
       ...(p.session && p.session.sessionId === null && p.session.accountPin ? { accountPin: p.session.accountPin } : {}),
       ...(p.session && p.session.sessionId === null && p.activeTurnId ? { turnId: p.activeTurnId } : {}),
       ...(paneSize(p.size) !== 1 ? { size: paneSize(p.size) } : {}),
+      ...(p.float ? { float: p.float } : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
@@ -133,6 +138,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
     // A first turn running at the reload: hello keeps it if the server still runs it (App then watches it), else drops it.
     ...(p.turnId ? { activeTurnId: p.turnId, myTurns: [p.turnId] } : {}),
     ...(p.size !== undefined ? { size: p.size } : {}),
+    ...(p.float ? { float: p.float } : {}),
     // Its history is asked for again once the socket is up: loading until it arrives.
     ...(p.session?.sessionId ? { loading: true } : {}),
   }));
@@ -188,7 +194,7 @@ export function parseQueues(raw: unknown): PersistedQueues | null {
   const queues = raw.queues.slice(0, 100).flatMap((x): PersistedQueue[] => {
     if (!isObj(x) || !shortStr(x.cwd, 4096) || !x.cwd.startsWith('/') || !Array.isArray(x.queue)) return [];
     const sessionId = x.sessionId === null ? null : shortStr(x.sessionId, 200) && x.sessionId ? x.sessionId : undefined;
-    const pane = Number.isInteger(x.pane) && (x.pane as number) >= 0 && (x.pane as number) < MAX_PANES ? (x.pane as number) : null;
+    const pane = Number.isInteger(x.pane) && (x.pane as number) >= 0 && (x.pane as number) < PANE_LIMIT ? (x.pane as number) : null;
     if (sessionId === undefined) return [];
     const queue = x.queue.slice(0, MAX_QUEUE).map(queueItem).filter((q): q is PersistedQueueItem => !!q);
     return queue.length ? [{ pane, sessionId, cwd: x.cwd, queue, ...(x.paused === true ? { paused: true as const } : {}) }] : [];

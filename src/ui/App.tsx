@@ -27,7 +27,8 @@ import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload }
 import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
-import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
+import { dockedPanes, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
+import { clampFloat, dockSlot, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, slotX, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { useTouchTooltip } from './useTouchTooltip';
@@ -545,6 +546,16 @@ export function App() {
   }, [state.ready, previewKey?.key]);
 
   const accounts = useMemo(() => uiAccounts(state.accounts), [state.accounts]);
+  // A phone has tabs instead of a grid: a floating card means nothing there, so any float lands (as a tab at the end)
+  // and the tabs are the panes in array order. (Hooks: before the early returns below.)
+  useEffect(() => {
+    if (!phone) return;
+    for (const p of state.panes) if (p.float) dispatch({ type: 'dock_pane', paneId: p.id });
+  }, [phone, state.panes]);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const panesRef = useRef<HTMLDivElement>(null);
+  // Phone tabs: hold (touch) or press-and-drag (mouse) a tab to put it elsewhere in the row.
+  const tabs = useTabReorder(state.panes.length, (from, to) => { const id = state.panes[from]?.id; if (id) dispatch({ type: 'move_pane', paneId: id, to }); });
   if (authed === null) {
     if (bootFails < BOOT_NOTICE_FAILS) return <div className="center">확인 중…</div>;
     return (
@@ -571,6 +582,10 @@ export function App() {
     for (const sessionId of sessionsToClose(prev, next)) { catchup.current?.forget(sessionId); send({ type: 'close_session', sessionId }); }
   };
   const active = state.panes.find((p) => p.id === state.activePaneId) ?? state.panes[0]!;
+  // The grid shows the docked panes; the floating ones are cards over the body. A phone has tabs instead: a floating
+  // card means nothing there, so any float lands (as a tab at the end) and the tabs are the panes in array order.
+  const docked = dockedPanes(state.panes);
+  const floats = state.panes.filter((p) => p.float);
   // Splitter drag: the grid is restyled directly while the pointer moves (no re-render of every pane per frame);
   // the weights reach the state on release, a cancelled drag puts the columns back.
   const startPaneResize = (e: ReactPointerEvent<HTMLDivElement>, leftId: string, rightId: string) => {
@@ -581,9 +596,10 @@ export function App() {
     if (!grid || !left || !right) return;
     e.preventDefault();
     el.setPointerCapture?.(e.pointerId);
-    const panes = latest.current.panes;
+    const panes = dockedPanes(latest.current.panes);
     const sizes = panes.map((p) => paneSize(p.size));
     const i = panes.findIndex((p) => p.id === leftId);
+    if (i < 0 || panes[i + 1]?.id !== rightId) return;
     const startX = e.clientX;
     const before = grid.style.gridTemplateColumns;
     let pair: [number, number] | null = null;
@@ -597,6 +613,150 @@ export function App() {
       el.removeEventListener('pointercancel', end);
       if (ev.type === 'pointercancel' || !pair) { grid.style.gridTemplateColumns = before; return; }
       dispatch({ type: 'resize_panes', sizes: { [leftId]: pair[0], [rightId]: pair[1] } });
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  };
+  /**
+   * The ⋮⋮ grip: a docked pane dragged along the top edge of the split view (the rail) changes places with its
+   * neighbours; dragged below it, it comes off as a floating card. A floating card dragged anywhere moves; dropped
+   * on the rail it goes back into the grid at that slot. The DOM is moved while the pointer moves (ghost, marker,
+   * the card itself); the state changes once, on release. Escape (or a cancelled pointer) puts everything back.
+   */
+  const startPaneDrag = (e: ReactPointerEvent<HTMLButtonElement>, paneId: string) => {
+    const body = bodyRef.current;
+    const grid = panesRef.current;
+    const section = e.currentTarget.closest<HTMLElement>('.pane');
+    const pane = latest.current.panes.find((p) => p.id === paneId);
+    if (phone || e.button !== 0 || !body || !grid || !section || !pane) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture?.(e.pointerId);
+    const touch = e.pointerType !== 'mouse';
+    const slop = touch ? 8 : 4;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const bodyRect = body.getBoundingClientRect();
+    const bounds = { w: bodyRect.width, h: bodyRect.height };
+    const card = pane.float ? section.closest<HTMLElement>('.float-card') : null;
+    const source = (card ?? section).getBoundingClientRect();
+    const docked = dockedPanes(latest.current.panes);
+    const from = docked.findIndex((p) => p.id === paneId);
+    const dockedRects = docked.map((p) => grid.querySelector<HTMLElement>(`.pane[data-pane="${p.id}"]`)?.getBoundingClientRect() ?? new DOMRect());
+    const mids = dockedRects.map((r) => r.left + r.width / 2);
+    const otherRects = dockedRects.filter((_, i) => i !== from);
+    const canFloat = !!pane.float || docked.length > 1;
+    const cardStyle = card ? { left: card.style.left, top: card.style.top } : null;
+    let active = false;
+    let ghost: HTMLDivElement | null = null;
+    let marker: HTMLDivElement | null = null;
+    let result: { kind: 'reorder'; to: number } | { kind: 'dock'; to: number } | { kind: 'float'; rect: FloatRect } | { kind: 'move'; rect: FloatRect } | null = null;
+    const begin = () => {
+      active = true;
+      document.body.classList.add('pane-dragging');
+      section.classList.add('pane-drag-source');
+      ghost = document.createElement('div');
+      ghost.className = 'pane-ghost';
+      ghost.textContent = pane.session?.title ?? '새 세션';
+      marker = document.createElement('div');
+      marker.className = 'pane-drop-marker';
+      body.append(ghost, marker);
+    };
+    const showMarker = (clientX: number) => {
+      const gr = grid.getBoundingClientRect();
+      Object.assign(marker!.style, { display: '', left: `${Math.round(clientX - bodyRect.left) - 1}px`, top: `${gr.top - bodyRect.top}px`, height: `${gr.height}px` });
+    };
+    const move = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.abs(ev.clientX - startX) <= slop && Math.abs(ev.clientY - startY) <= slop) return;
+        begin();
+      }
+      const rail = onRail({ x: ev.clientX, y: ev.clientY }, grid.getBoundingClientRect());
+      const local = { x: ev.clientX - bodyRect.left, y: ev.clientY - bodyRect.top };
+      marker!.style.display = 'none';
+      ghost!.className = 'pane-ghost';
+      ghost!.style.cssText = '';
+      if (card) card.classList.toggle('drag-move', !rail);
+      if (!pane.float && rail) {
+        // Reorder among the docked panes.
+        const to = reorderSlot(mids, from, ev.clientX);
+        result = { kind: 'reorder', to };
+        if (to !== from) showMarker(slotX(otherRects, to));
+        ghost!.classList.add('chip');
+        Object.assign(ghost!.style, { left: `${local.x + 12}px`, top: `${local.y + 12}px` });
+      } else if (!pane.float) {
+        // Off the rail: the pane as a card.
+        if (!canFloat) { result = null; ghost!.classList.add('chip', 'blocked'); ghost!.textContent = '마지막 패널은 떼어낼 수 없어요'; Object.assign(ghost!.style, { left: `${local.x + 12}px`, top: `${local.y + 12}px` }); return; }
+        ghost!.textContent = pane.session?.title ?? '새 세션';
+        const rect = floatRectAt(local, { w: source.width, h: source.height }, bounds);
+        result = { kind: 'float', rect };
+        ghost!.classList.add('card');
+        Object.assign(ghost!.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
+      } else if (rail) {
+        // A card back onto the rail.
+        const to = dockSlot(mids, ev.clientX);
+        result = { kind: 'dock', to };
+        showMarker(slotX(dockedRects, to));
+        ghost!.classList.add('chip');
+        Object.assign(ghost!.style, { left: `${local.x + 12}px`, top: `${local.y + 12}px` });
+      } else {
+        // A card moved.
+        ghost!.style.display = 'none';
+        const rect = clampFloat({ ...pane.float, x: pane.float.x + (ev.clientX - startX), y: pane.float.y + (ev.clientY - startY) }, bounds);
+        result = { kind: 'move', rect };
+        if (card) Object.assign(card.style, { left: `${rect.x}px`, top: `${rect.y}px` });
+      }
+    };
+    const end = (ev: PointerEvent | { type: 'cancel' }) => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', end);
+      el.removeEventListener('pointercancel', end);
+      window.removeEventListener('keydown', onKey, true);
+      document.body.classList.remove('pane-dragging');
+      section.classList.remove('pane-drag-source');
+      card?.classList.remove('drag-move');
+      ghost?.remove();
+      marker?.remove();
+      if (!active) return;
+      const drop = ev.type === 'pointerup' ? result : null;
+      if (!drop) { if (card && cardStyle) Object.assign(card.style, cardStyle); return; }
+      if (drop.kind === 'reorder') { if (drop.to !== from) dispatch({ type: 'move_pane', paneId, to: drop.to }); }
+      else if (drop.kind === 'dock') dispatch({ type: 'dock_pane', paneId, to: drop.to });
+      else if (drop.kind === 'float') dispatch({ type: 'float_pane', paneId, rect: drop.rect });
+      else dispatch({ type: 'move_float', paneId, rect: drop.rect });
+      requestFocus(paneId);
+    };
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape' && active) { ev.preventDefault(); ev.stopPropagation(); end({ type: 'cancel' }); } };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    window.addEventListener('keydown', onKey, true);
+  };
+  /** The ◢ corner of a floating card: its size follows the pointer; the state gets the final box. */
+  const startFloatResize = (e: ReactPointerEvent<HTMLDivElement>, paneId: string) => {
+    const body = bodyRef.current;
+    const card = e.currentTarget.closest<HTMLElement>('.float-card');
+    const pane = latest.current.panes.find((p) => p.id === paneId);
+    if (e.button !== 0 || !body || !card || !pane?.float) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture?.(e.pointerId);
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const start = pane.float;
+    const bounds = { w: body.clientWidth, h: body.clientHeight };
+    let rect: FloatRect | null = null;
+    const move = (ev: PointerEvent) => {
+      rect = clampFloat({ ...start, w: Math.max(FLOAT_MIN_W, start.w + (ev.clientX - startX)), h: Math.max(FLOAT_MIN_H, start.h + (ev.clientY - startY)) }, bounds);
+      Object.assign(card.style, { width: `${rect.w}px`, height: `${rect.h}px` });
+    };
+    const end = (ev: PointerEvent) => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', end);
+      el.removeEventListener('pointercancel', end);
+      if (ev.type === 'pointercancel' || !rect) { Object.assign(card.style, { width: `${start.w}px`, height: `${start.h}px` }); return; }
+      dispatch({ type: 'move_float', paneId, rect });
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', end);
@@ -646,22 +806,21 @@ export function App() {
     if (next.sessionId !== active.session?.sessionId) openIn(active.id, next.sessionId, next.cwd, next.title);
   };
   const toggleSidebar = () => { if (phone) setDrawer((d) => !d); else setSidebarHidden((h) => !h); };
-  const addPane = () => { if (!phone) { dispatch({ type: 'add_pane' }); requestFocus(); } };
+  /** + 분할 / ⌘⇧O: another pane (a phone shows it as another tab). No ceiling the user meets: the grid scrolls sideways. */
+  const addPane = () => { dispatch({ type: 'add_pane' }); requestFocus(); };
   /**
    * ⋯ 분할 보기로 열기: a new pane, then the session in it — even one another pane already shows (the same session in two
    * panes is allowed). `apply` moves latest.current on at once, so the new pane's id is read from there.
    * This rests on add_pane's id being deterministic (`p${max+1}`): the reducer run again by React makes the same id.
    */
   const openSplit = (sessionId: string, cwd: string, title: string) => {
-    if (phone) return;
-    if (latest.current.panes.length >= MAX_PANES) { dispatch({ type: 'show_error', message: `분할 보기는 최대 ${MAX_PANES}개까지 열 수 있어요` }); return; }
     apply({ type: 'add_pane' });
     openIn(latest.current.activePaneId, sessionId, cwd, title);
   };
-  /** ⌘⌥[ / ⌘⌥]: the pane to the left / right becomes active (wrapping). A phone shows one pane: nothing to step. */
+  /** ⌘⌥[ / ⌘⌥]: the pane to the left / right (on a phone: the previous / next tab) becomes active, wrapping. */
   const stepPane = (dir: -1 | 1) => {
     const panes = state.panes;
-    if (phone || panes.length < 2) return;
+    if (panes.length < 2) return;
     const i = panes.findIndex((p) => p.id === active.id);
     const next = panes[(i + dir + panes.length) % panes.length]!;
     dispatch({ type: 'focus_pane', paneId: next.id });
@@ -669,7 +828,7 @@ export function App() {
   };
   /** ⌘⇧X: the active pane closes as its ✕ would (a running turn keeps running, as with ✕); the last pane stays. */
   const closeActivePane = () => {
-    if (phone || state.panes.length < 2) return;
+    if (state.panes.length < 2) return;
     apply({ type: 'close_pane', paneId: active.id });
     requestFocus();
   };
@@ -688,7 +847,7 @@ export function App() {
   const mod = MAC ? '⌘' : 'Ctrl+';
   const actions: PaletteAction[] = [
     { id: 'new-chat', label: '새 대화', hint: `${mod}N`, run: () => newChat() },
-    ...(!phone && state.panes.length < MAX_PANES ? [{ id: 'new-pane', label: '새 분할', hint: `${mod}⇧O`, run: addPane }] : []),
+    { id: 'new-pane', label: '새 분할', hint: `${mod}⇧O`, run: addPane },
     { id: 'settings', label: '설정 열기', hint: `${mod},`, run: () => window.dispatchEvent(new CustomEvent('deck:open-settings')) },
     { id: 'usage', label: '사용량 보기', run: () => setUsageOpen(true) },
     ...(has('highlights') ? [{ id: 'highlights', label: '하이라이트 보기', run: () => setHighlightsOpen(true) }] : []),
@@ -758,7 +917,7 @@ export function App() {
           {!phone && has('highlights') && <HighlightsBadge ready={state.ready} running={state.activity.filter((a) => a.running).length} onOpen={() => setHighlightsOpen(true)} />}
           {!phone && <ServerChip startedAt={state.serverStartedAt} restartedAt={state.restartedAt} draining={state.draining} busy={busySessions} onDismissRestart={() => dispatch({ type: 'dismiss_restart' })} />}
           <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={usageOpen} data-sheet-return="" title="토큰 사용량 기록 (주별·일별)">사용량</button>
-          {!phone && <button type="button" className="text-btn split" onClick={addPane} disabled={state.panes.length >= MAX_PANES} title={`분할보기 (최대 ${MAX_PANES})`}>{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}/${MAX_PANES}` : '+ 분할'}</button>}
+          {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (⋮⋮ 를 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
           <NotifyMenu />
           {state.connected
             ? <span className="conn on" title="연결됨">연결됨</span>
@@ -803,7 +962,7 @@ export function App() {
           {orphanQs.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })} />)}
         </div>
       )}
-      <div className="body">
+      <div ref={bodyRef} className="body">
         {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
         {peekable && <div className="sidebar-hotzone" data-testid="sidebar-hotzone" aria-hidden="true" onMouseEnter={peek ? undefined : armPeek} onMouseLeave={() => { unlatchPeek(); if (!peek) clearPeekTimer(); }} />}
         <div
@@ -816,7 +975,7 @@ export function App() {
             projects={state.projects}
             currentSessionId={active.session?.sessionId ?? null}
             onOpen={(sessionId, cwd, title) => openIn(active.id, sessionId, cwd, title)}
-            {...(phone ? {} : { onOpenSplit: openSplit, splitBlocked: state.panes.length >= MAX_PANES ? `분할 보기는 최대 ${MAX_PANES}개까지예요` : null })}
+            onOpenSplit={openSplit}
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
             pins={state.pins}
@@ -869,24 +1028,39 @@ export function App() {
             onNewChat={() => newChat()}
           />
         </div>
-        <div className="panes" data-count={phone ? 1 : state.panes.length} style={{ '--cols': phone ? 1 : state.panes.length, ...(!phone && state.panes.length > 1 ? { gridTemplateColumns: paneColumns(state.panes.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
+        <div ref={panesRef} className="panes" data-count={phone ? 1 : docked.length} style={{ '--cols': phone ? 1 : docked.length, ...(!phone && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
           {phone && state.panes.length > 1 && (
-            <div className="pane-switch">
-              {state.panes.map((p, i) => <button type="button" key={p.id} className={p.id === active.id ? 'on' : ''} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
+            <div className="pane-switch" {...tabs.stripProps}>
+              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
+              <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}>+</button>
             </div>
           )}
-          {(phone ? [active] : state.panes).map((p, i, shown) => (
+          {(phone ? [active] : docked).map((p, i, shown) => (
             <Fragment key={p.id}>
             {i > 0 && (
               <div className="pane-splitter" role="separator" aria-orientation="vertical" aria-label="패널 폭 조절" title="드래그: 폭 조절 · 더블클릭: 균등"
                 onPointerDown={(e) => startPaneResize(e, shown[i - 1]!.id, p.id)}
-                onDoubleClick={() => dispatch({ type: 'resize_panes', sizes: Object.fromEntries(state.panes.map((x) => [x.id, 1])) })} />
+                onDoubleClick={() => dispatch({ type: 'resize_panes', sizes: Object.fromEntries(docked.map((x) => [x.id, 1])) })} />
             )}
             <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
-              onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions} />
+              onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
+              {...(!phone && (docked.length > 1 || floats.length > 0) ? { grip: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => startPaneDrag(e, p.id) } } : {})}
+              {...(!phone && docked.length > 1 ? { onFloat: () => { const r = floatRectAt({ x: 80 + 24 * floats.length, y: 40 + 24 * floats.length }, { w: 480, h: bodyRef.current?.clientHeight ?? 600 }, { w: bodyRef.current?.clientWidth ?? 1200, h: bodyRef.current?.clientHeight ?? 600 }); dispatch({ type: 'float_pane', paneId: p.id, rect: r }); requestFocus(p.id); } } : {})} />
             </Fragment>
           ))}
         </div>
+        {!phone && floats.length > 0 && (
+          <div className="floats">
+            {floats.map((p) => (
+              <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.float!.h }}>
+                <Pane pane={p} app={state} active={p.id === state.activePaneId} closable dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+                  onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
+                  floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id) }} onDock={() => { dispatch({ type: 'dock_pane', paneId: p.id }); requestFocus(p.id); }} />
+                <div className="float-resize" role="separator" aria-label="카드 크기 조절" title="드래그: 카드 크기" onPointerDown={(e) => startFloatResize(e, p.id)} />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
     </AccountsContext>

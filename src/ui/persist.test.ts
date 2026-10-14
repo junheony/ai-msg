@@ -256,10 +256,10 @@ describe('persist (ux-state)', () => {
         { session: { sessionId: 42, cwd: '/w' } },
         null,
         'junk',
-        {}, {}, {}, // more than MAX_PANES (5) in total
+        {}, {}, {}, // 8 in total: all kept (PANE_LIMIT is 24)
       ],
     })!;
-    expect(ui.panes).toHaveLength(5);
+    expect(ui.panes).toHaveLength(8);
     expect(ui.active).toBe(0);
     expect(ui.collapsed).toEqual(['/ok']);
     expect(ui.drawer).toBe(false);
@@ -331,5 +331,28 @@ describe('persist: pane widths', () => {
     const bad = parseUi({ v: 1, panes: [{ ...p, size: 'big' }, { ...p, size: -2 }, { ...p, size: 1e9 }, { ...p, size: 0.5 }], active: 0, collapsed: [], drawer: false });
     expect(bad?.panes.map((x) => x.size)).toEqual([undefined, undefined, undefined, 0.5]);
     expect(hydrate(initialState, bad).panes.map((x) => x.size ?? 1)).toEqual([1, 1, 1, 0.5]);
+  });
+});
+
+describe('persist: floating cards', () => {
+  const p = { session: null, model: 'auto', efforts: {}, autoEffort: null, engine: 'claude', sandbox: 'read-only' };
+
+  it('round-trips a card\'s box; docked panes store nothing extra', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    const rect = { x: 40, y: 60, w: 480, h: 360 };
+    s = reducer(s, { type: 'float_pane', paneId: 'p1', rect });
+    const snap = snapshotUi(s, { collapsed: [], drawer: false });
+    expect('float' in snap.panes[0]!).toBe(false);
+    expect(snap.panes[1]!.float).toEqual(rect);
+    const store = memStore();
+    saveUi(snap, null, store);
+    expect(hydrate(initialState, loadUi(store)).panes.map((x) => x.float)).toEqual([undefined, rect]);
+  });
+
+  it('a bad box is dropped (the pane docks); were every pane a card, the first one docks', () => {
+    const bad = parseUi({ v: 1, panes: [{ ...p, float: { x: 0, y: 0, w: 10, h: 10 } }, { ...p, float: 'x' }, { ...p, float: { x: 1, y: 2, w: 320.4, h: 240 } }], active: 0, collapsed: [], drawer: false })!;
+    expect(bad.panes.map((x) => x.float)).toEqual([undefined, undefined, { x: 1, y: 2, w: 320, h: 240 }]);
+    const all = parseUi({ v: 1, panes: [{ ...p, float: { x: 0, y: 0, w: 400, h: 300 } }, { ...p, float: { x: 5, y: 5, w: 400, h: 300 } }], active: 1, collapsed: [], drawer: false })!;
+    expect(all.panes.map((x) => !!x.float)).toEqual([false, true]);
   });
 });

@@ -69,7 +69,7 @@ describe('App split view (D6)', () => {
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
   });
 
-  it('splits into up to 5 equal columns; "+ 분할" disables at 5 and closing re-flows', async () => {
+  it('splits into equal columns with no fixed ceiling ("+ 분할" stays enabled past 5); closing re-flows', async () => {
     await boot();
     const split = screen.getByText(/^\+ 분할/) as HTMLButtonElement;
     for (let i = 0; i < 4; i++) fireEvent.click(split);
@@ -77,15 +77,101 @@ describe('App split view (D6)', () => {
     const panes = document.querySelector('.panes') as HTMLElement;
     expect(panes.dataset.count).toBe('5');
     expect(panes.style.getPropertyValue('--cols')).toBe('5');
-    expect(split.disabled).toBe(true);
-    expect(split.textContent).toBe('+ 분할 5/5');
-    fireEvent.click(split);
-    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(5);
-    fireEvent.click(within(lastPane()).getByLabelText('패널 닫기'));
-    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(4);
-    expect(panes.style.getPropertyValue('--cols')).toBe('4');
     expect(split.disabled).toBe(false);
-    expect(split.textContent).toBe('+ 분할 4/5');
+    expect(split.textContent).toBe('+ 분할 5');
+    fireEvent.click(split);
+    fireEvent.click(split);
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(7);
+    expect(panes.dataset.count).toBe('7');
+    fireEvent.click(within(lastPane()).getByLabelText('패널 닫기'));
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(6);
+    expect(panes.style.getPropertyValue('--cols')).toBe('6');
+    expect(split.textContent).toBe('+ 분할 6');
+  });
+
+  it('⋮⋮ grip: ⋯ 떠 있는 카드로 떼기 turns a pane into a floating card over the grid, 패널에 다시 붙이기 docks it; the card survives a reload', async () => {
+    await boot();
+    expect(screen.queryByLabelText('패널 끌기')).toBeNull(); // one pane: nothing to drag
+    openSession('one');
+    fireEvent.click(screen.getByText(/^\+ 분할/));
+    openSession('two');
+    expect(screen.getAllByLabelText('패널 끌기')).toHaveLength(2);
+    const menu = () => within(screen.getByTestId('pane-p1')).getByLabelText('채팅 메뉴');
+    fireEvent.click(menu());
+    fireEvent.click(screen.getByRole('menuitem', { name: '떠 있는 카드로 떼기' }));
+    const card = document.querySelector('.float-card') as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(card.contains(screen.getByTestId('pane-p1'))).toBe(true);
+    expect(card.classList.contains('on')).toBe(true);
+    const grid = document.querySelector('.panes') as HTMLElement;
+    expect(grid.dataset.count).toBe('1');
+    expect(grid.querySelectorAll('.pane')).toHaveLength(1);
+    expect(screen.queryAllByRole('separator', { name: '패널 폭 조절' })).toHaveLength(0);
+    // The lone docked pane cannot be pulled off: no 떼기 item, but it keeps its grip (a card may still dock next to it).
+    fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+    expect(screen.queryByRole('menuitem', { name: '떠 있는 카드로 떼기' })).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: { w: number } }[] };
+    expect(stored.panes[1]!.float?.w).toBeGreaterThanOrEqual(320);
+    cleanup();
+    sock.frames = [];
+    sock.onMessage = null;
+    await boot();
+    expect(document.querySelector('.float-card')).not.toBeNull();
+    fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('채팅 메뉴'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '패널에 다시 붙이기' }));
+    expect(document.querySelector('.float-card')).toBeNull();
+    expect((document.querySelector('.panes') as HTMLElement).dataset.count).toBe('2');
+    expect(screen.getAllByRole('separator', { name: '패널 폭 조절' })).toHaveLength(1);
+  });
+
+  it('⋮⋮ grip drag: along the rail it reorders the docked panes; below the rail it pulls the pane off as a card; Escape cancels', async () => {
+    await boot();
+    const split = screen.getByText(/^\+ 분할/);
+    fireEvent.click(split);
+    fireEvent.click(split); // p0 p1 p2
+    const ids = () => Array.from(document.querySelectorAll('.panes .pane')).map((el) => (el as HTMLElement).dataset.pane);
+    expect(ids()).toEqual(['p0', 'p1', 'p2']);
+    // jsdom has no layout: the body is 1200×800 at (0,0), the grid the same, each pane 400 wide in order.
+    const box = (x: number, w: number, h = 800) => ({ width: w, height: h, left: x, right: x + w, top: 0, bottom: h, x, y: 0, toJSON: () => ({}) } as DOMRect);
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const pane = (this as HTMLElement).dataset?.pane;
+      if (pane) return box(['p0', 'p1', 'p2'].indexOf(pane) * 400, 400);
+      return box(0, 1200);
+    });
+    try {
+      const grip = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
+      // Reorder: p0 dragged along the rail (y < 72) to x = 1000 (past p2's centre at 1000? centre = 1000 → not past; use 1050).
+      fireEvent.pointerDown(grip, { clientX: 10, clientY: 20, pointerId: 1, button: 0, pointerType: 'mouse' });
+      fireEvent.pointerMove(grip, { clientX: 1050, clientY: 20, pointerId: 1 });
+      expect(document.body.classList.contains('pane-dragging')).toBe(true);
+      expect(document.querySelector('.pane-drop-marker')).not.toBeNull();
+      fireEvent.pointerUp(grip, { clientX: 1050, clientY: 20, pointerId: 1 });
+      expect(document.body.classList.contains('pane-dragging')).toBe(false);
+      expect(document.querySelector('.pane-ghost')).toBeNull();
+      expect(ids()).toEqual(['p1', 'p2', 'p0']);
+      // Escape mid-drag: nothing changes.
+      const grip2 = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
+      fireEvent.pointerDown(grip2, { clientX: 810, clientY: 20, pointerId: 2, button: 0, pointerType: 'mouse' });
+      fireEvent.pointerMove(grip2, { clientX: 100, clientY: 20, pointerId: 2 });
+      fireEvent.keyDown(window, { key: 'Escape' });
+      fireEvent.pointerUp(grip2, { clientX: 100, clientY: 20, pointerId: 2 });
+      expect(ids()).toEqual(['p1', 'p2', 'p0']);
+      // Off the rail (y = 400): p0 floats as a card about its own width.
+      const grip3 = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
+      fireEvent.pointerDown(grip3, { clientX: 810, clientY: 20, pointerId: 3, button: 0, pointerType: 'mouse' });
+      fireEvent.pointerMove(grip3, { clientX: 600, clientY: 400, pointerId: 3 });
+      expect(document.querySelector('.pane-ghost.card')).not.toBeNull();
+      fireEvent.pointerUp(grip3, { clientX: 600, clientY: 400, pointerId: 3 });
+    } finally { rect.mockRestore(); }
+    const card = document.querySelector('.float-card') as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(card.contains(screen.getByTestId('pane-p0'))).toBe(true);
+    expect(ids()).toEqual(['p1', 'p2']);
+    const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: { x: number; y: number; w: number; h: number } }[] };
+    const f = stored.panes.find((p) => p.float)!.float!;
+    expect(f.w).toBe(400);
+    expect(f.y).toBe(382);
   });
 
   it('a splitter between each pair of panes: dragging trades width between its two neighbours, double-click evens them out, the widths survive a reload', async () => {
@@ -118,12 +204,12 @@ describe('App split view (D6)', () => {
     expect(again.style.gridTemplateColumns).toBe('minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr)');
   });
 
-  it('"+ 분할" shows no counter with one pane, then current/MAX_PANES', async () => {
+  it('"+ 분할" shows no counter with one pane, then the pane count (no maximum)', async () => {
     await boot();
     const split = screen.getByText(/^\+ 분할/) as HTMLButtonElement;
     expect(split.textContent).toBe('+ 분할');
     fireEvent.click(split);
-    expect(split.textContent).toBe('+ 분할 2/5');
+    expect(split.textContent).toBe('+ 분할 2');
   });
 
   it('⋯ 분할 보기로 열기: a new pane opens the session — also one another pane already shows', async () => {
@@ -302,6 +388,42 @@ describe('App phone layout (D10)', () => {
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
     expect(screen.getByTestId('pane-p0')).toBeTruthy();
     expect(screen.queryByTestId('pane-p1')).toBeNull();
+    // The tab row ends in +: another pane (as a tab), no ceiling.
+    fireEvent.click(within(document.querySelector('.pane-switch') as HTMLElement).getByLabelText('새 분할'));
+    expect(document.querySelectorAll('.pane-switch button[data-tab]')).toHaveLength(3);
+    expect(screen.getByTestId('pane-p2')).toBeTruthy();
+    // No grip / card menu on a phone: a card means nothing on one screen.
+    expect(screen.queryByLabelText('패널 끌기')).toBeNull();
+  });
+
+  it('phone: a floating card restored from a desktop save becomes a plain tab; tabs reorder by press-and-drag', async () => {
+    localStorage.setItem('deck.ui.v1', JSON.stringify({ v: 1, active: 0, collapsed: [], drawer: false, panes: [
+      { session: { sessionId: 's1', cwd: '/w', title: 'one', engine: null }, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write', float: { x: 10, y: 10, w: 400, h: 300 } },
+      { session: { sessionId: 's2', cwd: '/w', title: 'two', engine: null }, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write' },
+      { session: null, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write' },
+    ] }));
+    mockMatchMedia(true);
+    await boot();
+    const labels = () => Array.from(document.querySelectorAll('.pane-switch button[data-tab]')).map((b) => b.textContent);
+    // The float landed at the end: one, two, (blank) → two, blank, one.
+    await waitFor(() => expect(labels()).toEqual(['1 · two', '2', '3 · one']));
+    const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: unknown }[] };
+    expect(stored.panes.some((p) => p.float)).toBe(false);
+    // Drag tab 3 (one) to the front: tabs 100 wide at 0 / 100 / 200.
+    const tabs = Array.from(document.querySelectorAll<HTMLElement>('.pane-switch button[data-tab]'));
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const i = tabs.indexOf(this as HTMLElement);
+      const x = i >= 0 ? i * 100 : 0;
+      return { width: i >= 0 ? 100 : 400, height: 30, left: x, right: x + (i >= 0 ? 100 : 400), top: 0, bottom: 30, x, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+    try {
+      const strip = document.querySelector('.pane-switch') as HTMLElement;
+      fireEvent.pointerDown(tabs[2]!, { clientX: 250, clientY: 15, pointerId: 1, button: 0, pointerType: 'mouse' });
+      fireEvent.pointerMove(window, { clientX: 20, clientY: 15, pointerId: 1 });
+      expect(strip.classList.contains('tabs-reordering')).toBe(true);
+      fireEvent.pointerUp(window, { clientX: 20, clientY: 15, pointerId: 1 });
+    } finally { rect.mockRestore(); }
+    expect(labels()).toEqual(['1 · one', '2 · two', '3']);
   });
 
   it('Escape closes the open phone drawer', async () => {
