@@ -4,7 +4,12 @@
 
 ## 지금 상태 (2026-10-14 오후)
 
-**한 줄:** "Desktop 과 같은 경험" 2차·3차 목록이 **전부 들어갔고**(UI 7건 + 세션 관리 3건), Gemini 엔진은 서비스가 끝난 gemini-cli 대신 **Antigravity CLI `agy`** 로 갈아탔다. 커밋·빌드·공개본까지 반영. **Gemini 를 실제로 쓰려면 사용자가 터미널에서 `agy` 를 한 번 실행해 Google 로그인해야 하고**, 그 뒤 첫 턴에서 `step_update` 이벤트의 실제 형식을 확인해야 한다.
+**한 줄:** "Desktop 과 같은 경험" 2차·3차 목록이 **전부 들어갔고**(UI 7건 + 세션 관리 3건), Gemini 엔진은 서비스가 끝난 gemini-cli 대신 **Antigravity CLI `agy`** 로 갈아탔으며, 사용량 헤더에 **Gemini 카드**(agy `/usage` 폴링)가 붙었다. 커밋·빌드·공개본까지 반영. **Gemini 를 실제로 쓰려면 사용자가 터미널에서 `agy` 를 한 번 실행해 Google 로그인해야 하고**(이 Mac 은 아직 미로그인 — 카드는 "로그인 필요"), 그 뒤 첫 턴·첫 폴링에서 `step_update` 와 `/usage` 응답의 실제 형식을 확인해야 한다.
+
+### 한 일 (Gemini 사용량 카드, 10-14 늦은 오후)
+- **사용량 헤더에 Gemini 카드**: agy 가 설치돼 있으면 GPT 카드 옆에 파란 스파크 + "Gemini" 카드. 서버가 `agy -p=/usage --output-format json` 을 시작 때·5분마다·Gemini 턴 종료 4초 뒤 돌려(`GeminiUsagePoller`) 버킷(모델/묶음)마다 한 줄 — 남은 % 막대·리셋 카운트다운, 요약은 가장 적게 남은 버킷, 팝오버에 리셋 시각과 확인 시각. 미로그인이면 "—" + "Gemini 로그인 필요 — 터미널에서 agy 실행…" 힌트, 읽기 실패면 직전 값을 흐리게(stale) + 사유. **로그인 프로브가 참일 때만 실행**(미로그인 print 모드는 브라우저 로그인을 60초 기다리며 멈추는 것을 실측). 응답 JSON 모양은 바이너리 심볼(`groups`·`buckets`·`used_percentage`·`remaining_percentage`·`reset_time`)로만 알아서 해석기는 트리를 훑어 관대하게 읽고, 텍스트 보고서 형식도 받는다. 해석 실패 시 서버 로그에 응답 앞 600자를 한 번 남김 → 그걸로 `parseGeminiUsage` 를 맞춘다(`docs/gemini-spike.md` "/usage 응답 해석").
+- `UsageSnapshot.gemini`(옵셔널, 구형 서버면 카드 없음), `UsageService.applyGemini`(usage-deck 폴링이 덮어쓰지 않도록 이어 넘김), `TurnRunner` deps `geminiUsage.bump()`.
+- 검증: tsc 0, 서버·공유 91파일 1084건, UI 89파일 922건 통과, `vite build` 반영.
 
 ### 한 일 (2차·3차 전부 + Gemini→agy, 10-14 오후)
 - **대화 내 찾기 바**: 패널에서 ⌘F/Ctrl+F, ⋯ 메뉴 "대화에서 찾기", 검색 결과 점프 때 자동으로 열림. `N / M` 카운터, ↑↓·Enter(다음)·Shift+Enter(이전) 순환, 모든 매치 하이라이트 + 현재 매치 진하게·화면 가운데로, Esc 로 닫으면 해제. 접힌 긴 메시지는 펼침. 서식 경계(굵게 걸친 단어)를 넘는 매치는 못 찾음. `FindBar.tsx`.
@@ -49,7 +54,7 @@
 
 ### 남은 일
 - **서버 재시작 뒤 확인**: 파일 칩 메뉴에 `다운로드`·`Finder` 가 보이는지, 한도 이어가기는 실제 한도 때 `turn_retry`/notice 가 패널에 뜨는지(로그 `deck.log` 의 route 줄과 `events.jsonl`).
-- **Gemini(agy) 켜기 — 사용자 몫**: 터미널에서 `agy` 실행 → 브라우저 Google 로그인 → 종료. 그 뒤 deck 새로고침하면 "Gemini · 로그인 필요" 가 풀려야 한다(`agy models` 가 로그인 상태에서 0 으로 끝나는지는 추정). **첫 Gemini 턴에서 확인할 것**: `step_update`/`tool_info` 실제 필드, `init` 에 conversation_id 가 오는지 — 다르면 `GeminiEventMapper` 수정. 미확인 사항은 `docs/gemini-spike.md` 에 "미확인" 표시. thinking 류는 매퍼가 내보내지만 `runGemini` 가 화면에 안 넘김. 두 번째 Google 계정은 못 붙임(키체인 하나) — 필요하면 `GEMINI_API_KEY`(유료) 경로를 별도 자리로 설계.
+- **Gemini(agy) 켜기 — 사용자 몫**: 터미널에서 `agy` 실행 → 브라우저 Google 로그인 → 종료. 그 뒤 deck 새로고침하면 "Gemini · 로그인 필요" 가 풀려야 한다(`agy models` 가 로그인 상태에서 0 으로 끝나는지는 추정). **로그인 후 5분 안에 Gemini 사용량 카드에 숫자가 보여야 한다** — 안 보이면 `deck.log` 의 "agy /usage 응답을 해석하지 못했습니다 — 앞부분" 줄을 보고 `GeminiUsagePoller.parseGeminiUsage` 를 실제 모양에 맞춘다(테스트 `GeminiUsagePoller.test.ts` 첫 케이스에 실제 응답을 넣기). **첫 Gemini 턴에서 확인할 것**: `step_update`/`tool_info` 실제 필드, `init` 에 conversation_id 가 오는지 — 다르면 `GeminiEventMapper` 수정. 미확인 사항은 `docs/gemini-spike.md` 에 "미확인" 표시. thinking 류는 매퍼가 내보내지만 `runGemini` 가 화면에 안 넘김. 두 번째 Google 계정은 못 붙임(키체인 하나) — 필요하면 `GEMINI_API_KEY`(유료) 경로를 별도 자리로 설계.
 - **브라우저·실기기 확인**: 찾기 바(⌘F, 하이라이트), 터치 툴팁(폰 길게 누르기), 코드 블록 저장·줄바꿈, 패널 떼어내기, 작업 폴더 바꾸기 뒤 `claude --resume` 이 옮긴 기록을 찾는지, 복제 세션 제목.
 - 2차·3차 목록은 전부 끝. 다음은 상용화 1번: 턴 종료 때 Sonnet 한 줄 요약을 `events.jsonl` 에 함께 기록 + 아침 다이제스트 푸시.
 - **한도 이어가기 보강**: 안내문의 "→ B 계정" 은 라우터 1차 선택이고 실제 이어가기 턴은 자기 라우팅을 다시 하므로 드물게 다른 계정으로 갈 수 있음(쿨다운 때문에 보통 같음) — 내부 `forceAccount` 로 고정하는 것 검토. 주간/Opus 한도 문구는 `LIMIT_PATTERNS` 에 없음(실제 캡처 필요). 리셋 시각은 문구의 시간대를 버림(서버 TZ 기준). 프로세스 안에서 백그라운드 Agent 가 "API error: hit your session limit" 로 죽는 경우(task_done 실패)는 결과 실패가 아니라 이어가기가 안 걸린다 — 그 문구를 보면 다음 세그먼트 전에 선제적으로 옮기는 것 검토.

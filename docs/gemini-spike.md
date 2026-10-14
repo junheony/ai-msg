@@ -38,6 +38,17 @@ agy                                   # 인자 없이 → 브라우저에서 Goo
 | 미로그인 | stderr `authentication required. Run 'agy' to log in` + result `error: "authentication failed or timed out"` → "Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인". |
 | 사용량 | `result.usage`: `input_tokens` → 입력, `output_tokens` → 출력, `cache_read_tokens` → 캐시 읽기 (`thinking_tokens` 는 쓰지 않음). |
 | 한도 | 오류 문구에 quota / rate limit / RESOURCE_EXHAUSTED / 429 가 있으면 그 계정을 메모리에서 쿨다운. |
+| 잔여 한도 카드 | `agy -p=/usage --output-format json` (print 모드의 `/usage` — `--disable-slash-commands` 를 붙이면 안 됨). 서버 시작 때, 5분마다, Gemini 턴이 끝난 4초 뒤. **로그인 프로브가 참일 때만 실행** — 미로그인 print 모드는 브라우저 로그인을 60초 기다리며 멈춘다. 결과는 `UsageSnapshot.gemini` (`buckets[]`: name · usedPct · resetsAt) → 사용량 헤더의 Gemini 카드. |
+
+### `/usage` 응답 해석 (`GeminiUsagePoller.parseGeminiUsage`)
+
+실제 응답은 아직 못 봤다(미로그인). 바이너리 심볼로 본 구조: `printmode.usageReport` → `quotaRows` → `groupJSON`/`bucketJSON`(`bucketRemaining`, `bucketReset`), JSON 태그 `groups` · `buckets` · `used_percentage` · `remaining_percentage` · `reset_time`. 그래서 해석기는 모양을 고정하지 않는다:
+
+1. stdout 전체 또는 `{`/`[` 로 시작하는 줄을 JSON 으로 읽고, 트리를 재귀로 훑어 `used_percentage`/`remaining_percentage`(또는 `used`·`remaining` + `limit`)가 있는 객체마다 버킷 하나. 이름은 그 객체의 `name|label|display_name|model|…`, 없으면 상위 그룹 이름. 리셋은 `reset_time|resets_at|…`(ISO · epoch 초/ms · "2h 10m" 같은 상대값) 또는 `reset_in_seconds`. 턴 토큰 `usage{input_tokens…}` 는 건너뜀.
+2. 버킷이 없으면 `response` 의 텍스트 보고서를 줄 단위로 — `이름: 73% remaining (resets in 2h 10m)` / `이름 · 12% used · resets at <ISO>`.
+3. 그래도 없으면 stdout 자체를 2 와 같이. 전부 실패하면 카드가 "불명" 이 되고 서버 로그에 응답 앞 600자를 한 번 남긴다 → 그걸 보고 해석기를 고친다.
+
+같은 이름은 첫 것만, 퍼센트는 0–100 으로 자른다.
 
 확인된 실제 한 줄(미로그인):
 
@@ -63,13 +74,16 @@ deck id 는 저장된 세션 호환을 위해 그대로 둔다.
 - **프롬프트가 argv 에 보인다**: 프로세스 목록(`ps`)에서 프롬프트가 보일 수 있다(`--input-format stream-json` 은 메시지 형식이 미확인이라 쓰지 않음).
 - **기록 없음**: Gemini 세션을 다시 열면 이전 메시지가 보이지 않는다. 이어하기 자체는 된다.
 - **계정 하나**: 키체인 로그인이 하나뿐이라 g1/g2 분산·쿨다운 우회는 사실상 없다.
-- **쿼터 조회 불가**: 남은 한도를 읽을 수 없고, 사용량 헤더(5h/주간)에도 Gemini 는 포함되지 않는다.
+- **쿼터 응답 형식 미확인**: 카드는 `/usage` JSON 을 관대하게 해석한다(위). 로그인 후 첫 폴링에서 숫자가 안 보이면 서버 로그의 "agy /usage 응답을 해석하지 못했습니다 — 앞부분: …" 줄을 보고 `parseGeminiUsage` 를 맞춘다. 버킷이 모델별인지 묶음별인지, 리셋이 절대 시각인지 상대값인지도 그때 확정.
+- **미로그인 print 모드는 60초 블로킹**: 턴·`/usage` 모두. deck 은 `agy models` 프로브가 참일 때만 둘을 실행한다.
 
 ## 코드
 
 - `src/server/engine/GeminiEngine.ts` — `geminiArgs`, `GeminiEventMapper`, `GeminiEngine`(프로세스 실행), `resolveGeminiBin`, `GeminiLogin`(프로브+캐시)
 - `src/shared/accounts.ts` — `GeminiAccount`, `geminiEnv`
 - `src/shared/models.ts` — `GEMINI_CLI_ALIAS`, 라벨, effort
-- `src/server/turn/TurnRunner.ts` — `runGemini` (계정 선택·고정·쿨다운·effort)
+- `src/server/usage/GeminiUsagePoller.ts` — `/usage` 폴링·해석(`parseGeminiUsage`), `UsageService.applyGemini` 로 발행
+- `src/ui/components/UsagePanel.tsx` — `GeminiCard` (버킷당 한 줄, 최저 잔여 % 요약, 미로그인 힌트)
+- `src/server/turn/TurnRunner.ts` — `runGemini` (계정 선택·고정·쿨다운·effort; 끝나면 `geminiUsage.bump()`)
 - `src/server/main.ts` — `GeminiLogin` 연결
 - 테스트: `GeminiEngine.test.ts` (가짜 agy 바이너리), `TurnRunner.test.ts` 의 "Gemini sessions"

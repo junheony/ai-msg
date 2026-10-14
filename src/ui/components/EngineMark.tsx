@@ -26,6 +26,15 @@ export function ClaudeMark({ className }: { className: string }) {
   );
 }
 
+/** Gemini's four-point spark, drawn in currentColor (the usage card colours it Gemini blue). Same 24-unit box as the others. */
+export function GeminiMark({ className }: { className: string }) {
+  return (
+    <svg className={`gemini-mark ${className}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M12 1.5c.4 5.7 4.8 10.1 10.5 10.5-5.7.4-10.1 4.8-10.5 10.5C11.6 16.8 7.2 12.4 1.5 12 7.2 11.6 11.6 7.2 12 1.5z" />
+    </svg>
+  );
+}
+
 /** Which engine a session runs on: its own field, else what its seat implies. */
 export function engineOf(s: { engine?: EngineKind | null; account?: Seat }): EngineKind {
   return s.engine ?? (s.account === 'gpt' ? 'codex' : isGeminiAccount(s.account) ? 'gemini' : 'claude');

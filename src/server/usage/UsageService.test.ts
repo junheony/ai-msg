@@ -246,6 +246,24 @@ describe('UsageService', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
   });
+
+  it('applyGemini publishes the Gemini seat and a later usage-deck poll carries it over', async () => {
+    const s = svc(async () => ({ ok: true, json: async () => LIVE }));
+    const seen: unknown[] = [];
+    s.onChange((snap) => seen.push(snap.gemini));
+    expect(s.snapshot().gemini).toBeUndefined();
+    const g = { status: 'ok' as const, fetchedAt: '2026-09-30T12:29:00Z', loggedIn: true, buckets: [{ name: 'gemini-4-argon', usedPct: 27, resetsAt: null }], error: null };
+    s.applyGemini(g);
+    expect(s.snapshot().gemini).toEqual(g);
+    await s.pollOnce();
+    expect(s.snapshot().gemini).toEqual(g);
+    expect(usageOf(s.snapshot(), 'a').status).toBe('ok');
+    const down = svc(async () => { throw new Error('x'); });
+    down.applyGemini(g);
+    await down.pollOnce();
+    expect(down.snapshot().gemini).toEqual(g);
+    expect(seen).toEqual([g, g]);
+  });
 });
 
 describe('GPT usage (D5)', () => {

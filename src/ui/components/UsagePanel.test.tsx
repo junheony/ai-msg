@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { UsagePanel, countdown, creditsText, fullestWindow, resetStamp, shortCountdown } from './UsagePanel';
+import { UsagePanel, bucketLabel, countdown, creditsText, fullestWindow, geminiHint, resetStamp, shortCountdown } from './UsagePanel';
 import type { UsageSnapshot } from '../../shared/usage-types';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -33,6 +33,53 @@ describe('UsagePanel', () => {
   it('renders a placeholder without data', () => {
     render(<UsagePanel usage={null} current={null} />);
     expect(screen.getByText('잔여량 불러오는 중…')).toBeTruthy();
+  });
+
+  it('no Gemini card without the seat; with it, one row per bucket, the lowest remaining as the summary, current when a Gemini session is active', () => {
+    const { unmount } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    expect(screen.queryByTestId('account-gemini')).toBeNull();
+    unmount();
+    const g = { status: 'ok' as const, fetchedAt: new Date(NOW - 60_000).toISOString(), loggedIn: true, error: null, buckets: [
+      { name: 'gemini-4-argon', usedPct: 27, resetsAt: new Date(NOW + 2 * 3_600_000 + 10 * 60_000).toISOString() },
+      { name: 'gemini-3.8-flash', usedPct: 96, resetsAt: null },
+    ] };
+    render(<UsagePanel usage={{ ...usage, gemini: g }} current="g1" now={NOW} />);
+    const card = screen.getByTestId('account-gemini');
+    expect(card.className).toContain('gemini');
+    expect(card.className).toContain('current');
+    expect(card.className).toContain('ok');
+    expect(card.title).toBe('');
+    expect(screen.getByTestId('g1-b0').textContent).toContain('4 Argon');
+    expect(screen.getByTestId('g1-b0').textContent).toContain('73%');
+    expect(screen.getByTestId('g1-b0').textContent).toContain('2시간 10분');
+    expect(screen.getByTestId('g1-b1').textContent).toContain('3.8 Flash');
+    expect(screen.getByTestId('g1-b1').className).toContain('danger');
+    expect(screen.queryByTestId('g1-b1-cd')).toBeNull(); // the fullest bucket has no reset time → no short countdown
+    expect(screen.queryByTestId('g1-b0-cd')).toBeNull(); // only the fullest bucket would carry one
+    expect(card.querySelector('.usage-sum')!.textContent).toBe('4%');
+    expect(card.querySelector('.usage-sum')!.className).toContain('danger');
+    expect(card.querySelector('[style*="--usage-cards"]')).toBeNull();
+    expect((card.parentElement as HTMLElement).style.getPropertyValue('--usage-cards')).toBe('5');
+  });
+
+  it('a logged-out Gemini seat shows the login hint and a dash; a stale read shows the reason', () => {
+    const out = { status: 'down' as const, fetchedAt: null, loggedIn: false, buckets: [], error: 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인' };
+    const { unmount } = render(<UsagePanel usage={{ ...usage, gemini: out }} current={null} now={NOW} />);
+    const card = screen.getByTestId('account-gemini');
+    expect(card.title).toContain('agy 실행');
+    expect(card.className).toContain('down');
+    expect(screen.getByTestId('g1-none').textContent).toContain('—');
+    expect(screen.getByTestId('g1-none').textContent).toContain('로그인');
+    expect(card.querySelector('.usage-sum')!.textContent).toBe('—');
+    unmount();
+    const stale = { status: 'stale' as const, fetchedAt: null, loggedIn: true, buckets: [{ name: 'x', usedPct: 10, resetsAt: null }], error: 'agy /usage 실패 (exit 1)' };
+    render(<UsagePanel usage={{ ...usage, gemini: stale }} current={null} now={NOW} />);
+    expect(screen.getByTestId('account-gemini').title).toBe('Gemini 사용량 오래된 값 — agy /usage 실패 (exit 1)');
+    expect(geminiHint({ ...stale, status: 'down', error: null })).toBe('Gemini 사용량 불명');
+    expect(bucketLabel('gemini-4-argon')).toBe('4 Argon');
+    expect(bucketLabel('Gemini 3.8 Flash')).toBe('3.8 Flash');
+    expect(bucketLabel('Pro')).toBe('Pro');
+    expect(bucketLabel('gemini')).toBe('gemini');
   });
 
   afterEach(() => { cleanup(); vi.useRealTimers(); });
