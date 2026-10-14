@@ -5,12 +5,13 @@ import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
 import { usePrefs } from '../usePrefs';
+import { codeFileName, useCodeWrap } from '../codeWrap';
 import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
 import { has } from '../features';
 import { rawFileUrl } from '../sessionApi';
 import { baseName, useFileMenu } from './FileMenu';
 import type { ChatItem, SentFile } from '../state';
-import { MODEL_INFO, type ModelChoice } from '../../shared/models';
+import { MODEL_INFO, modelLabelOf, type ModelChoice } from '../../shared/models';
 import type { ReplyTurn } from '../replyTurn';
 import { usePopoverPlacement } from './usePopoverPlacement';
 import { CopyButton } from './CopyButton';
@@ -29,7 +30,20 @@ function textOf(node: ReactNode): string {
   return '';
 }
 
-/** Fenced code: a header strip with the language and a copy button above the scrolling body. */
+let savedCodeBlocks = 0;
+/** 저장: the block's text as a download, `code-N.<ext>` (N counts saves on this page). */
+function saveCode(text: string, lang: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = codeFileName(lang, ++savedCodeBlocks);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/** Fenced code: a header strip with the language, 줄바꿈 · 저장 · copy buttons above the scrolling body. */
 function CodeBlock({ children }: { children?: ReactNode }) {
   const code = Array.isArray(children) ? children[0] : children;
   const cls = isValidElement<{ className?: string }>(code) ? (code.props.className ?? '') : '';
@@ -37,16 +51,19 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const text = textOf(children).replace(/\n$/, '');
   const open = useContext(SidePanelContext);
   const previewable = open && (lang === 'html' || lang === 'svg' || (lang === 'xml' && /^\s*<svg[\s>]/i.test(text)));
+  const [wrap, setWrap] = useCodeWrap();
   return (
     <div className="code-block">
       <div className="code-head">
         <span className="code-lang">{lang || 'text'}</span>
         <span className="code-actions">
           {previewable && <button type="button" className="code-copy" onClick={() => open({ kind: 'html', title: `${lang.toUpperCase()} 미리보기`, html: text })}>미리보기</button>}
+          <button type="button" className="code-tool code-wrap-toggle" aria-pressed={wrap} title="긴 줄 접기 (모든 코드 블록)" onClick={() => setWrap(!wrap)}>줄바꿈</button>
+          <button type="button" className="code-tool code-save" title="파일로 저장" onClick={() => saveCode(text, lang)}>저장</button>
           <CopyButton text={text} label="코드 복사" />
         </span>
       </div>
-      <pre>{children}</pre>
+      <pre className={wrap ? 'code-wrap' : undefined}>{children}</pre>
     </div>
   );
 }
@@ -472,7 +489,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
       {item.text && <Markdown text={item.text} />}
       {item.streaming && <span className="cursor">▍</span>}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
-      {(item.badge || item.toolCalls.length > 0 || hasActions) && (
+      {(item.badge || item.model || item.toolCalls.length > 0 || hasActions) && (
         <div className="turn-foot">
           {hasActions && (
             <div className="msg-actions" data-testid="turn-actions">
@@ -482,7 +499,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
               {pick && regen && <RegenModelMenu models={regen.models} current={regen.current} sticky={!!(turn && branchFrom)} onPick={pick} />}
             </div>
           )}
-          {item.badge && <TurnBadge badge={item.badge} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} />}
+          {item.badge && <TurnBadge badge={item.badge} {...(item.model ? { model: item.model } : {})} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} />}
+          {!item.badge && item.model && <span className="msg-model" data-testid="msg-model" title={item.model}>{modelLabelOf(item.model)}</span>}
           <RoleBadge roles={roleSummary(item.toolCalls)} />
         </div>
       )}

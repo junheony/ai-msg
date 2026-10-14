@@ -140,6 +140,27 @@ describe('App split view (D6)', () => {
     expect(frames().filter((f) => f.type === 'open_session').map((f) => (f as { sessionId: string }).sessionId)).toEqual(['s1', 's1']);
   });
 
+  it('⋯ 새 탭으로 떼어내기: opens the session in a new tab and closes this pane; a lone pane has no such item', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    try {
+      await boot();
+      openSession('one');
+      fireEvent.click(within(lastPane()).getByLabelText('채팅 메뉴'));
+      expect(screen.queryByRole('menuitem', { name: '새 탭으로 떼어내기' })).toBeNull();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+      fireEvent.click(screen.getByText(/^\+ 분할/));
+      openSession('two');
+      expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
+      fireEvent.click(within(lastPane()).getByLabelText('채팅 메뉴'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '새 탭으로 떼어내기' }));
+      expect(open).toHaveBeenCalledWith(expect.stringContaining('?session=s2'), '_blank', 'noopener');
+      expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
+      expect(closes()).toEqual(['s2']);
+    } finally {
+      open.mockRestore();
+    }
+  });
+
   it('T9 (b): switching a pane to another session or closing it sends close_session only for sessions no pane still views', async () => {
     await boot();
     openSession('one');

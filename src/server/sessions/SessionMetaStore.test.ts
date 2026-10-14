@@ -145,4 +145,33 @@ describe('SessionMetaStore', () => {
     expect(byId().get(ID1)!.prevSession).toBeUndefined();
     expect(byId().get(ID2)).toMatchObject({ prevSession: ID1, title: 'p 1 (이어서)' });
   });
+
+  it('작업 폴더 바꾸기: a cwd override persists, reloads, drops junk, and SessionIndex shows the session (and lookup) in the new folder', async () => {
+    const dir = await tmp();
+    const file = path.join(dir, 'm.json');
+    const root = path.join(dir, 'b');
+    await fs.mkdir(path.join(root, '-w-p'), { recursive: true });
+    await fs.writeFile(path.join(root, '-w-p', `${ID1}.jsonl`), JSON.stringify({ type: 'user', cwd: '/w/p', message: { role: 'user', content: 'hi' } }) + '\n');
+    const meta = new SessionMetaStore(file);
+    await meta.load();
+    const index = new SessionIndex({ roots: rootsOf({ a: path.join(dir, 'a'), b: root, c: path.join(dir, 'c') }), pinnedFile: path.join(dir, 'p.json'), meta });
+    await index.refresh();
+    expect(index.lookup(ID1)!.cwd).toBe('/w/p');
+    await meta.setCwd(ID1, '/w/q');
+    index.regroup();
+    expect(meta.cwd(ID1)).toBe('/w/q');
+    expect(index.lookup(ID1)!.cwd).toBe('/w/q');
+    expect(index.projects().map((p) => p.cwd)).toContain('/w/q');
+    expect(index.projects().find((p) => p.cwd === '/w/q')!.sessions.map((e) => e.sessionId)).toEqual([ID1]);
+    const raw = JSON.parse(await fs.readFile(file, 'utf8')) as { cwds: Record<string, string> };
+    expect(raw.cwds).toEqual({ [ID1]: '/w/q' });
+    await fs.writeFile(file, JSON.stringify({ cwds: { [ID1]: '/w/q', [ID2]: 'relative' } }));
+    const again = new SessionMetaStore(file);
+    await again.load();
+    expect(again.cwd(ID1)).toBe('/w/q');
+    expect(again.cwd(ID2)).toBeNull();
+    await again.setCwd(ID1, null);
+    expect(again.cwd(ID1)).toBeNull();
+    expect(again.snapshot()).not.toHaveProperty('cwds');
+  });
 });

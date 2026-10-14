@@ -66,3 +66,17 @@ describe('SettingsView sheet', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('SettingsView 코드 줄바꿈', () => {
+  afterEach(() => { cleanup(); localStorage.removeItem('deck.codeWrap'); });
+
+  it('the 코드 줄바꿈 row flips the same deck.codeWrap switch the code blocks use', () => {
+    render(<SettingsView build={null} onOpenUsage={noop} onClose={noop} />);
+    const group = screen.getByText('코드 줄바꿈').closest('.settings-row') as HTMLElement;
+    const on = Array.from(group.querySelectorAll('button')).find((b) => b.textContent === '줄바꿈')!;
+    expect(on.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(on);
+    expect(localStorage.getItem('deck.codeWrap')).toBe('1');
+    expect(on.getAttribute('aria-pressed')).toBe('true');
+  });
+});

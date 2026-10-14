@@ -172,12 +172,14 @@ export type CodexTranscriptOptions = { maxMessages?: number; maxToolResultChars?
 
 class CodexTranscriptBuilder {
   private out: TranscriptMessage[] = [];
+  /** The model of the turn being read (each turn's `turn_context` line names it): kept on its assistant messages. */
+  private model: string | null = null;
   constructor(private readonly opts: Required<CodexTranscriptOptions>) {}
 
   private lastAssistant(ts: string | null): Extract<TranscriptMessage, { kind: 'assistant' }> {
     const last = this.out.at(-1);
     if (last && last.kind === 'assistant') return last;
-    const entry: Extract<TranscriptMessage, { kind: 'assistant' }> = { kind: 'assistant', text: '', model: null, toolCalls: [], ts };
+    const entry: Extract<TranscriptMessage, { kind: 'assistant' }> = { kind: 'assistant', text: '', model: this.model, toolCalls: [], ts };
     this.out.push(entry);
     return entry;
   }
@@ -185,6 +187,7 @@ class CodexTranscriptBuilder {
   add(line: unknown): void {
     const r = rec(line);
     const p = r ? rec(r.payload) : null;
+    if (r && p && r.type === 'turn_context' && typeof p.model === 'string' && p.model) { this.model = p.model; return; }
     if (!r || !p || r.type !== 'response_item') return;
     const ts = typeof r.timestamp === 'string' ? r.timestamp : null;
     if (p.type === 'message' && p.role === 'user') {
@@ -195,7 +198,7 @@ class CodexTranscriptBuilder {
       if (!text) return;
       const last = this.out.at(-1);
       if (last && last.kind === 'assistant' && !last.text && last.toolCalls.length === 0) { last.text = text; last.ts = ts; return; }
-      this.out.push({ kind: 'assistant', text, model: null, toolCalls: [], ts });
+      this.out.push({ kind: 'assistant', text, model: this.model, toolCalls: [], ts });
     } else if (p.type === 'function_call' || p.type === 'custom_tool_call') {
       // custom_tool_call (newer Codex, e.g. apply_patch) carries a raw `input` string instead of JSON `arguments`.
       const raw = p.type === 'function_call' ? p.arguments : p.input;

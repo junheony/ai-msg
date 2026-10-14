@@ -5,7 +5,7 @@ import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, type AccountNames } from '../shared/accounts';
-import { DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
+import { DEFAULT_CODEX_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
@@ -145,7 +145,7 @@ export type WsDeps = {
   /** Attachment metadata (name, image or not) for the prompt every viewing device is shown. */
   attachments?: { resolve(ids: string[]): { found: { id: string; name: string; isImage: boolean }[] } };
   /** 새 세션으로 이어가기: a new session sent with `handoffFrom` is linked to that session (and titled) here once it has an id. */
-  meta?: Pick<SessionMetaStore, 'link' | 'branch'>;
+  meta?: Pick<SessionMetaStore, 'link' | 'branch'> & Partial<Pick<SessionMetaStore, 'update' | 'setCwd' | 'title'>>;
   /** The send clientRefs / steer ids each session accepted (survives a restart); rides `history` as `acceptedRefs`. */
   acceptedRefs?: Pick<AcceptedRefs, 'add' | 'remove' | 'has' | 'list' | 'since'>;
   /** Process scan behind the index entries' `heldBy` (the same object the SessionIndex reads): rescanned at hello, open, send and on the outside poll. */
@@ -193,7 +193,7 @@ export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
 /** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
 export const CATCHUP_IDLE_MS = 10 * 60_000;
 
-type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null };
+type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }> }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -432,6 +432,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
   };
 
+  /** 복제: the duplicate's first turn gave it an id — it takes the "<원래 제목> (복사)" title its send carried. */
+  const titleNew = async (sid: string, title: string) => {
+    if (!deps.meta?.update) return;
+    try {
+      await deps.meta.update(sid, { title });
+      deps.index.regroup();
+    } catch (err) {
+      console.error('deck: duplicate title failed', errMsg(err));
+    }
+  };
+
   /** 메시지 편집 갈래: `child` was forked from `parent` at user message `n` (deck's session meta, never the transcript). */
   const linkBranch = async (child: string, parent: string, n: number) => {
     if (!deps.meta) return;
@@ -489,7 +500,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (!busy.has(sid)) busy.set(sid, turn.turnId);
     if (turn.fresh) {
       turn.fresh = false;
-      if (turn.handoffFrom) void linkHandoff(turn.handoffFrom, sid).finally(() => announceSession(sid));
+      if (turn.title) void titleNew(sid, turn.title).finally(() => announceSession(sid));
+      else if (turn.handoffFrom) void linkHandoff(turn.handoffFrom, sid).finally(() => announceSession(sid));
       else if (turn.branch) { const b = turn.branch; void linkBranch(sid, b.parent, b.n).finally(() => announceSession(sid)); }
       else announceSession(sid);
     }
@@ -502,6 +514,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    */
   const emitTurn = (turn: Turn, msg: ServerMessage) => {
     adopt(turn, 'sessionId' in msg ? msg.sessionId : null);
+    // Per-turn model: the result says which model answered (the badge's), saved with the turn on every device.
+    if (msg.type === 'turn_result' && msg.model === undefined && msg.badge?.model) msg = { ...msg, model: msg.badge.model };
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
     if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
     let out = msg;
@@ -700,7 +714,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
     const turnId = randomUUID();
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, ...(msg.sessionId === null && msg.title ? { title: msg.title } : {}), afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -1127,6 +1141,52 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `샌드박스를 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
+        case 'set_cwd': {
+          // 작업 폴더 바꾸기: refused while a turn (or its background work) runs; an idle held-open process is ended first
+          // so the next turn starts fresh in the new folder.
+          const id = msg.sessionId;
+          const refuse = (message: string) => send(ws, { type: 'error', turnId: null, sessionId: id, message });
+          const held = turns.get(busy.get(id) ?? '');
+          if (held && (held.current !== null || held.bg !== null || held.pendingRefs.size > 0 || held.afterRelease.length > 0)) { refuse('세션이 실행 중이라 작업 폴더를 바꿀 수 없습니다 — 끝난 뒤 다시 해 주세요'); break; }
+          if (draining) { refuse(DRAINING_MESSAGE); break; }
+          void (async () => {
+            let cwd: string;
+            try {
+              cwd = await resolveUnderRoots(msg.cwd, cwdRoots[0] ?? os.homedir(), cwdRoots);
+            } catch (err) {
+              if (!(err instanceof DirError)) throw err;
+              refuse(`${err.message}: ${msg.cwd}`);
+              return;
+            }
+            if (held && turns.has(held.turnId)) { held.recycling = true; held.ac.abort(); }
+            for (let i = 0; i < 100 && (busy.has(id) || deps.runner.backgroundSessions().includes(id)); i++) await new Promise((r) => setTimeout(r, 50));
+            if (busy.has(id)) { refuse('세션이 실행 중이라 작업 폴더를 바꿀 수 없습니다 — 끝난 뒤 다시 해 주세요'); return; }
+            const r = await deps.runner.setCwd(id, cwd);
+            if (!r.ok) { refuse(r.error); return; }
+            if (r.engine === 'claude') await deps.meta?.setCwd?.(id, cwd);
+            await rescanIndex();
+            deps.index.regroup();
+            broadcast({ type: 'session_cwd', sessionId: id, cwd });
+            broadcast(indexMsg());
+          })().catch((err: unknown) => refuse(`작업 폴더를 바꾸지 못했습니다: ${errMsg(err)}`));
+          break;
+        }
+        case 'duplicate_session': {
+          // 복제: the same folder, engine, model and account settings, no history. The session itself is created by the
+          // first send of the pane the sender opens with these (its `title` names it then).
+          const id = msg.sessionId;
+          const st = deps.store.get(id);
+          const entry = deps.index.lookup(id);
+          const imported = st || entry ? null : deps.index.codexImport(id);
+          const cwd = st?.cwd ?? entry?.cwd ?? imported?.cwd;
+          if (!cwd) { send(ws, { type: 'error', turnId: null, sessionId: id, message: `복제할 수 없는 세션입니다: ${id}` }); break; }
+          const old = deps.meta?.title?.(id) ?? entry?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === id)?.title ?? imported?.title ?? id.slice(0, 8);
+          const title = `${old} (복사)`.slice(0, 200);
+          if (st && (isCodexState(st) || isGeminiState(st))) send(ws, { type: 'session_duplicate', from: id, cwd, engine: st.engine, model: st.defaultModel, title, sandbox: st.sandbox });
+          else if (imported) send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'codex', model: DEFAULT_CODEX_MODEL, title, sandbox: deps.runner.importSandboxOf(id) ?? DEFAULT_SANDBOX });
+          else send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'claude', model: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, title, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(id) });
+          break;
+        }
         case 'route_preview':
           // A fresh ask is always answered (the pane dropped the last answer when it asked); null with no cwd withdraws it.
           routeSent.delete(ws);

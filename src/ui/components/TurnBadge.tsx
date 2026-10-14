@@ -1,4 +1,4 @@
-import { MODEL_LABEL } from '../../shared/models';
+import { modelLabelOf } from '../../shared/models';
 import type { TurnBadge as Badge } from '../../shared/protocol';
 import { useAccounts } from '../accounts';
 import { has } from '../features';
@@ -39,7 +39,7 @@ export function isFailedTurn(t: { error?: string | null; interrupted?: boolean }
 }
 
 /** Turn footer: account tile, model pill, token counts (or "중단됨" / "실패"), then the routing reason — one muted line. */
-export function TurnBadge({ badge, stopped = false, failed = false, cacheNote = null }: { badge: Badge; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null }) {
+export function TurnBadge({ badge, model, stopped = false, failed = false, cacheNote = null }: { badge: Badge; /** The turn's own model (turn_result / transcript); shown before the badge's. */ model?: string; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null }) {
   const u = badge.usage;
   const names = useAccounts();
   const label = names.label(badge.account);
@@ -49,7 +49,7 @@ export function TurnBadge({ badge, stopped = false, failed = false, cacheNote = 
     <div className={`turn-badge${stopped ? ' stopped' : ''}`}>
       <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={`계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`}><span className="acct-name">{label}</span></span>
       {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
-      <span className="tb-model">{MODEL_LABEL[badge.model]}</span>
+      <span className="tb-model">{modelLabelOf(model ?? badge.model)}</span>
       {stopped ? (
         <span className="tb-stopped" title={tokens}>{failed ? '실패' : '중단됨'}</span>
       ) : (

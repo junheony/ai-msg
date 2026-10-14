@@ -91,7 +91,9 @@ export function useUploads({ uploadFn, current, onUploaded }: { uploadFn: Upload
       }
     }
   }, [uploadFn, current, onUploaded]);
-  return { addFiles, uploading, error };
+  /** Files taken but not attached yet — all of them, also those still queued behind the one uploading now. */
+  const reserved = useCallback(() => pendingRef.current, []);
+  return { addFiles, uploading, error, reserved };
 }
 
 /**
@@ -117,7 +119,7 @@ export function usePasteUploads({ uploadFn, attachments, onUploaded, onUploadFai
     if (t !== undefined) setPastedTexts((m) => ({ ...m, [a.id]: t }));
     return a;
   };
-  const { addFiles: upload, uploading, error } = useUploads({ uploadFn: uploadWithText, current: attachments.length, onUploaded });
+  const { addFiles: upload, uploading, error, reserved } = useUploads({ uploadFn: uploadWithText, current: attachments.length, onUploaded });
   // Once nothing is uploading, texts of removed chips go (all of them, and the numbering restarts, when none is left).
   useEffect(() => {
     if (uploading !== 0) return;
@@ -135,8 +137,9 @@ export function usePasteUploads({ uploadFn, attachments, onUploaded, onUploadFai
     // iOS Safari too: plain getData.
     const pasted = e.clipboardData?.getData?.('text/plain') ?? '';
     if (!pasted || !isLongPaste(pasted) || disabled) return;
-    // No room for another attachment: it pastes as plain text instead.
-    if (attachments.length + uploading >= MAX_ATTACHMENTS_PER_TURN) return;
+    // No room for another attachment: it pastes as plain text instead. Uploads still in flight (or queued behind one)
+    // count, so a paste made while uploading joins the queue as a chip only when it will fit.
+    if (attachments.length + reserved() >= MAX_ATTACHMENTS_PER_TURN) return;
     e.preventDefault();
     const used = attachments.map((a) => /^pasted-(\d+)\.txt$/.exec(a.name)?.[1]).filter(Boolean).map(Number);
     const n = Math.max(pasteSeq.current, ...used) + 1;

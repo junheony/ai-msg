@@ -196,22 +196,15 @@ export function defaultAccountsConfig(profileNames: readonly string[], note: (li
  */
 export const LEGACY_ACCOUNTS: AccountNames = buildRegistry(defaultAccountsConfig(['.claude', '.claude-b', '.claude-c']), { homeDir: '/' });
 
-/** Two Google accounts for gemini-cli, each with its own GEMINI_CLI_HOME (never chosen by 자동). */
+/**
+ * Gemini seats (never chosen by 자동). Kept as two ids so stored session records stay valid, but agy keeps one Google
+ * login in the OS keychain → in practice only g1 is used; g2 always reads as logged out.
+ */
 export type GeminiAccount = 'g1' | 'g2';
 export const GEMINI_ACCOUNTS: readonly GeminiAccount[] = ['g1', 'g2'];
 
 export function isGeminiAccount(x: unknown): x is GeminiAccount {
   return x === 'g1' || x === 'g2';
-}
-
-/** g1 → `<deck config dir>/gemini/g1` (`~/.config/deck/gemini/g1` unless DECK_CONFIG_DIR): gemini-cli keeps everything (OAuth file, settings, chats) under `$GEMINI_CLI_HOME/.gemini`. */
-export function geminiHome(account: GeminiAccount, configDir: string): string {
-  return `${configDir}/gemini/${account}`;
-}
-
-/** The OAuth file gemini-cli writes after "Login with Google". deck only checks that it exists — never reads it. */
-export function geminiCredFile(account: GeminiAccount, configDir: string): string {
-  return `${geminiHome(account, configDir)}/.gemini/oauth_creds.json`;
 }
 
 /** Who ran a turn: a Claude account, the single ChatGPT Pro account, or a Gemini account. */
@@ -232,27 +225,20 @@ export function codexEnv(base: NodeJS.ProcessEnv): Record<string, string | undef
   return env;
 }
 
-/** API keys, ADC, Vertex and endpoint overrides: any of these would bypass the per-account OAuth login. */
+/** API keys, ADC, Vertex and endpoint overrides: any of these would bypass agy's Google (keychain) login. */
 const GEMINI_VARS = [
   'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_CLOUD_PROJECT',
   'GOOGLE_CLOUD_PROJECT_ID', 'GOOGLE_CLOUD_LOCATION', 'GOOGLE_GEMINI_BASE_URL', 'GOOGLE_VERTEX_BASE_URL', 'GEMINI_CLI_USE_COMPUTE_ADC', 'CLOUD_SHELL',
-  // Keychain/encrypted storage uses one shared entry ("gemini-cli-oauth" / "main-account"): g1 and g2 would collide.
-  'GEMINI_FORCE_ENCRYPTED_FILE_STORAGE',
-  // The sandbox is chosen by deck, not inherited.
-  'GEMINI_SANDBOX', 'SEATBELT_PROFILE', 'GEMINI_CLI_TRUST_WORKSPACE', 'GEMINI_CLI_HOME',
+  // Leftovers from gemini-cli setups: never inherited.
+  'GEMINI_FORCE_ENCRYPTED_FILE_STORAGE', 'GEMINI_SANDBOX', 'SEATBELT_PROFILE', 'GEMINI_CLI_TRUST_WORKSPACE', 'GEMINI_CLI_HOME',
 ] as const;
 
 /**
- * Environment for one gemini-cli turn: the base env minus every Anthropic/OpenAI/Google token and routing variable,
- * GEMINI_CLI_HOME pinned to the account's dir (under the deck config dir), and GOOGLE_GENAI_USE_GCA so headless runs use the account's
- * "Login with Google" OAuth file. deck never reads that file.
+ * Environment for one agy run: the base env minus every Anthropic/OpenAI/Google token and routing variable, so agy
+ * uses its own keychain Google login (HOME is kept: agy's state lives in `~/.gemini/antigravity-cli/`). deck never reads it.
  */
-export function geminiEnv(account: GeminiAccount, base: NodeJS.ProcessEnv, configDir: string): Record<string, string | undefined> {
+export function geminiEnv(base: NodeJS.ProcessEnv): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...base };
   for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...OPENAI_VARS, ...GEMINI_VARS]) delete env[v];
-  env.GEMINI_CLI_HOME = geminiHome(account, configDir);
-  env.GOOGLE_GENAI_USE_GCA = 'true';
-  // macOS seatbelt: writes only to the workspace, tmp/cache and the account's .gemini dir.
-  env.SEATBELT_PROFILE = 'permissive-open';
   return env;
 }

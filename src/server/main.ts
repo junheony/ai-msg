@@ -12,7 +12,7 @@ import { ClaudeEngine } from './engine/ClaudeEngine';
 import { CodexEngine } from './engine/CodexEngine';
 import { SlashCommandCache } from './engine/slashCommands';
 import { FileLister } from './files';
-import { GeminiEngine, geminiLoggedIn } from './engine/GeminiEngine';
+import { GeminiEngine, GeminiLogin } from './engine/GeminiEngine';
 import { createRequestHandler } from './http';
 import { installCrashHandlers } from './crash';
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
@@ -72,10 +72,14 @@ async function main(): Promise<void> {
   const stopBackupPruning = startBackupPruning(accounts.all().flatMap((a) => pruneRootsOf(accounts.profileDir(a))), cfg.backupRetentionDays);
   // D11: Codex is optional; without the binary the UI hides the GPT option and 'auto' means Claude.
   const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
-  // Gemini: explicit engine only; an account counts as logged in once its OAuth file exists (never read).
-  const geminiLogin = (a: GeminiAccount) => geminiLoggedIn(a, cfg.configDir);
-  const gemini = cfg.geminiBin ? { engine: new GeminiEngine(cfg.geminiBin, cfg.configDir), loggedIn: geminiLogin } : null;
-  const geminiStatus = () => ({ available: gemini !== null, loggedIn: Object.fromEntries(GEMINI_ACCOUNTS.map((a) => [a, gemini !== null && geminiLogin(a)])) as Record<GeminiAccount, boolean> });
+  // Gemini (agy): explicit engine only; logged in = an `agy models` probe exited 0 (cached 5 min, checked in the background).
+  const geminiLogin = cfg.geminiBin ? new GeminiLogin(cfg.geminiBin) : null;
+  void geminiLogin?.refresh();
+  const gemini = cfg.geminiBin && geminiLogin ? { engine: new GeminiEngine(cfg.geminiBin), loggedIn: (a: GeminiAccount) => geminiLogin.get(a) } : null;
+  const geminiStatus = () => {
+    geminiLogin?.ensureFresh();
+    return { available: gemini !== null, loggedIn: Object.fromEntries(GEMINI_ACCOUNTS.map((a) => [a, geminiLogin?.get(a) ?? false])) as Record<GeminiAccount, boolean> };
+  };
 
   // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) or by a fork reach it through this.
   let notifyIndex = () => {};
@@ -127,7 +131,7 @@ async function main(): Promise<void> {
   notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 
-  console.log(`deck: 세션 ${index.sessions().length}개 · 계정 ${accounts.all().map((a) => `${a}${accounts.isRetired(a) ? '(retired)' : ''}${accounts.isHome(a) ? '(home)' : ''}`).join(' ')} · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · codex ${cfg.codexBin ?? '없음'} · gemini ${cfg.geminiBin ?? '없음'}`);
+  console.log(`deck: 세션 ${index.sessions().length}개 · 계정 ${accounts.all().map((a) => `${a}${accounts.isRetired(a) ? '(retired)' : ''}${accounts.isHome(a) ? '(home)' : ''}`).join(' ')} · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · codex ${cfg.codexBin ?? '없음'} · agy ${cfg.geminiBin ?? '없음'}`);
   if (cfg.cwdRoots.length > 1) console.log(`deck: 새 세션 추가 허용 경로(DECK_EXTRA_CWD_ROOTS): ${cfg.cwdRoots.slice(1).join(', ')}`);
   for (const a of addresses) console.log(`deck: http://${a}:${cfg.port}`);
   if (dnsName) console.log(`deck: https://${dnsName}/ (tailscale serve 로 띄웠을 때 — 폰 앱·알림용)`);

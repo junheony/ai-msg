@@ -1,68 +1,75 @@
-# Gemini CLI spike (gemini-cli 0.62.0)
+# Gemini 엔진 — Antigravity CLI (agy 1.3.5)
 
 deck 의 세 번째 엔진. **명시 선택 전용** — 엔진 선택에서 "Gemini" 를 고를 때만 쓰이고, 자동(모델 자동·엔진 자동)은 절대 Gemini 로 열지 않는다.
 
+Google 이 2026-06-18 에 개인 계정(무료·AI Pro·Ultra)용 gemini-cli 서비스를 끝냈다(`IneligibleTierError … migrate to the Antigravity suite`). 그래서 deck 은 후속인 **Antigravity CLI `agy`** 를 쓴다.
+
 ## 설치
 
-`npm i -g @google/gemini-cli --prefix ~/.local` → `~/.local/bin/gemini` (sudo 없음).
-deck 은 `DECK_GEMINI_BIN` → `PATH` → `~/.local/bin/gemini` 순으로 찾는다. 없으면 Gemini 선택지 자체가 숨겨진다.
+```sh
+curl -fsSL https://antigravity.google/cli/install.sh | bash   # → ~/.local/bin/agy
+```
+
+deck 은 `DECK_GEMINI_BIN` → `PATH` 의 `agy` → `~/.local/bin/agy` 순으로 찾는다(`gemini` 는 더 찾지 않는다). 없으면 Gemini 선택지 자체가 숨겨진다.
 
 ## 로그인 (사용자가 직접 — deck 은 로그인하지 않는다)
 
-계정은 `g1`, `g2` 두 칸. 계정마다 홈을 분리한다(`GEMINI_CLI_HOME`).
-
 ```sh
-# API 키가 있으면 OAuth 대신 키를 쓰므로 먼저 지운다
-unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_GENAI_USE_VERTEXAI
-
-mkdir -p ~/.config/deck/gemini/g1
-GEMINI_CLI_HOME=~/.config/deck/gemini/g1 gemini
-#   → "Login with Google" 선택 → 브라우저에서 계정 1 로 로그인 → /quit
-
-mkdir -p ~/.config/deck/gemini/g2
-GEMINI_CLI_HOME=~/.config/deck/gemini/g2 gemini
-#   → "Login with Google" → 계정 2 → /quit
+unset GEMINI_API_KEY GOOGLE_API_KEY   # 키가 있으면 키를 쓴다 (deck 은 자식 env 에서 지운다)
+agy                                   # 인자 없이 → 브라우저에서 Google 로그인 → 종료
 ```
 
-로그인 판정: `~/.config/deck/gemini/<acct>/.gemini/oauth_creds.json` **존재 여부만** 본다(deck 은 이 파일을 열지 않는다).
-`GEMINI_FORCE_ENCRYPTED_FILE_STORAGE` 를 켜면 자격이 키체인 공유 항목으로 가서 두 계정이 충돌하므로 쓰지 말 것 — deck 은 자식 env 에서 이 변수를 지운다.
-로그인 후 deck 재접속(새로고침) 시 "Gemini · 로그인 필요" 가 활성 "Gemini" 로 바뀐다.
+- 자격은 **OS 키체인**(macOS Keychain)에 저장된다 — 파일이 없다. 설정·상태는 `~/.gemini/antigravity-cli/`.
+- 계정 전환: `agy` 안에서 `/logout` 후 다시 로그인.
+- **Mac 한 대에 Google 계정 하나.** deck 의 `g1`/`g2` 두 칸 중 실제로는 `g1` 만 쓰이고 `G2` 자리는 항상 "로그인 안 됨"(세션 레코드 호환 때문에 id 만 남겨 둠).
+- 로그인 판정: `agy models` 프로브(종료 코드 0 = 로그인, 비0·15초 타임아웃·실행 실패 = 아님). 서버 시작 때 한 번, 이후 상태 요청 시 캐시가 **5분**을 넘으면 백그라운드로 다시 확인. 동시 확인은 하나로 합친다. 로그인 직후엔 최대 5분 뒤(또는 서버 재시작 후) "Gemini · 로그인 필요" 가 "Gemini" 로 바뀐다.
 
-## 동작하는 것
+## 동작
 
 | 항목 | 방식 |
 |---|---|
-| 헤드리스 | stdin 이 TTY 가 아니면 헤드리스. deck 은 프롬프트를 **stdin** 으로만 넘긴다(argv 에 넣지 않음). |
-| 스트림 | `-o stream-json`: `init{session_id,model}` · `message{role,content,delta}` · `tool_use` · `tool_result` · `error{severity,message}` · `result{status,error?,stats}` |
-| 이어하기 | `--resume <uuid>` — 대화는 `$GEMINI_CLI_HOME/.gemini/tmp/<project>/chats` 에 있어 **같은 cwd·같은 계정**이어야 한다. deck 은 세션을 계정에 고정하고, UUID 가 아닌 id 는 거부한다. |
-| 신뢰 | `--skip-trust` (미신뢰 폴더에서 헤드리스가 실패하므로) |
-| 권한 | 읽기 전용 → `--approval-mode plan`, 파일 편집 허용 → `auto_edit`. 헤드리스는 확인이 필요한 도구를 거부한다. |
-| 샌드박스 | macOS: `-s` + `SEATBELT_PROFILE=permissive-open` (sandbox-exec) — 쓰기는 작업 폴더·tmp/cache·`~/.gemini` 만. |
-| 인증 | `GOOGLE_GENAI_USE_GCA=true` 로 OAuth 강제, API 키/Vertex/ADC/베이스 URL 변수는 전부 제거. |
-| 사용량 | `result.stats` 의 `input_tokens`(cached 포함) · `output_tokens` · `cached` → deck usage 로 환산. |
-| 한도 | `RESOURCE_EXHAUSTED` / `Quota exceeded` / 429 를 감지하면 그 계정을 메모리에서 쿨다운, 새 세션은 다른 계정(g1→g2)으로. |
+| 헤드리스 | `agy -p=<프롬프트> --output-format stream-json --model <slug> --effort <e> --mode <m> [--sandbox] --disable-slash-commands --print-timeout 0 [--conversation <id>]`. `-p` 는 값을 받는 플래그라 **반드시 `-p=` 한 argv 요소**로 붙인다. stdin 은 바로 닫는다. |
+| 스트림 | 한 줄 = `{"event":"<이름>","<이름>":{…}}`. `init`(cwd, tools, permission_mode, conversation_id?) · `step_update`(step_type, state, text_delta, tool_info) · `result`(conversation_id, status, response, error, usage). 알 수 없는 이벤트는 무시. |
+| 매핑 | `step_update.text_delta` → 본문 delta (step_type 이 thought/thinking/reasoning 이면 thinking). `tool_info` → id 당 한 번 tool_call, state 가 done/complete/success/error/fail 이고 output/result/error 가 있으면 tool_result. `result.status === 'SUCCESS'` 면 성공, 본문은 누적 delta(없으면 `response`). |
+| 상태값 | SUCCESS, ERROR, CANCELED, INTERRUPTED, INVALID, WAITING, RUNNING. 종료 코드 0 성공 / 1 오류 / 2 잘못된 입력. |
+| 이어하기 | `--conversation <id>` (id 는 `init`/`result` 의 conversation_id). 플래그 모양 id 는 거부(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`). |
+| 권한 | 읽기 전용 → `--mode plan`, 파일 편집 허용 → `--mode accept-edits --sandbox`. `--dangerously-skip-permissions` 는 절대 쓰지 않는다. |
+| 인증 | 키체인 로그인만. API 키/Vertex/ADC/베이스 URL 변수와 gemini-cli 잔재(`GEMINI_CLI_HOME`, `SEATBELT_PROFILE` 등)는 자식 env 에서 제거. |
+| 미로그인 | stderr `authentication required. Run 'agy' to log in` + result `error: "authentication failed or timed out"` → "Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인". |
+| 사용량 | `result.usage`: `input_tokens` → 입력, `output_tokens` → 출력, `cache_read_tokens` → 캐시 읽기 (`thinking_tokens` 는 쓰지 않음). |
+| 한도 | 오류 문구에 quota / rate limit / RESOURCE_EXHAUSTED / 429 가 있으면 그 계정을 메모리에서 쿨다운. |
+
+확인된 실제 한 줄(미로그인):
+
+```json
+{"event":"result","result":{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}
+```
 
 ## 모델
 
-Gemini 4.0 id 는 0.62 와 nightly 0.64 어디에도 없다. 알려진 id: `gemini-2.5-pro`(기본), `gemini-3-pro-preview`, `gemini-3.1-pro-preview`, `gemini-3-flash-preview`, `gemini-3.5-flash`, `gemini-3.8-flash`, `gemini-3.1-flash-lite`, `gemini-3.5-flash-lite`. 모델 구성은 서버에서 동적으로 내려온다.
-그래서 deck 은 별칭만 쓴다: **Gemini Pro → `-m pro`**, **Gemini Flash → `-m flash`**. 실제 모델명은 `init.model` 로 받는다.
-추론 수준(effort) 플래그는 없다 — 피커에서 effort 가 비활성.
+deck id 는 저장된 세션 호환을 위해 그대로 둔다.
+
+| deck id | 이름 | `--model` |
+|---|---|---|
+| `gemini-pro` | Gemini 4 Argon | `gemini-4-argon` |
+| `gemini-flash` | Gemini Flash | `gemini-3.8-flash` |
+
+바이너리에 있는 다른 슬러그: `gemini-4-argon-low/-medium/-high`, `gemini-3.8-flash-*` 변형, `gemini-3.1-pro`, `gemini-3-flash`. effort 는 슬러그 변형 대신 `--effort` 플래그로 보낸다 — 피커에서 낮음·중간·높음·엑스트라 선택 가능(기본 중간).
 
 ## 한계
 
-- **기록 없음**: Gemini 세션을 다시 열면 이전 메시지가 보이지 않는다(deck 은 gemini 의 chat 파일을 읽지 않는다). 이어하기 자체는 된다.
-- **네트워크 미차단**: seatbelt 의 네트워크 차단 프로필은 프록시(localhost:8877)가 필요해 쓰지 않는다. 쓰기만 제한된다.
-- **셸 불가**: `auto_edit` 에서도 셸 명령은 확인이 필요해 헤드리스에서 거부된다. 편집만 가능.
-- **프롬프트 해석**: `/` 로 시작하면 슬래시 명령, `@경로` 는 파일 삽입으로 해석된다.
-- **샌드박스 안에서는** gemini 가 프롬프트를 자식 argv 로 다시 넘긴다(프로세스 목록에 보일 수 있음).
-- **Linux**: `-s` 는 docker/podman 이 필요해 끈다 — approval mode 만 보호.
-- **쿼터 조회 불가**: 로컬에서 남은 한도를 읽을 수 없다(무료: 60 req/min, 1000 req/day). 쿨다운은 메모리에만 있어 재시작하면 초기화.
-- **첨부**: 작업 폴더 밖 첨부 파일은 gemini 의 파일 도구(및 seatbelt)가 못 읽을 수 있다.
-- 사용량 헤더(5h/주간)에는 Gemini 가 포함되지 않는다.
+- **`step_update` 세부 형식 미확인**: 필드 이름은 문서 기준이고 실제 줄은 아직 못 봤다(로그인 후 첫 실행에서 확인 필요). 특히 `tool_info` 의 id/name/input/output 키, `step_type`·`state` 값.
+- **`init` 의 conversation_id 미확인**: 없으면 `result` 의 conversation_id 로 세션을 잡는다.
+- **프롬프트가 argv 에 보인다**: 프로세스 목록(`ps`)에서 프롬프트가 보일 수 있다(`--input-format stream-json` 은 메시지 형식이 미확인이라 쓰지 않음).
+- **기록 없음**: Gemini 세션을 다시 열면 이전 메시지가 보이지 않는다. 이어하기 자체는 된다.
+- **계정 하나**: 키체인 로그인이 하나뿐이라 g1/g2 분산·쿨다운 우회는 사실상 없다.
+- **쿼터 조회 불가**: 남은 한도를 읽을 수 없고, 사용량 헤더(5h/주간)에도 Gemini 는 포함되지 않는다.
 
 ## 코드
 
-- `src/server/engine/GeminiEngine.ts` — args, 이벤트 매퍼, 프로세스 실행, `resolveGeminiBin`, `geminiLoggedIn`
-- `src/shared/accounts.ts` — `GeminiAccount`, `geminiHome`, `geminiCredFile`, `geminiEnv`
-- `src/server/turn/TurnRunner.ts` — `runGemini` (계정 선택·고정·쿨다운)
-- 테스트: `GeminiEngine.test.ts` (가짜 gemini 바이너리), `TurnRunner.test.ts` 의 "Gemini sessions"
+- `src/server/engine/GeminiEngine.ts` — `geminiArgs`, `GeminiEventMapper`, `GeminiEngine`(프로세스 실행), `resolveGeminiBin`, `GeminiLogin`(프로브+캐시)
+- `src/shared/accounts.ts` — `GeminiAccount`, `geminiEnv`
+- `src/shared/models.ts` — `GEMINI_CLI_ALIAS`, 라벨, effort
+- `src/server/turn/TurnRunner.ts` — `runGemini` (계정 선택·고정·쿨다운·effort)
+- `src/server/main.ts` — `GeminiLogin` 연결
+- 테스트: `GeminiEngine.test.ts` (가짜 agy 바이너리), `TurnRunner.test.ts` 의 "Gemini sessions"

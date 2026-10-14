@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CODEX_CLI_MODEL, CODEX_MODELS, MODEL_INFO, DEFAULT_CODEX_MODEL, DEFAULT_SANDBOX, MODEL_LABEL, SANDBOX_LABEL, defaultGeminiSandbox, isCodexModel } from './models';
+import { CODEX_CLI_MODEL, CODEX_MODELS, MODEL_INFO, DEFAULT_CODEX_MODEL, DEFAULT_SANDBOX, MODEL_LABEL, SANDBOX_LABEL, defaultGeminiSandbox, isCodexModel, modelLabelOf } from './models';
 
 describe('sandbox defaults (D2, 다 붙여)', () => {
   it('GPT: workspace-write with network is the default and says so; Gemini keeps plan unless 자동 승인', () => {
@@ -25,5 +25,18 @@ describe('codex models (D1)', () => {
     expect(CODEX_CLI_MODEL).toEqual({ 'gpt-6-sol': 'gpt-6.1-sol', 'gpt-6-astra': 'gpt-6-astra' });
     expect(MODEL_INFO['gpt-6-sol'].name).toBe('GPT-6.1-Sol');
     expect(isCodexModel('gpt-6.1-sol')).toBe(false);
+  });
+});
+
+describe('modelLabelOf (턴별 모델)', () => {
+  it('deck aliases and Codex CLI slugs by MODEL_LABEL, Claude ids as family + version, others as they are', () => {
+    expect(modelLabelOf('opus')).toBe('Opus');
+    expect(modelLabelOf('gpt-6-sol')).toBe('GPT Sol');
+    expect(modelLabelOf('gpt-6.1-sol')).toBe('GPT Sol');
+    expect(modelLabelOf('claude-opus-5-5')).toBe('Opus 5.5');
+    expect(modelLabelOf('claude-sonnet-4-5-20250929')).toBe('Sonnet 4.5');
+    expect(modelLabelOf('claude-3-5-sonnet-20241022')).toBe('Sonnet');
+    expect(modelLabelOf('claude-fable-1')).toBe('Fable 1');
+    expect(modelLabelOf('some-model')).toBe('some-model');
   });
 });

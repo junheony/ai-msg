@@ -46,6 +46,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
      * `expect` is that message as the device showed it — the server checks it (nearest match) before forking.
      */
     branch: z.object({ from: z.string().min(1).max(200), n: z.number().int().min(0).max(1_000_000), expect: z.string().max(200_000).optional() }).optional(),
+    /** 복제 (new sessions only): deck's title for the new session, set in session meta once it has an id. */
+    title: z.string().min(1).max(200).optional(),
   }),
   z.object({ type: z.literal('permission_response'), requestId: z.string().min(1), decision: z.enum(['once', 'session', 'deny']) }),
   /** D8: answers keyed by the question text, values are option labels (comma-joined for multiSelect) or free text. */
@@ -105,6 +107,13 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * answer); the server remembers the socket's last ask and answers it again after a usage change that changes the answer.
    * `sessionId: null` with no `cwd` withdraws the ask (the pane left Claude): nothing more is sent.
    */
+  /**
+   * 작업 폴더 바꾸기: the session's next turns run in `cwd` (an existing folder under the allowed roots). Refused while the
+   * session runs or holds background work. Answered with `session_cwd` to every device (and an `index`); refused with `error`.
+   */
+  z.object({ type: z.literal('set_cwd'), sessionId: z.string().min(1).max(200), cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }) }),
+  /** 복제: the sender gets `session_duplicate` (the session's settings for a new, empty session); nothing is copied yet. */
+  z.object({ type: z.literal('duplicate_session'), sessionId: z.string().min(1).max(200) }),
   z.object({ type: z.literal('route_preview'), sessionId: z.string().min(1).max(200).nullable(), cwd: z.string().min(1).max(4096).optional(), model: z.enum(['sonnet', 'opus', 'fable', 'auto']).optional() }),
 ]);
 
@@ -160,8 +169,9 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - sessionSandbox: `set_sandbox` changes an existing GPT session's sandbox (announced to sockets that accept 'sandbox').
  * - routePreview: `route_preview` asks are answered with `route_preview` (and again after usage changes).
  * - highlights: GET /api/highlights answers (세션 하이라이트, events.jsonl).
+ * - sessionOps: `set_cwd` (작업 폴더 바꾸기) and `duplicate_session` (복제) are answered; `send.title` is applied.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**
@@ -252,7 +262,7 @@ export type ServerMessage =
    * `turnId` names the turn the work belongs to (interrupt it to stop the work).
    */
   | ({ type: 'turn_background'; tasks: string[]; /** Per task: id (for stop_task), type, age. */ detail?: BgTaskInfo[]; /** stop_task works for this turn. */ canStop?: boolean } & TurnScope)
-  | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null } & TurnScope)
+  | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null; /** The model alias the engine ran this turn on (absent: unknown / an older server). */ model?: string } & TurnScope)
   /**
    * A steer reached the model, at this point of the transcript (mid-turn after a tool round, or as the start of its own
    * turn right after `turnId`'s result). Every device viewing the session shows `prompt` as the user's message here.
@@ -260,6 +270,13 @@ export type ServerMessage =
   | ({ type: 'steer_delivered'; steerId: string; prompt: TurnPrompt; /** Re-sent after `history` to a device that opened the session mid-turn (the transcript may already show it). */ replay?: true } & TurnScope)
   /** A steer did not go in (no running Claude turn, process closed, retry/failover): the sending device sends it after the turn. */
   | ({ type: 'steer_rejected'; steerId: string; message: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode } & TurnScope)
+  /** 작업 폴더 바꾸기 (set_cwd) took: the session's turns run in `cwd` from now on. */
+  | { type: 'session_cwd'; sessionId: string; cwd: string }
+  /**
+   * 복제 (duplicate_session), to the sender only: open a new session with these settings. `title` = "<원래 제목> (복사)",
+   * sent back as the first send's `title`. No history is copied.
+   */
+  | { type: 'session_duplicate'; from: string; cwd: string; engine: EngineKind; model: AnyModel; title: string; accountPin?: Account | null; permissionMode?: PermMode; sandbox?: CodexSandbox }
   | { type: 'error'; turnId: string | null; message: string; pos?: StreamPos; clientRef?: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string; /** An answer to this permission / question card came too late (another device answered it first): the card goes, nothing is shown. */ requestId?: string };
 
 /**

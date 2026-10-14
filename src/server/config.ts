@@ -30,7 +30,7 @@ export type DeckConfig = {
   extraHosts: string[];
   /** D11: null = Codex disabled (no `codex` binary found). */
   codexBin: string | null;
-  /** null = Gemini disabled (no `gemini` binary found). Accounts live under `<configDir>/gemini/<g1|g2>`. */
+  /** null = Gemini disabled (no `agy` Antigravity CLI found). agy keeps its own keychain login; deck never logs in. */
   geminiBin: string | null;
   /** `$CODEX_HOME/sessions` (rollout files; read-only for deck). */
   codexSessionsRoot: string;
