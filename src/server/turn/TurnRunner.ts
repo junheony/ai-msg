@@ -11,7 +11,7 @@ import type { CodexEngine } from '../engine/CodexEngine';
 import type { GeminiEngine } from '../engine/GeminiEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
-import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetHint } from '../engine/limitDetect';
+import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetAtMs, limitResetHint } from '../engine/limitDetect';
 import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
 import { chooseAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
@@ -72,7 +72,13 @@ export type TurnParams = {
   failoverHop?: number;
   /** Server-internal (failoverAfterBackground): a follow-up's send ref, carried on its turn_started so ws records the message as taken. */
   clientRef?: string;
+  /** Server-internal: this turn is the n-th automatic retry after 대안 계정 없음 (SessionState.pendingRetry, fired through ws). */
+  retryHop?: number;
 };
+
+/** 대안 계정 없음 → at most this many automatic retries of the same prompt (SessionState.pendingRetry). */
+export const MAX_RETRY_HOPS = 2;
+export const AUTO_RETRY_NOTICE = '한도가 풀려 자동으로 다시 시도합니다';
 
 export type TurnRunnerDeps = {
   engine: Engine;
@@ -148,7 +154,8 @@ type Attempt = {
 export type RoutePreview = { account: Account; asOpus?: boolean; reason: string };
 
 /** A user message for a session whose process is still open for background work (see `followUp`). */
-export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string };
+/** `retryHop`: an automatic retry (TurnParams.retryHop) that found the session's process held open. */
+export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string; retryHop?: number };
 
 /**
  * A background / follow-up segment of a held-open process ended on a limit or auth failure (followThrough): the process
@@ -1066,6 +1073,7 @@ export class TurnRunner {
     const sendFollowUp = (f: FollowUpParams, attachments: Attachment[]) => {
       const note = isClaudeModel(f.model) && f.model !== model ? '백그라운드 대기 중인 프로세스의 모델 유지' : null;
       open(f.turnId, '백그라운드 대기 중 이어 보냄', note, f.clientRef, { f, attachments });
+      if (f.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: AUTO_RETRY_NOTICE });
       const turnId = f.turnId;
       // Its turn_started recorded the ref as accepted: an error carrying it takes that back (ws), so a resent copy goes in.
       const failed = (errorText: string) => {
@@ -1565,6 +1573,7 @@ export class TurnRunner {
       }
     }
     if (!state?.sessionId && !forkAt && !p.handoff) systemNote = systemNote ? `${systemNote}\n\n${DECK_INTRO_NOTE}` : DECK_INTRO_NOTE;
+    if (p.retryHop) early.unshift(AUTO_RETRY_NOTICE);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     const tried: Account[] = [];
@@ -1686,6 +1695,10 @@ export class TurnRunner {
         tried.push(cand.account);
       }
       if (!next) {
+        // Nowhere to go on a limit: the same prompt is tried again by itself once a limit should have lifted (written before
+        // the result, so BottleneckWatch sees the booking with it). Not for a fork, a handoff note or a turn with files.
+        const sid = shownId();
+        if (failure === 'limit' && !moveRefused && sid && !p.handoff && !p.attachments?.length) await this.bookRetry(sid, p.text, p.retryHop, res.errorText).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : '대안 계정 없음'} · ${shownError ?? ''}`.trim() });
         announceMode();
         return done();
@@ -1697,6 +1710,23 @@ export class TurnRunner {
       byPin = false;
     }
     return done();
+  }
+
+  /**
+   * 대안 계정 없음: books an automatic retry of `text` in session `sessionId` (SessionState.pendingRetry) — at the reset time
+   * the limit text names (+1 min), else a minute after the earliest account cooldown ends, else in 30 minutes. The
+   * (MAX_RETRY_HOPS+1)-th failure in a row books nothing. BottleneckWatch fires it through ws's send path.
+   */
+  private async bookRetry(sessionId: string, text: string, prevHop: number | undefined, errorText: string | null): Promise<void> {
+    const hops = (prevHop ?? 0) + 1;
+    if (hops > MAX_RETRY_HOPS) return;
+    const st = this.deps.store.get(sessionId);
+    if (!st) return;
+    const now = this.now();
+    const reset = limitResetAtMs(errorText, now);
+    const cooled = Object.values(readAllCooldownsMs(this.deps.cooldownDir, now, this.accounts.list())).filter((v): v is number => v !== undefined);
+    const atMs = reset !== null ? reset + 60_000 : cooled.length ? Math.min(...cooled) + 60_000 : now + 30 * 60_000;
+    await this.deps.store.set({ ...st, pendingRetry: { text, atMs, hops } });
   }
 
   /**
@@ -1718,9 +1748,15 @@ export class TurnRunner {
       for (const q of need.queued) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
     };
     const noneLeft = `${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 대안 계정 없음`;
+    // A background continuation is booked as '이어서 진행해 주세요.', a failed follow-up as its own text (not with files).
+    const retryText = need.followUp ? (need.followUp.f.attachments?.length ? null : need.followUp.f.text) : '이어서 진행해 주세요.';
+    const none = async () => {
+      if (need.failure === 'limit' && retryText) await this.bookRetry(sessionId, retryText, need.followUp ? need.followUp.f.retryHop : p.retryHop, need.errorText).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
+      fail(noneLeft);
+    };
     try {
       const hop = p.failoverHop ?? 0;
-      if (hop >= this.accounts.list().length - 1) { fail(noneLeft); return; }
+      if (hop >= this.accounts.list().length - 1) { await none(); return; }
       const cand = chooseAccount({
         ...routerBase,
         usage: deps.usage.routingSnapshot(),
@@ -1731,7 +1767,7 @@ export class TurnRunner {
         cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()),
         exclude: [account],
       });
-      if (cand.account === account) { fail(noneLeft); return; }
+      if (cand.account === account) { await none(); return; }
       sink.emit({ type: 'turn_retry', turnId: need.seg.turnId, sessionId, cwd, fromAccount: account, toAccount: cand.account, reason: `${why}${hint ? ` · ${hint}` : ''} → ${cand.reason}`, attempt: 1 });
       sink.emit({ type: 'turn_notice', turnId: need.seg.turnId, sessionId, cwd, message: `${this.label(account)} 계정 ${why}${hint ? ` (${hint})` : ''} — ${this.label(cand.account)} 계정으로 이어서 진행합니다` });
       const st = deps.store.get(sessionId);
@@ -1743,7 +1779,7 @@ export class TurnRunner {
         if (!need.followUp || need.tasks.length) await deps.store.set({ ...st, interrupted: { atMs: this.now(), tasks: need.tasks, cause: `${this.label(account)} 계정 ${why}` } });
       }
       const next = { cwd, sessionId, failoverHop: hop + 1 };
-      const ofFollowUp = (f: FollowUpParams): TurnParams => ({ ...next, turnId: f.turnId, text: f.text, ...(f.model ? { model: f.model } : {}), ...(f.attachments ? { attachments: f.attachments } : {}), ...(f.clientRef ? { clientRef: f.clientRef } : {}) });
+      const ofFollowUp = (f: FollowUpParams): TurnParams => ({ ...next, turnId: f.turnId, text: f.text, ...(f.model ? { model: f.model } : {}), ...(f.attachments ? { attachments: f.attachments } : {}), ...(f.clientRef ? { clientRef: f.clientRef } : {}), ...(f.retryHop ? { retryHop: f.retryHop } : {}) });
       // The continuation refused before its turn_started (attachment purged, session gone): the segment that got the
       // turn_retry still needs an end, else the pane waits on it.
       let started = false;

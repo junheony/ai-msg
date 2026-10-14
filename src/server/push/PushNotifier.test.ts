@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { ServerMessage } from '../../shared/protocol';
-import { PushNotifier, firstLine, selectPush, type PushSender } from './PushNotifier';
+import { AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
+import { LONG_TURN_MS, PushNotifier, firstLine, selectPush, turnNeedsAttention, type PushSender } from './PushNotifier';
 import { SubscriptionStore } from './SubscriptionStore';
 
 const scope = { turnId: 't1', sessionId: 's1', cwd: '/Users/alice/dev/proj' };
@@ -114,5 +115,107 @@ describe('PushNotifier (mock sender)', () => {
     expect(logged.join('\n')).not.toContain('/fcm/send/live');
     expect(logged.join('\n')).not.toContain('priv');
     expect(store.list()).toHaveLength(2);
+  });
+});
+
+describe('turnNeedsAttention (which finished turns are pushed)', () => {
+  it('a failure or a long turn always', () => {
+    expect(turnNeedsAttention('', false, 1000)).toBe(true);
+    expect(turnNeedsAttention('고쳤습니다.', true, LONG_TURN_MS)).toBe(true);
+    expect(turnNeedsAttention('고쳤습니다.', true, LONG_TURN_MS - 1)).toBe(false);
+    expect(turnNeedsAttention('고쳤습니다.', true, null)).toBe(false);
+  });
+
+  it('the last paragraph asks: ends with ? / ？ or asks to pick / confirm', () => {
+    expect(turnNeedsAttention('바꿨습니다.\n\n이대로 커밋할까요?', true, 0)).toBe(true);
+    expect(turnNeedsAttention('바꿨습니다.\n\n**A 와 B 중 어느 쪽？**', true, 0)).toBe(true);
+    expect(turnNeedsAttention('둘 중 하나를 골라 주세요.', true, 0)).toBe(true);
+    expect(turnNeedsAttention('바꿨습니다.\n\n어느 쪽으로 진행할지 알려 주세요.', true, 0)).toBe(true);
+    expect(turnNeedsAttention('Done.\n\nLet me know which one you prefer.', true, 0)).toBe(true);
+    expect(turnNeedsAttention('Done.\n\nShould I also update the docs.', true, 0)).toBe(true);
+    expect(turnNeedsAttention('Done.\n\nDo you want me to push.', true, 0)).toBe(true);
+    // A question earlier on, answered by the end: not.
+    expect(turnNeedsAttention('왜 실패했을까?\n\n원인을 찾아 고쳤습니다.', true, 0)).toBe(false);
+  });
+
+  it('a closing list is looked past to the paragraph before it', () => {
+    expect(turnNeedsAttention('둘 중 어느 쪽으로 할까요?\n\n- A안: 빠름\n- B안: 안전', true, 0)).toBe(true);
+    expect(turnNeedsAttention('정리했습니다:\n\n1. 빌드\n2. 테스트', true, 0)).toBe(false);
+  });
+
+  it('words that only look like asking are not', () => {
+    expect(turnNeedsAttention('바꿨습니다.\n\n원하시면 테스트도 추가하겠습니다.', true, 0)).toBe(false);
+    expect(turnNeedsAttention('원하시면 언제든 다시 돌릴 수 있습니다.', true, 0)).toBe(false);
+    expect(turnNeedsAttention('실패한 테스트 3개를 골라냈습니다.', true, 0)).toBe(false);
+    expect(turnNeedsAttention('B안을 선택해서 적용했습니다.', true, 0)).toBe(false);
+  });
+
+  it('code fences are left out first', () => {
+    // A ? or a # line inside a fence neither asks nor is a heading…
+    expect(turnNeedsAttention('설정을 바꿨습니다.\n\n```bash\n# TODO\nread -p "continue?"\n```', true, 0)).toBe(false);
+    // …nor hides the question / heading before it.
+    expect(turnNeedsAttention('이대로 배포할까요?\n\n```bash\n# 설치\nnpm i\n```', true, 0)).toBe(true);
+    expect(turnNeedsAttention('## 다음 단계\n실행:\n\n```bash\n# 설치\nnpm i\n```', true, 0)).toBe(true);
+    // An unclosed fence runs to the end.
+    expect(turnNeedsAttention('고쳤습니다.\n\n```\nwhy?', true, 0)).toBe(false);
+  });
+
+  it('the last heading is a 남은 일 / 다음 단계 / 결정 / 확인 필요 / TODO / 질문 section', () => {
+    expect(turnNeedsAttention('## 한 일\n- a\n\n## 남은 일\n- b', true, 0)).toBe(true);
+    expect(turnNeedsAttention('**확인 필요**\n- 키 값', true, 0)).toBe(true);
+    expect(turnNeedsAttention('### TODO\n- x\n\n끝.', true, 0)).toBe(true);
+    expect(turnNeedsAttention('## 남은 일\n- 없음\n\n## 검증\n통과.', true, 0)).toBe(false);
+    expect(turnNeedsAttention('#### 남은 일\n- b', true, 0)).toBe(false);
+    expect(turnNeedsAttention('## 2. 결정 필요:\n- 색', true, 0)).toBe(true);
+    // Only the whole heading counts.
+    expect(turnNeedsAttention('## 결정한 것\n- 색은 파랑', true, 0)).toBe(false);
+    expect(turnNeedsAttention('## 질문에 대한 답\n그렇습니다.', true, 0)).toBe(false);
+  });
+});
+
+describe('PushNotifier.notify · turn results', () => {
+  const setup = async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-notifier-turn-'));
+    const store = new SubscriptionStore(path.join(dir, 'subs.json'));
+    await store.add({ endpoint: 'https://fcm.googleapis.com/fcm/send/live', keys: { p256dh: 'P', auth: 'A' } });
+    const calls: { body: string }[] = [];
+    let now = 1_000_000;
+    const n = new PushNotifier({ store, vapid: { publicKey: 'pub', privateKey: 'priv' }, subject: 's', titleOf, send: async (_s, payload) => { calls.push(JSON.parse(payload)); }, now: () => now });
+    return { n, calls, advance: (ms: number) => { now += ms; } };
+  };
+  const started = (turnId: string): ServerMessage => ({ type: 'turn_started', ...scope, turnId, account: 'a', model: 'opus', reason: 'r', attempt: 0 } as ServerMessage);
+  const result = (turnId: string, ok: boolean, text = '고쳤습니다.'): ServerMessage => ({ type: 'turn_result', ...scope, turnId, ok, text, badge: null, errorText: ok ? null : 'boom' });
+
+  it('a quiet short success is not pushed; a long one is (timed from its first turn_started)', async () => {
+    const { n, calls, advance } = await setup();
+    n.notify(started('t1'));
+    advance(60_000);
+    n.notify(result('t1', true));
+    n.notify(started('t2'));
+    advance(LONG_TURN_MS / 2);
+    n.notify(started('t2')); // a retry attempt of the same turn
+    advance(LONG_TURN_MS / 2);
+    n.notify(result('t2', true));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.body).toBe('완료 · 고쳤습니다.');
+  });
+
+  it('a background segment only when it failed', async () => {
+    const { n, calls } = await setup();
+    n.notify(result('t1:bg1', true, '할까요?'));
+    n.notify(result('t1:bg2', false));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.body).toBe('실패 · boom');
+  });
+
+  it('a turn deck retried by itself is always pushed, even a quiet success', async () => {
+    const { n, calls } = await setup();
+    n.notify(started('t1'));
+    n.notify({ type: 'turn_notice', ...scope, turnId: 't1', message: AUTO_RETRY_NOTICE });
+    n.notify(result('t1', true));
+    n.notify(started('t2'));
+    n.notify(result('t2', true));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.body).toBe('완료 · 고쳤습니다.');
   });
 });
