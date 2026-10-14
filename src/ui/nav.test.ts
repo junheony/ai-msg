@@ -89,6 +89,13 @@ describe('shortcuts', () => {
     expect(shortcutList(false).find((s) => s.id === 'next-pane')?.keys).toBe('Ctrl+Alt+]');
     expect(shortcutList(false).find((s) => s.id === 'close-pane')?.keys).toBe('Ctrl+⇧X');
   });
+  it('⌘⇧G arranges the floating cards — also from a text field; ⌘G alone is not it', () => {
+    const m = (code: string, extra: Partial<ShortcutKey> = {}) => matchShortcut(key(code, { metaKey: true, ...extra }), { mac: true, typing: true });
+    expect(m('KeyG', { shiftKey: true })).toBe('arrange-cards');
+    expect(m('', { key: 'G', shiftKey: true })).toBe('arrange-cards');
+    expect(m('KeyG')).toBeNull();
+    expect(shortcutList(true).find((s) => s.id === 'arrange-cards')?.keys).toBe('⌘⇧G');
+  });
   it('platform detection and cheat-sheet labels', () => {
     expect(isMacPlatform({ platform: 'MacIntel' })).toBe(true);
     expect(isMacPlatform({ platform: 'Win32' })).toBe(false);

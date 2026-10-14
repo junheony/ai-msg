@@ -10,7 +10,7 @@ import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
 import { LEGACY_ACCOUNT_LIST, accountListOf, activePin, sameAccountList, seatLabel } from './accounts';
 import { has } from './features';
-import type { FloatRect } from './paneDrag';
+import { clampFloat, type FloatRect } from './paneDrag';
 import { paneSize } from './paneResize';
 
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
@@ -255,7 +255,23 @@ export type PaneState = {
   float?: FloatRect;
   /** The card's box while a phone-width screen shows it as a tab (`park_floats`); it floats again at this box when the screen widens. */
   parkedFloat?: FloatRect;
+  /** The card's box before it was maximized (`toggle_max_float`); present = maximized, filling the body. */
+  floatBefore?: FloatRect;
+  /** The card's box per body size (`${w}x${h}`, oldest first, at most FLOAT_SIZES): a window back at a size it had puts the card back there. */
+  floatBySize?: Record<string, FloatRect>;
 };
+
+/** How many body sizes a card remembers its box for. */
+export const FLOAT_SIZES = 4;
+
+const sameRect = (a: FloatRect, b: FloatRect): boolean => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+
+/** `by` with `rect` remembered for body size `key`, as the newest entry; the oldest go past FLOAT_SIZES. */
+function rememberSize(by: Record<string, FloatRect> | undefined, key: string, rect: FloatRect): Record<string, FloatRect> {
+  const entries = Object.entries(by ?? {}).filter(([k]) => k !== key);
+  entries.push([key, rect]);
+  return Object.fromEntries(entries.slice(-FLOAT_SIZES));
+}
 
 /** The panes in the grid, left to right (floating cards excluded). */
 export const dockedPanes = (panes: readonly PaneState[]): PaneState[] => panes.filter((p) => !p.float);
@@ -375,12 +391,17 @@ export type Action =
   | { type: 'focus_pane'; paneId: string }
   /** A docked pane to index `to` among the other docked panes (floating cards keep their place). */
   | { type: 'move_pane'; paneId: string; to: number }
-  /** Off the rail into a floating card at `rect`; refused for the last docked pane. */
-  | { type: 'float_pane'; paneId: string; rect: FloatRect }
+  /** Off the rail into a floating card at `rect`; refused for the last docked pane. `at` (body size key) remembers the box for that size. */
+  | { type: 'float_pane'; paneId: string; rect: FloatRect; at?: string }
   /** A floating card back into the grid at docked index `to` (absent = the right end). */
   | { type: 'dock_pane'; paneId: string; to?: number }
-  /** A floating card moved / resized. */
-  | { type: 'move_float'; paneId: string; rect: FloatRect }
+  /**
+   * A floating card moved / resized. Un-maximizes it unless `keepMax` (the body resized under a maximized card);
+   * `at` (a body size key, `${w}x${h}`) also remembers the box for that size.
+   */
+  | { type: 'move_float'; paneId: string; rect: FloatRect; keepMax?: boolean; at?: string }
+  /** A floating card maximized to fill `bounds` (the body), or back to its box from before (remembered for body size `at`, if given). */
+  | { type: 'toggle_max_float'; paneId: string; bounds: { w: number; h: number }; at?: string }
   /** The screen is phone-wide: every floating card lands as a tab at the end, its box kept (`parkedFloat`) for `unpark_floats`. */
   | { type: 'park_floats' }
   /** The screen is wide again: every parked pane floats at its kept box (one pane always stays in the grid). */
@@ -1190,12 +1211,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'float_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
       if (!pane || pane.float || dockedPanes(state.panes).length < 2) return state;
-      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect, parkedFloat: undefined } : p)), activePaneId: action.paneId };
+      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect, parkedFloat: undefined, floatBefore: undefined, floatBySize: action.at !== undefined ? { [action.at]: action.rect } : undefined } : p)), activePaneId: action.paneId };
     }
     case 'dock_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
       if (!pane?.float) return state;
-      const { float: _f, size: _s, parkedFloat: _pf, ...bare } = pane;
+      const { float: _f, size: _s, parkedFloat: _pf, floatBefore: _fb, floatBySize: _fs, ...bare } = pane;
       const rest = state.panes.filter((p) => p.id !== action.paneId);
       const docked = dockedPanes(rest);
       // Its old width (fr) belongs to a grid that has since been resized: it lands at the average of the others.
@@ -1210,8 +1231,29 @@ export function reducer(state: AppState, action: Action): AppState {
       const pane = state.panes.find((p) => p.id === action.paneId);
       if (!pane?.float) return state;
       const r = pane.float;
-      if (r.x === action.rect.x && r.y === action.rect.y && r.w === action.rect.w && r.h === action.rect.h) return state;
-      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect } : p)) };
+      const same = r.x === action.rect.x && r.y === action.rect.y && r.w === action.rect.w && r.h === action.rect.h;
+      const unmax = !action.keepMax && !!pane.floatBefore;
+      const kept = action.at !== undefined ? pane.floatBySize?.[action.at] : undefined;
+      const record = action.at !== undefined && !(kept && sameRect(kept, action.rect) && Object.keys(pane.floatBySize!).at(-1) === action.at);
+      if (same && !unmax && !record) return state;
+      const next: PaneState = { ...pane, float: action.rect };
+      if (unmax) delete next.floatBefore;
+      if (record) next.floatBySize = rememberSize(pane.floatBySize, action.at!, action.rect);
+      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? next : p)) };
+    }
+    case 'toggle_max_float': {
+      const pane = state.panes.find((p) => p.id === action.paneId);
+      if (!pane?.float) return state;
+      if (pane.floatBefore) {
+        const float = clampFloat(pane.floatBefore, action.bounds);
+        const { floatBefore: _fb, ...next } = pane;
+        return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...next, float, ...(action.at !== undefined ? { floatBySize: rememberSize(pane.floatBySize, action.at, float) } : {}) } : p)) };
+      }
+      const max = clampFloat({ x: 0, y: 0, w: action.bounds.w, h: action.bounds.h }, action.bounds);
+      // Already filling the body: there is no smaller box to come back to.
+      if (sameRect(max, pane.float)) return state;
+      const next: PaneState = { ...pane, floatBefore: pane.float, float: max };
+      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? next : p)) };
     }
     case 'park_floats': {
       if (!state.panes.some((p) => p.float)) return state;
@@ -1227,7 +1269,9 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, panes: state.panes.map((p) => {
         if (!p.parkedFloat) return p;
         const { parkedFloat, ...bare } = p;
-        return p.id === keep ? bare : { ...bare, float: parkedFloat };
+        if (p.id !== keep) return { ...bare, float: parkedFloat };
+        const { floatBefore: _fb, floatBySize: _fs, ...docked } = bare;
+        return docked;
       }) };
     }
     case 'resize_panes': {
@@ -1245,7 +1289,7 @@ export function reducer(state: AppState, action: Action): AppState {
       if (state.panes.length <= 1 || !state.panes.some((p) => p.id === action.paneId)) return state;
       let panes = state.panes.filter((p) => p.id !== action.paneId);
       // The grid never empties: closing the last docked pane docks the first floating card.
-      if (!panes.some((p) => !p.float)) { const { float: _f, ...first } = panes[0]!; panes = [first, ...panes.slice(1)]; }
+      if (!panes.some((p) => !p.float)) { const { float: _f, floatBefore: _fb, floatBySize: _fs, ...first } = panes[0]!; panes = [first, ...panes.slice(1)]; }
       const next = dockedPanes(panes)[0]!;
       return { ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((p) => p.id === action.paneId)), panes, activePaneId: state.activePaneId === action.paneId ? next.id : state.activePaneId };
     }

@@ -1,7 +1,7 @@
 import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, type Account } from '../shared/accounts';
 import { CODEX_SANDBOXES, DEFAULT_EFFORT, isClaudeModel, isCodexModel, isEffort, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { ATTACHMENT_ID, MAX_ATTACHMENTS_PER_TURN } from '../shared/protocol';
-import { PANE_LIMIT, newPane, nextQueueId, parkKey, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
+import { FLOAT_SIZES, PANE_LIMIT, newPane, nextQueueId, parkKey, type AppState, type ChatItem, type PaneState, type QueueItem, type SentFile, type SentRecord, type UploadedAttachment } from './state';
 import { paneSize } from './paneResize';
 import { readFloat, type FloatRect } from './paneDrag';
 
@@ -22,7 +22,7 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
  * `turnId`: an id-less session's first turn still running — after a reload `hello.running` finds it by this id (with the
  * session id once the server knows it) and the pane follows it (`watch_turn`); an id-ful pane re-finds its turn by the id.
  */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number; /** PaneState.float (absent: docked). */ float?: FloatRect; /** PaneState.parkedFloat (absent: none). */ parkedFloat?: FloatRect };
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number; /** PaneState.float (absent: docked). */ float?: FloatRect; /** PaneState.parkedFloat (absent: none). */ parkedFloat?: FloatRect; /** PaneState.floatBefore (absent: not maximized). */ floatBefore?: FloatRect; /** PaneState.floatBySize (absent: none). */ floatBySize?: Record<string, FloatRect> };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -81,7 +81,17 @@ function pane(x: unknown): PersistedPane {
     ...(x.size !== undefined && paneSize(x.size) !== 1 ? { size: paneSize(x.size) } : {}),
     ...(readFloat(x.float) ? { float: readFloat(x.float)! } : {}),
     ...(!readFloat(x.float) && readFloat(x.parkedFloat) ? { parkedFloat: readFloat(x.parkedFloat)! } : {}),
+    // A card's extras (maximized box, boxes per body size) only ride a card (floating or parked).
+    ...((readFloat(x.float) || readFloat(x.parkedFloat)) && readFloat(x.floatBefore) ? { floatBefore: readFloat(x.floatBefore)! } : {}),
+    ...((readFloat(x.float) || readFloat(x.parkedFloat)) && floatBySize(x.floatBySize) ? { floatBySize: floatBySize(x.floatBySize)! } : {}),
   };
+}
+
+/** Stored boxes per body size: `${w}x${h}` keys, valid boxes only, the newest FLOAT_SIZES; null when none is usable. */
+function floatBySize(x: unknown): Record<string, FloatRect> | null {
+  if (!isObj(x)) return null;
+  const entries = Object.entries(x).flatMap(([k, v]) => { const r = /^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(k) ? readFloat(v) : null; return r ? [[k, r] as const] : []; }).slice(-FLOAT_SIZES);
+  return entries.length ? Object.fromEntries(entries) : null;
 }
 
 /** Validates (and migrates) whatever is stored; null = nothing usable, start fresh. */
@@ -92,7 +102,7 @@ export function parseUi(raw: unknown): PersistedUi | null {
   const panes = Array.isArray(raw.panes) ? raw.panes.slice(0, PANE_LIMIT).map(pane) : [];
   if (!panes.length) return null;
   // The grid never starts empty: were every saved pane a floating card, the first lands.
-  if (panes.every((p) => p.float)) delete panes[0]!.float;
+  if (panes.every((p) => p.float)) { delete panes[0]!.float; delete panes[0]!.floatBefore; delete panes[0]!.floatBySize; }
   const active = Number.isInteger(raw.active) && (raw.active as number) >= 0 && (raw.active as number) < panes.length ? (raw.active as number) : 0;
   const collapsed = Array.isArray(raw.collapsed) ? raw.collapsed.filter((c): c is string => shortStr(c, 4096)).slice(0, 200) : [];
   return { v: 1, panes, active, collapsed, drawer: raw.drawer === true };
@@ -115,6 +125,8 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
       ...(paneSize(p.size) !== 1 ? { size: paneSize(p.size) } : {}),
       ...(p.float ? { float: p.float } : {}),
       ...(!p.float && p.parkedFloat ? { parkedFloat: p.parkedFloat } : {}),
+      ...((p.float || p.parkedFloat) && p.floatBefore ? { floatBefore: p.floatBefore } : {}),
+      ...((p.float || p.parkedFloat) && p.floatBySize && Object.keys(p.floatBySize).length ? { floatBySize: p.floatBySize } : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
@@ -142,6 +154,8 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
     ...(p.size !== undefined ? { size: p.size } : {}),
     ...(p.float ? { float: p.float } : {}),
     ...(p.parkedFloat ? { parkedFloat: p.parkedFloat } : {}),
+    ...(p.floatBefore ? { floatBefore: p.floatBefore } : {}),
+    ...(p.floatBySize ? { floatBySize: { ...p.floatBySize } } : {}),
     // Its history is asked for again once the socket is up: loading until it arrives.
     ...(p.session?.sessionId ? { loading: true } : {}),
   }));

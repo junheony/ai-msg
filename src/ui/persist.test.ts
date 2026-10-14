@@ -368,6 +368,31 @@ describe('persist: floating cards', () => {
     expect(both.panes[1]).not.toHaveProperty('parkedFloat');
   });
 
+  it('a maximized card\'s box from before and its boxes per body size round-trip; bad entries and card-less extras are dropped', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    const rect = { x: 40, y: 60, w: 480, h: 360 };
+    s = reducer(s, { type: 'float_pane', paneId: 'p1', rect });
+    s = reducer(s, { type: 'move_float', paneId: 'p1', rect, at: '1200x800' });
+    s = reducer(s, { type: 'toggle_max_float', paneId: 'p1', bounds: { w: 1200, h: 800 } });
+    const snap = snapshotUi(s, { collapsed: [], drawer: false });
+    expect(snap.panes[1]).toMatchObject({ float: { x: 0, y: 0, w: 1200, h: 800 }, floatBefore: rect, floatBySize: { '1200x800': rect } });
+    expect(snap.panes[0]).not.toHaveProperty('floatBefore');
+    expect(snap.panes[0]).not.toHaveProperty('floatBySize');
+    const store = memStore();
+    saveUi(snap, null, store);
+    const back = hydrate(initialState, loadUi(store)).panes[1]!;
+    expect(back.floatBefore).toEqual(rect);
+    expect(back.floatBySize).toEqual({ '1200x800': rect });
+    // Bad keys / boxes go, the newest four stay; a docked pane (no float) keeps neither.
+    const by = { 'x': rect, '10x10': { x: 0, y: 0, w: 10, h: 10 }, '11x11': rect, '22x22': rect, '33x33': rect, '44x44': rect, '55x55': { ...rect, x: 5 } };
+    const ui = parseUi({ v: 1, panes: [{ ...p, floatBefore: rect, floatBySize: { '11x11': rect } }, { ...p, float: rect, floatBefore: { x: 0, y: 0, w: 1, h: 1 }, floatBySize: by }], active: 0, collapsed: [], drawer: false })!;
+    expect(ui.panes[0]).not.toHaveProperty('floatBefore');
+    expect(ui.panes[0]).not.toHaveProperty('floatBySize');
+    expect(ui.panes[1]).not.toHaveProperty('floatBefore');
+    expect(ui.panes[1]!.floatBySize).toEqual({ '22x22': rect, '33x33': rect, '44x44': rect, '55x55': { ...rect, x: 5 } });
+    expect(parseUi({ v: 1, panes: [p, { ...p, float: rect, floatBySize: { bad: rect, '0x0': rect, '0800x600': rect, '800x0600': rect } }], active: 0, collapsed: [], drawer: false })!.panes[1]).not.toHaveProperty('floatBySize');
+  });
+
   it('a bad box is dropped (the pane docks); were every pane a card, the first one docks', () => {
     const bad = parseUi({ v: 1, panes: [{ ...p, float: { x: 0, y: 0, w: 10, h: 10 } }, { ...p, float: 'x' }, { ...p, float: { x: 1, y: 2, w: 320.4, h: 240 } }], active: 0, collapsed: [], drawer: false })!;
     expect(bad.panes.map((x) => x.float)).toEqual([undefined, undefined, { x: 1, y: 2, w: 320, h: 240 }]);

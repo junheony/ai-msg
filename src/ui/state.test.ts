@@ -347,6 +347,63 @@ describe('panes (D6)', () => {
     expect(s.panes[2]!.size).toBe(3);
   });
 
+  it('toggle_max_float: a card fills the body and back; a user move un-maximizes, keepMax keeps it; dock forgets it', () => {
+    let s = reducer(initialState, { type: 'add_pane' }); // p0 p1
+    const rect = { x: 40, y: 50, w: 400, h: 300 };
+    const bounds = { w: 1200, h: 800 };
+    expect(reducer(s, { type: 'toggle_max_float', paneId: 'p0', bounds })).toBe(s); // docked: nothing
+    s = reducer(s, { type: 'float_pane', paneId: 'p0', rect });
+    s = reducer(s, { type: 'toggle_max_float', paneId: 'p0', bounds });
+    expect(s.panes[0]).toMatchObject({ float: { x: 0, y: 0, w: 1200, h: 800 }, floatBefore: rect });
+    s = reducer(s, { type: 'toggle_max_float', paneId: 'p0', bounds });
+    expect(s.panes[0]!.float).toEqual(rect);
+    expect(s.panes[0]).not.toHaveProperty('floatBefore');
+    expect(reducer(reducer(s, { type: 'move_float', paneId: 'p0', rect: { x: 0, y: 0, w: 1200, h: 800 } }), { type: 'toggle_max_float', paneId: 'p0', bounds }).panes[0]).not.toHaveProperty('floatBefore'); // already filling the body
+    const filled = reducer(s, { type: 'move_float', paneId: 'p0', rect: { x: 0, y: 0, w: 1200, h: 800 } });
+    expect(reducer(filled, { type: 'toggle_max_float', paneId: 'p0', bounds })).toBe(filled);
+    // Restored at another body size with `at`: the restored box is remembered for that size (maximizing records nothing).
+    const big = reducer(s, { type: 'toggle_max_float', paneId: 'p0', bounds, at: '1200x800' });
+    expect(big.panes[0]!.floatBySize).toBeUndefined();
+    const back = reducer(big, { type: 'toggle_max_float', paneId: 'p0', bounds: { w: 800, h: 600 }, at: '800x600' });
+    expect(back.panes[0]!.floatBySize).toEqual({ '800x600': rect });
+    // A tiny body: still at least the minimum size.
+    const tiny = reducer(s, { type: 'toggle_max_float', paneId: 'p0', bounds: { w: 100, h: 100 } });
+    expect(tiny.panes[0]!.float).toMatchObject({ w: 320, h: 240 });
+    // The body resized under a maximized card (keepMax): still maximized; a user move un-maximizes it.
+    s = reducer(s, { type: 'toggle_max_float', paneId: 'p0', bounds });
+    s = reducer(s, { type: 'move_float', paneId: 'p0', rect: { x: 0, y: 0, w: 800, h: 600 }, keepMax: true });
+    expect(s.panes[0]).toMatchObject({ float: { x: 0, y: 0, w: 800, h: 600 }, floatBefore: rect });
+    const moved = reducer(s, { type: 'move_float', paneId: 'p0', rect: { x: 0, y: 0, w: 800, h: 600 } });
+    expect(moved.panes[0]).not.toHaveProperty('floatBefore'); // same box, still a change: no longer maximized
+    expect(moved.panes[0]!.float).toEqual({ x: 0, y: 0, w: 800, h: 600 });
+    const docked = reducer(s, { type: 'dock_pane', paneId: 'p0' });
+    expect(docked.panes.find((p) => p.id === 'p0')).not.toHaveProperty('floatBefore');
+    // A fresh float starts un-maximized.
+    expect(reducer(docked, { type: 'float_pane', paneId: 'p0', rect }).panes.find((p) => p.id === 'p0')!.floatBefore).toBeUndefined();
+  });
+
+  it('move_float `at`: the box is remembered per body size, newest last, at most four; float_pane / dock_pane forget them', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    const rect = { x: 40, y: 50, w: 400, h: 300 };
+    s = reducer(s, { type: 'float_pane', paneId: 'p0', rect });
+    s = reducer(s, { type: 'move_float', paneId: 'p0', rect: { ...rect, x: 60 } });
+    expect(s.panes[0]!.floatBySize).toBeUndefined(); // no `at`: nothing remembered
+    s = reducer(s, { type: 'move_float', paneId: 'p0', rect: { ...rect, x: 60 }, at: '1200x800' }); // same box, still recorded
+    expect(s.panes[0]!.floatBySize).toEqual({ '1200x800': { ...rect, x: 60 } });
+    expect(reducer(s, { type: 'move_float', paneId: 'p0', rect: { ...rect, x: 60 }, at: '1200x800' })).toBe(s); // already so
+    for (const k of ['800x600', '1000x700', '1400x900']) s = reducer(s, { type: 'move_float', paneId: 'p0', rect: { ...rect, y: 10 }, at: k });
+    s = reducer(s, { type: 'move_float', paneId: 'p0', rect: { ...rect, x: 7 }, at: '800x600' }); // re-recorded: newest
+    expect(Object.keys(s.panes[0]!.floatBySize!)).toEqual(['1200x800', '1000x700', '1400x900', '800x600']);
+    s = reducer(s, { type: 'move_float', paneId: 'p0', rect, at: '1600x1000' }); // a fifth: the oldest goes
+    expect(Object.keys(s.panes[0]!.floatBySize!)).toEqual(['1000x700', '1400x900', '800x600', '1600x1000']);
+    expect(s.panes[0]!.floatBySize!['800x600']).toEqual({ ...rect, x: 7 });
+    const docked = reducer(s, { type: 'dock_pane', paneId: 'p0' });
+    expect(docked.panes.find((p) => p.id === 'p0')).not.toHaveProperty('floatBySize');
+    expect(reducer(docked, { type: 'float_pane', paneId: 'p0', rect }).panes.find((p) => p.id === 'p0')!.floatBySize).toBeUndefined();
+    // Pulled off with `at`: a fresh record of just that box.
+    expect(reducer(docked, { type: 'float_pane', paneId: 'p0', rect, at: '900x700' }).panes.find((p) => p.id === 'p0')!.floatBySize).toEqual({ '900x700': rect });
+  });
+
   it('park_floats / unpark_floats: cards become tabs for a phone-wide screen and float again where they were', () => {
     let s = reducer(initialState, { type: 'add_pane' });
     s = reducer(s, { type: 'add_pane' }); // p0 p1 p2

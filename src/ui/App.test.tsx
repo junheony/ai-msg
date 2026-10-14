@@ -259,7 +259,7 @@ describe('App split view (D6)', () => {
       expect(floatOf('s1')).toMatchObject({ w: 480 });
       // One card: no 정렬 item.
       fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
-      expect(screen.queryByRole('menuitem', { name: '떠 있는 카드 정렬' })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: /^떠 있는 카드 정렬/ })).toBeNull();
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
       expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
       // ←→ change the width, ↑↓ the height (24px, 96 with Shift), never below the minimum; the handle says its size.
@@ -275,11 +275,111 @@ describe('App split view (D6)', () => {
       // A second card: 정렬 lays both out side by side over the 1200 × 800 body.
       fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // s2 → card
       fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('채팅 메뉴'));
-      fireEvent.click(screen.getByRole('menuitem', { name: '떠 있는 카드 정렬' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: '떠 있는 카드 정렬 (Ctrl+Shift+G)' })); // jsdom is not a Mac
       expect(floatOf('s1')).toEqual({ x: 12, y: 12, w: 582, h: 776 });
       expect(floatOf('s2')).toEqual({ x: 606, y: 12, w: 582, h: 776 });
       expect(screen.getByTestId('cards-live').textContent).toBe('카드 2장을 정렬했습니다');
     } finally { cw.mockRestore(); ch.mockRestore(); }
+  });
+
+  const mockBody = (size: { w: number; h: number }) => {
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    return () => { cw.mockRestore(); ch.mockRestore(); };
+  };
+  type StoredPane = { session: { sessionId: string } | null; float?: { x: number; y: number; w: number; h: number }; floatBySize?: Record<string, { x: number; y: number; w: number; h: number }> };
+  const storedPane = (id: string) => (JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: StoredPane[] }).panes.find((p) => p.session?.sessionId === id);
+  const threePanes = async () => {
+    await boot();
+    openSession('one');
+    const split = screen.getByText(/^\+ 분할/);
+    fireEvent.click(split);
+    openSession('two');
+    fireEvent.click(split); // p0 p1 p2
+  };
+  const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByLabelText('패널 끌기');
+  const ctrlShiftG = () => fireEvent.keyDown(document.body, { key: 'G', code: 'KeyG', ctrlKey: true, shiftKey: true });
+
+  it('Ctrl+⇧G arranges two or more floating cards; with one card the key stays the browser\'s', async () => {
+    const restore = mockBody({ w: 1200, h: 800 });
+    try {
+      await threePanes();
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' }); // one card
+      const before = storedPane('s1')!.float;
+      expect(ctrlShiftG()).toBe(true); // not prevented: find-previous is the browser's
+      expect(storedPane('s1')!.float).toEqual(before);
+      expect(screen.getByTestId('cards-live').textContent).toBe('카드로 뗐습니다');
+      fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // two cards
+      expect(ctrlShiftG()).toBe(false);
+      expect(storedPane('s1')!.float).toEqual({ x: 12, y: 12, w: 582, h: 776 });
+      expect(storedPane('s2')!.float).toEqual({ x: 606, y: 12, w: 582, h: 776 });
+      expect(screen.getByTestId('cards-live').textContent).toBe('카드 2장을 정렬했습니다');
+    } finally { restore(); }
+  });
+
+  it('double-click on a card\'s header maximizes it to the body and back; ⋯ offers the same, labelled by state', async () => {
+    const restore = mockBody({ w: 1200, h: 800 });
+    try {
+      await threePanes();
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      const box = storedPane('s1')!.float!;
+      const card = () => document.querySelector('.float-card[data-float="p0"]') as HTMLElement;
+      const live = () => screen.getByTestId('cards-live').textContent;
+      fireEvent.doubleClick(grip('p0'));
+      expect(storedPane('s1')!.float).toEqual({ x: 0, y: 0, w: 1200, h: 800 });
+      expect(card().style.width).toBe('1200px');
+      expect(live()).toBe('카드를 최대화했습니다');
+      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      expect(screen.queryByRole('menuitem', { name: '카드 최대화' })).toBeNull();
+      fireEvent.click(screen.getByRole('menuitem', { name: '카드 원래 크기로' }));
+      expect(storedPane('s1')!.float).toEqual(box);
+      expect(live()).toBe('카드를 원래 크기로 되돌렸습니다');
+      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '카드 최대화' }));
+      expect(storedPane('s1')!.float).toEqual({ x: 0, y: 0, w: 1200, h: 800 });
+      // The bare header strip toggles too; its other buttons do not.
+      fireEvent.doubleClick(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      expect(storedPane('s1')!.float).toEqual({ x: 0, y: 0, w: 1200, h: 800 });
+      fireEvent.doubleClick(card().querySelector('button.chat-title') as HTMLElement); // the title button opens the session menu instead
+      expect(storedPane('s1')!.float).toEqual({ x: 0, y: 0, w: 1200, h: 800 });
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+      fireEvent.doubleClick(card().querySelector('.chat-head') as HTMLElement);
+      expect(storedPane('s1')!.float).toEqual(box);
+    } finally { restore(); }
+  });
+
+  it('a card remembers the box the user gave it per body size: a resize clamps at once, then (250 ms still) restores the box for that size — never records one', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const size = { w: 1200, h: 800 };
+    const restore = mockBody(size);
+    try {
+      await threePanes();
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      const start = storedPane('s1')!.float!;
+      expect(storedPane('s1')!.floatBySize).toEqual({ '1200x800': start }); // where it was pulled off
+      for (let i = 0; i < 9; i++) fireEvent.keyDown(grip('p0'), { key: 'ArrowRight', shiftKey: true });
+      const wide = { ...start, x: start.x + 864 };
+      expect(storedPane('s1')!.float).toEqual(wide);
+      expect(storedPane('s1')!.floatBySize).toEqual({ '1200x800': wide });
+      const card = () => document.querySelector('.float-card[data-float="p0"]') as HTMLElement;
+      // Narrower: pulled in at once; holding still adds no 800×600 entry (only user moves record).
+      size.w = 800; size.h = 600;
+      fireEvent(window, new Event('resize'));
+      const narrow = { x: 680, y: start.y, w: start.w, h: 600 };
+      expect(storedPane('s1')!.float).toEqual(narrow);
+      expect(card().style.left).toBe('680px');
+      expect(storedPane('s1')!.floatBySize).toEqual({ '1200x800': wide });
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(storedPane('s1')!.float).toEqual(narrow);
+      expect(storedPane('s1')!.floatBySize).toEqual({ '1200x800': wide });
+      // Back to 1200×800: nothing to pull in, then the box from before comes back.
+      size.w = 1200; size.h = 800;
+      fireEvent(window, new Event('resize'));
+      expect(storedPane('s1')!.float).toEqual(narrow);
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(storedPane('s1')!.float).toEqual(wide);
+      expect(card().style.left).toBe(`${wide.x}px`);
+    } finally { restore(); vi.useRealTimers(); }
   });
 
   it('a splitter between each pair of panes: dragging trades width between its two neighbours, double-click evens them out, the widths survive a reload', async () => {
