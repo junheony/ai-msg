@@ -108,8 +108,8 @@ Team(공유 계정 풀·관리자)은 Pro 지표 확인 뒤. 라이선스 우회
 
 ### 5.2 Claude 엔진 전환 (SDK → CLI)
 - 현재 819줄 `ClaudeEngine.ts`, 사용 옵션: cwd, env, model, effort, resume, forkSession+resumeSessionAt, permissionMode, settingSources, includePartialMessages, replay-user-messages, abort, settings(permissions.allow), additionalDirectories, canUseTool, hooks(PreToolUse·UserPromptSubmit·PostToolUse·PostToolUseFailure·PermissionDenied). 받는 메시지: system(init·compact·task_*·permission_denied), stream_event, assistant, user, result.
-- 전환 요건: stream-json 입출력은 그대로(파서 재사용). **권한·AskUserQuestion** 은 `--permission-prompts host` 의 control request/response 를 deck 이 직접 구현(공식 문서화 범위 확인 필요 — 미확인이면 `--permission-prompt-tool` MCP 도구 방식으로 대체). 훅은 `--settings` 의 hooks 명령으로. abort 는 프로세스 시그널. fork 는 `--resume` + `--fork-session`(플래그 확인). 외부 쓰기 식별(`foreignWrites.ts`, `entrypoint` 비교)은 deck 자체 마커(예: 첫 user 메시지 메타 또는 settings 의 환경변수 `DECK_SESSION`)로 재설계.
-- 작업 크기 **중~대**. 출시 전 필수. 공식 CLI 버전 차이(사용자 2.1.283 vs SDK 번들 2.1.285)를 감안해 **최소 지원 버전** 을 정하고 시작 시 검사.
+- 전환 요건(2026-10-15 CLI 2.1.283 `--help` + 공식 CLI 레퍼런스로 확인): stream-json 입출력은 그대로(파서 재사용). **권한·AskUserQuestion** 은 문서화된 경로인 `--permission-prompt-tool <mcp 도구>` 로 받는다 — deck 이 프로세스마다 작은 stdio MCP 서버를 `--mcp-config` 로 붙이고, 그 도구가 `tool_name`·`input`·`tool_use_id` 를 deck 서버로 전달해 사용자의 답을 기다린 뒤 `{"behavior":"allow","updatedInput":…}` / `{"behavior":"deny","message":…}` 를 JSON 문자열로 돌려준다. AskUserQuestion 도 같은 경로(`updatedInput.answers`). stdin 의 `control_request/response` 프로토콜은 SDK 내부용으로 비문서화 → 쓰지 않는다. 훅은 `--settings` 의 `hooks` 명령으로(스트림 이벤트로 대체 가능한 것은 제거). abort 는 SIGINT(턴 종료·결과 기록), 강제 종료는 SIGTERM. fork 는 `--resume <id> --fork-session`(확인됨). **`resumeSessionAt`(특정 메시지에서 fork)은 SDK 전용 — CLI 에 없음 → 기능 상실 또는 재설계.** `--session-id <uuid>` 로 deck 이 세션 ID 를 직접 정할 수 있어 외부 쓰기 식별(`foreignWrites.ts`, 현재 `entrypoint === 'sdk-ts'`)은 "deck 이 만든 세션 ID 집합" 기준으로 재설계. **`--bare` 는 쓰지 않는다**(구독 로그인을 읽지 않음).
+- 작업 크기 **중~대**. 출시 전 필수. **최소 지원 버전 2.1.259**(`--permission-prompts` 도입) 이상, 권장 2.1.283 — 시작 시 `claude --version` 검사. 구현 계획: `docs/superpowers/plans/2026-10-15-claude-engine-cli.md`.
 
 ### 5.3 클라우드
 - **계정·entitlement API** (Cloudflare Workers + D1 또는 Supabase — 운영 단순성 기준으로 Workers 통일): 이메일 매직링크 로그인, 기기 등록(최대 3), entitlement 발급(Ed25519 서명, 24h), Paddle 웹훅(서명 검증, 멱등 처리, 순서 역전 처리; 환불·해지·결제 실패 구분 — 결제 실패는 유예 7일, 실행 중 작업은 끊지 않음).
@@ -160,7 +160,8 @@ Team(공유 계정 풀·관리자)은 Pro 지표 확인 뒤. 라이선스 우회
 4. **클라우드·Pro 모듈·결제** (§5.3~5.4, 4~6주).
 
 ## 11. 미확인 (구현 전 확인)
-- `claude --permission-prompts host` 의 control 프로토콜 공식 문서화 범위, `--permission-prompt-tool` 존재, `--fork-session` 플래그.
+- ~~`--permission-prompt-tool`·`--fork-session`·`--permission-prompts` 존재~~ → 확인됨(§5.2). 남은 것: `--permission-prompt-tool` 이 `permission_suggestions`(항상 허용 규칙 제안)를 넘기는지, `tool_use_id` 로 중복 요청을 걸러도 되는지 — 첫 스파이크에서 실제 호출을 기록해 확인.
+- CLI 가 `CLAUDE_CODE_ENTRYPOINT` 환경변수를 transcript `entrypoint` 에 그대로 쓰는지(쓴다면 식별 재설계가 쉬워지지만, SDK 흉내로 보일 수 있어 **쓰지 않는 쪽**이 안전).
 - Node 최소 버전을 22 로 낮출 수 있는지(의존성 확인).
 - Paddle 한국 개인 판매자 KYC·KRW/USD 정산 비용, 카드 없는 체험 지원.
 - Terragon 종료 여부(랜딩 비교표에 넣지 않음).
