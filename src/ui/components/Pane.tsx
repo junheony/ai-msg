@@ -176,14 +176,14 @@ export type SessionActions = {
   onDuplicate?: (sessionId: string) => void;
 };
 
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock }: {
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'usage' | 'projects' | 'defaultPermMode' | 'pins'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
   grip?: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => void; onKeyDown?: (e: ReactKeyboardEvent<HTMLButtonElement>) => void };
-  /** ⋯ 왼쪽으로 / 오른콽으로 이동 (desktop, docked, when there is a neighbour on that side) — the keyboard way to reorder. */
+  /** ⋯ 왼쪽으로 / 오른쪽으로 이동 (desktop, docked, when there is a neighbour on that side) — the keyboard way to reorder. */
   onShift?: { left?: () => void; right?: () => void };
   /** Shown as a floating card (its ⋯ menu offers 패널에 다시 붙이기 instead of 떼기). */
   floating?: boolean;
@@ -191,6 +191,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   onFloat?: () => void;
   /** ⋯ 패널에 다시 붙이기 (desktop, floating). */
   onDock?: () => void;
+  /** ⋯ 떠 있는 카드 정렬 (desktop, floating, two or more cards): every card dealt into a grid. */
+  onArrange?: () => void;
   dispatch: (a: Action) => void;
   /** `false`: not sent (socket down). */
   send: SendFn;
@@ -294,6 +296,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   if (onShift?.right) fileMenu.push({ label: '오른쪽으로 이동', run: onShift.right });
   if (floating && onDock) fileMenu.push({ label: '패널에 다시 붙이기', run: onDock });
   else if (!floating && onFloat) fileMenu.push({ label: '떠 있는 카드로 떼기', run: onFloat });
+  if (floating && onArrange) fileMenu.push({ label: '떠 있는 카드 정렬', run: onArrange });
   // 새 탭으로 떼어내기 (split view only): the session in a new browser tab, this pane closed. A lone pane has no such item.
   if (closable && s?.sessionId) {
     const detached = s.sessionId;

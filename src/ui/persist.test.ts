@@ -349,6 +349,25 @@ describe('persist: floating cards', () => {
     expect(hydrate(initialState, loadUi(store)).panes.map((x) => x.float)).toEqual([undefined, rect]);
   });
 
+  it('a parked box (phone) round-trips too, so a save made on a phone-wide window floats the card again on a desktop', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    const rect = { x: 40, y: 60, w: 480, h: 360 };
+    s = reducer(s, { type: 'float_pane', paneId: 'p1', rect });
+    s = reducer(s, { type: 'park_floats' });
+    const snap = snapshotUi(s, { collapsed: [], drawer: false });
+    expect(snap.panes[1]).not.toHaveProperty('float');
+    expect(snap.panes[1]!.parkedFloat).toEqual(rect);
+    const store = memStore();
+    saveUi(snap, null, store);
+    const back = hydrate(initialState, loadUi(store));
+    expect(back.panes.map((x) => [x.float, x.parkedFloat])).toEqual([[undefined, undefined], [undefined, rect]]);
+    expect(reducer(back, { type: 'unpark_floats' }).panes[1]!.float).toEqual(rect);
+    // A pane that both floats and has a parked box (not something the reducer produces): the float wins, the box is dropped.
+    const both = parseUi({ v: 1, panes: [p, { ...p, float: rect, parkedFloat: { ...rect, x: 9 } }], active: 0, collapsed: [], drawer: false })!;
+    expect(both.panes[1]).toEqual(expect.objectContaining({ float: rect }));
+    expect(both.panes[1]).not.toHaveProperty('parkedFloat');
+  });
+
   it('a bad box is dropped (the pane docks); were every pane a card, the first one docks', () => {
     const bad = parseUi({ v: 1, panes: [{ ...p, float: { x: 0, y: 0, w: 10, h: 10 } }, { ...p, float: 'x' }, { ...p, float: { x: 1, y: 2, w: 320.4, h: 240 } }], active: 0, collapsed: [], drawer: false })!;
     expect(bad.panes.map((x) => x.float)).toEqual([undefined, undefined, { x: 1, y: 2, w: 320, h: 240 }]);

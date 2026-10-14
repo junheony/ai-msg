@@ -209,10 +209,13 @@ describe('App split view (D6)', () => {
     const order = () => Array.from(document.querySelectorAll<HTMLElement>('.panes .pane')).map((e) => e.dataset.pane);
     expect(order()).toEqual(['p0', 'p1', 'p2']);
     const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByLabelText('패널 끌기');
+    const live = () => screen.getByTestId('cards-live').textContent;
     fireEvent.keyDown(grip('p0'), { key: 'ArrowRight' });
     expect(order()).toEqual(['p1', 'p0', 'p2']);
+    expect(live()).toBe('2번째 자리로 옮겼습니다'); // narrated for screen readers
     fireEvent.keyDown(grip('p0'), { key: 'ArrowLeft' });
     expect(order()).toEqual(['p0', 'p1', 'p2']);
+    expect(live()).toBe('1번째 자리로 옮겼습니다');
     fireEvent.keyDown(grip('p0'), { key: 'ArrowLeft' }); // already first: nothing
     expect(order()).toEqual(['p0', 'p1', 'p2']);
     // The leftmost pane's ⋯ offers only 오른쇽으로 이동; the middle one both.
@@ -228,6 +231,7 @@ describe('App split view (D6)', () => {
     fireEvent.keyDown(grip('p1'), { key: 'Enter' });
     expect(document.querySelector('.float-card[data-float="p1"]')).not.toBeNull();
     expect(order()).toEqual(['p0', 'p2']);
+    expect(live()).toBe('카드로 뗐습니다');
     // Arrows move the card (24px, 96 with Shift), clamped to the body — jsdom's body is 0×0, so the card pins to the corner.
     fireEvent.keyDown(grip('p1'), { key: 'ArrowDown', shiftKey: true });
     const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: { x: number; y: number } }[] };
@@ -235,6 +239,47 @@ describe('App split view (D6)', () => {
     fireEvent.keyDown(grip('p1'), { key: ' ' });
     expect(document.querySelector('.float-card')).toBeNull();
     expect(order()).toEqual(['p0', 'p2', 'p1']);
+    expect(live()).toBe('패널에 붙였습니다');
+  });
+
+  it('the ◢ corner resizes a card from the keyboard; ⋯ 떠 있는 카드 정렬 deals two or more cards into a grid', async () => {
+    const size = { w: 1200, h: 800 };
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    try {
+      await boot();
+      openSession('one');
+      const split = screen.getByText(/^\+ 분할/);
+      fireEvent.click(split);
+      openSession('two');
+      fireEvent.click(split); // p0 p1 p2
+      const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByLabelText('패널 끌기');
+      const floatOf = (id: string) => (JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { session: { sessionId: string } | null; float?: { x: number; y: number; w: number; h: number } }[] }).panes.find((p) => p.session?.sessionId === id)?.float;
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' }); // s1 → card, 480 wide
+      expect(floatOf('s1')).toMatchObject({ w: 480 });
+      // One card: no 정렬 item.
+      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      expect(screen.queryByRole('menuitem', { name: '떠 있는 카드 정렬' })).toBeNull();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+      expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+      // ←→ change the width, ↑↓ the height (24px, 96 with Shift), never below the minimum; the handle says its size.
+      const corner = within(document.querySelector('.float-card[data-float="p0"]') as HTMLElement).getByLabelText('카드 크기 조절');
+      const before = floatOf('s1')!;
+      fireEvent.keyDown(corner, { key: 'ArrowRight' });
+      fireEvent.keyDown(corner, { key: 'ArrowDown', shiftKey: true });
+      expect(floatOf('s1')).toMatchObject({ w: before.w + 24, h: before.h + 96 });
+      expect(screen.getByTestId('cards-live').textContent).toBe(`카드 크기 ${before.w + 24} × ${before.h + 96}`);
+      for (let i = 0; i < 20; i++) fireEvent.keyDown(corner, { key: 'ArrowLeft', shiftKey: true });
+      expect(floatOf('s1')).toMatchObject({ w: 320 });
+      expect(corner.getAttribute('aria-valuetext')).toBe(`320 × ${before.h + 96}`);
+      // A second card: 정렬 lays both out side by side over the 1200 × 800 body.
+      fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // s2 → card
+      fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '떠 있는 카드 정렬' }));
+      expect(floatOf('s1')).toEqual({ x: 12, y: 12, w: 582, h: 776 });
+      expect(floatOf('s2')).toEqual({ x: 606, y: 12, w: 582, h: 776 });
+      expect(screen.getByTestId('cards-live').textContent).toBe('카드 2장을 정렬했습니다');
+    } finally { cw.mockRestore(); ch.mockRestore(); }
   });
 
   it('a splitter between each pair of panes: dragging trades width between its two neighbours, double-click evens them out, the widths survive a reload', async () => {
@@ -459,19 +504,20 @@ describe('App phone layout (D10)', () => {
     expect(screen.queryByLabelText('패널 끌기')).toBeNull();
   });
 
-  it('phone: a floating card restored from a desktop save becomes a plain tab; tabs reorder by press-and-drag', async () => {
+  it('phone: a floating card restored from a desktop save becomes a plain tab (its box kept); tabs reorder by press-and-drag; a wide screen floats it again', async () => {
     localStorage.setItem('deck.ui.v1', JSON.stringify({ v: 1, active: 0, collapsed: [], drawer: false, panes: [
       { session: { sessionId: 's1', cwd: '/w', title: 'one', engine: null }, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write', float: { x: 10, y: 10, w: 400, h: 300 } },
       { session: { sessionId: 's2', cwd: '/w', title: 'two', engine: null }, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write' },
       { session: null, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write' },
     ] }));
-    mockMatchMedia(true);
+    const mm = mockMatchMedia(true);
     await boot();
     const labels = () => Array.from(document.querySelectorAll('.pane-switch button[data-tab]')).map((b) => b.textContent);
     // The float landed at the end: one, two, (blank) → two, blank, one.
     await waitFor(() => expect(labels()).toEqual(['1 · two', '2', '3 · one']));
-    const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: unknown }[] };
-    expect(stored.panes.some((p) => p.float)).toBe(false);
+    const stored = () => JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: unknown; parkedFloat?: unknown }[] };
+    expect(stored().panes.some((p) => p.float)).toBe(false);
+    expect(stored().panes[2]!.parkedFloat).toEqual({ x: 10, y: 10, w: 400, h: 300 });
     // Drag tab 3 (one) to the front: tabs 100 wide at 0 / 100 / 200.
     const tabs = Array.from(document.querySelectorAll<HTMLElement>('.pane-switch button[data-tab]'));
     const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
@@ -487,6 +533,17 @@ describe('App phone layout (D10)', () => {
       fireEvent.pointerUp(window, { clientX: 20, clientY: 15, pointerId: 1 });
     } finally { rect.mockRestore(); }
     expect(labels()).toEqual(['1 · one', '2 · two', '3']);
+    // Back on a wide screen: the parked pane floats again where it was (it travelled to the front meanwhile).
+    mm.setPhone(false);
+    const card = document.querySelector('.float-card[data-float]') as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(within(card).getAllByText('one').length).toBeGreaterThan(0);
+    expect(stored().panes[0]).toMatchObject({ float: { x: 10, y: 10, w: 400, h: 300 } });
+    expect(stored().panes.some((p) => p.parkedFloat)).toBe(false);
+    // And a phone again parks it (no card, a tab at the end).
+    mm.setPhone(true);
+    expect(document.querySelector('.float-card')).toBeNull();
+    expect(labels()).toEqual(['1 · two', '2', '3 · one']);
   });
 
   it('Escape closes the open phone drawer', async () => {
