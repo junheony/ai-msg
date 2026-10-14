@@ -348,6 +348,181 @@ describe('App split view (D6)', () => {
     } finally { restore(); }
   });
 
+  it('자석: a dragged card\'s edge within 8px of another card\'s lands on it, with a guide line while dragging; Alt drags freely', async () => {
+    const restore = mockBody({ w: 1200, h: 800 });
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ width: 1200, height: 800, left: 0, right: 1200, top: 0, bottom: 800, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+    try {
+      await threePanes();
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' }); // A
+      fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // B
+      const a = storedPane('s1')!.float!;
+      const b = storedPane('s2')!.float!;
+      const right = a.x + a.w;
+      const drag = (dx: number, altKey: boolean, check?: () => void) => {
+        fireEvent.pointerDown(grip('p1'), { clientX: 300, clientY: 400, pointerId: 1, button: 0, pointerType: 'mouse' });
+        fireEvent.pointerMove(grip('p1'), { clientX: 300 + dx, clientY: 400, pointerId: 1, buttons: 1, altKey });
+        check?.();
+        fireEvent.pointerUp(grip('p1'), { clientX: 300 + dx, clientY: 400, pointerId: 1, altKey });
+      };
+      drag(right + 5 - b.x, false, () => {
+        const line = document.querySelector('.floats .snap-line.v') as HTMLElement;
+        expect(line).not.toBeNull();
+        expect(line.style.left).toBe(`${right}px`);
+      });
+      expect(storedPane('s2')!.float!.x).toBe(right);
+      expect(document.querySelector('.snap-line')).toBeNull(); // gone with the drag
+      drag(5, true, () => expect(document.querySelector('.snap-line.v')).toBeNull());
+      expect(storedPane('s2')!.float!.x).toBe(right + 5);
+    } finally { rect.mockRestore(); restore(); }
+  });
+
+  it('– on a card\'s head folds it to the head (no ◢, its box kept); double-click on the folded head unfolds it (no maximize)', async () => {
+    const restore = mockBody({ w: 1200, h: 800 });
+    try {
+      await threePanes();
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      const box = storedPane('s1')!.float!;
+      const card = () => document.querySelector('.float-card[data-float="p0"]') as HTMLElement;
+      const live = () => screen.getByTestId('cards-live').textContent;
+      const fold = within(card()).getByRole('button', { name: '카드 접기' });
+      expect(fold.textContent).toBe('–');
+      fireEvent.click(fold);
+      expect(card().classList.contains('collapsed')).toBe(true);
+      expect(card().style.height).toBe('56px'); // the head's height (COLLAPSED_H); the body is hidden by .collapsed
+      // The CSS hides everything under the pane but the head: the head's controls are outside what it hides.
+      const hiddenBy = '.float-card.collapsed > .pane > :not(.chat):not(.chat-head), .float-card.collapsed .chat > :not(.chat-head)';
+      for (const label of ['카드 펼치기', '패널 끌기', '채팅 메뉴']) expect(within(card()).getByLabelText(label).closest(hiddenBy)).toBeNull();
+      expect(card().querySelector('.composer')?.closest(hiddenBy)).not.toBeNull();
+      expect(within(card()).queryByLabelText('카드 크기 조절')).toBeNull();
+      expect(live()).toBe('카드를 접었습니다');
+      expect(storedPane('s1')!.float).toEqual(box);
+      expect(within(card()).getByRole('button', { name: '카드 펼치기' }).textContent).toBe('▭');
+      fireEvent.doubleClick(card().querySelector('.chat-head') as HTMLElement);
+      expect(card().classList.contains('collapsed')).toBe(false);
+      expect(storedPane('s1')!.float).toEqual(box); // unfolded, not maximized
+      expect(live()).toBe('카드를 펼쳤습니다');
+      expect(within(card()).getByLabelText('카드 크기 조절')).toBeTruthy();
+      // ⋯ offers the same, labelled by state.
+      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '카드 접기' }));
+      expect(card().classList.contains('collapsed')).toBe(true);
+      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      expect(screen.getByRole('menuitem', { name: '카드 펼치기' })).toBeTruthy();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+      // The new-chat screen (its own head, no chat): the head stays out of the hidden part too.
+      fireEvent.keyDown(grip('p2'), { key: 'Enter' });
+      const blank = document.querySelector('.float-card[data-float="p2"]') as HTMLElement;
+      fireEvent.click(within(blank).getByRole('button', { name: '카드 접기' }));
+      expect(blank.classList.contains('collapsed')).toBe(true);
+      for (const label of ['카드 펼치기', '패널 끌기']) expect(within(blank).getByLabelText(label).closest(hiddenBy)).toBeNull();
+      expect(blank.querySelector('.newchat')?.closest(hiddenBy)).not.toBeNull();
+    } finally { restore(); }
+  });
+
+  it('a folded card snaps and clamps by its head: it can go down to the body\'s bottom, its stored height unchanged', async () => {
+    const restore = mockBody({ w: 1200, h: 800 });
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ width: 1200, height: 800, left: 0, right: 1200, top: 0, bottom: 800, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+    try {
+      await threePanes();
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      const card = document.querySelector('.float-card[data-float="p0"]') as HTMLElement;
+      fireEvent.click(within(card).getByRole('button', { name: '카드 접기' }));
+      const box = storedPane('s1')!.float!;
+      const drag = (toY: number, altKey = false) => {
+        fireEvent.pointerDown(grip('p0'), { clientX: 300, clientY: 400, pointerId: 1, button: 0, pointerType: 'mouse' });
+        fireEvent.pointerMove(grip('p0'), { clientX: 300, clientY: 400 + toY - storedPane('s1')!.float!.y, pointerId: 1, buttons: 1, altKey });
+        fireEvent.pointerUp(grip('p0'), { clientX: 300, clientY: 400 + toY - storedPane('s1')!.float!.y, pointerId: 1 });
+      };
+      drag(800 - 56 - 5); // the head's bottom 5px above the body's: it snaps onto it
+      expect(storedPane('s1')!.float).toEqual({ ...box, y: 800 - 56 });
+      drag(2000, true); // past the bottom (Alt: no snap): held with the head still in view
+      expect(storedPane('s1')!.float).toEqual({ ...box, y: 800 - 48 });
+    } finally { rect.mockRestore(); restore(); }
+  });
+
+  it('⋯ 카드 배치…: saves the panes under a name, loads them back after a change, deletes', async () => {
+    const restore = mockBody({ w: 1200, h: 800 });
+    try {
+      await threePanes();
+      const dialog = () => screen.getByRole('dialog', { name: '카드 배치' });
+      const live = () => screen.getByTestId('cards-live').textContent;
+      const openDialog = (id: string) => {
+        fireEvent.click(within(screen.getByTestId(`pane-${id}`)).getByLabelText('채팅 메뉴'));
+        fireEvent.click(screen.getByRole('menuitem', { name: '카드 배치…' }));
+      };
+      openDialog('p0');
+      expect(dialog().getAttribute('aria-modal')).toBe('true');
+      const save = within(dialog()).getByRole('button', { name: '지금 배치 저장' }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true); // no name, no save
+      fireEvent.change(within(dialog()).getByLabelText('배치 이름'), { target: { value: '작업' } });
+      fireEvent.click(save);
+      expect(within(dialog()).getAllByRole('listitem')).toHaveLength(1);
+      expect(within(dialog()).getByText('작업')).toBeTruthy();
+      expect(live()).toBe('배치 "작업" 을 저장했습니다');
+      fireEvent.change(within(dialog()).getByLabelText('배치 이름'), { target: { value: '작업' } });
+      expect(within(dialog()).getByRole('button', { name: '덮어쓰기' })).toBeTruthy();
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.queryByRole('dialog', { name: '카드 배치' })).toBeNull();
+      // Change the layout: s1 becomes a card.
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      expect(document.querySelector('.float-card')).not.toBeNull();
+      sock.frames = [];
+      openDialog('p1');
+      fireEvent.click(within(dialog()).getByRole('button', { name: '작업 불러오기' }));
+      expect(screen.queryByRole('dialog', { name: '카드 배치' })).toBeNull();
+      expect(document.querySelector('.float-card')).toBeNull();
+      expect((document.querySelector('.panes') as HTMLElement).dataset.count).toBe('3');
+      expect(frames().filter((f) => f.type === 'open_session').map((f) => (f as { sessionId: string }).sessionId)).toEqual(['s1', 's2']);
+      expect((JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: StoredPane[] }).panes.map((p) => p.session?.sessionId ?? null)).toEqual(['s1', 's2', null]);
+      expect(live()).toBe('배치 "작업" 을 불러왔습니다');
+      // New panes after a load never reuse an id.
+      fireEvent.click(screen.getByText(/^\+ 분할/));
+      fireEvent.click(screen.getByText(/^\+ 분할/));
+      const ids = screen.getAllByTestId(/^pane-/).map((el) => el.dataset.pane);
+      expect(ids).toHaveLength(5);
+      expect(new Set(ids).size).toBe(5);
+      // Delete.
+      openDialog(document.querySelector<HTMLElement>('.panes .pane')!.dataset.pane!);
+      fireEvent.click(within(dialog()).getByRole('button', { name: '작업 삭제' }));
+      expect(within(dialog()).getAllByRole('listitem')).toHaveLength(1); // asks once more
+      fireEvent.click(within(dialog()).getByRole('button', { name: '작업 정말 삭제' }));
+      expect(within(dialog()).queryAllByRole('listitem')).toHaveLength(0);
+      expect(JSON.parse(localStorage.getItem('deck.layouts.v1')!)).toEqual([]);
+    } finally { restore(); }
+  });
+
+  it('카드 배치: 삭제 goes back to itself after 3 s; a full store says it could not save; shortcuts stay off while it is open', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const restore = mockBody({ w: 1200, h: 800 });
+    try {
+      await threePanes();
+      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // two cards: Ctrl+⇧G would arrange them
+      const before = storedPane('s1')!.float;
+      fireEvent.click(within(screen.getByTestId('pane-p2')).queryByLabelText('채팅 메뉴') ?? within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '카드 배치…' }));
+      const dialog = () => screen.getByRole('dialog', { name: '카드 배치' });
+      expect(ctrlShiftG()).toBe(true); // not taken: the dialog is modal
+      expect(storedPane('s1')!.float).toEqual(before);
+      fireEvent.change(within(dialog()).getByLabelText('배치 이름'), { target: { value: 'a' } });
+      fireEvent.click(within(dialog()).getByRole('button', { name: '지금 배치 저장' }));
+      fireEvent.click(within(dialog()).getByRole('button', { name: 'a 삭제' }));
+      expect(within(dialog()).getByRole('button', { name: 'a 정말 삭제' })).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(3100); });
+      expect(within(dialog()).getByRole('button', { name: 'a 삭제' })).toBeTruthy();
+      // The store refuses the write.
+      const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('full', 'QuotaExceededError'); });
+      try {
+        fireEvent.change(within(dialog()).getByLabelText('배치 이름'), { target: { value: 'b' } });
+        fireEvent.click(within(dialog()).getByRole('button', { name: '지금 배치 저장' }));
+      } finally { set.mockRestore(); }
+      expect(within(dialog()).getByText('저장하지 못했습니다(저장 공간 부족)')).toBeTruthy();
+      expect(screen.getByTestId('cards-live').textContent).toBe('저장하지 못했습니다(저장 공간 부족)');
+      expect(within(dialog()).getAllByRole('listitem')).toHaveLength(1);
+      expect((within(dialog()).getByLabelText('배치 이름') as HTMLInputElement).value).toBe('b'); // kept to try again
+    } finally { restore(); vi.useRealTimers(); }
+  });
+
   it('a card remembers the box the user gave it per body size: a resize clamps at once, then (250 ms still) restores the box for that size — never records one', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const size = { w: 1200, h: 800 };
@@ -562,6 +737,33 @@ describe('App phone layout (D10)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); (window as { matchMedia?: unknown }).matchMedia = undefined; });
+
+  const layoutPane = (extra: Record<string, unknown>) => ({ session: null, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write', ...extra });
+  const loadFromPalette = (name: string) => {
+    fireEvent.keyDown(window, { code: 'KeyK', key: 'k', ctrlKey: true });
+    fireEvent.click(screen.getByText('카드 배치 저장/불러오기'));
+    fireEvent.click(screen.getByRole('button', { name: `${name} 불러오기` }));
+  };
+
+  it('phone: a layout with a card loads as tabs (the card parked, its box kept)', async () => {
+    const box = { x: 40, y: 50, w: 400, h: 300 };
+    localStorage.setItem('deck.layouts.v1', JSON.stringify([{ name: 'L', savedAt: 1, panes: [layoutPane({}), layoutPane({ float: box })] }]));
+    mockMatchMedia(true);
+    await boot();
+    loadFromPalette('L');
+    expect(document.querySelector('.float-card')).toBeNull();
+    const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: unknown; parkedFloat?: unknown }[] };
+    expect(stored.panes.map((p) => [p.float, p.parkedFloat])).toEqual([[undefined, undefined], [undefined, box]]);
+  });
+
+  it('desktop: a layout saved on a phone (a parked box only) floats that card again', async () => {
+    const box = { x: 40, y: 50, w: 400, h: 300 };
+    localStorage.setItem('deck.layouts.v1', JSON.stringify([{ name: 'L', savedAt: 1, panes: [layoutPane({}), layoutPane({ parkedFloat: box })] }]));
+    mockMatchMedia(false);
+    await boot();
+    loadFromPalette('L');
+    expect(document.querySelector('.float-card')).not.toBeNull();
+  });
 
   it('phone: drawer sidebar, single pane, no split button; opening a session closes the drawer', async () => {
     mockMatchMedia(true);

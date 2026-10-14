@@ -259,6 +259,8 @@ export type PaneState = {
   floatBefore?: FloatRect;
   /** The card's box per body size (`${w}x${h}`, oldest first, at most FLOAT_SIZES): a window back at a size it had puts the card back there. */
   floatBySize?: Record<string, FloatRect>;
+  /** The card folded to its header strip (`toggle_collapse_float`); its box (`float.h`) is kept for when it unfolds. */
+  floatCollapsed?: boolean;
 };
 
 /** How many body sizes a card remembers its box for. */
@@ -404,6 +406,10 @@ export type Action =
   | { type: 'toggle_max_float'; paneId: string; bounds: { w: number; h: number }; at?: string }
   /** The screen is phone-wide: every floating card lands as a tab at the end, its box kept (`parkedFloat`) for `unpark_floats`. */
   | { type: 'park_floats' }
+  /** A floating card folded to its header strip, or unfolded again. */
+  | { type: 'toggle_collapse_float'; paneId: string }
+  /** 카드 배치 불러오기: every pane replaced by a saved layout's (built like a reload's — layouts.ts `layoutPanes`); the first becomes active. */
+  | { type: 'load_layout'; panes: PaneState[] }
   /** The screen is wide again: every parked pane floats at its kept box (one pane always stays in the grid). */
   | { type: 'unpark_floats' }
   /** Column weights by pane id (a splitter drag sends its two neighbours; 균등 sends every pane at 1); others are untouched. */
@@ -1211,12 +1217,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'float_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
       if (!pane || pane.float || dockedPanes(state.panes).length < 2) return state;
-      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect, parkedFloat: undefined, floatBefore: undefined, floatBySize: action.at !== undefined ? { [action.at]: action.rect } : undefined } : p)), activePaneId: action.paneId };
+      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect, parkedFloat: undefined, floatBefore: undefined, floatBySize: action.at !== undefined ? { [action.at]: action.rect } : undefined, floatCollapsed: undefined } : p)), activePaneId: action.paneId };
     }
     case 'dock_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
       if (!pane?.float) return state;
-      const { float: _f, size: _s, parkedFloat: _pf, floatBefore: _fb, floatBySize: _fs, ...bare } = pane;
+      const { float: _f, size: _s, parkedFloat: _pf, floatBefore: _fb, floatBySize: _fs, floatCollapsed: _fc, ...bare } = pane;
       const rest = state.panes.filter((p) => p.id !== action.paneId);
       const docked = dockedPanes(rest);
       // Its old width (fr) belongs to a grid that has since been resized: it lands at the average of the others.
@@ -1246,13 +1252,19 @@ export function reducer(state: AppState, action: Action): AppState {
       if (!pane?.float) return state;
       if (pane.floatBefore) {
         const float = clampFloat(pane.floatBefore, action.bounds);
-        const { floatBefore: _fb, ...next } = pane;
+        const { floatBefore: _fb, floatCollapsed: _fc, ...next } = pane;
         return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...next, float, ...(action.at !== undefined ? { floatBySize: rememberSize(pane.floatBySize, action.at, float) } : {}) } : p)) };
       }
       const max = clampFloat({ x: 0, y: 0, w: action.bounds.w, h: action.bounds.h }, action.bounds);
-      // Already filling the body: there is no smaller box to come back to.
-      if (sameRect(max, pane.float)) return state;
-      const next: PaneState = { ...pane, floatBefore: pane.float, float: max };
+      // Already filling the body: there is no smaller box to come back to (a folded one still unfolds).
+      if (sameRect(max, pane.float)) {
+        if (!pane.floatCollapsed) return state;
+        const { floatCollapsed: _fc, ...open } = pane;
+        return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? open : p)) };
+      }
+      // A folded card unfolds as it fills the body.
+      const { floatCollapsed: _fc, ...unfolded } = pane;
+      const next: PaneState = { ...unfolded, floatBefore: pane.float, float: max };
       return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? next : p)) };
     }
     case 'park_floats': {
@@ -1270,9 +1282,24 @@ export function reducer(state: AppState, action: Action): AppState {
         if (!p.parkedFloat) return p;
         const { parkedFloat, ...bare } = p;
         if (p.id !== keep) return { ...bare, float: parkedFloat };
-        const { floatBefore: _fb, floatBySize: _fs, ...docked } = bare;
+        const { floatBefore: _fb, floatBySize: _fs, floatCollapsed: _fc, ...docked } = bare;
         return docked;
       }) };
+    }
+    case 'toggle_collapse_float': {
+      const pane = state.panes.find((p) => p.id === action.paneId);
+      if (!pane?.float) return state;
+      const { floatCollapsed: was, ...rest } = pane;
+      const next: PaneState = was ? rest : { ...rest, floatCollapsed: true };
+      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? next : p)) };
+    }
+    case 'load_layout': {
+      if (!action.panes.length) return state;
+      // Every pane leaves its session as a close would: held messages are kept with it, its transcript cached.
+      let s = state;
+      for (const p of state.panes) s = { ...park(s, p.id), recent: remember(s.recent, p) };
+      const panes = action.panes.slice(0, PANE_LIMIT);
+      return { ...s, panes, activePaneId: panes[0]!.id };
     }
     case 'resize_panes': {
       let changed = false;
@@ -1289,7 +1316,7 @@ export function reducer(state: AppState, action: Action): AppState {
       if (state.panes.length <= 1 || !state.panes.some((p) => p.id === action.paneId)) return state;
       let panes = state.panes.filter((p) => p.id !== action.paneId);
       // The grid never empties: closing the last docked pane docks the first floating card.
-      if (!panes.some((p) => !p.float)) { const { float: _f, floatBefore: _fb, floatBySize: _fs, ...first } = panes[0]!; panes = [first, ...panes.slice(1)]; }
+      if (!panes.some((p) => !p.float)) { const { float: _f, floatBefore: _fb, floatBySize: _fs, floatCollapsed: _fc, ...first } = panes[0]!; panes = [first, ...panes.slice(1)]; }
       const next = dockedPanes(panes)[0]!;
       return { ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((p) => p.id === action.paneId)), panes, activePaneId: state.activePaneId === action.paneId ? next.id : state.activePaneId };
     }

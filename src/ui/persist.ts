@@ -22,7 +22,7 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
  * `turnId`: an id-less session's first turn still running — after a reload `hello.running` finds it by this id (with the
  * session id once the server knows it) and the pane follows it (`watch_turn`); an id-ful pane re-finds its turn by the id.
  */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number; /** PaneState.float (absent: docked). */ float?: FloatRect; /** PaneState.parkedFloat (absent: none). */ parkedFloat?: FloatRect; /** PaneState.floatBefore (absent: not maximized). */ floatBefore?: FloatRect; /** PaneState.floatBySize (absent: none). */ floatBySize?: Record<string, FloatRect> };
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number; /** PaneState.float (absent: docked). */ float?: FloatRect; /** PaneState.parkedFloat (absent: none). */ parkedFloat?: FloatRect; /** PaneState.floatBefore (absent: not maximized). */ floatBefore?: FloatRect; /** PaneState.floatBySize (absent: none). */ floatBySize?: Record<string, FloatRect>; /** PaneState.floatCollapsed (absent: unfolded). */ floatCollapsed?: true };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -58,7 +58,8 @@ function session(x: unknown): PersistedSession | null {
   return { sessionId, cwd: x.cwd, title, engine };
 }
 
-function pane(x: unknown): PersistedPane {
+/** One stored pane, validated field by field (also the layouts' parser — layouts.ts). */
+export function parsePane(x: unknown): PersistedPane {
   const d = newPane('');
   if (!isObj(x)) return { session: null, model: d.model, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: d.engine, sandbox: d.sandbox };
   const e = isObj(x.efforts) ? x.efforts : {};
@@ -84,6 +85,7 @@ function pane(x: unknown): PersistedPane {
     // A card's extras (maximized box, boxes per body size) only ride a card (floating or parked).
     ...((readFloat(x.float) || readFloat(x.parkedFloat)) && readFloat(x.floatBefore) ? { floatBefore: readFloat(x.floatBefore)! } : {}),
     ...((readFloat(x.float) || readFloat(x.parkedFloat)) && floatBySize(x.floatBySize) ? { floatBySize: floatBySize(x.floatBySize)! } : {}),
+    ...((readFloat(x.float) || readFloat(x.parkedFloat)) && x.floatCollapsed === true ? { floatCollapsed: true as const } : {}),
   };
 }
 
@@ -99,10 +101,10 @@ export function parseUi(raw: unknown): PersistedUi | null {
   if (!isObj(raw)) return null;
   // Only v1 exists; an unknown version is dropped rather than guessed at.
   if (raw.v !== 1) return null;
-  const panes = Array.isArray(raw.panes) ? raw.panes.slice(0, PANE_LIMIT).map(pane) : [];
+  const panes = Array.isArray(raw.panes) ? raw.panes.slice(0, PANE_LIMIT).map(parsePane) : [];
   if (!panes.length) return null;
   // The grid never starts empty: were every saved pane a floating card, the first lands.
-  if (panes.every((p) => p.float)) { delete panes[0]!.float; delete panes[0]!.floatBefore; delete panes[0]!.floatBySize; }
+  if (panes.every((p) => p.float)) { delete panes[0]!.float; delete panes[0]!.floatBefore; delete panes[0]!.floatBySize; delete panes[0]!.floatCollapsed; }
   const active = Number.isInteger(raw.active) && (raw.active as number) >= 0 && (raw.active as number) < panes.length ? (raw.active as number) : 0;
   const collapsed = Array.isArray(raw.collapsed) ? raw.collapsed.filter((c): c is string => shortStr(c, 4096)).slice(0, 200) : [];
   return { v: 1, panes, active, collapsed, drawer: raw.drawer === true };
@@ -127,6 +129,7 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
       ...(!p.float && p.parkedFloat ? { parkedFloat: p.parkedFloat } : {}),
       ...((p.float || p.parkedFloat) && p.floatBefore ? { floatBefore: p.floatBefore } : {}),
       ...((p.float || p.parkedFloat) && p.floatBySize && Object.keys(p.floatBySize).length ? { floatBySize: p.floatBySize } : {}),
+      ...((p.float || p.parkedFloat) && p.floatCollapsed ? { floatCollapsed: true as const } : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
@@ -156,6 +159,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
     ...(p.parkedFloat ? { parkedFloat: p.parkedFloat } : {}),
     ...(p.floatBefore ? { floatBefore: p.floatBefore } : {}),
     ...(p.floatBySize ? { floatBySize: { ...p.floatBySize } } : {}),
+    ...(p.floatCollapsed ? { floatCollapsed: true } : {}),
     // Its history is asked for again once the socket is up: loading until it arrives.
     ...(p.session?.sessionId ? { loading: true } : {}),
   }));

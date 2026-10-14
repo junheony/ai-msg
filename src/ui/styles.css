@@ -266,6 +266,14 @@ body.pane-dragging iframe { pointer-events: none; }
 .float-card.drag-move { box-shadow: 0 0 0 1px var(--accent), 0 24px 56px rgba(0, 0, 0, .4); }
 .float-card > .pane { flex: 1; min-height: 0; }
 .float-card > .pane.active::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent); opacity: .5; pointer-events: none; }
+/* Folded: the head only (App sets the height, COLLAPSED_H); everything else in the pane is hidden. */
+.float-card.collapsed { min-height: 0; }
+.float-card.collapsed > .pane > :not(.chat):not(.chat-head), .float-card.collapsed .chat > :not(.chat-head) { display: none; }
+.float-card.collapsed .chat { min-height: 0; }
+.pane-fold { font-size: 14px; line-height: 1; }
+.snap-line { position: absolute; z-index: 30; pointer-events: none; background: var(--accent); }
+.snap-line.v { top: 0; bottom: 0; width: 1px; }
+.snap-line.h { left: 0; right: 0; height: 1px; }
 .float-resize { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none; z-index: 3; }
 .float-resize::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); border-radius: 0 0 2px 0; opacity: .7; }
 .float-resize:hover::after, .float-resize:focus-visible::after { border-color: var(--accent); opacity: 1; }
@@ -2055,3 +2063,14 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
 .session-cwd-dialog .session-cwd-title { color: var(--fg); font-weight: 500; }
 .session-cwd-dialog .session-cwd-hint { margin: 0 0 10px; font-size: calc(12px * var(--font-scale, 1)); }
 .msg-model { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); font-weight: 500; }
+
+.layouts-dialog { width: min(520px, calc(100vw - 24px)); max-width: none; }
+.layouts-save { display: flex; gap: 8px; }
+.layouts-save input { flex: 1; min-width: 0; }
+.layouts-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.layouts-row { display: grid; grid-template-columns: 1fr auto auto; grid-template-rows: auto auto; column-gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+.layouts-row .layouts-name { grid-column: 1; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layouts-row .layouts-meta { grid-column: 1; grid-row: 2; font-size: calc(12px * var(--font-scale, 1)); }
+.layouts-row .btn { grid-row: 1 / span 2; }
+.layouts-error { color: var(--danger); font-size: calc(13px * var(--font-scale, 1)); }
+.layouts-empty { font-size: calc(13px * var(--font-scale, 1)); }

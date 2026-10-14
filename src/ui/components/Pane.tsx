@@ -176,7 +176,7 @@ export type SessionActions = {
   onDuplicate?: (sessionId: string) => void;
 };
 
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized }: {
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'usage' | 'projects' | 'defaultPermMode' | 'pins'>>;
   active: boolean;
@@ -196,6 +196,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   /** ⋯ 카드 최대화 / 카드 원래 크기로 (desktop, floating); `maximized` picks the label. */
   onToggleMax?: () => void;
   maximized?: boolean;
+  /** ⋯ 카드 접기 / 펼치기 and the – / ▭ head button (desktop, floating); `collapsed` picks the label. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+  /** ⋯ 카드 배치… (desktop): the saved-layouts dialog. */
+  onLayouts?: () => void;
   dispatch: (a: Action) => void;
   /** `false`: not sent (socket down). */
   send: SendFn;
@@ -301,17 +306,23 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   else if (!floating && onFloat) fileMenu.push({ label: '떠 있는 카드로 떼기', run: onFloat });
   if (floating && onToggleMax) fileMenu.push({ label: maximized ? '카드 원래 크기로' : '카드 최대화', run: onToggleMax });
   if (floating && onArrange) fileMenu.push({ label: `떠 있는 카드 정렬 (${isMacPlatform() ? '⌘⇧G' : 'Ctrl+Shift+G'})`, run: onArrange });
+  if (floating && onToggleCollapse) fileMenu.push({ label: collapsed ? '카드 펼치기' : '카드 접기', run: onToggleCollapse });
+  if (onLayouts) fileMenu.push({ label: '카드 배치…', run: onLayouts });
   // 새 탭으로 떼어내기 (split view only): the session in a new browser tab, this pane closed. A lone pane has no such item.
   if (closable && s?.sessionId) {
     const detached = s.sessionId;
     fileMenu.push({ label: '새 탭으로 떼어내기', run: () => { openInNewTab(detached); onClose(); } });
   }
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
-  const handle = grip && (
+  const fold = floating && onToggleCollapse && (
+    <button type="button" className="icon-btn pane-fold" aria-label={collapsed ? '카드 펼치기' : '카드 접기'} title={collapsed ? '카드 펼치기 (헤더 더블클릭도 됨)' : '카드 접기: 헤더만 남김'} onClick={onToggleCollapse}>{collapsed ? '▭' : '–'}</button>
+  );
+  const grip0 = grip && (
     <button type="button" className="icon-btn pane-grip" aria-label="패널 끌기" title={floating ? '드래그: 카드 이동 · 위 가장자리에 놓기: 패널에 붙이기 · 더블클릭: 최대화/복원 · 키보드: ←→↑↓ 이동, Enter 붙이기' : '드래그: 순서 바꾸기 · 아래로 끌기: 카드로 떼기 · 키보드: ←→ 순서, Enter 떼기'} onPointerDown={grip.onPointerDown} onKeyDown={grip.onKeyDown} onClick={(e) => e.preventDefault()}>
       <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true"><circle cx="2.5" cy="2" r="1.4" fill="currentColor" /><circle cx="7.5" cy="2" r="1.4" fill="currentColor" /><circle cx="2.5" cy="7" r="1.4" fill="currentColor" /><circle cx="7.5" cy="7" r="1.4" fill="currentColor" /><circle cx="2.5" cy="12" r="1.4" fill="currentColor" /><circle cx="7.5" cy="12" r="1.4" fill="currentColor" /></svg>
     </button>
   );
+  const handle = (fold || grip0) && <>{fold}{grip0}</>;
   const busy = pane.activeTurnId !== null || pane.awaitingStart;
   const onModel = (m: ModelChoice) => dispatch({ type: 'set_model', model: m, paneId: pane.id });
   const onEffort = (e: Effort | null) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id });
