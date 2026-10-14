@@ -80,6 +80,8 @@ export type TurnRunnerDeps = {
   codex: Pick<CodexEngine, 'runTurn'> | null;
   /** Null = agy not installed. `loggedIn` reads the cached `agy models` probe (only g1 can be logged in). */
   gemini?: { engine: Pick<GeminiEngine, 'runTurn'>; loggedIn: (account: GeminiAccount) => boolean } | null;
+  /** Re-reads the Gemini quota shortly after a Gemini turn (GeminiUsagePoller.bump); absent = none. */
+  geminiUsage?: { bump(): void } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
   attachments: AttachmentStore | null;
   codexSessionsRoot: string;
@@ -1382,6 +1384,7 @@ export class TurnRunner {
     }
     if (!res.ok && GEMINI_LIMIT_RE.test(res.errorText ?? '')) this.geminiCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
     sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
+    deps.geminiUsage?.bump();
   }
 
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { type Account, type AccountNames, type UsageSeat } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits };
@@ -202,8 +202,15 @@ export class UsageService {
   }
 
   private publish(next: UsageSnapshot): void {
+    // The Gemini seat is fed by GeminiUsagePoller only: a usage-deck poll carries the last reading over.
+    if (next.gemini === undefined && this.snap.gemini !== undefined) next = { ...next, gemini: this.snap.gemini };
     this.snap = this.withSource(next);
     for (const cb of this.listeners) cb(this.snap);
+  }
+
+  /** GeminiUsagePoller: a fresh `/usage` reading (or a login/parse failure) for the Gemini card. */
+  applyGemini(u: GeminiUsage): void {
+    this.publish({ ...this.snap, generatedAt: this.now().toISOString(), gemini: u });
   }
 
   private seatOf(s: UsageSnapshot, seat: UsageSeat): AccountUsage {

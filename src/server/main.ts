@@ -31,6 +31,7 @@ import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
+import { GeminiUsagePoller } from './usage/GeminiUsagePoller';
 import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
@@ -76,6 +77,9 @@ async function main(): Promise<void> {
   const geminiLogin = cfg.geminiBin ? new GeminiLogin(cfg.geminiBin) : null;
   void geminiLogin?.refresh();
   const gemini = cfg.geminiBin && geminiLogin ? { engine: new GeminiEngine(cfg.geminiBin), loggedIn: (a: GeminiAccount) => geminiLogin.get(a) } : null;
+  // Gemini quota for the usage card: `agy -p=/usage` at start, every 5 min, and after each Gemini turn — only while logged in.
+  const geminiUsage = cfg.geminiBin && geminiLogin ? new GeminiUsagePoller({ bin: cfg.geminiBin, usage, login: geminiLogin }) : null;
+  geminiUsage?.start();
   const geminiStatus = () => {
     geminiLogin?.ensureFresh();
     return { available: gemini !== null, loggedIn: Object.fromEntries(GEMINI_ACCOUNTS.map((a) => [a, geminiLogin?.get(a) ?? false])) as Record<GeminiAccount, boolean> };
@@ -88,6 +92,7 @@ async function main(): Promise<void> {
     engine: new ClaudeEngine({ home: cfg.home, accounts, bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) }),
     codex,
     gemini,
+    geminiUsage,
     attachments,
     codexSessionsRoot: cfg.codexSessionsRoot,
     usage,
@@ -141,7 +146,7 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    ws.close(); usage.stop(); codexUsage.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
+    ws.close(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
     void flushThenExit(() => events.flush(), () => process.exit(0));
   };
   installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });

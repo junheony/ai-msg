@@ -15,6 +15,15 @@ export type AccountUsage = {
   credits?: GptCredits | null;
 };
 
+/** One Antigravity quota bucket (a model or model family) as `agy -p=/usage` reports it. */
+export type GeminiBucket = { name: string; usedPct: number; resetsAt: string | null };
+
+/**
+ * The Gemini (agy) seat. `loggedIn` false = the keychain login is missing, so no numbers (status 'down').
+ * 'stale' = the last `/usage` read failed and these are the previous buckets. `error`: why there are no fresh numbers.
+ */
+export type GeminiUsage = { status: 'ok' | 'stale' | 'down'; fetchedAt: string | null; loggedIn: boolean; buckets: GeminiBucket[]; error?: string | null };
+
 export type UsageSnapshot = {
   generatedAt: string;
   deckReachable: boolean;
@@ -22,6 +31,8 @@ export type UsageSnapshot = {
   accounts: Record<Account, AccountUsage>;
   /** ChatGPT Pro (usage-deck card `codex`); status 'down' = unknown (D5). Optional only for Plan 1 test literals. */
   gpt?: AccountUsage;
+  /** Gemini via agy; absent = agy not installed (no card). */
+  gemini?: GeminiUsage;
   /** 'none' = this install has never had an answer from usage-deck: unknown usage alone does not change the model or engine. Absent = 'deck'. */ usageSource?: 'deck' | 'none';
 };
 
