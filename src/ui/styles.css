@@ -614,8 +614,9 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
 }
 
 /* Five cards (three accounts + GPT + Gemini) keep the full card too, but one row of five fits only from 1600px: below
-   that the same two-row layout as above (the top bar wraps when it holds a five-card panel). */
-@media (min-width: 1280px) and (max-width: 1599.98px) {
+   that the same two-row layout as above (the top bar wraps when it holds a five-card panel). The whole block needs
+   `:has` — without it the panel would be unwrapped into a bar that does not wrap — so it is gated as one. */
+@media (min-width: 1280px) and (max-width: 1599.98px) { @supports selector(:has(a)) {
   .topbar:has(> .usage-panel[data-cards="5"]) { flex-wrap: wrap; height: auto; column-gap: 6px; row-gap: 0; padding: 0 12px 8px 14px; }
   .topbar:has(> .usage-panel[data-cards="5"])::after { content: ""; order: 5; flex: 0 0 100%; }
   .topbar:has(> .usage-panel[data-cards="5"]) > .menu { order: 0; }
@@ -628,7 +629,7 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .topbar:has(> .usage-panel[data-cards="5"]) .top-chip { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .topbar:has(> .usage-panel[data-cards="5"]) .top-chip .chip-long { display: none; }
   .topbar:has(> .usage-panel[data-cards="5"]) .top-chip .chip-short { display: inline; }
-}
+} }
 
 /* Phone: mini cards — mark + letter on top, then "label · number" rows; a tap opens the detail popover. */
 @media (max-width: 720px) {

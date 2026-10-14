@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { AUTO_MODEL_INFO, MODEL_INFO, type CodexSandbox, type Effort, type ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { isGeminiAccount } from '../../shared/accounts';
@@ -176,13 +176,15 @@ export type SessionActions = {
   onDuplicate?: (sessionId: string) => void;
 };
 
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions, grip, floating, onFloat, onDock }: {
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'usage' | 'projects' | 'defaultPermMode' | 'pins'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
-  grip?: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => void };
+  grip?: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => void; onKeyDown?: (e: ReactKeyboardEvent<HTMLButtonElement>) => void };
+  /** ⋯ 왼쪽으로 / 오른콽으로 이동 (desktop, docked, when there is a neighbour on that side) — the keyboard way to reorder. */
+  onShift?: { left?: () => void; right?: () => void };
   /** Shown as a floating card (its ⋯ menu offers 패널에 다시 붙이기 instead of 떼기). */
   floating?: boolean;
   /** ⋯ 떠 있는 카드로 떼기 (desktop, docked, not the last docked pane). */
@@ -288,6 +290,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   // 파일 (the session folder in the side panel) lives in the header's ⋯ menu, as Claude keeps its header bare.
   const fileMenu = s ? [{ label: side ? '파일 패널 닫기' : '파일 열기', run: () => setSide(side ? null : { kind: 'pick' }) }] : [];
   // 떠 있는 카드로 떼기 / 패널에 다시 붙이기: the pane as a card over the split view and back (the grip does the same by drag).
+  if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', run: onShift.left });
+  if (onShift?.right) fileMenu.push({ label: '오른쪽으로 이동', run: onShift.right });
   if (floating && onDock) fileMenu.push({ label: '패널에 다시 붙이기', run: onDock });
   else if (!floating && onFloat) fileMenu.push({ label: '떠 있는 카드로 떼기', run: onFloat });
   // 새 탭으로 떼어내기 (split view only): the session in a new browser tab, this pane closed. A lone pane has no such item.
@@ -297,7 +301,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   }
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   const handle = grip && (
-    <button type="button" className="icon-btn pane-grip" aria-label="패널 끌기" title={floating ? '드래그: 카드 이동 · 위 가장자리에 놓기: 패널에 붙이기' : '드래그: 순서 바꾸기 · 아래로 끌기: 카드로 떼기'} onPointerDown={grip.onPointerDown} onClick={(e) => e.preventDefault()}>
+    <button type="button" className="icon-btn pane-grip" aria-label="패널 끌기" title={floating ? '드래그: 카드 이동 · 위 가장자리에 놓기: 패널에 붙이기 · 키보드: ←→↑↓ 이동, Enter 붙이기' : '드래그: 순서 바꾸기 · 아래로 끌기: 카드로 떼기 · 키보드: ←→ 순서, Enter 떼기'} onPointerDown={grip.onPointerDown} onKeyDown={grip.onKeyDown} onClick={(e) => e.preventDefault()}>
       <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true"><circle cx="2.5" cy="2" r="1.4" fill="currentColor" /><circle cx="7.5" cy="2" r="1.4" fill="currentColor" /><circle cx="2.5" cy="7" r="1.4" fill="currentColor" /><circle cx="7.5" cy="7" r="1.4" fill="currentColor" /><circle cx="2.5" cy="12" r="1.4" fill="currentColor" /><circle cx="7.5" cy="12" r="1.4" fill="currentColor" /></svg>
     </button>
   );

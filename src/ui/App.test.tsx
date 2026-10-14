@@ -143,7 +143,7 @@ describe('App split view (D6)', () => {
       const grip = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
       // Reorder: p0 dragged along the rail (y < 72) to x = 1000 (past p2's centre at 1000? centre = 1000 → not past; use 1050).
       fireEvent.pointerDown(grip, { clientX: 10, clientY: 20, pointerId: 1, button: 0, pointerType: 'mouse' });
-      fireEvent.pointerMove(grip, { clientX: 1050, clientY: 20, pointerId: 1 });
+      fireEvent.pointerMove(grip, { clientX: 1050, clientY: 20, pointerId: 1, buttons: 1 });
       expect(document.body.classList.contains('pane-dragging')).toBe(true);
       expect(document.querySelector('.pane-drop-marker')).not.toBeNull();
       fireEvent.pointerUp(grip, { clientX: 1050, clientY: 20, pointerId: 1 });
@@ -153,14 +153,14 @@ describe('App split view (D6)', () => {
       // Escape mid-drag: nothing changes.
       const grip2 = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
       fireEvent.pointerDown(grip2, { clientX: 810, clientY: 20, pointerId: 2, button: 0, pointerType: 'mouse' });
-      fireEvent.pointerMove(grip2, { clientX: 100, clientY: 20, pointerId: 2 });
+      fireEvent.pointerMove(grip2, { clientX: 100, clientY: 20, pointerId: 2, buttons: 1 });
       fireEvent.keyDown(window, { key: 'Escape' });
       fireEvent.pointerUp(grip2, { clientX: 100, clientY: 20, pointerId: 2 });
       expect(ids()).toEqual(['p1', 'p2', 'p0']);
       // Off the rail (y = 400): p0 floats as a card about its own width.
       const grip3 = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
       fireEvent.pointerDown(grip3, { clientX: 810, clientY: 20, pointerId: 3, button: 0, pointerType: 'mouse' });
-      fireEvent.pointerMove(grip3, { clientX: 600, clientY: 400, pointerId: 3 });
+      fireEvent.pointerMove(grip3, { clientX: 600, clientY: 400, pointerId: 3, buttons: 1 });
       expect(document.querySelector('.pane-ghost.card')).not.toBeNull();
       fireEvent.pointerUp(grip3, { clientX: 600, clientY: 400, pointerId: 3 });
     } finally { rect.mockRestore(); }
@@ -172,6 +172,69 @@ describe('App split view (D6)', () => {
     const f = stored.panes.find((p) => p.float)!.float!;
     expect(f.w).toBe(400);
     expect(f.y).toBe(382);
+  });
+
+  it('a floating card saved on a bigger screen is pulled back into the body; a resize keeps every card reachable', async () => {
+    localStorage.setItem('deck.ui.v1', JSON.stringify({ v: 1, active: 0, collapsed: [], drawer: false, panes: [
+      { session: null, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write' },
+      { session: null, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write', float: { x: 3000, y: 2000, w: 400, h: 300 } },
+    ] }));
+    // jsdom has no layout: the body reports 1200 × 800 (no ResizeObserver either, so the window resize path runs).
+    const size = { w: 1200, h: 800 };
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    try {
+      await boot();
+      const card = () => document.querySelector('.float-card') as HTMLElement;
+      // The window resize listener is attached at mount; the first clamp ran then too (body size came from the mock).
+      fireEvent(window, new Event('resize'));
+      expect(card().style.left).toBe('1080px');
+      expect(card().style.top).toBe('752px');
+      size.w = 600; size.h = 500;
+      fireEvent(window, new Event('resize'));
+      expect(card().style.left).toBe('480px');
+      expect(card().style.top).toBe('452px');
+      const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: { x: number; y: number } }[] };
+      expect(stored.panes[1]!.float).toMatchObject({ x: 480, y: 452 });
+    } finally { cw.mockRestore(); ch.mockRestore(); }
+  });
+
+  it('keyboard on the ⋮⋮ grip: ←→ reorder, Enter floats the pane; ⋯ has 왼쪽으로/오른쪽으로 이동 for panes with a neighbour there', async () => {
+    await boot();
+    openSession('one');
+    const split = screen.getByText(/^\+ 분할/);
+    fireEvent.click(split);
+    openSession('two');
+    fireEvent.click(split); // p0 p1 p2
+    const order = () => Array.from(document.querySelectorAll<HTMLElement>('.panes .pane')).map((e) => e.dataset.pane);
+    expect(order()).toEqual(['p0', 'p1', 'p2']);
+    const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByLabelText('패널 끌기');
+    fireEvent.keyDown(grip('p0'), { key: 'ArrowRight' });
+    expect(order()).toEqual(['p1', 'p0', 'p2']);
+    fireEvent.keyDown(grip('p0'), { key: 'ArrowLeft' });
+    expect(order()).toEqual(['p0', 'p1', 'p2']);
+    fireEvent.keyDown(grip('p0'), { key: 'ArrowLeft' }); // already first: nothing
+    expect(order()).toEqual(['p0', 'p1', 'p2']);
+    // The leftmost pane's ⋯ offers only 오른쇽으로 이동; the middle one both.
+    fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+    expect(screen.queryByRole('menuitem', { name: '왼쪽으로 이동' })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: '오른쪽으로 이동' }));
+    expect(order()).toEqual(['p1', 'p0', 'p2']);
+    fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+    expect(screen.getByRole('menuitem', { name: '왼쪽으로 이동' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '오른쪽으로 이동' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    // Enter on a docked grip floats the pane; Enter on the card's grip docks it again (at the end).
+    fireEvent.keyDown(grip('p1'), { key: 'Enter' });
+    expect(document.querySelector('.float-card[data-float="p1"]')).not.toBeNull();
+    expect(order()).toEqual(['p0', 'p2']);
+    // Arrows move the card (24px, 96 with Shift), clamped to the body — jsdom's body is 0×0, so the card pins to the corner.
+    fireEvent.keyDown(grip('p1'), { key: 'ArrowDown', shiftKey: true });
+    const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: { x: number; y: number } }[] };
+    expect(stored.panes.find((p) => p.float)!.float!.y).toBe(0);
+    fireEvent.keyDown(grip('p1'), { key: ' ' });
+    expect(document.querySelector('.float-card')).toBeNull();
+    expect(order()).toEqual(['p0', 'p2', 'p1']);
   });
 
   it('a splitter between each pair of panes: dragging trades width between its two neighbours, double-click evens them out, the widths survive a reload', async () => {
