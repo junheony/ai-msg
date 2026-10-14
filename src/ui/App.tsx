@@ -6,6 +6,8 @@ import { DeckMark } from './components/DeckMark';
 import { engineOf } from './components/EngineMark';
 import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
 import { SessionCwdDialog } from './components/SessionCwdDialog';
+import { LayoutsDialog } from './components/LayoutsDialog';
+import { deleteLayout, layoutPanes, listLayouts, saveLayout, type SavedLayout } from './layouts';
 import { Login } from './components/Login';
 import { NotifyMenu } from './components/NotifyMenu';
 import { SettingsView } from './components/SettingsView';
@@ -28,7 +30,7 @@ import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
 import { dockedPanes, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
-import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, useTabReorder, type FloatRect } from './paneDrag';
+import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { useTouchTooltip } from './useTouchTooltip';
@@ -259,6 +261,8 @@ export function App() {
   const [confirmDelete, setConfirmDelete] = useState<{ s: SessionEntry; which?: string } | null>(null);
   /** 작업 폴더 바꾸기: the session whose folder picker is open. */
   const [cwdFor, setCwdFor] = useState<SessionEntry | null>(null);
+  // 카드 배치 dialog: the saved layouts while it is open, and why the last save failed (null: closed).
+  const [layouts, setLayouts] = useState<{ list: SavedLayout[]; error: string | null } | null>(null);
   // One undo toast at a time: 삭제 (restore from the trash) or 보관 (unarchive).
   const [undo, setUndo] = useState<{ kind: 'trash'; trashId: string; title: string; which?: string } | { kind: 'archive'; sessionId: string } | null>(null);
   useEffect(() => {
@@ -404,7 +408,13 @@ export function App() {
   // No pane id: whichever pane is active then (a new split's id is only known after the reducer).
   const [focusReq, setFocusReq] = useState<{ paneId: string | null; n: number } | null>(null);
   const requestFocus = (paneId: string | null = null) => setFocusReq((r) => ({ paneId, n: (r?.n ?? 0) + 1 }));
-  useEffect(() => { if (focusReq) focusComposer(focusReq.paneId ?? latest.current.activePaneId); }, [focusReq]);
+  // A folded card's composer is hidden: no focus for it.
+  const folded = (paneId: string) => !!latest.current.panes.find((p) => p.id === paneId)?.floatCollapsed;
+  useEffect(() => {
+    if (!focusReq) return;
+    const id = focusReq.paneId ?? latest.current.activePaneId;
+    if (!folded(id)) focusComposer(id);
+  }, [focusReq]);
   useEffect(() => { if (authed) requestFocus(); }, [authed]);
   // A file dropped outside the chat pane (sidebar, top bar) must never make the browser navigate to it.
   useEffect(() => {
@@ -488,7 +498,7 @@ export function App() {
         // Type-to-compose: the key lands in the focused pane's composer (focus moves before the key's default action).
         // An IME key only moves focus (and is swallowed) so the composition never garbles.
         const how = routeKey(e, routeContext(e.target));
-        const ta = how ? composerOf(latest.current.activePaneId) : null;
+        const ta = how && !folded(latest.current.activePaneId) ? composerOf(latest.current.activePaneId) : null;
         if (!ta) return;
         // Already in the composer (a key event retargeted elsewhere, as iPadOS does mid-IME): leave the key and the caret alone.
         if (document.activeElement !== ta) {
@@ -691,6 +701,24 @@ export function App() {
    * on the rail it goes back into the grid at that slot. The DOM is moved while the pointer moves (ghost, marker,
    * the card itself); the state changes once, on release. Escape (or a cancelled pointer) puts everything back.
    */
+  /** 자석 guides while a card is dragged or resized: the lines it snapped to, drawn in the cards' layer (none: removed). */
+  const snapGuides = (layer: Element | null) => {
+    const lines: HTMLDivElement[] = [];
+    return (g: { x: number | null; y: number | null } | null) => {
+      while (lines.length) lines.pop()!.remove();
+      if (!layer || !g) return;
+      for (const [dir, at] of [['v', g.x], ['h', g.y]] as const) {
+        if (at === null) continue;
+        const line = document.createElement('div');
+        line.className = `snap-line ${dir}`;
+        line.style[dir === 'v' ? 'left' : 'top'] = `${at}px`;
+        layer.append(line);
+        lines.push(line);
+      }
+    };
+  };
+  /** The other cards' boxes, for snapping `paneId`'s card to them. */
+  const otherCards = (paneId: string) => latest.current.panes.filter((p) => p.id !== paneId).flatMap((p) => shownBox(p) ?? []);
   const startPaneDrag = (e: ReactPointerEvent<HTMLButtonElement>, paneId: string) => {
     const body = bodyRef.current;
     const grid = panesRef.current;
@@ -721,6 +749,8 @@ export function App() {
     };
     const canFloat = !!pane.float || docked.length > 1;
     const cardStyle = card ? { left: card.style.left, top: card.style.top } : null;
+    const guides = snapGuides(card ? body.querySelector('.floats') : null);
+    const others = otherCards(paneId);
     let active = false;
     let done = false;
     let ghost: HTMLDivElement | null = null;
@@ -787,6 +817,7 @@ export function App() {
       ghost!.className = 'pane-ghost';
       ghost!.style.cssText = '';
       if (card) card.classList.toggle('drag-move', !rail);
+      guides(null);
       if (rail) autoScroll();
       if (!pane.float && rail) {
         // Reorder among the docked panes.
@@ -818,7 +849,9 @@ export function App() {
       } else {
         // A card moved.
         ghost!.style.display = 'none';
-        const rect = clampFloat({ ...pane.float, x: pane.float.x + (ev.clientX - startX), y: pane.float.y + (ev.clientY - startY) }, bounds);
+        let rect = clampFloat({ ...pane.float, x: pane.float.x + (ev.clientX - startX), y: pane.float.y + (ev.clientY - startY) }, bounds);
+        // 자석: an edge within SNAP_PX of another card's or the body's edge lands on it (Alt held: free).
+        if (!ev.altKey) { const snap = snapFloat(rect, others, bounds, { collapsed: !!pane.floatCollapsed }); rect = snap.rect; guides(snap); }
         result = { kind: 'move', rect };
         if (card) Object.assign(card.style, { left: `${rect.x}px`, top: `${rect.y}px` });
         say('카드 이동');
@@ -836,6 +869,7 @@ export function App() {
       document.body.classList.remove('pane-dragging');
       section.classList.remove('pane-drag-source');
       card?.classList.remove('drag-move');
+      guides(null);
       ghost?.remove();
       marker?.remove();
       if (!active) return;
@@ -887,9 +921,45 @@ export function App() {
     const bounds = bodyBounds();
     // A card already filling the body (and not via maximize) has nothing to toggle: say so instead of claiming a change.
     const full = !pane.floatBefore && pane.float.x === 0 && pane.float.y === 0 && pane.float.w === bounds.w && pane.float.h === bounds.h;
-    if (full) { announce('카드가 이미 화면을 채우고 있습니다'); return; }
+    if (full && !pane.floatCollapsed) { announce('카드가 이미 화면을 채우고 있습니다'); return; }
     dispatch({ type: 'toggle_max_float', paneId, bounds, at: sizeKey(bounds) });
-    announce(pane.floatBefore ? '카드를 원래 크기로 되돌렸습니다' : '카드를 최대화했습니다');
+    announce(full ? '카드를 펼쳤습니다' : pane.floatBefore ? '카드를 원래 크기로 되돌렸습니다' : '카드를 최대화했습니다');
+  };
+  /** – / ▭ on a card's head, ⋯ 카드 접기/펼치기, double-click on a folded head: the card down to its head and back. */
+  const toggleCollapseCard = (paneId: string) => {
+    const pane = latest.current.panes.find((p) => p.id === paneId);
+    if (!pane?.float) return;
+    dispatch({ type: 'toggle_collapse_float', paneId });
+    announce(pane.floatCollapsed ? '카드를 펼쳤습니다' : '카드를 접었습니다');
+  };
+  const saveCurrentLayout = (name: string): boolean => {
+    const list = saveLayout(name, snapshotUi(latest.current, { collapsed: [], drawer: false }).panes);
+    if (!list) {
+      const error = '저장하지 못했습니다(저장 공간 부족)';
+      setLayouts((l) => (l ? { ...l, error } : l));
+      announce(error);
+      return false;
+    }
+    setLayouts({ list, error: null });
+    announce(`배치 "${name}" 을 저장했습니다`);
+    return true;
+  };
+  /** A saved layout replaces every pane, as a reload would build them; the sessions in it are opened again. */
+  const loadLayout = (layout: SavedLayout) => {
+    const firstId = Math.max(...latest.current.panes.map((p) => Number(p.id.slice(1)) || 0)) + 1;
+    const built = layoutPanes(layout.panes, firstId);
+    if (!built) return;
+    // Saved on a bigger screen: every box pulled into the body as it is now (a phone parks them; unparking clamps).
+    const bounds = bodyBounds();
+    const panes = phone ? built : built.map((p) => ({ ...p, ...(p.float ? { float: clampFloat(p.float, bounds) } : {}), ...(p.parkedFloat ? { parkedFloat: clampFloat(p.parkedFloat, bounds) } : {}) }));
+    apply({ type: 'load_layout', panes });
+    for (const p of panes) {
+      const id = p.session?.sessionId;
+      if (id) { catchup.current?.forget(id); send({ type: 'open_session', sessionId: id }); }
+    }
+    setLayouts(null);
+    requestFocus(panes[0]!.id);
+    announce(`배치 "${layout.name}" 을 불러왔습니다`);
   };
   /** Arrow keys as a (dx, dy) step: 24px, 96 with Shift; null for any other key. */
   const arrowStep = (e: ReactKeyboardEvent): { dx: number; dy: number } | null => {
@@ -944,15 +1014,20 @@ export function App() {
     const startY = e.clientY;
     const start = pane.float;
     const bounds = { w: body.clientWidth, h: body.clientHeight };
+    const guides = snapGuides(body.querySelector('.floats'));
+    const others = otherCards(paneId);
     let rect: FloatRect | null = null;
     const move = (ev: PointerEvent) => {
       rect = clampFloat({ ...start, w: Math.max(FLOAT_MIN_W, start.w + (ev.clientX - startX)), h: Math.max(FLOAT_MIN_H, start.h + (ev.clientY - startY)) }, bounds);
+      if (ev.altKey) guides(null);
+      else { const snap = snapFloat(rect, others, bounds, { resize: true }); rect = snap.rect; guides(snap); }
       Object.assign(card.style, { width: `${rect.w}px`, height: `${rect.h}px` });
     };
     const end = (ev: PointerEvent) => {
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', end);
       el.removeEventListener('pointercancel', end);
+      guides(null);
       if (ev.type === 'pointercancel' || !rect) { Object.assign(card.style, { width: `${start.w}px`, height: `${start.h}px` }); return; }
       dispatch({ type: 'move_float', paneId, rect, at: sizeKey(bounds) });
     };
@@ -1053,6 +1128,7 @@ export function App() {
     { id: 'theme', label: '테마 전환', run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
     { id: 'sidebar', label: phone ? '사이드바 열기' : sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기', hint: `${mod}\\`, run: toggleSidebar },
     { id: 'help', label: '단축키 보기', hint: `${mod}/`, run: () => setHelpOpen(true) },
+    { id: 'layouts', label: '카드 배치 저장/불러오기', run: () => setLayouts({ list: listLayouts(), error: null }) },
   ];
   const paletteSessions: PaletteSession[] = [
     ...recent.map((s) => ({ sessionId: s.sessionId, title: s.title, cwd: s.cwd, project: s.project, lastModified: s.lastModified, engine: engineOf(s) })),
@@ -1134,6 +1210,7 @@ export function App() {
       {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)} onOpenHit={openHit} searchFn={searchTranscripts} />}
       {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
+      {layouts && <LayoutsDialog layouts={layouts.list} error={layouts.error} onClose={() => setLayouts(null)} onSave={saveCurrentLayout} onLoad={loadLayout} onDelete={(name) => setLayouts({ list: deleteLayout(name), error: null })} />}
       {cwdFor && <SessionCwdDialog title={cwdFor.title} cwd={cwdFor.cwd} onClose={() => setCwdFor(null)} onPick={(cwd) => { setCwdFor(null); send({ type: 'set_cwd', sessionId: cwdFor.sessionId, cwd }); }} />}
       {confirmDelete && (
         <ConfirmDialog title="대화 삭제" danger confirmLabel="삭제" onCancel={cancelDelete} onConfirm={() => doDelete(confirmDelete.s, confirmDelete.which)}
@@ -1245,21 +1322,23 @@ export function App() {
             <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
               onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
               {...(!phone && (docked.length > 1 || floats.length > 0) ? { grip: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => startPaneDrag(e, p.id), onKeyDown: (e: ReactKeyboardEvent<HTMLButtonElement>) => gripKey(e, p.id) } } : {})}
-              {...(!phone && docked.length > 1 ? { onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})} />
+              {...(!phone && docked.length > 1 ? { onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
+              onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />
             </Fragment>
           ))}
         </div>
         {!phone && floats.length > 0 && (
           <div className="floats">
             {floats.map((p) => (
-              <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.float!.h }}
-                onDoubleClick={(e) => { if (onCardHead(e.target)) toggleMaxCard(p.id); }}>
+              <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}${p.floatCollapsed ? ' collapsed' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.floatCollapsed ? COLLAPSED_H : p.float!.h }}
+                onDoubleClick={(e) => { if (onCardHead(e.target)) { if (p.floatCollapsed) toggleCollapseCard(p.id); else toggleMaxCard(p.id); } }}>
                 <Pane pane={p} app={state} active={p.id === state.activePaneId} closable dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
                   onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
                   floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})}
-                  onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore} />
-                <div className="float-resize" role="separator" tabIndex={0} aria-label="카드 크기 조절" aria-valuetext={`${p.float!.w} × ${p.float!.h}`} title="드래그: 카드 크기 · 키보드: ←→ 너비, ↑↓ 높이 (Shift: 크게)"
-                  onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />
+                  onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore}
+                  collapsed={!!p.floatCollapsed} onToggleCollapse={() => toggleCollapseCard(p.id)} onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />
+                {!p.floatCollapsed && <div className="float-resize" role="separator" tabIndex={0} aria-label="카드 크기 조절" aria-valuetext={`${p.float!.w} × ${p.float!.h}`} title="드래그: 카드 크기 · 키보드: ←→ 너비, ↑↓ 높이 (Shift: 크게)"
+                  onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />}
               </div>
             ))}
           </div>

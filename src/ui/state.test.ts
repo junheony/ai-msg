@@ -382,6 +382,30 @@ describe('panes (D6)', () => {
     expect(reducer(docked, { type: 'float_pane', paneId: 'p0', rect }).panes.find((p) => p.id === 'p0')!.floatBefore).toBeUndefined();
   });
 
+  it('toggle_collapse_float: folds a card to its head and back; dock clears it; maximizing unfolds it', () => {
+    let s = reducer(initialState, { type: 'add_pane' }); // p0 p1
+    const rect = { x: 40, y: 50, w: 400, h: 300 };
+    expect(reducer(s, { type: 'toggle_collapse_float', paneId: 'p0' })).toBe(s); // docked: nothing
+    s = reducer(s, { type: 'float_pane', paneId: 'p0', rect });
+    s = reducer(s, { type: 'toggle_collapse_float', paneId: 'p0' });
+    expect(s.panes[0]).toMatchObject({ floatCollapsed: true, float: rect }); // the box is kept
+    expect(reducer(s, { type: 'toggle_collapse_float', paneId: 'p0' }).panes[0]).not.toHaveProperty('floatCollapsed');
+    expect(reducer(s, { type: 'dock_pane', paneId: 'p0' }).panes.find((p) => p.id === 'p0')).not.toHaveProperty('floatCollapsed');
+    const max = reducer(s, { type: 'toggle_max_float', paneId: 'p0', bounds: { w: 1200, h: 800 } });
+    expect(max.panes[0]).toMatchObject({ float: { x: 0, y: 0, w: 1200, h: 800 } });
+    expect(max.panes[0]).not.toHaveProperty('floatCollapsed');
+  });
+
+  it('load_layout: replaces every pane, the first becomes active; an empty list changes nothing', () => {
+    let s = reducer(initialState, { type: 'add_pane' }); // p0 p1
+    expect(reducer(s, { type: 'load_layout', panes: [] })).toBe(s);
+    const a = { ...s.panes[0]!, id: 'p5' };
+    const b = { ...s.panes[1]!, id: 'p6', float: { x: 0, y: 0, w: 400, h: 300 } };
+    s = reducer(s, { type: 'load_layout', panes: [a, b] });
+    expect(s.panes.map((p) => p.id)).toEqual(['p5', 'p6']);
+    expect(s.activePaneId).toBe('p5');
+  });
+
   it('move_float `at`: the box is remembered per body size, newest last, at most four; float_pane / dock_pane forget them', () => {
     let s = reducer(initialState, { type: 'add_pane' });
     const rect = { x: 40, y: 50, w: 400, h: 300 };

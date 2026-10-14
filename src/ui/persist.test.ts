@@ -349,6 +349,27 @@ describe('persist: floating cards', () => {
     expect(hydrate(initialState, loadUi(store)).panes.map((x) => x.float)).toEqual([undefined, rect]);
   });
 
+  it('a folded card round-trips (only with a box to fold; a bad value is dropped)', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    const rect = { x: 40, y: 60, w: 480, h: 360 };
+    s = reducer(s, { type: 'float_pane', paneId: 'p1', rect });
+    s = reducer(s, { type: 'toggle_collapse_float', paneId: 'p1' });
+    const snap = snapshotUi(s, { collapsed: [], drawer: false });
+    expect(snap.panes[1]!.floatCollapsed).toBe(true);
+    expect(snap.panes[0]).not.toHaveProperty('floatCollapsed');
+    const store = memStore();
+    saveUi(snap, null, store);
+    const back = hydrate(initialState, loadUi(store));
+    expect(back.panes.map((x) => x.floatCollapsed)).toEqual([undefined, true]);
+    expect(back.panes[1]!.float).toEqual(rect);
+    // Parked on a phone: carried with the parked box.
+    const parked = snapshotUi(reducer(s, { type: 'park_floats' }), { collapsed: [], drawer: false });
+    expect(parked.panes[1]).toMatchObject({ parkedFloat: rect, floatCollapsed: true });
+    const ui = parseUi({ v: 1, panes: [p, { ...p, floatCollapsed: true }, { ...p, float: rect, floatCollapsed: 'yes' }], active: 0, collapsed: [], drawer: false })!;
+    expect(ui.panes[1]).not.toHaveProperty('floatCollapsed');
+    expect(ui.panes[2]).not.toHaveProperty('floatCollapsed');
+  });
+
   it('a parked box (phone) round-trips too, so a save made on a phone-wide window floats the card again on a desktop', () => {
     let s = reducer(initialState, { type: 'add_pane' });
     const rect = { x: 40, y: 60, w: 480, h: 360 };

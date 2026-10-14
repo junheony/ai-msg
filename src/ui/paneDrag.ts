@@ -63,6 +63,47 @@ export function arrangeFloats(count: number, bounds: { w: number; h: number }): 
   return Array.from({ length: count }, (_, i) => clampFloat({ x: ARRANGE_GAP + (i % cols) * (w + ARRANGE_GAP), y: ARRANGE_GAP + Math.floor(i / cols) * (h + ARRANGE_GAP), w, h }, bounds));
 }
 
+/** A card's edge this close (px) to another card's edge or the body's pulls onto it while dragged / resized. */
+export const SNAP_PX = 8;
+/** A folded card's height (its head only): App draws it at this height, snapping uses it for the card's bottom edge. */
+export const COLLAPSED_H = 56;
+/** The box a card shows: a folded one is only its head tall (its stored box keeps the unfolded height). */
+export const shownBox = (p: { float?: FloatRect; floatCollapsed?: boolean }): FloatRect | null => (p.float ? (p.floatCollapsed ? { ...p.float, h: COLLAPSED_H } : p.float) : null);
+
+/**
+ * Magnet: a dragged card's edges pull onto the other cards' edges and the body's (within SNAP_PX, the nearest per axis).
+ * A move tries left / right against every vertical line and top / bottom against every horizontal one; a resize only its
+ * right / bottom (left / top stay), never below the minimum size. `x` / `y`: the guide line it snapped to, null if none.
+ * `rect` comes clamped (clampFloat) and goes out clamped.
+ */
+export function snapFloat(rect: FloatRect, others: readonly FloatRect[], bounds: { w: number; h: number }, opts: { resize?: boolean; collapsed?: boolean } = {}): { rect: FloatRect; x: number | null; y: number | null } {
+  const xs = [0, bounds.w, ...others.flatMap((o) => [o.x, o.x + o.w])];
+  const ys = [0, bounds.h, ...others.flatMap((o) => [o.y, o.y + o.h])];
+  const nearest = (edges: number[], lines: number[]): { d: number; at: number } | null => {
+    let best: { d: number; at: number } | null = null;
+    for (const e of edges) for (const at of lines) { const d = at - e; if (Math.abs(d) <= SNAP_PX && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, at }; }
+    return best;
+  };
+  let { x, y, w, h } = rect;
+  let gx: number | null = null;
+  let gy: number | null = null;
+  if (opts.resize) {
+    const sx = nearest([x + w], xs);
+    if (sx && w + sx.d >= FLOAT_MIN_W) { w += sx.d; gx = sx.at; }
+    const sy = nearest([y + h], ys);
+    if (sy && h + sy.d >= FLOAT_MIN_H) { h += sy.d; gy = sy.at; }
+  } else {
+    const sx = nearest([x, x + w], xs);
+    if (sx) { x += sx.d; gx = sx.at; }
+    // A folded card's bottom edge is its head's (its stored h is the unfolded height).
+    const sy = nearest([y, y + (opts.collapsed ? COLLAPSED_H : h)], ys);
+    if (sy) { y += sy.d; gy = sy.at; }
+  }
+  const out = clampFloat({ x, y, w, h }, bounds);
+  // The clamp may have moved it off the line again: then no guide.
+  return { rect: out, x: gx !== null && (gx === out.x || gx === out.x + out.w) ? gx : null, y: gy !== null && (gy === out.y || gy === out.y + (opts.collapsed && !opts.resize ? COLLAPSED_H : out.h)) ? gy : null };
+}
+
 /** True when the pointer is on the rail: within the panes' box and no deeper than RAIL_PX from its top. */
 export function onRail(p: { x: number; y: number }, panes: { left: number; right: number; top: number }): boolean {
   return p.x >= panes.left && p.x <= panes.right && p.y >= panes.top && p.y < panes.top + RAIL_PX;
