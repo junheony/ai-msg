@@ -179,8 +179,9 @@ const HL_POLL_MS = 5 * 60_000;
 const HL_AFTER_TURN_MS = 2_000;
 
 /**
- * 하이라이트 N: the last 24 hours' event count (GET /api/highlights?hours=24), asked once connected, every 5 minutes, and
- * shortly after a turn ends (fewer sessions running). A failed ask keeps the number shown. Narrow bars: ✦N (CSS).
+ * 하이라이트 N: the last 24 hours' outcomes (GET /api/highlights?hours=24 minus background task events — a session's
+ * tasks would swamp the number), asked once connected, every 5 minutes, and shortly after a turn ends (fewer sessions
+ * running). A failed ask keeps the number shown. Narrow bars: ✦N (CSS).
  */
 export function HighlightsBadge({ ready, running, onOpen, fetchFn = fetch }: {
   /** Connected (hello in): asks right away and starts polling. */
@@ -200,7 +201,7 @@ export function HighlightsBadge({ ready, running, onOpen, fetchFn = fetch }: {
       if (!r.ok) return;
       const list = ((await r.json()) as { events?: unknown }).events;
       if (mine !== seq.current || !Array.isArray(list)) return;
-      setCount(list.length);
+      setCount(list.filter((e) => !(e && typeof e === 'object' && (e as { kind?: unknown }).kind === 'task')).length);
     } catch { /* offline or an older server: keep the number shown */ }
   }, [fetchFn]);
   useEffect(() => {

@@ -86,6 +86,14 @@ describe('ServerChip', () => {
 describe('HighlightsBadge', () => {
   const asks = (f: ReturnType<typeof vi.fn>) => f.mock.calls.filter(([u]) => u === '/api/highlights?hours=24').length;
 
+  it('counts outcomes, not background task events', async () => {
+    const list = [{ at: 1, kind: 'turn' }, { at: 2, kind: 'task' }, { at: 3, kind: 'task' }, { at: 4, kind: 'interrupted' }, { at: 5, kind: 'permission' }];
+    const f = vi.fn(async () => new Response(JSON.stringify({ hours: 24, events: list }), { status: 200 }));
+    render(<HighlightsBadge ready running={0} onOpen={() => {}} fetchFn={f as unknown as typeof fetch} />);
+    await flush();
+    expect(badgeText()).toBe('하이라이트 3');
+  });
+
   it('waits for the connection, then asks every 5 minutes; 0 shows just 하이라이트', async () => {
     vi.useFakeTimers();
     const f = vi.fn(async () => ok(0));
