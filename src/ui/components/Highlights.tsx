@@ -54,14 +54,46 @@ export function groupHighlights(events: HighlightEvent[], f: HighlightFilter): H
   return [...cards.values()].sort((a, b) => (a.server !== b.server ? (a.server ? -1 : 1) : b.last - a.last));
 }
 
-/** 완료 3 · 실패 1 · 승인 2 · 작업 1 · 끊김 1 (zeros left out); the 서버 card counts its events. */
+/**
+ * 완료 3 · 실패 1 · 승인 2 · 끊김 1 (zeros left out); the 서버 card counts its events. Background task counts only stand
+ * in when the card has nothing else (the 작업 filter): a session's 120 tasks say nothing about what it got done.
+ */
 export function summaryOf(c: HighlightCard): string {
   if (c.server) return `${c.events.length}건`;
   const n = (p: (e: HighlightEvent) => boolean) => c.events.filter(p).length;
-  return ([
+  const main = ([
     ['완료', n((e) => matches(e, 'done'))], ['실패', n((e) => matches(e, 'failed'))], ['승인', n((e) => matches(e, 'ask'))],
-    ['작업', n((e) => matches(e, 'task'))], ['끊김', n((e) => matches(e, 'interrupted'))],
-  ] as const).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`).join(' · ');
+    ['끊김', n((e) => matches(e, 'interrupted'))],
+  ] as const).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`);
+  if (main.length) return main.join(' · ');
+  const tasks = n((e) => matches(e, 'task'));
+  return tasks ? `작업 ${tasks}` : '';
+}
+
+/** How many lines of what-was-done a card shows before the timeline. */
+export const DIGEST_MAX = 3;
+
+/**
+ * The card body: what the session got done, newest first — each finished or failed turn's first reply line (the
+ * `완료 · ` / `실패 · ` prefix goes; the icon says which) and interruptions, up to DIGEST_MAX. Approvals and background
+ * tasks stay in the timeline: they are not outcomes. The 서버 card keeps its latest line only.
+ */
+export function digestOf(c: HighlightCard): HighlightEvent[] {
+  if (c.server) return c.events.slice(0, 1);
+  const out: HighlightEvent[] = [];
+  for (const e of c.events) {
+    if (e.kind !== 'turn' && e.kind !== 'interrupted') continue;
+    if (!digestLine(e)) continue;
+    out.push(e);
+    if (out.length >= DIGEST_MAX) break;
+  }
+  return out;
+}
+
+/** The line a digest shows for an event: a turn's reply line without its 완료/실패 prefix ('' = nothing to show). */
+export function digestLine(e: HighlightEvent): string {
+  if (e.kind !== 'turn') return e.body;
+  return e.body.replace(/^(완료|실패)(\s*·\s*|$)/, '').trim();
 }
 
 function hhmm(at: number): string {
@@ -81,18 +113,33 @@ function savedHours(): number {
 function Card({ c, now, engine, onOpen }: { c: HighlightCard; now: number; engine?: EngineKind | undefined; onOpen?: (() => void) | undefined }) {
   const [open, setOpen] = useState(false);
   const project = c.server ? 'deck' : c.cwd.split('/').filter(Boolean).pop() ?? c.cwd;
+  const summary = summaryOf(c);
   const head = (
     <>
       <span className="hl-title">{engine && <EngineMark engine={engine} decorative />}{c.title}</span>
       <span className="hl-meta"><span className="hl-project">{project}</span><span>{ago(now - c.last)}</span></span>
-      <span className="hl-summary">{summaryOf(c)}</span>
+      {summary && <span className="hl-summary">{summary}</span>}
     </>
   );
+  const digest = digestOf(c);
   return (
     <li className={`hl-card${c.server ? ' server' : ''}`} data-testid="hl-card">
       {onOpen
         ? <button type="button" className="hl-head" onClick={onOpen} title="이 세션 열기">{head}</button>
         : <div className="hl-head">{head}</div>}
+      {digest.length > 0 && (
+        <ul className="hl-digest" data-testid="hl-digest">
+          {digest.map((e, i) => {
+            const l = lookOf(e);
+            return (
+              <li key={`${e.at}-${i}`}>
+                <span className={`hl-icon tone-${l.tone}`} title={l.label} aria-label={l.label}>{l.icon}</span>
+                <span className="hl-body">{digestLine(e)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <button type="button" className="text-btn hl-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{open ? '타임라인 접기' : `타임라인 ${c.events.length}건`}</button>
       {open && (
         <ol className="hl-timeline">

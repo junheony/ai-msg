@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { Highlights, groupHighlights, summaryOf } from './Highlights';
+import { Highlights, digestLine, digestOf, groupHighlights, summaryOf } from './Highlights';
 import type { HighlightEvent } from '../../shared/highlights';
 
 const NOW = new Date(2026, 9, 13, 12, 0).getTime();
@@ -30,6 +30,22 @@ describe('groupHighlights', () => {
     expect(summaryOf(cards[0]!)).toBe('1건');
   });
 
+  it('summary leaves tasks out unless the card has nothing else; digest = turn/interrupted lines without the prefix, newest first, 3 at most', () => {
+    const busy: HighlightEvent[] = [
+      ev(1, { body: '완료 · 로그인 버그 고침' }), ev(2, { kind: 'task', body: '작업 끝 · 빌드', ok: undefined }),
+      ev(3, { kind: 'permission', body: '권한 요청 · Bash', ok: undefined }), ev(4, { ok: false, body: '실패 · 타임아웃' }),
+      ev(5, { body: '완료' }), ev(6, { kind: 'interrupted', body: '서버가 다시 시작되어 중단됨', ok: undefined }),
+      ev(7, { body: '완료 · 테스트 추가' }), ev(8, { body: '완료 · 맨 오래된 것' }),
+    ];
+    const card = groupHighlights(busy, 'all')[0]!;
+    expect(summaryOf(card)).toBe('완료 4 · 실패 1 · 승인 1 · 끊김 1');
+    expect(digestOf(card).map(digestLine)).toEqual(['로그인 버그 고침', '타임아웃', '서버가 다시 시작되어 중단됨']);
+    const onlyTasks = groupHighlights(busy, 'task')[0]!;
+    expect(summaryOf(onlyTasks)).toBe('작업 1');
+    expect(digestOf(onlyTasks)).toEqual([]);
+    expect(digestOf(groupHighlights(busy, 'all').find((c) => c.server) ?? groupHighlights(events, 'all')[0]!).map(digestLine)).toEqual(['서버 시작']);
+  });
+
   it('filters by kind', () => {
     expect(groupHighlights(events, 'failed').map((c) => c.key)).toEqual(['s1']);
     expect(groupHighlights(events, 'ask').map((c) => c.key)).toEqual(['s2']);
@@ -54,6 +70,7 @@ describe('Highlights', () => {
     expect(app.textContent).toContain('app');
     expect(app.textContent).toContain('완료 1 · 실패 1');
     expect(app.textContent).toContain('5분 전');
+    expect(within(app).getByTestId('hl-digest').textContent).toBe('✓최신✕에러');
     fireEvent.click(within(app).getByTitle('이 세션 열기'));
     expect(onOpen).toHaveBeenCalledWith('s1', '/p/app', 'App 작업');
     fireEvent.click(within(app).getByRole('button', { name: '타임라인 2건' }));

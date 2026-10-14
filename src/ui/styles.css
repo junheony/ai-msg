@@ -1118,7 +1118,18 @@ button.hl-head:hover { background: var(--hover); }
 .hl-title { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hl-meta { display: flex; gap: 8px; justify-content: space-between; color: var(--muted); font-size: calc(13px * var(--font-scale, 1)); }
 .hl-project { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hl-summary { font-size: calc(13.5px * var(--font-scale, 1)); color: var(--fg); }
+.hl-summary { font-size: calc(13.5px * var(--font-scale, 1)); color: var(--muted); }
+/* What the session got done: up to three reply lines, two visual lines each; the icon says 완료/실패/끊김. */
+.hl-digest { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.hl-digest li { display: grid; grid-template-columns: 1.2em minmax(0, 1fr); gap: 6px; align-items: baseline; font-size: calc(13.5px * var(--font-scale, 1)); color: var(--fg); line-height: 1.35; }
+.hl-digest .hl-body { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* The 서버 card is one line: 서버 · deck · 2시간 전 · 서버 시작. */
+.hl-card.server { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 7px 12px; }
+.hl-card.server .hl-head { flex-direction: row; align-items: baseline; gap: 10px; }
+.hl-card.server .hl-summary { display: none; }
+.hl-card.server .hl-digest { margin: 0; flex: 1 1 200px; min-width: 0; }
+.hl-card.server .hl-digest .hl-body { -webkit-line-clamp: 1; }
+.hl-card.server .hl-toggle { margin-left: 0; }
 .hl-toggle { align-self: flex-start; margin-left: -8px; }
 .hl-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: calc(13px * var(--font-scale, 1)); }
 .hl-timeline li { display: grid; grid-template-columns: auto 1.2em minmax(0, 1fr); gap: 8px; align-items: baseline; }
