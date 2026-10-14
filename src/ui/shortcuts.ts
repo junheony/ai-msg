@@ -1,5 +1,5 @@
 /** Global keyboard shortcuts: ⌘ on Mac, Ctrl elsewhere. */
-export type ShortcutId = 'palette' | 'help' | 'new-chat' | 'new-pane' | 'prev-session' | 'next-session' | 'toggle-sidebar' | 'settings' | 'prev-pane' | 'next-pane' | 'close-pane';
+export type ShortcutId = 'palette' | 'help' | 'new-chat' | 'new-pane' | 'prev-session' | 'next-session' | 'toggle-sidebar' | 'settings' | 'prev-pane' | 'next-pane' | 'close-pane' | 'arrange-cards';
 
 /**
  * By physical key (`code`), so a Korean input source still matches. `typing`: also fires while a text field
@@ -18,13 +18,14 @@ const BINDINGS: { id: ShortcutId; code: string; shift: boolean; alt?: boolean; t
   { id: 'prev-pane', code: 'BracketLeft', shift: false, alt: true, typing: true, keys: '⌥[', label: '이전 패널 (왼쪽)' },
   { id: 'next-pane', code: 'BracketRight', shift: false, alt: true, typing: true, keys: '⌥]', label: '다음 패널 (오른쪽)' },
   { id: 'close-pane', code: 'KeyX', shift: true, typing: true, keys: '⇧X', label: '지금 패널 닫기 (마지막 패널은 그대로)' },
+  { id: 'arrange-cards', code: 'KeyG', shift: true, typing: true, keys: '⇧G', label: '떠 있는 카드 정렬 (카드 2장 이상일 때)' },
   { id: 'toggle-sidebar', code: 'Backslash', shift: false, typing: true, keys: '\\', label: '사이드바 열기/닫기' },
   { id: 'settings', code: 'Comma', shift: false, typing: true, keys: ',', label: '설정' },
   { id: 'help', code: 'Slash', shift: false, typing: true, keys: '/', label: '단축키 보기' },
 ];
 
 /** `code` fallback from `key` for synthetic events / old browsers. */
-const KEY_TO_CODE: Record<string, string> = { k: 'KeyK', n: 'KeyN', o: 'KeyO', x: 'KeyX', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '/': 'Slash', ',': 'Comma' };
+const KEY_TO_CODE: Record<string, string> = { k: 'KeyK', n: 'KeyN', o: 'KeyO', x: 'KeyX', g: 'KeyG', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '/': 'Slash', ',': 'Comma' };
 
 export function isMacPlatform(nav: { platform?: string; userAgent?: string } | undefined = typeof navigator === 'undefined' ? undefined : navigator): boolean {
   return /Mac|iPhone|iPad|iPod/i.test(nav?.platform || nav?.userAgent || '');

@@ -65,6 +65,19 @@ const ARCHIVE_UNDO_MS = 8_000;
 /** How often a visible page asks /api/build (it also asks whenever it becomes visible). */
 const BUILD_CHECK_MS = 5 * 60_000;
 const MAC = isMacPlatform();
+/** How long the body's size must hold still before cards go back to their boxes for that size. */
+const SETTLE_MS = 250;
+/** A body size as a `floatBySize` key. */
+const sizeKey = (b: { w: number; h: number }) => `${Math.round(b.w)}x${Math.round(b.h)}`;
+/**
+ * A double-click on a floating card's header (the ⋮⋮ grip, the bare strip, a plain title) — not on its other controls:
+ * the title button opens the session menu, so it stays out too.
+ */
+const onCardHead = (t: EventTarget | null): boolean => {
+  if (!(t instanceof Element) || !t.closest('.chat-head')) return false;
+  const control = t.closest('button, input, select, textarea, a, [role="menu"]');
+  return !control || control.matches('.pane-grip');
+};
 const THEME_LABEL: Record<Theme, string> = { system: '시스템', light: '라이트', dark: '다크' };
 
 function readLocal(key: string): string | null {
@@ -486,6 +499,8 @@ export function App() {
         return;
       }
       if (hasOpenModal() && id !== 'palette' && id !== 'help' && id !== 'settings') return;
+      // ⌘⇧G with fewer than two cards stays the browser's (find previous).
+      if (id === 'arrange-cards' && latest.current.panes.filter((p) => p.float).length < 2) return;
       e.preventDefault();
       onShortcut.current(id);
     };
@@ -566,26 +581,45 @@ export function App() {
     requestAnimationFrame(() => { if (liveRef.current) liveRef.current.textContent = text; });
   };
   // Floating cards stay reachable when the body shrinks (window resized, sidebar unfolded, a save from a bigger
-  // monitor): every card is clamped to the body whenever its size changes. Same rect → the reducer returns the same state.
+  // monitor): every card is clamped to the body whenever its size changes (a maximized one keeps filling it). Same
+  // rect → the reducer returns the same state. Once the size has held still for SETTLE_MS, each card goes back to the
+  // box the user gave it at that size before (`floatBySize`), if any. Only user moves record boxes: a slow window drag
+  // through many sizes must not push the remembered ones out.
   const floatCount = state.panes.filter((p) => p.float).length;
   useEffect(() => {
     if (phone || !authed || floatCount === 0) return;
     const body = bodyRef.current;
     if (!body) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settle = () => {
+      timer = null;
+      const bounds = { w: body.clientWidth, h: body.clientHeight };
+      if (!bounds.w || !bounds.h) return;
+      const at = sizeKey(bounds);
+      for (const p of latest.current.panes) {
+        if (!p.float || p.floatBefore) continue;
+        const kept = p.floatBySize?.[at];
+        if (kept) dispatch({ type: 'move_float', paneId: p.id, rect: clampFloat(kept, bounds) });
+      }
+    };
     const clamp = () => {
       const bounds = { w: body.clientWidth, h: body.clientHeight };
       if (!bounds.w || !bounds.h) return;
       for (const p of latest.current.panes) {
         if (!p.float) continue;
+        if (p.floatBefore) { dispatch({ type: 'move_float', paneId: p.id, rect: clampFloat({ x: 0, y: 0, w: bounds.w, h: bounds.h }, bounds), keepMax: true }); continue; }
         const rect = clampFloat(p.float, bounds);
         if (rect.x !== p.float.x || rect.y !== p.float.y || rect.w !== p.float.w || rect.h !== p.float.h) dispatch({ type: 'move_float', paneId: p.id, rect });
       }
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(settle, SETTLE_MS);
     };
     clamp();
-    if (typeof ResizeObserver === 'undefined') { window.addEventListener('resize', clamp); return () => window.removeEventListener('resize', clamp); }
+    const stop = () => { if (timer !== null) clearTimeout(timer); };
+    if (typeof ResizeObserver === 'undefined') { window.addEventListener('resize', clamp); return () => { stop(); window.removeEventListener('resize', clamp); }; }
     const ro = new ResizeObserver(clamp);
     ro.observe(body);
-    return () => ro.disconnect();
+    return () => { stop(); ro.disconnect(); };
   }, [phone, authed, floatCount]);
   // Phone tabs: hold (touch) or press-and-drag (mouse) a tab to put it elsewhere in the row.
   const tabs = useTabReorder(state.panes.length, (from, to) => { const id = state.panes[from]?.id; if (id) dispatch({ type: 'move_pane', paneId: id, to }); });
@@ -809,8 +843,8 @@ export function App() {
       if (!drop) { if (card && cardStyle) Object.assign(card.style, cardStyle); say('끌기 취소'); return; }
       if (drop.kind === 'reorder') { if (drop.to !== from) dispatch({ type: 'move_pane', paneId, to: drop.to }); say(drop.to === from ? '제자리' : `${drop.to + 1}번째 자리로 옮겼습니다`); }
       else if (drop.kind === 'dock') { dispatch({ type: 'dock_pane', paneId, to: drop.to }); say(`${drop.to + 1}번째 자리에 붙였습니다`); }
-      else if (drop.kind === 'float') { dispatch({ type: 'float_pane', paneId, rect: drop.rect }); say('카드로 뗐습니다'); }
-      else { dispatch({ type: 'move_float', paneId, rect: drop.rect }); say('카드를 옮겼습니다'); }
+      else if (drop.kind === 'float') { dispatch({ type: 'float_pane', paneId, rect: drop.rect, at: sizeKey(bodyBounds()) }); say('카드로 뗐습니다'); }
+      else { dispatch({ type: 'move_float', paneId, rect: drop.rect, at: sizeKey(bodyBounds()) }); say('카드를 옮겼습니다'); }
       requestFocus(paneId);
     };
     const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape' && active) { ev.preventDefault(); ev.stopPropagation(); end({ type: 'cancel' }); } };
@@ -827,7 +861,7 @@ export function App() {
     const body = bodyRef.current;
     const bounds = { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 };
     const n = latest.current.panes.filter((p) => p.float).length;
-    dispatch({ type: 'float_pane', paneId, rect: floatRectAt({ x: 80 + 24 * n, y: 40 + 24 * n }, { w: 480, h: bounds.h }, bounds) });
+    dispatch({ type: 'float_pane', paneId, rect: floatRectAt({ x: 80 + 24 * n, y: 40 + 24 * n }, { w: 480, h: bounds.h }, bounds), at: sizeKey(bounds) });
     requestFocus(paneId);
     announce('카드로 뗐습니다');
   };
@@ -842,10 +876,21 @@ export function App() {
     const bounds = { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 };
     const cards = latest.current.panes.filter((p) => p.float);
     const rects = arrangeFloats(cards.length, bounds);
-    cards.forEach((p, i) => dispatch({ type: 'move_float', paneId: p.id, rect: rects[i]! }));
+    cards.forEach((p, i) => dispatch({ type: 'move_float', paneId: p.id, rect: rects[i]!, at: sizeKey(bounds) }));
     announce(`카드 ${cards.length}장을 정렬했습니다`);
   };
   const bodyBounds = () => { const body = bodyRef.current; return { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 }; };
+  /** Double-click on a card's header / ⋯ 카드 최대화: the card fills the body, or goes back to its box from before. */
+  const toggleMaxCard = (paneId: string) => {
+    const pane = latest.current.panes.find((p) => p.id === paneId);
+    if (!pane?.float) return;
+    const bounds = bodyBounds();
+    // A card already filling the body (and not via maximize) has nothing to toggle: say so instead of claiming a change.
+    const full = !pane.floatBefore && pane.float.x === 0 && pane.float.y === 0 && pane.float.w === bounds.w && pane.float.h === bounds.h;
+    if (full) { announce('카드가 이미 화면을 채우고 있습니다'); return; }
+    dispatch({ type: 'toggle_max_float', paneId, bounds, at: sizeKey(bounds) });
+    announce(pane.floatBefore ? '카드를 원래 크기로 되돌렸습니다' : '카드를 최대화했습니다');
+  };
   /** Arrow keys as a (dx, dy) step: 24px, 96 with Shift; null for any other key. */
   const arrowStep = (e: ReactKeyboardEvent): { dx: number; dy: number } | null => {
     const d = e.shiftKey ? 96 : 24;
@@ -862,8 +907,9 @@ export function App() {
       const step = arrowStep(e);
       if (step) {
         e.preventDefault();
-        const rect = clampFloat({ ...pane.float, x: pane.float.x + step.dx, y: pane.float.y + step.dy }, bodyBounds());
-        dispatch({ type: 'move_float', paneId, rect });
+        const bounds = bodyBounds();
+        const rect = clampFloat({ ...pane.float, x: pane.float.x + step.dx, y: pane.float.y + step.dy }, bounds);
+        dispatch({ type: 'move_float', paneId, rect, at: sizeKey(bounds) });
         announce(`카드 위치 ${rect.x}, ${rect.y}`);
       } else if (act) { e.preventDefault(); dockPane(paneId); }
       return;
@@ -880,8 +926,9 @@ export function App() {
     const step = pane?.float ? arrowStep(e) : null;
     if (!pane?.float || !step || e.altKey || e.metaKey || e.ctrlKey) return;
     e.preventDefault();
-    const rect = clampFloat({ ...pane.float, w: Math.max(FLOAT_MIN_W, pane.float.w + step.dx), h: Math.max(FLOAT_MIN_H, pane.float.h + step.dy) }, bodyBounds());
-    dispatch({ type: 'move_float', paneId, rect });
+    const bounds = bodyBounds();
+    const rect = clampFloat({ ...pane.float, w: Math.max(FLOAT_MIN_W, pane.float.w + step.dx), h: Math.max(FLOAT_MIN_H, pane.float.h + step.dy) }, bounds);
+    dispatch({ type: 'move_float', paneId, rect, at: sizeKey(bounds) });
     announce(`카드 크기 ${rect.w} × ${rect.h}`);
   };
   /** The ◢ corner of a floating card: its size follows the pointer; the state gets the final box. */
@@ -907,7 +954,7 @@ export function App() {
       el.removeEventListener('pointerup', end);
       el.removeEventListener('pointercancel', end);
       if (ev.type === 'pointercancel' || !rect) { Object.assign(card.style, { width: `${start.w}px`, height: `${start.h}px` }); return; }
-      dispatch({ type: 'move_float', paneId, rect });
+      dispatch({ type: 'move_float', paneId, rect, at: sizeKey(bounds) });
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', end);
@@ -994,6 +1041,7 @@ export function App() {
     else if (id === 'settings') { setPaletteOpen(false); setHelpOpen(false); setSettingsOpen((o) => !o); }
     else if (id === 'prev-pane' || id === 'next-pane') stepPane(id === 'prev-pane' ? -1 : 1);
     else if (id === 'close-pane') closeActivePane();
+    else if (id === 'arrange-cards') arrangeCards();
   };
   const mod = MAC ? '⌘' : 'Ctrl+';
   const actions: PaletteAction[] = [
@@ -1204,10 +1252,12 @@ export function App() {
         {!phone && floats.length > 0 && (
           <div className="floats">
             {floats.map((p) => (
-              <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.float!.h }}>
+              <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.float!.h }}
+                onDoubleClick={(e) => { if (onCardHead(e.target)) toggleMaxCard(p.id); }}>
                 <Pane pane={p} app={state} active={p.id === state.activePaneId} closable dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
                   onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
-                  floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})} />
+                  floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})}
+                  onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore} />
                 <div className="float-resize" role="separator" tabIndex={0} aria-label="카드 크기 조절" aria-valuetext={`${p.float!.w} × ${p.float!.h}`} title="드래그: 카드 크기 · 키보드: ←→ 너비, ↑↓ 높이 (Shift: 크게)"
                   onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />
               </div>
