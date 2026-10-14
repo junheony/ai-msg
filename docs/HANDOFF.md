@@ -2,9 +2,17 @@
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 이 저장소는 비공개 원본(원격 없음)이고, 공개본은 `scripts/export-public.sh` 로 뽑아 따로 올린다.
 
-## 지금 상태 (2026-10-14 새벽)
+## 지금 상태 (2026-10-14 오후)
 
-**한 줄:** "Desktop 과 같은 경험" 2차·3차 일부(긴 붙여넣기 칩, 임의 턴 다시 생성·모델 바꿔 생성, 긴 사용자 메시지 접기, 보관 되돌리기 토스트, 패널 단축키·새 탭, reduced-motion)가 들어갔고, **백그라운드 중 계정 한도 소진 → 다른 계정으로 이어가기**(서버)를 같이 넣어 커밋·빌드·재시작까지 한 번에 간다.
+**한 줄:** "Desktop 과 같은 경험" 2차·3차 목록이 **전부 들어갔고**(UI 7건 + 세션 관리 3건), Gemini 엔진은 서비스가 끝난 gemini-cli 대신 **Antigravity CLI `agy`** 로 갈아탔다. 커밋·빌드·공개본까지 반영. **Gemini 를 실제로 쓰려면 사용자가 터미널에서 `agy` 를 한 번 실행해 Google 로그인해야 하고**, 그 뒤 첫 턴에서 `step_update` 이벤트의 실제 형식을 확인해야 한다.
+
+### 한 일 (2차·3차 전부 + Gemini→agy, 10-14 오후)
+- **대화 내 찾기 바**: 패널에서 ⌘F/Ctrl+F, ⋯ 메뉴 "대화에서 찾기", 검색 결과 점프 때 자동으로 열림. `N / M` 카운터, ↑↓·Enter(다음)·Shift+Enter(이전) 순환, 모든 매치 하이라이트 + 현재 매치 진하게·화면 가운데로, Esc 로 닫으면 해제. 접힌 긴 메시지는 펼침. 서식 경계(굵게 걸친 단어)를 넘는 매치는 못 찾음. `FindBar.tsx`.
+- **다시 생성·다른 모델로 → 맨 아래로 따라가기**. **터치 툴팁**: coarse pointer 에서 `title` 있는 버튼·링크를 0.5초 길게 누르면 말풍선(2초 뒤·손 떼면 사라짐, 그 클릭은 취소; 파일 칩은 제외). `useTouchTooltip.ts`, App 에서 한 번 마운트.
+- **코드 블록 머리**: "저장"(언어별 확장자 `code-N.ts` 등, 모르면 .txt), "줄바꿈" 토글(localStorage `deck.codeWrap`, 설정 시트 "코드 줄바꿈" 과 공유). **패널 ⋯ "새 탭으로 떼어내기"**(패널 하나면 숨김). **붙여넣기 칩 버그**: 첨부가 줄 서 있을 때 남은 자리를 업로드 중 1개만 세어 칩이 오류로 사라지던 것 → 대기 파일까지 셈. **갈래 거절 → 모델 피커 되돌림** + "갈래를 만들지 못해 모델을 X 로 되돌렸습니다".
+- **세션 관리(서버+UI)**: `set_cwd`→`session_cwd` 작업 폴더 바꾸기(존재·허용 범위 확인, Claude 는 모든 프로필의 기록 파일·폴더를 새 위치로 옮김 — `claude --resume` 이 그 위치만 보기 때문; 턴 중·Gemini·아직 안 돌린 Codex 가져오기는 거절, 거절은 상단 오류 줄). `duplicate_session`→`session_duplicate` 복제(같은 cwd·엔진·모델·계정 고정·권한 모드로 새 세션을 지금 창에 열고 첫 메시지에 제목 `<원래> (복사)` 동봉, 기록은 복사 안 함 — deck 세션은 첫 턴 전엔 id 가 없어 서버가 미리 만들지 않음). `turn_result.model`(옵셔널) 턴별 실제 모델 → 답장 아래 모델 표시가 그 턴 값을 우선, GPT 기록도 턴별 모델 보존. `SessionCwdDialog.tsx`.
+- **Gemini → Antigravity CLI**: gemini-cli 0.62·0.64 모두 `IneligibleTierError … migrate to Antigravity`(Google 이 2026-06-18 개인 계정 서비스 종료). `~/.local/bin/agy`(1.3.5) 설치. `GeminiEngine` 재작성: `-p=<prompt>`(argv — stdin NDJSON 형식 미확인), `--output-format stream-json`, `--model gemini-4-argon|gemini-3.8-flash`(deck id 는 `gemini-pro|gemini-flash` 유지), `--effort`(Gemini 도 effort 선택 가능), `--mode plan`(읽기 전용) / `--mode accept-edits --sandbox`(쓰기), `--conversation <id>` 이어하기, `--disable-slash-commands`, `--dangerously-skip-permissions` 절대 안 넣음. 이벤트는 `{"event":"result","result":{conversation_id,status,response,error,usage{input_tokens,output_tokens,thinking_tokens,cache_read_tokens}}}` 형태(이 줄은 실제 확인), `init`·`step_update` 는 문서 필드명으로 방어적으로 매핑. **로그인 판정**: 자격이 macOS 키체인에 있어 파일 검사 불가 → `GeminiLogin` 이 `agy models` 를 임시 폴더에서 돌려 종료 0 이면 로그인(5분 캐시, 동시 호출 합침, 15초 타임아웃·실패는 false). Google 계정은 Mac 한 대에 하나 → G2 자리는 항상 비활성. `docs/gemini-spike.md` 재작성.
+- 검증: tsc 0, 서버·공유 90파일 1073건, UI 89파일 920건 통과, `vite build` 반영.
 
 ### 한 일 (2차·3차 + 한도 이어가기, 10-14 새벽)
 - **긴 텍스트 붙여넣기 → 칩**: 1500자 또는 25줄 이상을 붙이면 입력창 대신 `붙여넣은 텍스트 (N줄 · M자)` 칩으로 첨부(`pasted-1.txt`, 보낸 뒤 번호 초기화). 클릭 → 미리보기, × → 제거. 첨부가 꽉 찼으면 그냥 텍스트로 들어가고, 업로드가 실패하면 텍스트가 입력창으로 돌아온다(잃지 않음).
@@ -41,7 +49,9 @@
 
 ### 남은 일
 - **서버 재시작 뒤 확인**: 파일 칩 메뉴에 `다운로드`·`Finder` 가 보이는지, 한도 이어가기는 실제 한도 때 `turn_retry`/notice 가 패널에 뜨는지(로그 `deck.log` 의 route 줄과 `events.jsonl`).
-- **2차·3차 남은 것**: 터치 기기 툴팁, 대화 내 찾기(다음/이전·고정 하이라이트), 코드 블록 파일로 저장·줄바꿈 토글, cwd 변경, 세션 복제, 패널 헤더 "새 탭으로 떼어내기", 다시 생성 뒤 맨 아래로 스크롤, 턴별 모델 프로토콜 필드, 업로드 중 붙여넣기 칩 표시, 갈래가 거부되면 모델 선택 되돌리기.
+- **Gemini(agy) 켜기 — 사용자 몫**: 터미널에서 `agy` 실행 → 브라우저 Google 로그인 → 종료. 그 뒤 deck 새로고침하면 "Gemini · 로그인 필요" 가 풀려야 한다(`agy models` 가 로그인 상태에서 0 으로 끝나는지는 추정). **첫 Gemini 턴에서 확인할 것**: `step_update`/`tool_info` 실제 필드, `init` 에 conversation_id 가 오는지 — 다르면 `GeminiEventMapper` 수정. 미확인 사항은 `docs/gemini-spike.md` 에 "미확인" 표시. thinking 류는 매퍼가 내보내지만 `runGemini` 가 화면에 안 넘김. 두 번째 Google 계정은 못 붙임(키체인 하나) — 필요하면 `GEMINI_API_KEY`(유료) 경로를 별도 자리로 설계.
+- **브라우저·실기기 확인**: 찾기 바(⌘F, 하이라이트), 터치 툴팁(폰 길게 누르기), 코드 블록 저장·줄바꿈, 패널 떼어내기, 작업 폴더 바꾸기 뒤 `claude --resume` 이 옮긴 기록을 찾는지, 복제 세션 제목.
+- 2차·3차 목록은 전부 끝. 다음은 상용화 1번: 턴 종료 때 Sonnet 한 줄 요약을 `events.jsonl` 에 함께 기록 + 아침 다이제스트 푸시.
 - **한도 이어가기 보강**: 안내문의 "→ B 계정" 은 라우터 1차 선택이고 실제 이어가기 턴은 자기 라우팅을 다시 하므로 드물게 다른 계정으로 갈 수 있음(쿨다운 때문에 보통 같음) — 내부 `forceAccount` 로 고정하는 것 검토. 주간/Opus 한도 문구는 `LIMIT_PATTERNS` 에 없음(실제 캡처 필요). 리셋 시각은 문구의 시간대를 버림(서버 TZ 기준). 프로세스 안에서 백그라운드 Agent 가 "API error: hit your session limit" 로 죽는 경우(task_done 실패)는 결과 실패가 아니라 이어가기가 안 걸린다 — 그 문구를 보면 다음 세그먼트 전에 선제적으로 옮기는 것 검토.
 - **브라우저에서 눈으로 확인할 것**: 스플리터 드래그(5분할), 파일 칩 메뉴(폰 길게 누르기, 전체 화면 사이드 패널 위), 썸네일 가로 배치, 헤더 칩 3개가 1100~1280px 에서 겹치지 않는지, 붙여넣기 칩·↻ 메뉴·접힌 메시지.
 - **분할 패널 드래그 순서 바꾸기 + 떠 있는 카드**: 설계만 제시됐고 시작 안 함.
@@ -55,7 +65,7 @@
 ### 재현·복구용
 - 1차 비공개 커밋 `50c22f0`(계정 카드 태그 `4208849` 포함), 공개본 `44937bc`(junheony/quarterdeck main). 2차·3차+한도 이어가기는 그 다음 커밋. 서버는 relaunch 루프 자식(`~/.config/deck/relaunch.sh`, pidfile 잠금) — `scripts/restart.sh` 가 바쁘면 `kill -USR2 <pid>` 로 drain.
 - 한도 이어가기 코드: `src/server/engine/limitDetect.ts`(`LIMIT_PATTERNS`, `limitResetHint`, `failureLabel`), `TurnRunner.followThrough` → `Failover` 반환 → `failoverAfterBackground`(쿨다운 → 라우터 → `turn_retry` → `this.run` 재진입, `TurnParams.failoverHop`), `SessionState.interrupted.cause`. 테스트 `TurnRunner.background.test.ts`. 헤드리스 렌더 확인: `scripts/render-check.sh [fixture] [widths…]` → `/tmp/deck-render/`.
-- 비공개 커밋: 이 섹션 아래 "다음 할 일" 의 첫 묶음 참고. 공개본은 `/tmp/deck-head` 워크트리를 새 커밋으로 옮긴 뒤 `scripts/export-public.sh` → `/tmp/quarterdeck-pub` 로 rsync → 위생 grep(`/Users/max|/home/max|Documents/개발|quant_analyzer|StandX`) 깨끗 → `hwangmc88` 로 커밋, `junheony` 로 push, gh 는 `officialsaviorofhealth` 로 복귀.
+- 비공개 커밋: 이 섹션 아래 "다음 할 일" 의 첫 묶음 참고. 공개본은 `/tmp/deck-head` 워크트리를 새 커밋으로 옮긴 뒤 `scripts/export-public.sh` → `/tmp/quarterdeck-pub` 로 rsync → 위생 grep(`/Users/max|/home/max|Documents/개발|quant_analyzer|StandX`) 깨끗 → `hwangmc88` 로 커밋, `junheony` 로 push, gh 는 `official146` 로 복귀(`officialsaviorofhealth` 는 없는 이름 — switch 가 조용히 실패한다).
 - 테스트: `npx tsc --noEmit -p .`, `npx vitest run`(`relaunch.test.ts`·`ws.outside.test.ts` 는 부하 때 불안정 — 단독 재실행으로 확인), 실제 배포는 `npx vite build`(UI) + 서버 재시작.
 
 ## 다음 할 일 (2026-10-06 오후)
