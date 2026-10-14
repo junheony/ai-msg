@@ -12,12 +12,12 @@ import { readCooldownUntilMs } from '../routing/cooldown';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
-import { AUTO_RETRY_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { AUTO_RETRY_NOTICE, MAX_BG_CAP_HOPS, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 
-async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' | 'move'>> & { readFile?: (p: string) => Promise<Buffer> } = {}) {
+async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' | 'move'>> & { readFile?: (p: string) => Promise<Buffer>; /** The background wait limit (ClaudeEngine bgMaxMs); default: the engine's. */ bgMaxMs?: number } = {}) {
   const f = fakeSdk();
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trbg-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
@@ -29,7 +29,7 @@ async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' 
   const options: (Options | undefined)[] = [];
   const deps: TurnRunnerDeps = {
     accounts: testRegistry(),
-    engine: new ClaudeEngine({ accounts: testRegistry(), queryFn: (p) => { options.push(p.options); return f.queryFn(p); }, readFile: over.readFile ?? (async () => Buffer.from('')) }),
+    engine: new ClaudeEngine({ accounts: testRegistry(), queryFn: (p) => { options.push(p.options); return f.queryFn(p); }, readFile: over.readFile ?? (async () => Buffer.from('')), ...(over.bgMaxMs !== undefined ? { bgMaxMs: over.bgMaxMs } : {}) }),
     usage,
     index: new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'projects.json') }),
     store,
@@ -264,6 +264,50 @@ describe('TurnRunner: background work after the turn result', () => {
     expect(await promptNote(options[1])).toEqual(expect.stringMatching(/"build", "watch logs".*이미 다시 띄웠거나 더 필요 없으면 무시하세요\.$/));
     expect(store.get('s1')).not.toHaveProperty('interrupted');
     expect(of(msgs2, 'turn_result').at(-1)).toMatchObject({ turnId: 't2', ok: true });
+  });
+
+  it('the background wait limit cutting work: deck records it and sends 이어서 진행해 주세요 itself, telling the model it is an automatic continuation', async () => {
+    const { f, msgs, sink, runner, store, options } = await setup({ bgMaxMs: 20 });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'slow analysis' }]), sdk.result('launched', 's1'));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    // The limit ends the process; the continuation deck sends starts a new one, which the fake SDK feeds next.
+    await waitFor(() => of(msgs, 'turn_started').length === 2, 'the automatic continuation');
+    expect(store.get('s1')).toMatchObject({ interrupted: { atMs: NOW, tasks: ['slow analysis'], cause: '백그라운드 작업 0분 한도', kind: 'cap' } });
+    f.push(sdk.init('s1'), sdk.result('resumed', 's1'));
+    await done;
+    const notices = of(msgs, 'turn_notice').map((m) => m.message as string);
+    expect(notices).toContain('백그라운드 작업 1개가 0분 한도로 끊김: slow analysis — 이어서 진행하도록 자동으로 보냅니다');
+    const at = new Date(NOW).toTimeString().slice(0, 5);
+    expect(notices).toContain(`${at} 백그라운드 작업 0분 한도로 백그라운드 작업 1개가 끊겼습니다: slow analysis — deck 이 자동으로 이어갑니다`);
+    expect(of(msgs, 'turn_started')[1]).toMatchObject({ turnId: 't1:cap1', sessionId: 's1' });
+    expect(await promptNote(options[1])).toEqual(expect.stringMatching(/"slow analysis".*deck 이 자동으로 이어 보낸 것입니다.*한 줄로 알리세요\.$/));
+    expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 't1:cap1', ok: true, text: 'resumed' });
+    // The continuation got the note through: nothing is carried to the user's next message.
+    expect(store.get('s1')).not.toHaveProperty('interrupted');
+    expect(options.length).toBe(2);
+  });
+
+  it('the automatic continuation is sent at most MAX_BG_CAP_HOPS times in a row; after that the cut waits for the user, who still gets the note', async () => {
+    const { f, msgs, sink, runner, store, options } = await setup({ bgMaxMs: 20 });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', bgCapHop: MAX_BG_CAP_HOPS }, sink);
+    f.push(sdk.init('s1'), sdk.bgLevel([{ id: 'x', desc: 'still slow' }]), sdk.result('launched', 's1'));
+    await done;
+    expect(of(msgs, 'turn_started')).toHaveLength(1);
+    expect(of(msgs, 'turn_notice').map((m) => m.message)).toContain(`백그라운드 작업 1개가 0분 한도로 끊김: still slow — 자동 이어가기 ${MAX_BG_CAP_HOPS}회를 다 써서 멈춥니다 (다음 메시지에 모델에게 알립니다)`);
+    expect(store.get('s1')).toMatchObject({ interrupted: { tasks: ['still slow'], kind: 'cap' } });
+
+    const msgs2: ServerMessage[] = [];
+    const sink2: TurnSink = { ...sink, emit: (m) => msgs2.push(m) };
+    const next = runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 's1', text: 'again' }, sink2);
+    f.push(sdk.init('s1'), sdk.result('ok', 's1'));
+    await next;
+    const at = new Date(NOW).toTimeString().slice(0, 5);
+    expect(of(msgs2, 'turn_notice').map((m) => m.message)).toContain(`${at} 백그라운드 작업 0분 한도로 백그라운드 작업 1개가 끊겼습니다: still slow — 모델에게 알렸습니다`);
+    const note = await promptNote(options[1]);
+    expect(note).toEqual(expect.stringMatching(/끊겨 결과가 오지 않습니다: "still slow"\./));
+    expect(note).not.toContain('자동으로 이어 보낸');
+    expect(store.get('s1')).not.toHaveProperty('interrupted');
   });
 
   it('the restart deadline cutting a turn that runs background work: its result says so (no second notice), the work is kept for the next turn', async () => {

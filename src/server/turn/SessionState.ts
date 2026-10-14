@@ -16,7 +16,7 @@ type SessionBase = {
    * 서버 재시작으로 백그라운드 작업이 끊긴 기록; 다음 턴이 읽고 지운다. `cause`: 재시작이 아닌 원인(예: "C 계정 사용 한도 도달" —
    * 백그라운드 세그먼트가 한도로 끝나 다른 계정에서 이어갈 때).
    */
-  interrupted?: { atMs: number; tasks: string[]; cause?: string };
+  interrupted?: { atMs: number; tasks: string[]; cause?: string; /** `'cap'`: the held-open process hit the background wait limit (ClaudeEngine bgMaxMs) — deck itself sends the session on (TurnRunner.continueAfterCap). */ kind?: 'cap' };
   /**
    * 병목 알림(BottleneckWatch): 턴이 실패한 채 멈춰 있다 — 재알림 단계(n번 보냄)를 재시작 뒤에도 이어 가려고 저장한다.
    * 다음 턴의 시작·성공, 또는 사용자가 이 세션에 보내면 지운다(열기만 해서는 지우지 않는다 — 재연결한 탭도 다시 연다).

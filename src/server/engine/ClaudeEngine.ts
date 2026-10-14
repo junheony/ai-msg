@@ -813,7 +813,12 @@ export class ClaudeEngine implements Engine {
       clearGrace();
       req.signal.removeEventListener('abort', onAbort);
     }
-    if (ended === 'cap') yield { kind: 'notice', message: `백그라운드 작업이 ${Math.round(this.bgMaxMs / 60_000)}분 안에 끝나지 않아 프로세스를 종료했습니다` };
+    if (ended === 'cap') {
+      const minutes = Math.round(this.bgMaxMs / 60_000);
+      yield { kind: 'notice', message: `백그라운드 작업이 ${minutes}분 안에 끝나지 않아 프로세스를 종료했습니다` };
+      // The cut work by name (what the pane last showed): the runner records it and sends the session on by itself.
+      yield { kind: 'bg_cap', tasks: shownTasks.length ? [...shownTasks] : bg.tasks(), minutes };
+    }
     if (shownTasks.length) yield { kind: 'background', tasks: [], detail: [] };
   }
 }

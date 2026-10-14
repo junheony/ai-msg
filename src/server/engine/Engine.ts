@@ -43,6 +43,8 @@ export type EngineEvent =
   | { kind: 'notice'; message: string }
   /** Live background tasks (Agent run_in_background, background Bash), emitted whenever the set changes; descriptions, one per task. */
   | { kind: 'background'; tasks: string[]; /** Same tasks with id, type and start (for the task popover / per-task stop). */ detail?: BgTask[] }
+  /** The process was ended because its background work did not finish within `minutes` (ClaudeEngine bgMaxMs): `tasks` were cut. Sent before the clearing `background`. */
+  | { kind: 'bg_cap'; tasks: string[]; minutes: number }
   /** Main-conversation output so far in this deck turn (estimate while streaming, exact at each message end) and what it is streaming. */
   | { kind: 'progress'; outputTokens: number; phase: TurnPhase }
   /** A subagent's (Agent/Task tool) own tool call, attached to the Agent call `parentToolUseId`; kept out of the main transcript. */
