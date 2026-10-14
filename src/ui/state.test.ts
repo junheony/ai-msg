@@ -347,6 +347,34 @@ describe('panes (D6)', () => {
     expect(s.panes[2]!.size).toBe(3);
   });
 
+  it('park_floats / unpark_floats: cards become tabs for a phone-wide screen and float again where they were', () => {
+    let s = reducer(initialState, { type: 'add_pane' });
+    s = reducer(s, { type: 'add_pane' }); // p0 p1 p2
+    const rect = { x: 40, y: 50, w: 400, h: 300 };
+    expect(reducer(s, { type: 'park_floats' })).toBe(s); // nothing floating
+    expect(reducer(s, { type: 'unpark_floats' })).toBe(s); // nothing parked
+    s = reducer(s, { type: 'float_pane', paneId: 'p0', rect });
+    s = reducer(s, { type: 'park_floats' }); // p1 p2 p0(parked)
+    expect(s.panes.map((p) => [p.id, !!p.float, !!p.parkedFloat])).toEqual([['p1', false, false], ['p2', false, false], ['p0', false, true]]);
+    expect(reducer(s, { type: 'park_floats' })).toBe(s);
+    // The phone reorders tabs meanwhile: the parked box travels with the pane.
+    s = reducer(s, { type: 'move_pane', paneId: 'p0', to: 0 });
+    s = reducer(s, { type: 'unpark_floats' });
+    expect(s.panes.map((p) => [p.id, p.float ?? null, !!p.parkedFloat])).toEqual([['p0', rect, false], ['p1', null, false], ['p2', null, false]]);
+    // Docking (desktop) forgets any parked box; floating anew replaces it.
+    s = reducer(s, { type: 'park_floats' });
+    s = reducer(s, { type: 'unpark_floats' });
+    s = reducer(s, { type: 'dock_pane', paneId: 'p0' });
+    expect(s.panes.every((p) => !p.parkedFloat && !p.float)).toBe(true);
+    // Only parked panes left (the docked ones were closed on the phone): the first stays in the grid.
+    s = reducer(s, { type: 'float_pane', paneId: 'p1', rect });
+    s = reducer(s, { type: 'float_pane', paneId: 'p2', rect: { ...rect, x: 90 } }); // p0 is the only docked pane
+    s = reducer(s, { type: 'park_floats' }); // p0 p1(parked) p2(parked)
+    s = reducer(s, { type: 'close_pane', paneId: 'p0' });
+    s = reducer(s, { type: 'unpark_floats' });
+    expect(s.panes.map((p) => [p.id, p.float ?? null, !!p.parkedFloat])).toEqual([['p1', null, false], ['p2', { ...rect, x: 90 }, false]]);
+  });
+
   it('closing the last docked pane docks the first floating card (the grid never empties)', () => {
     let s = reducer(initialState, { type: 'add_pane' });
     s = reducer(s, { type: 'add_pane' }); // p0 p1 p2

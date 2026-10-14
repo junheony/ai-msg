@@ -22,7 +22,7 @@ export type PersistedSession = { sessionId: string | null; cwd: string; title: s
  * `turnId`: an id-less session's first turn still running — after a reload `hello.running` finds it by this id (with the
  * session id once the server knows it) and the pane follows it (`watch_turn`); an id-ful pane re-finds its turn by the id.
  */
-export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number; /** PaneState.float (absent: docked). */ float?: FloatRect };
+export type PersistedPane = { session: PersistedSession | null; model: ModelChoice; /** PaneState.modelPicked (absent: not picked). */ modelPicked?: true; efforts: Record<EngineKind, Effort>; autoEffort: Effort | null; engine: EngineChoice; sandbox: CodexSandbox; handoffFrom?: { sessionId: string; title: string }; prefill?: string; accountPin?: Account; turnId?: string; /** PaneState.size (absent: 1). */ size?: number; /** PaneState.float (absent: docked). */ float?: FloatRect; /** PaneState.parkedFloat (absent: none). */ parkedFloat?: FloatRect };
 export type PersistedUi = { v: 1; panes: PersistedPane[]; active: number; collapsed: string[]; drawer: boolean };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -80,6 +80,7 @@ function pane(x: unknown): PersistedPane {
     // Older saves have no weight; a bad one falls back to 1 (an equal column).
     ...(x.size !== undefined && paneSize(x.size) !== 1 ? { size: paneSize(x.size) } : {}),
     ...(readFloat(x.float) ? { float: readFloat(x.float)! } : {}),
+    ...(!readFloat(x.float) && readFloat(x.parkedFloat) ? { parkedFloat: readFloat(x.parkedFloat)! } : {}),
   };
 }
 
@@ -113,6 +114,7 @@ export function snapshotUi(state: AppState, extra: { collapsed: string[]; drawer
       ...(p.session && p.session.sessionId === null && p.activeTurnId ? { turnId: p.activeTurnId } : {}),
       ...(paneSize(p.size) !== 1 ? { size: paneSize(p.size) } : {}),
       ...(p.float ? { float: p.float } : {}),
+      ...(!p.float && p.parkedFloat ? { parkedFloat: p.parkedFloat } : {}),
     })),
     active: Math.max(0, state.panes.findIndex((p) => p.id === state.activePaneId)),
     collapsed: extra.collapsed,
@@ -139,6 +141,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
     ...(p.turnId ? { activeTurnId: p.turnId, myTurns: [p.turnId] } : {}),
     ...(p.size !== undefined ? { size: p.size } : {}),
     ...(p.float ? { float: p.float } : {}),
+    ...(p.parkedFloat ? { parkedFloat: p.parkedFloat } : {}),
     // Its history is asked for again once the socket is up: loading until it arrives.
     ...(p.session?.sessionId ? { loading: true } : {}),
   }));

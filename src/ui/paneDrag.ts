@@ -47,6 +47,22 @@ export function floatRectAt(pointer: { x: number; y: number }, source: { w: numb
   return clampFloat({ x: pointer.x - Math.round(w * 0.3), y: pointer.y - 18, w, h }, bounds);
 }
 
+/** Gap between / around cards laid out by `arrangeFloats`. */
+const ARRANGE_GAP = 12;
+
+/**
+ * `count` floating cards dealt into a grid over the body (as square as fits, row-major): every card the same size,
+ * each at least the minimum — a body too small for that overlaps them a little rather than shrinking them.
+ */
+export function arrangeFloats(count: number, bounds: { w: number; h: number }): FloatRect[] {
+  if (count <= 0) return [];
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
+  const w = Math.max(FLOAT_MIN_W, Math.floor((bounds.w - ARRANGE_GAP * (cols + 1)) / cols));
+  const h = Math.max(FLOAT_MIN_H, Math.floor((bounds.h - ARRANGE_GAP * (rows + 1)) / rows));
+  return Array.from({ length: count }, (_, i) => clampFloat({ x: ARRANGE_GAP + (i % cols) * (w + ARRANGE_GAP), y: ARRANGE_GAP + Math.floor(i / cols) * (h + ARRANGE_GAP), w, h }, bounds));
+}
+
 /** True when the pointer is on the rail: within the panes' box and no deeper than RAIL_PX from its top. */
 export function onRail(p: { x: number; y: number }, panes: { left: number; right: number; top: number }): boolean {
   return p.x >= panes.left && p.x <= panes.right && p.y >= panes.top && p.y < panes.top + RAIL_PX;

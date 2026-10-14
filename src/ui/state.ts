@@ -253,6 +253,8 @@ export type PaneState = {
   size?: number;
   /** A card floating over the split view (pulled off the rail); absent = docked in the grid. A phone shows it as a tab. */
   float?: FloatRect;
+  /** The card's box while a phone-width screen shows it as a tab (`park_floats`); it floats again at this box when the screen widens. */
+  parkedFloat?: FloatRect;
 };
 
 /** The panes in the grid, left to right (floating cards excluded). */
@@ -379,6 +381,10 @@ export type Action =
   | { type: 'dock_pane'; paneId: string; to?: number }
   /** A floating card moved / resized. */
   | { type: 'move_float'; paneId: string; rect: FloatRect }
+  /** The screen is phone-wide: every floating card lands as a tab at the end, its box kept (`parkedFloat`) for `unpark_floats`. */
+  | { type: 'park_floats' }
+  /** The screen is wide again: every parked pane floats at its kept box (one pane always stays in the grid). */
+  | { type: 'unpark_floats' }
   /** Column weights by pane id (a splitter drag sends its two neighbours; 균등 sends every pane at 1); others are untouched. */
   | { type: 'resize_panes'; sizes: Record<string, number> }
   | { type: 'dismiss_error' }
@@ -1184,12 +1190,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'float_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
       if (!pane || pane.float || dockedPanes(state.panes).length < 2) return state;
-      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect } : p)), activePaneId: action.paneId };
+      return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect, parkedFloat: undefined } : p)), activePaneId: action.paneId };
     }
     case 'dock_pane': {
       const pane = state.panes.find((p) => p.id === action.paneId);
       if (!pane?.float) return state;
-      const { float: _f, size: _s, ...bare } = pane;
+      const { float: _f, size: _s, parkedFloat: _pf, ...bare } = pane;
       const rest = state.panes.filter((p) => p.id !== action.paneId);
       const docked = dockedPanes(rest);
       // Its old width (fr) belongs to a grid that has since been resized: it lands at the average of the others.
@@ -1206,6 +1212,23 @@ export function reducer(state: AppState, action: Action): AppState {
       const r = pane.float;
       if (r.x === action.rect.x && r.y === action.rect.y && r.w === action.rect.w && r.h === action.rect.h) return state;
       return { ...state, panes: state.panes.map((p) => (p.id === action.paneId ? { ...p, float: action.rect } : p)) };
+    }
+    case 'park_floats': {
+      if (!state.panes.some((p) => p.float)) return state;
+      // Cards land after the grid in array order, their boxes kept; widths are left alone (a phone has no columns).
+      const docked = state.panes.filter((p) => !p.float);
+      const parked = state.panes.filter((p) => p.float).map(({ float, ...p }) => ({ ...p, parkedFloat: float! }));
+      return { ...state, panes: [...docked, ...parked] };
+    }
+    case 'unpark_floats': {
+      if (!state.panes.some((p) => p.parkedFloat)) return state;
+      // Panes closed on the phone may have left only parked ones: the first of those stays in the grid.
+      const keep = state.panes.every((p) => p.parkedFloat) ? state.panes[0]!.id : null;
+      return { ...state, panes: state.panes.map((p) => {
+        if (!p.parkedFloat) return p;
+        const { parkedFloat, ...bare } = p;
+        return p.id === keep ? bare : { ...bare, float: parkedFloat };
+      }) };
     }
     case 'resize_panes': {
       let changed = false;

@@ -28,7 +28,7 @@ import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
 import { dockedPanes, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
-import { clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, useTabReorder, type FloatRect } from './paneDrag';
+import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { useTouchTooltip } from './useTouchTooltip';
@@ -546,14 +546,25 @@ export function App() {
   }, [state.ready, previewKey?.key]);
 
   const accounts = useMemo(() => uiAccounts(state.accounts), [state.accounts]);
-  // A phone has tabs instead of a grid: a floating card means nothing there, so any float lands (as a tab at the end)
-  // and the tabs are the panes in array order. (Hooks: before the early returns below.)
+  // A phone has tabs instead of a grid: a floating card means nothing there, so any float is parked (a tab at the end,
+  // its box remembered) and the tabs are the panes in array order; a wide screen again floats the parked ones back.
+  // (Hooks: before the early returns below.)
   useEffect(() => {
-    if (!phone) return;
-    for (const p of state.panes) if (p.float) dispatch({ type: 'dock_pane', paneId: p.id });
+    dispatch({ type: phone ? 'park_floats' : 'unpark_floats' });
   }, [phone, state.panes]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const panesRef = useRef<HTMLDivElement>(null);
+  // Screen-reader narration of the card work (drag, keyboard moves): one polite live region, written directly so a
+  // drag's per-move updates never re-render the panes.
+  const liveRef = useRef<HTMLDivElement>(null);
+  const announce = (text: string) => {
+    const el = liveRef.current;
+    if (!el) return;
+    // The same text twice must still be read: clear, then set again on the next frame.
+    if (el.textContent !== text || typeof requestAnimationFrame !== 'function') { el.textContent = text; return; }
+    el.textContent = '';
+    requestAnimationFrame(() => { if (liveRef.current) liveRef.current.textContent = text; });
+  };
   // Floating cards stay reachable when the body shrinks (window resized, sidebar unfolded, a save from a bigger
   // monitor): every card is clamped to the body whenever its size changes. Same rect → the reducer returns the same state.
   const floatCount = state.panes.filter((p) => p.float).length;
@@ -683,11 +694,15 @@ export function App() {
     let lastEv: PointerEvent | null = null;
     let raf: number | null = null;
     let result: { kind: 'reorder'; to: number } | { kind: 'dock'; to: number } | { kind: 'float'; rect: FloatRect } | { kind: 'move'; rect: FloatRect } | null = null;
+    // What the drop would do, said once per change (not per move).
+    let said = '';
+    const say = (text: string) => { if (text !== said) { said = text; announce(text); } };
     const blocked = (text: string, local: { x: number; y: number }) => {
       result = null;
       ghost!.classList.add('chip', 'blocked');
       ghost!.textContent = text;
       Object.assign(ghost!.style, { left: `${local.x + 12}px`, top: `${local.y + 12}px` });
+      say(text);
     };
     // On the rail near either end of a grid that overflows, the grid scrolls on its own so far-off slots can be reached.
     const autoScroll = () => {
@@ -715,6 +730,7 @@ export function App() {
       marker = document.createElement('div');
       marker.className = 'pane-drop-marker';
       body.append(ghost, marker);
+      say(pane.float ? '카드 끌기 시작 — 위 가장자리에 놓으면 패널에 붙입니다, Esc 로 취소' : '패널 끌기 시작 — 위 가장자리에서는 순서 바꾸기, 아래로 끌면 카드로 떼기, Esc 로 취소');
     };
     const showMarker = (clientX: number) => {
       const gr = grid.getBoundingClientRect();
@@ -745,6 +761,7 @@ export function App() {
         if (to !== from) showMarker(slotX(otherRects, to));
         ghost!.classList.add('chip');
         Object.assign(ghost!.style, { left: `${local.x + 12}px`, top: `${local.y + 12}px` });
+        say(to === from ? '원래 자리' : `${to + 1}번째 자리로`);
       } else if (!pane.float) {
         // Off the rail: the pane as a card — but not above the rail (the top bar) or outside the body (sidebar), where
         // a slip of the hand would otherwise pull the pane out.
@@ -755,6 +772,7 @@ export function App() {
         result = { kind: 'float', rect };
         ghost!.classList.add('card');
         Object.assign(ghost!.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
+        say('카드로 떼기');
       } else if (rail) {
         // A card back onto the rail.
         const to = dockSlot(mids, ev.clientX);
@@ -762,12 +780,14 @@ export function App() {
         showMarker(slotX(dockedRects, to));
         ghost!.classList.add('chip');
         Object.assign(ghost!.style, { left: `${local.x + 12}px`, top: `${local.y + 12}px` });
+        say(`${to + 1}번째 자리에 붙이기`);
       } else {
         // A card moved.
         ghost!.style.display = 'none';
         const rect = clampFloat({ ...pane.float, x: pane.float.x + (ev.clientX - startX), y: pane.float.y + (ev.clientY - startY) }, bounds);
         result = { kind: 'move', rect };
         if (card) Object.assign(card.style, { left: `${rect.x}px`, top: `${rect.y}px` });
+        say('카드 이동');
       }
     };
     const end = (ev: PointerEvent | { type: 'cancel' }) => {
@@ -786,11 +806,11 @@ export function App() {
       marker?.remove();
       if (!active) return;
       const drop = ev.type === 'pointerup' ? result : null;
-      if (!drop) { if (card && cardStyle) Object.assign(card.style, cardStyle); return; }
-      if (drop.kind === 'reorder') { if (drop.to !== from) dispatch({ type: 'move_pane', paneId, to: drop.to }); }
-      else if (drop.kind === 'dock') dispatch({ type: 'dock_pane', paneId, to: drop.to });
-      else if (drop.kind === 'float') dispatch({ type: 'float_pane', paneId, rect: drop.rect });
-      else dispatch({ type: 'move_float', paneId, rect: drop.rect });
+      if (!drop) { if (card && cardStyle) Object.assign(card.style, cardStyle); say('끌기 취소'); return; }
+      if (drop.kind === 'reorder') { if (drop.to !== from) dispatch({ type: 'move_pane', paneId, to: drop.to }); say(drop.to === from ? '제자리' : `${drop.to + 1}번째 자리로 옮겼습니다`); }
+      else if (drop.kind === 'dock') { dispatch({ type: 'dock_pane', paneId, to: drop.to }); say(`${drop.to + 1}번째 자리에 붙였습니다`); }
+      else if (drop.kind === 'float') { dispatch({ type: 'float_pane', paneId, rect: drop.rect }); say('카드로 뗐습니다'); }
+      else { dispatch({ type: 'move_float', paneId, rect: drop.rect }); say('카드를 옮겼습니다'); }
       requestFocus(paneId);
     };
     const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape' && active) { ev.preventDefault(); ev.stopPropagation(); end({ type: 'cancel' }); } };
@@ -809,6 +829,29 @@ export function App() {
     const n = latest.current.panes.filter((p) => p.float).length;
     dispatch({ type: 'float_pane', paneId, rect: floatRectAt({ x: 80 + 24 * n, y: 40 + 24 * n }, { w: 480, h: bounds.h }, bounds) });
     requestFocus(paneId);
+    announce('카드로 뗐습니다');
+  };
+  const dockPane = (paneId: string) => {
+    dispatch({ type: 'dock_pane', paneId });
+    requestFocus(paneId);
+    announce('패널에 붙였습니다');
+  };
+  /** ⋯ 떠 있는 카드 정렬: every card dealt into a grid over the body, in array order. */
+  const arrangeCards = () => {
+    const body = bodyRef.current;
+    const bounds = { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 };
+    const cards = latest.current.panes.filter((p) => p.float);
+    const rects = arrangeFloats(cards.length, bounds);
+    cards.forEach((p, i) => dispatch({ type: 'move_float', paneId: p.id, rect: rects[i]! }));
+    announce(`카드 ${cards.length}장을 정렬했습니다`);
+  };
+  const bodyBounds = () => { const body = bodyRef.current; return { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 }; };
+  /** Arrow keys as a (dx, dy) step: 24px, 96 with Shift; null for any other key. */
+  const arrowStep = (e: ReactKeyboardEvent): { dx: number; dy: number } | null => {
+    const d = e.shiftKey ? 96 : 24;
+    const dx = e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0;
+    const dy = e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0;
+    return dx || dy ? { dx, dy } : null;
   };
   /** The ⋮⋮ grip from the keyboard: ←→ reorder a docked pane (←→↑↓ move a card by 24px, 96 with Shift); Enter/Space floats or docks. */
   const gripKey = (e: ReactKeyboardEvent<HTMLButtonElement>, paneId: string) => {
@@ -816,21 +859,30 @@ export function App() {
     if (!pane || e.altKey || e.metaKey || e.ctrlKey) return;
     const act = e.key === 'Enter' || e.key === ' ';
     if (pane.float) {
-      const d = e.shiftKey ? 96 : 24;
-      const dx = e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0;
-      const dy = e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0;
-      if (dx || dy) {
+      const step = arrowStep(e);
+      if (step) {
         e.preventDefault();
-        const body = bodyRef.current;
-        dispatch({ type: 'move_float', paneId, rect: clampFloat({ ...pane.float, x: pane.float.x + dx, y: pane.float.y + dy }, { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 }) });
-      } else if (act) { e.preventDefault(); dispatch({ type: 'dock_pane', paneId }); requestFocus(paneId); }
+        const rect = clampFloat({ ...pane.float, x: pane.float.x + step.dx, y: pane.float.y + step.dy }, bodyBounds());
+        dispatch({ type: 'move_float', paneId, rect });
+        announce(`카드 위치 ${rect.x}, ${rect.y}`);
+      } else if (act) { e.preventDefault(); dockPane(paneId); }
       return;
     }
     const docked = dockedPanes(latest.current.panes);
     const i = docked.findIndex((p) => p.id === paneId);
-    if (e.key === 'ArrowLeft' && i > 0) { e.preventDefault(); dispatch({ type: 'move_pane', paneId, to: i - 1 }); }
-    else if (e.key === 'ArrowRight' && i >= 0 && i < docked.length - 1) { e.preventDefault(); dispatch({ type: 'move_pane', paneId, to: i + 1 }); }
+    if (e.key === 'ArrowLeft' && i > 0) { e.preventDefault(); dispatch({ type: 'move_pane', paneId, to: i - 1 }); announce(`${i}번째 자리로 옮겼습니다`); }
+    else if (e.key === 'ArrowRight' && i >= 0 && i < docked.length - 1) { e.preventDefault(); dispatch({ type: 'move_pane', paneId, to: i + 1 }); announce(`${i + 2}번째 자리로 옮겼습니다`); }
     else if (act && docked.length > 1) { e.preventDefault(); floatPane(paneId); }
+  };
+  /** The ◢ corner from the keyboard: ←→ width, ↑↓ height (24px, 96 with Shift), never below the minimum. */
+  const resizeKey = (e: ReactKeyboardEvent<HTMLDivElement>, paneId: string) => {
+    const pane = latest.current.panes.find((p) => p.id === paneId);
+    const step = pane?.float ? arrowStep(e) : null;
+    if (!pane?.float || !step || e.altKey || e.metaKey || e.ctrlKey) return;
+    e.preventDefault();
+    const rect = clampFloat({ ...pane.float, w: Math.max(FLOAT_MIN_W, pane.float.w + step.dx), h: Math.max(FLOAT_MIN_H, pane.float.h + step.dy) }, bodyBounds());
+    dispatch({ type: 'move_float', paneId, rect });
+    announce(`카드 크기 ${rect.w} × ${rect.h}`);
   };
   /** The ◢ corner of a floating card: its size follows the pointer; the state gets the final box. */
   const startFloatResize = (e: ReactPointerEvent<HTMLDivElement>, paneId: string) => {
@@ -1062,6 +1114,7 @@ export function App() {
         </div>
       )}
       <div ref={bodyRef} className="body">
+        <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" data-testid="cards-live" />
         {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
         {peekable && <div className="sidebar-hotzone" data-testid="sidebar-hotzone" aria-hidden="true" onMouseEnter={peek ? undefined : armPeek} onMouseLeave={() => { unlatchPeek(); if (!peek) clearPeekTimer(); }} />}
         <div
@@ -1154,8 +1207,9 @@ export function App() {
               <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.float!.h }}>
                 <Pane pane={p} app={state} active={p.id === state.activePaneId} closable dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
                   onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
-                  floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => { dispatch({ type: 'dock_pane', paneId: p.id }); requestFocus(p.id); }} />
-                <div className="float-resize" role="separator" aria-label="카드 크기 조절" title="드래그: 카드 크기" onPointerDown={(e) => startFloatResize(e, p.id)} />
+                  floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})} />
+                <div className="float-resize" role="separator" tabIndex={0} aria-label="카드 크기 조절" aria-valuetext={`${p.float!.w} × ${p.float!.h}`} title="드래그: 카드 크기 · 키보드: ←→ 너비, ↑↓ 높이 (Shift: 크게)"
+                  onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />
               </div>
             ))}
           </div>

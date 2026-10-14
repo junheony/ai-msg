@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { clampFloat, dockSlot, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, RAIL_PX, readFloat, reorderSlot, slotX } from './paneDrag';
+import { arrangeFloats, clampFloat, dockSlot, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, RAIL_PX, readFloat, reorderSlot, slotX } from './paneDrag';
 
 describe('paneDrag geometry', () => {
+  it('arrangeFloats deals the cards into a near-square grid of equal cards, never below the minimum size', () => {
+    expect(arrangeFloats(0, { w: 1200, h: 800 })).toEqual([]);
+    expect(arrangeFloats(1, { w: 1200, h: 800 })).toEqual([{ x: 12, y: 12, w: 1176, h: 776 }]);
+    const two = arrangeFloats(2, { w: 1200, h: 800 });
+    expect(two).toEqual([{ x: 12, y: 12, w: 582, h: 776 }, { x: 606, y: 12, w: 582, h: 776 }]);
+    const three = arrangeFloats(3, { w: 1200, h: 800 }); // 2 columns × 2 rows, the last slot empty
+    expect(three.map((r) => [r.x, r.y])).toEqual([[12, 12], [606, 12], [12, 406]]);
+    expect(three.every((r) => r.w === 582 && r.h === 382)).toBe(true);
+    // A small body: cards keep the minimum size and are clamped (they overlap rather than shrink).
+    const tight = arrangeFloats(4, { w: 500, h: 400 });
+    expect(tight.every((r) => r.w === FLOAT_MIN_W && r.h === FLOAT_MIN_H)).toBe(true);
+    expect(tight[3]).toEqual({ x: 344, y: 264, w: FLOAT_MIN_W, h: FLOAT_MIN_H });
+  });
+
   it('readFloat accepts only a usable box (finite numbers, at least the minimum size) and rounds it', () => {
     expect(readFloat({ x: 1.4, y: 2.6, w: 320.2, h: 240 })).toEqual({ x: 1, y: 3, w: 320, h: 240 });
     expect(readFloat({ x: -50, y: 0, w: 400, h: 300 })).toEqual({ x: -50, y: 0, w: 400, h: 300 });

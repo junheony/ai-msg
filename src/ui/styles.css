@@ -268,7 +268,8 @@ body.pane-dragging iframe { pointer-events: none; }
 .float-card > .pane.active::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent); opacity: .5; pointer-events: none; }
 .float-resize { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none; z-index: 3; }
 .float-resize::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); border-radius: 0 0 2px 0; opacity: .7; }
-.float-resize:hover::after { border-color: var(--accent); opacity: 1; }
+.float-resize:hover::after, .float-resize:focus-visible::after { border-color: var(--accent); opacity: 1; }
+.float-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: 6px 0 12px 0; }
 .pane-ghost { position: absolute; z-index: 30; pointer-events: none; border-radius: 12px; box-sizing: border-box; }
 .pane-ghost.card { border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); color: transparent; }
 .pane-ghost.chip { padding: 4px 10px; border-radius: 8px; background: var(--fg-strong); color: var(--bg); font-size: 12.5px; line-height: 1.4; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
