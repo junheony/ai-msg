@@ -126,7 +126,7 @@ export async function readRecent(file: string): Promise<string[]> {
 }
 
 /** deck-side titles / archive flags (SessionMetaStore) laid over the scanned entries. */
-export type SessionMetaView = { title(sessionId: string): string | null; isArchived(sessionId: string): boolean; /** 새 세션으로 이어가기 links. */ next?(sessionId: string): string | null; prev?(sessionId: string): string | null; /** 메시지 편집 갈래 links. */ branchOf?(sessionId: string): BranchLink | null };
+export type SessionMetaView = { title(sessionId: string): string | null; isArchived(sessionId: string): boolean; /** 새 세션으로 이어가기 links. */ next?(sessionId: string): string | null; prev?(sessionId: string): string | null; /** 메시지 편집 갈래 links. */ branchOf?(sessionId: string): BranchLink | null; /** 작업 폴더 바꾸기: the folder deck runs the session in (the transcript head keeps the old one). */ cwd?(sessionId: string): string | null };
 
 export class SessionIndex {
   private entries: SessionEntry[] = [];
@@ -162,7 +162,7 @@ export class SessionIndex {
   }
 
   /** A deck rename wins over the transcript's title; archived entries (deck's or Codex's) carry the flag; a Claude session held open outside deck carries `heldBy`. Unchanged entries are returned as is. */
-  private decorate<T extends { sessionId: string; title: string; engine?: string; archived?: boolean; codexArchived?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink; heldBy?: SessionHolder }>(e: T): T {
+  private decorate<T extends { sessionId: string; title: string; cwd?: string; engine?: string; archived?: boolean; codexArchived?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink; heldBy?: SessionHolder }>(e: T): T {
     const meta = this.opts.meta;
     const held = (e.engine ?? 'claude') === 'claude' ? (this.opts.holders?.heldBy(e.sessionId) ?? null) : null;
     const title = meta?.title(e.sessionId) ?? null;
@@ -170,8 +170,9 @@ export class SessionIndex {
     const prev = meta?.prev?.(e.sessionId) ?? null;
     const next = meta?.next?.(e.sessionId) ?? null;
     const branch = meta?.branchOf?.(e.sessionId) ?? null;
+    const cwd = (e.engine ?? 'claude') === 'claude' ? (meta?.cwd?.(e.sessionId) ?? null) : null;
     if (!meta && !held && !e.heldBy) return e;
-    if (!title && !archived && !e.archived && !prev && !next && !e.prevSession && !e.nextSession && !branch && !e.branch && !held && !e.heldBy) return e;
+    if (!title && !archived && !(cwd && cwd !== e.cwd) && !e.archived && !prev && !next && !e.prevSession && !e.nextSession && !branch && !e.branch && !held && !e.heldBy) return e;
     const out: T = { ...e, title: title ?? e.title };
     if (archived) out.archived = true;
     else delete out.archived;
@@ -183,6 +184,7 @@ export class SessionIndex {
     else delete out.branch;
     if (held) out.heldBy = held;
     else delete out.heldBy;
+    if (cwd && e.cwd !== undefined) out.cwd = cwd;
     return out;
   }
 
@@ -283,7 +285,9 @@ export class SessionIndex {
   }
 
   lookup(sessionId: string): SessionEntry | null {
-    return this.byId.get(sessionId) ?? null;
+    const e = this.byId.get(sessionId) ?? null;
+    const cwd = e ? (this.opts.meta?.cwd?.(sessionId) ?? null) : null;
+    return e && cwd && cwd !== e.cwd ? { ...e, cwd } : e;
   }
 
   /** An external Codex thread (Codex Desktop / CLI rollout) as of the last refresh; null if unknown. */

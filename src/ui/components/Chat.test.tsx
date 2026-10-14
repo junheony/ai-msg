@@ -102,7 +102,7 @@ describe('Chat', () => {
     expect(screen.queryByTestId('session-sandbox-select')).toBeNull();
   });
 
-  it('Gemini: option only with gemini-cli; disabled with 로그인 필요 until an account has credentials; Gemini models without effort', () => {
+  it('Gemini: option only with agy; disabled with 로그인 필요 until agy is logged in; Gemini models with effort', () => {
     const out = { available: true, loggedIn: { g1: false, g2: false } };
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false, gemini: out });
     const opt = () => within(screen.getByTestId('engine-select')).getByRole('option', { name: /Gemini/ }) as HTMLOptionElement;
@@ -119,7 +119,7 @@ describe('Chat', () => {
     expect(opt().textContent).toBe('Gemini');
     expect(within(screen.getByTestId('sandbox-select')).getAllByRole('option').map((o) => o.textContent)).toEqual(['읽기 전용', '파일 편집 허용(셸 거부)']);
     fireEvent.click(screen.getByTestId('model-picker'));
-    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent)).toEqual(['Gemini Pro', 'Gemini Flash']);
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent)).toEqual(['Gemini 4 Argon', 'Gemini Flash', '낮음', '중간', '높음', '엑스트라']);
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'gemini', sessionSandbox: 'read-only', model: 'gemini-pro' });
     expect(screen.getByText('Gemini · 읽기 전용')).toBeTruthy();

@@ -22,7 +22,7 @@ function open(messages: TranscriptMessage[], engine: 'claude' | 'codex' = 'claud
   const dispatch = (x: Parameters<typeof reducer>[1]) => { s = reducer(s, x); };
   const ui = (pane: PaneState) => <Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: true, projects: [] }} active closable={false} dispatch={dispatch} send={(m) => sent.push(m)} onClose={() => {}} />;
   const view = render(ui(s.panes[0]!));
-  return { sent, state: () => s, attach: (attachment: UploadedAttachment, paneId: string) => dispatch({ type: 'attach', attachment, paneId }), rerender: () => view.rerender(ui(s.panes[0]!)) };
+  return { sent, state: () => s, dispatch, attach: (attachment: UploadedAttachment, paneId: string) => dispatch({ type: 'attach', attachment, paneId }), rerender: () => view.rerender(ui(s.panes[0]!)) };
 }
 
 const THREE = [u('첫 질문', 0), a('답 0'), u('두 번째', 1), a('답 1'), u('세 번째', 2), a('답 2')];
@@ -62,6 +62,34 @@ describe('다시 생성 · any turn', () => {
     expect(after.model).toBe('sonnet');
     expect(after.modelPicked).toBe(true);
     expect(t.sent.some((m) => m.type !== 'send')).toBe(false);
+  });
+
+  it('a refused branch puts the picker back on the model before the pick, with a one-line notice', () => {
+    const t = open(THREE);
+    const before = t.state().panes[0]!;
+    fireEvent.click(screen.getAllByRole('button', { name: '다른 모델로 다시 생성' })[0]!);
+    fireEvent.click(screen.getAllByRole('menuitem').find((b) => b.textContent?.includes('Sonnet'))!);
+    t.rerender();
+    expect(t.state().panes[0]!.model).toBe('sonnet');
+    const ref = (t.sent[0] as Extract<ClientMessage, { type: 'send' }>).clientRef!;
+    act(() => { t.dispatch({ type: 'server', msg: { type: 'error', turnId: null, clientRef: ref, message: '갈래를 만들 수 없습니다' } }); });
+    act(() => { t.rerender(); });
+    const after = t.state().panes[0]!;
+    expect(after.model).toBe(before.model);
+    expect(after.modelPicked).toBe(before.modelPicked);
+    expect(after.notices?.some((n) => n.message.startsWith('갈래를 만들지 못해 모델을'))).toBe(true);
+  });
+
+  it('a branch picked without another model leaves the picker alone when refused', () => {
+    const t = open(THREE);
+    const before = t.state().panes[0]!;
+    fireEvent.click(screen.getAllByRole('button', { name: '다시 생성' })[0]!);
+    t.rerender();
+    const ref = (t.sent[0] as Extract<ClientMessage, { type: 'send' }>).clientRef!;
+    act(() => { t.dispatch({ type: 'server', msg: { type: 'error', turnId: null, clientRef: ref, message: 'x' } }); });
+    act(() => { t.rerender(); });
+    expect(t.state().panes[0]!.model).toBe(before.model);
+    expect(t.state().panes[0]!.notices?.some((n) => n.message.startsWith('갈래를 만들지 못해'))).toBe(false);
   });
 
   it('the last reply with another model branches too (a plain send with a model would change the session’s own)', () => {

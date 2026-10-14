@@ -96,6 +96,43 @@ describe('long paste → 붙여넣은 텍스트 chip', () => {
     expect(uploadFn).not.toHaveBeenCalled();
   });
 
+  it('while another attachment is still uploading, a long paste still becomes a chip; sending waits for both', async () => {
+    const gates: (() => void)[] = [];
+    let n = 0;
+    const uploadFn = vi.fn((f: File) => new Promise<UploadedAttachment>((res) => { gates.push(() => res({ id: `id-${++n}`, name: f.name, size: f.size, isImage: false })); }));
+    const onSend = vi.fn();
+    render(<Harness uploadFn={uploadFn} onSend={onSend} />);
+    const ta = screen.getByLabelText('메시지') as HTMLTextAreaElement;
+    const img = new File(['x'], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(ta, { clipboardData: { files: [img], items: [], getData: () => '' } });
+    await waitFor(() => expect(uploadFn).toHaveBeenCalledTimes(1));
+    expect(screen.getByText(/업로드 중 1/)).toBeTruthy();
+    const ev = fireEvent.paste(ta, { clipboardData: { files: [], items: [], getData: (t: string) => (t === 'text/plain' ? long : '') } });
+    expect(ev).toBe(false);
+    expect(ta.value).toBe('');
+    await waitFor(() => expect(uploadFn).toHaveBeenCalledTimes(2));
+    expect(uploadFn.mock.calls[1]![0].name).toBe('pasted-1.txt');
+    expect((screen.getByText('보내기').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    gates[0]!();
+    await waitFor(() => expect(screen.getByText(/업로드 중 1/)).toBeTruthy());
+    expect((screen.getByText('보내기').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    gates[1]!();
+    await waitFor(() => expect(screen.getByTestId('pasted-chip')).toBeTruthy());
+    expect((screen.getByText('보내기').closest('button') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('files still queued behind the one uploading count: with them filling the attachments, a long paste stays text', async () => {
+    const uploadFn = vi.fn((_f: File) => new Promise<UploadedAttachment>(() => {}));
+    render(<Harness uploadFn={uploadFn} onSend={() => {}} />);
+    const ta = screen.getByLabelText('메시지') as HTMLTextAreaElement;
+    const files = Array.from({ length: MAX_ATTACHMENTS_PER_TURN }, (_, i) => new File(['x'], `f${i}.png`, { type: 'image/png' }));
+    fireEvent.paste(ta, { clipboardData: { files, items: [], getData: () => '' } });
+    await waitFor(() => expect(uploadFn).toHaveBeenCalledTimes(1)); // one at a time: the rest wait in the queue
+    const ev = fireEvent.paste(ta, { clipboardData: { files: [], items: [], getData: (t: string) => (t === 'text/plain' ? long : '') } });
+    expect(ev).toBe(true);
+    expect(uploadFn).toHaveBeenCalledTimes(1);
+  });
+
   it('a long paste whose upload fails goes back into the composer, nothing lost', async () => {
     const { uploadFn, ta, paste } = setup({ fail: true });
     fireEvent.change(ta, { target: { value: '설명: ' } });

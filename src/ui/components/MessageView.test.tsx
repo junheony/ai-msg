@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { MessageView } from './MessageView';
+import { codeFileName } from '../codeWrap';
 
 describe('MessageView', () => {
   afterEach(cleanup);
@@ -154,5 +155,51 @@ describe('MessageView code blocks and turn footer', () => {
     const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'ok', toolCalls: [], badge, streaming: false, error: null, notes: [], attempts: [] }} />);
     const t = container.querySelector('.turn-foot .turn-badge')?.textContent ?? '';
     for (const s of ['B', '입력 1.2k', '출력 340', '캐시 읽기 56.0k', '캐시 쓰기 0', '가장 여유']) expect(t).toContain(s);
+  });
+});
+
+describe('code block 저장 · 줄바꿈', () => {
+  afterEach(() => { cleanup(); localStorage.removeItem('deck.codeWrap'); vi.restoreAllMocks(); });
+  const reply = (text: string) => ({ kind: 'assistant' as const, turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] });
+
+  it('codeFileName: code-N with the language extension, .txt when unknown', () => {
+    expect(codeFileName('ts', 1)).toBe('code-1.ts');
+    expect(codeFileName('python', 2)).toBe('code-2.py');
+    expect(codeFileName('bash', 3)).toBe('code-3.sh');
+    expect(codeFileName('json', 4)).toBe('code-4.json');
+    expect(codeFileName('md', 5)).toBe('code-5.md');
+    expect(codeFileName('', 6)).toBe('code-6.txt');
+    expect(codeFileName('cobol', 7)).toBe('code-7.txt');
+  });
+
+  it('저장 downloads the block through <a download> named by its language', async () => {
+    const created = vi.fn((_b: Blob) => 'blob:x');
+    URL.createObjectURL = created as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = () => {};
+    let name = '';
+    let blob: Blob | null = null;
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { name = this.download; blob = created.mock.calls.at(-1)![0]; });
+    const { getByRole } = render(<MessageView item={reply('```py\nprint(1)\n```')} />);
+    fireEvent.click(getByRole('button', { name: '저장' }));
+    expect(name).toMatch(/^code-\d+\.py$/);
+    expect(await blob!.text()).toBe('print(1)');
+  });
+
+  it('줄바꿈 is one device-wide switch (deck.codeWrap): every block wraps, and it is remembered', () => {
+    const { container, getAllByRole, unmount } = render(<>
+      <MessageView item={reply('```ts\nconst a = 1;\n```')} />
+      <MessageView item={reply('```\nplain\n```')} />
+    </>);
+    const toggles = getAllByRole('button', { name: '줄바꿈' });
+    expect(toggles).toHaveLength(2);
+    expect(toggles[0]!.getAttribute('aria-pressed')).toBe('false');
+    expect(container.querySelectorAll('pre.code-wrap')).toHaveLength(0);
+    fireEvent.click(toggles[0]!);
+    expect(container.querySelectorAll('pre.code-wrap')).toHaveLength(2);
+    expect(toggles[1]!.getAttribute('aria-pressed')).toBe('true');
+    expect(localStorage.getItem('deck.codeWrap')).toBe('1');
+    unmount();
+    const again = render(<MessageView item={reply('```\nx\n```')} />);
+    expect(again.container.querySelector('pre.code-wrap')).not.toBeNull();
   });
 });

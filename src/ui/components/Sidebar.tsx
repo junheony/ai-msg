@@ -36,7 +36,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
   /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
@@ -85,6 +85,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onViewChange?: (view: SidebarView) => void;
   /** 삭제 (Claude sessions): the app confirms, moves it to the trash and offers undo. `which` names the branch of a 갈래 row. */
   onDelete?: (s: SessionEntry, which?: string) => void;
+  /** 작업 폴더 바꾸기 / 복제 (servers with 'sessionOps'); absent = no such items. */
+  onSetCwd?: (s: SessionEntry) => void;
+  onDuplicate?: (sessionId: string) => void;
   /** 새 세션 (the floating pill bottom right, as in Claude): same as ⌘N — a new chat in the current pane's folder. */
   onNewChat?: () => void;
   /** ⋯ 분할 보기로 열기: the session in a new split pane. Absent = no such item (a phone). */
@@ -281,6 +284,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {/* Archived in Codex: only the Codex app can unarchive it. */}
             {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
+            {onSetCwd && (target.engine ?? 'claude') !== 'gemini' && <button type="button" role="menuitem" onClick={() => { setMenu(null); onSetCwd(target); }}>작업 폴더 바꾸기</button>}
+            {onDuplicate && <button type="button" role="menuitem" onClick={() => { setMenu(null); onDuplicate(target.sessionId); }}>복제</button>}
             {/* GPT / Gemini / Codex-app sessions: shown disabled with the reason, so it is clear why they stay. */}
             {onDelete && (deleteBlockedReason(target)
               ? <BlockedDeleteItem reason={deleteBlockedReason(target)!} />

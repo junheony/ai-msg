@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { CodexSandbox, Effort, ModelChoice } from '../../shared/models';
+import { AUTO_MODEL_INFO, MODEL_INFO, type CodexSandbox, type Effort, type ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { isGeminiAccount } from '../../shared/accounts';
 import type { AccountInfo, ClientMessage } from '../../shared/protocol';
@@ -18,6 +18,7 @@ import { ForkMenu } from './ForkMenu';
 import { NewChat } from './NewChat';
 import { OpenInDesktop } from './OpenInDesktop';
 import { SidePanel } from './SidePanel';
+import { openInNewTab } from './ShareMenu';
 import { deleteBlockedReason } from './SessionMenu';
 import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
 import { hasOpenPopup } from '../composerFocus';
@@ -74,6 +75,7 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
     ...(s.sessionId === null ? { engine: pane.engine, sandbox: pane.sandbox, ...(s.accountPin ? { accountPin: s.accountPin } : {}), ...(s.permissionMode || defaultMode ? { permissionMode: paneMode(pane, defaultMode) } : {}) } : {}),
     ...(ids.length ? { attachments: ids } : {}),
     ...(s.sessionId === null && pane.handoffFrom ? { handoffFrom: pane.handoffFrom.sessionId } : {}),
+    ...(s.sessionId === null && s.newTitle ? { title: s.newTitle } : {}),
     clientRef,
   });
   if (sent === false) dispatch({ type: 'send_failed', clientRef, paneId: pane.id });
@@ -169,6 +171,9 @@ export type SessionActions = {
   onTogglePin: (sessionId: string, pinned: boolean) => void;
   onArchive: (sessionId: string, archived: boolean) => void;
   onDelete: (s: SessionEntry) => void;
+  /** 작업 폴더 바꾸기 / 복제: absent when the server cannot ('sessionOps'). */
+  onSetCwd?: (s: SessionEntry) => void;
+  onDuplicate?: (sessionId: string) => void;
 };
 
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions }: {
@@ -274,6 +279,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const effort = paneEffort(pane, model);
   // 파일 (the session folder in the side panel) lives in the header's ⋯ menu, as Claude keeps its header bare.
   const fileMenu = s ? [{ label: side ? '파일 패널 닫기' : '파일 열기', run: () => setSide(side ? null : { kind: 'pick' }) }] : [];
+  // 새 탭으로 떼어내기 (split view only): the session in a new browser tab, this pane closed. A lone pane has no such item.
+  if (closable && s?.sessionId) {
+    const detached = s.sessionId;
+    fileMenu.push({ label: '새 탭으로 떼어내기', run: () => { openInNewTab(detached); onClose(); } });
+  }
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   const busy = pane.activeTurnId !== null || pane.awaitingStart;
   const onModel = (m: ModelChoice) => dispatch({ type: 'set_model', model: m, paneId: pane.id });
@@ -316,7 +326,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     };
   }, [projects, sid, cwd]);
   // A refused edit (message not found, folder gone…) leaves an unsent new session: go back to the original instead.
-  const branchUndo = useRef<{ sessionId: string; cwd: string; title: string } | null>(null);
+  // 다른 모델로 다시 생성: `model` is the picker before it, put back (with a one-line notice) when the branch is refused.
+  const branchUndo = useRef<{ sessionId: string; cwd: string; title: string; model?: { model: ModelChoice; picked: boolean } } | null>(null);
   useEffect(() => {
     const u = branchUndo.current;
     if (!u || pane.awaitingStart) return;
@@ -325,6 +336,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       // The edited text (queued again, paused) and the rest of the queue go back with it.
       dispatch({ type: 'branch_undo', sessionId: u.sessionId, paneId: pane.id });
       openRef.current?.(u.sessionId, u.cwd, u.title);
+      if (u.model) {
+        dispatch({ type: 'set_model', model: u.model.model, picked: u.model.picked, paneId: pane.id });
+        const name = u.model.model === 'auto' ? AUTO_MODEL_INFO.name : MODEL_INFO[u.model.model]?.name ?? u.model.model;
+        dispatch({ type: 'pane_notice', message: `갈래를 만들지 못해 모델을 ${name}(으)로 되돌렸습니다`, paneId: pane.id });
+      }
     }
   }, [pane.awaitingStart, pane.myTurns.length, pane.session?.sessionId]);
   // 다시 생성 under a reply (MessageView). Stable while the session, its models and the busy state stay: the items are
@@ -343,7 +359,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       const { pane: p, send: out, accounts } = latest.current;
       const ps = p.session;
       if (!ps?.sessionId) return;
-      branchUndo.current = { sessionId: ps.sessionId, cwd: ps.cwd, title: ps.title };
+      branchUndo.current = { sessionId: ps.sessionId, cwd: ps.cwd, title: ps.title, ...(m ? { model: { model: p.model, picked: p.modelPicked } } : {}) };
       startBranch(p, turn.n, turn.text, turn.text, dispatch, out, accounts, m);
       if (m) dispatch({ type: 'set_model', model: m, paneId: p.id });
     };
@@ -366,6 +382,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         onArchive: entry.codexArchived ? undefined : () => sessionActions.onArchive(entry.sessionId, !entry.archived),
         onDelete: () => sessionActions.onDelete(entry),
         deleteBlocked: deleteBlockedReason(entry),
+        ...(sessionActions.onSetCwd && (entry.engine ?? 'claude') !== 'gemini' ? { onSetCwd: () => sessionActions.onSetCwd?.(entry) } : {}),
+        ...(sessionActions.onDuplicate ? { onDuplicate: () => sessionActions.onDuplicate?.(entry.sessionId) } : {}),
       }
     : { pinned, archived: false, onTogglePin: () => sessionActions.onTogglePin(sid, !pinned) };
   const prevId = entry?.prevSession ?? pane.handoffFrom?.sessionId ?? null;

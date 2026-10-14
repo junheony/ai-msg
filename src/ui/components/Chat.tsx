@@ -1,5 +1,5 @@
 import { loadDraft, saveDraft } from '../autoReload';
-import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus } from '../../shared/protocol';
@@ -21,7 +21,9 @@ import { useComposerSuggest } from './ComposerSuggest';
 import { HANDOFF_COMMAND, HANDOFF_PROMPT } from '../../shared/handoff';
 import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, nextPermMode, type PermMode } from '../../shared/permission';
 import type { CommandItem } from '../autocomplete';
-import { MessageActionsContext, MessageView, type MessageActions } from './MessageView';
+import { MessageActionsContext, MessageView, RegenerateContext, type MessageActions, type Regenerate } from './MessageView';
+import { FIND_EVENT, FindBar } from './FindBar';
+import type { ReplyTurn } from '../replyTurn';
 import { ModelPicker } from './ModelPicker';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
@@ -41,7 +43,7 @@ export type ChatProps = {
   busy: boolean;
   title: string;
   /** The title ⌄ menu (the sidebar ⋯ actions; `deleteBlocked` = 삭제 shown disabled with this reason). Absent = the caret is decoration. */
-  titleMenu?: { pinned: boolean; archived: boolean; onRename?: (title: string | null) => void; onTogglePin?: () => void; onArchive?: () => void; onDelete?: () => void; deleteBlocked?: string | null };
+  titleMenu?: { pinned: boolean; archived: boolean; onRename?: (title: string | null) => void; onTogglePin?: () => void; onArchive?: () => void; onDelete?: () => void; deleteBlocked?: string | null; /** 작업 폴더 바꾸기 / 복제 (servers with 'sessionOps'). */ onSetCwd?: () => void; onDuplicate?: () => void };
   /** Session folder: the header shows its last segment as a chip, the full path on hover. */
   cwd?: string;
   /** For `/` command suggestions (null while the session is new). */
@@ -328,6 +330,17 @@ export function Chat(p: ChatProps) {
     ...(p.versions ? { versions: p.versions } : {}),
     coarse,
   }), [canRetry, retryable, scroll.attach, canBranch, p.editNote, p.versions, coarse]);
+  // 다시 생성 / 다른 모델로 (Pane's context): the new turn is followed from the bottom, as after a send.
+  const paneRegen = useContext(RegenerateContext);
+  const regen = useMemo<Regenerate | null>(() => {
+    if (!paneRegen) return null;
+    const { branch, retryWith } = paneRegen;
+    return {
+      ...paneRegen,
+      ...(branch ? { branch: (turn: ReplyTurn, m?: ModelChoice) => { branch(turn, m); scroll.attach(); } } : {}),
+      ...(retryWith ? { retryWith: (m: ModelChoice) => { retryWith(m); scroll.attach(); } } : {}),
+    };
+  }, [paneRegen, scroll.attach]);
   // GPT/Gemini have no per-call approvals: their sandbox decides, so the mode picker is shown disabled.
   const permSupported = effectiveEngine === 'claude' || effectiveEngine === 'auto';
   const permMode: PermMode = p.permMode ?? 'default';
@@ -373,12 +386,31 @@ export function Chat(p: ChatProps) {
       {tm.onRename && <button type="button" role="menuitem" onClick={() => { close(); setRenaming(p.title); }}>이름 바꾸기</button>}
       {tm.onTogglePin && <button type="button" role="menuitem" onClick={() => { close(); tm.onTogglePin?.(); }}>{tm.pinned ? '고정 해제' : '맨 위에 고정'}</button>}
       {tm.onArchive && <button type="button" role="menuitem" onClick={() => { close(); tm.onArchive?.(); }}>{tm.archived ? '보관 해제' : '보관'}</button>}
+      {tm.onSetCwd && <button type="button" role="menuitem" onClick={() => { close(); tm.onSetCwd?.(); }}>작업 폴더 바꾸기</button>}
+      {tm.onDuplicate && <button type="button" role="menuitem" onClick={() => { close(); tm.onDuplicate?.(); }}>복제</button>}
     </>
   );
   const deleteItem = (close: () => void) => tm && (tm.deleteBlocked
     ? <BlockedDeleteItem reason={tm.deleteBlocked} />
     : tm.onDelete && <button type="button" role="menuitem" className="danger" onClick={() => { close(); tm.onDelete?.(); }}>삭제…</button>);
-  const hasMore = !!tm || shareActions.length > 0 || (p.headMenu?.length ?? 0) > 0;
+  // 대화에서 찾기 (⌘F / Ctrl+F in the pane, the ⋯ menu, or a 대화 내용 검색 jump with its term); a new key refocuses an open bar.
+  const [find, setFind] = useState<{ query: string; anchor: Element | null; key: number } | null>(null);
+  useEffect(() => { setFind(null); }, [p.sessionId]);
+  const openFind = (query = '', anchor: Element | null = null) => setFind((f) => ({ query: query || f?.query || '', anchor, key: (f?.key ?? 0) + 1 }));
+  const closeFind = () => { setFind(null); taRef.current?.focus(); };
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const on = (e: Event) => {
+      const q = (e as CustomEvent<unknown>).detail;
+      if (typeof q === 'string' && q.trim()) openFind(q, e.target instanceof Element ? e.target : null);
+    };
+    el.addEventListener(FIND_EVENT, on);
+    return () => el.removeEventListener(FIND_EVENT, on);
+  }, []);
+  const canFind = p.items.length > 0;
+  const hasMore = !!tm || shareActions.length > 0 || (p.headMenu?.length ?? 0) > 0 || canFind;
   const [{ sendKey }] = usePrefs();
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggest.onKeyDown(e)) return;
@@ -450,7 +482,9 @@ export function Chat(p: ChatProps) {
     if (files.length) void addFiles(files);
   };
   return (
-    <main className="chat" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+    <main ref={mainRef} className="chat" onKeyDown={(e) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f' && canFind) { e.preventDefault(); openFind(); }
+    }} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
       {/* Claude's header: the title (folder on a second line) centred, chips on the left, ⋯ on the right. A narrow
           pane falls back to a left-aligned, truncating row (styles.css, @container pane). */}
@@ -503,7 +537,8 @@ export function Chat(p: ChatProps) {
               {moreOpen && (
                 <MenuList className="session-menu chat-more-menu" label="채팅 메뉴" onClose={() => setMoreOpen(false)}>
                   {sessionItems(() => setMoreOpen(false))}
-                  {tm && (shareActions.length > 0 || p.headMenu?.length) ? <div className="menu-sep" role="separator" /> : null}
+                  {tm && (shareActions.length > 0 || p.headMenu?.length || canFind) ? <div className="menu-sep" role="separator" /> : null}
+                  {canFind && <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); openFind(); }}>대화에서 찾기</button>}
                   {shareActions.map((a) => <button key={a.key} type="button" role="menuitem" aria-disabled={a.disabled || undefined} onClick={a.disabled ? undefined : a.run}>{a.label}</button>)}
                   {p.headMenu?.map((it) => <button key={it.label} type="button" role="menuitem" onClick={() => { setMoreOpen(false); it.run(); }}>{it.label}</button>)}
                   {tm && (tm.onDelete || tm.deleteBlocked) && <div className="menu-sep" role="separator" />}
@@ -514,6 +549,7 @@ export function Chat(p: ChatProps) {
           )}
         </div>
       </div>
+      {find && <FindBar key={find.key} root={bodyRef} content={content} initialQuery={find.query} anchor={find.anchor} onClose={closeFind} />}
       {p.notices?.map((n) => (
         <div key={n.message} className={`pane-notice ${n.level}`} role={n.level === 'error' ? 'alert' : 'status'} data-testid="pane-notice">
           <span className="pane-notice-text">{n.message}</span>
@@ -532,7 +568,9 @@ export function Chat(p: ChatProps) {
         {p.loading && p.items.length > 0 && <div className="chat-refreshing" role="status" data-testid="chat-refreshing">불러오는 중…</div>}
         <AgentContext.Provider value={agentCtx}>
           <MessageActionsContext.Provider value={msgActions}>
-            {shown.map((it, i) => <MessageView key={keys[i]} item={it} cwd={p.cwd} last={i === shown.length - 1} />)}
+            <RegenerateContext.Provider value={regen}>
+              {shown.map((it, i) => <MessageView key={keys[i]} item={it} cwd={p.cwd} last={i === shown.length - 1} />)}
+            </RegenerateContext.Provider>
           </MessageActionsContext.Provider>
         </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}

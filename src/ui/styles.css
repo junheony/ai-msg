@@ -1976,3 +1976,36 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
 .msg.user pre.folded { max-height: calc(1.6em * 8 + 20px); overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 65%, transparent); mask-image: linear-gradient(to bottom, #000 65%, transparent); }
 .fold-toggle { margin-top: -2px; padding: 2px 8px; border-radius: 7px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
 .fold-toggle:hover { background: var(--hover); color: var(--fg); }
+
+/* === 찾기 다음/이전 · 터치 툴팁 ===
+   대화에서 찾기: a slim bar under the chat header (input · N / M · ↑ ↓ · ×); every hit is a mark, the current one solid.
+   Touch tooltip: a long press on a titled button shows its title in a small fixed bubble (useTouchTooltip). */
+.find-bar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--line-strong); background: var(--panel); }
+.find-input { flex: 1 1 auto; min-width: 0; padding: 5px 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: calc(13px * var(--font-scale, 1)); }
+.find-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.find-count { flex: none; min-width: 3.5em; text-align: center; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); font-variant-numeric: tabular-nums; }
+.find-bar .icon-btn { flex: none; }
+.find-bar .icon-btn:disabled { opacity: .4; cursor: default; }
+mark.find-hit { background: color-mix(in srgb, var(--accent) 28%, transparent); color: inherit; border-radius: 2px; }
+mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 0 1px var(--accent); }
+.touch-tip { position: fixed; z-index: 1000; transform: translate(-50%, -100%); max-width: min(260px, calc(100vw - 16px)); padding: 5px 9px; border-radius: 8px; background: var(--fg, #222); color: var(--bg, #fff); font-size: calc(12px * var(--font-scale, 1)); line-height: 1.35; box-shadow: var(--shadow); pointer-events: none; white-space: normal; }
+.touch-tip.below { transform: translate(-50%, 0); }
+
+/* === 코드 블록 저장·줄바꿈 · 패널 떼어내기 ===
+   The code head's 줄바꿈 (one device-wide switch, deck.codeWrap) and 저장 buttons look like its copy button; with
+   줄바꿈 on, the block folds long lines instead of scrolling sideways. 새 탭으로 떼어내기 is a plain ⋯ menu item. */
+.code-tool { height: 24px; padding: 0 9px; border-radius: 6px; font-size: calc(12px * var(--font-scale, 1)); color: var(--muted); transition: background .15s ease, color .15s ease; }
+.code-tool:hover { background: var(--hover); color: var(--fg); }
+.code-tool[aria-pressed="true"] { color: var(--fg); background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.code-block pre.code-wrap { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; }
+.code-block pre.code-wrap code { white-space: inherit; overflow-wrap: anywhere; }
+@media (max-width: 720px) { .code-tool { min-height: var(--phone-tap); } }
+
+/* === 세션 cwd·복제·턴별 모델 ===
+   작업 폴더 바꾸기: the folder picker in a small modal under the session's current folder. A turn with no badge (a
+   history turn) still names its model in the turn foot, like the badge's model pill. */
+.session-cwd-dialog { width: min(480px, calc(100vw - 24px)); }
+.session-cwd-dialog .session-cwd-now { margin: 0 0 4px; font-size: calc(12.5px * var(--font-scale, 1)); overflow-wrap: anywhere; }
+.session-cwd-dialog .session-cwd-title { color: var(--fg); font-weight: 500; }
+.session-cwd-dialog .session-cwd-hint { margin: 0 0 10px; font-size: calc(12px * var(--font-scale, 1)); }
+.msg-model { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); font-weight: 500; }

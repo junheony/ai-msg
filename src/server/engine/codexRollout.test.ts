@@ -178,3 +178,18 @@ describe('readCodexTranscriptTail', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 });
+
+describe('per-turn model (턴별 모델)', () => {
+  it('each assistant message keeps the model its turn_context named', () => {
+    const lines = [
+      { type: 'turn_context', payload: { model: 'gpt-6.1-sol', cwd: '/w' } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'one' }] } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'first' }] } },
+      { type: 'turn_context', payload: { model: 'gpt-6-astra', cwd: '/w' } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'two' }] } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'second' }] } },
+    ];
+    const t = parseCodexTranscript(lines.map((l) => JSON.stringify(l)).join('\n'));
+    expect(t.filter((m) => m.kind === 'assistant').map((m) => (m.kind === 'assistant' ? m.model : null))).toEqual(['gpt-6.1-sol', 'gpt-6-astra']);
+  });
+});

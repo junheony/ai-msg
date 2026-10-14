@@ -29,18 +29,33 @@ export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6-sol';
 export const CODEX_CLI_MODEL: Record<CodexModel, string> = { 'gpt-6-sol': 'gpt-6.1-sol', 'gpt-6-astra': 'gpt-6-astra' };
 
 /**
- * Gemini (explicit engine only, never chosen by 자동). gemini-cli 0.62 has no Gemini 4.0 id; deck sends the CLI's
- * aliases (`-m pro` / `-m flash`) so the server-side model config picks the current one (docs/gemini-spike.md).
+ * Gemini (explicit engine only, never chosen by 자동), run through the Antigravity CLI `agy` (gemini-cli lost individual
+ * accounts on 2026-06-18). The deck ids stay 'gemini-pro' / 'gemini-flash' (persisted in sessions); `agy --model` gets
+ * the slugs below (agy 1.3.5 binary). Effort goes in its own `--effort` flag (docs/gemini-spike.md).
  */
 export type GeminiModel = 'gemini-pro' | 'gemini-flash';
 export const GEMINI_MODELS: readonly GeminiModel[] = ['gemini-pro', 'gemini-flash'];
 export const DEFAULT_GEMINI_MODEL: GeminiModel = 'gemini-pro';
-/** The `-m` value gemini-cli gets for each deck id. */
-export const GEMINI_CLI_ALIAS: Record<GeminiModel, string> = { 'gemini-pro': 'pro', 'gemini-flash': 'flash' };
+/** The `--model` value agy gets for each deck id. */
+export const GEMINI_CLI_ALIAS: Record<GeminiModel, string> = { 'gemini-pro': 'gemini-4-argon', 'gemini-flash': 'gemini-3.8-flash' };
 
 export type AnyModel = ClaudeModel | CodexModel | GeminiModel;
 
-export const MODEL_LABEL: Record<AnyModel, string> = { sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable', 'gpt-6-sol': 'GPT Sol', 'gpt-6-astra': 'GPT Astra', 'gemini-pro': 'Gemini Pro', 'gemini-flash': 'Gemini Flash' };
+export const MODEL_LABEL: Record<AnyModel, string> = { sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable', 'gpt-6-sol': 'GPT Sol', 'gpt-6-astra': 'GPT Astra', 'gemini-pro': 'Gemini 4 Argon', 'gemini-flash': 'Gemini Flash' };
+
+/**
+ * A turn's model for display: deck's aliases and the Codex CLI's slugs by MODEL_LABEL, a Claude model id as its family
+ * and version ("claude-opus-5-5" → "Opus 5.5"); anything else as it is.
+ */
+export function modelLabelOf(model: string): string {
+  if (Object.hasOwn(MODEL_LABEL, model)) return MODEL_LABEL[model as AnyModel];
+  const codex = (Object.keys(CODEX_CLI_MODEL) as CodexModel[]).find((m) => CODEX_CLI_MODEL[m] === model);
+  if (codex) return MODEL_LABEL[codex];
+  const m = /(opus|sonnet|haiku|fable)(?:-(\d{1,2})(?!\d)(?:-(\d{1,2})(?!\d))?)?/i.exec(model);
+  if (!m) return model;
+  const family = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1).toLowerCase();
+  return m[2] ? `${family} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : family;
+}
 
 /**
  * Picker rows: exact versions. Claude names/ids from the SDK's `supportedModels()` (agent-sdk 0.3.285, account B,
@@ -53,22 +68,22 @@ export const MODEL_INFO: Record<AnyModel, { name: string; description: string }>
   fable: { name: 'Fable 5.1', description: '기본 모델 · 가장 뛰어난 추론 · Fable 주간 80% 넘으면 Opus 로' },
   'gpt-6-sol': { name: 'GPT-6.1-Sol', description: '코딩과 일상 작업의 주력 모델' },
   'gpt-6-astra': { name: 'GPT-6-Astra', description: '가장 까다로운 작업용 최상위 모델' },
-  'gemini-pro': { name: 'Gemini Pro', description: 'gemini-cli 의 pro 별칭 · 서버가 현재 Pro 모델로 연결' },
-  'gemini-flash': { name: 'Gemini Flash', description: 'gemini-cli 의 flash 별칭 · 빠르고 가벼운 작업용' },
+  'gemini-pro': { name: 'Gemini 4 Argon', description: 'agy(Antigravity CLI) 의 gemini-4-argon · 가장 뛰어난 Gemini' },
+  'gemini-flash': { name: 'Gemini Flash', description: 'agy(Antigravity CLI) 의 gemini-3.8-flash · 빠르고 가벼운 작업용' },
 };
 
 /**
  * Reasoning effort, sent per turn. Claude: SDK `Options.effort` (sdk.d.ts `EffortLevel`
  * = 'low'|'medium'|'high'|'xhigh'|'max'). GPT: `codex exec -c model_reasoning_effort="…"` (models_cache
- * supported_reasoning_levels low…max, ultra). deck offers the four levels every listed model supports;
+ * supported_reasoning_levels low…max, ultra). Gemini: `agy --effort` (low…max). deck offers the four levels every listed model supports;
  * 'max'/'ultra' are left out on purpose.
  */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh'];
 export const EFFORT_LABEL: Record<Effort, string> = { low: '낮음', medium: '중간', high: '높음', xhigh: '엑스트라' };
-/** Per model: every Claude/GPT model reports all four (supportedEffortLevels / supported_reasoning_levels); gemini-cli has no effort flag. */
-export const MODEL_EFFORTS: Record<AnyModel, readonly Effort[]> = { opus: EFFORTS, sonnet: EFFORTS, fable: EFFORTS, 'gpt-6-sol': EFFORTS, 'gpt-6-astra': EFFORTS, 'gemini-pro': [], 'gemini-flash': [] };
-/** gemini: never sent (no CLI flag); present so per-engine effort maps stay total. */
+/** Per model: every Claude/GPT model reports all four (supportedEffortLevels / supported_reasoning_levels); agy takes `--effort` low…max. */
+export const MODEL_EFFORTS: Record<AnyModel, readonly Effort[]> = { opus: EFFORTS, sonnet: EFFORTS, fable: EFFORTS, 'gpt-6-sol': EFFORTS, 'gpt-6-astra': EFFORTS, 'gemini-pro': EFFORTS, 'gemini-flash': EFFORTS };
+/** gemini: what a Gemini turn sends when nothing was picked (agy `--effort`). */
 export const DEFAULT_EFFORT: Record<EngineKind, Effort> = { claude: 'high', codex: 'medium', gemini: 'medium' };
 
 /**
@@ -118,7 +133,7 @@ export function defaultGeminiSandbox(autoApprove: boolean): CodexSandbox {
   return autoApprove ? 'workspace-write' : 'read-only';
 }
 export const SANDBOX_LABEL: Record<CodexSandbox, string> = { 'read-only': '읽기 전용', 'workspace-write': '작업폴더 쓰기 · 네트워크' };
-/** Gemini: read-only = `--approval-mode plan`; workspace-write = `auto_edit` (edits run, shell is denied headless). Network stays open. */
+/** Gemini (agy): read-only = `--mode plan`; workspace-write = `--mode accept-edits --sandbox` (edits run, shell needs approval, which headless denies). */
 export const GEMINI_SANDBOX_LABEL: Record<CodexSandbox, string> = { 'read-only': '읽기 전용', 'workspace-write': '파일 편집 허용(셸 거부)' };
 
 export const DEFAULT_CONTEXT_WINDOW = 200_000;

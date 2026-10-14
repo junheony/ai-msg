@@ -18,7 +18,7 @@ export type ChatItem =
   | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number }
   /** A hook's message to the model (e.g. a Stop hook made it keep going): a muted row, collapsed. Never counted as a user message. */
   | { kind: 'system'; source: string; label: string; text: string }
-  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null; /** This client sent an interrupt for this turn (중단, 지금 전송): its error is the stop, not a failure. */ interrupted?: true };
+  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null; /** This client sent an interrupt for this turn (중단, 지금 전송): its error is the stop, not a failure. */ interrupted?: true; /** The model that answered (the server's per-turn model, or the transcript's); absent = unknown. */ model?: string };
 
 /** A subagent's own tool call, shown in its Agent card (nested subagents' calls are flattened into the top card). */
 export type AgentCall = { toolUseId: string; name: string; input: unknown; done: boolean; isError: boolean };
@@ -197,7 +197,7 @@ function unsteer(pane: PaneState, which: (steerId: string) => boolean): PaneStat
   return { ...pane, queue, queuePaused: true };
 }
 
-export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null; /** Claude permission mode (absent = the server's default for new sessions); a new session sends it with its first turn. */ permissionMode?: PermMode; /** Picked while the new session's first turn ran (no id yet): sent as soon as the id arrives. */ permissionModePending?: true };
+export type PaneSession = { sessionId: string | null; cwd: string; account: Seat | null; title: string; engine: EngineKind | null; sandbox: CodexSandbox | null; /** 이 세션은 B 써 (absent/null = 자동); a new session sends it with its first turn. */ accountPin?: Account | null; /** Claude permission mode (absent = the server's default for new sessions); a new session sends it with its first turn. */ permissionMode?: PermMode; /** Picked while the new session's first turn ran (no id yet): sent as soon as the id arrives. */ permissionModePending?: true; /** 복제: a new session's title, sent with its first turn. */ newTitle?: string };
 
 export type PaneState = {
   id: string;
@@ -347,7 +347,7 @@ export type Action =
   /** A refused edit goes back to its original session: the new pane's whole queue (the edited text first) goes with it. */
   | { type: 'branch_undo'; sessionId: string; paneId?: string }
   | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean; /** A message released after a restart: the queue's pause stays for the rest. */ keepPaused?: boolean; /** 다시 생성: the composer's attachments stay (none were sent). */ keepAttachments?: boolean }
-  | { type: 'set_model'; model: ModelChoice; paneId?: string }
+  | { type: 'set_model'; model: ModelChoice; paneId?: string; /** false: put back without marking it picked (갈래 거절 되돌리기) */ picked?: boolean }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
   | { type: 'set_engine'; engine: EngineChoice; paneId?: string }
@@ -405,7 +405,7 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
     else if (m.kind === 'assistant') {
       const at = m.ts ? Date.parse(m.ts) : NaN;
       const ctx: ContextInfo | null = m.usage ? { usage: m.usage, window: contextWindowOf(m.model), at: Number.isNaN(at) ? null : at, model: m.model, account: null } : null;
-      items.push({ kind: 'assistant', turnId: null, text: m.text, toolCalls: m.toolCalls.map((t) => ({ toolUseId: t.id, name: t.name, input: t.input, result: null, isError: false })), badge: null, streaming: false, error: null, notes: [], attempts: [], ...(m.thinking || m.thinkingRedacted ? { thinking: { text: m.thinking ?? '', redacted: !!m.thinkingRedacted, startedAt: null, ms: null } } : {}), ...(ctx ? { ctx } : {}) });
+      items.push({ kind: 'assistant', turnId: null, text: m.text, toolCalls: m.toolCalls.map((t) => ({ toolUseId: t.id, name: t.name, input: t.input, result: null, isError: false })), badge: null, streaming: false, error: null, notes: [], attempts: [], ...(m.model ? { model: m.model } : {}), ...(m.thinking || m.thinkingRedacted ? { thinking: { text: m.thinking ?? '', redacted: !!m.thinkingRedacted, startedAt: null, ms: null } } : {}), ...(ctx ? { ctx } : {}) });
     } else {
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
@@ -786,7 +786,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const prev = latestContext(pane.items);
       const ctx: ContextInfo | null = b?.usage.context ? { usage: b.usage.context, window: b.usage.contextWindow ?? contextWindowOf(b.model), at: Date.now(), model: b.model, account: b.account } : null;
       const cacheNote = b ? coldWriteNote(b.usage, prev, { account: b.account, model: b.model, reason: b.reason, startedAt: pane.runStartedAt ?? Date.now() }) : null;
-      const next = updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패'), ...(ctx ? { ctx } : {}), ...(cacheNote ? { cacheNote } : {}) }));
+      const next = updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패'), ...((msg.model ?? msg.badge?.model) ? { model: msg.model ?? msg.badge?.model } : {}), ...(ctx ? { ctx } : {}), ...(cacheNote ? { cacheNote } : {}) }));
       // Only a turn this pane started may re-point the pane's session (id / account).
       const session = mine && next.session ? { ...next.session, sessionId: msg.sessionId || next.session.sessionId, account: msg.badge?.account ?? next.session.account } : next.session;
       // ux-state: a failed (or stopped) turn of this pane pauses its queue instead of firing the next message into it.
@@ -920,6 +920,15 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     case 'account_pin': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, accountPin: msg.pin } } : p)) };
     case 'sandbox': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && p.session.sandbox !== msg.sandbox ? { ...p, session: { ...p.session, sandbox: msg.sandbox } } : p)) };
     case 'usage': return { ...state, usage: msg.usage };
+    case 'session_cwd': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && p.session.cwd !== msg.cwd ? { ...p, session: { ...p.session, cwd: msg.cwd } } : p)) };
+    case 'session_duplicate': {
+      // 복제: a new session in the active pane with the original's folder and settings; its first send names it.
+      const opened = reducer(state, { type: 'open', sessionId: null, cwd: msg.cwd, title: msg.title });
+      return updatePane(opened, undefined, (p) => ({
+        ...p, engine: msg.engine, model: msg.model, modelPicked: true, ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
+        session: { ...p.session!, engine: msg.engine, newTitle: msg.title, ...(msg.engine === 'claude' && activePin(state.accounts, msg.accountPin ?? null) ? { accountPin: msg.accountPin } : {}), ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) },
+      }));
+    }
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
     case 'history': case 'catchup': {
       // Every pane with this session open (`open` records the id before open_session is sent, so a pane still
@@ -1110,7 +1119,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
       };
     });
-    case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model, modelPicked: true }));
+    case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model, modelPicked: action.picked ?? true }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
     case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({

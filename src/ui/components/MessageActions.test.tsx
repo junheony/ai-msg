@@ -166,7 +166,7 @@ describe('useShareActions', () => {
     renderChat(items);
     expect(screen.queryByRole('button', { name: '공유' })).toBeNull(); // no separate share button: Claude keeps one ⋯
     fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
-    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기']);
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['대화에서 찾기', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기']);
     fireEvent.click(screen.getByRole('menuitem', { name: '링크 복사' }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(`${window.location.origin}/?session=s-1`));
     expect(screen.queryByRole('menu')).toBeNull();
@@ -187,7 +187,7 @@ describe('useShareActions', () => {
     expect(more.getAttribute('aria-haspopup')).toBe('menu');
     fireEvent.click(more);
     const menu = screen.getByRole('menu', { name: '채팅 메뉴' });
-    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기', '파일 열기', '삭제…']);
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '대화에서 찾기', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기', '파일 열기', '삭제…']);
     expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(2);
     expect(document.activeElement).toBe(screen.getAllByRole('menuitem')[0]);
     fireEvent.keyDown(menu, { key: 'End' });

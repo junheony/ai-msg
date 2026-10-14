@@ -1,4 +1,5 @@
 import { usePrefs } from '../usePrefs';
+import { useCodeWrap } from '../codeWrap';
 import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
 import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy } from '../../shared/protocol';
@@ -33,6 +34,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   onClose: () => void;
 }) {
   const [prefs, dispatch] = usePrefs();
+  const [codeWrap, setCodeWrap] = useCodeWrap();
   const set = <K extends keyof Prefs>(key: K, value: Prefs[K]) => dispatch({ type: 'set', key, value });
 
   return (
@@ -47,6 +49,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
         <Seg<FontSize> label="글자 크기" value={prefs.fontSize} onPick={(v) => set('fontSize', v)} options={[['small', '작게'], ['normal', '보통'], ['large', '크게'], ['xlarge', '아주 크게']]} />
         <Seg<ChatWidth> label="채팅 폭" value={prefs.chatWidth} onPick={(v) => set('chatWidth', v)} options={[['narrow', '좁게'], ['wide', '넓게']]} />
         <Seg<SendKey> label="Enter 동작" value={prefs.sendKey} onPick={(v) => set('sendKey', v)} options={[['enter', 'Enter 전송'], ['mod-enter', '⌘Enter 전송']]} />
+        <Seg<'off' | 'on'> label="코드 줄바꿈" value={codeWrap ? 'on' : 'off'} onPick={(v) => setCodeWrap(v === 'on')} options={[['off', '가로 스크롤'], ['on', '줄바꿈']]} />
         <p className="muted">이 기기에만 저장됩니다 (폰과 맥이 따로).</p>
       </section>
       <section aria-label="권한">

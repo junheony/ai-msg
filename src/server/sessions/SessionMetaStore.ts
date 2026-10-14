@@ -10,7 +10,7 @@ export const MAX_META_ENTRIES = 5000;
  * `next`: 새 세션으로 이어가기 links, old session id → the session that continues it (present only when non-empty).
  * `branches`: 메시지 편집 갈래, branch child → { parent, n } in creation order (present only when non-empty).
  */
-export type SessionMeta = { titles: Record<string, string>; archived: string[]; next?: Record<string, string>; branches?: Record<string, BranchLink> };
+export type SessionMeta = { titles: Record<string, string>; archived: string[]; next?: Record<string, string>; branches?: Record<string, BranchLink>; /** 작업 폴더 바꾸기: session id → the folder its turns run in (wins over the transcript's first cwd). */ cwds?: Record<string, string> };
 
 /**
  * deck-only session metadata (`session-meta.json`): custom titles and archived ids. The Claude jsonl and
@@ -22,6 +22,7 @@ export class SessionMetaStore {
   private nextIds = new Map<string, string>();
   private prevIds = new Map<string, string>();
   private branchLinks = new Map<string, BranchLink>();
+  private cwds = new Map<string, string>();
   private writing: Promise<void> = Promise.resolve();
 
   constructor(private readonly file: string) {}
@@ -56,6 +57,21 @@ export class SessionMetaStore {
         this.branchLinks.set(child, { parent: link.parent as string, n: link.n as number });
       }
     }
+    const cwds = o.cwds && typeof o.cwds === 'object' ? (o.cwds as Record<string, unknown>) : {};
+    for (const [id, c] of Object.entries(cwds)) if (isPinnableId(id) && typeof c === 'string' && c.startsWith('/')) this.cwds.set(id, c);
+  }
+
+  /** 작업 폴더 바꾸기: the folder deck runs `sessionId` in when it was changed in deck; null = the transcript's own. */
+  cwd(sessionId: string): string | null {
+    return this.cwds.get(sessionId) ?? null;
+  }
+
+  /** 작업 폴더 바꾸기: records the session's new folder (null = back to the transcript's own). */
+  async setCwd(sessionId: string, cwd: string | null): Promise<SessionMeta> {
+    this.cwds.delete(sessionId);
+    if (cwd) this.cwds.set(sessionId, cwd);
+    if (this.cwds.size > MAX_META_ENTRIES) this.cwds.delete(this.cwds.keys().next().value!);
+    return this.update(sessionId, {});
   }
 
   /** 메시지 편집 갈래: the session `sessionId` was forked from, and at which user message; null = not a branch. */
@@ -119,7 +135,7 @@ export class SessionMetaStore {
   }
 
   snapshot(): SessionMeta {
-    return { titles: Object.fromEntries(this.titles), archived: [...this.archivedIds], ...(this.nextIds.size ? { next: Object.fromEntries(this.nextIds) } : {}), ...(this.branchLinks.size ? { branches: Object.fromEntries(this.branchLinks) } : {}) };
+    return { titles: Object.fromEntries(this.titles), archived: [...this.archivedIds], ...(this.nextIds.size ? { next: Object.fromEntries(this.nextIds) } : {}), ...(this.branchLinks.size ? { branches: Object.fromEntries(this.branchLinks) } : {}), ...(this.cwds.size ? { cwds: Object.fromEntries(this.cwds) } : {}) };
   }
 
   /** `title`: string = rename, null/'' = back to the transcript's own title, undefined = unchanged. */

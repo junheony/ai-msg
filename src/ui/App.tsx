@@ -5,6 +5,7 @@ import { CommandPalette, type PaletteAction, type PaletteSession } from './compo
 import { DeckMark } from './components/DeckMark';
 import { engineOf } from './components/EngineMark';
 import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
+import { SessionCwdDialog } from './components/SessionCwdDialog';
 import { Login } from './components/Login';
 import { NotifyMenu } from './components/NotifyMenu';
 import { SettingsView } from './components/SettingsView';
@@ -29,6 +30,8 @@ import { findSession } from './push';
 import { MAX_PANES, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
 import { isMacPlatform, isTypingTarget, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
+import { useTouchTooltip } from './useTouchTooltip';
+import { FIND_EVENT } from './components/FindBar';
 
 /** Disconnected this long → the 서버 응답 없음 bar (short blips during a restart stay at 재연결 중…). */
 const DOWN_NOTICE_MS = 20_000;
@@ -240,6 +243,8 @@ export function App() {
   /** The empty pane's preselected project, by pane (the project it showed before ⌘N / a delete). */
   const [newChatCwd, setNewChatCwd] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState<{ s: SessionEntry; which?: string } | null>(null);
+  /** 작업 폴더 바꾸기: the session whose folder picker is open. */
+  const [cwdFor, setCwdFor] = useState<SessionEntry | null>(null);
   // One undo toast at a time: 삭제 (restore from the trash) or 보관 (unarchive).
   const [undo, setUndo] = useState<{ kind: 'trash'; trashId: string; title: string; which?: string } | { kind: 'archive'; sessionId: string } | null>(null);
   useEffect(() => {
@@ -350,6 +355,8 @@ export function App() {
       dispatch(msg.type === 'history' ? { type: 'server', msg, sentFiles: loadSent(msg.sessionId) } : { type: 'server', msg });
       if (msg.type === 'turn_result') refreshIndex.current?.afterTurn();
       if (msg.type === 'index') refreshIndex.current?.indexSeen();
+      // 복제 opened the copy in the focused pane: the phone drawer gets out of the way.
+      if (msg.type === 'session_duplicate') setDrawer(false);
       // Reconnected: re-open every pane's session (once each) so this socket receives their turn events again (review I3, D6).
       if (msg.type === 'hello') {
         // A restarted server with a new UI build: reload when nothing is at stake, else offer the pill.
@@ -377,6 +384,7 @@ export function App() {
   useQueueRunner(state.panes, state.ready, dispatch, (m) => (sock.current ? sock.current.send(m) : false), state.defaultPermMode);
   // 시작하는 중… for START_STALL_MS on a socket that looks open: it is likely dead — a fresh one's hello requeues the send.
   useStartWatch(state.panes, state.connected, () => sock.current?.reconnect());
+  useTouchTooltip();
   useTabTitle(state.activity.some((a) => a.running) || state.panes.some((p) => p.activeTurnId !== null), state.panes.find((p) => p.id === state.activePaneId)?.session?.title ?? null);
   // Composer focus after opening a chat / 새 채팅 / a pane switch: run after the commit so the pane's textarea exists.
   // No pane id: whichever pane is active then (a new split's id is only known after the reducer).
@@ -500,6 +508,7 @@ export function App() {
       el.scrollIntoView({ block: 'center' });
       el.classList.add('search-flash');
       setTimeout(() => el.classList.remove('search-flash'), 2000);
+      el.dispatchEvent(new CustomEvent(FIND_EVENT, { bubbles: true, detail: scrollTo.match }));
       setScrollTo(null);
     });
     return () => cancelAnimationFrame(id);
@@ -711,7 +720,9 @@ export function App() {
     // A 삭제 undo still showing keeps its slot: the archive can be undone from the archived list anyway.
     postSessionMeta(sessionId, { archived }).then(() => { if (archived) setUndo((u) => (u?.kind === 'trash' ? u : { kind: 'archive', sessionId })); }, showError('보관 실패'));
   };
-  const sessionActions = { pins: state.pins, onRename: renameSession, onTogglePin: togglePin, onArchive: archiveSession, onDelete: (s: SessionEntry) => askDelete(s) };
+  const setCwd = has('sessionOps') ? (s: SessionEntry) => setCwdFor(s) : undefined;
+  const duplicate = has('sessionOps') ? (sessionId: string) => { send({ type: 'duplicate_session', sessionId }); } : undefined;
+  const sessionActions = { pins: state.pins, onRename: renameSession, onTogglePin: togglePin, onArchive: archiveSession, onDelete: (s: SessionEntry) => askDelete(s), ...(setCwd ? { onSetCwd: setCwd } : {}), ...(duplicate ? { onDuplicate: duplicate } : {}) };
   const footAccount = active.session?.account ?? null;
   const orphanPerms = orphanCards(state.panes, state.pending);
   const orphanQs = orphanCards(state.panes, state.questions);
@@ -765,6 +776,7 @@ export function App() {
       {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)} onOpenHit={openHit} searchFn={searchTranscripts} />}
       {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
+      {cwdFor && <SessionCwdDialog title={cwdFor.title} cwd={cwdFor.cwd} onClose={() => setCwdFor(null)} onPick={(cwd) => { setCwdFor(null); send({ type: 'set_cwd', sessionId: cwdFor.sessionId, cwd }); }} />}
       {confirmDelete && (
         <ConfirmDialog title="대화 삭제" danger confirmLabel="삭제" onCancel={cancelDelete} onConfirm={() => doDelete(confirmDelete.s, confirmDelete.which)}
           message={`“${confirmDelete.s.title}”${confirmDelete.which ? ` (${confirmDelete.which})` : ''} 을(를) 목록에서 지울까요? 파일은 휴지통(session-trash)으로 옮겨지고 바로 되돌릴 수 있어요.`} />
@@ -838,6 +850,8 @@ export function App() {
             view={sidebarView}
             onViewChange={setSidebarView}
             onDelete={askDelete}
+            onSetCwd={setCwd}
+            onDuplicate={duplicate}
             activity={state.activity}
             unread={state.unread}
             waiting={[...state.pending, ...state.questions].map((c) => c.sessionId).filter((id): id is string => !!id)}

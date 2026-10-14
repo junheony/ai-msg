@@ -945,8 +945,7 @@ describe('TurnRunner: Gemini sessions (explicit only)', () => {
     const g = fakeGemini(['g1', 'g2'], () => geminiOk(GSID));
     const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'hello gemini\nmore', engine: 'gemini', model: 'gemini-flash', effort: 'high' }, c.sink);
-    expect(g.calls[0]).toMatchObject({ account: 'g1', cwd: '/w', resumeSessionId: null, model: 'gemini-flash', sandbox: 'read-only', prompt: 'hello gemini\nmore' });
-    expect(g.calls[0]).not.toHaveProperty('effort');
+    expect(g.calls[0]).toMatchObject({ account: 'g1', cwd: '/w', resumeSessionId: null, model: 'gemini-flash', effort: 'high', sandbox: 'read-only', prompt: 'hello gemini\nmore' });
     expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'g1', engine: 'gemini', model: 'gemini-flash', reason: 'Gemini 지정 · G1' });
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: GSID, badge: { account: 'g1', model: 'gemini-flash', usage: { cacheReadTokens: 40 } } });
     expect(c.deps.store.get(GSID)).toMatchObject({ engine: 'gemini', account: 'g1', cwd: '/w', sandbox: 'read-only', defaultModel: 'gemini-flash', title: 'hello gemini', lastTurnAtMs: NOW });
@@ -958,7 +957,8 @@ describe('TurnRunner: Gemini sessions (explicit only)', () => {
     const g = fakeGemini(['g2'], () => geminiOk(GSID));
     const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'gemini' }, c.sink);
-    expect(g.calls[0]).toMatchObject({ account: 'g2', model: 'gemini-pro' });
+    // No effort picked → DEFAULT_EFFORT.gemini.
+    expect(g.calls[0]).toMatchObject({ account: 'g2', model: 'gemini-pro', effort: 'medium' });
 
     const none = fakeGemini([], () => geminiOk(GSID));
     const c2 = await ctx(new StubEngine(async () => []), { gemini: none.dep });

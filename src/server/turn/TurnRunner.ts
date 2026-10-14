@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { GEMINI_ACCOUNTS, GEMINI_LABEL, isGeminiAccount, type Account, type AccountNames, type GeminiAccount, type ProjectsRoots } from '../../shared/accounts';
-import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
+import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
@@ -78,7 +78,7 @@ export type TurnRunnerDeps = {
   engine: Engine;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
   codex: Pick<CodexEngine, 'runTurn'> | null;
-  /** Null = gemini-cli not installed. `loggedIn` checks only that the account's OAuth file exists (read per turn). */
+  /** Null = agy not installed. `loggedIn` reads the cached `agy models` probe (only g1 can be logged in). */
   gemini?: { engine: Pick<GeminiEngine, 'runTurn'>; loggedIn: (account: GeminiAccount) => boolean } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
   attachments: AttachmentStore | null;
@@ -133,8 +133,8 @@ export const DECK_INTRO_NOTE = '[deck] 사용자는 deck 웹 UI(대개 폰·다�
 /** Start of the turn_notice said when the drain deadline cuts a process's background work (highlights.ts keys on it). */
 export const SHUTDOWN_CUT_NOTICE = '서버가 다시 시작되어 백그라운드 작업';
 
-/** gemini-cli's quota / 429 errors (TerminalQuotaError, RESOURCE_EXHAUSTED); matched on the CLI's result error only. */
-const GEMINI_LIMIT_RE = /\bRESOURCE_EXHAUSTED\b|exhausted your (daily )?quota|\bQuota exceeded\b|"code"\s*:\s*429\b/i;
+/** agy / Gemini quota and 429 errors (RESOURCE_EXHAUSTED, rate limit); matched on the CLI's result error only. */
+const GEMINI_LIMIT_RE = /\bRESOURCE_EXHAUSTED\b|exhausted your (daily )?quota|\bQuota exceeded\b|"code"\s*:\s*429\b|quota|rate limit|\b429\b/i;
 
 /** `rest`: the engine stream after the first result (background continuations); `live`: its input handle. */
 type Attempt = {
@@ -691,6 +691,52 @@ export class TurnRunner {
     if (!isCodexState(st)) return false;
     if (st.sandbox !== sandbox) await this.deps.store.set({ ...st, sandbox });
     return true;
+  }
+
+  /**
+   * 작업 폴더 바꾸기: the session's next turns run in `cwd` (already resolved and checked by the caller). A Claude session's
+   * transcript (every profile's copy, with its `<id>/` dir) moves to the new folder's project dir — `claude --resume` only
+   * looks there. Refused while a turn or held-open process runs it; Gemini sessions and unrun Codex imports cannot move.
+   */
+  async setCwd(sessionId: string, cwd: string): Promise<{ ok: true; engine: 'claude' | 'codex' } | { ok: false; error: string }> {
+    const { store, index } = this.deps;
+    if (this.active.has(sessionId) || this.live.has(sessionId) || this.bornTurnOf(sessionId)) return { ok: false, error: '세션이 실행 중이라 작업 폴더를 바꿀 수 없어요.' };
+    return this.serialize(sessionId, async () => {
+      const st = store.get(sessionId);
+      if (st && isGeminiState(st)) return { ok: false as const, error: 'Gemini 세션은 작업 폴더를 바꿀 수 없어요.' };
+      if (st && isCodexState(st)) {
+        if (st.cwd !== cwd) await store.set({ ...st, cwd });
+        return { ok: true as const, engine: 'codex' as const };
+      }
+      let base: ClaudeSessionState;
+      if (st) base = st;
+      else {
+        const e = index.lookup(sessionId);
+        if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return { ok: false as const, error: '작업 폴더를 바꿀 수 없는 세션이에요.' };
+        base = { sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
+      }
+      const slug = projectSlug(cwd);
+      let projectDir = base.projectDir;
+      if (path.basename(base.projectDir) !== slug) {
+        const copies = await findCopies(this.deps.projectsRoots, sessionId, base.projectDir, base.account).catch(() => []);
+        const moves = copies.map((c) => ({ from: c.projectDir, to: path.join(path.dirname(c.projectDir), slug) }));
+        for (const m of moves) {
+          if (await exists(path.join(m.to, `${sessionId}.jsonl`))) return { ok: false as const, error: '새 작업 폴더에 같은 세션 기록이 이미 있어요.' };
+        }
+        try {
+          for (const m of moves) {
+            await fs.mkdir(m.to, { recursive: true, mode: 0o700 });
+            await fs.rename(path.join(m.from, `${sessionId}.jsonl`), path.join(m.to, `${sessionId}.jsonl`));
+            if (await exists(path.join(m.from, sessionId))) await fs.rename(path.join(m.from, sessionId), path.join(m.to, sessionId));
+          }
+        } catch (err) {
+          return { ok: false as const, error: `세션 기록을 옮기지 못했어요: ${err instanceof Error ? err.message : String(err)}` };
+        }
+        projectDir = path.join(path.dirname(base.projectDir), slug);
+      }
+      await store.set({ ...base, cwd, projectDir });
+      return { ok: true as const, engine: 'claude' as const };
+    });
   }
 
   /** The sandbox a Codex thread deck has not run yet was given (setSandbox), if any. */
@@ -1314,7 +1360,8 @@ export class TurnRunner {
     if (sink.signal.aborted) { fail(account, abortedText(sink.signal)); return; }
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini' });
     let result: EngineResult | null = null;
-    for await (const ev of gem.engine.runTurn({ account, cwd, resumeSessionId: state?.sessionId ?? null, model, sandbox, prompt: promptWithFiles(p.text, attachments), signal: sink.signal })) {
+    const effort = effortFor(model, p.effort) ?? DEFAULT_EFFORT.gemini;
+    for await (const ev of gem.engine.runTurn({ account, cwd, resumeSessionId: state?.sessionId ?? null, model, effort, sandbox, prompt: promptWithFiles(p.text, attachments), signal: sink.signal })) {
       switch (ev.kind) {
         case 'init': if (ev.sessionId !== sessionId) sink.sessionKnown?.(ev.sessionId); sessionId = ev.sessionId; break;
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
