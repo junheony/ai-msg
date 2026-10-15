@@ -22,7 +22,7 @@ import { Sidebar, type SidebarView } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
 import { UsageView } from './components/UsageView';
 import { Highlights } from './components/Highlights';
-import { HighlightsBadge, ServerChip, WorkStatus } from './components/WorkStatus';
+import { HighlightsBadge, ServerChip, WorkStatus, type WorkRow } from './components/WorkStatus';
 import { isGeminiAccount } from '../shared/accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
@@ -1168,6 +1168,13 @@ export function App() {
     ?? sessionId.slice(0, 8);
   const preview = previewKey && state.routePreview && state.routePreview.sessionId === previewKey.sessionId ? state.routePreview : null;
   const busySessions = state.activity.filter((a) => a.running || a.bg > 0).length;
+  /** A 작업 현황 / 재시작 대기 row: opens its session. */
+  const openWorkRow = (r: WorkRow) => {
+    if (r.sessionId) { if (!openById.current(r.sessionId) && r.cwd) openIn(active.id, r.sessionId, r.cwd, r.title); return; }
+    // 새 대화: the pane whose turn the card belongs to.
+    const pane = state.panes.find((p) => p.activeTurnId === r.turnId || p.myTurns.includes(r.turnId ?? ''));
+    if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); requestFocus(pane.id); }
+  };
 
   return (
     <AccountsContext value={accounts}>
@@ -1183,14 +1190,9 @@ export function App() {
         </button>
         <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} next={!phone ? preview : null} />
         <div className="topbar-end">
-          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onNewChat={() => newChat()} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={(r) => {
-            if (r.sessionId) { if (!openById.current(r.sessionId) && r.cwd) openIn(active.id, r.sessionId, r.cwd, r.title); return; }
-            // 새 대화: the pane whose turn the card belongs to.
-            const pane = state.panes.find((p) => p.activeTurnId === r.turnId || p.myTurns.includes(r.turnId ?? ''));
-            if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); requestFocus(pane.id); }
-          }} />}
+          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onNewChat={() => newChat()} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={openWorkRow} />}
           {!phone && has('highlights') && <HighlightsBadge ready={state.ready} running={state.activity.filter((a) => a.running).length} onOpen={() => setHighlightsOpen(true)} />}
-          {!phone && <ServerChip startedAt={state.serverStartedAt} restartedAt={state.restartedAt} draining={state.draining} busy={busySessions} onDismissRestart={() => dispatch({ type: 'dismiss_restart' })} />}
+          {!phone && <ServerChip startedAt={state.serverStartedAt} restartedAt={state.restartedAt} draining={state.draining} busy={busySessions} activity={state.activity} titleOf={titleOf} onOpen={openWorkRow} onDismissRestart={() => dispatch({ type: 'dismiss_restart' })} />}
           <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={usageOpen} data-sheet-return="" title="토큰 사용량 기록 (주별·일별)">사용량</button>
           {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (⋮⋮ 를 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
           <NotifyMenu />
@@ -1207,7 +1209,7 @@ export function App() {
       )}
       {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
-      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)} onOpenHit={openHit} searchFn={searchTranscripts} />}
       {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
       {layouts && <LayoutsDialog layouts={layouts.list} error={layouts.error} onClose={() => setLayouts(null)} onSave={saveCurrentLayout} onLoad={loadLayout} onDelete={(name) => setLayouts({ list: deleteLayout(name), error: null })} />}

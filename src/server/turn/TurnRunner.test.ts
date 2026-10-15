@@ -10,7 +10,7 @@ import type { CodexEngine, CodexTurnRequest } from '../engine/CodexEngine';
 import type { GeminiTurnRequest } from '../engine/GeminiEngine';
 import type { GeminiAccount } from '../../shared/accounts';
 import type { EngineEvent } from '../engine/Engine';
-import { readCooldownUntilMs } from '../routing/cooldown';
+import { readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
 import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { projectSlug } from '../sessions/slug';
@@ -1147,5 +1147,56 @@ describe('TurnRunner: permission modes', () => {
     const c = await ctx(new StubEngine(async () => ok(SID)));
     await c.deps.store.set({ engine: 'codex', sessionId: 'gpt1', cwd: '/w', sandbox: 'read-only' } as never);
     expect(await new TurnRunner(c.deps).setPermissionMode('gpt1', 'plan')).toBe(false);
+  });
+});
+
+describe('TurnRunner · 같은 벤더 계정 자동 순환 꺼짐', () => {
+  const of = <T extends ServerMessage['type']>(c: Ctx, t: T) => c.msgs.filter((m): m is Extract<ServerMessage, { type: T }> => m.type === t);
+
+  it('a new session runs on the home account; a limit is not retried on another Claude account; the retry waits for that account', async () => {
+    const lines: string[] = [];
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'n1', model: 'm' }, failResult('usage limit reached', { sessionId: 'n1' })]);
+    const c = await ctx(eng, { sameVendorRotation: () => false, routeLog: (l) => lines.push(l) });
+    // Another account's cooldown ends sooner: with rotation off it is not where the retry would run.
+    writeCooldown(c.deps.cooldownDir, 'b', NOW + 10 * 60_000);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls.map((r) => r.account)).toEqual(['a']);
+    expect(lines[0]).toMatch(/^deck: route 새 세션 → A \(같은 벤더 순환 꺼짐 · 새 세션/);
+    expect(of(c, 'turn_retry')).toEqual([]);
+    expect(c.moves).toEqual([]);
+    expect(of(c, 'turn_result')[0]).toMatchObject({ ok: false, errorText: expect.stringContaining('대안 계정 없음(같은 벤더 순환 꺼짐)') });
+    expect(readCooldownUntilMs(c.deps.cooldownDir, 'a', NOW)).toBe(NOW + 3_600_000);
+    expect(c.deps.store.get('n1')?.pendingRetry).toMatchObject({ text: 'hi', hops: 1, atMs: NOW + 3_600_000 + 60_000 });
+  });
+
+  it('an existing session on another account stays there (no cold-cache move); a pin still moves it', async () => {
+    const eng = new StubEngine(() => ok(SID));
+    const c = await ctx(eng, { sameVendorRotation: () => false });
+    const srcDir = await seedSession(c, 'c');
+    await c.deps.store.set({ sessionId: SID, cwd: '/w/one', account: 'c', projectDir: srcDir, lastTurnAtMs: NOW - 3 * 3_600_000, justCompacted: false, defaultModel: 'opus' });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
+    expect(eng.calls.map((r) => r.account)).toEqual(['c']);
+    expect(c.moves).toEqual([]);
+    await c.deps.store.setAccountPin(SID, 'b');
+    await runner.run({ turnId: 't2', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
+    expect(eng.calls.map((r) => r.account)).toEqual(['c', 'b']);
+    expect(of(c, 'turn_result')[1]).toMatchObject({ ok: true, badge: { account: 'b', pinned: true } });
+  });
+
+  it('벤더 간 인계 stays on: 자동 weighs GPT against the home account alone', async () => {
+    // a (home) weekly 80, b weekly 10, GPT weekly 40: with rotation on b's room keeps the session on Claude; off → GPT.
+    const resetsAt = new Date(NOW + 100 * 3_600_000).toISOString();
+    const cards = [card('claude:main', 10, 80, 0, 100), card('claude:second', 10, 10, 0, 100), card('claude:third', 10, 10, 0, 100), { id: 'codex', status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Weekly (7d)', used: 40, resetsAt }] }];
+    const mk = async () => { const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) }); await u.pollOnce(); return u; };
+    const on = fakeCodex(codexOk('tid-on'));
+    const c1 = await ctx(new StubEngine(() => ok('n1')), { codex: on.engine, findRollout: async () => null, sameVendorRotation: () => true }, await mk());
+    await new TurnRunner(c1.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'auto' }, c1.sink);
+    expect(on.calls).toHaveLength(0);
+    const offCodex = fakeCodex(codexOk('tid-off'));
+    const c2 = await ctx(new StubEngine(() => ok('n2')), { codex: offCodex.engine, findRollout: async () => null, sameVendorRotation: () => false }, await mk());
+    await new TurnRunner(c2.deps).run({ turnId: 't2', cwd: '/w', sessionId: null, text: 'x', engine: 'auto' }, c2.sink);
+    expect(offCodex.calls).toHaveLength(1);
+    expect(of(c2, 'turn_started')[0]).toMatchObject({ account: 'gpt', engine: 'codex' });
   });
 });

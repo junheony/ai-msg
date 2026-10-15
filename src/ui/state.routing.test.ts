@@ -16,3 +16,15 @@ describe('routingPolicy (server setting)', () => {
     expect(s.routingPolicy).toBe('balance');
   });
 });
+
+describe('sameVendorRotation (server setting)', () => {
+  it('null until the server says (and for an older server without it); settings set and clear it', () => {
+    expect(initialState.sameVendorRotation).toBeNull();
+    let s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default', sameVendorRotation: false } }]);
+    expect(s.sameVendorRotation).toBe(false);
+    s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default', sameVendorRotation: true } }], s);
+    expect(s.sameVendorRotation).toBe(true);
+    s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } }], s);
+    expect(s.sameVendorRotation).toBeNull();
+  });
+});

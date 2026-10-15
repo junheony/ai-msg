@@ -310,6 +310,8 @@ export type AppState = {
   defaultPermMode: PermMode | null;
   /** 자동 routing policy (server setting); null until the server says. */
   routingPolicy: RoutingPolicy | null;
+  /** 같은 벤더 계정 자동 순환 (server setting); null = not known yet, or an older server without it. */
+  sameVendorRotation: boolean | null;
   /** Sessions with a turn running or background work, on any device (sidebar dots, tab title). */
   activity: SessionActivity[];
   /** Sessions whose turn finished while no focused pane showed them; cleared when opened. */
@@ -366,7 +368,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null };
+export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -944,6 +946,7 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
   if (!settings) return state;
   if (settings.defaultPermissionMode !== state.defaultPermMode) state = { ...state, defaultPermMode: settings.defaultPermissionMode };
   if ((settings.routingPolicy ?? 'balance') !== state.routingPolicy) state = { ...state, routingPolicy: settings.routingPolicy ?? 'balance' };
+  if ((settings.sameVendorRotation ?? null) !== state.sameVendorRotation) state = { ...state, sameVendorRotation: settings.sameVendorRotation ?? null };
   if (settings.autoApprove === state.autoApprove) return state;
   const from = defaultGeminiSandbox(state.autoApprove ?? false);
   const to = defaultGeminiSandbox(settings.autoApprove);

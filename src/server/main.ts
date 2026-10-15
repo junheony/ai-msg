@@ -107,6 +107,7 @@ async function main(): Promise<void> {
     auditFile: cfg.auditFile,
     defaultPermissionMode: () => settings.get().defaultPermissionMode,
     routingPolicy: () => settings.get().routingPolicy,
+    sameVendorRotation: () => settings.get().sameVendorRotation,
     routeLog: (line) => console.log(line),
     onPermissionMode: (sessionId, mode) => notifyPermissionMode(sessionId, mode),
     accounts,

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { usePrefs } from '../usePrefs';
 import { useCodeWrap } from '../codeWrap';
 import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
@@ -6,6 +7,9 @@ import type { RoutingPolicy } from '../../shared/protocol';
 import { NotifyMenu } from './NotifyMenu';
 import { describeShell } from '../shellFit';
 import { Sheet } from './Dialogs';
+
+/** What turning 같은 벤더 계정 자동 순환 on asks the user to agree to (spec: paid design §3 rule 3). */
+export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁니다. 계정 공유·재판매·한도 회피 목적의 계정 생성은 각 제공자 약관 위반입니다.';
 
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
 declare const __DECK_VERSION__: string | undefined;
@@ -21,7 +25,7 @@ function Seg<T extends string>({ label, value, options, onPick }: { label: strin
   );
 }
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, onOpenUsage, onOpenHighlights, onClose }: {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, claudeAccounts = 0, onOpenUsage, onOpenHighlights, onClose }: {
   build: string | null;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
@@ -29,6 +33,11 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   /** How 자동 picks an account (server setting; null = not known yet). */
   routingPolicy?: RoutingPolicy | null;
   onRoutingPolicy?: (p: RoutingPolicy) => void;
+  /** 같은 벤더 계정 자동 순환 (server setting; null = not known yet / an older server). Turning it on asks for consent first. */
+  sameVendorRotation?: boolean | null;
+  onSameVendorRotation?: (on: boolean) => void;
+  /** Active Claude accounts: with one, there is nothing to rotate between and the switch is disabled. */
+  claudeAccounts?: number;
   onOpenUsage: () => void;
   onOpenHighlights?: () => void;
   onClose: () => void;
@@ -36,6 +45,8 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   const [prefs, dispatch] = usePrefs();
   const [codeWrap, setCodeWrap] = useCodeWrap();
   const set = <K extends keyof Prefs>(key: K, value: Prefs[K]) => dispatch({ type: 'set', key, value });
+  const [askConsent, setAskConsent] = useState(false);
+  const single = claudeAccounts <= 1;
 
   return (
     <Sheet className="settings" label="설정" onClose={onClose}>
@@ -76,6 +87,29 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           <>
             <Seg<RoutingPolicy> label="자동 계정 선택" value={routingPolicy} onPick={onRoutingPolicy} options={[['balance', '고르게 분산'], ['drain', '리셋 임박 먼저 소진']]} />
             <p className="muted">고르게 분산: 5시간 사용량이 가장 낮은 계정으로 (비슷하면 주간이 낮은 쪽). 리셋 임박 먼저 소진: 주간 한도가 곧 리셋되는 계정부터. 대화 중인 세션은 캐시 때문에 그대로 두고, 새 세션, 오래 쉰 세션, 한도 문턱(5시간 80% · 주간 85%)을 넘어 옮길 때 적용됩니다.</p>
+          </>
+        )}
+        {onSameVendorRotation && sameVendorRotation !== null && (
+          <>
+            <div className="settings-row">
+              <span id="seg-rotation">같은 벤더 계정 자동 순환</span>
+              <div className="seg" role="group" aria-labelledby="seg-rotation">
+                <button type="button" aria-pressed={!sameVendorRotation} disabled={single} onClick={() => { setAskConsent(false); if (sameVendorRotation) onSameVendorRotation(false); }}>끄기</button>
+                <button type="button" aria-pressed={sameVendorRotation} disabled={single} onClick={() => { if (!sameVendorRotation) setAskConsent(true); }}>켜기</button>
+              </div>
+            </div>
+            {askConsent && !sameVendorRotation && !single && (
+              <div className="settings-consent" role="group" aria-label="자동 순환 동의">
+                <p>{ROTATION_CONSENT}</p>
+                <div className="settings-row">
+                  <button type="button" className="btn" onClick={() => { setAskConsent(false); onSameVendorRotation(true); }}>동의하고 켜기</button>
+                  <button type="button" className="btn ghost" onClick={() => setAskConsent(false)}>취소</button>
+                </div>
+              </div>
+            )}
+            <p className="muted">{single
+              ? 'Claude 계정이 1개라 순환할 계정이 없습니다. 계정을 더 등록하면 켤 수 있습니다.'
+              : '꺼짐(기본): 세션은 기본 Claude 계정(또는 세션에서 고른 계정)에만 머물고, 한도에 걸리면 다른 Claude 계정으로 넘기지 않고 리셋 뒤 자동으로 다시 시도합니다. 켜면 위 자동 계정 선택대로 Claude 계정 사이를 옮깁니다. GPT·Gemini 로의 벤더 간 인계는 이 설정과 상관없습니다.'}</p>
           </>
         )}
         <div className="settings-row"><span>토큰 사용량 기록 (주별·일별)</span><button type="button" className="btn ghost" onClick={() => { onClose(); onOpenUsage(); }}>사용량 보기</button></div>

@@ -773,3 +773,56 @@ describe('chooseAccount — 최종 리뷰: 잔여량 모름 계정의 순서', (
     expect(d.reason).toMatch(/^쿨다운\(~\d\d:\d\d\) → 잔여량 모름 · C 전환$/);
   });
 });
+
+describe('같은 벤더 계정 자동 순환 꺼짐 (sameVendorRotation: false)', () => {
+  const off = (over: Partial<RouterInput>) => input({ ...over, sameVendorRotation: false });
+
+  it('a new session goes to the home account, not the best-ranked one, and the reason says rotation is off', () => {
+    expect(chooseAccount(input({})).account).toBe('b');
+    const d = chooseAccount(off({}));
+    expect(d.account).toBe('a');
+    expect(d.switched).toBe(false);
+    expect(d.reason).toMatch(/^같은 벤더 순환 꺼짐 · 새 세션/);
+    expect(routeLogLine(null, d, testRegistry())).toContain('같은 벤더 순환 꺼짐');
+  });
+
+  it('a session over the thresholds, in cooldown or with a cold cache stays on its account', () => {
+    const hot = off({ current: 'c', lastTurnAtMs: NOW - 60_000 });
+    const d = chooseAccount(hot);
+    expect(d.account).toBe('c');
+    expect(d.switched).toBe(false);
+    expect(d.reason).toMatch(/같은 벤더 순환 꺼짐 · 문턱 초과.*유지/);
+    expect(chooseAccount(off({ current: 'a', cooldownUntilMs: { a: NOW + H } })).account).toBe('a');
+    expect(chooseAccount(off({ current: 'a', lastTurnAtMs: NOW - 2 * H })).account).toBe('a');
+    // A retry after a limit (the failed account excluded) has nowhere to go.
+    expect(chooseAccount(off({ current: 'a', exclude: ['a'], cooldownUntilMs: { a: NOW + H } })).account).toBe('a');
+  });
+
+  it('the Fable cap does not move the session: the turn runs on Opus on the same account', () => {
+    const usage = snap({ w: 10, f: 90 }, { w: 10, f: 10 }, { w: 10, f: 10 });
+    const d = chooseAccount(off({ current: 'a', needFable: true, usage, lastTurnAtMs: NOW - 60_000 }));
+    expect(d.account).toBe('a');
+    expect(d.asOpus).toBe('Fable 여유 계정 없음');
+    expect(d.reason).toMatch(/^같은 벤더 순환 꺼짐 · Fable 여유 계정 없음 → Opus/);
+  });
+
+  it('a user pin still picks the account (an explicit choice, not rotation); a blocked pin is not routed around', () => {
+    const d = chooseAccount(off({ current: 'a', pinned: 'b' }));
+    expect(d.account).toBe('b');
+    expect(d.pinned).toBe(true);
+    expect(d.switched).toBe(true);
+    const blocked = chooseAccount(off({ current: 'b', pinned: 'b', cooldownUntilMs: { b: NOW + H } }));
+    expect(blocked.account).toBe('b');
+    expect(blocked.pinBlocked).toBeUndefined();
+    expect(blocked.reason).toMatch(/같은 벤더 순환 꺼짐 · 고정 B 쿨다운.*대안 없음/);
+  });
+
+  it('a session on a retired / unknown account falls back to home', () => {
+    expect(chooseAccount(off({ current: 'zz' })).account).toBe('a');
+  });
+
+  it('absent or true keeps the full router', () => {
+    expect(chooseAccount(input({ sameVendorRotation: true })).account).toBe('b');
+    expect(chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, sameVendorRotation: true })).account).not.toBe('c');
+  });
+});

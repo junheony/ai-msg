@@ -140,7 +140,7 @@ export function uptimeLabel(ms: number): string {
  * 서버 chip: 재시작 대기 중 while draining, 재시작됨 HH:MM right after a restart (a click closes it), else how long the
  * server has been up. An older server (no start time) shows only the draining form.
  */
-export function ServerChip({ startedAt, restartedAt, draining, busy, onDismissRestart, now: fixedNow }: {
+export function ServerChip({ startedAt, restartedAt, draining, busy, onDismissRestart, now: fixedNow, activity = [], titleOf = (id, cwd) => cwd?.split('/').filter(Boolean).pop() ?? id.slice(0, 8), onOpen }: {
   startedAt: number | null;
   restartedAt: number | null;
   draining: boolean;
@@ -148,8 +148,24 @@ export function ServerChip({ startedAt, restartedAt, draining, busy, onDismissRe
   busy: number;
   onDismissRestart: () => void;
   now?: number;
+  /** While draining, a click lists these sessions (the ones the restart waits for); a row opens its session. */
+  activity?: SessionActivity[];
+  titleOf?: (sessionId: string, cwd: string | null) => string;
+  onOpen?: (row: WorkRow) => void;
 }) {
   const [, setTick] = useState(0);
+  const [pop, setPop] = useState<{ right: number; y: number } | null>(null);
+  const chip = useRef<HTMLButtonElement>(null);
+  const open = draining && pop !== null;
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setPop(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setPop(null); chip.current?.focus(); } };
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    document.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); document.removeEventListener('keydown', onKey); };
+  }, [open]);
   // Re-render each minute (the label shows minute steps); the time itself is read at render, so a new start shows right.
   useEffect(() => {
     if (startedAt === null || fixedNow !== undefined) return;
@@ -157,11 +173,41 @@ export function ServerChip({ startedAt, restartedAt, draining, busy, onDismissRe
     return () => clearInterval(t);
   }, [startedAt, fixedNow]);
   if (draining) {
+    const rows = open ? activity.filter((a) => a.running || a.bg > 0) : [];
     return (
-      <span className="top-chip warn server-chip" role="status" title="서버가 재시작을 준비 중입니다 — 돌고 있는 작업이 끝나면 다시 시작합니다">
-        <span className="chip-long">{busy > 0 ? `재시작 대기 중 · 작업 ${busy}개 기다림` : '재시작 중…'}</span>
-        <span className="chip-short" aria-hidden="true">{busy > 0 ? `재시작 대기 · ${busy}` : '재시작 중…'}</span>
-      </span>
+      <>
+        <button
+          ref={chip} type="button" className="top-chip warn server-chip" aria-expanded={open} aria-haspopup="dialog" title="서버가 재시작을 준비 중입니다 — 돌고 있는 작업이 끝나면 다시 시작합니다"
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = e.currentTarget.getBoundingClientRect();
+            setPop(open ? null : { right: Math.max(8, window.innerWidth - r.right), y: r.bottom + 6 });
+          }}
+        >
+          <span role="status">
+            <span className="chip-long">{busy > 0 ? `재시작 대기 중 · 작업 ${busy}개 기다림` : '재시작 중…'}</span>
+            <span className="chip-short" aria-hidden="true">{busy > 0 ? `재시작 대기 · ${busy}` : '재시작 중…'}</span>
+          </span>
+        </button>
+        {open && pop && (
+          <div className="usage-pop work-pop" role="dialog" aria-label="재시작이 기다리는 작업" style={{ right: pop.right, top: pop.y }} onClick={(e) => e.stopPropagation()}>
+            <div className="usage-pop-title">재시작이 기다리는 작업</div>
+            {rows.map((a) => {
+              const row: WorkRow = { key: a.sessionId, sessionId: a.sessionId, turnId: null, title: titleOf(a.sessionId, a.cwd), cwd: a.cwd, status: a.running ? '턴 진행 중' : `백그라운드 작업 ${a.bg}개`, waiting: false };
+              return (
+                <div key={row.key}>
+                  <button type="button" className="usage-pop-row work-row" onClick={() => { setPop(null); onOpen?.(row); }}>
+                    <span className="work-title">{row.title}</span>
+                    <b>{row.status}</b>
+                  </button>
+                  {a.tasks && a.tasks.length > 0 && <div className="usage-pop-row hint">{a.tasks.map((t, i) => <div key={i} className="work-title">· {t}</div>)}</div>}
+                </div>
+              );
+            })}
+            {rows.length === 0 && <div className="usage-pop-row hint">기다리는 작업이 없어요</div>}
+          </div>
+        )}
+      </>
     );
   }
   if (restartedAt !== null) return <button type="button" className="top-chip server-chip" onClick={onDismissRestart} title="서버가 다시 시작됐습니다 — 눌러서 닫기">재시작됨 {hhmm(restartedAt)}</button>;

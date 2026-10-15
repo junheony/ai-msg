@@ -185,7 +185,7 @@ All settings are environment variables. None is required.
 | `DECK_EXTRA_CWD_ROOTS` | empty | Comma-separated absolute paths where new sessions may start in addition to the home directory. Honoured only with `DECK_LOOPBACK_ONLY=1`; `/` is never accepted. Meant for test harnesses. |
 | `DECK_DEV_ORIGIN` | empty | Comma-separated extra origins allowed during development (the Vite dev server). |
 
-Server-wide settings changed in the UI (default permission mode, routing policy) are stored in `settings.json` in the config directory. Pinned project folders can be listed in `projects.json` as `[{"cwd": "/Users/alice/code/acme-app", "name": "acme-app"}]`.
+Server-wide settings changed in the UI (default permission mode, routing policy) are stored in `settings.json` in the config directory. *Same-vendor account rotation* (moving a session between your Claude accounts on limits, the Fable cap or a cold cache) is off by default — sessions stay on the home account or the account you pin — and turns on only after you confirm the accounts are your own paid accounts; handing off to another vendor (Codex, Gemini) is not affected. Pinned project folders can be listed in `projects.json` as `[{"cwd": "/Users/alice/code/acme-app", "name": "acme-app"}]`.
 
 ### Usage data
 
@@ -241,7 +241,7 @@ Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
 |---|---|
 | `token` | Login token (`0600`). |
 | `accounts.json` | Optional account list ([Multiple Claude accounts](#multiple-claude-accounts)). |
-| `settings.json` | Default permission mode (default: ask every time), routing policy. |
+| `settings.json` | Default permission mode (default: ask every time), routing policy, same-vendor account rotation (default: off). |
 | `projects.json` | Optional pinned project folders. |
 | `session-state.json` | Per-session account, model and last turn. |
 | `session-meta.json`, `pins.json` | Renamed titles, archive flags, pinned sessions. |
