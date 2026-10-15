@@ -1501,6 +1501,31 @@ button.hl-head:hover { background: var(--hover); }
 .side-pick { display: flex; flex-direction: column; gap: 8px; padding: 16px; font-size: calc(13px * var(--font-scale, 1)); }
 .side-pick input { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: calc(13px * var(--font-scale, 1)); }
 .side-pick .btn { align-self: flex-start; }
+/* Open documents: file-like tabs on the sidebar tint (the document's own 보기 / 원문 tabs below stay underlined). */
+.side-doc-tabs { display: flex; gap: 2px; padding: 5px 6px 0; overflow-x: auto; scrollbar-width: thin; flex-shrink: 0; background: var(--sidebar); border-bottom: 1px solid var(--line); }
+.side-doc-tab { display: flex; align-items: center; flex: 0 0 auto; max-width: 200px; height: 30px; margin-bottom: -1px; border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0; color: var(--muted); }
+.side-doc-tab:hover { background: var(--hover); }
+.side-doc-tab.on { background: var(--bg-raised); border-color: var(--line); color: var(--fg-strong); }
+.side-doc-name { min-width: 0; height: 100%; padding: 0 4px 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: calc(12px * var(--font-scale, 1)); color: inherit; }
+.side-doc-close { flex-shrink: 0; width: 20px; height: 20px; margin-right: 4px; border-radius: 5px; font-size: 11px; color: var(--faint); opacity: 0; }
+.side-doc-tab.on .side-doc-close, .side-doc-tab:hover .side-doc-close, .side-doc-close:focus-visible { opacity: 1; }
+.side-doc-close:hover { background: var(--hover); color: var(--fg); }
+@media (hover: none) { .side-doc-close { opacity: 1; } }
+.side-doc-name:focus-visible, .side-doc-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Desktop: the panel slides out from the right edge and back in (Pane SIDE_SLIDE_MS waits for side-out). The wrap's
+   width animates while the panel inside holds its full width, pinned right, so its content never reflows; only on
+   mount / close, so dragging the splitter stays immediate. Phones keep the plain full-screen sheet; 동작 줄이기 = none. */
+@media (min-width: 721px) and (prefers-reduced-motion: no-preference) {
+  .side-wrap { overflow: hidden; justify-content: flex-end; animation: side-in .18s cubic-bezier(.2, .8, .2, 1); }
+  .side-wrap > .side-panel { animation: side-hold .18s; }
+  .side-wrap.closing { animation: side-out .18s cubic-bezier(.4, 0, .6, 1) forwards; pointer-events: none; }
+  .side-wrap.closing > .side-panel { animation: side-hold-out .18s forwards; }
+  .side-wrap.instant, .side-wrap.instant > .side-panel { animation: none; }
+}
+@keyframes side-in { from { width: 0; } }
+@keyframes side-out { to { width: 0; } }
+@keyframes side-hold { from, to { flex: none; width: var(--side-w); } }
+@keyframes side-hold-out { from, to { flex: none; width: var(--side-w); } } /* its own name: reusing side-hold would not restart it */
 .code-actions { display: inline-flex; align-items: center; gap: 2px; }
 .file-link { display: inline; padding: 0; font: inherit; color: inherit; text-align: inherit; cursor: pointer; text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
 .file-link:hover { color: var(--accent); }
@@ -1511,6 +1536,8 @@ button.hl-head:hover { background: var(--hover); }
   .side-splitter { display: none; }
   .side-wrap { position: fixed; inset: 0; z-index: 60; width: auto !important; padding-top: env(safe-area-inset-top); background: var(--bg-raised); }
   .side-head .icon-btn, .side-head .code-copy { min-width: var(--phone-tap); min-height: var(--phone-tap); }
+  .side-doc-tab { height: 38px; }
+  .side-doc-close { width: 32px; height: 32px; }
 }
 
 /* === fold layout: Galaxy Z Fold cover (phone) and unfolded inner screen (tablet, 721–1100px) === */

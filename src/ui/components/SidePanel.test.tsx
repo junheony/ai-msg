@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Pane } from './Pane';
 import { PREVIEW_FRAME_SRC, SidePanel } from './SidePanel';
 import { newPane, type PaneState } from '../state';
 import { Markdown } from './MessageView';
 import { SidePanelContext } from '../sidePanel';
+import { SIDE_WIDTH_KEY, forgetSideTabs } from '../sideTabs';
 import { CopyButton } from './CopyButton';
 
 Element.prototype.scrollIntoView = () => {};
@@ -125,5 +126,177 @@ describe('SidePanel header buttons (narrow panel)', () => {
     expect(text.textContent).toBe('복사');
     expect(text.querySelector('svg')).toBeNull();
     expect(screen.getByRole('button', { name: '코드 복사' }).classList.contains('copy-compact')).toBe(false);
+  });
+});
+
+describe('SidePanel code highlighting', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  it('colours a known language with the hljs classes and keeps the line numbers', async () => {
+    mockFetch({ path: '/w/a.ts', size: 30, kind: 'text', text: 'const a = 1;\n// note\n' });
+    render(<SidePanel doc={{ kind: 'file', path: '/w/a.ts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    await waitFor(() => expect(document.querySelector('.side-lines .hljs-keyword')?.textContent).toBe('const'));
+    expect(document.querySelector('.side-lines .hljs-comment')!.textContent).toBe('// note');
+    expect(screen.getByTestId('side-text').textContent).toContain('const a = 1;');
+    expect(document.querySelector('.side-gutter')!.textContent).toBe('1\n2');
+  });
+
+  it('an extension named like an Object member stays plain instead of throwing', async () => {
+    mockFetch({ path: '/w/x.constructor', size: 1, kind: 'text', text: 'a\n' });
+    render(<SidePanel doc={{ kind: 'file', path: '/w/x.constructor' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    expect((await screen.findByTestId('side-text')).textContent).toContain('a');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByTestId('side-text').querySelector('.side-lines span')).toBeNull();
+  });
+
+  it('leaves big files and unknown types plain', async () => {
+    mockFetch({ path: '/w/a.ts', size: 1, kind: 'text', text: 'const a = 1;\n' });
+    const first = render(<SidePanel doc={{ kind: 'file', path: '/w/a.ts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    await waitFor(() => expect(document.querySelector('.side-lines .hljs-keyword')).not.toBeNull()); // grammars loaded
+    first.unmount();
+    mockFetch({ path: '/w/big.ts', size: 1, kind: 'text', text: 'const a = 1;\n'.repeat(5001) });
+    const big = render(<SidePanel doc={{ kind: 'file', path: '/w/big.ts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    await screen.findByTestId('side-text');
+    expect(document.querySelector('.side-lines span')).toBeNull();
+    big.unmount();
+    mockFetch({ path: '/w/n.txt', size: 1, kind: 'text', text: 'const a = 1;\n' });
+    render(<SidePanel doc={{ kind: 'file', path: '/w/n.txt' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    await screen.findByTestId('side-text');
+    expect(document.querySelector('.side-lines span')).toBeNull();
+  });
+});
+
+describe('Pane side panel tabs', () => {
+  beforeEach(() => { forgetSideTabs(); localStorage.clear(); });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const session = { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude' as const, sandbox: null };
+  const pane = (sessionId = 's1'): PaneState => ({
+    ...newPane('p1'),
+    session: { ...session, sessionId },
+    items: [{ kind: 'assistant', turnId: 't1', text: 'See `src/b.md` and\n\n```html\n<p>x</p>\n```\n', toolCalls: [{ toolUseId: 'u1', name: 'Read', input: { file_path: '/w/src/a.ts' }, result: 'ok', isError: false }], badge: null, streaming: false, error: null, notes: [], attempts: [] }],
+  });
+  const ui = (sessionId?: string) => <Pane pane={pane(sessionId)} app={{ pending: [], questions: [], codexAvailable: false }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} />;
+  const docTabs = () => within(screen.getByRole('tablist', { name: '열린 문서' })).getAllByRole('tab');
+  const selected = () => docTabs().find((t) => t.getAttribute('aria-selected') === 'true')?.textContent;
+
+  it('a tab per document; opening one again activates it; closing the active goes back; the last closes the panel', () => {
+    mockFetch({ path: '/w/x', size: 1, kind: 'text', text: 'x' });
+    render(ui());
+    fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
+    fireEvent.click(screen.getByTitle('src/b.md — 사이드 패널에서 열기'));
+    expect(docTabs().map((t) => t.textContent)).toEqual(['a.ts', 'b.md']);
+    expect(docTabs()[0]!.getAttribute('title')).toBe('/w/src/a.ts');
+    expect(selected()).toBe('b.md');
+    fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
+    expect(docTabs()).toHaveLength(2);
+    expect(selected()).toBe('a.ts');
+    fireEvent.click(screen.getByText('미리보기')); // the reply's html block
+    expect(selected()).toBe('HTML 미리보기');
+    fireEvent.click(screen.getByRole('button', { name: 'HTML 미리보기 닫기' }));
+    expect(selected()).toBe('a.ts');
+    fireEvent(docTabs()[0]!.parentElement!, new MouseEvent('auxclick', { bubbles: true, button: 1 })); // middle click
+    expect(docTabs().map((t) => t.textContent)).toEqual(['b.md']);
+    fireEvent.click(screen.getByRole('button', { name: 'b.md 닫기' }));
+    expect(screen.queryByTestId('side-panel')).toBeNull();
+  });
+
+  it('a file picked in 파일 열기 replaces that tab', () => {
+    mockFetch({ files: ['src/c.ts'] });
+    render(ui());
+    fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '파일 열기' }));
+    expect(selected()).toBe('파일 열기');
+    fireEvent.change(screen.getByLabelText('세션 폴더의 파일 경로'), { target: { value: 'src/c.ts' } });
+    fireEvent.click(screen.getByRole('button', { name: '열기' }));
+    expect(docTabs().map((t) => t.textContent)).toEqual(['c.ts']);
+  });
+
+  it('another session shows its own (none); coming back reopens the tabs', () => {
+    mockFetch({ path: '/w/x', size: 1, kind: 'text', text: 'x' });
+    const { rerender } = render(ui());
+    fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
+    fireEvent.click(screen.getByTitle('src/b.md — 사이드 패널에서 열기'));
+    fireEvent.click(docTabs()[0]!);
+    rerender(ui('s2'));
+    expect(screen.queryByTestId('side-panel')).toBeNull();
+    rerender(ui('s1'));
+    expect(docTabs().map((t) => t.textContent)).toEqual(['a.ts', 'b.md']);
+    expect(selected()).toBe('a.ts');
+  });
+
+  it('a session switch remounts the document view (tab ids restart per session)', () => {
+    const { rerender } = render(ui());
+    fireEvent.click(screen.getByText('미리보기'));
+    const first = screen.getByTestId('html-preview');
+    rerender(ui('s2'));
+    fireEvent.click(screen.getByText('미리보기'));
+    expect(screen.getByTestId('html-preview')).not.toBe(first);
+  });
+
+  it('a new chat keeps its tabs when its first message gives it a session id', () => {
+    mockFetch({ path: '/w/x', size: 1, kind: 'text', text: 'x' });
+    const { rerender } = render(<Pane pane={{ ...pane(), session: { ...session, sessionId: null } }} app={{ pending: [], questions: [], codexAvailable: false }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} />);
+    fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
+    rerender(ui('s9'));
+    expect(docTabs().map((t) => t.textContent)).toEqual(['a.ts']);
+  });
+
+  it('the same file by relative and absolute path is one tab', () => {
+    mockFetch({ path: '/w/x', size: 1, kind: 'text', text: 'x' });
+    const p = pane();
+    const items = [{ ...(p.items[0] as Extract<PaneState['items'][number], { kind: 'assistant' }>), text: 'See `src/a.ts`' }];
+    render(<Pane pane={{ ...p, items }} app={{ pending: [], questions: [], codexAvailable: false }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} />);
+    fireEvent.click(screen.getByTitle('src/a.ts — 사이드 패널에서 열기'));
+    fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
+    expect(docTabs()).toHaveLength(1);
+  });
+
+  it('on a phone the remembered tabs wait closed; opening a document shows them again', () => {
+    mockFetch({ path: '/w/x', size: 1, kind: 'text', text: 'x' });
+    const { unmount } = render(ui());
+    fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
+    unmount();
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(max-width: 720px)', addEventListener() {}, removeEventListener() {} }));
+    render(ui());
+    expect(screen.queryByTestId('side-panel')).toBeNull();
+    fireEvent.click(screen.getByTitle('src/b.md — 사이드 패널에서 열기'));
+    expect(docTabs().map((t) => t.textContent)).toEqual(['a.ts', 'b.md']);
+  });
+
+  it('desktop: Esc slides the panel shut; opening during the slide shows it at once; leaving mid-slide forgets the tabs', () => {
+    vi.useFakeTimers();
+    try {
+      mockFetch({ path: '/w/x', size: 1, kind: 'text', text: 'x' });
+      vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('min-width: 721px'), addEventListener() {}, removeEventListener() {} }));
+      const { rerender } = render(ui());
+      fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(document.querySelector('.side-wrap')!.classList.contains('closing')).toBe(true);
+      fireEvent.click(screen.getByTitle('src/b.md — 사이드 패널에서 열기'));
+      const wrap = document.querySelector('.side-wrap')!;
+      expect(wrap.classList.contains('closing')).toBe(false);
+      expect(wrap.classList.contains('instant')).toBe(true);
+      fireEvent.keyDown(window, { key: 'Escape' });
+      rerender(ui('s2'));
+      rerender(ui('s1'));
+      expect(screen.queryByTestId('side-panel')).toBeNull();
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(screen.queryByTestId('side-panel')).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('the width comes from storage and a drag saves it', () => {
+    mockFetch({ path: '/w/x', size: 1, kind: 'text', text: 'x' });
+    localStorage.setItem(SIDE_WIDTH_KEY, '520');
+    render(ui());
+    fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
+    const wrap = document.querySelector<HTMLElement>('.side-wrap')!;
+    expect(wrap.style.width).toBe('520px');
+    const splitter = screen.getByRole('separator', { name: '사이드 패널 크기 조절' });
+    fireEvent.pointerDown(splitter, { pointerId: 1 });
+    fireEvent.pointerMove(splitter, { pointerId: 1, clientX: -400 });
+    fireEvent.pointerUp(splitter, { pointerId: 1 });
+    expect(localStorage.getItem(SIDE_WIDTH_KEY)).toBe(wrap.style.width.replace('px', ''));
+    expect(wrap.style.width).not.toBe('520px');
   });
 });
