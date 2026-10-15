@@ -6,8 +6,10 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
 import { cookieValueFor } from './auth';
-import { ClaudeEngine, type QueryFn } from './engine/ClaudeEngine';
-import { fakeSdk, sdk } from './engine/fakeSdk';
+import { ClaudeEngine } from './engine/ClaudeEngine';
+import { fakeClaudeCli, cli } from './engine/claudeCli/fakeClaudeCli';
+import { PermissionBridge } from './engine/claudeCli/bridge';
+import type { ClaudeSpawnFn } from './engine/claudeCli/spawnTypes';
 import { createRequestHandler } from './http';
 import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { PinStore } from './sessions/PinStore';
@@ -27,10 +29,13 @@ let wsUrl = '';
 let wsApi: ReturnType<typeof attachWebSocket>;
 let base: string;
 let work: string;
-let fake = fakeSdk();
-const queryFn: QueryFn = (p) => fake.queryFn(p);
+let fake = fakeClaudeCli();
+const spawnFn: ClaudeSpawnFn = (bin, args, o) => fake.spawnFn(bin, args, o);
+/** The engines' permission bridge (one for the file). */
+let bridge: PermissionBridge;
 
 beforeAll(async () => {
+  bridge = await PermissionBridge.open();
   base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-wsnew-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
@@ -40,7 +45,7 @@ beforeAll(async () => {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  const runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ bin: 'claude', spawnFn, bridge, killGraceMs: 50, accounts: testRegistry(), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
   const pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
   const settings = new SettingsStore(path.join(base, 'settings.json'));
@@ -52,7 +57,7 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${port}`;
   wsUrl = `ws://127.0.0.1:${port}/ws`;
 });
-afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
+afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); await bridge.close(); });
 
 async function client() {
   const ws = new WebSocket(wsUrl, { headers: { Origin: origin, Cookie: COOKIE } });
@@ -82,7 +87,7 @@ async function client() {
 describe('ws: a new session reloaded mid first turn (7b)', () => {
   it('the session id goes out as soon as the CLI names it (no other event yet), and a device that comes back finds and opens the running turn', async () => {
     const S = '77777777-7777-4777-8777-777777777777';
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: null, cwd: work, text: '첫 메시지', clientRef: 'r-first' });
@@ -90,7 +95,7 @@ describe('ws: a new session reloaded mid first turn (7b)', () => {
     expect(t.sessionId).toBeNull();
 
     // Only the CLI's init so far — no delta, no progress: the id is known server-side and every device learns it now.
-    fake.push(sdk.init(S));
+    fake.push(cli.init(S));
     expect(await a.next('activity', (m) => m.sessions.some((x) => x.sessionId === S))).toMatchObject({ sessions: [{ sessionId: S, turnId: t.turnId, running: true }] });
 
     // The page reloads: the new socket's hello names the running turn with its session id.
@@ -107,7 +112,7 @@ describe('ws: a new session reloaded mid first turn (7b)', () => {
     expect(h.pendingRefs).not.toContain('r-first');
 
     // The rest of the turn reaches the device that opened it.
-    fake.push(sdk.result('done', S));
+    fake.push(cli.result('done', S));
     fake.end();
     expect(await b.next('turn_result', (m) => m.turnId === t.turnId)).toMatchObject({ sessionId: S, ok: true });
     b.close();

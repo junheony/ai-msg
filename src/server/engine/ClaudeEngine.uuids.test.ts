@@ -1,14 +1,24 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ClaudeEngine } from './ClaudeEngine';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ClaudeEngine, type ClaudeEngineOptions } from './ClaudeEngine';
 import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
-import { fakeSdk, sdk } from './fakeSdk';
+import { fakeClaudeCli, cli } from './claudeCli/fakeClaudeCli';
+import { PermissionBridge } from './claudeCli/bridge';
 import { testRegistry } from '../../shared/accounts.testkit';
+
+const SID = '11111111-2222-4333-8444-555555555555';
+let bridge: PermissionBridge;
+let tmp = '';
+beforeAll(async () => { bridge = await PermissionBridge.open(); tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qd-uuids-')); });
+afterAll(async () => { await bridge.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
 
 function req(over: Partial<TurnRequest> = {}): TurnRequest {
   return { account: 'c', cwd: '/w', resumeSessionId: null, model: 'opus', prompt: 'hi', signal: new AbortController().signal, onPermission: async () => 'once', ...over };
 }
 
-/** Pulls engine events one by one so the test can feed SDK messages between them. */
+/** Pulls engine events one by one so the test can feed CLI frames between them. */
 function reader(it: AsyncIterable<EngineEvent>) {
   const iter = it[Symbol.asyncIterator]();
   const seen: EngineEvent[] = [];
@@ -36,42 +46,42 @@ function reader(it: AsyncIterable<EngineEvent>) {
 }
 
 /** A result as the real CLI reports it: the uuids of the user messages the turn consumed. */
-const answered = (text: string, uuids: string[]) => ({ ...sdk.result(text), user_message_uuids: uuids });
+const answered = (text: string, uuids: string[]) => ({ ...cli.result(text), user_message_uuids: uuids });
 const tick = () => new Promise((r) => setTimeout(r, 5));
-const engine = (f: ReturnType<typeof fakeSdk>, over: Partial<ConstructorParameters<typeof ClaudeEngine>[0]> = {}) => new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from(''), ...over });
+const engine = (f: ReturnType<typeof fakeClaudeCli>, over: Partial<ClaudeEngineOptions> = {}) => new ClaudeEngine({ bin: 'claude', spawnFn: f.spawnFn, bridge, accounts: testRegistry(), readFile: async () => Buffer.from(''), tmpRoot: tmp, killGraceMs: 50, ...over });
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('ClaudeEngine: results that name what they answered (user_message_uuids)', () => {
   it('a normal turn: the result names the prompt, the input closes right after it', async () => {
-    const f = fakeSdk();
+    const f = fakeClaudeCli();
     const r = reader(engine(f).runTurn(req()));
-    f.push(sdk.init());
+    f.push(cli.init());
     await r.until('init');
-    f.push(sdk.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
+    f.push(cli.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
     expect((await r.rest()).map((e) => e.kind)).toEqual(['delta', 'result']);
     await tick();
     expect(f.state.inputClosed).toBe(true);
   });
 
   it('a background turn: held open for the task, a follow-up answered by its own uuid, the unnamed continuation closes it once the set is empty', async () => {
-    const f = fakeSdk();
+    const f = fakeClaudeCli();
     let live: LiveInput | null = null;
     const r = reader(engine(f).runTurn(req({ onLive: (l) => { live = l; } })));
-    f.push(sdk.init());
+    f.push(cli.init());
     await r.until('init');
-    f.push(sdk.bgLevel([{ id: 'b1', desc: 'explore' }]), sdk.delta('started'), answered('started', [f.inputs[0]!.uuid!]));
+    f.push(cli.bgLevel([{ id: 'b1', desc: 'explore' }]), cli.delta('started'), answered('started', [f.inputs[0]!.uuid!]));
     await r.until('result');
     await tick();
     expect(f.state.inputClosed).toBe(false);
     expect(await live!.send({ text: 'status?', attachments: [] })).toBe(true);
     await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
-    f.push(sdk.delta('still going'), answered('still going', [f.inputs[1]!.uuid!]));
+    f.push(cli.delta('still going'), answered('still going', [f.inputs[1]!.uuid!]));
     const fu = await r.until('result');
     expect(fu).toMatchObject({ text: 'still going' });
     await tick();
     expect(f.state.inputClosed).toBe(false);
-    f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('found'), sdk.result('found'));
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('found'), cli.result('found'));
     await r.until('continue');
     expect(await r.until('result')).toMatchObject({ text: 'found' });
     expect(await r.rest()).toEqual([]);
@@ -81,10 +91,10 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
   });
 
   it('once a result named its answers, an unnamed success (a background continuation) answers nothing: a pending steer keeps the input open', async () => {
-    const f = fakeSdk();
+    const f = fakeClaudeCli();
     let live: LiveInput | null = null;
     const r = reader(engine(f).runTurn(req({ onLive: (l) => { live = l; } })));
-    f.push(sdk.init(), sdk.bgLevel([{ id: 'b1', desc: 'build' }]));
+    f.push(cli.init(), cli.bgLevel([{ id: 'b1', desc: 'build' }]));
     await r.until('background');
     expect(await live!.steer!({ text: 'also this', attachments: [] }, 'k1')).toBe(true);
     const [first, steer] = f.inputs;
@@ -92,7 +102,7 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
     f.push(answered('first', [first!.uuid!]));
     await r.until('result');
     // The background task settles; the CLI's own continuation turn names no input message.
-    f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('bg done'), sdk.result('bg done'));
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('bg done'), cli.result('bg done'));
     await r.until('result');
     await tick();
     expect(f.state.inputClosed).toBe(false);
@@ -106,26 +116,26 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
   });
 
   it('an unnamed error result still answers the oldest message (delivery failure, synthesized error)', async () => {
-    const f = fakeSdk();
+    const f = fakeClaudeCli();
     let live: LiveInput | null = null;
     const r = reader(engine(f).runTurn(req({ onLive: (l) => { live = l; } })));
-    f.push(sdk.init(), sdk.bgLevel([{ id: 'b1', desc: 'build' }]));
+    f.push(cli.init(), cli.bgLevel([{ id: 'b1', desc: 'build' }]));
     await r.until('background');
     f.push(answered('first', [f.inputs[0]!.uuid!]));
     await r.until('result');
     expect(await live!.send({ text: 'next', attachments: [] })).toBe(true);
-    f.push(sdk.bgLevel([]), { type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['boom'], session_id: 's1', usage: { input_tokens: 0, output_tokens: 0 } });
+    f.push(cli.bgLevel([]), { type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['boom'], session_id: 's1', usage: { input_tokens: 0, output_tokens: 0 } });
     expect(await r.until('result')).toMatchObject({ ok: false });
     expect(await r.rest()).toEqual([]);
   });
 
   it('resume: the result of a notification the CLI queued without asking the model (orphaned agent) is not our turn — the prompt is still answered in this process', async () => {
-    const f = fakeSdk();
-    const r = reader(engine(f).runTurn(req({ resumeSessionId: 's1' })));
-    f.push(sdk.init());
+    const f = fakeClaudeCli();
+    const r = reader(engine(f).runTurn(req({ resumeSessionId: SID })));
+    f.push(cli.init());
     await r.until('init');
     // On resume the CLI reports the agent the previous process left running, as its own non-querying turn, before our prompt.
-    f.push(sdk.notifyUser(), sdk.notifyNoopResult(), sdk.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
+    f.push(cli.notifyUser(), cli.notifyNoopResult(), cli.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
     const rest = await r.rest();
     expect(r.seen.filter((e) => e.kind === 'result')).toEqual([expect.objectContaining({ ok: true, text: 'ok' })]);
     expect(rest.map((e) => e.kind)).toEqual(['system', 'delta', 'result']);
@@ -136,11 +146,11 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
   it('an injected no-query turn that failed (error result, num_turns 0) while our prompt is pending is logged, not taken as our answer — the prompt still runs', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const f = fakeSdk();
-      const r = reader(engine(f).runTurn(req({ resumeSessionId: 's1' })));
-      f.push(sdk.init());
+      const f = fakeClaudeCli();
+      const r = reader(engine(f).runTurn(req({ resumeSessionId: SID })));
+      f.push(cli.init());
       await r.until('init');
-      f.push(sdk.notifyUser(), { ...sdk.notifyNoopResult(), subtype: 'error_during_execution', is_error: true, errors: ['boom'] }, sdk.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
+      f.push(cli.notifyUser(), { ...cli.notifyNoopResult(), subtype: 'error_during_execution', is_error: true, errors: ['boom'] }, cli.delta('ok'), answered('ok', [f.inputs[0]!.uuid!]));
       await r.rest();
       expect(r.seen.filter((e) => e.kind === 'result')).toEqual([expect.objectContaining({ ok: true, text: 'ok' })]);
       expect(warn.mock.calls.some((c) => String(c[0]).includes('boom'))).toBe(true);
@@ -150,16 +160,16 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
   });
 
   it('idle with the background set emptied: a no-query notification the CLI injects closes its segment with a result and lets the process end', async () => {
-    const f = fakeSdk();
+    const f = fakeClaudeCli();
     const r = reader(engine(f, { bgGraceMs: 30 }).runTurn(req()));
-    f.push(sdk.init());
+    f.push(cli.init());
     await r.until('init');
-    f.push(sdk.bgLevel([{ id: 'b1', desc: 'agent' }]), answered('started', [f.inputs[0]!.uuid!]));
+    f.push(cli.bgLevel([{ id: 'b1', desc: 'agent' }]), answered('started', [f.inputs[0]!.uuid!]));
     await r.until('result');
     await tick();
     expect(f.state.inputClosed).toBe(false);
     // The agent hands back: its notification is queued shouldQuery:false, and nothing follows.
-    f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.notifyNoopResult());
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.notifyNoopResult());
     const restP = r.rest();
     await new Promise((res) => setTimeout(res, 200));
     expect(f.state.inputClosed).toBe(true);
@@ -171,9 +181,9 @@ describe('ClaudeEngine: results that name what they answered (user_message_uuids
 
   it('a result naming none of our messages is warned about and attributed like an unnamed one — the process is not held until bgMaxMs', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const f = fakeSdk();
+    const f = fakeClaudeCli();
     const r = reader(engine(f, { bgMaxMs: 60 * 60_000 }).runTurn(req()));
-    f.push(sdk.init(), answered('odd', ['not-ours']));
+    f.push(cli.init(), answered('odd', ['not-ours']));
     await r.until('result');
     expect(await r.rest()).toEqual([]);
     await tick();

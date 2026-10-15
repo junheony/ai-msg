@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { noteCommands } from './ClaudeEngine';
+import type { CliMessage } from './claudeCli/messages';
 import { DEFAULT_SLASH_COMMANDS, SlashCommandCache } from './slashCommands';
 
 describe('SlashCommandCache', () => {
@@ -32,9 +32,9 @@ describe('noteCommands (ClaudeEngine)', () => {
   it('reads system/init slash_commands minus terminal ones, and commands_changed', () => {
     const calls: unknown[][] = [];
     const on = (...a: unknown[]) => { calls.push(a); };
-    noteCommands({ type: 'system', subtype: 'init', session_id: 's', cwd: '/real', slash_commands: ['a', 'b', 3], terminal_slash_commands: ['b'] } as unknown as SDKMessage, '/fallback', on);
-    noteCommands({ type: 'system', subtype: 'commands_changed', session_id: 's', commands: [{ name: 'c', description: 'd', argumentHint: '' }, null] } as unknown as SDKMessage, '/fallback', on);
-    noteCommands({ type: 'assistant' } as unknown as SDKMessage, '/fallback', on);
+    noteCommands({ type: 'system', subtype: 'init', session_id: 's', cwd: '/real', slash_commands: ['a', 'b', 3], terminal_slash_commands: ['b'] } as unknown as CliMessage, '/fallback', on);
+    noteCommands({ type: 'system', subtype: 'commands_changed', session_id: 's', commands: [{ name: 'c', description: 'd', argumentHint: '' }, null] } as unknown as CliMessage, '/fallback', on);
+    noteCommands({ type: 'assistant' } as unknown as CliMessage, '/fallback', on);
     expect(calls).toEqual([['s', '/real', ['a', 'b'], ['b']], ['s', '/fallback', [{ name: 'c', description: 'd', argumentHint: '' }], []]]);
   });
 });

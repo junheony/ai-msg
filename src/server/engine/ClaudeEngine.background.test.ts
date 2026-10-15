@@ -1,14 +1,27 @@
-import { describe, expect, it } from 'vitest';
-import { ClaudeEngine } from './ClaudeEngine';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { ClaudeEngine, type ClaudeEngineOptions } from './ClaudeEngine';
 import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
-import { fakeSdk, sdk } from './fakeSdk';
+import { fakeClaudeCli, cli } from './claudeCli/fakeClaudeCli';
+import { PermissionBridge } from './claudeCli/bridge';
 import { testRegistry } from '../../shared/accounts.testkit';
+
+let bridge: PermissionBridge | null = null;
+let tmp = '';
+afterEach(async () => { await bridge?.close(); bridge = null; if (tmp) fs.rmSync(tmp, { recursive: true, force: true }); tmp = ''; });
+async function engine(f: ReturnType<typeof fakeClaudeCli>, over: Partial<ClaudeEngineOptions> = {}) {
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qd-bg-'));
+  bridge = await PermissionBridge.open();
+  return new ClaudeEngine({ bin: 'claude', spawnFn: f.spawnFn, bridge, accounts: testRegistry(), readFile: async () => Buffer.from(''), tmpRoot: tmp, killGraceMs: 50, ...over });
+}
 
 function req(over: Partial<TurnRequest> = {}): TurnRequest {
   return { account: 'c', cwd: '/w', resumeSessionId: null, model: 'opus', prompt: 'hi', signal: new AbortController().signal, onPermission: async () => 'once', ...over };
 }
 
-/** Pulls engine events one by one so the test can feed SDK messages between them. */
+/** Pulls engine events one by one so the test can feed CLI frames between them. */
 function reader(it: AsyncIterable<EngineEvent>) {
   const iter = it[Symbol.asyncIterator]();
   const seen: EngineEvent[] = [];
@@ -41,9 +54,9 @@ const textOf = (m: { message: { content: unknown } }) => (typeof m.message.conte
 
 describe('ClaudeEngine: background tasks outlive the turn result', () => {
   it('without background tasks the input closes right after the result (one-shot as before)', async () => {
-    const f = fakeSdk();
-    f.push(sdk.init(), sdk.delta('ok'), sdk.result('ok'));
-    const evs = await reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req())).rest();
+    const f = fakeClaudeCli();
+    f.push(cli.init(), cli.delta('ok'), cli.result('ok'));
+    const evs = await reader((await engine(f)).runTurn(req())).rest();
     expect(evs.map((e) => e.kind)).toEqual(['init', 'delta', 'result']);
     expect(f.inputs.map(textOf)).toEqual(['hi']);
     await new Promise((r) => setTimeout(r, 0));
@@ -51,17 +64,17 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
   });
 
   it('keeps the process open while a task is live and streams the continuation after it settles', async () => {
-    const f = fakeSdk();
-    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn }).runTurn(req()));
-    f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'explore repo' }, { id: 'amb', desc: 'monitor', ambient: true }]), sdk.delta('started'), sdk.result('started'));
+    const f = fakeClaudeCli();
+    const r = reader((await engine(f)).runTurn(req()));
+    f.push(cli.init(), cli.bgLevel([{ id: 't1', desc: 'explore repo' }, { id: 'amb', desc: 'monitor', ambient: true }]), cli.delta('started'), cli.result('started'));
     expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: ['explore repo'] });
     expect(await r.until('result')).toMatchObject({ ok: true, text: 'started' });
     await new Promise((res) => setTimeout(res, 5));
     expect(f.state.inputClosed).toBe(false);
     // Subagent progress while idle is not a continuation.
-    f.push(sdk.subagentTool());
+    f.push(cli.subagentTool());
     // The task settles; the CLI injects its notification and runs another turn by itself.
-    f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('found it'), sdk.result('found it'));
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('found it'), cli.result('found it'));
     expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: [] });
     const after: EngineEvent[] = [];
     for (let e = await r.next(); e && e.kind !== 'result'; e = await r.next()) after.push(e);
@@ -77,19 +90,19 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
   });
 
   it('a follow-up written through onLive is answered in the same process without a continue marker', async () => {
-    const f = fakeSdk();
+    const f = fakeClaudeCli();
     let live: LiveInput | null = null;
-    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from('') }).runTurn(req({ onLive: (l) => { live = l; } })));
-    f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'build' }]), sdk.result('first'));
+    const r = reader((await engine(f)).runTurn(req({ onLive: (l) => { live = l; } })));
+    f.push(cli.init(), cli.bgLevel([{ id: 't1', desc: 'build' }]), cli.result('first'));
     await r.until('result');
     expect(await live!.send({ text: 'and also this', attachments: [] })).toBe(true);
     await new Promise((res) => setTimeout(res, 0));
     expect(f.inputs.map(textOf)).toEqual(['hi', 'and also this']);
-    f.push(sdk.delta('answer'), sdk.result('answer'));
+    f.push(cli.delta('answer'), cli.result('answer'));
     expect(await r.until('result')).toMatchObject({ text: 'answer' });
     expect(r.seen.some((e) => e.kind === 'continue')).toBe(false);
     // Still a live task → still open; settling it ends the process after its continuation.
-    f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.result('done'));
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.result('done'));
     const rest = await r.rest();
     expect(rest.map((e) => e.kind)).toEqual(['background', 'continue', 'system', 'result']);
     await new Promise((res) => setTimeout(res, 0));
@@ -98,20 +111,20 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
   });
 
   it('ends after the grace window when the task set empties but no continuation comes', async () => {
-    const f = fakeSdk();
-    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, bgGraceMs: 20 }).runTurn(req()));
-    f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'x' }]), sdk.result('r'));
+    const f = fakeClaudeCli();
+    const r = reader((await engine(f, { bgGraceMs: 20 })).runTurn(req()));
+    f.push(cli.init(), cli.bgLevel([{ id: 't1', desc: 'x' }]), cli.result('r'));
     await r.until('result');
-    f.push(sdk.bgLevel([]));
+    f.push(cli.bgLevel([]));
     const rest = await r.rest();
     expect(rest).toMatchObject([{ kind: 'background', tasks: [] }]);
     expect(f.state.inputClosed).toBe(true);
   });
 
   it('caps the wait and says so', async () => {
-    const f = fakeSdk();
-    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, bgMaxMs: 20 }).runTurn(req()));
-    f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'forever' }]), sdk.result('r'));
+    const f = fakeClaudeCli();
+    const r = reader((await engine(f, { bgMaxMs: 20 })).runTurn(req()));
+    f.push(cli.init(), cli.bgLevel([{ id: 't1', desc: 'forever' }]), cli.result('r'));
     await r.until('result');
     const rest = await r.rest();
     expect(rest[0]).toMatchObject({ kind: 'notice', message: expect.stringContaining('백그라운드 작업이') });
@@ -122,10 +135,10 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
   });
 
   it('abort while waiting stops the process and clears the background status', async () => {
-    const f = fakeSdk();
+    const f = fakeClaudeCli();
     const ac = new AbortController();
-    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn }).runTurn(req({ signal: ac.signal })));
-    f.push(sdk.init(), sdk.bgLevel([{ id: 't1', desc: 'x' }]), sdk.result('r'));
+    const r = reader((await engine(f)).runTurn(req({ signal: ac.signal })));
+    f.push(cli.init(), cli.bgLevel([{ id: 't1', desc: 'x' }]), cli.result('r'));
     await r.until('result');
     ac.abort();
     const rest = await r.rest();
@@ -134,12 +147,12 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
   });
 
   it('falls back to task_started / task_notification when no level signal is sent', async () => {
-    const f = fakeSdk();
-    const r = reader(new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn }).runTurn(req()));
-    f.push(sdk.init(), sdk.taskStarted('t1', 'review'), sdk.taskStarted('t2', 'inline', false), sdk.result('r'));
+    const f = fakeClaudeCli();
+    const r = reader((await engine(f)).runTurn(req()));
+    f.push(cli.init(), cli.taskStarted('t1', 'review'), cli.taskStarted('t2', 'inline', false), cli.result('r'));
     expect(await r.until('background')).toMatchObject({ kind: 'background', tasks: ['review'] });
     await r.until('result');
-    f.push(sdk.taskDone('t1'), sdk.notifyUser(), sdk.delta('d'), sdk.result('d'));
+    f.push(cli.taskDone('t1'), cli.notifyUser(), cli.delta('d'), cli.result('d'));
     const rest = await r.rest();
     expect(rest.map((e) => e.kind)).toEqual(['background', 'task_done', 'continue', 'system', 'delta', 'result']);
   });

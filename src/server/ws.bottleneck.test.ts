@@ -7,7 +7,9 @@ import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
 import { cookieValueFor } from './auth';
 import { ClaudeEngine } from './engine/ClaudeEngine';
-import { fakeSdk } from './engine/fakeSdk';
+import { fakeClaudeCli } from './engine/claudeCli/fakeClaudeCli';
+import { PermissionBridge } from './engine/claudeCli/bridge';
+import type { ClaudeSpawnFn } from './engine/claudeCli/spawnTypes';
 import { createRequestHandler } from './http';
 import { BottleneckWatch } from './push/BottleneckWatch';
 import type { PushPayload } from './push/PushNotifier';
@@ -27,6 +29,8 @@ let store: SessionStateStore;
 let watch: BottleneckWatch;
 let wsUrl: string;
 let origin: string;
+/** The engine's permission bridge. */
+let bridge: PermissionBridge;
 let close: () => Promise<void>;
 const sends: string[] = [];
 const pushes: PushPayload[] = [];
@@ -36,6 +40,7 @@ let seq = 0;
 const fire = () => { const fns = [...timers.values()]; timers.clear(); for (const fn of fns) fn(); };
 
 beforeAll(async () => {
+  bridge = await PermissionBridge.open();
   base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-wsbottle-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
@@ -44,8 +49,8 @@ beforeAll(async () => {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => { throw new Error('ECONNREFUSED'); } });
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const fake = fakeSdk();
-  runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ accounts: testRegistry(), queryFn: (p) => fake.queryFn(p), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  const fake = fakeClaudeCli();
+  runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ bin: 'claude', spawnFn: fake.spawnFn, bridge, killGraceMs: 50, accounts: testRegistry(), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
   watch = new BottleneckWatch({
     sendPush: (p) => pushes.push(p), titleOf: () => 't', store, retry: (r) => wsApi.submitRetry(r),
     setTimer: (fn) => { const id = ++seq; timers.set(id, fn); return id; }, clearTimer: (t) => { timers.delete(t as number); },
@@ -59,7 +64,7 @@ beforeAll(async () => {
   close = async () => { watch.stop(); wsApi.close(); await new Promise<void>((r) => server.close(() => r())); };
 });
 afterEach(() => { vi.restoreAllMocks(); });
-afterAll(async () => { await close(); await fs.rm(base, { recursive: true, force: true }); });
+afterAll(async () => { await close(); await fs.rm(base, { recursive: true, force: true }); await bridge.close(); });
 
 const state = (sessionId: string, over: Partial<ClaudeSessionState> = {}): ClaudeSessionState => ({ sessionId, cwd: base, account: 'a', projectDir: base, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', ...over });
 const startedOf = (p: TurnParams): ServerMessage => ({ type: 'turn_started', turnId: p.turnId, sessionId: p.sessionId, cwd: p.cwd, account: 'a', model: 'opus', reason: 'r', attempt: 0, engine: 'claude' });

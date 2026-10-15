@@ -6,8 +6,10 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
 import { cookieValueFor } from './auth';
-import { ClaudeEngine, type QueryFn } from './engine/ClaudeEngine';
-import { fakeSdk, sdk } from './engine/fakeSdk';
+import { ClaudeEngine } from './engine/ClaudeEngine';
+import { fakeClaudeCli, cli } from './engine/claudeCli/fakeClaudeCli';
+import { PermissionBridge } from './engine/claudeCli/bridge';
+import type { ClaudeSpawnFn } from './engine/claudeCli/spawnTypes';
 import { createRequestHandler } from './http';
 import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
@@ -23,8 +25,10 @@ const COOKIE = `deck_session=${cookieValueFor(TOKEN)}`;
 let base: string;
 let work: string;
 /** Each test installs its own fake CLI process. */
-let fake = fakeSdk();
-const queryFn: QueryFn = (p) => fake.queryFn(p);
+let fake = fakeClaudeCli();
+const spawnFn: ClaudeSpawnFn = (bin, args, o) => fake.spawnFn(bin, args, o);
+/** The engines' permission bridge (one for the file). */
+let bridge: PermissionBridge;
 const closers: (() => Promise<void>)[] = [];
 
 /** A deck server of its own (a test that drains it leaves the others alone). */
@@ -38,7 +42,7 @@ async function makeServer(serverStartedAt: number) {
   await usage.pollOnce();
   const store = new SessionStateStore(path.join(dir, 'state.json'));
   await store.load();
-  const runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(dir, 'cd'), protectedAccount: null, auditFile: path.join(dir, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(dir, 'codex') });
+  const runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ bin: 'claude', spawnFn, bridge, killGraceMs: 50, accounts: testRegistry(), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(dir, 'cd'), protectedAccount: null, auditFile: path.join(dir, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(dir, 'codex') });
   const pins = new PinStore(path.join(dir, 'pins.json'));
   await pins.load();
   const settings = new SettingsStore(path.join(dir, 'settings.json'));
@@ -54,11 +58,12 @@ type Srv = Awaited<ReturnType<typeof makeServer>>;
 let shared: Srv;
 
 beforeAll(async () => {
+  bridge = await PermissionBridge.open();
   base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-wsstat-'));
   work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-wsstat-work-')));
   shared = await makeServer(12345);
 });
-afterAll(async () => { for (const c of closers) await c(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
+afterAll(async () => { for (const c of closers) await c(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); await bridge.close(); });
 
 /** A socket that buffers everything from connection time; `next(pred)` waits for the next matching message. */
 async function client(srv: Srv = shared) {

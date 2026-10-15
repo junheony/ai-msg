@@ -1,14 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Account } from '../../shared/accounts';
 import type { ServerMessage } from '../../shared/protocol';
 import { ClaudeEngine } from '../engine/ClaudeEngine';
 import type { CodexEngine } from '../engine/CodexEngine';
 import type { EngineEvent } from '../engine/Engine';
-import { fakeSdk, sdk } from '../engine/fakeSdk';
+import { fakeClaudeCli, cli } from '../engine/claudeCli/fakeClaudeCli';
+import { PermissionBridge } from '../engine/claudeCli/bridge';
+import type { CliUserMessage } from '../engine/claudeCli/messages';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
@@ -16,6 +17,15 @@ import { TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
+const SID = '11111111-2222-4333-8444-555555555555';
+
+let bridge: PermissionBridge;
+let tmpRoot = '';
+beforeAll(async () => { bridge = await PermissionBridge.open(); tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trsteer-proc-')); });
+afterAll(async () => { await bridge.close(); await fs.rm(tmpRoot, { recursive: true, force: true }); });
+/** A CLI engine on the fake child. */
+const engineFor = (f: ReturnType<typeof fakeClaudeCli>, over: { readFile?: (p: string) => Promise<Buffer>; steer?: boolean } = {}) =>
+  new ClaudeEngine({ bin: 'claude', spawnFn: f.spawnFn, bridge, tmpRoot, killGraceMs: 50, accounts: testRegistry(), baseEnv: {}, readFile: over.readFile ?? (async () => Buffer.from('')), ...(over.steer !== undefined ? { steer: over.steer } : {}) });
 
 /** Every account usable (a retry needs somewhere to go). */
 async function usableAccounts(): Promise<UsageService> {
@@ -29,7 +39,7 @@ async function usableAccounts(): Promise<UsageService> {
 }
 
 async function setup(over: Partial<TurnRunnerDeps> = {}) {
-  const f = fakeSdk();
+  const f = fakeClaudeCli();
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trsteer-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
@@ -38,7 +48,7 @@ async function setup(over: Partial<TurnRunnerDeps> = {}) {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
   const deps: TurnRunnerDeps = {
     accounts: testRegistry(),
-    engine: new ClaudeEngine({ accounts: testRegistry(), queryFn: f.queryFn, readFile: async () => Buffer.from('') }),
+    engine: engineFor(f),
     usage,
     index: new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'projects.json') }),
     store,
@@ -69,10 +79,10 @@ async function waitFor(cond: () => boolean, what: string): Promise<void> {
 }
 
 const of = (msgs: ServerMessage[], type: ServerMessage['type']) => msgs.filter((m) => m.type === type) as (ServerMessage & Record<string, unknown>)[];
-const textOf = (m: SDKUserMessage) => (typeof m.message.content === 'string' ? m.message.content : '');
+const textOf = (m: CliUserMessage) => (typeof m.message.content === 'string' ? m.message.content : '');
 /** The CLI's --replay-user-messages echo of a consumed user message. */
-const replay = (m: SDKUserMessage) => ({ type: 'user', isReplay: true, uuid: m.uuid, parent_tool_use_id: null, message: m.message, session_id: 's1' });
-const resultFor = (text: string, uuids: (string | undefined)[]) => ({ ...sdk.result(text), user_message_uuid: uuids.at(-1), user_message_uuids: uuids });
+const replay = (m: CliUserMessage) => ({ type: 'user', isReplay: true, uuid: m.uuid, parent_tool_use_id: null, message: m.message, session_id: 's1' });
+const resultFor = (text: string, uuids: (string | undefined)[]) => ({ ...cli.result(text), user_message_uuid: uuids.at(-1), user_message_uuids: uuids });
 const toolCall = (id: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'ls' } }] }, session_id: 's1' });
 const toolResult = (id: string) => ({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'a' }] }, session_id: 's1' });
 const prompt = (text: string) => ({ text, attachments: [] });
@@ -82,18 +92,18 @@ describe('TurnRunner: steering a running Claude turn', () => {
     const { f, msgs, sink, runner } = await setup();
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => f.inputs.length === 1, 'prompt written');
-    f.push(sdk.init('s1'), sdk.delta('looking'), toolCall('tu1'));
+    f.push(cli.init('s1'), cli.delta('looking'), toolCall('tu1'));
     await waitFor(() => of(msgs, 'tool_call').length === 1, 'tool call');
     expect(await runner.steer('t1', { steerId: 'k1', text: 'also check b', prompt: prompt('also check b') })).toBe(true);
     await waitFor(() => f.inputs.length === 2, 'steer written');
-    const [first, steer] = f.inputs as [SDKUserMessage, SDKUserMessage];
+    const [first, steer] = f.inputs as [CliUserMessage, CliUserMessage];
     expect(steer).toMatchObject({ type: 'user', priority: 'next', parent_tool_use_id: null });
     expect(textOf(steer)).toBe('also check b');
     expect(steer.uuid).toBeTruthy();
     expect(first.priority).toBeUndefined();
     expect(first.uuid).toBeTruthy();
     // The CLI folds it in after the tool round (echo), answers, and reports both uuids on the one result.
-    f.push(toolResult('tu1'), replay(steer), sdk.delta('b too'), resultFor('b too', [first.uuid, steer.uuid]));
+    f.push(toolResult('tu1'), replay(steer), cli.delta('b too'), resultFor('b too', [first.uuid, steer.uuid]));
     await done;
     expect(of(msgs, 'steer_delivered')).toEqual([{ type: 'steer_delivered', turnId: 't1', sessionId: 's1', cwd: '/w/new', steerId: 'k1', prompt: prompt('also check b') }]);
     // Delivered between the tool result and the rest of the answer.
@@ -113,16 +123,16 @@ describe('TurnRunner: steering a running Claude turn', () => {
     const { f, msgs, sink, runner } = await setup();
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => f.inputs.length === 1, 'prompt written');
-    f.push(sdk.init('s1'), sdk.delta('answer'));
+    f.push(cli.init('s1'), cli.delta('answer'));
     await waitFor(() => of(msgs, 'delta').length === 1, 'delta');
     expect(await runner.steer('t1', { steerId: 'k1', text: 'and then?', prompt: prompt('and then?') })).toBe(true);
     await waitFor(() => f.inputs.length === 2, 'steer written');
-    const [first, steer] = f.inputs as [SDKUserMessage, SDKUserMessage];
+    const [first, steer] = f.inputs as [CliUserMessage, CliUserMessage];
     f.push(resultFor('answer', [first.uuid]));
     await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
     // The process stays open for the steer (it is unanswered), then the CLI runs it as the next turn.
     expect(f.state.inputClosed).toBe(false);
-    f.push(replay(steer), sdk.delta('then this'), resultFor('then this', [steer.uuid]));
+    f.push(replay(steer), cli.delta('then this'), resultFor('then this', [steer.uuid]));
     await done;
     expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.reason])).toEqual([['t1', expect.any(String)], ['t1:s1', '실행 중 보낸 메시지']]);
     expect(of(msgs, 'steer_delivered')).toMatchObject([{ turnId: 't1:s1', steerId: 'k1', prompt: prompt('and then?') }]);
@@ -135,10 +145,10 @@ describe('TurnRunner: steering a running Claude turn', () => {
     const { f, msgs, sink, runner } = await setup();
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => f.inputs.length === 1, 'prompt written');
-    f.push(sdk.init('s1'));
+    f.push(cli.init('s1'));
     expect(await runner.steer('t1', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(true);
     await waitFor(() => f.inputs.length === 2, 'steer written');
-    const [first, steer] = f.inputs as [SDKUserMessage, SDKUserMessage];
+    const [first, steer] = f.inputs as [CliUserMessage, CliUserMessage];
     f.push(resultFor('done', [first.uuid, steer.uuid]));
     await done;
     const types = msgs.map((m) => m.type);
@@ -151,7 +161,7 @@ describe('TurnRunner: steering a running Claude turn', () => {
     expect(await runner.steer('nope', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(false);
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => f.inputs.length === 1, 'prompt written');
-    f.push(sdk.init('s1'));
+    f.push(cli.init('s1'));
     expect(await runner.steer('t1', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(true);
     expect(await runner.steer('t1', { steerId: 'k1', text: 'again', prompt: prompt('again') })).toBeNull();
     expect(await runner.steer('t1', { steerId: 'k2', text: 'file', attachments: ['att_missing'], prompt: prompt('file') })).toBe(false);
@@ -165,7 +175,7 @@ describe('TurnRunner: steering a running Claude turn', () => {
     const { f, msgs, sink, ac, runner } = await setup();
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => f.inputs.length === 1, 'prompt written');
-    f.push(sdk.init('s1'), toolCall('tu1'));
+    f.push(cli.init('s1'), toolCall('tu1'));
     await waitFor(() => of(msgs, 'tool_call').length === 1, 'tool call');
     expect(await runner.steer('t1', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(true);
     ac.abort();
@@ -175,17 +185,18 @@ describe('TurnRunner: steering a running Claude turn', () => {
   });
 
   it('a retry (limit → next account) resends only the turn prompt and rejects the waiting steer', async () => {
+    // The retry resumes the session init named, and the CLI only takes a real session id there.
     const { f, msgs, sink, runner } = await setup({ maxRetries: 1, usage: await usableAccounts() });
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => f.inputs.length === 1, 'prompt written');
-    f.push(sdk.init('s1'));
+    f.push(cli.init(SID));
     expect(await runner.steer('t1', { steerId: 'k1', text: 'steer me', prompt: prompt('steer me') })).toBe(true);
     await waitFor(() => f.inputs.length === 2, 'steer written');
-    f.push({ type: 'result', subtype: 'success', is_error: true, result: 'usage limit reached', session_id: 's1', usage: {} });
+    f.push({ type: 'result', subtype: 'success', is_error: true, result: 'usage limit reached', session_id: SID, usage: {} });
     await waitFor(() => of(msgs, 'turn_retry').length === 1, 'retry');
     expect(of(msgs, 'steer_rejected')).toMatchObject([{ steerId: 'k1' }]);
     await waitFor(() => f.inputs.length === 3, 'retry prompt written');
-    f.push(sdk.init('s1'), resultFor('ok', [f.inputs[2]!.uuid]));
+    f.push(cli.init(SID), resultFor('ok', [f.inputs[2]!.uuid]));
     await done;
     expect(f.inputs.map(textOf)).toEqual(['go', 'steer me', 'go']);
     expect(of(msgs, 'turn_result')).toHaveLength(1);
@@ -196,13 +207,13 @@ describe('TurnRunner: steering a running Claude turn', () => {
   it('a steer settled while still being written (process ended meanwhile) is answered once: rejected, and steer() says nothing more', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
-    const g = fakeSdk();
-    const engine = new ClaudeEngine({ accounts: testRegistry(), queryFn: g.queryFn, readFile: async () => { await gate; return Buffer.from('png'); } });
+    const g = fakeClaudeCli();
+    const engine = engineFor(g, { readFile: async () => { await gate; return Buffer.from('png'); } });
     const att = { id: 'att_1', name: 'a.png', mediaType: 'image/png', size: 3, path: '/tmp/a.png', isImage: true, createdAtMs: NOW };
     const { msgs, sink, ac, runner } = await setup({ engine, attachments: { resolve: () => ({ found: [att], missing: [] }) } as unknown as TurnRunnerDeps['attachments'] });
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => g.inputs.length === 1, 'prompt written');
-    g.push(sdk.init('s1'));
+    g.push(cli.init('s1'));
     const pending = runner.steer('t1', { steerId: 'k1', text: 'see this', attachments: ['att_1'], prompt: prompt('see this') });
     ac.abort();
     await done;
@@ -213,11 +224,11 @@ describe('TurnRunner: steering a running Claude turn', () => {
   });
 
   it('DECK_STEER=0 (engine steer: false): no live steer, so steer() refuses; follow-up bookkeeping still closes the process', async () => {
-    const g = fakeSdk();
-    const { msgs, sink, runner } = await setup({ engine: new ClaudeEngine({ accounts: testRegistry(), queryFn: g.queryFn, readFile: async () => Buffer.from(''), steer: false }) });
+    const g = fakeClaudeCli();
+    const { msgs, sink, runner } = await setup({ engine: engineFor(g, { steer: false }) });
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
     await waitFor(() => g.inputs.length === 1, 'prompt written');
-    g.push(sdk.init('s1'));
+    g.push(cli.init('s1'));
     expect(await runner.steer('t1', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(false);
     g.push(resultFor('ok', [g.inputs[0]!.uuid]));
     await done;
@@ -230,7 +241,7 @@ describe('TurnRunner: steering a running Claude turn', () => {
     const { f, sink, runner } = await setup();
     const done = runner.run({ turnId: 'h1', cwd: '/w/new', sessionId: null, text: 'write the note', handoff: true }, sink);
     await waitFor(() => f.inputs.length === 1, 'prompt written');
-    f.push(sdk.init('s1'));
+    f.push(cli.init('s1'));
     expect(await runner.steer('h1', { steerId: 'k1', text: 'x', prompt: prompt('x') })).toBe(false);
     f.push(resultFor('note', [f.inputs[0]!.uuid]));
     await done;

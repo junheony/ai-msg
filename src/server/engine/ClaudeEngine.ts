@@ -11,8 +11,7 @@ import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, type CliPermissio
 import { MCP_TOOL_TIMEOUT_MS, PermissionBridge } from './claudeCli/bridge';
 import { forkCandidates, writeForkSource } from './claudeCli/fork';
 import { hookHandler } from './claudeCli/hooks';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'; // type-only, for the Task 2 shims — removed in Task 8b
-import type { CliMessage, CliUserMessage, Rec } from './claudeCli/messages';
+import type { CliUserMessage, Rec } from './claudeCli/messages';
 import { deckWrites, type OwnedEntries } from './claudeCli/ownedEntries';
 import { SessionGrants, permissionHandler, type ModeGate } from './claudeCli/permissions';
 import { ClaudeProcess, exitFailureText } from './claudeCli/process';
@@ -23,19 +22,9 @@ import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText } from './claudeCli
 import type { ClaudeBin } from './claudeCli/version';
 import { LegacySdkEngine, type LegacySdkEngineOptions } from './legacySdkEngine'; // shim — removed in Task 8c
 
-export { isActivity, isInjectedNoopResult, toolAudit, deniedCalls, mapCliMessage, type CommandsListener, type ToolAudit } from './claudeCli/stream';
+export { BackgroundTracker, ProgressMeter, isActivity, isInjectedNoopResult, toolAudit, deniedCalls, noteCommands, mapCliMessage, type CommandsListener, type ToolAudit } from './claudeCli/stream';
 export { toUserMessage, type ReadFile } from './claudeCli/prompt';
 export { NO_TOOLS_MESSAGE, KEEP_PLANNING_MESSAGE } from './claudeCli/texts';
-// Kept only so the not-yet-migrated tests compile; deleted in Task 8b Step 3.
-export { buildOptions, buildPrompt, type QueryFn, type PromptInput, type LegacySdkEngineOptions } from './legacySdkEngine';
-/** Until Task 8b migrates their tests, the exported helpers keep accepting the SDK's message type (the same objects, typed looser locally). */
-type AnyMessage = CliMessage | SDKMessage;
-class SdkBackgroundTracker extends BackgroundTracker { override apply(m: AnyMessage): boolean { return super.apply(m as CliMessage); } }
-class SdkProgressMeter extends ProgressMeter { override apply(m: AnyMessage) { return super.apply(m as CliMessage); } }
-export { SdkBackgroundTracker as BackgroundTracker, SdkProgressMeter as ProgressMeter };
-export const mapSdkMessage = (m: AnyMessage): EngineEvent[] => mapCliMessage(m as CliMessage);
-const noteSdkCommands =(m: AnyMessage, fallbackCwd: string, onCommands: CommandsListener): void => noteCommands(m as CliMessage, fallbackCwd, onCommands);
-export { noteSdkCommands as noteCommands };
 
 /** Background waiting caps: total wait after the first result, and how long an emptied set may stay idle. */
 export const BG_MAX_MS = 6 * 60 * 60_000;
@@ -197,7 +186,14 @@ class CliClaudeEngine implements Engine {
       };
       const first = randomUUID();
       unanswered.push(first);
-      const firstMsg = { ...(await toUserMessage(req.prompt, req.attachments ?? [], this.readFile)), uuid: first };
+      let firstMsg: CliUserMessage;
+      try {
+        firstMsg = { ...(await toUserMessage(req.prompt, req.attachments ?? [], this.readFile)), uuid: first };
+      } catch (err) {
+        // e.g. an attachment that can no longer be read: a failed result before anything is spawned, not a throw.
+        yield fail(err instanceof Error ? err.message : String(err));
+        return;
+      }
       p.start(); // changed
       writeMsg(firstMsg); // changed
       if (req.signal.aborted) onAbort();
@@ -292,9 +288,8 @@ class CliClaudeEngine implements Engine {
 }
 
 /**
- * Shim until Task 8c. Options with `bin` (the new test, and main.ts from Task 8c) run the CLI engine; options
- * without it (every pre-existing test, which passes `queryFn`, and today's main.ts) run the moved SDK engine
- * unchanged. Task 8c deletes this class and renames CliClaudeEngine to ClaudeEngine.
+ * Shim until Task 8c. Options with `bin` (every test, and main.ts from Task 8c) run the CLI engine; options
+ * without it (today's main.ts) run the moved SDK engine unchanged. Task 8c deletes this class and renames CliClaudeEngine to ClaudeEngine.
  */
 export class ClaudeEngine implements Engine {
   private readonly impl: CliClaudeEngine | LegacySdkEngine;

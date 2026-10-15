@@ -7,8 +7,10 @@ import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
 import type { SessionHolder } from '../shared/session-types';
 import { cookieValueFor } from './auth';
-import { ClaudeEngine, type QueryFn } from './engine/ClaudeEngine';
-import { fakeSdk, sdk } from './engine/fakeSdk';
+import { ClaudeEngine } from './engine/ClaudeEngine';
+import { fakeClaudeCli, cli } from './engine/claudeCli/fakeClaudeCli';
+import { PermissionBridge } from './engine/claudeCli/bridge';
+import type { ClaudeSpawnFn } from './engine/claudeCli/spawnTypes';
 import { createRequestHandler } from './http';
 import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { PinStore } from './sessions/PinStore';
@@ -35,10 +37,13 @@ let runner: TurnRunner;
 const held = new Map<string, SessionHolder>();
 let heldChanged = false;
 /** Each test installs its own fake CLI process. */
-let fake = fakeSdk();
-const queryFn: QueryFn = (p) => fake.queryFn(p);
+let fake = fakeClaudeCli();
+const spawnFn: ClaudeSpawnFn = (bin, args, o) => fake.spawnFn(bin, args, o);
+/** The engines' permission bridge (one for the file). */
+let bridge: PermissionBridge;
 
 beforeAll(async () => {
+  bridge = await PermissionBridge.open();
   base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-wsout-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
@@ -48,7 +53,7 @@ beforeAll(async () => {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ bin: 'claude', spawnFn, bridge, killGraceMs: 50, accounts: testRegistry(), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
   const pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
   const settings = new SettingsStore(path.join(base, 'settings.json'));
@@ -60,7 +65,7 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${port}`;
   wsUrl = `ws://127.0.0.1:${port}/ws`;
 });
-afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
+afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); await bridge.close(); });
 
 /** A socket that buffers everything from connection time; `next(pred)` waits for the next matching message. */
 async function client() {
@@ -175,7 +180,7 @@ describe('ws: outside poll, per socket', () => {
   it('a turn that starts while the poll reads the transcript keeps its pane: no history lands on top of the stream', async () => {
     const S = '5b5b5b5b-5b5b-45b5-85b5-5b5b5b5b5b5b';
     const cwd = await seed(S, 'follow3');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'open_session', sessionId: S });
@@ -192,13 +197,13 @@ describe('ws: outside poll, per socket', () => {
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     spy.mockRestore();
     const t = await a.next('turn_started');
-    fake.push(sdk.init(S), sdk.delta('streaming'));
+    fake.push(cli.init(S), cli.delta('streaming'));
     await a.next('delta');
     letGo();
     await new Promise((r) => setTimeout(r, 200));
     const at = a.got.findIndex((m) => m.type === 'turn_started');
     expect(a.got.slice(at).filter((m) => m.type === 'history')).toEqual([]);
-    fake.push(sdk.result('done', S));
+    fake.push(cli.result('done', S));
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
@@ -224,13 +229,13 @@ describe('ws: the sidebar times stay current', () => {
   it('a turn in an existing session updates that session\'s entry right after the turn', async () => {
     const S = '5d5d5d5d-5d5d-45d5-85d5-5d5d5d5d5d5d';
     const cwd = await seed(S, 'times2');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     const touch = vi.spyOn(index, 'touch');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     const t = await a.next('turn_started');
-    fake.push(sdk.init(S), sdk.result('done', S));
+    fake.push(cli.init(S), cli.result('done', S));
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     await vi.waitFor(() => expect(touch).toHaveBeenCalledWith([S]));
     touch.mockRestore();
@@ -245,7 +250,7 @@ describe('ws: a running turn\'s own writes', () => {
   it('abortAll (server shutdown) ends a running turn with the shutdown text, not the hidden 중단됨', async () => {
     const S = '5b5b5b5b-5b5b-45b5-85b5-5b5b5b5b5b5b';
     const cwd = await seed(S, 'shutdown1');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
@@ -269,7 +274,7 @@ describe('ws: a running turn\'s own writes', () => {
   it('the poll does not broadcast for a transcript that grows only because a deck turn runs; the turn\'s end does', async () => {
     const S = '5e5e5e5e-5e5e-45e5-85e5-5e5e5e5e5e5e';
     const cwd = await seed(S, 'times3');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     const before = lastOf(await a.next('hello'), S)!;
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
@@ -280,7 +285,7 @@ describe('ws: a running turn\'s own writes', () => {
     // Several poll ticks (40 ms each) while the turn runs: no index moves this session.
     await new Promise((r) => setTimeout(r, 300));
     expect(a.got.some((m) => m.type === 'index' && (lastOf(m, S) ?? 0) > before)).toBe(false);
-    fake.push(sdk.init(S), sdk.result('done', S));
+    fake.push(cli.init(S), cli.result('done', S));
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     expect(lastOf(await a.next('index', (m) => (lastOf(m, S) ?? 0) > before), S)).toBeGreaterThan(before);
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
@@ -292,14 +297,14 @@ describe('ws: deck follows a conversation that went on outside it', () => {
   /** Starts a turn that leaves the process held open with one background task. */
   async function heldOpen(S: string, name: string) {
     const cwd = await seed(S, name);
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'open_session', sessionId: S });
     await a.next('history');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     const first = await a.next('turn_started');
-    fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'explore' }]), sdk.result('launched', S));
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'explore' }]), cli.result('launched', S));
     await a.next('turn_result', (m) => m.turnId === first.turnId);
     return { a, cwd };
   }
@@ -309,12 +314,12 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     const { a, cwd } = await heldOpen(S, 'recycle1');
     const old = fake;
     await fs.appendFile(fileOf(cwd, S), line('claude-desktop', 'from desktop') + line('claude-desktop', 'desktop answer', 'assistant'));
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     a.send({ type: 'send', sessionId: S, cwd, text: 'and then?', clientRef: 'ref-r' });
     expect(await a.next('turn_notice', (m) => m.turnId === '')).toMatchObject({ sessionId: S, message: recycleNotice(1) });
     const next = await a.next('turn_started', (m) => m.clientRef === 'ref-r');
     expect(next.reason).not.toBe('백그라운드 대기 중 이어 보냄');
-    fake.push(sdk.init(S), sdk.result('after desktop', S));
+    fake.push(cli.init(S), cli.result('after desktop', S));
     expect(await a.next('turn_result', (m) => m.turnId === next.turnId)).toMatchObject({ ok: true, text: 'after desktop' });
     // The message went to a new process, not into the old one's input; ending the old one failed no turn.
     expect(old.state.calls).toBe(1);
@@ -337,16 +342,16 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     b.send({ type: 'open_session', sessionId: S });
     await b.next('history');
     const old = fake;
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const spy = slowCheck(true);
     a.send({ type: 'send', sessionId: S, cwd, text: 'one', clientRef: 'ref-1' });
     b.send({ type: 'send', sessionId: S, cwd, text: 'two', clientRef: 'ref-2' });
     await a.next('turn_notice', (m) => m.message === recycleNotice(1));
     const t1 = await a.next('turn_started', (m) => m.clientRef === 'ref-1');
-    fake.push(sdk.init(S), sdk.result('answer one', S));
+    fake.push(cli.init(S), cli.result('answer one', S));
     expect(await a.next('turn_result', (m) => m.turnId === t1.turnId)).toMatchObject({ ok: true, text: 'answer one' });
     const t2 = await b.next('turn_started', (m) => m.clientRef === 'ref-2');
-    fake.push(sdk.init(S), sdk.result('answer two', S));
+    fake.push(cli.init(S), cli.result('answer two', S));
     expect(await b.next('turn_result', (m) => m.turnId === t2.turnId)).toMatchObject({ ok: true, text: 'answer two' });
     expect(errors(a)).toEqual([]);
     expect(errors(b)).toEqual([]);
@@ -360,21 +365,21 @@ describe('ws: deck follows a conversation that went on outside it', () => {
   it('a second send while the recycled session\'s new process is held open again joins it as a follow-up', async () => {
     const S = '57575757-5757-4575-8575-575757575757';
     const { a, cwd } = await heldOpen(S, 'recycle5');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const spy = slowCheck(true);
     a.send({ type: 'send', sessionId: S, cwd, text: 'one', clientRef: 'ref-1' });
     a.send({ type: 'send', sessionId: S, cwd, text: 'two', clientRef: 'ref-2' });
     const t1 = await a.next('turn_started', (m) => m.clientRef === 'ref-1');
-    fake.push(sdk.init(S), sdk.bgLevel([{ id: 'y', desc: 'again' }]), sdk.result('answer one', S));
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'y', desc: 'again' }]), cli.result('answer one', S));
     await a.next('turn_result', (m) => m.turnId === t1.turnId);
     // Not left waiting for that process to end (it may be held for hours): given to it as soon as it is between turns.
     const t2 = await a.next('turn_started', (m) => m.clientRef === 'ref-2');
     expect(t2.reason).toBe('백그라운드 대기 중 이어 보냄');
-    fake.push(sdk.result('answer two', S));
+    fake.push(cli.result('answer two', S));
     expect(await a.next('turn_result', (m) => m.turnId === t2.turnId)).toMatchObject({ ok: true, text: 'answer two' });
     expect(fake.state.calls).toBe(1);
     expect(errors(a)).toEqual([]);
-    fake.push(sdk.bgLevel([]));
+    fake.push(cli.bgLevel([]));
     fake.end();
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     spy.mockRestore();
@@ -395,7 +400,7 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     const fu = await b.next('turn_started', (m) => m.clientRef === 'ref-gone');
     expect(fu.reason).toBe('백그라운드 대기 중 이어 보냄');
     expect(fake.inputs.length).toBe(2);
-    fake.push(sdk.result('got it', S));
+    fake.push(cli.result('got it', S));
     await b.next('turn_result', (m) => m.turnId === fu.turnId);
     spy.mockRestore();
 
@@ -403,14 +408,14 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     const c = await client();
     await c.next('hello');
     const old = fake;
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     spy = slowCheck(true);
     c.send({ type: 'send', sessionId: S, cwd, text: 'and again', clientRef: 'ref-gone-2' });
     await new Promise((r) => setTimeout(r, 20));
     c.close();
     await b.next('turn_notice', (m) => m.message === recycleNotice(1));
     const next = await b.next('turn_started', (m) => m.clientRef === 'ref-gone-2');
-    fake.push(sdk.init(S), sdk.result('after recycle', S));
+    fake.push(cli.init(S), cli.result('after recycle', S));
     expect(await b.next('turn_result', (m) => m.turnId === next.turnId)).toMatchObject({ ok: true, text: 'after recycle' });
     expect(old.inputs.length).toBe(2);
     expect(fake.state.calls).toBe(1);
@@ -426,7 +431,7 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     a.send({ type: 'send', sessionId: S, cwd, text: 'status?', clientRef: 'ref-m' });
     expect((await a.next('turn_started', (m) => m.clientRef === 'ref-m')).reason).toBe('백그라운드 대기 중 이어 보냄');
     expect(fake.state.calls).toBe(1);
-    fake.push(sdk.result('ok', S), sdk.bgLevel([]));
+    fake.push(cli.result('ok', S), cli.bgLevel([]));
     fake.end();
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
@@ -439,11 +444,11 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     a.send({ type: 'send', sessionId: S, cwd, text: 'status?', clientRef: 'ref-k' });
     const fu = await a.next('turn_started', (m) => m.clientRef === 'ref-k');
     expect(fu.reason).toBe('백그라운드 대기 중 이어 보냄');
-    fake.push(sdk.result('still going', S));
+    fake.push(cli.result('still going', S));
     await a.next('turn_result', (m) => m.turnId === fu.turnId);
     expect(fake.state.calls).toBe(1);
     expect(a.got.some((m) => m.type === 'turn_notice' && m.turnId === '')).toBe(false);
-    fake.push(sdk.bgLevel([]));
+    fake.push(cli.bgLevel([]));
     fake.end();
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
@@ -452,18 +457,18 @@ describe('ws: deck follows a conversation that went on outside it', () => {
   it('a running turn is never cut: with a foreign write and a turn streaming, the process keeps going', async () => {
     const S = '55555555-5555-4555-8555-555555555555';
     const cwd = await seed(S, 'recycle3');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     const first = await a.next('turn_started');
-    fake.push(sdk.init(S), sdk.delta('working'));
+    fake.push(cli.init(S), cli.delta('working'));
     await a.next('delta');
     await fs.appendFile(fileOf(cwd, S), line('claude-desktop', 'from desktop'));
     a.send({ type: 'send', sessionId: S, cwd, text: 'more', clientRef: 'ref-q' });
     await new Promise((r) => setTimeout(r, 200));
     expect(a.got.some((m) => m.type === 'turn_notice' && m.turnId === '')).toBe(false);
-    fake.push(sdk.result('done', S));
+    fake.push(cli.result('done', S));
     expect(await a.next('turn_result', (m) => m.turnId === first.turnId)).toMatchObject({ ok: true, text: 'done' });
     fake.end();
     a.close();
