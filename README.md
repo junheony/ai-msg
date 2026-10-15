@@ -170,7 +170,7 @@ All settings are environment variables. None is required.
 | `DECK_EXTRA_HOSTS` | empty | Comma-separated extra names accepted in the `Host` header. |
 | `DECK_STEER` | on | `0` = messages sent during a turn are queued for after it instead of injected. |
 | `DECK_DRAIN_MAX_MIN` | `15` | On graceful restart, minutes to wait for running turns and live background work (subagents, Monitor); work still running then is cut, announced in its session, and told to the model on the next turn (a note added to its first prompt by a hook). |
-| `DECK_BG_MAX_MIN` | `120` | Minutes a CLI process may stay open for background tasks after its turn. |
+| `DECK_BG_MAX_MIN` | `360` | Minutes a CLI process may stay open for background tasks after its turn. When the limit cuts work, deck records it and sends the session on by itself (at most twice in a row). |
 | `DECK_BACKUP_RETENTION_DAYS` | `30` | Age at which fork backups and trashed sessions are deleted. |
 | `DECK_USAGE_STRICT` | unset | `1` = unknown quota means Opus / engine switch, `0` = never. Unset: decided by `usage-source.json`. |
 | `DECK_URL` | `http://127.0.0.1:9310` | Base URL of the optional usage dashboard. When unset, the first line of `~/.config/claude-pick/deck_url` is used if that file exists (an optional path shared with the author's other tools). |

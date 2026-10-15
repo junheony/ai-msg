@@ -50,7 +50,7 @@ export type DeckConfig = {
   desktopSessionsRoot: string;
   /** Graceful restart (SIGTERM/SIGUSR2): how long running turns and background work may finish (`DECK_DRAIN_MAX_MIN`, default 15). */
   drainMaxMs: number;
-  /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`, default 120). */
+  /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`, default 360 — long analyses and multi-hour subagents are normal; a cut here loses their results, and the model only hears of it through TurnRunner.continueAfterCap). */
   bgMaxMs: number;
   /** Messages typed while a Claude turn runs go into it at the next tool boundary (`DECK_STEER=0` turns it off: queued for after the turn). */
   steer: boolean;
@@ -153,7 +153,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     cwdRoots: [home, ...extraCwdRoots(env)],
     desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
     drainMaxMs: minutes(env.DECK_DRAIN_MAX_MIN, 15),
-    bgMaxMs: minutes(env.DECK_BG_MAX_MIN, 120),
+    bgMaxMs: minutes(env.DECK_BG_MAX_MIN, 360),
     steer: env.DECK_STEER !== '0',
     backupRetentionDays: Number(env.DECK_BACKUP_RETENTION_DAYS) > 0 ? Number(env.DECK_BACKUP_RETENTION_DAYS) : 30,
     vapidFile: path.join(configDir, 'vapid.json'),
