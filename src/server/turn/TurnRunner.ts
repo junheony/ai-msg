@@ -22,7 +22,8 @@ import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
 import { CODEX_ARCHIVED_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
 import { elsewhereNotice } from '../sessions/elsewhereNotice';
-import { scanForeign } from '../sessions/foreignWrites';
+import { OWN_LAG_MS, scanForeign } from '../sessions/foreignWrites';
+import { deckWrites } from '../engine/claudeCli/ownedEntries';
 import { backupDivergedAndMove } from '../sessions/SessionFork';
 import { isAncestor, moveSession } from '../sessions/SessionMover';
 import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
@@ -347,7 +348,7 @@ export class TurnRunner {
         // Never scanned: the stat spares the read (2 s of slack for file systems that keep whole-second mtimes).
         if (from === undefined && c.mtimeMs < entry.since - 2000) continue;
         // Scanned before: only what was appended since is read, so a process held open for hours costs each send the same.
-        const r = await scanForeign(c.file, entry.since, from ?? 0);
+        const r = await scanForeign(c.file, entry.since, from ?? 0, { isOwn: (u, id) => deckWrites.has(u, id), lagMs: OWN_LAG_MS });
         if (r.foreign) return true;
         entry.clean.set(c.file, r.end);
       }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { parseTranscript } from '../sessions/transcript';
-import { mapSdkMessage } from './ClaudeEngine';
+import { mapCliMessage } from './ClaudeEngine';
+import type { CliMessage } from './claudeCli/messages';
 import { StreamRedactor, redactSecrets } from './redact';
 
-const ev = (event: unknown) => ({ type: 'stream_event', parent_tool_use_id: null, event }) as unknown as SDKMessage;
+const ev = (event: unknown) => ({ type: 'stream_event', parent_tool_use_id: null, event }) as unknown as CliMessage;
 const L = (o: unknown) => JSON.stringify(o);
 
 // A real stall (quadratic rescans) takes many seconds; 1s flaked under heavy machine load.
@@ -12,10 +12,10 @@ const STALL_MS = 5000;
 
 describe('thinking: stream', () => {
   it('maps thinking block start / deltas / redacted blocks', () => {
-    expect(mapSdkMessage(ev({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }))).toEqual([{ kind: 'thinking', text: '' }]);
-    expect(mapSdkMessage(ev({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '음…' } }))).toEqual([{ kind: 'thinking', text: '음…' }]);
-    expect(mapSdkMessage(ev({ type: 'content_block_start', index: 0, content_block: { type: 'redacted_thinking' } }))).toEqual([{ kind: 'thinking', text: '', redacted: true }]);
-    expect(mapSdkMessage(ev({ type: 'content_block_start', index: 1, content_block: { type: 'text' } }))).toEqual([]);
+    expect(mapCliMessage(ev({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }))).toEqual([{ kind: 'thinking', text: '' }]);
+    expect(mapCliMessage(ev({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '음…' } }))).toEqual([{ kind: 'thinking', text: '음…' }]);
+    expect(mapCliMessage(ev({ type: 'content_block_start', index: 0, content_block: { type: 'redacted_thinking' } }))).toEqual([{ kind: 'thinking', text: '', redacted: true }]);
+    expect(mapCliMessage(ev({ type: 'content_block_start', index: 1, content_block: { type: 'text' } }))).toEqual([]);
   });
 });
 

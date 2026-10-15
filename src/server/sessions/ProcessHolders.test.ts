@@ -6,8 +6,8 @@ const B = 'bb000000-0000-4000-8000-000000000002';
 const C = 'cc000000-0000-4000-8000-000000000003';
 const D = 'dd000000-0000-4000-8000-000000000004';
 const DECK = 39022;
-const ROOT = '/Users/u/Documents/작업/deck/node_modules/';
-const SDK = `${ROOT}@anthropic-ai/claude-agent-sdk-darwin-arm64/claude --output-format stream-json --verbose --input-format stream-json --model claude-opus-5-5 --permission-prompt-tool stdio`;
+const MARK = '--permission-prompt-tool mcp__deck_bridge__permission';
+const SDK = `/opt/bin/claude -p --output-format stream-json --verbose --input-format stream-json --model claude-opus-5-5 ${MARK}`;
 const DESKTOP = '/Users/u/Library/Application Support/Claude/claude-code/2.1.280/claude.app/Contents/MacOS/claude --output-format stream-json --verbose --input-format stream-json';
 
 const PS = [
@@ -29,19 +29,17 @@ const PS = [
 
 describe('parseHolders', () => {
   it('lists sessions resumed by processes outside deck: Desktop by its path / ccd tools, anything else as other', () => {
-    const held = parseHolders(PS, { pid: DECK, ownRoots: [ROOT] });
+    const held = parseHolders(PS, { pid: DECK });
     expect(Object.fromEntries(held)).toEqual({ [A]: 'desktop', [C]: 'other', [D]: 'other' });
   });
 
-  it("deck's own CLI children are never holders: by parent pid, by ancestry, and by this repo's node_modules path", () => {
-    // A second deck instance (another pid) running the same repo's SDK binary: told apart by path alone.
-    expect(parseHolders(`700 600 ${SDK} --resume=${B}`, { pid: DECK, ownRoots: [ROOT] }).size).toBe(0);
-    // Started through a wrapper: a grandchild of deck, from a path deck does not own.
+  it("deck's own CLI children are never holders: by parent pid, by ancestry, and by deck's argv marker (another deck instance)", () => {
+    expect(parseHolders(`700 600 /opt/bin/claude -p --output-format stream-json ${MARK} --resume=${B}`, { pid: DECK }).size).toBe(0);
+    expect(parseHolders(`700 600 /opt/bin/claude -p --output-format stream-json --resume=${B}`, { pid: DECK }).get(B)).toBe('other');
+    // Started through a wrapper: a grandchild of deck, without the marker.
     expect(parseHolders(`${DECK} 1 node main.js\n500 ${DECK} sh -c wrapper\n501 500 /opt/claude --resume=${B}`, { pid: DECK }).size).toBe(0);
     // The same line under another parent is somebody else's.
     expect(parseHolders(`501 500 /opt/claude --resume=${B}`, { pid: DECK }).get(B)).toBe('other');
-    // An NFD spelling of the repo path (macOS) still matches.
-    expect(parseHolders(`700 600 ${SDK.normalize('NFD')} --resume=${B}`, { pid: DECK, ownRoots: [ROOT] }).size).toBe(0);
   });
 
   it('desktop wins when both kinds hold one session, whatever the order; mcp__ccd_ alone marks Desktop', () => {

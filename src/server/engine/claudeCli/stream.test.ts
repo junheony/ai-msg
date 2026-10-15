@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { parseLine, type CliMessage } from './messages';
 import { mapCliMessage, isActivity, BackgroundTracker } from './stream';
+import { ToolTracker, toolAudit as mkAudit } from './stream';
 import { toUserMessage } from './prompt';
 import { fakeClaudeCli, cli, argValue } from './fakeClaudeCli';
 
@@ -89,5 +90,50 @@ describe('fakeClaudeCli', () => {
     b.kill('SIGTERM');
     expect(await eb).toEqual([null, 'SIGTERM']);
     expect(fake.state.signals).toEqual(['SIGINT', 'SIGTERM']);
+  });
+});
+
+describe('ToolTracker (replaces PostToolUse/PostToolUseFailure audit)', () => {
+  const setup = () => {
+    const seen: { toolUseId: string; decision: string; source: string }[] = [];
+    const audit = mkAudit({ onToolAudit: async (e) => { seen.push(e); } });
+    return { t: new ToolTracker(audit), audit, seen };
+  };
+  const use = (id: string, parent: string | null = null) => ({ type: 'assistant', parent_tool_use_id: parent, message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'ls' } }] } }) as CliMessage;
+  const res = (id: string, isError = false, parent: string | null = null) => ({ type: 'user', parent_tool_use_id: parent, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', is_error: isError }] } }) as CliMessage;
+  it('a successful result the CLI ran on its own → allow cli, once', async () => {
+    const { t, seen } = setup();
+    await t.apply(use('a'));
+    await t.apply(res('a'));
+    await t.apply(res('a'));
+    expect(seen).toEqual([expect.objectContaining({ toolUseId: 'a', decision: 'allow', source: 'cli' })]);
+  });
+  it('subagent calls are audited too', async () => {
+    const { t, seen } = setup();
+    await t.apply(use('s', 'toolu_ag'));
+    await t.apply(res('s', false, 'toolu_ag'));
+    expect(seen.map((s) => s.toolUseId)).toEqual(['s']);
+  });
+  it('calls deck decided are skipped', async () => {
+    const { t, audit, seen } = setup();
+    audit.handled.add('b');
+    await t.apply(use('b'));
+    await t.apply(res('b'));
+    expect(seen).toEqual([]);
+  });
+  it('error results wait for the turn result so a denial report wins', async () => {
+    const { t, audit, seen } = setup();
+    await t.apply(use('c'));
+    await t.apply(res('c', true));
+    expect(seen).toEqual([]);
+    await audit.report({ tool_name: 'Bash', tool_input: {}, tool_use_id: 'c' }, 'deny', 'rule');
+    await t.apply({ type: 'result', subtype: 'success', session_id: 's' } as CliMessage);
+    expect(seen).toEqual([expect.objectContaining({ toolUseId: 'c', decision: 'deny', source: 'rule' })]);
+  });
+  it('replayed tool results are ignored', async () => {
+    const { t, seen } = setup();
+    await t.apply(use('d'));
+    await t.apply({ ...(res('d') as object), isReplay: true } as CliMessage);
+    expect(seen).toEqual([]);
   });
 });

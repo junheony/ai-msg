@@ -8,10 +8,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ClaudeProcess } from '../process';
-import { claudeArgs, claudeEnv } from '../args';
+import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, type CliPermissionMode, type RelaySpec } from '../args';
+import { PermissionBridge, type BridgeHandlers, type PermissionCall } from '../bridge';
 import { resolveClaudeBin } from '../version';
 import { scrubLine } from './scrub';
-import { BackgroundTracker } from '../stream';
+import { BackgroundTracker, toolAudit } from '../stream';
+import { hookHandler } from '../hooks';
+import { writeForkSource } from '../fork';
+import { OwnedEntries } from '../ownedEntries';
+import { projectSlug } from '../../../sessions/slug';
 import type { CliMessage, CliUserMessage, Rec } from '../messages';
 
 export type CaptureCtx = {
@@ -25,7 +30,11 @@ export type Scenario = {
   /** Default false: prompts off (`--permission-prompts none`, no prompt tool). Task 4 adds the bridge path. */
   bridge?: boolean;
   extraArgs?: (dir: string) => string[];
-  resume?: (dir: string) => string;
+  /** Starting `--permission-mode` (default `default`). */
+  permissionMode?: CliPermissionMode;
+  /** The child's `MCP_TOOL_TIMEOUT` in ms (default 600000). */
+  toolTimeoutMs?: number;
+  resume?: (dir: string) => string | Promise<string>;
   first: string;
   drive(ctx: CaptureCtx, m: CliMessage): void | Promise<void>;
   /** Extra checks recorded into meta after the run. */
@@ -34,6 +43,10 @@ export type Scenario = {
 
 export const FIRST_UUID = '00000000-0000-4000-8000-000000000001';
 export const SECOND_UUID = '00000000-0000-4000-8000-000000000002';
+
+/** Carries the parent run's facts (a session id, a uuid, a path) from `fork-parent` to `fork-file`, which deletes it. */
+const HANDOFF = path.join(os.tmpdir(), 'qd-cap-fork.json');
+const PROJECTS = () => path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'projects');
 
 const text = (m: CliMessage): string => (m.type === 'stream_event' && (m.event as Rec).type === 'content_block_delta' ? String(((m.event as Rec).delta as Rec)?.text ?? '') : '');
 
@@ -87,6 +100,68 @@ export const scenarios: Record<string, Scenario> = {
     },
     after: (ctx) => { delete ctx.meta.bgTracker; },
   },
+  'fork-parent': {
+    maxTurns: 2,
+    first: 'Remember the codeword KIWI. Reply only OK.',
+    drive: (ctx, m) => {
+      if (m.type === 'assistant' && typeof m.uuid === 'string') ctx.meta.lastAssistant = m.uuid;
+      if (m.type !== 'result') return;
+      ((ctx.meta.turns ??= []) as unknown[]).push({ session: m.session_id, lastAssistant: ctx.meta.lastAssistant });
+      if ((ctx.meta.turns as unknown[]).length === 1) ctx.send('Also remember the codeword LIME. Reply only OK.');
+      else ctx.proc.stop();
+    },
+    after: async (ctx) => {
+      const [t1] = ctx.meta.turns as { session: string; lastAssistant: string }[];
+      const file = path.join(PROJECTS(), projectSlug(path.join(ctx.dir, 'work')), `${t1!.session}.jsonl`);
+      const copy = path.join(os.tmpdir(), `qd-cap-parent-${t1!.session}.jsonl`);
+      fs.copyFileSync(file, copy);
+      fs.writeFileSync(HANDOFF, JSON.stringify({ sessionId: t1!.session, at: t1!.lastAssistant, file: copy }), { mode: 0o600 });
+      ctx.meta.transcriptUuidsSeenOnStdout = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'assistant').every((r) => (ctx.frames as { uuid?: string }[]).some((f) => f.uuid === r.uuid));
+    },
+  },
+  'fork-file': {
+    maxTurns: 1,
+    resume: async (dir) => {
+      const h = JSON.parse(fs.readFileSync(HANDOFF, 'utf8')) as { sessionId: string; at: string; file: string };
+      const r = await writeForkSource({ candidates: [h.file], at: h.at, dir, sessionId: h.sessionId });
+      if (!r.ok) throw new Error(r.text);
+      return r.path;
+    },
+    extraArgs: () => ['--fork-session'],
+    first: 'List every codeword I asked you to remember, comma-separated, nothing else.',
+    drive: (ctx, m) => {
+      if (m.type === 'system' && m.subtype === 'init') ctx.meta.initSession = m.session_id;
+      if (m.type === 'result') { ctx.meta.result = m.result; ctx.meta.resultSession = m.session_id; ctx.proc.stop(); }
+    },
+    after: (ctx) => {
+      const h = JSON.parse(fs.readFileSync(HANDOFF, 'utf8')) as { sessionId: string; file: string };
+      ctx.meta.newId = ctx.meta.initSession !== h.sessionId;
+      const own = path.join(PROJECTS(), projectSlug(path.join(ctx.dir, 'work')));
+      ctx.meta.forkTranscriptInCwdProject = fs.existsSync(path.join(own, `${String(ctx.meta.initSession)}.jsonl`));
+      ctx.meta.sourceKeptWhole = fs.readFileSync(h.file, 'utf8').includes('LIME');
+      fs.rmSync(h.file, { force: true });
+      fs.rmSync(HANDOFF, { force: true });
+    },
+  },
+  'owned-uuids': {
+    maxTurns: 3,
+    settings: { permissions: { allow: ['Bash(echo owned)'] } },
+    first: 'Run `echo owned` with the Bash tool, then reply DONE.',
+    drive: (ctx, m) => { if (m.type === 'system' && m.subtype === 'init') ctx.meta.session = m.session_id; if (m.type === 'result') ctx.proc.stop(); },
+    after: (ctx) => {
+      const own = new OwnedEntries();
+      own.add(FIRST_UUID);
+      for (const f of ctx.frames) own.note(f);
+      const file = path.join(PROJECTS(), projectSlug(path.join(ctx.dir, 'work')), `${String(ctx.meta.session)}.jsonl`);
+      const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+      ctx.meta.entrypoints = [...new Set(rows.map((r) => r.entrypoint).filter((x) => typeof x === 'string'))];
+      ctx.meta.firstUuidKept = rows.some((r) => r.uuid === FIRST_UUID);
+      ctx.meta.unowned = rows
+        .filter((r) => !r.isSidechain && (r.type === 'assistant' || r.type === 'user') && typeof r.uuid === 'string')
+        .filter((r) => !own.has(r.uuid as string, typeof (r.message as { id?: unknown })?.id === 'string' ? (r.message as { id: string }).id : null))
+        .map((r) => ({ type: r.type, toolResult: Array.isArray((r.message as { content?: unknown })?.content) }));
+    },
+  },
 };
 
 function replaceFlag(args: string[], flag: string, value: string | null): string[] {
@@ -106,11 +181,11 @@ export async function capture(name: string, sc: Scenario, hooks: { bridgeSetup?:
   fs.writeFileSync(settingsPath, JSON.stringify({ ...(sc.settings ?? {}), ...(bridge?.settings ?? {}) }), { mode: 0o600 });
   const mcpConfigPath = bridge?.mcpConfigPath ?? path.join(dir, 'mcp.json');
   if (!bridge) fs.writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: {} }), { mode: 0o600 });
-  let args = claudeArgs({ model: 'sonnet', permissionMode: 'default', settingsPath, mcpConfigPath, ...(sc.resume ? { resume: sc.resume(dir) } : {}) });
+  let args = claudeArgs({ model: 'sonnet', permissionMode: sc.permissionMode ?? 'default', settingsPath, mcpConfigPath, ...(sc.resume ? { resume: await sc.resume(dir) } : {}) });
   args = replaceFlag(args, '--setting-sources', 'project');
   if (!bridge) { args = replaceFlag(args, '--permission-prompt-tool', null); args = replaceFlag(args, '--permission-prompts', 'none'); }
   args.push('--max-turns', String(sc.maxTurns), ...(sc.extraArgs?.(dir) ?? []));
-  const proc = new ClaudeProcess({ bin: bin.bin, args, cwd: work, env: claudeEnv(process.env, 600_000) });
+  const proc = new ClaudeProcess({ bin: bin.bin, args, cwd: work, env: claudeEnv(process.env, sc.toolTimeoutMs ?? 600_000) });
   const frames: CliMessage[] = [];
   const meta: Rec = { cli: bin.version, scenario: name, maxTurns: sc.maxTurns };
   const ctx: CaptureCtx = {
@@ -128,15 +203,159 @@ export async function capture(name: string, sc: Scenario, hooks: { bridgeSetup?:
   await bridge?.dispose();
   const scrub = (s: string) => scrubLine(s, { home: os.homedir(), cwd: work });
   const out = path.join(import.meta.dirname, `${name}.jsonl`);
-  fs.writeFileSync(out, frames.map((f) => scrub(JSON.stringify(f))).join('\n') + '\n');
+  fs.writeFileSync(out, frames.map((f) => scrub(JSON.stringify(f))).filter(Boolean).join('\n') + '\n');
   fs.writeFileSync(path.join(import.meta.dirname, `${name}.meta.json`), scrub(JSON.stringify(meta, null, 2)) + '\n');
   fs.rmSync(dir, { recursive: true, force: true });
+  // The transcript directory the run created in the profile: captures leave nothing behind.
+  for (const f of new Set([work, work.normalize('NFD')])) fs.rmSync(path.join(PROJECTS(), projectSlug(f)), { recursive: true, force: true });
   console.log(`wrote ${path.relative(process.cwd(), out)} (${frames.length} frames)`, meta.exit);
+}
+
+export type BridgeScenario = Scenario & {
+  handlers(ctx: { calls: PermissionCall[]; meta: Rec; dir: string }): Partial<BridgeHandlers>;
+  /** `--settings` hook commands running the real hookRelay.ts against this capture's bridge registration. */
+  hookSettings?: (relay: RelaySpec) => Record<string, unknown>;
+};
+
+const MCP_SCRIPT = path.join(import.meta.dirname, '..', 'permissionMcp.ts');
+const allow = async (c: PermissionCall) => ({ behavior: 'allow' as const, updatedInput: c.input });
+
+export async function captureWithBridge(name: string, sc: BridgeScenario): Promise<void> {
+  const calls: PermissionCall[] = [];
+  const meta: Rec = {};
+  const bridge = await PermissionBridge.open();
+  await capture(name, { ...sc, bridge: true, after: async (ctx) => { Object.assign(ctx.meta, meta, { calls: calls.map((c) => ({ tool_name: c.tool_name, inputKeys: Object.keys(c.input), tool_use_id: c.tool_use_id, permission_suggestions: c.permission_suggestions ?? null })) }); await sc.after?.(ctx); } }, {
+    bridgeSetup: async (dir) => {
+      const h = sc.handlers({ calls, meta, dir });
+      const reg = bridge.register({
+        permission: async (c, s) => { calls.push(c); return (h.permission ?? allow)(c, s); },
+        hook: h.hook ?? (async () => ({})),
+      });
+      const mcpConfigPath = path.join(dir, 'mcp.json');
+      fs.writeFileSync(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: process.execPath, script: MCP_SCRIPT, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
+      const relay = { node: process.execPath, script: path.join(import.meta.dirname, '..', 'hookRelay.ts'), socketPath: reg.socketPath, token: reg.token };
+      return { mcpConfigPath, settings: sc.hookSettings?.(relay) ?? {}, dispose: async () => { reg.dispose(); await bridge.close(); } };
+    },
+  });
+}
+
+export const bridgeScenarios: Record<string, BridgeScenario> = {
+  'permission-allow': {
+    maxTurns: 3,
+    first: 'Create a file named hello.txt containing the word hi, using the Write tool. Then reply DONE.',
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    handlers: () => ({}),
+    after: (ctx) => { ctx.meta.fileWritten = fs.existsSync(path.join(ctx.dir, 'work', 'hello.txt')); },
+  },
+  'permission-session': {
+    maxTurns: 4,
+    // `echo` is auto-allowed by the CLI (never reaches the prompt tool); `touch` asks.
+    first: 'Run the shell command `touch one.txt` with the Bash tool, then, as a separate Bash call, run `touch two.txt`. Then reply DONE.',
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    handlers: () => ({
+      permission: async (c) => ({ behavior: 'allow', updatedInput: c.input, updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'session' }] }),
+    }),
+  },
+  'plan-exit': {
+    maxTurns: 6,
+    permissionMode: 'plan',
+    first: 'Make a one-line plan to create notes.txt containing x, present it with ExitPlanMode, and once approved create the file with the Write tool. Then reply DONE.',
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    handlers: () => ({
+      permission: async (c) => c.tool_name === 'ExitPlanMode'
+        ? { behavior: 'allow', updatedInput: c.input, updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }
+        : { behavior: 'allow', updatedInput: c.input },
+    }),
+    after: (ctx) => { ctx.meta.fileWritten = fs.existsSync(path.join(ctx.dir, 'work', 'notes.txt')); },
+  },
+  // `ask` (spike D6) moved to Task 3 Step 8; its fixture is already committed.
+  deny: {
+    maxTurns: 3,
+    settings: { permissions: { deny: ['Bash(rm:*)'] } },
+    first: 'First run `rm -f nothing.txt` with the Bash tool. Then create a file named x.txt containing x with the Write tool. Report each tool result verbatim.',
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    handlers: () => ({ permission: async () => ({ behavior: 'deny', message: 'NOPE-MARKER' }) }),
+  },
+  'self-call': {
+    maxTurns: 2,
+    first: 'Call the tool named mcp__deck_bridge__permission with tool_name "Bash" and input {}. Report what happened.',
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    handlers: () => ({}),
+  },
+  hooks: {
+    maxTurns: 3,
+    first: 'Read the file a.txt with the Read tool. Then tell me the codeword from your context if you were given one, else NONE.',
+    hookSettings: (relay) => buildSettings({ noTools: true, systemNote: 'The codeword is PAPAYA.', relay }),
+    handlers: ({ meta }) => {
+      const audit = toolAudit({ onToolAudit: async (e) => { ((meta.audits ??= []) as unknown[]).push(e); } });
+      const h = hookHandler({ noTools: true, systemNote: 'The codeword is PAPAYA.' }, audit, { mode: 'default', startedIn: 'default' });
+      return { hook: async (i, s) => { ((meta.hookEvents ??= []) as unknown[]).push(i.hook_event_name); return h(i, s); } };
+    },
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+  },
+  'hook-ask': {
+    maxTurns: 4,
+    permissionMode: 'acceptEdits',
+    first: 'Create a.txt containing a with the Write tool, then create b.txt containing b with the Write tool. Then reply DONE.',
+    hookSettings: (relay) => buildSettings({ relay }),
+    handlers: ({ meta }) => {
+      let n = 0;
+      return { hook: async (i) => {
+        if (i.hook_event_name !== 'PreToolUse') return {};
+        n += 1;
+        ((meta.hookCalls ??= []) as unknown[]).push(i.tool_name);
+        return n === 2 ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask' } } : {};
+      } };
+    },
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    after: (ctx) => { ctx.meta.files = ['a.txt', 'b.txt'].filter((f) => fs.existsSync(path.join(ctx.dir, 'work', f))); },
+  },
+  'hook-allow': {
+    maxTurns: 3,
+    first: 'Create c.txt containing c with the Write tool. Then reply DONE.',
+    hookSettings: (relay) => buildSettings({ relay }),
+    handlers: () => ({ hook: async (i) => (i.hook_event_name === 'PreToolUse' ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } } : {}) }),
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    after: (ctx) => { ctx.meta.fileWritten = fs.existsSync(path.join(ctx.dir, 'work', 'c.txt')); },
+  },
+  'permission-slow': slowPermission(3_000),
+  'permission-slow-20s': slowPermission(20_000),
+};
+
+/**
+ * Does MCP_TOOL_TIMEOUT bound the permission prompt tool? The allow is answered 6 s late; with a
+ * 3 s timeout the CLI should give up on the call (tool not run), with 20 s it should honour it.
+ */
+function slowPermission(toolTimeoutMs: number): BridgeScenario {
+  return {
+    maxTurns: 3,
+    toolTimeoutMs,
+    timeoutMs: 120_000,
+    first: 'Create a file named slow.txt containing the word hi, using the Write tool. Then report the tool result verbatim and reply DONE.',
+    drive: (ctx, m) => {
+      if (m.type === 'user' && Array.isArray(m.message.content)) {
+        for (const b of m.message.content) if (b.type === 'tool_result') {
+          ((ctx.meta.toolResults ??= []) as unknown[]).push({ is_error: b.is_error === true, text: (typeof b.content === 'string' ? b.content : JSON.stringify(b.content)).slice(0, 300) });
+        }
+      }
+      if (m.type === 'result') ctx.proc.stop();
+    },
+    handlers: ({ meta }) => ({
+      permission: (c, signal) => new Promise((resolve) => {
+        const t0 = Date.now();
+        const t = setTimeout(() => { meta.answeredAfterMs = Date.now() - t0; resolve({ behavior: 'allow', updatedInput: c.input }); }, 6_000);
+        signal.addEventListener('abort', () => { clearTimeout(t); meta.cancelledAfterMs = Date.now() - t0; resolve({ behavior: 'deny', message: 'cancelled' }); }, { once: true });
+      }),
+    }),
+    after: (ctx) => { ctx.meta.toolTimeoutMs = toolTimeoutMs; ctx.meta.fileWritten = fs.existsSync(path.join(ctx.dir, 'work', 'slow.txt')); },
+  };
 }
 
 if (process.argv[1]?.endsWith('capture.ts')) {
   const name = process.argv[2] ?? '';
+  const bsc = bridgeScenarios[name];
   const sc = scenarios[name];
-  if (!sc) { console.error(`scenarios: ${Object.keys(scenarios).join(', ')}`); process.exit(2); }
-  await capture(name, sc);
+  if (bsc) await captureWithBridge(name, bsc);
+  else if (sc) await capture(name, sc);
+  else { console.error(`scenarios: ${[...Object.keys(scenarios), ...Object.keys(bridgeScenarios)].join(', ')}`); process.exit(2); }
 }

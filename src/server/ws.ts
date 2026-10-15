@@ -17,7 +17,8 @@ import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRoll
 import { sessionAllowLabel } from './engine/Engine';
 import { displayError } from './engine/redact';
 import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
-import { scanForeign } from './sessions/foreignWrites';
+import { OWN_LAG_MS, scanForeign } from './sessions/foreignWrites';
+import { deckWrites } from './engine/claudeCli/ownedEntries';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
@@ -392,7 +393,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         if (busy.has(id)) continue;
         if (!files.has(id)) files.set(id, deps.index.sessions().filter((e) => e.sessionId === id).map((e) => e.file));
         for (const file of files.get(id)!) {
-          const r = await scanForeign(file, rec.at - OUTSIDE_SLACK_MS, rec.clean.get(file) ?? 0).catch(() => null);
+          const r = await scanForeign(file, rec.at - OUTSIDE_SLACK_MS, rec.clean.get(file) ?? 0, { isOwn: (u, id) => deckWrites.has(u, id), lagMs: OWN_LAG_MS }).catch(() => null);
           if (!r) continue;
           if (r.foreign) { stale.set(id, [...(stale.get(id) ?? []), ws]); break; }
           rec.clean.set(file, r.end);

@@ -6,8 +6,10 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
 import { cookieValueFor } from './auth';
-import { ClaudeEngine, type QueryFn } from './engine/ClaudeEngine';
-import { fakeSdk, sdk } from './engine/fakeSdk';
+import { ClaudeEngine } from './engine/ClaudeEngine';
+import { fakeClaudeCli, cli } from './engine/claudeCli/fakeClaudeCli';
+import { PermissionBridge } from './engine/claudeCli/bridge';
+import type { ClaudeSpawnFn } from './engine/claudeCli/spawnTypes';
 import { TCC_DENIAL_NOTICE } from './tccDenial';
 import { createRequestHandler } from './http';
 import { PinStore } from './sessions/PinStore';
@@ -30,10 +32,13 @@ let work: string;
 let store: SessionStateStore;
 let index: SessionIndex;
 /** Each test installs its own fake CLI process. */
-let fake = fakeSdk();
-const queryFn: QueryFn = (p) => fake.queryFn(p);
+let fake = fakeClaudeCli();
+const spawnFn: ClaudeSpawnFn = (bin, args, o) => fake.spawnFn(bin, args, o);
+/** The engines' permission bridge (one for the file). */
+let bridge: PermissionBridge;
 
 beforeAll(async () => {
+  bridge = await PermissionBridge.open();
   base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-wsact-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
@@ -43,7 +48,7 @@ beforeAll(async () => {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  const runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ bin: 'claude', spawnFn, bridge, killGraceMs: 50, accounts: testRegistry(), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
   const pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
   const settings = new SettingsStore(path.join(base, 'settings.json'));
@@ -55,7 +60,7 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${port}`;
   wsUrl = `ws://127.0.0.1:${port}/ws`;
 });
-afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
+afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); await bridge.close(); });
 
 /** A socket that buffers everything from connection time; `next(pred)` waits for the next matching message. */
 async function client() {
@@ -95,10 +100,10 @@ async function seed(sid: string, name: string): Promise<string> {
 }
 
 describe('ws: activity on every device', () => {
-  it('broadcasts session activity, replays a running turn to a late device, and stops one task', async () => {
+  it('broadcasts session activity, replays a running turn to a late device; stopping one task is not offered', async () => {
     const S = '55555555-5555-4555-8555-555555555555';
     const cwd = await seed(S, 'act1');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     const other = await client();
@@ -110,8 +115,8 @@ describe('ws: activity on every device', () => {
     expect(await other.next('activity', (m) => m.sessions.length === 1)).toMatchObject({ sessions: [{ sessionId: S, turnId: t.turnId, running: true, bg: 0 }] });
 
     fake.push(
-      sdk.init(S), sdk.messageStart(), sdk.blockStart('tool_use'), sdk.agentCall(), sdk.messageDelta(40),
-      sdk.agentStarted(), sdk.subToolCall(), sdk.subToolResult(), sdk.agentProgress(),
+      cli.init(S), cli.messageStart(), cli.blockStart('tool_use'), cli.agentCall(), cli.messageDelta(40),
+      cli.agentStarted(), cli.subToolCall(), cli.subToolResult(), cli.agentProgress(),
       // A patch carries no Agent call id; the replay must keep the one task_started gave.
       { type: 'system', subtype: 'task_updated', task_id: 'a1', patch: { status: 'running' }, session_id: S },
     );
@@ -132,19 +137,23 @@ describe('ws: activity on every device', () => {
     expect(await late.next('sub_tool_result')).toMatchObject({ toolUseId: 'sub1', isError: false });
     expect(await late.next('turn_progress')).toMatchObject({ outputTokens: 40 });
 
-    // A background command outlives the result: activity shows bg, the pill can stop it by id.
+    // A background command outlives the result: activity shows bg. Stopping one task needs the control protocol the CLI engine does not use, so the pill offers no stop.
     fake.push(
       { type: 'system', subtype: 'task_notification', task_id: 'a1', tool_use_id: 'toolu_ag', status: 'completed', summary: '42', session_id: S },
       { type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'k', task_type: 'local_bash', description: 'sleep 20' }], session_id: S },
-      sdk.result('waiting', S),
+      cli.result('waiting', S),
     );
-    expect(await a.next('turn_background', (m) => m.tasks.length === 1)).toMatchObject({ canStop: true, detail: [{ id: 'k', type: 'local_bash', description: 'sleep 20' }] });
+    const bgMsg = await a.next('turn_background', (m) => m.tasks.length === 1);
+    expect(bgMsg).toMatchObject({ detail: [{ id: 'k', type: 'local_bash', description: 'sleep 20' }] });
+    expect(bgMsg).not.toHaveProperty('canStop');
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     expect(await other.next('activity', (m) => m.sessions[0]?.running === false)).toMatchObject({ sessions: [{ sessionId: S, running: false, bg: 1 }] });
 
+    // A stray stop_task is refused; the child is left alone.
     a.send({ type: 'stop_task', turnId: t.turnId, taskId: 'k' });
-    expect(await a.next('task_done', (m) => m.taskId === 'k')).toMatchObject({ status: 'stopped' });
-    expect(fake.stopped).toEqual(['k']);
+    expect(await a.next('error')).toMatchObject({ message: '이 작업은 따로 멈출 수 없습니다 — 모두 중지를 써 주세요' });
+    expect(a.got.some((m) => m.type === 'task_done' && (m as { taskId?: string }).taskId === 'k')).toBe(false);
+    expect(fake.state.signals).toEqual([]);
 
     fake.push({ type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: S });
     fake.end();
@@ -160,7 +169,7 @@ describe('ws: activity on every device', () => {
     const S = '56565656-5656-4565-8565-565656565656';
     const cwd = await seed(S, 'act-mid');
     const file = path.join(base, 'b', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${S}.jsonl`);
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'open_session', sessionId: S });
@@ -172,8 +181,8 @@ describe('ws: activity on every device', () => {
     // First API message: a text block, then a Bash call; the CLI writes each finished block (and the result) to the transcript.
     const bash = { type: 'tool_use', id: 'toolu_b', name: 'Bash', input: { command: 'ls' } };
     fake.push(
-      sdk.init(S), sdk.messageStart(), sdk.blockStart('text'), sdk.delta('Let me '), sdk.delta('look.'),
-      sdk.blockStart('tool_use'), { type: 'assistant', parent_tool_use_id: null, message: { content: [bash] }, session_id: S },
+      cli.init(S), cli.messageStart(), cli.blockStart('text'), cli.delta('Let me '), cli.delta('look.'),
+      cli.blockStart('tool_use'), { type: 'assistant', parent_tool_use_id: null, message: { content: [bash] }, session_id: S },
     );
     await a.next('tool_call');
     const line = (r: unknown) => JSON.stringify(r) + '\n';
@@ -183,7 +192,7 @@ describe('ws: activity on every device', () => {
     // Second API message: its text block is streaming (only in memory, not in the transcript yet).
     fake.push(
       { type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_b', content: 'a\nb', is_error: false }] }, session_id: S },
-      sdk.messageStart(), sdk.blockStart('text'), sdk.delta('Found '), sdk.delta('two '),
+      cli.messageStart(), cli.blockStart('text'), cli.delta('Found '), cli.delta('two '),
     );
     await a.next('delta', (m) => m.text === 'two ');
 
@@ -197,14 +206,14 @@ describe('ws: activity on every device', () => {
     const afterHistory = late.got.indexOf(h) + 1;
     expect(await late.next('delta')).toMatchObject({ turnId: t.turnId, sessionId: S, text: 'Found two ' });
 
-    fake.push(sdk.delta('files.'));
+    fake.push(cli.delta('files.'));
     await late.next('delta', (m) => m.text === 'files.');
     await a.next('delta', (m) => m.text === 'files.');
     // What the late device shows in the turn's streaming item is what the first device streamed since the transcript's last block.
     expect(textOf(late.got, afterHistory)).toBe('Found two files.');
     expect(textOf(a.got)).toBe('Let me look.Found two files.');
 
-    fake.push(sdk.result('Found two files.', S));
+    fake.push(cli.result('Found two files.', S));
     fake.end();
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     a.close();
@@ -214,7 +223,7 @@ describe('ws: activity on every device', () => {
   it('tells the turn once when macOS denies the process its folder (TCC)', async () => {
     const S = '77777777-7777-4777-8777-777777777777';
     const cwd = await seed(S, 'tcc1');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
@@ -223,13 +232,13 @@ describe('ws: activity on every device', () => {
     const failed = (id: string, text: string) => ({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text, is_error: true }] }, session_id: S });
     const denied = 'Exit code 1\nhead: /Users/alice/Documents/work/notes.md: Operation not permitted';
     fake.push(
-      sdk.init(S),
+      cli.init(S),
       call('toolu_1'), failed('toolu_1', 'Exit code 2\nls: nope: No such file or directory'),
       call('toolu_2'), failed('toolu_2', denied),
       call('toolu_3'), failed('toolu_3', denied),
     );
     await a.next('tool_result', (m) => m.toolUseId === 'toolu_3');
-    fake.push(sdk.result('done', S));
+    fake.push(cli.result('done', S));
     fake.end();
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     // An ordinary failure says nothing; the denial is explained once, after the first result that shows it.

@@ -1,0 +1,14 @@
+{
+  "cli": "2.1.283",
+  "scenario": "self-call",
+  "maxTurns": 2,
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "calls": [],
+  "verdicts": {
+    "D9_visible": false,
+    "note": "prompt tool not in init tools; ToolSearch finds nothing; no call reached the bridge, so permission-allow-disallowed was not needed"
+  }
+}

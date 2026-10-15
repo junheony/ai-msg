@@ -144,3 +144,35 @@ describe('scanForeign (cursor)', () => {
     expect((await scanForeign(g, T0, from)).foreign).toBe(true);
   });
 });
+
+describe('ownership by deck’s own stdout (CLI children)', () => {
+  const cli = (o: { type?: string; ms: number; uuid: string; id?: string; compact?: boolean }) => JSON.stringify({
+    parentUuid: null, isSidechain: false, type: o.type ?? 'user', uuid: o.uuid, timestamp: at(o.ms), entrypoint: 'sdk-cli',
+    ...(o.compact ? { isCompactSummary: true } : {}),
+    message: { role: o.type ?? 'user', ...(o.id ? { id: o.id } : {}), content: 'x' },
+  });
+  const own = new Set(['mine-u', 'msg_mine']);
+  const isOwn = (u: string, id: string | null) => own.has(u) || (id !== null && own.has(id));
+  it('an entry deck emitted is not foreign; one it did not is', () => {
+    expect(classifyLine(cli({ ms: 5, uuid: 'mine-u' }), T0, { isOwn })).toBeNull();
+    expect(classifyLine(cli({ type: 'assistant', ms: 5, uuid: 'blk2', id: 'msg_mine' }), T0, { isOwn })).toBeNull();
+    expect(classifyLine(cli({ ms: 5, uuid: 'theirs' }), T0, { isOwn })).toBe('foreign');
+  });
+  it('an unknown entry younger than the lag is pending (deck may not have read its stdout frame yet)', () => {
+    expect(classifyLine(cli({ ms: 5, uuid: 'theirs' }), T0, { isOwn, nowMs: T0 + 1000, lagMs: 3000 })).toBe('pending');
+    expect(classifyLine(cli({ ms: 5, uuid: 'theirs' }), T0, { isOwn, nowMs: T0 + 5000, lagMs: 3000 })).toBe('foreign');
+  });
+  it('Desktop and terminal entries are never deck’s: foreign at once, whatever the lag', () => {
+    expect(classifyLine(entry({ entrypoint: 'claude-desktop', ms: 5 }), T0, { isOwn, nowMs: T0 + 1000, lagMs: 3000 })).toBe('foreign');
+    expect(classifyLine(entry({ entrypoint: 'cli', ms: 5 }), T0, { isOwn, nowMs: T0 + 1000, lagMs: 3000 })).toBe('foreign');
+  });
+  it('compact summaries are bookkeeping, not a prompt', () => {
+    expect(classifyLine(cli({ ms: 5, uuid: 'cs', compact: true }), T0, { isOwn })).toBeNull();
+  });
+  it('a pending line keeps the cursor where it was; older foreign lines are still found', async () => {
+    const f = await transcript('pending.jsonl', [cli({ ms: 5, uuid: 'mine-u' }), cli({ ms: 6, uuid: 'late' })]);
+    expect(await scanForeign(f, T0, 0, { isOwn, nowMs: T0 + 1000, lagMs: 3000 })).toEqual({ foreign: false, end: 0 });
+    const g = await transcript('pending2.jsonl', [cli({ ms: 5, uuid: 'theirs' }), cli({ ms: 3000, uuid: 'late' })]);
+    expect((await scanForeign(g, T0, 0, { isOwn, nowMs: T0 + 4000, lagMs: 3000 })).foreign).toBe(true);
+  });
+});

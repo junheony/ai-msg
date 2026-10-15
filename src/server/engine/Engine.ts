@@ -1,4 +1,4 @@
-import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionUpdate } from './claudeCli/permissionTypes';
 import type { Account } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
 import type { ClaudeModel, Effort } from '../../shared/models';

@@ -6,8 +6,10 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
 import { cookieValueFor } from './auth';
-import { ClaudeEngine, type QueryFn } from './engine/ClaudeEngine';
-import { fakeSdk, sdk } from './engine/fakeSdk';
+import { ClaudeEngine } from './engine/ClaudeEngine';
+import { fakeClaudeCli, cli } from './engine/claudeCli/fakeClaudeCli';
+import { PermissionBridge } from './engine/claudeCli/bridge';
+import type { ClaudeSpawnFn } from './engine/claudeCli/spawnTypes';
 import { createRequestHandler } from './http';
 import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { PinStore } from './sessions/PinStore';
@@ -31,10 +33,13 @@ let store: SessionStateStore;
 let index: SessionIndex;
 let runner: TurnRunner;
 /** Each test installs its own fake CLI process. */
-let fake = fakeSdk();
-const queryFn: QueryFn = (p) => fake.queryFn(p);
+let fake = fakeClaudeCli();
+const spawnFn: ClaudeSpawnFn = (bin, args, o) => fake.spawnFn(bin, args, o);
+/** The engines' permission bridge (one for the file). */
+let bridge: PermissionBridge;
 
 beforeAll(async () => {
+  bridge = await PermissionBridge.open();
   base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-wsbg-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
@@ -44,7 +49,7 @@ beforeAll(async () => {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ bin: 'claude', spawnFn, bridge, killGraceMs: 50, accounts: testRegistry(), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
   const pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
   const settings = new SettingsStore(path.join(base, 'settings.json'));
@@ -56,7 +61,7 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${port}`;
   wsUrl = `ws://127.0.0.1:${port}/ws`;
 });
-afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
+afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); await bridge.close(); });
 
 /** A socket that buffers everything from connection time; `next(pred)` waits for the next matching message. */
 async function client(url = wsUrl, org = origin) {
@@ -99,12 +104,12 @@ describe('ws: sessions held open for background work', () => {
   it('a send while waiting becomes a follow-up of the same process; the continuation streams as 백그라운드 계속', async () => {
     const S = '33333333-3333-4333-8333-333333333333';
     const cwd = await seed(S, 'bg1');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     const base1 = await a.next('turn_started');
-    fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'explore' }]), sdk.result('launched', S));
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'explore' }]), cli.result('launched', S));
     expect(await a.next('turn_background')).toMatchObject({ turnId: base1.turnId, tasks: ['explore'] });
     await a.next('turn_result', (m) => m.turnId === base1.turnId);
     // What restart.sh reads: the session's live background work, written a moment after it changed.
@@ -123,19 +128,19 @@ describe('ws: sessions held open for background work', () => {
     const fu = await b.next('turn_started', (m) => m.clientRef === 'ref-1');
     expect(fu.turnId).not.toBe(base1.turnId);
     expect(fu.reason).toBe('백그라운드 대기 중 이어 보냄');
-    fake.push(sdk.delta('still going'), sdk.result('still going', S));
+    fake.push(cli.delta('still going'), cli.result('still going', S));
     expect(await a.next('turn_result', (m) => m.turnId === fu.turnId)).toMatchObject({ ok: true, text: 'still going' });
     expect(fake.state.calls).toBe(1);
 
-    fake.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('found'), sdk.result('found', S));
+    fake.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('found'), cli.result('found', S));
     await a.next('turn_background', (m) => m.tasks.length === 0);
     const cont = await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
     expect(await a.next('turn_result', (m) => m.turnId === cont.turnId)).toMatchObject({ ok: true, text: 'found' });
 
     // The process ended → the session is free again: a new send starts a new process.
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
-    fake = fakeSdk();
-    fake.push(sdk.init(S), sdk.result('fresh', S));
+    fake = fakeClaudeCli();
+    fake.push(cli.init(S), cli.result('fresh', S));
     a.send({ type: 'send', sessionId: S, cwd, text: 'again' });
     expect(await a.next('turn_result', (m) => m.text === 'fresh')).toMatchObject({ ok: true });
     a.close();
@@ -145,15 +150,15 @@ describe('ws: sessions held open for background work', () => {
   it('a send during a 백그라운드 계속 segment: the sender that accepts turn_queued is told it waits behind that segment; an older UI is not', async () => {
     const S = '34343434-3434-4343-8343-343434343434';
     const cwd = await seed(S, 'bgq');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     const base1 = await a.next('turn_started');
-    fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'explore' }]), sdk.result('launched', S));
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'explore' }]), cli.result('launched', S));
     await a.next('turn_result', (m) => m.turnId === base1.turnId);
     // The background work ends and its continuation streams.
-    fake.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('working'));
+    fake.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('working'));
     const cont = await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
 
     const b = await client();
@@ -196,14 +201,14 @@ describe('ws: sessions held open for background work', () => {
     e.close();
 
     // The segment's result lets the first queued send in (its turn_started carries the ref); the second follows that result.
-    fake.push(sdk.result('working', S));
+    fake.push(cli.result('working', S));
     await a.next('turn_result', (m) => m.turnId === cont.turnId);
     const q1 = await b.next('turn_started', (m) => m.clientRef === 'q-1');
     expect(q1.reason).toBe('백그라운드 대기 중 이어 보냄');
-    fake.push(sdk.result('one', S));
+    fake.push(cli.result('one', S));
     await b.next('turn_result', (m) => m.turnId === q1.turnId);
     const q2 = await c.next('turn_started', (m) => m.clientRef === 'q-2');
-    fake.push(sdk.result('two', S));
+    fake.push(cli.result('two', S));
     await c.next('turn_result', (m) => m.turnId === q2.turnId);
     expect(c.got.filter((m) => m.type === 'turn_queued')).toEqual([]);
     // Nothing else goes in: the withdrawn send is gone and the process, with no work left, ends.
@@ -219,7 +224,7 @@ describe('ws: sessions held open for background work', () => {
   it('steer: refused with no running turn; into a running turn it reaches every viewer as steer_delivered with its prompt', async () => {
     const S = '55555555-5555-4555-8555-555555555555';
     const cwd = await seed(S, 'steer1');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'steer', turnId: 'no-such-turn', steerId: 'k0', text: 'x' });
@@ -233,7 +238,7 @@ describe('ws: sessions held open for background work', () => {
     await b.next('hello');
     b.send({ type: 'open_session', sessionId: S });
     await b.next('history');
-    fake.push(sdk.init(S));
+    fake.push(cli.init(S));
     await vi.waitFor(() => expect(fake.inputs).toHaveLength(1));
     a.send({ type: 'steer', turnId: t.turnId, steerId: 'k1', text: 'also this' });
     await vi.waitFor(() => expect(fake.inputs).toHaveLength(2));
@@ -253,7 +258,7 @@ describe('ws: sessions held open for background work', () => {
     // A repeated steerId is refused as already in (D) and never reaches the process again.
     a.send({ type: 'steer', turnId: t.turnId, steerId: 'k1', text: 'also this' });
     expect(await a.next('steer_rejected', (m) => m.steerId === 'k1')).toMatchObject({ code: 'already_accepted' });
-    fake.push({ ...sdk.result('done', S), user_message_uuids: [fake.inputs[0]!.uuid, steer.uuid] });
+    fake.push({ ...cli.result('done', S), user_message_uuids: [fake.inputs[0]!.uuid, steer.uuid] });
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     expect(a.got.filter((m) => m.type === 'turn_result')).toHaveLength(1);
@@ -266,12 +271,12 @@ describe('ws: sessions held open for background work', () => {
   it('A: a steer handed to the process but never delivered is pending, not accepted — after the process dies it is in neither list', async () => {
     const S = '66666666-6666-4666-8666-666666666666';
     const cwd = await seed(S, 'steer2');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'g1' });
     const t = await a.next('turn_started');
-    fake.push(sdk.init(S));
+    fake.push(cli.init(S));
     await vi.waitFor(() => expect(fake.inputs).toHaveLength(1));
     a.send({ type: 'steer', turnId: t.turnId, steerId: 'k2', text: 'late' });
     await vi.waitFor(() => expect(fake.inputs).toHaveLength(2));
@@ -301,7 +306,7 @@ describe('ws: sessions held open for background work', () => {
   it('a steer the runner rejects (retry, process gone) is no longer pending; an error carrying a clientRef takes back its accepted ref', async () => {
     const S = '67676767-6767-4767-8767-676767676767';
     const cwd = await seed(S, 'steer3');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     let sink: Parameters<TurnRunner['run']>[1] | null = null;
     const run = runner.run.bind(runner);
     const spy = vi.spyOn(runner, 'run').mockImplementation((p, s) => { sink = s; return run(p, s); });
@@ -310,7 +315,7 @@ describe('ws: sessions held open for background work', () => {
     a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'g3' });
     const t = await a.next('turn_started');
     spy.mockRestore();
-    fake.push(sdk.init(S));
+    fake.push(cli.init(S));
     await vi.waitFor(() => expect(fake.inputs).toHaveLength(1));
     a.send({ type: 'steer', turnId: t.turnId, steerId: 'k3', text: 'late' });
     await vi.waitFor(() => expect(fake.inputs).toHaveLength(2));
@@ -329,7 +334,7 @@ describe('ws: sessions held open for background work', () => {
   it('D: a send whose clientRef the session already accepted is refused with already_accepted and never runs again; a follow-up is recorded at its turn_started', async () => {
     const S = '77777777-7777-4777-8777-777777777777';
     const cwd = await seed(S, 'dedupe');
-    fake = fakeSdk();
+    fake = fakeClaudeCli();
     let sink: Parameters<TurnRunner['run']>[1] | null = null;
     const run = runner.run.bind(runner);
     const spy = vi.spyOn(runner, 'run').mockImplementation((p, s) => { sink = s; return run(p, s); });
@@ -338,7 +343,7 @@ describe('ws: sessions held open for background work', () => {
     a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'd1' });
     const t = await a.next('turn_started');
     spy.mockRestore();
-    fake.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', S));
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', S));
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'd1' });
     expect(await a.next('error', (m) => m.clientRef === 'd1')).toMatchObject({ turnId: null, code: 'already_accepted' });
@@ -362,12 +367,12 @@ describe('ws: sessions held open for background work', () => {
   it('drain waits on running turns and live background work, ends only processes waiting with nothing left, and still takes messages into live processes', async () => {
     const S = '44444444-4444-4444-8444-444444444444';
     const cwd = await seed(S, 'bg2');
-    const f1 = (fake = fakeSdk());
+    const f1 = (fake = fakeClaudeCli());
     const a = await client();
     await a.next('hello');
     a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
     const t = await a.next('turn_started');
-    f1.push(sdk.init(S), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', S));
+    f1.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', S));
     await a.next('turn_background');
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     expect(wsApi.activeTurns()).toBe(1);
@@ -377,22 +382,22 @@ describe('ws: sessions held open for background work', () => {
     // More sessions: one held open for live background work, one held open with its work already done (waiting for a
     // continuation that may never come), one still running its prompt.
     const hold = async (id: string, name: string, ref: string) => {
-      const f = (fake = fakeSdk());
+      const f = (fake = fakeClaudeCli());
       a.send({ type: 'send', sessionId: id, cwd: await seed(id, name), text: 'go', clientRef: ref });
       const t = await a.next('turn_started', (m) => m.clientRef === ref);
-      f.push(sdk.init(id), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', id));
+      f.push(cli.init(id), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', id));
       await a.next('turn_result', (m) => m.turnId === t.turnId);
       return { id, f, turnId: t.turnId };
     };
     const held = await hold('55555555-5555-4555-8555-555555555555', 'bg3', 'h');
     const idle = await hold('57575757-5757-4757-8757-575757575757', 'bg5', 'i');
-    idle.f.push(sdk.bgLevel([]));
+    idle.f.push(cli.bgLevel([]));
     await a.next('turn_background', (m) => m.turnId === idle.turnId && m.tasks.length === 0);
     const S3 = '56565656-5656-4656-8656-565656565656';
-    const fake3 = (fake = fakeSdk());
+    const fake3 = (fake = fakeClaudeCli());
     a.send({ type: 'send', sessionId: S3, cwd: await seed(S3, 'bg4'), text: 'busy', clientRef: 'r3b' });
     const t3 = await a.next('turn_started', (m) => m.clientRef === 'r3b');
-    fake3.push(sdk.init(S3), sdk.delta('working'));
+    fake3.push(cli.init(S3), cli.delta('working'));
     await a.next('delta', (m) => m.turnId === t3.turnId);
     expect(wsApi.activeTurns()).toBe(4);
 
@@ -408,7 +413,7 @@ describe('ws: sessions held open for background work', () => {
     expect(held.f.inputs.length).toBe(1);
     expect(a.got.filter((m) => m.type === 'turn_result' && !m.ok)).toEqual([]);
     // A turn that finishes with background work while draining stays held open too.
-    fake3.push(sdk.bgLevel([{ id: 'y', desc: 'later' }]), sdk.result('launched too', S3));
+    fake3.push(cli.bgLevel([{ id: 'y', desc: 'later' }]), cli.result('launched too', S3));
     expect(await a.next('turn_result', (m) => m.turnId === t3.turnId)).toMatchObject({ ok: true });
     await new Promise((r) => setTimeout(r, 30));
     expect(wsApi.activeTurns()).toBe(3);
@@ -438,7 +443,7 @@ describe('ws: sessions held open for background work', () => {
 async function ownServer() {
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }) });
-  const r = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ accounts: testRegistry(), queryFn, readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
+  const r = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ bin: 'claude', spawnFn, bridge, killGraceMs: 50, accounts: testRegistry(), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
   const own = { foreign: false };
   vi.spyOn(r, 'foreignWrites').mockImplementation(async () => own.foreign);
   const pins = new PinStore(path.join(base, 'pins.json'));
@@ -458,10 +463,10 @@ describe('ws: drain and held processes', () => {
   /** A session whose process is held open for live background work ('build'). */
   async function held(s: Awaited<ReturnType<typeof ownServer>>, a: Awaited<ReturnType<typeof client>>, id: string, name: string) {
     const cwd = await seed(id, name);
-    const f = (fake = fakeSdk());
+    const f = (fake = fakeClaudeCli());
     a.send({ type: 'send', sessionId: id, cwd, text: 'go', clientRef: `${name}-go` });
     const t = await a.next('turn_started', (m) => m.clientRef === `${name}-go`);
-    f.push(sdk.init(id), sdk.bgLevel([{ id: 'x', desc: 'build' }]), sdk.result('launched', id));
+    f.push(cli.init(id), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', id));
     await a.next('turn_result', (m) => m.turnId === t.turnId);
     return { f, cwd, turnId: t.turnId };
   }
@@ -476,7 +481,7 @@ describe('ws: drain and held processes', () => {
     s.api.drain();
     await a.next('error', (m) => m.message === DRAINING_MESSAGE);
     // The background work ends; its continuation streams…
-    h.f.push(sdk.bgLevel([]), sdk.notifyUser(), sdk.delta('built'));
+    h.f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('built'));
     const bg = await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
     await a.next('delta', (m) => m.turnId === bg.turnId);
     // …a message comes in meanwhile and is queued behind it…
@@ -484,11 +489,11 @@ describe('ws: drain and held processes', () => {
     await vi.waitFor(() => expect(s.api.activeTurns()).toBe(1));
     await new Promise((r) => setTimeout(r, 20));
     // …and the continuation ends with no background work left: M goes in rather than the process being ended.
-    h.f.push(sdk.result('built', S));
+    h.f.push(cli.result('built', S));
     expect(await a.next('turn_result', (m) => m.turnId === bg.turnId)).toMatchObject({ ok: true });
     const m = await a.next('turn_started', (x) => x.clientRef === 'm1');
     await vi.waitFor(() => expect(h.f.inputs.length).toBe(2));
-    h.f.push(sdk.result('done M', S));
+    h.f.push(cli.result('done M', S));
     expect(await a.next('turn_result', (x) => x.turnId === m.turnId)).toMatchObject({ ok: true, text: 'done M' });
     expect(a.got.filter((x) => x.type === 'error' && x.clientRef === 'm1')).toEqual([]);
     // Nothing left to wait for after M: the drained process ends now.

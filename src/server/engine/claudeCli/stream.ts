@@ -243,6 +243,46 @@ export function toolAudit(req: Pick<TurnRequest, 'onToolAudit'>): ToolAudit {
   };
 }
 
+/**
+ * Stream-side audit for tool calls deck was not asked about (allow rule, permission mode, tools
+ * that need no permission) — what the PostToolUse/PostToolUseFailure hooks reported before.
+ * Error results are held until the turn's `result`, so a denial seen in the meantime
+ * (permission_denied frame or permission_denials) is reported instead.
+ */
+export class ToolTracker {
+  private readonly calls = new Map<string, { name: string; input: unknown }>();
+  private held: string[] = [];
+  constructor(private readonly audit: ToolAudit) {}
+
+  inputOf(id: string): unknown { return this.calls.get(id)?.input ?? null; }
+
+  async apply(m: CliMessage): Promise<void> {
+    if (m.type === 'assistant') {
+      for (const b of m.message.content) if (b.type === 'tool_use' && typeof b.id === 'string') this.calls.set(b.id, { name: String(b.name ?? ''), input: b.input });
+      return;
+    }
+    if (m.type === 'user' && m.isReplay !== true && Array.isArray(m.message.content)) {
+      for (const b of m.message.content) {
+        if (b.type !== 'tool_result' || typeof b.tool_use_id !== 'string' || !this.calls.has(b.tool_use_id)) continue;
+        if (b.is_error === true) this.held.push(b.tool_use_id);
+        else await this.report(b.tool_use_id);
+      }
+      return;
+    }
+    if (m.type === 'result') {
+      const held = this.held;
+      this.held = [];
+      for (const id of held) await this.report(id);
+    }
+  }
+
+  private async report(id: string): Promise<void> {
+    const c = this.calls.get(id);
+    this.calls.delete(id);
+    if (c) await this.audit.report({ tool_name: c.name, tool_input: c.input, tool_use_id: id }, 'allow', 'cli');
+  }
+}
+
 /** The denials an SDK message reports: a `system/permission_denied` frame (input from the call's tool_use block), or a result's `permission_denials`. */
 export function deniedCalls(m: CliMessage, inputs: Map<string, unknown>): { tool_name: string; tool_input: unknown; tool_use_id: string; source: AuditSource }[] {
   const r = m as unknown as Rec;

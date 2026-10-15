@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import { PassThrough } from 'node:stream';
 import readline from 'node:readline';
 import type { CliUserMessage, Rec } from './messages';
 import type { ClaudeChildLike, ClaudeSpawnFn } from './spawnTypes';
+import { postBridge } from './permissionMcp';
 
-export type FakeSpawn = { bin: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv };
+export type FakeSpawn = { bin: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv; files: { settings: Record<string, unknown> | null; mcpConfig: Record<string, unknown> | null } };
 export type FakeCtl = { push(...ms: unknown[]): void; raw(text: string): void; exit(code: number | null, signal?: NodeJS.Signals | null): void };
 
 /**
@@ -13,6 +15,8 @@ export type FakeCtl = { push(...ms: unknown[]): void; raw(text: string): void; e
  * stdin line is parsed into `inputs`. Closing stdin ends the child with exit 0 (the real CLI's
  * behaviour once its input ends and the turn is over) unless `exitOnStdinClose: false`.
  * Signals: SIGINT → `onSignal` if given, else exit 130 with no output; SIGTERM/SIGKILL → killed by signal.
+ * `end()` before a child exists is queued for the next one. Each spawn snapshots its `--settings` / `--mcp-config`
+ * files (the engine deletes them when the turn ends; tests inspect them afterwards).
  */
 export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (sig: NodeJS.Signals, ctl: FakeCtl) => void } = {}) {
   const spawns: FakeSpawn[] = [];
@@ -21,11 +25,13 @@ export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (si
   const queue: unknown[] = [];
   let live: FakeCtl | null = null;
   let stderrOf: PassThrough | null = null;
+  let endQueued: number | null = null;
+  const readJson = (p: string | undefined) => { if (!p) return null; try { return JSON.parse(fs.readFileSync(p, 'utf8')) as Record<string, unknown>; } catch { return null; } };
 
   const spawnFn: ClaudeSpawnFn = (bin, args, o) => {
     state.calls++;
     state.inputClosed = false;
-    spawns.push({ bin, args: [...args], cwd: o.cwd, env: { ...o.env } });
+    spawns.push({ bin, args: [...args], cwd: o.cwd, env: { ...o.env }, files: { settings: readJson(argValue(args, '--settings')), mcpConfig: readJson(argValue(args, '--mcp-config')) } });
     const ee = new EventEmitter();
     const stdin = new PassThrough();
     const stdout = new PassThrough();
@@ -63,6 +69,7 @@ export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (si
     stderrOf = stderr;
     const pending = queue.splice(0);
     if (pending.length) setImmediate(() => ctl.push(...pending));
+    if (endQueued !== null) { const c = endQueued; endQueued = null; setImmediate(() => setImmediate(() => ctl.exit(c))); }
     return child;
   };
 
@@ -72,9 +79,29 @@ export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (si
     inputs,
     state,
     push: (...ms: unknown[]) => { if (live) live.push(...ms); else queue.push(...ms); },
-    end: (code = 0) => { if (live) live.exit(code); },
+    end: (code = 0) => { if (live) live.exit(code); else endQueued = code; },
     stderr: (text: string) => { stderrOf?.write(text); },
     ctl: () => live,
+    /** What the real permissionMcp.ts would do for the latest spawn: read its mcp-config (snapshot), POST to the bridge. */
+    ask: async (call: { tool_name: string; input: Record<string, unknown>; tool_use_id: string; permission_suggestions?: unknown }) => {
+      const s = spawns[spawns.length - 1];
+      if (!s) throw new Error('no spawn');
+      if (!s.files.mcpConfig) throw new Error('no mcp-config');
+      const env = (s.files.mcpConfig as { mcpServers: Record<string, { env: Record<string, string> }> }).mcpServers.deck_bridge!.env;
+      const r = await postBridge(env.DECK_BRIDGE_SOCK!, env.DECK_BRIDGE_TOKEN!, '/v1/permission', call);
+      return JSON.parse(r.body) as Record<string, unknown>;
+    },
+    /** What hookRelay.ts would do for the latest spawn: parse --sock and the DECK_BRIDGE_TOKEN= prefix out of the settings (snapshot)'s first hook command. */
+    hook: async (input: Record<string, unknown>) => {
+      const s = spawns[spawns.length - 1]!;
+      if (!s.files.settings) throw new Error('no settings');
+      const settings = s.files.settings as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+      const cmd = Object.values(settings.hooks)[0]![0]!.hooks[0]!.command;
+      const word = (flag: string) => (cmd.match(new RegExp(`'${flag}' '([^']*)'`)) ?? [])[1]!;
+      const token = (cmd.match(/^DECK_BRIDGE_TOKEN='([^']*)' /) ?? [])[1]!;
+      const r = await postBridge(word('--sock'), token, '/v1/hook', input);
+      return JSON.parse(r.body) as Record<string, unknown>;
+    },
   };
 }
 

@@ -123,6 +123,13 @@ describe('config', () => {
     expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').codexSessionsRoot).toBe('/h/.codex/sessions');
   });
 
+  it('claude bin: DECK_CLAUDE_BIN, version-gated by `claude --version`', () => {
+    const script = path.join(dir, 'claude');
+    fs.writeFileSync(script, '#!/bin/sh\necho "2.1.283 (Claude Code)"\n', { mode: 0o755 });
+    expect(loadConfig({ PATH: '/nonexistent', DECK_CLAUDE_BIN: script }, '/h', '/repo').claudeBin).toEqual({ ok: true, bin: script, version: '2.1.283', belowRecommended: false });
+    expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').claudeBin).toEqual({ ok: false, reason: 'missing' });
+  });
+
   it('recent folders file and new-session cwd roots (F1)', () => {
     const cfg = loadConfig({ PATH: '/nonexistent' }, '/h', '/repo');
     expect(cfg.recentFoldersFile).toBe('/h/.config/deck/recent-folders.json');
