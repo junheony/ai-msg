@@ -9,6 +9,7 @@ import { bindAddresses, tailscaleDnsName, tailscaleIPv4s } from './bind';
 import { AccountsFileError } from './accounts';
 import { loadConfig } from './config';
 import { ClaudeEngine } from './engine/ClaudeEngine';
+import { MIN_CLAUDE_VERSION, RECOMMENDED_CLAUDE_VERSION, type ClaudeBin } from './engine/claudeCli/version';
 import { CodexEngine } from './engine/CodexEngine';
 import { SlashCommandCache } from './engine/slashCommands';
 import { FileLister } from './files';
@@ -90,8 +91,9 @@ async function main(): Promise<void> {
   // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) or by a fork reach it through this.
   let notifyIndex = () => {};
   let notifyPermissionMode: (sessionId: string, mode: PermMode) => void = () => {};
+  const claude = new ClaudeEngine({ bin: cfg.claudeBin, accounts, bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) });
   const runner = new TurnRunner({
-    engine: new ClaudeEngine({ home: cfg.home, accounts, bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) }),
+    engine: claude,
     codex,
     gemini,
     geminiUsage,
@@ -149,7 +151,7 @@ async function main(): Promise<void> {
   notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 
-  console.log(`deck: 세션 ${index.sessions().length}개 · 계정 ${accounts.all().map((a) => `${a}${accounts.isRetired(a) ? '(retired)' : ''}${accounts.isHome(a) ? '(home)' : ''}`).join(' ')} · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · codex ${cfg.codexBin ?? '없음'} · agy ${cfg.geminiBin ?? '없음'}`);
+  console.log(`deck: 세션 ${index.sessions().length}개 · 계정 ${accounts.all().map((a) => `${a}${accounts.isRetired(a) ? '(retired)' : ''}${accounts.isHome(a) ? '(home)' : ''}`).join(' ')} · 보호 계정 ${cfg.protectedAccount ?? '없음'} · usage-deck ${cfg.deckUrl} · claude ${claudeLabel(cfg.claudeBin)} · codex ${cfg.codexBin ?? '없음'} · agy ${cfg.geminiBin ?? '없음'}`);
   if (cfg.cwdRoots.length > 1) console.log(`deck: 새 세션 추가 허용 경로(DECK_EXTRA_CWD_ROOTS): ${cfg.cwdRoots.slice(1).join(', ')}`);
   for (const a of addresses) console.log(`deck: http://${a}:${cfg.port}`);
   if (dnsName) console.log(`deck: https://${dnsName}/ (tailscale serve 로 띄웠을 때 — 폰 앱·알림용)`);
@@ -160,10 +162,13 @@ async function main(): Promise<void> {
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
     ws.close(); watch.stop(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
-    void flushThenExit(() => events.flush(), () => process.exit(0));
+    // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
+    void flushThenExit(() => Promise.all([events.flush(), claude.close()]).then(() => {}), () => process.exit(0));
   };
   installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });
 }
+
+const claudeLabel = (b: ClaudeBin) => (b.ok ? `${b.version}${b.belowRecommended ? ` (${RECOMMENDED_CLAUDE_VERSION} 이상 권장)` : ''}` : b.reason === 'too_old' ? `${b.version} (너무 오래됨 — ${MIN_CLAUDE_VERSION} 이상 필요)` : '없음');
 
 installCrashHandlers(process, { log: (line) => console.error(line), exit: (code) => process.exit(code) });
 

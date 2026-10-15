@@ -70,7 +70,7 @@ describe('private hygiene rules', () => {
     ['the public author address', 'hwangmc88@gmail.com'],
     ['the public repo slug', 'https://github.com/junheony/quarterdeck/issues'],
     ['a project mailbox', 'security@example.org'],
-    ['an npm scope', '@anthropic-ai/claude-agent-sdk'],
+    ['an npm scope', '@types/node'],
   ])('leaves %s alone', (_what, text) => {
     expect(hit(text)).toEqual([]);
   });

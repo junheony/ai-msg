@@ -7,7 +7,7 @@ import type { AccountRegistry } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage } from '../../shared/turn-types';
 import type { Engine, EngineEvent, LiveInput, TurnRequest } from './Engine';
-import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, type CliPermissionMode } from './claudeCli/args';
+import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, validResume, type CliPermissionMode } from './claudeCli/args';
 import { MCP_TOOL_TIMEOUT_MS, PermissionBridge } from './claudeCli/bridge';
 import { forkCandidates, writeForkSource } from './claudeCli/fork';
 import { hookHandler } from './claudeCli/hooks';
@@ -18,9 +18,8 @@ import { ClaudeProcess, exitFailureText } from './claudeCli/process';
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
 import type { ClaudeSpawnFn } from './claudeCli/spawnTypes';
 import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
-import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText } from './claudeCli/texts';
+import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, invalidResumeText } from './claudeCli/texts';
 import type { ClaudeBin } from './claudeCli/version';
-import { LegacySdkEngine, type LegacySdkEngineOptions } from './legacySdkEngine'; // shim — removed in Task 8c
 
 export { BackgroundTracker, ProgressMeter, isActivity, isInjectedNoopResult, toolAudit, deniedCalls, noteCommands, mapCliMessage, type CommandsListener, type ToolAudit } from './claudeCli/stream';
 export { toUserMessage, type ReadFile } from './claudeCli/prompt';
@@ -51,7 +50,7 @@ export type ClaudeEngineOptions = {
   tmpRoot?: string;
 };
 
-class CliClaudeEngine implements Engine {
+export class ClaudeEngine implements Engine {
   private readonly bin: ClaudeBin;
   private readonly o: ClaudeEngineOptions;
   private readonly readFile: ReadFile;
@@ -70,6 +69,7 @@ class CliClaudeEngine implements Engine {
     return (this.bridgeP ??= PermissionBridge.open());
   }
 
+  /** Closes the bridge (server shutdown). A bridge passed in by the caller is the caller's to close. */
   async close(): Promise<void> {
     if (this.bridgeP && !this.o.bridge) await (await this.bridgeP).close();
   }
@@ -89,6 +89,9 @@ class CliClaudeEngine implements Engine {
     // Review M2: an interrupt that landed before the turn started must not spawn the CLI at all.
     if (req.signal.aborted) { yield fail(ABORTED_TEXT, 'aborted'); return; }
     if (!this.bin.ok) { yield fail(this.bin.reason === 'too_old' ? claudeTooOldText(this.bin.version) : CLAUDE_MISSING_TEXT); return; }
+    // claudeArgs throws on a bad resume target; answer with a failed result here instead of rejecting the iterator.
+    // (A fork resumes the truncated copy's path instead, which writeForkSource produces.)
+    if (req.resumeSessionId && !req.forkAt && !validResume(req.resumeSessionId)) { yield fail(invalidResumeText(req.resumeSessionId)); return; }
 
     const procDir = await fs.mkdtemp(path.join(this.o.tmpRoot ?? os.tmpdir(), 'qd-claude-'));
     await fs.chmod(procDir, 0o700);
@@ -284,22 +287,5 @@ class CliClaudeEngine implements Engine {
       reg.dispose();
       await fs.rm(procDir, { recursive: true, force: true });
     }
-  }
-}
-
-/**
- * Shim until Task 8c. Options with `bin` (every test, and main.ts from Task 8c) run the CLI engine; options
- * without it (today's main.ts) run the moved SDK engine unchanged. Task 8c deletes this class and renames CliClaudeEngine to ClaudeEngine.
- */
-export class ClaudeEngine implements Engine {
-  private readonly impl: CliClaudeEngine | LegacySdkEngine;
-  constructor(opts: ClaudeEngineOptions | LegacySdkEngineOptions) {
-    this.impl = 'bin' in opts ? new CliClaudeEngine(opts) : new LegacySdkEngine(opts);
-  }
-  runTurn(req: TurnRequest): AsyncIterable<EngineEvent> {
-    return this.impl.runTurn(req);
-  }
-  async close(): Promise<void> {
-    if (this.impl instanceof CliClaudeEngine) await this.impl.close();
   }
 }

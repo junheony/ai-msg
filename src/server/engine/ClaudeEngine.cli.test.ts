@@ -7,7 +7,7 @@ import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { fakeClaudeCli, cli, argValue } from './claudeCli/fakeClaudeCli';
 import { PermissionBridge } from './claudeCli/bridge';
 import { OwnedEntries } from './claudeCli/ownedEntries';
-import { CLAUDE_MISSING_TEXT, FORK_SOURCE_MISSING, PLAN_GATE_MESSAGE, claudeTooOldText } from './claudeCli/texts';
+import { CLAUDE_MISSING_TEXT, FORK_SOURCE_MISSING, PLAN_GATE_MESSAGE, claudeTooOldText, invalidResumeText } from './claudeCli/texts';
 import { testRegistry } from '../../shared/accounts.testkit';
 
 let bridge: PermissionBridge | null = null;
@@ -84,6 +84,33 @@ describe('ClaudeEngine over the claude CLI', () => {
     const old = new ClaudeEngine({ bin: { ok: false, reason: 'too_old', bin: '/x/claude', version: '2.0.1' }, spawnFn: f.spawnFn, bridge: bridge!, accounts: testRegistry('/h') });
     expect((await drain(old.runTurn(req()))).at(-1)).toMatchObject({ ok: false, errorText: claudeTooOldText('2.0.1') });
     expect(f.state.calls).toBe(0);
+  });
+
+  it('a resume id that is not a session id: one failed result, nothing spawned, nothing registered (no rejected iterator)', async () => {
+    const { f, engine } = await setup();
+    const evs = await drain(engine.runTurn(req({ resumeSessionId: 'not-a-uuid' })));
+    expect(evs).toEqual([expect.objectContaining({ kind: 'result', ok: false, errorText: invalidResumeText('not-a-uuid') })]);
+    expect(f.state.calls).toBe(0);
+    expect(bridge!.registrations).toBe(0);
+    expect(fs.readdirSync(tmp)).toEqual([]);
+  });
+
+  it('close() closes the bridge the engine opened itself (server shutdown); a bridge passed in stays open', async () => {
+    const { f } = await setup();
+    const own = new ClaudeEngine({ bin: 'claude', spawnFn: f.spawnFn, accounts: testRegistry('/h'), baseEnv: { PATH: '/bin' }, readFile: async () => Buffer.from(''), tmpRoot: tmp, owned: new OwnedEntries(), killGraceMs: 50 });
+    await own.close(); // never opened: no-op
+    f.push(cli.init('s1'), cli.result('a', 's1'));
+    await drain(own.runTurn(req()));
+    const sock = (f.spawns[0]!.files.mcpConfig as { mcpServers: { deck_bridge: { env: { DECK_BRIDGE_SOCK: string } } } }).mcpServers.deck_bridge.env.DECK_BRIDGE_SOCK;
+    expect(sock).not.toBe(bridge!.socketPath);
+    expect(fs.existsSync(sock)).toBe(true);
+    await own.close();
+    expect(fs.existsSync(sock)).toBe(false);
+    expect(fs.existsSync(path.dirname(sock))).toBe(false);
+
+    const shared = new ClaudeEngine({ bin: 'claude', spawnFn: f.spawnFn, bridge: bridge!, accounts: testRegistry('/h') });
+    await shared.close();
+    expect(fs.existsSync(bridge!.socketPath)).toBe(true);
   });
 
   it('abort: SIGINT, the CLI\'s interrupted result is reported as 중단됨 / aborted, the child is stopped', async () => {

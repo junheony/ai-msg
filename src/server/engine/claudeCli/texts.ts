@@ -18,6 +18,8 @@ export const HOOK_RELAY_FAILED_MESSAGE = '도구 사용 여부를 deck 에 확�
 export const FORK_SOURCE_MISSING = '갈래를 만들 원본 대화 기록을 찾지 못했습니다';
 /** 메시지 편집 갈래: the edited message's entry is not in the parent transcript. */
 export const FORK_AT_UNSUPPORTED = '고친 메시지 지점을 원본 대화 기록에서 찾지 못했습니다';
+/** The session id to resume is not a Claude session id (no child is spawned). */
+export const invalidResumeText = (id: string): string => `이어 갈 세션 id 가 올바르지 않습니다: ${id}`;
 export const CLAUDE_MISSING_TEXT = 'Claude Code(claude)를 찾지 못했습니다 — 터미널에서 설치하고 로그인한 뒤 deck 을 다시 시작해 주세요';
 export const claudeTooOldText = (version: string): string => `Claude Code ${version} 은 너무 오래됐습니다 — ${MIN_CLAUDE_VERSION} 이상으로 업데이트한 뒤 deck 을 다시 시작해 주세요`;
 /** = TurnRunner.ABORTED: the UI hides a stopped turn's error when it is exactly this. */

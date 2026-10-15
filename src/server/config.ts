@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { Account, AccountNames, AccountRegistry, AccountRoot } from '../shared/accounts';
 import { loadAccountRegistry } from './accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
+import { resolveClaudeBin, type ClaudeBin } from './engine/claudeCli/version';
 import { resolveGeminiBin } from './engine/GeminiEngine';
 import { defaultCooldownDir } from './routing/cooldown';
 
@@ -28,6 +29,8 @@ export type DeckConfig = {
   uiDir: string;
   /** Deviation (added per review I5): extra Host-header names (e.g. Tailscale MagicDNS) allowed in addition to loopback/CGNAT. */
   extraHosts: string[];
+  /** The user's own `claude` (version-gated). Not ok = Claude turns fail with a Korean hint; the rest of deck runs. */
+  claudeBin: ClaudeBin;
   /** D11: null = Codex disabled (no `codex` binary found). */
   codexBin: string | null;
   /** null = Gemini disabled (no `agy` Antigravity CLI found). agy keeps its own keychain login; deck never logs in. */
@@ -142,6 +145,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     projectsRoots: accounts.projectsRoots(),
     uiDir: env.DECK_UI_DIR || path.join(repoRoot, 'dist', 'ui'),
     extraHosts: (env.DECK_EXTRA_HOSTS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+    claudeBin: resolveClaudeBin(env, home),
     codexBin: resolveCodexBin(env, home),
     geminiBin: resolveGeminiBin(env, home),
     codexSessionsRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),
