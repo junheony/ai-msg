@@ -26,7 +26,7 @@ let tmpRoot = '';
 beforeAll(async () => { bridge = await PermissionBridge.open(); tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trbg-proc-')); });
 afterAll(async () => { await bridge.close(); await fs.rm(tmpRoot, { recursive: true, force: true }); });
 
-async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' | 'move'>> & { readFile?: (p: string) => Promise<Buffer>; /** The background wait limit (ClaudeEngine bgMaxMs); default: the engine's. */ bgMaxMs?: number } = {}) {
+async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' | 'move' | 'sameVendorRotation'>> & { readFile?: (p: string) => Promise<Buffer>; /** The background wait limit (ClaudeEngine bgMaxMs); default: the engine's. */ bgMaxMs?: number } = {}) {
   const f = fakeClaudeCli();
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trbg-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
@@ -66,6 +66,7 @@ async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' 
     now: () => NOW,
     maxRetries: 0,
     ...(over.move ? { move: over.move } : {}),
+    ...(over.sameVendorRotation ? { sameVendorRotation: over.sameVendorRotation } : {}),
   };
   const msgs: ServerMessage[] = [];
   const ac = new AbortController();
@@ -428,6 +429,22 @@ describe('TurnRunner: background work after the turn result', () => {
       expect(JSON.stringify(f.inputs.at(-1))).toContain('이어서 진행해 주세요.');
       expect(store.get(SID)).toMatchObject({ account: 'a' });
       expect(store.get(SID)).not.toHaveProperty('interrupted');
+    });
+
+    it('같은 벤더 순환 꺼짐: the segment does not go on on another Claude account; it ends as failed and the retry is booked', async () => {
+      const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove, sameVendorRotation: () => false });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      // A new session goes to the home account (a), not the best-ranked b.
+      expect(of(msgs, 'turn_started')[0]).toMatchObject({ account: 'a', reason: expect.stringMatching(/^같은 벤더 순환 꺼짐 · /) });
+      f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'), limited);
+      await done;
+      expect(readCooldownUntilMs(deps.cooldownDir, 'a', NOW)).toBe(NOW + 3_600_000);
+      expect(of(msgs, 'turn_retry')).toEqual([]);
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, 'A 계정 사용 한도 도달 · 03:50 리셋 · 대안 계정 없음(같은 벤더 순환 꺼짐)']]);
+      expect(f.state.calls).toBe(1);
+      expect(deps.store.get(SID)).toMatchObject({ account: 'a', pendingRetry: { text: '이어서 진행해 주세요.', hops: 1 } });
     });
 
     it('a follow-up: sent again under its own turn id and text on the other account; background work cut with it is told to the model', async () => {

@@ -307,7 +307,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const activity = (): SessionActivity[] => {
     const now = Date.now();
     return shownTurns()
-      .map((t) => ({ sessionId: t.sessionId, cwd: t.cwd, turnId: t.current ?? t.turnId, running: t.current !== null, bg: t.bg?.msg.tasks.length ?? 0, forMs: t.current !== null ? Math.max(0, now - t.since) : 0 }));
+      .map((t) => ({ sessionId: t.sessionId, cwd: t.cwd, turnId: t.current ?? t.turnId, running: t.current !== null, bg: t.bg?.msg.tasks.length ?? 0, forMs: t.current !== null ? Math.max(0, now - t.since) : 0, ...(t.bg?.msg.tasks.length ? { tasks: t.bg.msg.tasks.slice(0, 5).map((x) => x.slice(0, 80)) } : {}) }));
   };
   // The task names are in it too: work swapped for other work of the same count is still a change (activityFile lists them).
   let activitySig = '[[],[]]';
@@ -1223,7 +1223,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
           // The default only applies to new sessions (and ones with no stored mode) from their next turn: waiting cards stay.
-          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}) })
+          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}) })
             .then((settings) => broadcast({ type: 'settings', settings }))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `설정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;

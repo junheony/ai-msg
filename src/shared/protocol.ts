@@ -99,7 +99,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * Server-wide settings (persisted, broadcast to every device as `settings`). `defaultPermissionMode` = the mode new
    * sessions start in; `autoApprove` is the legacy switch (true = bypassPermissions, false = default).
    */
-  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional() }),
+  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
    * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),
@@ -123,7 +123,13 @@ export type ClientMessage = z.infer<typeof ClientMessageSchema>;
  * Server-wide settings. defaultPermissionMode: the mode new Claude sessions (and sessions deck has no mode for) start in.
  * autoApprove mirrors `defaultPermissionMode === 'bypassPermissions'` (legacy 자동 승인; new GPT sessions default to workspace-write).
  */
-export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMode; /** Absent from older servers (= 'balance'). */ routingPolicy?: RoutingPolicy };
+export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMode; /** Absent from older servers (= 'balance'). */ routingPolicy?: RoutingPolicy;
+  /**
+   * 같은 벤더 계정 자동 순환: true = the router may move a session between Claude accounts by itself (limits, Fable cap,
+   * cold cache, failover). false (the default) = a session stays on its account (new ones on the home account) unless the
+   * user pins another. Turned on only after the user agrees to the own-accounts-only notice. Absent from older servers.
+   */
+  sameVendorRotation?: boolean };
 
 /**
  * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;
@@ -157,7 +163,7 @@ export type RunningTurn = { turnId: string; sessionId: string | null; cwd: strin
  * What runs where, for the sidebar and the tab title on every device: one entry per session with a
  * turn in flight or background work held open. `forMs` = how long the current turn has run.
  */
-export type SessionActivity = { sessionId: string; cwd: string; turnId: string; running: boolean; bg: number; forMs: number };
+export type SessionActivity = { sessionId: string; cwd: string; turnId: string; running: boolean; bg: number; forMs: number; /** Live background task titles: at most 5, each cut to 80 characters (absent: none, or an older server). */ tasks?: string[] };
 
 /**
  * What this server can do beyond the first protocol, announced in `hello.features` (see docs/protocol.md). A server

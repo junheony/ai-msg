@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { SettingsView } from './SettingsView';
+import { ROTATION_CONSENT, SettingsView } from './SettingsView';
 
 const noop = () => {};
 
@@ -34,6 +34,53 @@ describe('SettingsView 자동 계정 선택', () => {
     expect(drain.getAttribute('aria-pressed')).toBe('false');
     fireEvent.click(drain);
     expect(onPolicy).toHaveBeenCalledWith('drain');
+  });
+});
+
+describe('SettingsView 같은 벤더 계정 자동 순환', () => {
+  afterEach(cleanup);
+  const group = () => screen.getByRole('group', { name: '같은 벤더 계정 자동 순환' });
+  const btn = (name: string) => Array.from(group().querySelectorAll('button')).find((b) => b.textContent === name) as HTMLButtonElement;
+
+  it('hidden until the server says; turning it on asks for consent first, cancel sends nothing, agreeing sends true', () => {
+    const on = vi.fn();
+    const { rerender } = render(<SettingsView build={null} sameVendorRotation={null} onSameVendorRotation={on} claudeAccounts={3} onOpenUsage={noop} onClose={noop} />);
+    expect(screen.queryByRole('group', { name: '같은 벤더 계정 자동 순환' })).toBeNull();
+    rerender(<SettingsView build={null} sameVendorRotation={false} onSameVendorRotation={on} claudeAccounts={3} onOpenUsage={noop} onClose={noop} />);
+    expect(btn('끄기').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByText(ROTATION_CONSENT)).toBeNull();
+    fireEvent.click(btn('켜기'));
+    expect(on).not.toHaveBeenCalled();
+    expect(screen.getByText(ROTATION_CONSENT)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(screen.queryByText(ROTATION_CONSENT)).toBeNull();
+    expect(on).not.toHaveBeenCalled();
+    fireEvent.click(btn('켜기'));
+    fireEvent.click(screen.getByRole('button', { name: '동의하고 켜기' }));
+    expect(on).toHaveBeenCalledWith(true);
+    expect(screen.queryByText(ROTATION_CONSENT)).toBeNull();
+  });
+
+  it('turning it off needs no consent', () => {
+    const on = vi.fn();
+    render(<SettingsView build={null} sameVendorRotation onSameVendorRotation={on} claudeAccounts={2} onOpenUsage={noop} onClose={noop} />);
+    expect(btn('켜기').getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn('켜기'));
+    expect(on).not.toHaveBeenCalled();
+    fireEvent.click(btn('끄기'));
+    expect(on).toHaveBeenCalledWith(false);
+    expect(screen.queryByText(ROTATION_CONSENT)).toBeNull();
+  });
+
+  it('one Claude account: the switch is disabled and says why', () => {
+    const on = vi.fn();
+    render(<SettingsView build={null} sameVendorRotation={false} onSameVendorRotation={on} claudeAccounts={1} onOpenUsage={noop} onClose={noop} />);
+    expect(btn('켜기').disabled).toBe(true);
+    expect(btn('끄기').disabled).toBe(true);
+    fireEvent.click(btn('켜기'));
+    expect(screen.queryByText(ROTATION_CONSENT)).toBeNull();
+    expect(on).not.toHaveBeenCalled();
+    expect(screen.getByText(/Claude 계정이 1개라/)).toBeTruthy();
   });
 });
 

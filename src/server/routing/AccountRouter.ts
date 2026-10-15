@@ -36,6 +36,11 @@ export type RouterInput = {
   policy?: RoutingPolicy;
   /** Which accounts exist, their order (ties) and labels. */
   accounts: AccountNames;
+  /**
+   * 같은 벤더 계정 자동 순환 (DeckSettings.sameVendorRotation). false = the turn stays on one account (fixedAccount): no
+   * limit / Fable-cap / cold-cache / failover move to another Claude account. Absent = on.
+   */
+  sameVendorRotation?: boolean;
 };
 
 export type Candidate = {
@@ -271,9 +276,44 @@ function pinBlock(input: RouterInput, pin: Account): { why: string; detail: stri
   return null;
 }
 
+/** Said in the reason (badge, route log) of every turn routed with 같은 벤더 계정 자동 순환 off. */
+export const NO_ROTATION = '같은 벤더 순환 꺼짐';
+
+/** `reg` narrowed to the one active account `only`: routing over it never picks another account. */
+export function onlyAccount(reg: AccountNames, only: Account): AccountNames {
+  return {
+    list: () => [only],
+    all: () => reg.all(),
+    has: (id: unknown): id is Account => reg.has(id),
+    isRetired: (id) => reg.isRetired(id),
+    label: (id) => reg.label(id),
+    cardId: (id) => reg.cardId(id),
+    home: reg.home,
+    isHome: (id) => reg.isHome(id),
+    fallback: () => only,
+  };
+}
+
+/**
+ * With 같은 벤더 계정 자동 순환 off, the one account a turn may run on: the pin (the user's explicit choice, or an
+ * edit-fork's parent), else the session's own account, else (a new session, a retired account) the home account.
+ */
+export function fixedAccount(input: Pick<RouterInput, 'pinned' | 'current' | 'accounts'>): Account {
+  const active = input.accounts.list();
+  if (input.pinned && active.includes(input.pinned)) return input.pinned;
+  if (input.current !== null && active.includes(input.current)) return input.current;
+  return input.accounts.home;
+}
+
 export function chooseAccount(input: RouterInput): RouterDecision {
   const reg = input.accounts;
   const LABEL = (a: Account) => reg.label(a);
+  if (input.sameVendorRotation === false) {
+    // The same decision over that one account: limits, cooldowns and the Fable cap still decide the reason and the
+    // model (→ Opus), but never send the turn to another Claude account.
+    const d = chooseAccount({ ...input, sameVendorRotation: true, accounts: onlyAccount(reg, fixedAccount(input)) });
+    return { ...d, reason: `${NO_ROTATION} · ${d.reason}` };
+  }
   // A pin on an account that is not active (removed or retired since) is no pin.
   const pin = input.pinned && reg.list().includes(input.pinned) ? input.pinned : null;
   if (pin) {

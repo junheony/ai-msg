@@ -165,6 +165,31 @@ describe('ws: activity on every device', () => {
     late.close();
   });
 
+  it('activity carries the live background task titles: at most 5, each cut to 80 characters', async () => {
+    const S = '66666666-6666-4666-8666-666666666666';
+    const cwd = await seed(S, 'act-tasks');
+    fake = fakeClaudeCli();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
+    const t = await a.next('turn_started');
+    const long = 'x'.repeat(100);
+    fake.push(
+      cli.init(S),
+      { type: 'system', subtype: 'background_tasks_changed', tasks: [long, 'b', 'c', 'd', 'e', 'f'].map((d, i) => ({ task_id: `k${i}`, task_type: 'local_bash', description: d })), session_id: S },
+      cli.result('waiting', S),
+    );
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    const act = await a.next('activity', (m) => m.sessions[0]?.running === false);
+    const tasks = act.sessions[0]!.tasks!;
+    expect(tasks).toHaveLength(5);
+    expect(tasks[0]).toHaveLength(80);
+    fake.push({ type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: S });
+    fake.end();
+    expect(await a.next('activity', (m) => m.sessions.length === 0)).toMatchObject({ sessions: [] });
+    a.close();
+  });
+
   it('a device opening the session mid-sentence gets the open text block so far (finished blocks come from the transcript)', async () => {
     const S = '56565656-5656-4565-8565-565656565656';
     const cwd = await seed(S, 'act-mid');

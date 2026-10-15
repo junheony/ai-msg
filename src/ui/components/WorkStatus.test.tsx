@@ -81,6 +81,39 @@ describe('ServerChip', () => {
     fireEvent.click(btn);
     expect(onDismissRestart).toHaveBeenCalledOnce();
   });
+
+  it('draining: a click lists the sessions it waits for (status, task titles); a row opens it; Esc and outside clicks close', () => {
+    const onOpen = vi.fn();
+    const activity = [
+      { sessionId: 's1', cwd: '/w/alpha', turnId: 't1', running: true, bg: 0, forMs: 0 },
+      { sessionId: 's2', cwd: '/w/beta', turnId: 't2', running: false, bg: 2, forMs: 0, tasks: ['npm run dev', 'sleep 20'] },
+      { sessionId: 's3', cwd: '/w/idle', turnId: 't3', running: false, bg: 0, forMs: 0 },
+    ];
+    render(<ServerChip {...base} startedAt={1} draining busy={2} activity={activity} titleOf={(id) => (id === 's1' ? '첫 세션' : `t-${id}`)} onOpen={onOpen} />);
+    const chip = screen.getByRole('button', { name: /재시작 대기 중/ });
+    expect(chip.getAttribute('title')).toBe('서버가 재시작을 준비 중입니다 — 돌고 있는 작업이 끝나면 다시 시작합니다');
+    expect(chip.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(chip);
+    expect(chip.getAttribute('aria-expanded')).toBe('true');
+    const pop = screen.getByRole('dialog', { name: '재시작이 기다리는 작업' });
+    expect(pop.textContent).toContain('첫 세션');
+    expect(pop.textContent).toContain('턴 진행 중');
+    expect(pop.textContent).toContain('백그라운드 작업 2개');
+    expect(pop.textContent).toContain('npm run dev');
+    expect(pop.textContent).toContain('sleep 20');
+    expect(pop.textContent).not.toContain('t-s3');
+    // Esc closes; an outside click closes.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(chip);
+    fireEvent.click(document.body);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // A row opens its session and closes the list.
+    fireEvent.click(chip);
+    fireEvent.click(screen.getByRole('button', { name: /t-s2/ }));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's2', cwd: '/w/beta', title: 't-s2' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
 });
 
 describe('HighlightsBadge', () => {

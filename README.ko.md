@@ -185,7 +185,7 @@ CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c  (계정
 | `DECK_EXTRA_CWD_ROOTS` | 없음 | 홈 디렉터리 외에 새 세션을 시작할 수 있게 할 절대 경로(콤마 구분). `DECK_LOOPBACK_ONLY=1` 일 때만 적용되고 `/` 는 받지 않는다. 테스트 하네스용. |
 | `DECK_DEV_ORIGIN` | 없음 | 개발 중 추가로 허용할 origin(콤마 구분, Vite 개발 서버). |
 
-화면에서 바꾸는 서버 전체 설정(기본 권한 모드, 라우팅 정책)은 설정 디렉터리의 `settings.json` 에 저장된다. 고정 프로젝트 폴더는 `projects.json` 에 `[{"cwd": "/Users/alice/code/acme-app", "name": "acme-app"}]` 형식으로 적는다.
+화면에서 바꾸는 서버 전체 설정(기본 권한 모드, 라우팅 정책)은 설정 디렉터리의 `settings.json` 에 저장된다. *같은 벤더 계정 자동 순환*(한도·Fable 상한·식은 캐시 때 Claude 계정 사이를 옮기기)은 기본 꺼짐이라 세션은 기본(home) 계정이나 직접 고정한 계정에 머물고, 본인이 결제하는 본인 계정이라는 동의를 거쳐야 켜진다. 다른 벤더(Codex·Gemini)로의 인계는 이 설정과 상관없다. 고정 프로젝트 폴더는 `projects.json` 에 `[{"cwd": "/Users/alice/code/acme-app", "name": "acme-app"}]` 형식으로 적는다.
 
 ### 사용량 자료
 
@@ -241,7 +241,7 @@ quarterdeck 은 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 �
 |---|---|
 | `token` | 로그인 토큰(`0600`). |
 | `accounts.json` | 선택. 계정 목록([Claude 계정 여러 개 쓰기](#claude-계정-여러-개-쓰기)). |
-| `settings.json` | 기본 권한 모드(기본값: 매번 묻기), 라우팅 정책. |
+| `settings.json` | 기본 권한 모드(기본값: 매번 묻기), 라우팅 정책, 같은 벤더 계정 자동 순환(기본값: 꺼짐). |
 | `projects.json` | 선택. 고정 프로젝트 폴더. |
 | `session-state.json` | 세션별 계정·모델·마지막 턴. |
 | `session-meta.json`, `pins.json` | 바꾼 제목, 보관 표시, 고정한 세션. |

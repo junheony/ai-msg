@@ -13,7 +13,7 @@ import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetAtMs, limitResetHint } from '../engine/limitDetect';
 import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
-import { chooseAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
+import { NO_ROTATION, chooseAccount, fixedAccount, onlyAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
 import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
@@ -107,6 +107,8 @@ export type TurnRunnerDeps = {
   defaultPermissionMode?: () => PermMode;
   /** 자동 routing policy (DeckSettings.routingPolicy, read per turn); absent = 'balance'. */
   routingPolicy?: () => RoutingPolicy;
+  /** 같은 벤더 계정 자동 순환 (DeckSettings.sameVendorRotation, read per turn); absent = on (main passes the setting, off by default). */
+  sameVendorRotation?: () => boolean;
   /** One line per routed Claude turn (main: console.log); absent = not logged. */
   routeLog?: (line: string) => void;
   /** A session's mode changed during a turn (approved plan, 이 세션's "allow all edits") or via setPermissionMode. */
@@ -1314,16 +1316,19 @@ export class TurnRunner {
     // Gemini is explicit only: chooseEngine (자동) never sees it.
     if (!state && p.engine === 'gemini') return this.runGemini(p, null, sink, 'Gemini 지정', attachments);
     if (!state) {
+      // 같은 벤더 계정 자동 순환 off: the new session can only run on one Claude account, so GPT (벤더 간 인계) and 자동
+      // 모델 weigh that account alone.
+      const claudeAccounts = this.rotation() ? this.accounts : onlyAccount(this.accounts, fixedAccount({ pinned: p.accountPin ?? null, current: null, accounts: this.accounts }));
       const pick = chooseEngine({
         choice: p.engine ?? 'claude', usage: deps.usage.routingSnapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
-        gptCooldownUntilMs: this.gptCooldownUntil, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: this.accounts,
+        gptCooldownUntilMs: this.gptCooldownUntil, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: claudeAccounts,
       });
       if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason, attachments);
       // Only a non-default choice earns a prefix, so Plan 1 badges read exactly as before.
       const enginePrefix = p.engine && p.engine !== 'claude' ? pick.reason : null;
       if (p.model === 'auto') {
         // 자동: decided once, here, for the new session; later turns keep it as the session default (prompt cache).
-        const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.routingSnapshot(), nowMs: this.now(), cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: this.accounts });
+        const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.routingSnapshot(), nowMs: this.now(), cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: claudeAccounts });
         return this.runClaude({ ...p, model: auto.model, effort: p.effort ?? auto.effort }, null, sink, enginePrefix ? `${enginePrefix} · ${auto.reason}` : auto.reason, attachments, auto.model);
       }
       return this.runClaude(p, null, sink, enginePrefix, attachments);
@@ -1500,11 +1505,16 @@ export class TurnRunner {
    * The router's input for a Claude turn on `state` (null = a new session) wanting `wanted`, pinned to `askedPin`: reads
    * usage, settings and cooldown files only. The turn path and previewRoute both route from it.
    */
+  /** 같은 벤더 계정 자동 순환 (read per turn); absent = on. */
+  private rotation(): boolean {
+    return this.deps.sameVendorRotation?.() ?? true;
+  }
+
   private claudeRoute(state: ClaudeSessionState | null, wanted: ClaudeModel, askedPin: Account | null) {
     const { deps } = this;
     // A pin on an account that is not active (removed or retired since) is no pin.
     const pin = askedPin && this.accounts.list().includes(askedPin) ? askedPin : null;
-    const routerBase = { usage: deps.usage.routingSnapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance', accounts: this.accounts };
+    const routerBase = { usage: deps.usage.routingSnapshot(), nowMs: this.now(), protectedAccount: deps.protectedAccount, needFable: wanted === 'fable', pinned: pin, policy: deps.routingPolicy?.() ?? 'balance', accounts: this.accounts, sameVendorRotation: this.rotation() };
     const routeInput: RouterInput = {
       ...routerBase,
       current: state?.account ?? null,
@@ -1757,7 +1767,7 @@ export class TurnRunner {
         // the result, so BottleneckWatch sees the booking with it). Not for a fork, a handoff note or a turn with files.
         const sid = shownId();
         if (failure === 'limit' && !moveRefused && sid && !p.handoff && !p.attachments?.length) await this.bookRetry(sid, p.text, p.retryHop, res.errorText).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : '대안 계정 없음'} · ${shownError ?? ''}`.trim() });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : `대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`} · ${shownError ?? ''}`.trim() });
         announceMode();
         return done();
       }
@@ -1782,7 +1792,8 @@ export class TurnRunner {
     if (!st) return;
     const now = this.now();
     const reset = limitResetAtMs(errorText, now);
-    const cooled = Object.values(readAllCooldownsMs(this.deps.cooldownDir, now, this.accounts.list())).filter((v): v is number => v !== undefined);
+    // 같은 벤더 계정 자동 순환 off: the retry runs on the session's own account, so only its cooldown counts.
+    const cooled = Object.values(readAllCooldownsMs(this.deps.cooldownDir, now, this.rotation() || isCodexState(st) || isGeminiState(st) ? this.accounts.list() : [st.account])).filter((v): v is number => v !== undefined);
     const atMs = reset !== null ? reset + 60_000 : cooled.length ? Math.min(...cooled) + 60_000 : now + 30 * 60_000;
     await this.deps.store.set({ ...st, pendingRetry: { text, atMs, hops } });
   }
@@ -1805,7 +1816,7 @@ export class TurnRunner {
       sink.emit({ type: 'turn_result', turnId: need.seg.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: need.seg.reason, usage: ZERO_USAGE, modelNote: null }, errorText });
       for (const q of need.queued) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
     };
-    const noneLeft = `${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 대안 계정 없음`;
+    const noneLeft = `${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`;
     // A background continuation is booked as '이어서 진행해 주세요.', a failed follow-up as its own text (not with files).
     const retryText = need.followUp ? (need.followUp.f.attachments?.length ? null : need.followUp.f.text) : '이어서 진행해 주세요.';
     const none = async () => {

@@ -5,13 +5,14 @@ import { ROUTING_POLICIES, type DeckSettings, type RoutingPolicy } from '../shar
 
 /**
  * A fresh install asks before every tool call (기본 — 묻기); 모두 자동 승인 is opt-in through the settings screen.
- * An existing `settings.json` always wins over these. 자동 routing spreads load (고르게 분산).
+ * An existing `settings.json` always wins over these. 자동 routing spreads load (고르게 분산). 같은 벤더 계정 자동 순환 is
+ * off until the user turns it on (and agrees to the own-accounts-only notice); a file without it = off.
  */
-export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance' };
+export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false };
 
 /** Both permission fields from one source: `defaultPermissionMode` wins; a lone legacy `autoApprove` maps to bypass / default. */
-function normalize(mode: PermMode, routingPolicy: RoutingPolicy): Required<DeckSettings> {
-  return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode, routingPolicy };
+function normalize(mode: PermMode, routingPolicy: RoutingPolicy, sameVendorRotation: boolean): Required<DeckSettings> {
+  return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode, routingPolicy, sameVendorRotation };
 }
 
 function isRoutingPolicy(v: unknown): v is RoutingPolicy {
@@ -35,7 +36,7 @@ export class SettingsStore {
     const r = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
     // Migration: a file from before per-session modes has only autoApprove.
     const mode = isPermMode(r.defaultPermissionMode) ? r.defaultPermissionMode : typeof r.autoApprove === 'boolean' ? permModeFromAutoApprove(r.autoApprove) : DEFAULT_SETTINGS.defaultPermissionMode;
-    this.current = normalize(mode, isRoutingPolicy(r.routingPolicy) ? r.routingPolicy : DEFAULT_SETTINGS.routingPolicy);
+    this.current = normalize(mode, isRoutingPolicy(r.routingPolicy) ? r.routingPolicy : DEFAULT_SETTINGS.routingPolicy, r.sameVendorRotation === true);
   }
 
   get(): Required<DeckSettings> {
@@ -44,7 +45,7 @@ export class SettingsStore {
 
   async set(patch: Partial<DeckSettings>): Promise<Required<DeckSettings>> {
     const mode = patch.defaultPermissionMode ?? (patch.autoApprove !== undefined ? permModeFromAutoApprove(patch.autoApprove) : this.current.defaultPermissionMode);
-    const next = normalize(mode, patch.routingPolicy ?? this.current.routingPolicy);
+    const next = normalize(mode, patch.routingPolicy ?? this.current.routingPolicy, patch.sameVendorRotation ?? this.current.sameVendorRotation);
     this.current = next;
     this.writing = this.writing.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
