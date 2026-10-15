@@ -1,4 +1,5 @@
 // src/server/engine/claudeCli/texts.ts
+import { MIN_CLAUDE_VERSION } from './version';
 /** The handoff-note turn (TurnRequest.noTools): what a denied tool call tells the model. */
 export const NO_TOOLS_MESSAGE = '인계 메모 작성 중에는 도구를 쓸 수 없습니다 — 지금까지의 대화만으로 메모를 써 주세요';
 /** 계속 계획 on the plan card: what the denied ExitPlanMode call tells the model. */
@@ -17,3 +18,7 @@ export const HOOK_RELAY_FAILED_MESSAGE = '도구 사용 여부를 deck 에 확�
 export const FORK_SOURCE_MISSING = '갈래를 만들 원본 대화 기록을 찾지 못했습니다';
 /** 메시지 편집 갈래: the edited message's entry is not in the parent transcript. */
 export const FORK_AT_UNSUPPORTED = '고친 메시지 지점을 원본 대화 기록에서 찾지 못했습니다';
+export const CLAUDE_MISSING_TEXT = 'Claude Code(claude)를 찾지 못했습니다 — 터미널에서 설치하고 로그인한 뒤 deck 을 다시 시작해 주세요';
+export const claudeTooOldText = (version: string): string => `Claude Code ${version} 은 너무 오래됐습니다 — ${MIN_CLAUDE_VERSION} 이상으로 업데이트한 뒤 deck 을 다시 시작해 주세요`;
+/** = TurnRunner.ABORTED: the UI hides a stopped turn's error when it is exactly this. */
+export const ABORTED_TEXT = '중단됨';
