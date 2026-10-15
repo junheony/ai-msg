@@ -1,0 +1,1 @@
+{"cli":"2.1.283","scenario":"hook-ask","maxTurns":4,"exit":{"code":0,"signal":null},"hookCalls":["Write","Write"],"calls":[{"tool_name":"Write","inputKeys":["file_path","content"],"tool_use_id":"toolu_017fGVBVaojrwryjUgZDRs23","permission_suggestions":null}],"files":["a.txt","b.txt"]}

@@ -8,11 +8,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ClaudeProcess } from '../process';
-import { buildMcpConfig, claudeArgs, claudeEnv, type CliPermissionMode } from '../args';
+import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, type CliPermissionMode, type RelaySpec } from '../args';
 import { PermissionBridge, type BridgeHandlers, type PermissionCall } from '../bridge';
 import { resolveClaudeBin } from '../version';
 import { scrubLine } from './scrub';
-import { BackgroundTracker } from '../stream';
+import { BackgroundTracker, toolAudit } from '../stream';
+import { hookHandler } from '../hooks';
 import type { CliMessage, CliUserMessage, Rec } from '../messages';
 
 export type CaptureCtx = {
@@ -139,7 +140,11 @@ export async function capture(name: string, sc: Scenario, hooks: { bridgeSetup?:
   console.log(`wrote ${path.relative(process.cwd(), out)} (${frames.length} frames)`, meta.exit);
 }
 
-export type BridgeScenario = Scenario & { handlers(ctx: { calls: PermissionCall[]; meta: Rec; dir: string }): Partial<BridgeHandlers> };
+export type BridgeScenario = Scenario & {
+  handlers(ctx: { calls: PermissionCall[]; meta: Rec; dir: string }): Partial<BridgeHandlers>;
+  /** `--settings` hook commands running the real hookRelay.ts against this capture's bridge registration. */
+  hookSettings?: (relay: RelaySpec) => Record<string, unknown>;
+};
 
 const MCP_SCRIPT = path.join(import.meta.dirname, '..', 'permissionMcp.ts');
 const allow = async (c: PermissionCall) => ({ behavior: 'allow' as const, updatedInput: c.input });
@@ -157,7 +162,8 @@ export async function captureWithBridge(name: string, sc: BridgeScenario): Promi
       });
       const mcpConfigPath = path.join(dir, 'mcp.json');
       fs.writeFileSync(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: process.execPath, script: MCP_SCRIPT, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
-      return { mcpConfigPath, settings: {}, dispose: async () => { reg.dispose(); await bridge.close(); } };
+      const relay = { node: process.execPath, script: path.join(import.meta.dirname, '..', 'hookRelay.ts'), socketPath: reg.socketPath, token: reg.token };
+      return { mcpConfigPath, settings: sc.hookSettings?.(relay) ?? {}, dispose: async () => { reg.dispose(); await bridge.close(); } };
     },
   });
 }
@@ -204,6 +210,42 @@ export const bridgeScenarios: Record<string, BridgeScenario> = {
     first: 'Call the tool named mcp__deck_bridge__permission with tool_name "Bash" and input {}. Report what happened.',
     drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
     handlers: () => ({}),
+  },
+  hooks: {
+    maxTurns: 3,
+    first: 'Read the file a.txt with the Read tool. Then tell me the codeword from your context if you were given one, else NONE.',
+    hookSettings: (relay) => buildSettings({ noTools: true, systemNote: 'The codeword is PAPAYA.', relay }),
+    handlers: ({ meta }) => {
+      const audit = toolAudit({ onToolAudit: async (e) => { ((meta.audits ??= []) as unknown[]).push(e); } });
+      const h = hookHandler({ noTools: true, systemNote: 'The codeword is PAPAYA.' }, audit, { mode: 'default', startedIn: 'default' });
+      return { hook: async (i, s) => { ((meta.hookEvents ??= []) as unknown[]).push(i.hook_event_name); return h(i, s); } };
+    },
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+  },
+  'hook-ask': {
+    maxTurns: 4,
+    permissionMode: 'acceptEdits',
+    first: 'Create a.txt containing a with the Write tool, then create b.txt containing b with the Write tool. Then reply DONE.',
+    hookSettings: (relay) => buildSettings({ relay }),
+    handlers: ({ meta }) => {
+      let n = 0;
+      return { hook: async (i) => {
+        if (i.hook_event_name !== 'PreToolUse') return {};
+        n += 1;
+        ((meta.hookCalls ??= []) as unknown[]).push(i.tool_name);
+        return n === 2 ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask' } } : {};
+      } };
+    },
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    after: (ctx) => { ctx.meta.files = ['a.txt', 'b.txt'].filter((f) => fs.existsSync(path.join(ctx.dir, 'work', f))); },
+  },
+  'hook-allow': {
+    maxTurns: 3,
+    first: 'Create c.txt containing c with the Write tool. Then reply DONE.',
+    hookSettings: (relay) => buildSettings({ relay }),
+    handlers: () => ({ hook: async (i) => (i.hook_event_name === 'PreToolUse' ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } } : {}) }),
+    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
+    after: (ctx) => { ctx.meta.fileWritten = fs.existsSync(path.join(ctx.dir, 'work', 'c.txt')); },
   },
   'permission-slow': slowPermission(3_000),
   'permission-slow-20s': slowPermission(20_000),

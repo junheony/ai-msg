@@ -86,6 +86,16 @@ export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (si
       const r = await postBridge(env.DECK_BRIDGE_SOCK!, env.DECK_BRIDGE_TOKEN!, '/v1/permission', call);
       return JSON.parse(r.body) as Record<string, unknown>;
     },
+    /** What hookRelay.ts would do for the latest spawn: parse --sock and the DECK_BRIDGE_TOKEN= prefix out of the settings file's first hook command. */
+    hook: async (input: Record<string, unknown>) => {
+      const s = spawns[spawns.length - 1]!;
+      const settings = JSON.parse(fs.readFileSync(argValue(s.args, '--settings')!, 'utf8')) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+      const cmd = Object.values(settings.hooks)[0]![0]!.hooks[0]!.command;
+      const word = (flag: string) => (cmd.match(new RegExp(`'${flag}' '([^']*)'`)) ?? [])[1]!;
+      const token = (cmd.match(/^DECK_BRIDGE_TOKEN='([^']*)' /) ?? [])[1]!;
+      const r = await postBridge(word('--sock'), token, '/v1/hook', input);
+      return JSON.parse(r.body) as Record<string, unknown>;
+    },
   };
 }
 

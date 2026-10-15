@@ -1,0 +1,1 @@
+{"cli":"2.1.283","scenario":"hooks","maxTurns":3,"exit":{"code":0,"signal":null},"hookEvents":["UserPromptSubmit","PreToolUse"],"audits":[{"toolName":"Read","input":{"file_path":"/work/a.txt"},"toolUseId":"toolu_01ADcVPjtnMVr6peXk1rvv6a","decision":"deny","source":"deck"}],"calls":[]}
