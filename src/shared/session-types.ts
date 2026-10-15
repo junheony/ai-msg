@@ -22,6 +22,8 @@ export type SessionEntry = {
   sizeBytes: number;
   /** deck-side 보관됨 (session-meta.json); hidden from the lists unless the 보관됨 filter is on. */
   archived?: boolean;
+  /** Claude: written only by non-interactive `claude -p` runs (a script's one-shot, e.g. an OCR job). Left out of the lists unless deck runs or keeps meta for it; search and links still find it. */
+  headless?: boolean;
   /** A Codex Desktop / CLI thread read from ~/.codex/sessions that deck has not run yet (becomes a deck Codex session on the first turn). */
   imported?: boolean;
   /** An imported thread from a non-interactive `codex exec` run (shown with a 자동 실행 tag). */

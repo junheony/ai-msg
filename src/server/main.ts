@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   // Codex rollouts (~1000 files) are read after listening; the sidebar is told when they are in.
   await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), settings.load(), pushSubs.load()]);
   const commands = new SlashCommandCache();
-  const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries()).flatMap((p) => p.sessions) });
+  const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries(), { all: true }).flatMap((p) => p.sessions) });
   // /api/file never previews deck's own config (token, VAPID key, push subscriptions), even with the cwd at ~.
   const files = new FileLister({ home: cfg.home, roots: cfg.cwdRoots, denyRoots: [await fs.realpath(cfg.configDir).catch(() => cfg.configDir)] });
   usage.start();

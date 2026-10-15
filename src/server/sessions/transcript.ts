@@ -6,7 +6,11 @@ import type { TranscriptMessage } from '../../shared/session-types';
 import { contextUsageOf } from '../../shared/turn-types';
 import { redactSecrets } from '../engine/redact';
 
-export type HeadInfo = { cwd: string | null; title: string | null };
+/** `headless`: every record in the head that names its writer is a non-interactive `claude -p` run (`sdk-cli`) — a script's one-shot, or deck's own CLI child (SessionIndex tells them apart). */
+export type HeadInfo = { cwd: string | null; title: string | null; headless?: boolean };
+
+/** The `entrypoint` a non-interactive `claude -p` run stamps on its records. */
+export const HEADLESS_ENTRYPOINT = 'sdk-cli';
 
 type Rec = Record<string, unknown>;
 
@@ -130,12 +134,14 @@ function titleFrom(text: string): string | null {
   return first.length > 80 ? first.slice(0, 80) : first;
 }
 
-function scan(text: string): { cwd: string | null; custom: string | null; firstUser: string | null } {
+function scan(text: string): { cwd: string | null; custom: string | null; firstUser: string | null; headless: boolean } {
   let cwd: string | null = null;
   let custom: string | null = null;
   let firstUser: string | null = null;
+  let headless: boolean | null = null;
   for (const r of parseLines(text)) {
     if (cwd === null && typeof r.cwd === 'string' && r.cwd) cwd = r.cwd;
+    if (typeof r.entrypoint === 'string' && headless !== false) headless = r.entrypoint === HEADLESS_ENTRYPOINT;
     if (r.type === 'custom-title' && typeof r.customTitle === 'string' && r.customTitle.trim()) custom = r.customTitle.trim();
     if (firstUser === null && isRealUser(r)) {
       const m = message(r);
@@ -143,12 +149,12 @@ function scan(text: string): { cwd: string | null; custom: string | null; firstU
       if (t) firstUser = t;
     }
   }
-  return { cwd, custom, firstUser };
+  return { cwd, custom, firstUser, headless: headless === true };
 }
 
 export function parseHead(text: string): HeadInfo {
-  const { cwd, custom, firstUser } = scan(text);
-  return { cwd, title: custom ?? firstUser };
+  const { cwd, custom, firstUser, headless } = scan(text);
+  return { cwd, title: custom ?? firstUser, ...(headless ? { headless } : {}) };
 }
 
 async function companionTitle(file: string): Promise<string | null> {
@@ -187,7 +193,7 @@ export async function readHead(file: string, maxBytes = 256 * 1024): Promise<Hea
     await fh.close();
   }
   const title = tailCustom ?? (await companionTitle(file)) ?? head.custom ?? head.firstUser;
-  return { cwd: head.cwd, title };
+  return { cwd: head.cwd, title, ...(head.headless ? { headless: true } : {}) };
 }
 
 function stringify(v: unknown): string {

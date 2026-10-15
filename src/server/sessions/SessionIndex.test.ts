@@ -228,3 +228,37 @@ describe('SessionIndex.touch', () => {
     expect(await idx.touch()).toBe(false);
   });
 });
+
+describe('headless (`claude -p`) sessions', () => {
+  const write = async (root: string, id: string, entrypoint: string, title: string) => {
+    const d = path.join(root, '-w-auto');
+    await fs.mkdir(d, { recursive: true });
+    await fs.writeFile(path.join(d, `${id}.jsonl`), L({ type: 'user', cwd: '/w/auto', entrypoint, message: { role: 'user', content: title } }));
+  };
+  const listed = (idx: SessionIndex) => idx.projects().flatMap((p) => p.sessions.map((s) => s.sessionId)).sort();
+
+  it('lists a script\'s one-shot only once deck knows it (a turn, the state store) or keeps meta for it; lookup and sessions() still have it', async () => {
+    const root = await mkRoot();
+    await write(root, ID1, 'sdk-cli', 'media/x/1.jpg 파일을 읽어라');
+    await write(root, ID2, 'cli', 'terminal session');
+    await write(root, ID3, 'sdk-cli', 'renamed one-shot');
+    const titles: Record<string, string> = { [ID3]: 'Mine' };
+    const idx = new SessionIndex({
+      roots: rootsOf({ a: root, b: '/nonexistent/b', c: '/nonexistent/c' }),
+      pinnedFile: '/nonexistent/p.json',
+      meta: { title: (id) => titles[id] ?? null, isArchived: () => false },
+    });
+    await idx.refresh();
+    expect(listed(idx)).toEqual([ID2, ID3]);
+    expect(idx.lookup(ID1)?.headless).toBe(true);
+    expect(idx.sessions().map((s) => s.sessionId).sort()).toEqual([ID1, ID2, ID3]);
+    expect(idx.projects([], { all: true }).flatMap((p) => p.sessions.map((s) => s.sessionId)).sort()).toEqual([ID1, ID2, ID3]);
+
+    const known = new Set<string>();
+    idx.setKnown((id) => known.has(id));
+    expect(listed(idx)).toEqual([ID2, ID3]);
+    known.add(ID1);
+    idx.regroup();
+    expect(listed(idx)).toEqual([ID1, ID2, ID3]);
+  });
+});

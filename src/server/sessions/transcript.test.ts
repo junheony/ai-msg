@@ -26,6 +26,14 @@ describe('parseHead', () => {
     expect(parseHead(text)).toEqual({ cwd: CWD, title: 'Sample Project' });
   });
 
+  it('marks a head written only by `claude -p` (sdk-cli) as headless; any other writer clears it', () => {
+    const rec = (entrypoint: string) => L({ type: 'user', cwd: CWD, entrypoint, message: { role: 'user', content: 'ocr this' } });
+    expect(parseHead([L({ type: 'queue-operation' }), rec('sdk-cli')].join('\n'))).toEqual({ cwd: CWD, title: 'ocr this', headless: true });
+    expect(parseHead([rec('sdk-cli'), rec('cli')].join('\n'))).toEqual({ cwd: CWD, title: 'ocr this' });
+    expect(parseHead([rec('sdk-ts'), rec('sdk-cli')].join('\n'))).toEqual({ cwd: CWD, title: 'ocr this' });
+    expect(parseHead(L({ type: 'user', cwd: CWD, message: { role: 'user', content: 'ocr this' } }))).toEqual({ cwd: CWD, title: 'ocr this' });
+  });
+
   it('falls back to the first real user message, skipping compact summaries and <command> wrappers', () => {
     const text = [
       L({ type: 'user', cwd: CWD, isCompactSummary: true, message: { role: 'user', content: 'This session is being continued' } }),
