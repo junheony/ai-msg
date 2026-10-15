@@ -304,7 +304,7 @@ function isInjectedNoopResult(m: SDKMessage): boolean {
 }
 
 /** Background waiting caps: total wait after the first result, and how long an emptied set may stay idle. */
-export const BG_MAX_MS = 2 * 60 * 60_000;
+export const BG_MAX_MS = 6 * 60 * 60_000;
 export const BG_GRACE_MS = 60_000;
 
 /** The handoff-note turn (TurnRequest.noTools): what a denied tool call tells the model. */
