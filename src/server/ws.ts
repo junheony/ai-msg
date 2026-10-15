@@ -255,6 +255,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    * `new:<turnId>` until the CLI reports its id, then by that id as well.
    */
   const busy = new Map<string, string>();
+  // A `claude -p` transcript is deck's own while a deck turn runs it or once the state store has it; other scripts' runs stay out of the sidebar.
+  deps.index.setKnown?.((id) => busy.has(id) || deps.store.get(id) !== null);
   /** D6: the sessions each socket has open (one per pane); a session's turn events go to every socket viewing it. */
   const viewing = new Map<WebSocket, Set<string>>();
   const view = (ws: WebSocket, sessionId: string) => { let s = viewing.get(ws); if (!s) { s = new Set(); viewing.set(ws, s); } s.add(sessionId); };

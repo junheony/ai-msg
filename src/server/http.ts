@@ -420,7 +420,7 @@ export function createRequestHandler(deps: HttpDeps) {
           try {
             // A known session's own folder wins over the client's cwd (a new, unsaved session only has the cwd).
             const sid = url.searchParams.get('session');
-            const known = sid ? deps.index.projects(deps.extraSessions?.() ?? []).flatMap((p) => p.sessions).find((e) => e.sessionId === sid) : undefined;
+            const known = sid ? deps.index.projects(deps.extraSessions?.() ?? [], { all: true }).flatMap((p) => p.sessions).find((e) => e.sessionId === sid) : undefined;
             const cwd = known?.cwd ?? url.searchParams.get('cwd') ?? '';
             const file = url.searchParams.get('path') ?? '';
             if (url.searchParams.get('raw') === '1') {

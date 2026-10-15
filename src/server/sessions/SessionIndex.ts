@@ -47,6 +47,7 @@ export async function scanProfile(account: Account, projectsRoot: string): Promi
           title: head.title ?? '(제목 없음)',
           lastModified: st.mtimeMs,
           sizeBytes: st.size,
+          ...(head.headless ? { headless: true } : {}),
         });
       } catch {
         // unreadable file: skip
@@ -188,8 +189,25 @@ export class SessionIndex {
     return out;
   }
 
-  private group(sessions: SessionEntry[]): ProjectEntry[] {
-    return groupProjects(sessions.map((s) => this.decorate(s)), this.pinned, this.recentFolders);
+  /** Sessions deck runs or has run (its state store, a turn in flight); set by the ws layer. */
+  private known: ((sessionId: string) => boolean) | null = null;
+
+  /** `known` says which `claude -p` sessions are deck's own; the others (scripts' one-shots) stay out of the lists. Regroups. */
+  setKnown(known: (sessionId: string) => boolean): void {
+    this.known = known;
+    this.regroup();
+  }
+
+  /** A headless session is listed only when deck runs it or keeps something for it (a title, a link, 보관됨…). */
+  private listed(s: SessionEntry): boolean {
+    if (!s.headless) return true;
+    const id = s.sessionId;
+    const meta = this.opts.meta;
+    return !!this.known?.(id) || !!meta?.title(id) || !!meta?.isArchived(id) || !!meta?.next?.(id) || !!meta?.prev?.(id) || !!meta?.branchOf?.(id) || !!meta?.cwd?.(id);
+  }
+
+  private group(sessions: SessionEntry[], all = false): ProjectEntry[] {
+    return groupProjects((all ? sessions : sessions.filter((s) => this.listed(s))).map((s) => this.decorate(s)), this.pinned, this.recentFolders);
   }
 
   /** Re-applies titles / archive flags / `heldBy` after a SessionMetaStore or process-holder change (no rescan). */
@@ -330,14 +348,16 @@ export class SessionIndex {
    * Cached grouping of the profile scan; with `extra` (Codex sessions from the state store, D4) and/or
    * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice;
    * if Codex has since archived it (its newest rollout is in archived_sessions), deck's entry is archived too.
+   * `all`: headless sessions deck does not know are included (search, file lookup) — the sidebar leaves them out.
    */
-  projects(extra: SessionEntry[] = []): ProjectEntry[] {
+  projects(extra: SessionEntry[] = [], opts: { all?: boolean } = {}): ProjectEntry[] {
     extra = this.codexOwned(extra);
     const all = this.codex?.list() ?? [];
     const archivedInCodex = new Set(all.filter((e) => e.codexArchived).map((e) => e.sessionId));
     const own = new Set(extra.map((e) => e.sessionId));
     const mine = archivedInCodex.size ? extra.map((e) => (archivedInCodex.has(e.sessionId) ? { ...e, archived: true, codexArchived: true } : e)) : extra;
     const imports = all.filter((e) => !own.has(e.sessionId));
+    if (opts.all) return this.group([...this.entries, ...mine, ...imports], true);
     return extra.length || imports.length ? this.group([...this.entries, ...mine, ...imports]) : this.grouped;
   }
 
