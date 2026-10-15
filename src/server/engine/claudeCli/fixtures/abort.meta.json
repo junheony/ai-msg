@@ -1,0 +1,1 @@
+{"cli":"2.1.283","scenario":"abort","maxTurns":1,"sigintAfterFrame":8,"resultAfterSigint":true,"result":{"subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming"},"exit":{"code":0,"signal":null}}

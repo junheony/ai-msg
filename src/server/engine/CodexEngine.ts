@@ -310,7 +310,7 @@ function parseVersion(v: string): [number, number, number] {
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
 }
 
-function versionAtLeast(v: string, min: string): boolean {
+export function versionAtLeast(v: string, min: string): boolean {
   const a = parseVersion(v);
   const b = parseVersion(min);
   if (a[0] !== b[0]) return a[0] > b[0];
