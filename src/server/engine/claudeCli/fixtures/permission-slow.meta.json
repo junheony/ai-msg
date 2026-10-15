@@ -1,0 +1,32 @@
+{
+  "cli": "2.1.283",
+  "scenario": "permission-slow",
+  "maxTurns": 3,
+  "toolResults": [
+    {
+      "is_error": true,
+      "text": "<tool_use_error>Error calling tool (Write): MCP server \"deck_bridge\" tool \"permission\" timed out after 3s</tool_use_error>"
+    }
+  ],
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "cancelledAfterMs": 3020,
+  "calls": [
+    {
+      "tool_name": "Write",
+      "inputKeys": [
+        "file_path",
+        "content"
+      ],
+      "tool_use_id": "toolu_01KCptbMy4CSJn5DPkuVArvr",
+      "permission_suggestions": null
+    }
+  ],
+  "toolTimeoutMs": 3000,
+  "fileWritten": false,
+  "verdicts": {
+    "D10": true
+  }
+}

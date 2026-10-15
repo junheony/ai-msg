@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import { PassThrough } from 'node:stream';
 import readline from 'node:readline';
 import type { CliUserMessage, Rec } from './messages';
 import type { ClaudeChildLike, ClaudeSpawnFn } from './spawnTypes';
+import { postBridge } from './permissionMcp';
 
 export type FakeSpawn = { bin: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv };
 export type FakeCtl = { push(...ms: unknown[]): void; raw(text: string): void; exit(code: number | null, signal?: NodeJS.Signals | null): void };
@@ -75,6 +77,15 @@ export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (si
     end: (code = 0) => { if (live) live.exit(code); },
     stderr: (text: string) => { stderrOf?.write(text); },
     ctl: () => live,
+    /** What the real permissionMcp.ts would do for the latest spawn: read its mcp-config file, POST to the bridge. */
+    ask: async (call: { tool_name: string; input: Record<string, unknown>; tool_use_id: string; permission_suggestions?: unknown }) => {
+      const s = spawns[spawns.length - 1];
+      if (!s) throw new Error('no spawn');
+      const cfgPath = argValue(s.args, '--mcp-config')!;
+      const env = (JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as { mcpServers: Record<string, { env: Record<string, string> }> }).mcpServers.deck_bridge!.env;
+      const r = await postBridge(env.DECK_BRIDGE_SOCK!, env.DECK_BRIDGE_TOKEN!, '/v1/permission', call);
+      return JSON.parse(r.body) as Record<string, unknown>;
+    },
   };
 }
 

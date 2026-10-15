@@ -1,0 +1,25 @@
+{
+  "cli": "2.1.283",
+  "scenario": "deny",
+  "maxTurns": 3,
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "calls": [
+    {
+      "tool_name": "Write",
+      "inputKeys": [
+        "file_path",
+        "content"
+      ],
+      "tool_use_id": "toolu_013Bun7xc5Cqq26fw4fs6UTY",
+      "permission_suggestions": null
+    }
+  ],
+  "verdicts": {
+    "D7": "tool_result+permission_denials",
+    "D7_permissionDeniedFrame": false,
+    "D8": true
+  }
+}

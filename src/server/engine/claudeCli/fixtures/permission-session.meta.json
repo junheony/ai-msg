@@ -1,0 +1,25 @@
+{
+  "cli": "2.1.283",
+  "scenario": "permission-session",
+  "maxTurns": 4,
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "calls": [
+    {
+      "tool_name": "Bash",
+      "inputKeys": [
+        "command",
+        "description"
+      ],
+      "tool_use_id": "toolu_014Gue1TgE2oDt82JBvGEmvW",
+      "permission_suggestions": null
+    }
+  ],
+  "verdicts": {
+    "D2": true,
+    "bashPermissionSuggestions": null,
+    "note": "echo is auto-allowed by the CLI (first attempt: calls 0, invalid); re-run with touch"
+  }
+}

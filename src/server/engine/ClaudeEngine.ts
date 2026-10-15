@@ -10,6 +10,7 @@ import { parseQuestions, sessionUpdates, type Engine, type EngineEvent, type Liv
 import { STDERR_MAX } from './redact';
 import type { CliMessage, Rec } from './claudeCli/messages';
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
+import { KEEP_PLANNING_MESSAGE, NO_TOOLS_MESSAGE } from './claudeCli/texts';
 import { BackgroundTracker as CliBackgroundTracker, ProgressMeter as CliProgressMeter, deniedCalls, isActivity, isInjectedNoopResult, mapCliMessage, noteCommands as noteCliCommands, toolAudit, type CommandsListener, type ToolAudit } from './claudeCli/stream';
 export { deniedCalls, toolAudit, toUserMessage };
 export type { CommandsListener, ToolAudit, ReadFile };
@@ -73,11 +74,7 @@ export class InputChannel implements AsyncIterable<SDKUserMessage> {
 export const BG_MAX_MS = 6 * 60 * 60_000;
 export const BG_GRACE_MS = 60_000;
 
-/** The handoff-note turn (TurnRequest.noTools): what a denied tool call tells the model. */
-export const NO_TOOLS_MESSAGE = '인계 메모 작성 중에는 도구를 쓸 수 없습니다 — 지금까지의 대화만으로 메모를 써 주세요';
-
-/** 계속 계획 on the plan card: what the denied ExitPlanMode call tells the model. */
-export const KEEP_PLANNING_MESSAGE = '사용자가 계획을 승인하지 않았습니다 — 계획 모드를 유지하며 계획을 더 다듬어 주세요';
+export { NO_TOOLS_MESSAGE, KEEP_PLANNING_MESSAGE } from './claudeCli/texts';
 
 export function buildOptions(
   req: TurnRequest,

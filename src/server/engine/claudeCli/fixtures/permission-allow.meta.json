@@ -1,0 +1,26 @@
+{
+  "cli": "2.1.283",
+  "scenario": "permission-allow",
+  "maxTurns": 3,
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "calls": [
+    {
+      "tool_name": "Write",
+      "inputKeys": [
+        "file_path",
+        "content"
+      ],
+      "tool_use_id": "toolu_01DrgCf4tuAZVnfwT4Wp6UJ2",
+      "permission_suggestions": null
+    }
+  ],
+  "fileWritten": true,
+  "verdicts": {
+    "D1": true,
+    "D3": true,
+    "writePermissionSuggestions": null
+  }
+}

@@ -4,5 +4,10 @@
   "E3": true,
   "D6": true,
   "H1": true,
-  "F1": true
+  "F1": true,
+  "D10": true,
+  "D10_evidence": {
+    "permission-slow": "MCP_TOOL_TIMEOUT=3000: tool_result is_error \"MCP server deck_bridge tool permission timed out after 3s\", bridge signal aborted at 3020 ms, file not written",
+    "permission-slow-20s": "MCP_TOOL_TIMEOUT=20000: allow answered at 6002 ms was honoured, file written"
+  }
 }

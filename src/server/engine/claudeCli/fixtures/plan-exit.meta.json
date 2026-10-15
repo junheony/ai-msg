@@ -1,0 +1,26 @@
+{
+  "cli": "2.1.283",
+  "scenario": "plan-exit",
+  "maxTurns": 6,
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "calls": [
+    {
+      "tool_name": "ExitPlanMode",
+      "inputKeys": [
+        "plan",
+        "planFilePath"
+      ],
+      "tool_use_id": "toolu_019NFgsaPEP8orrdwfQpuHZ4",
+      "permission_suggestions": null
+    }
+  ],
+  "fileWritten": true,
+  "verdicts": {
+    "D4": true,
+    "D5": "applied-by-cli",
+    "note": "setMode acceptEdits from the prompt tool switched the CLI (system/status permissionMode acceptEdits); the following Write was not asked"
+  }
+}

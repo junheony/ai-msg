@@ -1,0 +1,32 @@
+{
+  "cli": "2.1.283",
+  "scenario": "permission-slow-20s",
+  "maxTurns": 3,
+  "toolResults": [
+    {
+      "is_error": false,
+      "text": "File created successfully at: /work/slow.txt (file state is current in your context — no need to Read it back)"
+    }
+  ],
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "answeredAfterMs": 6002,
+  "calls": [
+    {
+      "tool_name": "Write",
+      "inputKeys": [
+        "file_path",
+        "content"
+      ],
+      "tool_use_id": "toolu_01GE9ScsBdUjb7pcQyznJYBg",
+      "permission_suggestions": null
+    }
+  ],
+  "toolTimeoutMs": 20000,
+  "fileWritten": true,
+  "verdicts": {
+    "D10": true
+  }
+}
