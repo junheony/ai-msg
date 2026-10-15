@@ -78,6 +78,8 @@ npm run restart                         # graceful restart: refused while turns 
 
 The service reads environment variables from `~/.config/deck/env` (`KEY=value` lines). The file is read as a shell script (`scripts/launchd/run.sh` sources it), so keep it writable by you only (`chmod 600`).
 
+If the repo lives under `~/Documents` (or Desktop/Downloads), give **Full Disk Access** to the node binary the installer prints (System Settings → Privacy & Security). The LaunchAgent starts that node (`scripts/launchd/boot.mjs`), and macOS checks folder access against the job's own program — so node's grant covers the shell scripts and the server it starts.
+
 ## Multiple Claude accounts
 
 Each account is a Claude Code **profile directory**. Log in once per profile:

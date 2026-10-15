@@ -2,9 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Template — scripts/install-launchd.sh fills the __PLACEHOLDERS__ and writes
-  ~/Library/LaunchAgents/com.deck.server.plist. Environment (DECK_EXTRA_HOSTS, …) comes from
-  ~/.config/deck/env, read by run.sh at every start (launchd has no env-file support).
-  ExitTimeOut > DECK_DRAIN_MAX_MIN so a stop (SIGTERM) can drain before launchd SIGKILLs.
+  ~/Library/LaunchAgents/com.deck.server.plist. The program is node (boot.mjs, outside ~/Documents) so that
+  Full Disk Access for node covers the whole tree; boot.mjs runs the relaunch loop, which restarts the server
+  (no KeepAlive: the loop never gives up, and a refused second loop must not be respawned). AbandonProcessGroup:
+  stopping the job ends the loop, not the server. Environment (DECK_EXTRA_HOSTS, …) comes from ~/.config/deck/env,
+  read by run.sh at every start (launchd has no env-file support).
 -->
 <plist version="1.0">
 <dict>
@@ -12,11 +14,11 @@
   <string>com.deck.server</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
-    <string>__REPO__/scripts/launchd/run.sh</string>
+    <string>__NODE__</string>
+    <string>__HOME__/.config/deck/boot.mjs</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>__REPO__</string>
+  <string>__HOME__/.config/deck</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -26,10 +28,8 @@
   </dict>
   <key>RunAtLoad</key>
   <true/>
-  <key>KeepAlive</key>
+  <key>AbandonProcessGroup</key>
   <true/>
-  <key>ThrottleInterval</key>
-  <integer>10</integer>
   <key>ExitTimeOut</key>
   <integer>__EXIT_TIMEOUT__</integer>
   <key>StandardOutPath</key>

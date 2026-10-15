@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Installs deck as a user LaunchAgent (com.deck.server): starts at login, restarted by launchd
-# whenever it exits (KeepAlive) — which is how `npm run restart` (graceful) comes back up.
+# Installs deck as a user LaunchAgent (com.deck.server): starts at login. launchd runs node on
+# ~/.config/deck/boot.mjs, which runs the relaunch loop (~/.config/deck/relaunch.sh) — that loop restarts the server
+# whenever it exits, which is how `npm run restart` (graceful) comes back up. Grant Full Disk Access to the node
+# binary this prints (System Settings › Privacy & Security), or macOS refuses it the checkout under ~/Documents.
 #   scripts/install-launchd.sh              # install or update, then (re)start under launchd
 #   scripts/install-launchd.sh --uninstall  # stop (gracefully) and remove the agent
-# Run it from the checkout launchd should serve (the plist points at this directory).
-# A server already listening on the port (e.g. a manual `npm start`) is stopped gracefully first.
+# Run it from the checkout launchd should serve (relaunch.env points at this directory).
+# A deck server already listening on the port is handed over: it drains, then the agent's loop starts the new one
+# (a hand-started relaunch loop is stopped first; its server keeps running until then).
 set -euo pipefail
 
 LABEL="com.deck.server"
@@ -57,6 +60,7 @@ unload() {
 
 if [[ "${1:-}" == "--uninstall" ]]; then
   unload
+  stop_listener
   rm -f "$PLIST_DST"
   echo "deck: LaunchAgent 제거 완료 ($PLIST_DST)"
   exit 0
@@ -64,6 +68,8 @@ fi
 
 NODE="$(command -v node || true)"
 [[ -n "$NODE" ]] || { echo "deck: node 를 찾을 수 없습니다 (PATH 확인)" >&2; exit 1; }
+# The real file, not a symlink: Full Disk Access is granted to (and checked against) the binary itself.
+NODE="$(realpath "$NODE")"
 NODE_DIR="$(dirname "$NODE")"
 LAUNCH_PATH="$NODE_DIR:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 [[ -e "$REPO/node_modules/tsx" ]] || { echo "deck: $REPO/node_modules 가 없습니다 — npm install 먼저" >&2; exit 1; }
@@ -82,20 +88,25 @@ if [[ ! -f "$ENV_FILE" ]]; then
   echo "deck: $ENV_FILE 생성 (DECK_EXTRA_HOSTS=${DECK_EXTRA_HOSTS:-비어 있음})"
 fi
 
+# Stop a hand-started loop before overwriting its script (sh reads a script as it runs); its server keeps running.
+[[ -x "$CONF_DIR/relaunch.sh" ]] && "$CONF_DIR/relaunch.sh" stop >/dev/null 2>&1 || true
+sh "$REPO/scripts/relaunch.sh" install >/dev/null
+cp "$REPO/scripts/launchd/boot.mjs" "$CONF_DIR/boot.mjs"
+
 TMP="$(mktemp)"
-sed -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" -e "s|__PATH__|$LAUNCH_PATH|g" -e "s|__EXIT_TIMEOUT__|$((DRAIN_S + 60))|g" "$PLIST_SRC" > "$TMP"
+sed -e "s|__NODE__|$NODE|g" -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" -e "s|__PATH__|$LAUNCH_PATH|g" -e "s|__EXIT_TIMEOUT__|$((DRAIN_S + 60))|g" "$PLIST_SRC" > "$TMP"
 plutil -lint "$TMP" >/dev/null
 
 unload
-stop_listener
 mv "$TMP" "$PLIST_DST"
 chmod 644 "$PLIST_DST"
 launchctl bootstrap "$DOMAIN" "$PLIST_DST"
 launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
 
+echo "deck: 전체 디스크 접근이 필요한 node: $NODE"
 for _ in $(seq 1 30); do
-  if pid="$(listener)" && [[ -n "$pid" ]]; then
-    echo "deck: launchd 로 실행 중 (pid $pid, 포트 $PORT) · 로그 $CONF_DIR/deck.log"
+  if pid="$(listener)" && [[ -n "$pid" ]] && "$CONF_DIR/relaunch.sh" status >/dev/null 2>&1; then
+    echo "deck: launchd 등록 완료 (서버 pid $pid, 포트 $PORT — 이전 서버였다면 진행 중 턴이 끝난 뒤 새 서버로 바뀜) · 로그 $CONF_DIR/deck.log"
     echo "      재시작: npm run restart · 상태: launchctl print $DOMAIN/$LABEL · 제거: $0 --uninstall"
     exit 0
   fi
