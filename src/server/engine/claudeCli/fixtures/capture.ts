@@ -14,6 +14,9 @@ import { resolveClaudeBin } from '../version';
 import { scrubLine } from './scrub';
 import { BackgroundTracker, toolAudit } from '../stream';
 import { hookHandler } from '../hooks';
+import { writeForkSource } from '../fork';
+import { OwnedEntries } from '../ownedEntries';
+import { projectSlug } from '../../../sessions/slug';
 import type { CliMessage, CliUserMessage, Rec } from '../messages';
 
 export type CaptureCtx = {
@@ -31,7 +34,7 @@ export type Scenario = {
   permissionMode?: CliPermissionMode;
   /** The child's `MCP_TOOL_TIMEOUT` in ms (default 600000). */
   toolTimeoutMs?: number;
-  resume?: (dir: string) => string;
+  resume?: (dir: string) => string | Promise<string>;
   first: string;
   drive(ctx: CaptureCtx, m: CliMessage): void | Promise<void>;
   /** Extra checks recorded into meta after the run. */
@@ -40,6 +43,10 @@ export type Scenario = {
 
 export const FIRST_UUID = '00000000-0000-4000-8000-000000000001';
 export const SECOND_UUID = '00000000-0000-4000-8000-000000000002';
+
+/** Carries the parent run's facts (a session id, a uuid, a path) from `fork-parent` to `fork-file`, which deletes it. */
+const HANDOFF = path.join(os.tmpdir(), 'qd-cap-fork.json');
+const PROJECTS = () => path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'projects');
 
 const text = (m: CliMessage): string => (m.type === 'stream_event' && (m.event as Rec).type === 'content_block_delta' ? String(((m.event as Rec).delta as Rec)?.text ?? '') : '');
 
@@ -93,6 +100,68 @@ export const scenarios: Record<string, Scenario> = {
     },
     after: (ctx) => { delete ctx.meta.bgTracker; },
   },
+  'fork-parent': {
+    maxTurns: 2,
+    first: 'Remember the codeword KIWI. Reply only OK.',
+    drive: (ctx, m) => {
+      if (m.type === 'assistant' && typeof m.uuid === 'string') ctx.meta.lastAssistant = m.uuid;
+      if (m.type !== 'result') return;
+      ((ctx.meta.turns ??= []) as unknown[]).push({ session: m.session_id, lastAssistant: ctx.meta.lastAssistant });
+      if ((ctx.meta.turns as unknown[]).length === 1) ctx.send('Also remember the codeword LIME. Reply only OK.');
+      else ctx.proc.stop();
+    },
+    after: async (ctx) => {
+      const [t1] = ctx.meta.turns as { session: string; lastAssistant: string }[];
+      const file = path.join(PROJECTS(), projectSlug(path.join(ctx.dir, 'work')), `${t1!.session}.jsonl`);
+      const copy = path.join(os.tmpdir(), `qd-cap-parent-${t1!.session}.jsonl`);
+      fs.copyFileSync(file, copy);
+      fs.writeFileSync(HANDOFF, JSON.stringify({ sessionId: t1!.session, at: t1!.lastAssistant, file: copy }), { mode: 0o600 });
+      ctx.meta.transcriptUuidsSeenOnStdout = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'assistant').every((r) => (ctx.frames as { uuid?: string }[]).some((f) => f.uuid === r.uuid));
+    },
+  },
+  'fork-file': {
+    maxTurns: 1,
+    resume: async (dir) => {
+      const h = JSON.parse(fs.readFileSync(HANDOFF, 'utf8')) as { sessionId: string; at: string; file: string };
+      const r = await writeForkSource({ candidates: [h.file], at: h.at, dir, sessionId: h.sessionId });
+      if (!r.ok) throw new Error(r.text);
+      return r.path;
+    },
+    extraArgs: () => ['--fork-session'],
+    first: 'List every codeword I asked you to remember, comma-separated, nothing else.',
+    drive: (ctx, m) => {
+      if (m.type === 'system' && m.subtype === 'init') ctx.meta.initSession = m.session_id;
+      if (m.type === 'result') { ctx.meta.result = m.result; ctx.meta.resultSession = m.session_id; ctx.proc.stop(); }
+    },
+    after: (ctx) => {
+      const h = JSON.parse(fs.readFileSync(HANDOFF, 'utf8')) as { sessionId: string; file: string };
+      ctx.meta.newId = ctx.meta.initSession !== h.sessionId;
+      const own = path.join(PROJECTS(), projectSlug(path.join(ctx.dir, 'work')));
+      ctx.meta.forkTranscriptInCwdProject = fs.existsSync(path.join(own, `${String(ctx.meta.initSession)}.jsonl`));
+      ctx.meta.sourceKeptWhole = fs.readFileSync(h.file, 'utf8').includes('LIME');
+      fs.rmSync(h.file, { force: true });
+      fs.rmSync(HANDOFF, { force: true });
+    },
+  },
+  'owned-uuids': {
+    maxTurns: 3,
+    settings: { permissions: { allow: ['Bash(echo owned)'] } },
+    first: 'Run `echo owned` with the Bash tool, then reply DONE.',
+    drive: (ctx, m) => { if (m.type === 'system' && m.subtype === 'init') ctx.meta.session = m.session_id; if (m.type === 'result') ctx.proc.stop(); },
+    after: (ctx) => {
+      const own = new OwnedEntries();
+      own.add(FIRST_UUID);
+      for (const f of ctx.frames) own.note(f);
+      const file = path.join(PROJECTS(), projectSlug(path.join(ctx.dir, 'work')), `${String(ctx.meta.session)}.jsonl`);
+      const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+      ctx.meta.entrypoints = [...new Set(rows.map((r) => r.entrypoint).filter((x) => typeof x === 'string'))];
+      ctx.meta.firstUuidKept = rows.some((r) => r.uuid === FIRST_UUID);
+      ctx.meta.unowned = rows
+        .filter((r) => !r.isSidechain && (r.type === 'assistant' || r.type === 'user') && typeof r.uuid === 'string')
+        .filter((r) => !own.has(r.uuid as string, typeof (r.message as { id?: unknown })?.id === 'string' ? (r.message as { id: string }).id : null))
+        .map((r) => ({ type: r.type, toolResult: Array.isArray((r.message as { content?: unknown })?.content) }));
+    },
+  },
 };
 
 function replaceFlag(args: string[], flag: string, value: string | null): string[] {
@@ -112,7 +181,7 @@ export async function capture(name: string, sc: Scenario, hooks: { bridgeSetup?:
   fs.writeFileSync(settingsPath, JSON.stringify({ ...(sc.settings ?? {}), ...(bridge?.settings ?? {}) }), { mode: 0o600 });
   const mcpConfigPath = bridge?.mcpConfigPath ?? path.join(dir, 'mcp.json');
   if (!bridge) fs.writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: {} }), { mode: 0o600 });
-  let args = claudeArgs({ model: 'sonnet', permissionMode: sc.permissionMode ?? 'default', settingsPath, mcpConfigPath, ...(sc.resume ? { resume: sc.resume(dir) } : {}) });
+  let args = claudeArgs({ model: 'sonnet', permissionMode: sc.permissionMode ?? 'default', settingsPath, mcpConfigPath, ...(sc.resume ? { resume: await sc.resume(dir) } : {}) });
   args = replaceFlag(args, '--setting-sources', 'project');
   if (!bridge) { args = replaceFlag(args, '--permission-prompt-tool', null); args = replaceFlag(args, '--permission-prompts', 'none'); }
   args.push('--max-turns', String(sc.maxTurns), ...(sc.extraArgs?.(dir) ?? []));
@@ -137,6 +206,8 @@ export async function capture(name: string, sc: Scenario, hooks: { bridgeSetup?:
   fs.writeFileSync(out, frames.map((f) => scrub(JSON.stringify(f))).filter(Boolean).join('\n') + '\n');
   fs.writeFileSync(path.join(import.meta.dirname, `${name}.meta.json`), scrub(JSON.stringify(meta, null, 2)) + '\n');
   fs.rmSync(dir, { recursive: true, force: true });
+  // The transcript directory the run created in the profile: captures leave nothing behind.
+  for (const f of new Set([work, work.normalize('NFD')])) fs.rmSync(path.join(PROJECTS(), projectSlug(f)), { recursive: true, force: true });
   console.log(`wrote ${path.relative(process.cwd(), out)} (${frames.length} frames)`, meta.exit);
 }
 

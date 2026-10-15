@@ -25,11 +25,12 @@ function isClaudeCli(command: string): boolean {
   return head.slice(head.lastIndexOf('/') + 1) === 'claude' || head.endsWith('/claude-code/cli.js');
 }
 
+/** deck's own CLI children (this or another deck instance) always carry this argv pair (`claudeArgs`). */
+export const DECK_CHILD_MARKER = '--permission-prompt-tool mcp__deck_bridge__permission';
+
 export type HolderSelf = {
-  /** deck's own pid: its descendants (the SDK's CLI children) are not "another" process. */
+  /** deck's own pid: its descendants are not "another" process. */
   pid: number;
-  /** Path prefixes of deck's own CLI binaries (`<repo>/node_modules/`): a second deck instance's children are deck too. */
-  ownRoots?: string[];
 };
 
 /**
@@ -48,15 +49,14 @@ export function parseHolders(psText: string, self: HolderSelf): Map<string, Sess
     if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3]!.normalize('NFC') });
   }
   const parent = new Map(rows.map((r) => [r.pid, r.ppid]));
-  // Descendant, not just child: holds if the SDK ever starts its CLI through a wrapper. Bounded against a pid cycle.
+  // Descendant, not just child: holds if a CLI child is ever started through a wrapper. Bounded against a pid cycle.
   const underDeck = (pid: number) => {
     for (let p: number | undefined = pid, i = 0; p !== undefined && p > 1 && i < 64; p = parent.get(p), i++) if (p === self.pid) return true;
     return false;
   };
-  const roots = (self.ownRoots ?? []).map((r) => r.normalize('NFC'));
   const out = new Map<string, SessionHolder>();
   for (const r of rows) {
-    if (!isClaudeCli(r.command) || underDeck(r.pid) || roots.some((root) => r.command.startsWith(root))) continue;
+    if (!isClaudeCli(r.command) || underDeck(r.pid) || r.command.includes(DECK_CHILD_MARKER)) continue;
     const kind: SessionHolder = r.command.includes('/Claude/claude-code/') || r.command.includes('mcp__ccd_') ? 'desktop' : 'other';
     for (const m of r.command.matchAll(RESUME)) {
       const id = m[1]!.toLowerCase();
@@ -86,11 +86,11 @@ export class ProcessHolders {
   private readonly ttlMs: number;
   private readonly self: HolderSelf;
 
-  constructor(opts: { ownRoots?: string[]; pid?: number; ps?: () => Promise<string>; ttlMs?: number; now?: () => number } = {}) {
+  constructor(opts: { pid?: number; ps?: () => Promise<string>; ttlMs?: number; now?: () => number } = {}) {
     this.ps = opts.ps ?? psList;
     this.now = opts.now ?? (() => Date.now());
     this.ttlMs = opts.ttlMs ?? 5000;
-    this.self = { pid: opts.pid ?? process.pid, ...(opts.ownRoots ? { ownRoots: opts.ownRoots } : {}) };
+    this.self = { pid: opts.pid ?? process.pid };
   }
 
   heldBy(sessionId: string): SessionHolder | null {

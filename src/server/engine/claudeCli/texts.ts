@@ -13,3 +13,7 @@ export const PERMISSION_ERROR_MESSAGE = '권한 요청을 처리하다 오류가
 export const PLAN_GATE_MESSAGE = '계획 모드로 바뀌었습니다 — 파일을 바꾸지 말고 계획을 이어 가 주세요';
 /** Mirrors hookRelay.ts (which may import node built-ins only). */
 export const HOOK_RELAY_FAILED_MESSAGE = '도구 사용 여부를 deck 에 확인하지 못해 거부했습니다';
+/** 메시지 편집 갈래: the parent transcript was not found in the profile. */
+export const FORK_SOURCE_MISSING = '갈래를 만들 원본 대화 기록을 찾지 못했습니다';
+/** 메시지 편집 갈래: the edited message's entry is not in the parent transcript. */
+export const FORK_AT_UNSUPPORTED = '고친 메시지 지점을 원본 대화 기록에서 찾지 못했습니다';

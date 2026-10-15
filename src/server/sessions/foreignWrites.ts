@@ -1,10 +1,24 @@
 import fs from 'node:fs/promises';
 
-/** The `entrypoint` Claude Code stamps on entries written through the Agent SDK — deck's own processes. Desktop writes `claude-desktop`, a terminal `cli`. */
+/** The `entrypoint` Claude Code stamps on entries written through the Agent SDK: entries written by deck versions that ran the CLI through the Agent SDK. Desktop writes `claude-desktop`, a terminal `cli`. */
 export const DECK_ENTRYPOINT = 'sdk-ts';
 
 /** Two writers interleave: a line a little older than `since` may sit after a newer one, so the backwards read goes this far past it. */
 const OVERLAP_MS = 60_000;
+
+/** How long an entry deck may still be about to claim (its stdout frame not read yet) counts as undecided. */
+export const OWN_LAG_MS = 3000;
+
+/** Writers that are never one of deck's `claude -p` children (those stamp `sdk-cli`): Desktop and an interactive terminal. Their entries are not held back by the lag. */
+const NEVER_DECK = new Set(['claude-desktop', 'cli']);
+
+export type ForeignOpts = {
+  /** Entries deck's own CLI children emitted (`deckWrites.has`). */
+  isOwn?: (uuid: string, messageId: string | null) => boolean;
+  nowMs?: number;
+  /** 0 (default) = never pending. */
+  lagMs?: number;
+};
 
 /** Main-chain `user` entries the CLI writes without anyone saying anything: slash-command echoes and their output (`/model`), task notifications, reminders. */
 const NOT_A_PROMPT = /^\s*<(?:local-command-|command-|task-notification|system-reminder|bash-)/;
@@ -21,12 +35,13 @@ function promptText(r: Record<string, unknown>): string | null {
 
 /**
  * What one transcript line says about writes since `sinceMs`: `foreign` = a main-chain prompt or assistant entry
- * written at or after it by something other than deck's SDK process; `old` = a conversation line from well
- * before it (nothing earlier in the file can matter); null = neither. An entry without an `entrypoint`
+ * written at or after it by something other than deck (neither an older deck's SDK entry nor one `opts.isOwn`
+ * claims); `pending` = such an entry younger than `opts.lagMs` that deck may not have claimed yet; `old` = a
+ * conversation line from well before it (nothing earlier in the file can matter); null = neither. An entry without an `entrypoint`
  * (older CLI) cannot be told apart and counts as deck's. Only "the conversation went on" counts: a `/model`
  * typed in Desktop writes user entries too, and must not cost deck's held-open process its background work.
  */
-export function classifyLine(line: string, sinceMs: number): 'foreign' | 'old' | null {
+export function classifyLine(line: string, sinceMs: number, opts: ForeignOpts = {}): 'foreign' | 'old' | 'pending' | null {
   if (!line.includes('"timestamp"')) return null;
   let r: Record<string, unknown> | null;
   try { r = JSON.parse(line) as Record<string, unknown> | null; } catch { return null; }
@@ -34,8 +49,12 @@ export function classifyLine(line: string, sinceMs: number): 'foreign' | 'old' |
   const t = Date.parse(r.timestamp);
   if (!Number.isFinite(t)) return null;
   if (t < sinceMs) return t < sinceMs - OVERLAP_MS ? 'old' : null;
-  if (r.isSidechain || typeof r.entrypoint !== 'string' || r.entrypoint === DECK_ENTRYPOINT) return null;
-  return r.type === 'assistant' || (r.type === 'user' && promptText(r) !== null) ? 'foreign' : null;
+  if (r.isSidechain || r.isCompactSummary || typeof r.entrypoint !== 'string' || r.entrypoint === DECK_ENTRYPOINT) return null;
+  if (!(r.type === 'assistant' || (r.type === 'user' && promptText(r) !== null))) return null;
+  const id = (r.message as { id?: unknown } | null | undefined)?.id;
+  if (opts.isOwn?.(r.uuid as string, typeof id === 'string' ? id : null)) return null;
+  if (opts.lagMs && !NEVER_DECK.has(r.entrypoint) && (opts.nowMs ?? Date.now()) - t < opts.lagMs) return 'pending';
+  return 'foreign';
 }
 
 /**
@@ -44,9 +63,10 @@ export function classifyLine(line: string, sinceMs: number): 'foreign' | 'old' |
  * stops at `from` or at the first line from well before `sinceMs`. `end` is the offset this scan found clean up to:
  * handed back as the next scan's `from`, a check costs what was appended since the last one, however long the
  * process has been held open. It stays at `from` when something foreign was found or the last line is still being
- * written. A missing file is "no"; a file shorter than `from` (rewritten) is read whole.
+ * written, or while an entry is still `pending` (the next scan looks at it again). A missing file is "no"; a file
+ * shorter than `from` (rewritten) is read whole.
  */
-export async function scanForeign(file: string, sinceMs: number, from = 0): Promise<{ foreign: boolean; end: number }> {
+export async function scanForeign(file: string, sinceMs: number, from = 0, opts: ForeignOpts = {}): Promise<{ foreign: boolean; end: number }> {
   let fh: fs.FileHandle;
   try { fh = await fs.open(file, 'r'); } catch { return { foreign: false, end: 0 }; }
   try {
@@ -57,6 +77,7 @@ export async function scanForeign(file: string, sinceMs: number, from = 0): Prom
     const last = Buffer.alloc(1);
     await fh.read(last, 0, 1, size - 1);
     const clean = { foreign: false, end: last[0] === 0x0a ? size : from };
+    let pending = false;
     let end = size;
     // The part of a line that began in an earlier chunk (see copies.ts lastConversationAt): pieces, joined once per line.
     let carry: Buffer[] = [];
@@ -71,13 +92,14 @@ export async function scanForeign(file: string, sinceMs: number, from = 0): Prom
       if (start > from && cut === 0) { carry.push(chunk); continue; }
       const lines = Buffer.concat([chunk.subarray(cut), ...carry.reverse()]).toString('utf8').split('\n');
       for (let i = lines.length - 1; i >= 0; i--) {
-        const c = classifyLine(lines[i]!, sinceMs);
+        const c = classifyLine(lines[i]!, sinceMs, opts);
         if (c === 'foreign') return { foreign: true, end: from };
-        if (c === 'old') return clean;
+        if (c === 'pending') { pending = true; continue; }
+        if (c === 'old') return pending ? { foreign: false, end: from } : clean;
       }
       carry = [chunk.subarray(0, cut)];
     }
-    return clean;
+    return pending ? { foreign: false, end: from } : clean;
   } finally {
     await fh.close();
   }

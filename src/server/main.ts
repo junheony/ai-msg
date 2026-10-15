@@ -7,7 +7,7 @@ import { AttachmentStore } from './attachments/AttachmentStore';
 import { loadOrCreateToken } from './auth';
 import { bindAddresses, tailscaleDnsName, tailscaleIPv4s } from './bind';
 import { AccountsFileError } from './accounts';
-import { loadConfig, repoRootDefault } from './config';
+import { loadConfig } from './config';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { CodexEngine } from './engine/CodexEngine';
 import { SlashCommandCache } from './engine/slashCommands';
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   const meta = new SessionMetaStore(path.join(cfg.configDir, 'session-meta.json'));
   await meta.load();
   // Sessions another `claude` process (Claude Desktop, a terminal) holds open: read-only `ps`, never deck's own CLI children.
-  const holders = new ProcessHolders({ ownRoots: [path.join(repoRootDefault(), 'node_modules') + path.sep] });
+  const holders = new ProcessHolders();
   const index = new SessionIndex({ holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home });
   const store = new SessionStateStore(cfg.stateFile);
   const pins = new PinStore(cfg.pinsFile);
