@@ -1,0 +1,1 @@
+{"cli":"2.1.283 (Claude Code)","scenario":"basic","args":"-p stream-json in/out, --verbose --include-partial-messages --replay-user-messages --max-turns 1"}
