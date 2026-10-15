@@ -131,14 +131,14 @@ describe('flushThenExit', () => {
 });
 
 describe('config: drain and background limits', () => {
-  it('defaults to 15 min drain and 120 min background hold; env minutes override, junk is ignored', () => {
+  it('defaults to 15 min drain and 360 min background hold; env minutes override, junk is ignored', () => {
     const d = loadConfig({ PATH: '/nonexistent' }, '/h', '/repo');
     expect(d.drainMaxMs).toBe(15 * 60_000);
-    expect(d.bgMaxMs).toBe(120 * 60_000);
+    expect(d.bgMaxMs).toBe(360 * 60_000);
     const o = loadConfig({ PATH: '/nonexistent', DECK_DRAIN_MAX_MIN: '30', DECK_BG_MAX_MIN: '0.5' }, '/h', '/repo');
     expect(o.drainMaxMs).toBe(30 * 60_000);
     expect(o.bgMaxMs).toBe(30_000);
-    expect(loadConfig({ PATH: '/nonexistent', DECK_DRAIN_MAX_MIN: 'x', DECK_BG_MAX_MIN: '-1' }, '/h', '/repo')).toMatchObject({ drainMaxMs: 15 * 60_000, bgMaxMs: 120 * 60_000 });
+    expect(loadConfig({ PATH: '/nonexistent', DECK_DRAIN_MAX_MIN: 'x', DECK_BG_MAX_MIN: '-1' }, '/h', '/repo')).toMatchObject({ drainMaxMs: 15 * 60_000, bgMaxMs: 360 * 60_000 });
   });
 
   it('steering is on unless DECK_STEER=0', () => {
