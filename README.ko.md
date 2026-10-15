@@ -78,6 +78,8 @@ npm run restart                         # 재시작: 돌던 턴이 끝난 뒤 �
 
 서비스는 `~/.config/deck/env` 의 환경변수(`KEY=value` 한 줄씩)를 읽는다. 이 파일은 셸 스크립트로 읽히므로(`scripts/launchd/run.sh` 가 source) 본인만 쓸 수 있게 둔다(`chmod 600`).
 
+저장소가 `~/Documents`(또는 데스크탑·다운로드) 아래에 있으면 설치 스크립트가 알려 주는 node 에 **전체 디스크 접근 권한**을 준다(시스템 설정 → 개인정보 보호 및 보안). LaunchAgent 는 그 node 로 시작하고(`scripts/launchd/boot.mjs`), macOS 는 폴더 접근을 작업의 첫 프로그램 기준으로 판단하므로 node 의 권한이 그 아래 셸 스크립트와 서버까지 덮는다.
+
 ## Claude 계정 여러 개 쓰기
 
 계정 하나가 Claude Code **프로필 디렉터리** 하나다. 프로필마다 한 번씩 로그인한다.
