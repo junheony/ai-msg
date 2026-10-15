@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { relPath } from '../diff';
 import { has } from '../features';
 import { listFiles, readFile, type FilePreview } from '../sessionApi';
 import { viewFor, type SideDoc } from '../sidePanel';
+import { activeTab, canHighlight, langFor, type SideTab, type SideTabs } from '../sideTabs';
 import { CopyButton } from './CopyButton';
 import { DiffList } from './DiffView';
 import { useFileActions } from './FileMenu';
@@ -44,17 +45,51 @@ export function HtmlPreview({ html, title }: { html: string; title: string }) {
   );
 }
 
-/** Plain text with a line-number gutter (no highlighting here; two <pre>s keep 2 MB files cheap to render). */
-function NumberedText({ text }: { text: string }) {
+type Lowlight = ReturnType<typeof import('lowlight').createLowlight>;
+type HastNode = ReturnType<Lowlight['highlight']>['children'][number];
+let lowlight: Lowlight | null = null;
+let lowlightLoading: Promise<void> | null = null;
+/** highlight.js's common grammars (the chat's code blocks use the same set), loaded with the first highlighted file. */
+function loadLowlight(): Promise<void> {
+  return (lowlightLoading ??= import('lowlight').then((m) => { lowlight = m.createLowlight(m.common); }, () => { lowlightLoading = null; }));
+}
+
+/** lowlight's tree as React: spans with highlight.js's `hljs-*` classes (themed in styles.css), and text. */
+function hastNodes(nodes: HastNode[]): ReactNode[] {
+  return nodes.map((n, i) => {
+    if (n.type === 'text') return n.value;
+    if (n.type !== 'element') return null;
+    const c = n.properties.className;
+    return <span key={i} className={Array.isArray(c) ? c.join(' ') : typeof c === 'string' ? c : undefined}>{hastNodes(n.children)}</span>;
+  });
+}
+
+/**
+ * Text with a line-number gutter (two <pre>s keep 2 MB files cheap to render), coloured by `lang` when highlight.js
+ * knows it and the text is small enough (sideTabs.canHighlight); plain until the grammars have loaded.
+ */
+const NumberedText = memo(function NumberedText({ text, lang = null }: { text: string; lang?: string | null }) {
   const count = useMemo(() => text.split('\n').length - (text.endsWith('\n') ? 1 : 0), [text]);
   const gutter = useMemo(() => Array.from({ length: Math.max(1, count) }, (_, i) => i + 1).join('\n'), [count]);
+  const want = lang && canHighlight(text) ? lang : null;
+  const [ll, setLl] = useState(lowlight);
+  useEffect(() => {
+    if (!want || ll) return;
+    let live = true;
+    void loadLowlight().then(() => { if (live) setLl(lowlight); });
+    return () => { live = false; };
+  }, [want, ll]);
+  const lines = useMemo((): ReactNode => {
+    if (!want || !ll) return text;
+    try { return ll.registered(want) ? hastNodes(ll.highlight(want, text).children) : text; } catch { return text; }
+  }, [want, ll, text]);
   return (
     <div className="side-code" data-testid="side-text">
       <pre className="side-gutter" aria-hidden="true">{gutter}</pre>
-      <pre className="side-lines">{text}</pre>
+      <pre className="side-lines">{lines}</pre>
     </div>
   );
-}
+});
 
 /** 파일 button: type (or pick from the @ list) a path of the session folder. */
 function FilePick({ cwd, onOpen }: { cwd: string; onOpen: (doc: SideDoc) => void }) {
@@ -81,8 +116,64 @@ function FilePick({ cwd, onOpen }: { cwd: string; onOpen: (doc: SideDoc) => void
 
 type Tab = '보기' | '미리보기' | '원문' | '변경 사항';
 
-/** Desktop-style right panel of one pane: a file (rendered markdown / image / numbered text, its diff) or a reply's HTML. */
-export function SidePanel({ doc, cwd, sessionId, onClose, onOpen }: {
+function tabLabel(doc: SideDoc): { name: string; title: string } {
+  if (doc.kind === 'file') return { name: doc.path.replace(/\/+$/, '').split('/').pop() || doc.path, title: doc.path };
+  if (doc.kind === 'html') return { name: doc.title, title: doc.title };
+  return { name: '파일 열기', title: '파일 열기' };
+}
+
+/** The open documents, above the document's own 보기 / 원문 / 변경 사항 tabs: ✕ or a middle click closes one. */
+function DocTabs({ tabs, onSelect, onClose }: { tabs: SideTabs; onSelect: (id: string) => void; onClose: (id: string) => void }) {
+  const on = activeTab(tabs)?.id;
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [on]);
+  const middle = (e: ReactMouseEvent, t: SideTab) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    onClose(t.id);
+  };
+  return (
+    <div className="side-doc-tabs" role="tablist" aria-label="열린 문서" ref={ref}>
+      {tabs.tabs.map((t) => {
+        const { name, title } = tabLabel(t.doc);
+        return (
+          <div key={t.id} className={`side-doc-tab${t.id === on ? ' on' : ''}`} onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }} onAuxClick={(e) => middle(e, t)}>
+            <button type="button" role="tab" aria-selected={t.id === on} title={title} className="side-doc-name" onClick={() => onSelect(t.id)}>{name}</button>
+            <button type="button" className="side-doc-close" aria-label={`${name} 닫기`} title="탭 닫기" onClick={() => onClose(t.id)}>✕</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Desktop-style right panel of one pane: the open documents' tabs (when the pane keeps them) over the active one —
+ * a file (rendered markdown / image / numbered text, its diff) or a reply's HTML.
+ */
+export function SidePanel({ doc, docKey, tabs, onSelectTab, onCloseTab, ...rest }: {
+  doc: SideDoc;
+  /** Changes when the document should start over (another tab, or opened again). */
+  docKey?: string;
+  tabs?: SideTabs;
+  onSelectTab?: (id: string) => void;
+  onCloseTab?: (id: string) => void;
+  cwd: string;
+  sessionId: string | null;
+  onClose: () => void;
+  onOpen: (doc: SideDoc) => void;
+}) {
+  return (
+    <aside className="side-panel" data-testid="side-panel" aria-label="사이드 패널">
+      {tabs && onSelectTab && onCloseTab && <DocTabs tabs={tabs} onSelect={onSelectTab} onClose={onCloseTab} />}
+      <DocView key={docKey} doc={doc} {...rest} />
+    </aside>
+  );
+}
+
+function DocView({ doc, cwd, sessionId, onClose, onOpen }: {
   doc: SideDoc;
   cwd: string;
   sessionId: string | null;
@@ -93,7 +184,7 @@ export function SidePanel({ doc, cwd, sessionId, onClose, onOpen }: {
   const [reload, setReload] = useState(0);
   const [data, setData] = useState<{ key: string; file?: FilePreview; error?: string } | null>(null);
   const filePath = doc.kind === 'file' ? doc.path : null;
-  const key = `${filePath}\n${reload}`;
+  const key = `${cwd}\n${filePath}\n${reload}`;
   useEffect(() => {
     if (filePath === null) return;
     let live = true;
@@ -122,18 +213,18 @@ export function SidePanel({ doc, cwd, sessionId, onClose, onOpen }: {
   let body: ReactNode = null;
   if (doc.kind === 'pick') body = <FilePick cwd={cwd} onOpen={onOpen} />;
   else if (active === '변경 사항' && diffs) body = <DiffList diffs={diffs} cwd={cwd} />;
-  else if (doc.kind === 'html') body = active === '원문' ? <NumberedText text={doc.html} /> : <HtmlPreview key={reload} html={doc.html} title={doc.title} />;
+  else if (doc.kind === 'html') body = active === '원문' ? <NumberedText text={doc.html} lang="xml" /> : <HtmlPreview key={reload} html={doc.html} title={doc.title} />;
   else if (!current) body = <div className="side-msg muted">불러오는 중…</div>;
   else if (current.error) body = <div className="side-msg error" role="alert">{current.error}</div>;
   else if (current.file?.kind === 'image') body = <div className="side-image"><img src={`data:${current.file.mediaType};base64,${current.file.base64}`} alt={shownPath} /></div>;
   else if (text !== null) {
     if (active === '보기' && view === 'markdown') body = <div className="side-md"><Markdown text={text} /></div>;
     else if (active === '미리보기') body = <HtmlPreview key={reload} html={text} title={shownPath} />;
-    else body = <NumberedText text={text} />;
+    else body = <NumberedText text={text} lang={filePath && langFor(filePath)} />;
   }
 
   return (
-    <aside className="side-panel" data-testid="side-panel" aria-label="사이드 패널">
+    <>
       <div className="side-head">
         <span className="side-path" title={fullPath ?? shownPath}>{shownPath}</span>
         <span className="spacer" />
@@ -155,6 +246,6 @@ export function SidePanel({ doc, cwd, sessionId, onClose, onOpen }: {
       )}
       <div className="side-body">{body}</div>
       {act.node}
-    </aside>
+    </>
   );
 }

@@ -26,6 +26,7 @@
     "restart": "bash scripts/restart.sh"
   },
   "dependencies": {
+    "lowlight": "^3.3.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",

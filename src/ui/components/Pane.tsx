@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { AUTO_MODEL_INFO, MODEL_INFO, type CodexSandbox, type Effort, type ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { isGeminiAccount } from '../../shared/accounts';
@@ -21,8 +21,10 @@ import { SidePanel } from './SidePanel';
 import { openInNewTab } from './ShareMenu';
 import { deleteBlockedReason } from './SessionMenu';
 import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
+import { NO_TABS, activeTab, carriesTabs, closeTab, openTab, readSideWidth, recallSideTabs, rememberSideTabs, saveSideWidth, selectTab, type SideTabs } from '../sideTabs';
 import { hasOpenPopup } from '../composerFocus';
 import { isMacPlatform, isTypingTarget } from '../shortcuts';
+import { PHONE_QUERY } from '../useIsPhone';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -47,6 +49,8 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
   return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
 }
 
+/** The side panel's open / close slide (styles.css side-in / side-out run a little shorter). */
+const SIDE_SLIDE_MS = 200;
 /** Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the hidden sidebar's peek, the folder picker. */
 const ESC_OWNERS = '[role="tooltip"], .sidebar-wrap.drawer.open, .sidebar-wrap.peek, .folder-picker';
 
@@ -216,24 +220,66 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   sessionActions?: SessionActions;
 }) {
   const s = pane.session;
-  // Side panel (artifacts / file preview): per pane, closed by ✕ or Esc, dropped when the pane's session changes.
-  const [side, setSide] = useState<SideDoc | null>(null);
-  const [sideWidth, setSideWidth] = useState(440);
-  const sectionRef = useRef<HTMLElement>(null);
-  const openSide = useCallback((doc: SideDoc) => setSide(doc), []);
+  // Side panel (artifacts / file preview): per pane, a tab per open document, closed by ✕ or Esc. The tabs belong to
+  // the session (sideTabs.ts remembers them): another session shows its own, coming back reopens these — on a phone,
+  // where the panel is a full-screen sheet, they are only kept until a document is opened. A new chat's tabs stay when
+  // its first message gives it a session id.
   const sessionKey = s ? `${s.sessionId ?? ''}\n${s.cwd}` : '';
-  useEffect(() => { setSide(null); }, [sessionKey]);
+  const recall = (key: string) => ({ key, tabs: recallSideTabs(key), open: !window.matchMedia?.(PHONE_QUERY).matches });
+  const [sideTabs, setSideTabs] = useState(() => recall(sessionKey));
+  const [closing, setClosing] = useState(false);
+  // Opened again while sliding shut: shown at once, as a slide-in from nothing would jump.
+  const [instant, setInstant] = useState(false);
+  if (sideTabs.key !== sessionKey) {
+    setSideTabs(carriesTabs(sideTabs.key, sessionKey) ? { ...sideTabs, key: sessionKey } : recall(sessionKey));
+    setClosing(false);
+    setInstant(false);
+  }
+  useEffect(() => { rememberSideTabs(sideTabs.key, sideTabs.tabs); }, [sideTabs]);
+  const sideTab = sideTabs.open ? activeTab(sideTabs.tabs) : null;
+  const side = sideTab?.doc ?? null;
+  const [sideWidth, setSideWidth] = useState(readSideWidth);
+  const sectionRef = useRef<HTMLElement>(null);
+  const closingRef = useRef(closing);
+  closingRef.current = closing;
+  const keyRef = useRef(sideTabs.key);
+  keyRef.current = sideTabs.key;
+  const updateTabs = useCallback((fn: (t: SideTabs) => SideTabs) => {
+    if (closingRef.current) { setClosing(false); setInstant(true); }
+    setSideTabs((cur) => ({ ...cur, tabs: fn(cur.tabs), open: true }));
+  }, []);
+  const sideCwd = s?.cwd;
+  const openSide = useCallback((doc: SideDoc) => updateTabs((t) => openTab(t, doc, { cwd: sideCwd })), [updateTabs, sideCwd]);
+  const shut = useCallback(() => { setClosing(false); setInstant(false); setSideTabs((cur) => ({ ...cur, tabs: NO_TABS })); }, []);
+  // Desktop slides the panel shut first (styles.css side-out); a phone sheet and 동작 줄이기 close at once. The session
+  // forgets the tabs now, so leaving it mid-slide does not bring them back.
+  const closeSide = useCallback(() => {
+    rememberSideTabs(keyRef.current, NO_TABS);
+    if (window.matchMedia?.('(min-width: 721px) and (prefers-reduced-motion: no-preference)').matches) setClosing(true);
+    else shut();
+  }, [shut]);
+  useEffect(() => {
+    if (!closing) return;
+    const t = setTimeout(shut, SIDE_SLIDE_MS);
+    return () => clearTimeout(t);
+  }, [closing, shut]);
+  // A remembered width may not fit this pane: clamp it once the panel shows.
+  const sideShown = side !== null && s !== null;
+  useLayoutEffect(() => {
+    const w = sectionRef.current?.getBoundingClientRect().width ?? 0;
+    if (sideShown && w > 0) setSideWidth((cur) => clampSideWidth(cur, w));
+  }, [sideShown]);
   useEffect(() => {
     if (!side) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       // Only the pane the user is in (split view: one Esc closes one panel).
       if (!active && !sectionRef.current?.contains(document.activeElement)) return;
-      setSide(null);
+      closeSide();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [side, active]);
+  }, [side, active, closeSide]);
   // Stop: ux-state — the queue stays but pauses, so the next message does not fire into the stop.
   // A stop that never left (socket down) changes nothing: the turn runs on, so no 중단됨 and no pause — a notice says so.
   const sendInterrupt = (turnId: string): boolean => {
@@ -264,7 +310,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   // keeps its Esc; focus must be in this pane, or nowhere (then only the active pane stops).
   const turnId = pane.activeTurnId;
   useEffect(() => {
-    if (!turnId || side) return;
+    if (!turnId || (side && !closing)) return;
     let owned = false;
     const note = (e: KeyboardEvent) => { if (e.key === 'Escape') owned = hasOpenPopup() || document.querySelector(ESC_OWNERS) !== null; };
     const onKey = (e: KeyboardEvent) => {
@@ -280,15 +326,16 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     window.addEventListener('keydown', note, true);
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', note, true); window.removeEventListener('keydown', onKey); };
-  }, [turnId, side, active]);
+  }, [turnId, side, closing, active]);
   const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
     const box = sectionRef.current?.getBoundingClientRect();
     if (!box) return;
     e.preventDefault();
     const el = e.currentTarget;
     el.setPointerCapture?.(e.pointerId);
-    const move = (ev: PointerEvent) => setSideWidth(clampSideWidth(box.right - ev.clientX, box.width));
-    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+    let width: number | null = null;
+    const move = (ev: PointerEvent) => { width = clampSideWidth(box.right - ev.clientX, box.width); setSideWidth(width); };
+    const up = () => { if (width !== null) saveSideWidth(width); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
     el.addEventListener('pointercancel', up);
@@ -298,7 +345,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
   // 파일 (the session folder in the side panel) lives in the header's ⋯ menu, as Claude keeps its header bare.
-  const fileMenu = s ? [{ label: side ? '파일 패널 닫기' : '파일 열기', run: () => setSide(side ? null : { kind: 'pick' }) }] : [];
+  const fileMenu = s ? [{ label: side ? '파일 패널 닫기' : '파일 열기', run: () => (side ? closeSide() : openSide({ kind: 'pick' })) }] : [];
   // 떠 있는 카드로 떼기 / 패널에 다시 붙이기: the pane as a card over the split view and back (the grip does the same by drag).
   if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', run: onShift.left });
   if (onShift?.right) fileMenu.push({ label: '오른쪽으로 이동', run: onShift.right });
@@ -563,8 +610,12 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       {side && s && (
         <>
           <div className="side-splitter" role="separator" aria-orientation="vertical" aria-label="사이드 패널 크기 조절" onPointerDown={startResize} />
-          <div className="side-wrap" style={{ width: sideWidth }}>
-            <SidePanel doc={side} cwd={s.cwd} sessionId={s.sessionId} onClose={() => setSide(null)} onOpen={openSide} />
+          <div className={`side-wrap${closing ? ' closing' : instant ? ' instant' : ''}`} style={{ width: sideWidth, '--side-w': `${sideWidth}px` } as CSSProperties}>
+            <SidePanel doc={side} docKey={sideTab ? `${sideTabs.key}\n${sideTab.id}:${sideTab.rev}` : undefined} tabs={sideTabs.tabs} cwd={s.cwd} sessionId={s.sessionId}
+              onClose={closeSide}
+              onOpen={(doc) => updateTabs((t) => openTab(t, doc, { replace: sideTab?.id, cwd: s.cwd }))}
+              onSelectTab={(id) => updateTabs((t) => selectTab(t, id))}
+              onCloseTab={(id) => (sideTabs.tabs.tabs.length > 1 ? updateTabs((t) => closeTab(t, id)) : closeSide())} />
           </div>
         </>
       )}
