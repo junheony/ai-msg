@@ -13,14 +13,14 @@
 ## Global Constraints
 
 - Minimum `claude` version **2.1.259** (introduces `--permission-prompts`), recommended **2.1.283**; checked once at startup with `claude --version` (`resolveClaudeBin`). Below the minimum the binary is not used; below the recommended version deck logs a Korean warning.
-- Verified on CLI 2.1.283 (do not re-verify): `-p`, `--output-format stream-json`, `--input-format stream-json`, `--include-partial-messages`, `--replay-user-messages`, `--verbose`, `--resume <id|path>`, `--fork-session`, `--session-id <uuid>`, `--model`, `--effort`, `--settings <file-or-json>` (with `hooks` and `permissions`), `--setting-sources`, `--add-dir`, `--permission-mode`, `--permission-prompts host|none`, `--permission-prompt-tool <mcp tool>` (documented; MCP server via `--mcp-config`; Claude waits for it before the first turn), `--mcp-config`, `--strict-mcp-config`, `--max-turns`, `--include-hook-events`, `--forward-subagent-text`. SIGINT ends the turn (result recorded), SIGTERM kills (exit 143, no result). Stdin user messages are `{"type":"user","message":{"role":"user","content":…}}`.
+- Verified on CLI 2.1.283 (do not re-verify): `-p`, `--output-format stream-json`, `--input-format stream-json`, `--include-partial-messages`, `--replay-user-messages`, `--verbose`, `--resume <id>`, `--fork-session`, `--session-id <uuid>`, `--model`, `--effort`, `--settings <file-or-json>` (with `hooks` and `permissions`), `--setting-sources`, `--add-dir`, `--permission-mode`, `--permission-prompts host|none`, `--permission-prompt-tool <mcp tool>` (documented; MCP server via `--mcp-config`; Claude waits for it before the first turn), `--mcp-config`, `--strict-mcp-config`, `--max-turns`, `--include-hook-events`, `--forward-subagent-text`. SIGTERM kills (exit 143, no result). Not yet verified: that SIGINT interrupts a turn cleanly in stream-json input mode (result recorded, process keeps reading stdin) — this is verified by spike B1 in Task 3; if negative, see "Lost or changed features" (Abort text row: the engine synthesizes 중단됨 from the exit). `--resume` with a transcript path (fork-at-message) is likewise unverified until spike F1 in Task 3. Stdin user messages are `{"type":"user","message":{"role":"user","content":…}}`.
 - `resumeSessionAt` does not exist in the CLI; fork-at-message is redesigned (Task 6) and documented in "Lost or changed features".
 - Never pass `--bare` (it disables subscription login).
 - Never pass `--strict-mcp-config` (it would drop the user's own MCP servers).
 - Never use the stdin `control_request`/`control_response` protocol (undocumented for CLI consumers): no interrupt, stopTask or setPermissionMode over stdin.
 - deck never reads token files, `.credentials.json`, or the keychain, and never intermediates credentials; it selects the profile only through `CLAUDE_CONFIG_DIR` (`AccountRegistry.env`, unchanged). Login stays the user's job in a terminal.
 - deck never sets `CLAUDE_CODE_ENTRYPOINT` or `CLAUDE_AGENT_SDK_VERSION` (and `AccountRegistry.env` keeps stripping an inherited `CLAUDE_CODE_ENTRYPOINT`).
-- `@anthropic-ai/claude-agent-sdk` is removed from `package.json` and `package-lock.json`; no file under `src/` imports it (guard test in Task 8).
+- `@anthropic-ai/claude-agent-sdk` is removed from `package.json` and `package-lock.json`; no file under `src/` imports it (guard test in Task 8c).
 - Tests use temp dirs (`fs.mkdtemp(path.join(os.tmpdir(), …))`) and never the network; the bridge uses a unix socket inside a temp dir. Live captures (spike steps) run the real CLI by hand, never inside `vitest`.
 - User-facing strings stay Korean (existing texts are moved, not rewritten).
 - All new files live under `src/server/engine/claudeCli/`. The two child-process entry scripts (`permissionMcp.ts`, `hookRelay.ts`) import only `node:` built-ins and use erasable TypeScript only, so `node <file>.ts` runs them without tsx.
@@ -62,7 +62,7 @@ New, under `src/server/engine/claudeCli/`:
 | `ownedEntries.ts` | `OwnedEntries` / `deckWrites`: uuids and API message ids deck's own processes emitted (replaces `entrypoint === 'sdk-ts'`). |
 | `ownedEntries.test.ts` | Set semantics and bound. |
 | `background.fixture.test.ts` | Replays the recorded background-task fixture through engine + mapper. |
-| `noSdk.test.ts` | Guard: no SDK import in `src/`, no SDK dependency in `package.json`. |
+| `noSdk.test.ts` | Guard: no SDK import in `src/`, no SDK dependency in `package.json` (Task 8c). |
 | `fixtures/scrub.ts` | Dev-only: scrubs a raw capture (home path, slugs, temp dir, e-mails, init lists) for commit. |
 | `fixtures/scrub.test.ts` | Scrubber behaviour. |
 | `fixtures/capture.ts` | Dev-only live capture runner (scenarios added per task); never imported by the server or tests. |
@@ -72,18 +72,20 @@ Modified:
 
 | File | Change |
 |---|---|
-| `src/server/engine/ClaudeEngine.ts` | Rewritten as the orchestrator (spawn, bridge registration, stream loop moved from today's `runTurn`); keeps exporting `ClaudeEngine`, `BG_MAX_MS`, `BG_GRACE_MS`, `NO_TOOLS_MESSAGE`, `KEEP_PLANNING_MESSAGE`, `CommandsListener`. `buildOptions`, `buildPrompt`, `InputChannel`, `QueryFn`, `PromptInput` are deleted. |
+| `src/server/engine/ClaudeEngine.ts` | Rewritten as the orchestrator (spawn, bridge registration, stream loop moved from today's `runTurn`); keeps exporting `ClaudeEngine`, `BG_MAX_MS`, `BG_GRACE_MS`, `NO_TOOLS_MESSAGE`, `KEEP_PLANNING_MESSAGE`, `CommandsListener`. `buildOptions`, `buildPrompt`, `InputChannel`, `QueryFn`, `PromptInput` move to the temporary `legacySdkEngine.ts` in Task 8a (behind a `ClaudeEngine` shim that routes options without `bin` to it) and are deleted with it in Task 8c. |
 | `src/server/engine/Engine.ts` | `PermissionUpdate` from `./claudeCli/permissionTypes`; SDK wording in comments. Shapes of `Engine`, `TurnRequest`, `EngineEvent`, `LiveInput` unchanged. |
 | `src/server/engine/CodexEngine.ts` | Export `versionAtLeast` (reused by `version.ts`). |
 | `src/server/config.ts`, `src/server/main.ts` | Resolve the claude binary at startup, log version / warnings, pass `bin` to `ClaudeEngine`, close the bridge on shutdown, drop `ownRoots` for `ProcessHolders`. |
 | `src/server/sessions/foreignWrites.ts` (+ test) | Ownership by `deckWrites` instead of `entrypoint`; `pending` state for very recent unknown lines. |
 | `src/server/sessions/ProcessHolders.ts` (+ test) | deck's own children recognised by the `--permission-prompt-tool mcp__deck_bridge__permission` argv marker instead of the SDK's `node_modules` path. |
-| `src/server/engine/ClaudeEngine.test.ts`, `.activity.test.ts`, `.background.test.ts`, `.fork.test.ts`, `.handoff.test.ts`, `.uuids.test.ts`, `thinking.test.ts`, `slashCommands.test.ts` | Migrated from `fakeSdk`/`buildOptions` to `fakeClaudeCli`/the new modules. |
-| `src/server/turn/TurnRunner.background.test.ts`, `TurnRunner.steer.test.ts`, `src/server/ws.background.test.ts`, `ws.bottleneck.test.ts`, `ws.activity.test.ts`, `ws.newSession.test.ts`, `ws.status.test.ts`, `ws.outside.test.ts` | Same migration (constructor options, imports, SDK option inspection → argv inspection, stop_task expectation). |
+| `src/server/engine/ClaudeEngine.test.ts`, `.activity.test.ts`, `.background.test.ts`, `.fork.test.ts`, `.handoff.test.ts`, `.uuids.test.ts`, `thinking.test.ts`, `slashCommands.test.ts` | Migrated from `fakeSdk`/`buildOptions` to `fakeClaudeCli`/the new modules (Task 8b). |
+| `src/server/turn/TurnRunner.background.test.ts`, `TurnRunner.steer.test.ts`, `src/server/ws.background.test.ts`, `ws.bottleneck.test.ts`, `ws.activity.test.ts`, `ws.newSession.test.ts`, `ws.status.test.ts`, `ws.outside.test.ts` | Same migration (constructor options, imports incl. the `type QueryFn` imports, SDK option inspection → argv / `spawns[i].files.settings` inspection, stop_task expectation; Task 8b). |
 | `src/hygiene.private.test.ts` | The "npm scope" example no longer names the removed package. |
 | `package.json`, `package-lock.json` | SDK dependency removed. |
 
-Deleted: `src/server/engine/fakeSdk.ts`.
+Temporary (created in Task 8a, deleted in Task 8c): `src/server/engine/legacySdkEngine.ts` — today's SDK engine moved verbatim, reached only through the shim.
+
+Deleted: `src/server/engine/fakeSdk.ts` (Task 8b).
 
 ---
 
@@ -347,11 +349,12 @@ describe('buildSettings', () => {
 });
 
 describe('relayCommand / shellQuote', () => {
-  it('quotes every part', () => {
+  it('quotes every part; the token travels as an env prefix, never as a node argv flag', () => {
     expect(shellQuote("a'b")).toBe(`'a'\\''b'`);
     expect(relayCommand(relay, 'open')).toBe(
-      `'/usr/bin/node' '--disable-warning=ExperimentalWarning' '/app/hookRelay.ts' '--sock' '/t/qd-1/bridge.sock' '--token' 'tok' '--fail' 'open'`,
+      `DECK_BRIDGE_TOKEN='tok' '/usr/bin/node' '--disable-warning=ExperimentalWarning' '/app/hookRelay.ts' '--sock' '/t/qd-1/bridge.sock' '--fail' 'open'`,
     );
+    expect(relayCommand(relay, 'open')).not.toContain('--token');
   });
 });
 
@@ -460,8 +463,12 @@ export function shellQuote(s: string): string {
 
 export interface RelaySpec { node: string; script: string; socketPath: string; token: string }
 
+/**
+ * Hook command line. The registration token goes in as a `DECK_BRIDGE_TOKEN=` env assignment in
+ * front of node (same channel as the MCP server's `env`), so it never appears in node's argv / `ps`.
+ */
 export function relayCommand(r: RelaySpec, fail: 'open' | 'deny'): string {
-  return [r.node, '--disable-warning=ExperimentalWarning', r.script, '--sock', r.socketPath, '--token', r.token, '--fail', fail]
+  return `DECK_BRIDGE_TOKEN=${shellQuote(r.token)} ` + [r.node, '--disable-warning=ExperimentalWarning', r.script, '--sock', r.socketPath, '--fail', fail]
     .map(shellQuote).join(' ');
 }
 
@@ -528,7 +535,7 @@ git commit -m "feat(claude-cli): claude 바이너리 버전 게이트와 headles
 - Create: `src/server/engine/claudeCli/messages.ts`, `src/server/engine/claudeCli/spawnTypes.ts`, `src/server/engine/claudeCli/prompt.ts`, `src/server/engine/claudeCli/stream.ts`, `src/server/engine/claudeCli/stream.test.ts`
 - Create: `src/server/engine/claudeCli/fakeClaudeCli.ts`
 - Create: `src/server/engine/claudeCli/fixtures/scrub.ts`, `src/server/engine/claudeCli/fixtures/scrub.test.ts`, `src/server/engine/claudeCli/fixtures/basic.jsonl`, `src/server/engine/claudeCli/fixtures/basic.meta.json`
-- Modify: `src/server/engine/ClaudeEngine.ts` (delete the moved code, import it back from `./claudeCli/stream` and `./claudeCli/prompt`, and re-export `BackgroundTracker`, `ProgressMeter`, `toolAudit`, `deniedCalls`, `noteCommands`, `toUserMessage`, `CommandsListener`, `ToolAudit` plus `mapSdkMessage` as an alias of `mapCliMessage`, so existing tests stay green until Task 8)
+- Modify: `src/server/engine/ClaudeEngine.ts` (delete the moved code, import it back from `./claudeCli/stream` and `./claudeCli/prompt`, and re-export `BackgroundTracker`, `ProgressMeter`, `toolAudit`, `deniedCalls`, `noteCommands`, `toUserMessage`, `CommandsListener`, `ToolAudit` plus `mapSdkMessage` as an alias of `mapCliMessage`, so existing tests stay green until they are migrated in Task 8b; Task 8a moves the SDK engine and these re-exports' consumers behind a shim)
 
 **Interfaces:**
 - Consumes: `systemRow`, `textOfContent` (`src/server/sessions/transcript.ts`), `IMAGE_TYPES`, `promptWithFiles`, `Attachment` (`src/server/attachments/AttachmentStore.ts`), `EngineEvent`, `EngineResult`, `BgTask`, `RateLimitSignal`, `TurnRequest` (`../Engine`), turn types from `src/shared/turn-types.ts`.
@@ -588,9 +595,12 @@ printf '%s\n' '{"type":"user","uuid":"00000000-0000-4000-8000-000000000001","par
   | (cd "$D" && perl -e 'alarm 120; exec @ARGV' claude -p --output-format stream-json --input-format stream-json --verbose --include-partial-messages --replay-user-messages --max-turns 1 --model claude-sonnet-5-5) > "$D/raw.jsonl"
 npx tsx src/server/engine/claudeCli/fixtures/scrub.ts --home "$HOME" --cwd "$D" < "$D/raw.jsonl" > src/server/engine/claudeCli/fixtures/basic.jsonl
 printf '{"cli":"%s","scenario":"basic","args":"-p stream-json in/out, --verbose --include-partial-messages --replay-user-messages --max-turns 1"}\n' "$(claude --version | head -1)" > src/server/engine/claudeCli/fixtures/basic.meta.json
+node -e 'for (const l of require("fs").readFileSync(process.argv[1],"utf8").split("\n")) { try { const m = JSON.parse(l); if (m.type === "result") console.log("cost", m.total_cost_usd, JSON.stringify(m.usage)); } catch {} }' "$D/raw.jsonl"
 rm -rf "$D"
-npx vitest run src/hygiene.test.ts --maxWorkers=4
+npx vitest run src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4
 ```
+
+**Account and cost (applies to every spike/capture step in this plan):** captures run on whichever Claude profile `CLAUDE_CONFIG_DIR` selects in the implementer's shell (unset = `~/.claude`). Before the first capture, run `echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"` and choose the profile deliberately (one with usage headroom, not the profile the running deck serves). Record the profile's usage before and after this step (the 5-hour and weekly percentages from `/usage` in an interactive `claude` on that profile) together with the `cost` line printed above. Put these numbers and the profile name in the task report only — never in a committed fixture or meta file (profile names and home paths are private; `hygiene.private.test.ts` checks).
 
 Expected: `basic.jsonl` has an init line, stream events, one `assistant`, the replay line and one `result`; hygiene PASS. If A3 or A4 fails (no replay frame / no uuids in the result), record it in `basic.meta.json` as `"notes"` and keep going — the engine already handles both (`namesAnswers` fallback, steer echo via result uuids), but Task 3's steer test must then use the fallback shapes. If the CLI refuses stdin messages without `session_id`, add `"session_id":""` to the line and record that in `notes`; `toUserMessage` already sets it.
 
@@ -928,12 +938,12 @@ if (!ok) errorText = m.subtype === 'success' ? (m.result ?? '') : [m.subtype, ..
 const result: EngineResult = { kind: 'result', sessionId: m.session_id, ok, text: ok ? (m.result ?? '') : '', usage: { ...usageOf(m.usage), ...windowFromModelUsage(m.modelUsage) }, errorText, stderr: null, errorKind: null, terminalReason: m.terminal_reason ?? null };
 return [result];
 
-// the assistant branch in the runTurn loop (Task 8) reads blocks as ContentBlock: `b.type === 'tool_use'` then `String(b.id)`.
+// the assistant branch in the runTurn loop (Task 8a) reads blocks as ContentBlock: `b.type === 'tool_use'` then `String(b.id)`.
 ```
 
 If `npx tsc --noEmit -p .` reports another SDK-only field, read it through `m as Rec` with a `typeof` check, the same way the surrounding code already does.
 
-In `ClaudeEngine.ts`, delete the moved code and the old `buildPrompt`'s image helpers, keep `buildPrompt` (still used by its tests until Task 8) implemented on top of `toUserMessage`:
+In `ClaudeEngine.ts`, delete the moved code and the old `buildPrompt`'s image helpers, keep `buildPrompt` (still used by its tests until Task 8b; Task 8a moves it into `legacySdkEngine.ts`) implemented on top of `toUserMessage`:
 
 ```ts
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
@@ -942,7 +952,7 @@ export { BackgroundTracker, ProgressMeter, deniedCalls, noteCommands, toolAudit,
 export type { CommandsListener, ToolAudit, ReadFile };
 ```
 
-The temporary `SDKMessage`→`CliMessage` mismatch inside the still-SDK-driven `runTurn` is bridged with a single cast at the loop head: `for await (const sdkMsg of stream) { const m = sdkMsg as unknown as CliMessage; … }` (removed in Task 8).
+The temporary `SDKMessage`→`CliMessage` mismatch inside the still-SDK-driven `runTurn` is bridged with a single cast at the loop head: `for await (const sdkMsg of stream) { const m = sdkMsg as unknown as CliMessage; … }` (moved with the SDK engine into `legacySdkEngine.ts` in Task 8a, deleted with it in Task 8c).
 
 - [ ] **Step 10: Implement `fakeClaudeCli.ts`**
 
@@ -1045,7 +1055,7 @@ export const cli = {
 };
 ```
 
-The "copy every entry of `sdk`" instruction is literal: the 17 builders (`init`, `delta`, `result`, `bgLevel`, `taskStarted`, `taskDone`, `notifyUser`, `notifyNoopResult`, `messageStart`, `blockStart`, `messageDelta`, `agentCall`, `agentStarted`, `agentProgress`, `subToolCall`, `subToolResult`, `subagentTool`) are moved character for character from `fakeSdk.ts` lines 52–77; `fakeSdk.ts` itself re-exports `cli as sdk` from here until it is deleted in Task 8.
+The "copy every entry of `sdk`" instruction is literal: the 17 builders (`init`, `delta`, `result`, `bgLevel`, `taskStarted`, `taskDone`, `notifyUser`, `notifyNoopResult`, `messageStart`, `blockStart`, `messageDelta`, `agentCall`, `agentStarted`, `agentProgress`, `subToolCall`, `subToolResult`, `subagentTool`) are moved character for character from `fakeSdk.ts` lines 52–77; `fakeSdk.ts` itself re-exports `cli as sdk` from here until it is deleted in Task 8b.
 
 - [ ] **Step 11: Run the new tests and the old engine tests**
 
@@ -1066,9 +1076,12 @@ git commit -m "refactor(claude-cli): stream-json 메시지 타입·매퍼 분리
 **Files:**
 - Create: `src/server/engine/claudeCli/process.ts`, `src/server/engine/claudeCli/process.test.ts`
 - Create: `src/server/engine/claudeCli/fixtures/capture.ts` (dev-only), `fixtures/abort.jsonl`, `fixtures/abort.meta.json`, `fixtures/steer.jsonl`, `fixtures/steer.meta.json`
+- Create (go/no-go spikes, Steps 7–11): `fixtures/go-no-go.meta.json`, `fixtures/background.jsonl`, `fixtures/background.meta.json` (scenario `background`, moved here from Task 7), `fixtures/ask.jsonl`, `fixtures/ask.meta.json` (spike D6, moved here from Task 4)
+
+This task also runs the early go/no-go spikes (E1/E3 hook echo, D6 AskUserQuestion through the prompt tool, H1 background survival, F1 fork from a truncated transcript) against the real CLI, so the risky unknowns are answered before Tasks 4–8c build on them. They use throwaway helpers in a temp dir (a printf hook, a 30-line spike MCP server, a hand-truncated transcript), not the Task 4–6 modules, which do not exist yet. Tasks 4–7 keep their own captures as regression fixtures for deck's real code paths.
 
 **Interfaces:**
-- Consumes: `ClaudeSpawnFn`, `ClaudeChildLike` (`spawnTypes.ts`), `parseLine`, `CliMessage`, `CliUserMessage` (`messages.ts`), `STDERR_MAX` (`../redact`), `claudeArgs`, `claudeEnv` (`args.ts`), `resolveClaudeBin` (`version.ts`), `scrubLine` (`fixtures/scrub.ts`), `classifyFailure` (`../limitDetect`).
+- Consumes: `ClaudeSpawnFn`, `ClaudeChildLike` (`spawnTypes.ts`), `parseLine`, `CliMessage`, `CliUserMessage` (`messages.ts`), `STDERR_MAX` (`../redact`), `claudeArgs`, `claudeEnv` (`args.ts`), `resolveClaudeBin` (`version.ts`), `scrubLine` (`fixtures/scrub.ts`), `classifyFailure` (`../limitDetect`), `BackgroundTracker` (`stream.ts`, for the `background` scenario).
 - Produces:
   ```ts
   export type ProcessExit = { code: number | null; signal: NodeJS.Signals | null; spawnError: string | null };
@@ -1367,7 +1380,7 @@ export class ClaudeProcess {
 
 Note the `drainMs` close: `messages()` must be called before or after exit — if called after exit the timer is armed on the already-resolved promise and still closes the reader, which is what the stderr test relies on.
 
-- [ ] **Step 4: Write the capture runner (dev-only) with the `abort` and `steer` scenarios**
+- [ ] **Step 4: Write the capture runner (dev-only) with the `abort`, `steer` and `background` scenarios** (`background` is captured by spike H1 in Step 9)
 
 ```ts
 // src/server/engine/claudeCli/fixtures/capture.ts
@@ -1383,6 +1396,7 @@ import { ClaudeProcess } from '../process';
 import { claudeArgs, claudeEnv } from '../args';
 import { resolveClaudeBin } from '../version';
 import { scrubLine } from './scrub';
+import { BackgroundTracker } from '../stream';
 import type { CliMessage, CliUserMessage, Rec } from '../messages';
 
 export type CaptureCtx = {
@@ -1433,6 +1447,30 @@ export const scenarios: Record<string, Scenario> = {
         if (named.includes(SECOND_UUID) || String(m.result ?? '').includes('MANGO')) ctx.proc.stop();
       }
     },
+  },
+  background: {
+    maxTurns: 3,
+    timeoutMs: 120_000,
+    settings: { permissions: { allow: ['Bash(sleep 6)'] } },
+    first: 'Run the shell command `sleep 6` with the Bash tool with run_in_background set to true. Do not wait for it: reply STARTED right away. When it finishes, reply FINISHED.',
+    drive: (ctx, m) => {
+      const bg = (ctx.meta.bgTracker ??= new BackgroundTracker()) as BackgroundTracker;
+      bg.apply(m);
+      if (m.type === 'system' && m.subtype === 'background_tasks_changed') ctx.meta.sawLevel = true;
+      if (m.type === 'system' && m.subtype === 'task_started') ctx.meta.sawTaskStarted = true;
+      if (m.type === 'system' && m.subtype === 'task_notification') ctx.meta.sawNotification = true;
+      if (m.type !== 'result') return;
+      const results = ((ctx.meta.results ??= []) as unknown[]);
+      results.push({ uuids: m.user_message_uuids ?? (m.user_message_uuid ? [m.user_message_uuid] : null), tasksLive: bg.tasks().length });
+      if (results.length === 1) {
+        // The engine's rule: stdin stays open while a task is live. Check the child is still there a moment later.
+        setTimeout(() => { ctx.meta.aliveAfterFirstResult = ctx.proc.exit === null; }, 500);
+        if (bg.tasks().length === 0) ctx.proc.stop();
+      } else if (bg.tasks().length === 0) {
+        ctx.proc.stop();
+      }
+    },
+    after: (ctx) => { delete ctx.meta.bgTracker; },
   },
 };
 
@@ -1495,11 +1533,11 @@ Run (repo root):
 ```bash
 npx tsx src/server/engine/claudeCli/fixtures/capture.ts abort
 npx tsx src/server/engine/claudeCli/fixtures/capture.ts steer
-npx vitest run src/hygiene.test.ts --maxWorkers=4
+npx vitest run src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4
 ```
 Expected: two fixtures plus meta files; hygiene PASS.
 
-`abort` validates: (B1) in stream-json input mode a SIGINT mid-turn still yields a `result` frame (meta `resultAfterSigint: true`, its `subtype`/`terminal_reason` recorded), and (B2) the process keeps waiting on stdin and exits 0 once `stop()` closes it (meta `exit.signal: null`). If B1 fails (no result after SIGINT), the engine's synthesized `중단됨` result (Task 8) covers it and the B1 test is changed to `expect(meta.resultAfterSigint).toBe(false)` with a comment pointing at the meta file. If B2 fails (the CLI exits on SIGINT by itself), nothing changes in the engine: `ClaudeProcess` already treats an early exit as the end of `messages()`.
+`abort` validates: (B1) in stream-json input mode a SIGINT mid-turn still yields a `result` frame (meta `resultAfterSigint: true`, its `subtype`/`terminal_reason` recorded), and (B2) the process keeps waiting on stdin and exits 0 once `stop()` closes it (meta `exit.signal: null`). If B1 fails (no result after SIGINT), the engine's synthesized `중단됨` result (Task 8a) covers it and the B1 test is changed to `expect(meta.resultAfterSigint).toBe(false)` with a comment pointing at the meta file. If B2 fails (the CLI exits on SIGINT by itself), nothing changes in the engine: `ClaudeProcess` already treats an early exit as the end of `messages()`.
 
 `steer` validates: (C1) our stdin `uuid` comes back as an `isReplay` frame when the CLI takes the message (meta `replays` contains `…0002`); (C2) `priority: "next"` folds the message into the running turn at the Bash tool boundary, so one result names both uuids and contains MANGO; (C3) results carry `user_message_uuids`. If C2 fails (the steer becomes its own next turn), the engine still answers it correctly through `unanswered` bookkeeping; record that under "Lost or changed features" ("steer folds in only at the next turn").
 
@@ -1508,10 +1546,144 @@ Expected: two fixtures plus meta files; hygiene PASS.
 Run: `npx vitest run src/server/engine/claudeCli/process.test.ts --maxWorkers=4`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7 (go/no-go spike E1/E3): hook echo through a `--settings` command hook**
+
+The spikes in Steps 7–10 share one shell session (repo root) and one verdict file. Define the helper once:
 
 ```bash
-git add src/server/engine/claudeCli/process.ts src/server/engine/claudeCli/process.test.ts src/server/engine/claudeCli/fakeClaudeCli.ts src/server/engine/claudeCli/fixtures/capture.ts src/server/engine/claudeCli/fixtures/abort.jsonl src/server/engine/claudeCli/fixtures/abort.meta.json src/server/engine/claudeCli/fixtures/steer.jsonl src/server/engine/claudeCli/fixtures/steer.meta.json
+verdict() { node -e 'const fs=require("fs"),[f,k,v]=process.argv.slice(1);const j=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};j[k]=v==="true";j.cli=process.env.CLI_VER;fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' src/server/engine/claudeCli/fixtures/go-no-go.meta.json "$1" "$2"; echo "$1=$2"; }
+export CLI_VER="$(claude --version | head -1)"
+```
+
+Run a print-mode turn whose `--settings` carries two plain command hooks (no deck code involved): a PreToolUse deny on Bash and a UserPromptSubmit `additionalContext`:
+
+```bash
+D=$(mktemp -d)
+cat > "$D/settings.json" <<'EOF'
+{"permissions":{"allow":["Bash(echo hi)"]},
+ "hooks":{
+  "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","timeout":30,"command":"printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"HOOK-DENY-MARKER\"}}'"}]}],
+  "UserPromptSubmit":[{"hooks":[{"type":"command","timeout":30,"command":"printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"The codeword is PAPAYA.\"}}'"}]}]
+}}
+EOF
+printf '%s\n' '{"type":"user","session_id":"","parent_tool_use_id":null,"message":{"role":"user","content":"Run `echo hi` with the Bash tool and quote its tool result verbatim. Then tell me the codeword from your context if you were given one, else NONE."}}' \
+  | (cd "$D" && perl -e 'alarm 180; exec @ARGV' claude -p --output-format stream-json --input-format stream-json --verbose --max-turns 3 --model claude-sonnet-5-5 \
+      --setting-sources project "--settings=$D/settings.json" --permission-prompts none) > "$D/e.jsonl"
+node -e '
+const fr = require("fs").readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+const tr = fr.filter((f) => f.type === "user" && Array.isArray(f.message?.content)).flatMap((f) => f.message.content).filter((b) => b.type === "tool_result");
+const res = fr.find((f) => f.type === "result");
+console.log("E1", tr.some((b) => b.is_error && JSON.stringify(b.content).includes("HOOK-DENY-MARKER")));
+console.log("E3", String(res?.result ?? "").includes("PAPAYA"));' "$D/e.jsonl"
+```
+
+(`echo hi` is pre-allowed, so only the hook can block it.) Positive: the script prints `E1 true` (the Bash call came back as an error `tool_result` carrying HOOK-DENY-MARKER, i.e. the hook's JSON `permissionDecision` is honoured in print mode) and `E3 true` (the `result` names PAPAYA, i.e. `additionalContext` reached the model). Record both: `verdict E1 true|false; verdict E3 true|false`, then `rm -rf "$D"`.
+
+Negative and fallback:
+- E1 false: the noTools turn (handoff note) and the mode gate cannot rely on a PreToolUse hook. The `--permission-prompt-tool` route still sees every call that is not pre-allowed, so Task 5 moves the noTools deny and the plan-mode edit deny into `permissionHandler` (Task 4 already denies noTools there) and drops the PreToolUse relay; the acceptEdits auto-allow from the mode gate is lost mid-turn (see "Lost or changed features", row "Mid-process permission-mode change": the new mode then applies from the next turn).
+- E3 false: stop and report before Task 4 instead of improvising. The alternatives (`--append-system-prompt`, or a separate first stdin message) either change the system prompt and its cache or put the note into the visible transcript, and both contradict how `systemNote` works today.
+
+- [ ] **Step 8 (go/no-go spike D6): AskUserQuestion through the permission prompt tool**
+
+deck's bridge does not exist yet, so the spike uses a throwaway stdio MCP server that answers AskUserQuestion with Blue and denies anything else. The raw stream is scrubbed into `fixtures/ask.jsonl`, which Task 4's `D6` test reads.
+
+```bash
+D=$(mktemp -d)
+cat > "$D/spike-mcp.mjs" <<'EOF'
+import fs from 'node:fs';
+import readline from 'node:readline';
+const log = new URL('./calls.log', import.meta.url);
+const send = (m) => process.stdout.write(JSON.stringify(m) + '\n');
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'spike', version: '0' } } });
+  if (m.method === 'tools/list') return send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'permission', description: 'spike permission prompt', inputSchema: { type: 'object', properties: { tool_name: { type: 'string' }, input: { type: 'object' }, tool_use_id: { type: 'string' } }, required: ['tool_name', 'input'] } }] } });
+  if (m.method === 'tools/call') {
+    const a = m.params.arguments;
+    fs.appendFileSync(log, a.tool_name + '\n');
+    const q = a.input?.questions?.[0]?.question ?? '';
+    const reply = a.tool_name === 'AskUserQuestion'
+      ? { behavior: 'allow', updatedInput: { ...a.input, answers: { [q]: 'Blue' } } }
+      : { behavior: 'deny', message: 'spike: only AskUserQuestion is answered' };
+    return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: JSON.stringify(reply) }] } });
+  }
+  if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, result: {} });
+});
+EOF
+printf '{"mcpServers":{"spike":{"type":"stdio","command":"%s","args":["%s"]}}}\n' "$(command -v node)" "$D/spike-mcp.mjs" > "$D/mcp.json"
+printf '%s\n' '{"type":"user","session_id":"","parent_tool_use_id":null,"message":{"role":"user","content":"Use the AskUserQuestion tool to ask me one question, \"Which color?\", with the options Red and Blue. Then reply with my answer only."}}' \
+  | (cd "$D" && perl -e 'alarm 180; exec @ARGV' claude -p --output-format stream-json --input-format stream-json --verbose --max-turns 3 --model claude-sonnet-5-5 \
+      --setting-sources project "--mcp-config=$D/mcp.json" --permission-prompts host --permission-prompt-tool mcp__spike__permission) > "$D/raw.jsonl"
+cat "$D/calls.log"
+npx tsx src/server/engine/claudeCli/fixtures/scrub.ts --home "$HOME" --cwd "$D" < "$D/raw.jsonl" > src/server/engine/claudeCli/fixtures/ask.jsonl
+printf '{"cli":"%s","scenario":"ask","args":"-p stream-json, spike MCP server as --permission-prompt-tool, --max-turns 3"}\n' "$CLI_VER" > src/server/engine/claudeCli/fixtures/ask.meta.json
+node -e 'const r = require("fs").readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((f) => f.type === "result"); console.log("D6", String(r?.result ?? "").includes("Blue"));' "$D/raw.jsonl"
+```
+
+Positive: `calls.log` lists `AskUserQuestion` and the script prints `D6 true` (the `answers` in `updatedInput` reached the model). Record `verdict D6 true|false`, then `rm -rf "$D"`.
+
+Negative and fallback: AskUserQuestion has no other documented route in print mode. Stop and report before Task 4 — do not start the bridge work. The decision (ship without AskUserQuestion, i.e. the model gets a deny and the question card never appears, or stay on the SDK) belongs to the user; if they accept the loss, add a row "AskUserQuestion — Lost" to "Lost or changed features" and Task 4 Step 11's D6 test asserts the recorded negative instead.
+
+- [ ] **Step 9 (go/no-go spike H1): background task survives the first result while stdin stays open**
+
+Capture the `background` scenario (Step 4). `capture()` keeps stdin open until the scenario calls `stop()`, which is exactly deck's holding rule:
+
+```bash
+npx tsx src/server/engine/claudeCli/fixtures/capture.ts background
+node -e 'const m = require("./src/server/engine/claudeCli/fixtures/background.meta.json"); console.log("H1", m.aliveAfterFirstResult === true && m.results?.[0]?.tasksLive === 1, "results", m.results?.length);'
+```
+
+Assumptions validated (recorded in `background.meta.json`, asserted by Task 7's replay test):
+- H1: after the first `result` with a live background task, the child stays alive while stdin is open (`aliveAfterFirstResult: true`, `results[0].tasksLive: 1`).
+- H2: print mode emits the level signal `background_tasks_changed` (`sawLevel`) or at least the `task_started` / `task_notification` bookends (`sawTaskStarted && sawNotification`); `BackgroundTracker` handles either.
+- H3: the CLI runs the continuation turn by itself after the task settles, and that `result` names none of deck's uuids (`results[1].uuids` is `null` or `[]`, never `[FIRST_UUID]`), so the existing "names its answers" rule classifies it as a background continuation.
+- H4: closing stdin after the last result ends the child with exit code 0 (`exit.code: 0`).
+
+Positive: the script prints `H1 true results 2`. Record `verdict H1 true|false`.
+
+Negative and fallback: if H1 fails (the child exits at the first result even with stdin open), background work cannot outlive a turn: Task 8a then closes stdin at the first result regardless, `BG_MAX_MS`/`BG_GRACE_MS` become unused, Task 7's H1/H3 assertions are changed to the recorded values, and "Background tasks after the turn" in "Lost or changed features" becomes **Lost**. If H3 fails because the continuation's result does name `FIRST_UUID`, the loop's `answer()` call is a no-op for it (already answered) and nothing changes — record it in meta and keep going.
+
+- [ ] **Step 10 (go/no-go spike F1): fork from a truncated transcript with `--resume <path> --fork-session`**
+
+Run a two-turn parent session with a known id, cut its transcript after the first turn by hand, and resume the cut copy as a fork:
+
+```bash
+D=$(mktemp -d); mkdir "$D/work"; D=$(cd "$D" && pwd -P)
+SID=$(node -e 'console.log(require("crypto").randomUUID())')
+{ printf '%s\n' '{"type":"user","session_id":"","parent_tool_use_id":null,"message":{"role":"user","content":"Remember the codeword KIWI. Reply only OK."}}'; sleep 25;
+  printf '%s\n' '{"type":"user","session_id":"","parent_tool_use_id":null,"message":{"role":"user","content":"Also remember the codeword LIME. Reply only OK."}}'; sleep 25; } \
+  | (cd "$D/work" && perl -e 'alarm 120; exec @ARGV' claude -p --output-format stream-json --input-format stream-json --verbose --max-turns 2 --model claude-sonnet-5-5 \
+      --setting-sources project --permission-prompts none "--session-id=$SID") > "$D/parent.jsonl"
+PROJ="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+SRC=$(find "$PROJ" -name "$SID.jsonl" | head -1); echo "parent transcript: ${SRC:+found}"
+# Keep every line up to (not including) the first user entry that mentions LIME.
+node -e 'const fs=require("fs"); const ls=fs.readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean); const i=ls.findIndex((l)=>{const r=JSON.parse(l); return r.type==="user" && JSON.stringify(r.message??"").includes("LIME");}); fs.writeFileSync(process.argv[2], ls.slice(0, i<0?ls.length:i).join("\n")+"\n");' "$SRC" "$D/cut.jsonl"
+printf '%s\n' '{"type":"user","session_id":"","parent_tool_use_id":null,"message":{"role":"user","content":"List every codeword I asked you to remember, comma-separated, nothing else."}}' \
+  | (cd "$D/work" && perl -e 'alarm 120; exec @ARGV' claude -p --output-format stream-json --input-format stream-json --verbose --max-turns 1 --model claude-sonnet-5-5 \
+      --setting-sources project --permission-prompts none "--resume=$D/cut.jsonl" --fork-session) > "$D/fork.jsonl"
+node -e '
+const fr = require("fs").readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+const init = fr.find((f) => f.type === "system" && f.subtype === "init"); const r = fr.find((f) => f.type === "result");
+const t = String(r?.result ?? ""); console.log("F1", /KIWI/.test(t) && !/LIME/.test(t), "newId", init?.session_id !== process.argv[2], "result", JSON.stringify(t));' "$D/fork.jsonl" "$SID"
+```
+
+Positive: `F1 true newId true` — the CLI accepted a path for `--resume`, loaded exactly the cut history (KIWI, not LIME) and forked under a new id. Record `verdict F1 true|false`. Clean up the profile: `rm -rf "$D"` and remove the project directories the two runs created under `$PROJ` (the directories whose name ends in the temp dir's basename plus `-work`; check with `ls "$PROJ" | grep -- "$(basename "$D")"` before deleting).
+
+Negative and fallback: if the CLI rejects a path, ignores the cut, or reuses the parent id, fork-at-message is deferred: Task 6 item 1 (fork-at-message, `fork.ts`, the `fork-parent`/`fork-file` scenarios) is skipped; the engine yields `FORK_AT_UNSUPPORTED` for every `forkAt` (Task 8a handles a `{ ok: false }` source the same way); and "Fork at a message" in "Lost or changed features" becomes **Lost**. Task 6 items 2 and 3 (ownership, holder marker) proceed unchanged.
+
+- [ ] **Step 11: Hygiene and the go/no-go gate**
+
+```bash
+cat src/server/engine/claudeCli/fixtures/go-no-go.meta.json
+npx vitest run src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4
+```
+
+Expected: the verdict file has `E1`, `E3`, `D6`, `H1`, `F1` (plus `cli`); hygiene PASS. Gate: if `E3` or `D6` is `false`, stop here and report (both have no fallback that keeps today's behaviour). Any other `false` follows the fallback written in its step; note the choice in the task report.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add src/server/engine/claudeCli/process.ts src/server/engine/claudeCli/process.test.ts src/server/engine/claudeCli/fakeClaudeCli.ts src/server/engine/claudeCli/fixtures/capture.ts src/server/engine/claudeCli/fixtures/abort.jsonl src/server/engine/claudeCli/fixtures/abort.meta.json src/server/engine/claudeCli/fixtures/steer.jsonl src/server/engine/claudeCli/fixtures/steer.meta.json src/server/engine/claudeCli/fixtures/go-no-go.meta.json src/server/engine/claudeCli/fixtures/background.jsonl src/server/engine/claudeCli/fixtures/background.meta.json src/server/engine/claudeCli/fixtures/ask.jsonl src/server/engine/claudeCli/fixtures/ask.meta.json
 git commit -m "feat(claude-cli): claude 자식 프로세스 수명 관리(SIGINT 중단·종료 승격·stderr 꼬리)와 중단·끼어들기 실측 픽스처"
 ```
 
@@ -1527,7 +1699,7 @@ git commit -m "feat(claude-cli): claude 자식 프로세스 수명 관리(SIGINT
 - Create: `src/server/engine/claudeCli/texts.ts`
 - Modify: `src/server/engine/Engine.ts` (line 1: `import type { PermissionUpdate } from './claudeCli/permissionTypes';`)
 - Modify: `src/server/engine/claudeCli/fixtures/capture.ts` (bridge setup + scenarios), `src/server/engine/claudeCli/fakeClaudeCli.ts` (`ask` helper)
-- Create: `fixtures/permission-allow.*`, `fixtures/permission-session.*`, `fixtures/plan-exit.*`, `fixtures/ask.*`, `fixtures/deny.*`, `fixtures/self-call.*` (`.jsonl` + `.meta.json` each)
+- Create: `fixtures/permission-allow.*`, `fixtures/permission-session.*`, `fixtures/plan-exit.*`, `fixtures/deny.*`, `fixtures/self-call.*`, `fixtures/permission-slow.*`, `fixtures/permission-slow-20s.*` (`.jsonl` + `.meta.json` each). `fixtures/ask.*` already exists (spike D6, Task 3 Step 8).
 
 **Interfaces:**
 - Consumes: `TurnRequest`, `PermissionRequest`, `sessionUpdates`, `ruleString`, `parseQuestions` (`../Engine`); `ToolAudit` (`stream.ts`); `PERMISSION_TOOL`, `BRIDGE_SERVER`, `CliPermissionMode`, `buildMcpConfig` (`args.ts`).
@@ -1552,11 +1724,14 @@ git commit -m "feat(claude-cli): claude 자식 프로세스 수명 관리(SIGINT
     hook(input: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>>;
   };
   export type BridgeRegistration = { token: string; socketPath: string; abortAll(): void; dispose(): void };
-  export const PERMISSION_WAIT_MS = 12 * 60 * 60_000;
+  export const MCP_TOOL_TIMEOUT_MS = 12 * 60 * 60_000;
+  export const PERMISSION_WAIT_MS = MCP_TOOL_TIMEOUT_MS - 2 * 60_000; // 2 min below the CLI's tool timeout
   export const HOOK_WAIT_MS = 25_000;
   export class PermissionBridge {
     static open(opts?: { waitMs?: number; hookWaitMs?: number }): Promise<PermissionBridge>;
     readonly socketPath: string;
+    /** Live (not yet disposed) registrations; 0 after every register has been disposed. */
+    get registrations(): number;
     register(h: BridgeHandlers): BridgeRegistration;
     close(): Promise<void>;
   }
@@ -1668,6 +1843,27 @@ describe('PermissionBridge', () => {
     expect(JSON.parse(r.body)).toEqual({ behavior: 'deny', message: '권한 요청을 처리하다 오류가 나서 거부했습니다' });
   });
 
+  it('register N then dispose N leaks nothing: zero registrations, in-flight requests aborted, socket stays until close', async () => {
+    bridge = await PermissionBridge.open();
+    const N = 20;
+    let aborted = 0;
+    const regs = Array.from({ length: N }, () => bridge!.register({ ...allowAll, permission: (_c, signal) => new Promise((resolve) => signal.addEventListener('abort', () => { aborted++; resolve({ behavior: 'deny', message: 'aborted' }); }, { once: true })) }));
+    expect(bridge.registrations).toBe(N);
+    const pending = regs.map((r) => postBridge(r.socketPath, r.token, '/v1/permission', call));
+    await new Promise((r) => setTimeout(r, 50));
+    for (const r of regs) r.dispose();
+    for (const r of regs) r.dispose(); // idempotent
+    await Promise.all(pending);
+    expect(bridge.registrations).toBe(0);
+    expect(aborted).toBe(N);
+    for (const r of regs) expect((await postBridge(r.socketPath, r.token, '/v1/permission', call)).status).toBe(410);
+    expect(fs.existsSync(bridge.socketPath)).toBe(true); // one shared socket per deck server
+    const sock = bridge.socketPath;
+    await bridge.close();
+    bridge = null;
+    expect(fs.existsSync(sock)).toBe(false);
+  });
+
   it('close removes the socket dir', async () => {
     const b = await PermissionBridge.open();
     const dir = b.socketPath.replace(/\/[^/]+$/, '');
@@ -1744,8 +1940,16 @@ export type BridgeHandlers = {
 };
 export type BridgeRegistration = { token: string; socketPath: string; abortAll(): void; dispose(): void };
 
-/** A permission card may wait for the user this long (the CLI's MCP tool timeout is set just above it). */
-export const PERMISSION_WAIT_MS = 12 * 60 * 60_000;
+/** Passed to the claude child as `MCP_TOOL_TIMEOUT` (the CLI's limit for one MCP tool call, the prompt tool included — spike `permission-slow`). */
+export const MCP_TOOL_TIMEOUT_MS = 12 * 60 * 60_000;
+/**
+ * A permission card may wait for the user this long. Kept 2 minutes below MCP_TOOL_TIMEOUT_MS so
+ * deck's own Korean deny always reaches the CLI before the CLI gives up on the tool call itself
+ * (a CLI-side timeout would surface as an MCP error, not as deck's message). If spike
+ * `permission-slow` shows the CLI ignores MCP_TOOL_TIMEOUT for the prompt tool, set this to the
+ * CLI's internal limit minus 2 minutes (see "Lost or changed features").
+ */
+export const PERMISSION_WAIT_MS = MCP_TOOL_TIMEOUT_MS - 2 * 60_000;
 /** Below the 30 s command-hook timeout written into the settings file. */
 export const HOOK_WAIT_MS = 25_000;
 const MAX_BODY = 1024 * 1024;
@@ -1763,7 +1967,9 @@ function parseCall(v: unknown): PermissionCall | null {
 /**
  * One per deck server: an HTTP server on a unix socket inside a private temp dir (0700). Each
  * claude process gets its own registration token, handed only to its MCP prompt server and hook
- * relay through 0600 config files — never through the claude process env or argv.
+ * relay through 0600 config files, always as the env variable `DECK_BRIDGE_TOKEN` (the MCP server's
+ * `env` entry; a `DECK_BRIDGE_TOKEN=` prefix in the hook command) — never in the claude process env
+ * and never as an argv flag of node or claude.
  */
 export class PermissionBridge {
   private readonly regs = new Map<string, Reg>();
@@ -1781,6 +1987,8 @@ export class PermissionBridge {
     self = new PermissionBridge(server, socketPath, dir, opts.waitMs ?? PERMISSION_WAIT_MS, opts.hookWaitMs ?? HOOK_WAIT_MS);
     return self;
   }
+
+  get registrations(): number { return this.regs.size; }
 
   register(handlers: BridgeHandlers): BridgeRegistration {
     const token = randomBytes(24).toString('hex');
@@ -1885,7 +2093,7 @@ export function postBridge(sock: string, token: string, urlPath: string, body: u
 - [ ] **Step 4: Run the bridge test and see it pass**
 
 Run: `npx vitest run src/server/engine/claudeCli/bridge.test.ts --maxWorkers=4`
-Expected: PASS (8 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 5: Write the failing MCP server test**
 
@@ -2092,18 +2300,7 @@ export const bridgeScenarios: Record<string, BridgeScenario> = {
     }),
     after: (ctx) => { ctx.meta.fileWritten = fs.existsSync(path.join(ctx.dir, 'work', 'notes.txt')); },
   },
-  ask: {
-    maxTurns: 3,
-    first: 'Use the AskUserQuestion tool to ask me one question, "Which color?", with the options Red and Blue. Then reply with my answer only.',
-    drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
-    handlers: () => ({
-      permission: async (c) => {
-        if (c.tool_name !== 'AskUserQuestion') return { behavior: 'deny', message: 'unexpected' };
-        const q = ((c.input.questions as { question: string }[] | undefined) ?? [])[0]?.question ?? '';
-        return { behavior: 'allow', updatedInput: { ...c.input, answers: { [q]: 'Blue' } } };
-      },
-    }),
-  },
+  // `ask` (spike D6) moved to Task 3 Step 8; its fixture is already committed.
   deny: {
     maxTurns: 3,
     settings: { permissions: { deny: ['Bash(rm:*)'] } },
@@ -2117,18 +2314,51 @@ export const bridgeScenarios: Record<string, BridgeScenario> = {
     drive: (ctx, m) => { if (m.type === 'result') ctx.proc.stop(); },
     handlers: () => ({}),
   },
+  'permission-slow': slowPermission(3_000),
+  'permission-slow-20s': slowPermission(20_000),
 };
+
+/**
+ * Does MCP_TOOL_TIMEOUT bound the permission prompt tool? The allow is answered 6 s late; with a
+ * 3 s timeout the CLI should give up on the call (tool not run), with 20 s it should honour it.
+ */
+function slowPermission(toolTimeoutMs: number): BridgeScenario {
+  return {
+    maxTurns: 3,
+    toolTimeoutMs,
+    timeoutMs: 120_000,
+    first: 'Create a file named slow.txt containing the word hi, using the Write tool. Then report the tool result verbatim and reply DONE.',
+    drive: (ctx, m) => {
+      if (m.type === 'user' && Array.isArray(m.message.content)) {
+        for (const b of m.message.content) if (b.type === 'tool_result') {
+          ((ctx.meta.toolResults ??= []) as unknown[]).push({ is_error: b.is_error === true, text: (typeof b.content === 'string' ? b.content : JSON.stringify(b.content)).slice(0, 300) });
+        }
+      }
+      if (m.type === 'result') ctx.proc.stop();
+    },
+    handlers: ({ meta }) => ({
+      permission: (c, signal) => new Promise((resolve) => {
+        const t0 = Date.now();
+        const t = setTimeout(() => { meta.answeredAfterMs = Date.now() - t0; resolve({ behavior: 'allow', updatedInput: c.input }); }, 6_000);
+        signal.addEventListener('abort', () => { clearTimeout(t); meta.cancelledAfterMs = Date.now() - t0; resolve({ behavior: 'deny', message: 'cancelled' }); }, { once: true });
+      }),
+    }),
+    after: (ctx) => { ctx.meta.toolTimeoutMs = toolTimeoutMs; ctx.meta.fileWritten = fs.existsSync(path.join(ctx.dir, 'work', 'slow.txt')); },
+  };
+}
 ```
 
-and route bridge scenarios in the CLI entry: `const bsc = bridgeScenarios[name]; if (bsc) await captureWithBridge(name, bsc); else …`. For `plan-exit`, `capture()` must start in plan mode: add `permissionMode?: CliPermissionMode` to `Scenario`, pass it to `claudeArgs`, and set `permissionMode: 'plan'` on that scenario (replacing the empty `extraArgs`).
+and route bridge scenarios in the CLI entry: `const bsc = bridgeScenarios[name]; if (bsc) await captureWithBridge(name, bsc); else …`. For `plan-exit`, `capture()` must start in plan mode: add `permissionMode?: CliPermissionMode` to `Scenario`, pass it to `claudeArgs`, and set `permissionMode: 'plan'` on that scenario (replacing the empty `extraArgs`). For `permission-slow`, add `toolTimeoutMs?: number` to `Scenario` and change the `ClaudeProcess` construction in `capture()` to `env: claudeEnv(process.env, sc.toolTimeoutMs ?? 600_000)`, so the scenario's value becomes the child's `MCP_TOOL_TIMEOUT`.
 
 - [ ] **Step 10 (spike): Capture the permission scenarios**
 
 Run (repo root), one at a time, then the hygiene test:
 ```bash
-for s in permission-allow permission-session plan-exit ask deny self-call; do npx tsx src/server/engine/claudeCli/fixtures/capture.ts "$s"; done
-npx vitest run src/hygiene.test.ts --maxWorkers=4
+for s in permission-allow permission-session plan-exit deny self-call permission-slow permission-slow-20s; do npx tsx src/server/engine/claudeCli/fixtures/capture.ts "$s"; done
+npx vitest run src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4
 ```
+
+(`ask` is no longer in this loop: it was captured as spike D6 in Task 3 Step 8, which already wrote `fixtures/ask.jsonl` + `ask.meta.json`.)
 What each validates (record the answer in that scenario's `.meta.json`; the tests in Step 11 assert the recorded value):
 
 | Scenario | Assumption |
@@ -2136,11 +2366,12 @@ What each validates (record the answer in that scenario's `.meta.json`; the test
 | `permission-allow` | D1: the prompt tool receives `{tool_name, input, tool_use_id}` and `tool_use_id` equals the assistant `tool_use` block id; D3: `{"behavior":"allow","updatedInput":…}` runs the tool (`fileWritten: true`). Also records whether `permission_suggestions` is present for Write. |
 | `permission-session` | D2: `updatedPermissions` returned by the prompt tool are applied for the rest of the process (meta `calls.length === 1`). Also records Bash `permission_suggestions` shape. |
 | `plan-exit` | D4: ExitPlanMode reaches the prompt tool in plan mode; D5: a returned `setMode acceptEdits` leaves plan mode and the following Write is not asked (`calls` = only ExitPlanMode) — or is asked (`calls` includes Write), meaning the mode switch must be enforced by deck (Task 5 gate already does). |
-| `ask` | D6: AskUserQuestion goes through the prompt tool and `updatedInput.answers` reaches the model (final result text contains Blue). |
+| `ask` | Moved: D6 is answered early by Task 3 Step 8 (go/no-go spike); not re-captured here. |
 | `deny` | D7: a deny-rule refusal is reported as a `system/permission_denied` frame (record its fields, and whether it arrives before the matching `tool_result`) and/or in `result.permission_denials`; D8: a prompt-tool deny message comes back to the model as an error `tool_result` containing NOPE-MARKER. |
-| `self-call` | D9: whether `mcp__deck_bridge__permission` appears in init `tools` (model-visible) and whether a direct call reaches the prompt tool as `tool_name: "mcp__deck_bridge__permission"` (then denied by `SELF_CALL_MESSAGE`, Step 13). If it is visible, re-run `permission-allow` once with `extraArgs: () => ['--disallowedTools', 'mcp__deck_bridge__permission']` (scenario `permission-allow-disallowed`) and record whether the prompt tool still works; Task 8 adds the flag only if it does. |
+| `self-call` | D9: whether `mcp__deck_bridge__permission` appears in init `tools` (model-visible) and whether a direct call reaches the prompt tool as `tool_name: "mcp__deck_bridge__permission"` (then denied by `SELF_CALL_MESSAGE`, Step 13). If it is visible, re-run `permission-allow` once with `extraArgs: () => ['--disallowedTools', 'mcp__deck_bridge__permission']` (scenario `permission-allow-disallowed`) and record whether the prompt tool still works; Task 8a adds the flag only if it does. |
+| `permission-slow` / `permission-slow-20s` | D10: `MCP_TOOL_TIMEOUT` applies to the permission prompt tool. Positive: with 3000 ms the 6 s-late allow is not honoured — `fileWritten: false`, `toolResults[0].is_error: true` (a timeout/denied text), and usually `cancelledAfterMs` ≈ 3000 (the CLI cancelled the MCP call); with 20000 ms the late allow is honoured — `fileWritten: true`, `answeredAfterMs` ≈ 6000. Negative: the 3000 ms run also writes the file (the variable does not bound the prompt tool), or the 20000 ms run times out (some lower internal limit wins). |
 
-If D2 fails, deck's `SessionGrants` (Step 13) is what keeps 이 세션 working within the process; later turns already pass the rules through `--settings`. If D6 fails, AskUserQuestion is lost — stop and report before continuing, because the plan has no other documented route for it.
+If D2 fails, deck's `SessionGrants` (Step 13) is what keeps 이 세션 working within the process; later turns already pass the rules through `--settings`. If D10 is negative, follow "Lost or changed features" (row "Long-waiting permission cards"): find the CLI's own limit by re-running `permission-slow-20s` with the handler delay raised (60 s, 300 s, 600 s) until the allow is no longer honoured, then set `PERMISSION_WAIT_MS` in `bridge.ts` to that limit minus 2 minutes and change the D10 assertions in Step 11 to the recorded values.
 
 - [ ] **Step 11: Write the failing permission-handler test** (moved `canUseTool` tests + fixture assertions)
 
@@ -2250,7 +2481,7 @@ describe('permission fixtures (real CLI captures)', () => {
     const frames = fs.readFileSync(path.join(__dirname, 'fixtures', 'ask.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     expect(frames.find((f) => f.type === 'result').result).toContain('Blue');
   });
-  it('D2 / D5 / D9 are recorded (values drive Task 5 and Task 8 decisions)', () => {
+  it('D2 / D5 / D9 are recorded (values drive Task 5 and Task 8a decisions)', () => {
     expect(typeof meta('permission-session').calls.length).toBe('number');
     expect(Array.isArray(meta('plan-exit').calls)).toBe(true);
     expect(Array.isArray(meta('self-call').calls)).toBe(true);
@@ -2351,7 +2582,92 @@ export function permissionHandler(req: PermissionDeps, audit: ToolAudit, gate: M
 }
 ```
 
-- [ ] **Step 14: Add the `ask` helper to the fake CLI** (used by engine tests in Task 8)
+- [ ] **Step 14: Write the failing synthesized-suggestion test** (spike D3 negative: no `permission_suggestions`)
+
+`TurnRunner`'s `addGrants` persists 이 세션 only from `pr.suggestions` (through `sessionUpdates(pr)`). If the CLI sends no `permission_suggestions`, `pr.suggestions` would be empty and 이 세션 would neither persist to later turns nor be remembered by `SessionGrants`. `permissionHandler` therefore synthesizes one suggestion from the tool name when the request carries none. Append to `permissions.test.ts`:
+
+```ts
+import { synthesizedSuggestions } from './permissions';
+
+describe('permission suggestions when the CLI sends none (spike D3 negative)', () => {
+  it('a request without permission_suggestions reaches onPermission with one synthesized session rule', async () => {
+    const onPermission = vi.fn(async () => 'once' as const);
+    const { h } = mk({ onPermission });
+    await h({ tool_name: 'Write', input: { file_path: '/w/a.txt', content: 'x' }, tool_use_id: 't1' }, sig);
+    expect(onPermission).toHaveBeenCalledWith(expect.objectContaining({
+      suggestions: [{ type: 'addRules', rules: [{ toolName: 'Write' }], behavior: 'allow', destination: 'session' }],
+    }));
+  });
+  it('Bash: the synthesized rule carries the exact command as ruleContent', async () => {
+    const onPermission = vi.fn(async () => 'once' as const);
+    const { h } = mk({ onPermission });
+    await h({ tool_name: 'Bash', input: { command: 'npm test' }, tool_use_id: 't1' }, sig);
+    expect(onPermission).toHaveBeenCalledWith(expect.objectContaining({
+      suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test' }], behavior: 'allow', destination: 'session' }],
+    }));
+  });
+  it('a request with permission_suggestions is passed through unchanged', async () => {
+    const onPermission = vi.fn(async () => 'once' as const);
+    const { h } = mk({ onPermission });
+    await h({ tool_name: 'Bash', input: { command: 'npm test' }, tool_use_id: 't1', permission_suggestions: bashSuggestion }, sig);
+    expect(onPermission).toHaveBeenCalledWith(expect.objectContaining({ suggestions: bashSuggestion }));
+  });
+  it('이 세션 on a synthesized suggestion is returned as updatedPermissions and remembered for the process', async () => {
+    const onPermission = vi.fn(async () => 'session' as const);
+    const { h } = mk({ onPermission });
+    const r = await h({ tool_name: 'Write', input: {}, tool_use_id: 't1' }, sig);
+    expect(r).toEqual({ behavior: 'allow', updatedInput: {}, updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Write' }], behavior: 'allow', destination: 'session' }] });
+    expect(await h({ tool_name: 'Write', input: {}, tool_use_id: 't2' }, sig)).toEqual({ behavior: 'allow', updatedInput: {} });
+    expect(onPermission).toHaveBeenCalledTimes(1);
+  });
+  it('synthesizedSuggestions: ExitPlanMode gets none (it is answered with setMode)', () => {
+    expect(synthesizedSuggestions('ExitPlanMode', {})).toBeUndefined();
+    expect(synthesizedSuggestions('Bash', { command: 42 })).toEqual([{ type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'session' }]);
+  });
+});
+```
+
+(Merge the `synthesizedSuggestions` import into the existing `./permissions` import line at the top of the file.)
+
+- [ ] **Step 15: Run it and see it fail**
+
+Run: `npx vitest run src/server/engine/claudeCli/permissions.test.ts --maxWorkers=4`
+Expected: FAIL — `synthesizedSuggestions` is not exported, and the first test sees `suggestions` absent from the `onPermission` argument.
+
+- [ ] **Step 16: Synthesize the suggestion in `permissions.ts`**
+
+Add above `permissionHandler`:
+
+```ts
+/**
+ * The suggestion deck offers when the CLI's prompt-tool request has no `permission_suggestions`
+ * (spike D3 negative): allow this tool for the session; for Bash, this exact command. Without it
+ * TurnRunner's addGrants (which reads pr.suggestions) would have nothing to persist for 이 세션.
+ */
+export function synthesizedSuggestions(toolName: string, input: Record<string, unknown>): PermissionUpdate[] | undefined {
+  if (toolName === 'ExitPlanMode') return undefined;
+  const ruleContent = toolName === 'Bash' && typeof input.command === 'string' && input.command ? input.command : undefined;
+  return [{ type: 'addRules', rules: [{ toolName, ...(ruleContent ? { ruleContent } : {}) }], behavior: 'allow', destination: 'session' }];
+}
+```
+
+and in `permissionHandler` replace the `pr` construction with:
+
+```ts
+    const suggestions = call.permission_suggestions ?? synthesizedSuggestions(toolName, input);
+    const pr: PermissionRequest = {
+      toolName, input, toolUseId, signal,
+      ...(suggestions ? { suggestions } : {}),
+      suppressAlwaysAllowRule: false,
+    };
+```
+
+- [ ] **Step 17: Run it and see it pass**
+
+Run: `npx vitest run src/server/engine/claudeCli/permissions.test.ts --maxWorkers=4`
+Expected: PASS, including the earlier `passes suggestions and the abort signal to onPermission` and `session → updatedPermissions rewritten to destination session` tests (both send suggestions, so they take the pass-through branch).
+
+- [ ] **Step 18: Add the `ask` helper to the fake CLI** (used by engine tests in Task 8a)
 
 In `fakeClaudeCli.ts`, the returned object gains:
 
@@ -2369,12 +2685,12 @@ ask: async (call: { tool_name: string; input: Record<string, unknown>; tool_use_
 
 with `import fs from 'node:fs';` and `import { postBridge } from './permissionMcp';` at the top.
 
-- [ ] **Step 15: Run the Task 4 tests and the engine suite**
+- [ ] **Step 19: Run the Task 4 tests and the engine suite**
 
 Run: `npx vitest run src/server/engine/claudeCli src/server/engine/ClaudeEngine.test.ts --maxWorkers=4`
 Expected: PASS (`Engine.ts` now imports the local `PermissionUpdate`; `sessionUpdates` type-checks against it).
 
-- [ ] **Step 16: Commit**
+- [ ] **Step 20: Commit**
 
 ```bash
 git add src/server/engine/claudeCli/permissionTypes.ts src/server/engine/claudeCli/texts.ts src/server/engine/claudeCli/bridge.ts src/server/engine/claudeCli/bridge.test.ts src/server/engine/claudeCli/permissionMcp.ts src/server/engine/claudeCli/permissionMcp.test.ts src/server/engine/claudeCli/permissions.ts src/server/engine/claudeCli/permissions.test.ts src/server/engine/claudeCli/fakeClaudeCli.ts src/server/engine/claudeCli/fixtures src/server/engine/Engine.ts src/server/engine/ClaudeEngine.ts
@@ -2493,7 +2809,7 @@ const SCRIPT = path.join(__dirname, 'hookRelay.ts');
 let bridge: PermissionBridge | null = null;
 afterEach(async () => { await bridge?.close(); bridge = null; });
 
-const run = (args: string[], stdin: string) => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', SCRIPT, ...args], { input: stdin, encoding: 'utf8', env: { PATH: process.env.PATH ?? '' }, timeout: 10_000 });
+const run = (args: string[], stdin: string, token: string) => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', SCRIPT, ...args], { input: stdin, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', DECK_BRIDGE_TOKEN: token }, timeout: 10_000 });
 
 describe('relayOutput', () => {
   it('passes a 200 body through; failures follow the fail mode', () => {
@@ -2507,16 +2823,16 @@ describe('hookRelay.ts as the CLI runs it (plain node)', () => {
   it('posts stdin to the bridge and prints the answer', async () => {
     bridge = await PermissionBridge.open();
     const reg = bridge.register({ permission: async () => ({ behavior: 'deny', message: 'x' }), hook: async (i) => ({ hookSpecificOutput: { hookEventName: i.hook_event_name, additionalContext: 'N' } }) });
-    const r = run(['--sock', reg.socketPath, '--token', reg.token, '--fail', 'open'], JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'p' }));
+    const r = run(['--sock', reg.socketPath, '--fail', 'open'], JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'p' }), reg.token);
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'N' } });
   });
   it('dead socket: fail-open prints {}, fail-deny prints a deny', () => {
     const sock = path.join(os.tmpdir(), 'qd-none', 'b.sock');
-    const open = run(['--sock', sock, '--token', 'x', '--fail', 'open'], '{"hook_event_name":"PreToolUse"}');
+    const open = run(['--sock', sock, '--fail', 'open'], '{"hook_event_name":"PreToolUse"}', 'x');
     expect(open.status).toBe(0);
     expect(JSON.parse(open.stdout)).toEqual({});
-    const deny = run(['--sock', sock, '--token', 'x', '--fail', 'deny'], '{"hook_event_name":"PreToolUse"}');
+    const deny = run(['--sock', sock, '--fail', 'deny'], '{"hook_event_name":"PreToolUse"}', 'x');
     expect(JSON.parse(deny.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
   });
 });
@@ -2620,8 +2936,9 @@ export function hookHandler(req: HookDeps, audit: ToolAudit, gate: ModeGate): Br
 ```ts
 // src/server/engine/claudeCli/hookRelay.ts
 // Child entry for deck's `--settings` command hooks. The CLI runs:
-//   node --disable-warning=ExperimentalWarning hookRelay.ts --sock <s> --token <t> --fail open|deny
-// stdin: the hook input JSON; stdout: the hook output JSON. node: built-ins only, erasable TS only.
+//   DECK_BRIDGE_TOKEN=<t> node --disable-warning=ExperimentalWarning hookRelay.ts --sock <s> --fail open|deny
+// The token comes from the env (never argv). stdin: the hook input JSON; stdout: the hook output JSON.
+// node: built-ins only, erasable TS only.
 import { pathToFileURL } from 'node:url';
 import { postBridge } from './permissionMcp.ts';
 
@@ -2642,7 +2959,7 @@ async function main(): Promise<void> {
   let status: number | null = null;
   let body = '';
   try {
-    const r = await postBridge(arg('--sock'), arg('--token'), '/v1/hook', JSON.parse(raw || '{}'), AbortSignal.timeout(25_000));
+    const r = await postBridge(arg('--sock'), process.env.DECK_BRIDGE_TOKEN ?? '', '/v1/hook', JSON.parse(raw || '{}'), AbortSignal.timeout(25_000));
     status = r.status;
     body = r.body;
   } catch {
@@ -2764,13 +3081,14 @@ hooks: {
 In `fakeClaudeCli.ts` add next to `ask`:
 
 ```ts
-/** What hookRelay.ts would do for the latest spawn: parse --sock/--token out of the settings file's first hook command. */
+/** What hookRelay.ts would do for the latest spawn: parse --sock and the DECK_BRIDGE_TOKEN= prefix out of the settings file's first hook command. */
 hook: async (input: Record<string, unknown>) => {
   const s = spawns[spawns.length - 1]!;
   const settings = JSON.parse(fs.readFileSync(argValue(s.args, '--settings')!, 'utf8')) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
   const cmd = Object.values(settings.hooks)[0]![0]!.hooks[0]!.command;
   const word = (flag: string) => (cmd.match(new RegExp(`'${flag}' '([^']*)'`)) ?? [])[1]!;
-  const r = await postBridge(word('--sock'), word('--token'), '/v1/hook', input);
+  const token = (cmd.match(/^DECK_BRIDGE_TOKEN='([^']*)' /) ?? [])[1]!;
+  const r = await postBridge(word('--sock'), token, '/v1/hook', input);
   return JSON.parse(r.body) as Record<string, unknown>;
 },
 ```
@@ -2779,8 +3097,10 @@ hook: async (input: Record<string, unknown>) => {
 
 ```bash
 for s in hooks hook-ask hook-allow; do npx tsx src/server/engine/claudeCli/fixtures/capture.ts "$s"; done
-npx vitest run src/hygiene.test.ts --maxWorkers=4
+npx vitest run src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4
 ```
+
+E1/E3 were already answered as go/no-go in Task 3 Step 7 with plain printf hooks; here the same two facts are re-recorded through deck's real relay (`hookRelay.ts` → bridge → `hookHandler`) as regression fixtures.
 
 | Scenario | Assumption |
 |---|---|
@@ -2788,7 +3108,7 @@ npx vitest run src/hygiene.test.ts --maxWorkers=4
 | `hook-ask` | E2a: `permissionDecision: "ask"` in `-p` mode with a prompt tool routes the call to `mcp__deck_bridge__permission` (meta `calls` has exactly the second Write) instead of failing the call. |
 | `hook-allow` | E2b: `permissionDecision: "allow"` skips the prompt tool in default mode (meta `calls` empty, `fileWritten: true`). |
 
-If E2a fails (an `ask` hook denies outright in print mode), change the `default`-after-`acceptEdits` branch of `hookHandler` to return `{}` and list "switching from acceptEdits back to manual mid-turn takes effect next turn" under Lost or changed features. If E3 fails, stop and report instead of improvising: the alternatives (`--append-system-prompt`, or a separate first stdin message) either change the system prompt and its cache or put the note into the visible transcript, and both contradict how `systemNote` works today.
+If E2a fails (an `ask` hook denies outright in print mode), change the `default`-after-`acceptEdits` branch of `hookHandler` to return `{}` and list "switching from acceptEdits back to manual mid-turn takes effect next turn" under Lost or changed features. E1/E3 fallbacks: see Task 3 Step 7 (if they passed there but fail here, the relay is at fault — fix `hookRelay.ts`/`hookHandler`, not the plan).
 
 - [ ] **Step 7: Add the fixture assertions and run**
 
@@ -2838,6 +3158,8 @@ Three things today lean on SDK-only behaviour:
 1. **`forkAt`** uses SDK `resumeSessionAt`, which the CLI does not have. Redesign: deck writes a *truncated copy* of the parent transcript (the chain from the root up to and including `forkAt`) into the per-process temp dir and starts `claude --resume=<that file> --fork-session`. The CLI loads the copy and writes the fork under a new session id; the parent transcript is never written (same guarantee as today).
 2. **Foreign-write detection** treats `entrypoint === 'sdk-ts'` as "deck wrote this". A `claude -p` child stamps whatever the CLI stamps for print mode (recorded by the spike, not set by deck), which other `claude -p` users share. Redesign: per-entry ownership — the uuids and API message ids that deck's own processes emitted on stdout (`deckWrites`). The `sdk-ts` rule stays for transcripts written by earlier deck versions.
 3. **`ProcessHolders`** recognises a second deck instance's children by the SDK's `node_modules` path (`ownRoots`). The CLI now lives wherever the user installed it. Redesign: deck's children carry the argv marker `--permission-prompt-tool mcp__deck_bridge__permission` (always present, see `claudeArgs`), which no user-run session has.
+
+**Item 1 is deferred if spike F1 was negative** (`fixtures/go-no-go.meta.json` has `"F1": false`, Task 3 Step 10): skip `fork.ts`/`fork.test.ts`, `FORK_SOURCE_MISSING`, and the `fork-parent`/`fork-file` scenarios and their assertions; keep `FORK_AT_UNSUPPORTED` in `texts.ts` (the engine returns it for every `forkAt`). Items 2 and 3 are done either way.
 
 **Files:**
 - Create: `src/server/engine/claudeCli/fork.ts`, `src/server/engine/claudeCli/fork.test.ts`
@@ -3300,16 +3622,16 @@ const PROJECTS = () => path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.h
 npx tsx src/server/engine/claudeCli/fixtures/capture.ts fork-parent
 npx tsx src/server/engine/claudeCli/fixtures/capture.ts fork-file
 npx tsx src/server/engine/claudeCli/fixtures/capture.ts owned-uuids
-npx vitest run src/hygiene.test.ts --maxWorkers=4
+npx vitest run src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4
 ```
 
 | Scenario | Assumption |
 |---|---|
 | `fork-parent` | F0: assistant uuids on stdout are the uuids in the transcript (`transcriptUuidsSeenOnStdout: true`) — the base of both fork points (`forkAt` comes from transcript uuids) and of ownership. |
-| `fork-file` | F1: `--resume=<truncated file> --fork-session` loads exactly the truncated history (result names KIWI, not LIME); F2: the fork gets a new session id (`newId: true`) and its transcript is written under the cwd's project dir (`forkTranscriptInCwdProject: true`), where deck's index finds it; F3: the file deck reads from is never rewritten (`sourceKeptWhole`: the copy of the parent still contains LIME; truncation went to a separate file). |
+| `fork-file` | F1 (go/no-go already answered in Task 3 Step 10; this is the regression capture through deck's own `writeForkSource`): `--resume=<truncated file> --fork-session` loads exactly the truncated history (result names KIWI, not LIME); F2: the fork gets a new session id (`newId: true`) and its transcript is written under the cwd's project dir (`forkTranscriptInCwdProject: true`), where deck's index finds it; F3: the file deck reads from is never rewritten (`sourceKeptWhole`: the copy of the parent still contains LIME; truncation went to a separate file). |
 | `owned-uuids` | G1: every main-chain user/assistant transcript entry is claimed by stdout uuids, API message ids and the stdin uuid (`unowned: []`); G2: `firstUuidKept` records whether the CLI keeps deck's stdin uuid (if false, ownership of prompts relies on the replayed frame's uuid); `entrypoints` records what a print-mode child stamps (expected not `sdk-ts`; deck does not set it). |
 
-If F1 fails (the CLI ignores a path or rejects `--fork-session` with a path), `forkAt` turns into a user-visible failure: the engine yields `FORK_AT_UNSUPPORTED` as the result's `errorText` (Task 8 handles a `{ ok: false }` source the same way), and "edit a message" moves to Lost features. If G1 lists entries, add the missing key kind to `OwnedEntries.note` (e.g. the replayed prompt's uuid) and recapture; if prompt entries cannot be claimed at all, `classifyLine` must ignore `user` entries whose text equals a prompt deck sent — do not fall back to `entrypoint`.
+F1 fallback: see Task 3 Step 10 (if F1 passed there but `fork-file` fails here, the fault is in `writeForkSource`/`chainUpTo` — fix them). If G1 lists entries, add the missing key kind to `OwnedEntries.note` (e.g. the replayed prompt's uuid) and recapture; if prompt entries cannot be claimed at all, `classifyLine` must ignore `user` entries whose text equals a prompt deck sent — do not fall back to `entrypoint`.
 
 - [ ] **Step 7: Fixture assertions and run**
 
@@ -3357,65 +3679,19 @@ git commit -m "feat(claude-cli): 잘라 낸 사본으로 메시지 편집 갈래
 
 ### Task 7: Background tasks over stdio — recorded fixture
 
-The engine's background logic (`BackgroundTracker`, the `idle`/`continue` segments, `bgGraceMs`/`bgMaxMs`, the uuid attribution of results) moves unchanged; it depends on the CLI (a) staying alive with stdin open after a `result` while a background task runs, (b) emitting `background_tasks_changed` and/or `task_*` frames on stdout in print mode, and (c) running a continuation turn by itself when the task settles, whose `result` names none of deck's stdin uuids. This task records that once and pins it with a replay test, so Task 8 can move the loop without guessing.
+The engine's background logic (`BackgroundTracker`, the `idle`/`continue` segments, `bgGraceMs`/`bgMaxMs`, the uuid attribution of results) moves unchanged; it depends on the CLI (a) staying alive with stdin open after a `result` while a background task runs, (b) emitting `background_tasks_changed` and/or `task_*` frames on stdout in print mode, and (c) running a continuation turn by itself when the task settles, whose `result` names none of deck's stdin uuids. Task 3 recorded that once (spike H1); this task pins it with a replay test, so Task 8a can move the loop without guessing.
 
 **Files:**
-- Modify: `src/server/engine/claudeCli/fixtures/capture.ts` (scenario `background`)
-- Create: `fixtures/background.jsonl`, `fixtures/background.meta.json`
 - Create: `src/server/engine/claudeCli/background.fixture.test.ts`
+- Reads (created in Task 3): `fixtures/background.jsonl`, `fixtures/background.meta.json`
 
 **Interfaces:**
 - Consumes: `BackgroundTracker`, `mapCliMessage`, `isActivity`, `isInjectedNoopResult` (`stream.ts`), `parseLine` (`messages.ts`), `FIRST_UUID` (`fixtures/capture.ts`), `ClaudeProcess` (`process.ts`), `fakeClaudeCli` (`fakeClaudeCli.ts`).
 - Produces: no runtime code. Fixture contract (`background.meta.json`): `{ aliveAfterFirstResult: boolean, results: { uuids: string[] | null, tasksLive: number }[], sawLevel: boolean, sawTaskStarted: boolean, sawNotification: boolean, exit: { code, signal } }`.
 
-- [ ] **Step 1: Add the scenario**
+The `background` scenario and its capture (spike H1–H4, with the fallbacks) moved to Task 3 (Steps 4 and 9); `fixtures/background.jsonl` and `background.meta.json` are already committed. This task only adds the replay test.
 
-```ts
-// fixtures/capture.ts — in `scenarios`
-background: {
-  maxTurns: 3,
-  timeoutMs: 120_000,
-  settings: { permissions: { allow: ['Bash(sleep 6)'] } },
-  first: 'Run the shell command `sleep 6` with the Bash tool with run_in_background set to true. Do not wait for it: reply STARTED right away. When it finishes, reply FINISHED.',
-  drive: (ctx, m) => {
-    const bg = (ctx.meta.bgTracker ??= new BackgroundTracker()) as BackgroundTracker;
-    bg.apply(m);
-    if (m.type === 'system' && m.subtype === 'background_tasks_changed') ctx.meta.sawLevel = true;
-    if (m.type === 'system' && m.subtype === 'task_started') ctx.meta.sawTaskStarted = true;
-    if (m.type === 'system' && m.subtype === 'task_notification') ctx.meta.sawNotification = true;
-    if (m.type !== 'result') return;
-    const results = ((ctx.meta.results ??= []) as unknown[]);
-    results.push({ uuids: m.user_message_uuids ?? (m.user_message_uuid ? [m.user_message_uuid] : null), tasksLive: bg.tasks().length });
-    if (results.length === 1) {
-      // The engine's rule: stdin stays open while a task is live. Check the child is still there a moment later.
-      setTimeout(() => { ctx.meta.aliveAfterFirstResult = ctx.proc.exit === null; }, 500);
-      if (bg.tasks().length === 0) ctx.proc.stop();
-    } else if (bg.tasks().length === 0) {
-      ctx.proc.stop();
-    }
-  },
-  after: (ctx) => { delete ctx.meta.bgTracker; },
-},
-```
-
-(`import { BackgroundTracker } from '../stream'`.) `ctx.meta.bgTracker` is a scratch object removed in `after`, before meta is written.
-
-- [ ] **Step 2 (spike): Capture**
-
-```bash
-npx tsx src/server/engine/claudeCli/fixtures/capture.ts background
-npx vitest run src/hygiene.test.ts --maxWorkers=4
-```
-
-Assumptions validated:
-- H1: after the first `result` with a live background task, the child stays alive while stdin is open (`aliveAfterFirstResult: true`, `results[0].tasksLive: 1`).
-- H2: print mode emits the level signal `background_tasks_changed` (`sawLevel`) or at least the `task_started` / `task_notification` bookends (`sawTaskStarted && sawNotification`); `BackgroundTracker` handles either.
-- H3: the CLI runs the continuation turn by itself after the task settles, and that `result` names none of deck's uuids (`results[1].uuids` is `null` or `[]`, never `[FIRST_UUID]`), so the existing "names its answers" rule classifies it as a background continuation.
-- H4: closing stdin after the last result ends the child with exit code 0 (`exit.code: 0`).
-
-If H1 fails (the child exits at the first result even with stdin open), background work cannot outlive a turn: Task 8 then closes stdin at the first result regardless, `BG_MAX_MS`/`BG_GRACE_MS` become unused, and "background tasks finishing after the turn" moves to Lost features. If H3 fails because the continuation's result does name `FIRST_UUID`, the loop's `answer()` call is a no-op for it (already answered) and nothing changes — record it in meta and keep going.
-
-- [ ] **Step 3: Write the replay test (fails until the fixture exists)**
+- [ ] **Step 1: Write the replay test**
 
 ```ts
 // src/server/engine/claudeCli/background.fixture.test.ts
@@ -3480,40 +3756,53 @@ describe('background fixture (real CLI, print mode, stdin open)', () => {
 });
 ```
 
-- [ ] **Step 4: Run it**
+- [ ] **Step 2: Run it**
 
 Run: `npx vitest run src/server/engine/claudeCli/background.fixture.test.ts --maxWorkers=4`
-Expected: before Step 2's capture exists, FAIL with `ENOENT … background.jsonl`; after the capture, PASS (5 tests). A failure after capture means an H-assumption broke: apply the fallback written in Step 2, adjust the matching assertion to the recorded behaviour, and note it under Lost or changed features.
+Expected: PASS (5 tests) against the fixture captured in Task 3 Step 9. If Task 3 recorded a negative H-verdict, change the matching assertion in Step 1 to the recorded behaviour before running (fallback in Task 3 Step 9); any other failure here otherwise means the replay code is wrong, not the CLI.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add src/server/engine/claudeCli/fixtures/capture.ts src/server/engine/claudeCli/fixtures/background.jsonl src/server/engine/claudeCli/fixtures/background.meta.json src/server/engine/claudeCli/background.fixture.test.ts
-git commit -m "test(claude-cli): 백그라운드 작업 실제 기록과 재생 테스트"
+git add src/server/engine/claudeCli/background.fixture.test.ts
+git commit -m "test(claude-cli): 백그라운드 작업 실측 기록 재생 테스트"
 ```
 
 ---
 
-### Task 8: Engine rewrite, test migration, SDK removal, startup wiring
+### Task 8a: Engine rewrite behind a shim (old tests stay green)
 
 `ClaudeEngine.runTurn` keeps its event contract and its loop (uuid attribution, steer echo, background segments, cap/grace, injected no-op results, denial audit, meter, commands) line for line; only the transport changes: `InputChannel` → `ClaudeProcess.write`, `queryFn` → spawn, `abortController.abort()` → SIGINT, SDK options → argv + two 0600 files in a 0700 per-process dir, `canUseTool`/hooks → bridge registration.
 
+Task 8 is split in three commits so each one leaves the whole suite green and is reviewable on its own:
+- **8a (this task)** writes the CLI engine and its own test. Today's SDK engine is moved, unchanged, into `legacySdkEngine.ts`; the exported `ClaudeEngine` is a thin shim that picks the CLI engine when the options carry `bin` and the SDK engine otherwise. Every existing test (they pass `queryFn`, never `bin`) and `main.ts` (no `bin` yet) keep running on the SDK engine, so nothing outside the new test changes behaviour in this commit.
+- **8b** migrates the old tests to the fake CLI and deletes `fakeSdk.ts`.
+- **8c** removes the shim and the SDK engine, uninstalls the SDK, adds the guard test, and wires `main.ts`/`config.ts` (the production switch happens here).
+
 **Files:**
-- Modify: `src/server/engine/ClaudeEngine.ts` (rewrite of the class; the moved helpers stay re-exported as in Task 2)
+- Create: `src/server/engine/legacySdkEngine.ts` (today's SDK-driven class moved verbatim; deleted in Task 8c)
+- Modify: `src/server/engine/ClaudeEngine.ts` (the CLI engine as `CliClaudeEngine` + the `ClaudeEngine` shim; the moved helpers stay re-exported as in Task 2; `QueryFn`, `buildOptions`, `buildPrompt` re-exported from `./legacySdkEngine` until Task 8b)
 - Modify: `src/server/engine/claudeCli/texts.ts` (`CLAUDE_MISSING_TEXT`, `claudeTooOldText`, `ABORTED_TEXT`)
 - Modify: `src/server/engine/claudeCli/fakeClaudeCli.ts` (`end()` before spawn is queued; spawn snapshots the `--settings` / `--mcp-config` files; `ask`/`hook` read the snapshot)
 - Create: `src/server/engine/ClaudeEngine.cli.test.ts`
-- Modify (migration): `src/server/engine/ClaudeEngine.test.ts`, `ClaudeEngine.activity.test.ts`, `ClaudeEngine.background.test.ts`, `ClaudeEngine.fork.test.ts`, `ClaudeEngine.handoff.test.ts`, `ClaudeEngine.uuids.test.ts`, `thinking.test.ts`, `slashCommands.test.ts`, `src/server/turn/TurnRunner.background.test.ts`, `TurnRunner.steer.test.ts`, `src/server/ws.activity.test.ts`, `ws.background.test.ts`, `ws.bottleneck.test.ts`, `ws.newSession.test.ts`, `ws.outside.test.ts`, `ws.status.test.ts`
-- Delete: `src/server/engine/fakeSdk.ts`
-- Create: `src/server/engine/claudeCli/noSdk.test.ts`
-- Modify: `src/hygiene.private.test.ts` (line 73 example), `package.json`, `package-lock.json`
-- Modify: `src/server/config.ts` (`claudeBin`), `src/server/config.test.ts`, `src/server/main.ts` (engine options, startup log, shutdown)
+- Modify (only if spike D9 requires it, Step 9): `src/server/engine/claudeCli/args.ts`, `args.test.ts`
 
 **Interfaces:**
-- Consumes: everything produced by Tasks 1–6.
+- Consumes: everything produced by Tasks 1–7.
 - Produces:
   ```ts
+  // legacySdkEngine.ts (temporary — removed in Task 8c)
+  export type LegacySdkEngineOptions = /* today's ClaudeEngineOptions, unchanged (has queryFn, home, …; never bin) */;
+  export class LegacySdkEngine implements Engine { /* today's ClaudeEngine body, unchanged */ }
+  export type QueryFn; export function buildOptions(...); export function buildPrompt(...); // unchanged
+
   // ClaudeEngine.ts
+  /** Shim until Task 8c: options with `bin` → CliClaudeEngine, otherwise → LegacySdkEngine. */
+  export class ClaudeEngine implements Engine {
+    constructor(opts: ClaudeEngineOptions | LegacySdkEngineOptions);
+    runTurn(req: TurnRequest): AsyncIterable<EngineEvent>;
+    close(): Promise<void>;
+  }
   export type ClaudeEngineOptions = {
     /** From resolveClaudeBin at startup; a plain string = a usable binary (tests). */
     bin: ClaudeBin | string;
@@ -3535,7 +3824,7 @@ git commit -m "test(claude-cli): 백그라운드 작업 실제 기록과 재생 
     /** Parent of the per-process temp dirs; default os.tmpdir(). */
     tmpRoot?: string;
   };
-  export class ClaudeEngine implements Engine {
+  class CliClaudeEngine implements Engine {   // renamed to ClaudeEngine in Task 8c
     constructor(opts: ClaudeEngineOptions);
     runTurn(req: TurnRequest): AsyncIterable<EngineEvent>;
     /** Closes the bridge (server shutdown). */
@@ -3545,8 +3834,6 @@ git commit -m "test(claude-cli): 백그라운드 작업 실제 기록과 재생 
   export const CLAUDE_MISSING_TEXT = 'Claude Code(claude)를 찾지 못했습니다 — 터미널에서 설치하고 로그인한 뒤 deck 을 다시 시작해 주세요';
   export function claudeTooOldText(version: string): string; // `Claude Code ${version} 은 너무 오래됐습니다 — ${MIN_CLAUDE_VERSION} 이상으로 업데이트한 뒤 deck 을 다시 시작해 주세요`
   export const ABORTED_TEXT = '중단됨'; // = TurnRunner.ABORTED (the UI hides exactly this text)
-  // config.ts
-  claudeBin: ClaudeBin;   // new DeckConfig field
   ```
 
 - [ ] **Step 1: Fake additions**
@@ -3576,7 +3863,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
-import { ClaudeEngine } from './ClaudeEngine';
+import { ClaudeEngine, type ClaudeEngineOptions } from './ClaudeEngine';
 import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { fakeClaudeCli, cli, argValue } from './claudeCli/fakeClaudeCli';
 import { PermissionBridge } from './claudeCli/bridge';
@@ -3589,7 +3876,7 @@ let tmp = '';
 afterEach(async () => { await bridge?.close(); bridge = null; if (tmp) fs.rmSync(tmp, { recursive: true, force: true }); tmp = ''; });
 
 const req = (over: Partial<TurnRequest> = {}): TurnRequest => ({ account: 'c', cwd: '/w', resumeSessionId: null, model: 'opus', prompt: 'hi', signal: new AbortController().signal, onPermission: async () => 'once', ...over });
-async function setup(over: Partial<ConstructorParameters<typeof ClaudeEngine>[0]> = {}, fakeOpts: Parameters<typeof fakeClaudeCli>[0] = {}) {
+async function setup(over: Partial<ClaudeEngineOptions> = {}, fakeOpts: Parameters<typeof fakeClaudeCli>[0] = {}) {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qd-eng-'));
   bridge = await PermissionBridge.open();
   const f = fakeClaudeCli(fakeOpts);
@@ -3671,6 +3958,18 @@ describe('ClaudeEngine over the claude CLI', () => {
     expect(f.state.inputClosed).toBe(true);
   });
 
+  it('abort before the turn starts: nothing is spawned, no bridge registration is left, one 중단됨 / aborted result', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const { f, engine } = await setup();
+    const evs = await drain(engine.runTurn(req({ signal: ac.signal })));
+    expect(f.state.calls).toBe(0);
+    expect(f.spawns).toHaveLength(0);
+    expect(bridge!.registrations).toBe(0);
+    expect(fs.readdirSync(tmp)).toEqual([]); // no per-process dir was created
+    expect(evs).toEqual([expect.objectContaining({ kind: 'result', ok: false, errorText: '중단됨', terminalReason: 'aborted' })]);
+  });
+
   it('exit without a result: the exit becomes the failure text, with the stderr tail', async () => {
     const { f, engine } = await setup();
     const it = engine.runTurn(req())[Symbol.asyncIterator]();
@@ -3748,7 +4047,22 @@ describe('ClaudeEngine over the claude CLI', () => {
 Run: `npx vitest run src/server/engine/ClaudeEngine.cli.test.ts --maxWorkers=4`
 Expected: FAIL — the constructor has no `bin`/`spawnFn`; today's engine calls the SDK `query()`.
 
-- [ ] **Step 4: Rewrite the engine**
+- [ ] **Step 4: Move the SDK engine aside**
+
+Create `src/server/engine/legacySdkEngine.ts` by moving, character for character, everything in today's `ClaudeEngine.ts` that the CLI engine does not reuse: the SDK `import` line (`query`, `HookInput`, `Options`, `SDKMessage`, `SDKUserMessage`), the remaining imports the moved code uses, `QueryFn`, `PromptInput`, `InputChannel`, `buildOptions`, `buildPrompt` (the Task 2 version on top of `toUserMessage`), and the `ClaudeEngine` class with its `ClaudeEngineOptions` type. Only two names change: the class becomes `export class LegacySdkEngine implements Engine` and its options type becomes `export type LegacySdkEngineOptions`. Imports of the helpers moved in Task 2 point at `./claudeCli/stream` and `./claudeCli/prompt` (not back at `./ClaudeEngine`, which would be circular); `BG_MAX_MS`/`BG_GRACE_MS` are imported from `./ClaudeEngine` (read only inside methods at run time, so this one import cycle is harmless under ESM). Add at the top:
+
+```ts
+/**
+ * Today's Agent-SDK-driven engine, moved here unchanged so the existing tests and main.ts keep running while the
+ * CLI engine lands (Task 8a). Reached only through the ClaudeEngine shim when the options carry no `bin`.
+ * Deleted in Task 8c together with the SDK dependency.
+ */
+```
+
+Run: `npx tsc --noEmit -p .`
+Expected: errors only in `ClaudeEngine.ts` (the moved names are now defined twice or missing) — fixed by Step 5.
+
+- [ ] **Step 5: Rewrite the engine**
 
 Add to `texts.ts`:
 
@@ -3760,7 +4074,7 @@ export const claudeTooOldText = (version: string): string => `Claude Code ${vers
 export const ABORTED_TEXT = '중단됨';
 ```
 
-Replace everything in `ClaudeEngine.ts` from the old `import` block through the end of the file, keeping the Task 2 re-exports, with:
+Replace everything left in `ClaudeEngine.ts` (after Step 4 moved the SDK engine out) from the `import` block through the end of the file, keeping the Task 2 re-exports, with:
 
 ```ts
 import { randomUUID } from 'node:crypto';
@@ -3773,7 +4087,7 @@ import type { Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage } from '../../shared/turn-types';
 import type { Engine, EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, type CliPermissionMode } from './claudeCli/args';
-import { PERMISSION_WAIT_MS, PermissionBridge } from './claudeCli/bridge';
+import { MCP_TOOL_TIMEOUT_MS, PermissionBridge } from './claudeCli/bridge';
 import { forkCandidates, writeForkSource } from './claudeCli/fork';
 import { hookHandler } from './claudeCli/hooks';
 import type { CliUserMessage, Rec } from './claudeCli/messages';
@@ -3785,10 +4099,14 @@ import type { ClaudeSpawnFn } from './claudeCli/spawnTypes';
 import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
 import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText } from './claudeCli/texts';
 import type { ClaudeBin } from './claudeCli/version';
+import { LegacySdkEngine, type LegacySdkEngineOptions } from './legacySdkEngine'; // shim — removed in Task 8c
 
 export { BackgroundTracker, ProgressMeter, isActivity, isInjectedNoopResult, toolAudit, deniedCalls, noteCommands, mapCliMessage, type CommandsListener, type ToolAudit } from './claudeCli/stream';
 export { toUserMessage, type ReadFile } from './claudeCli/prompt';
 export { NO_TOOLS_MESSAGE, KEEP_PLANNING_MESSAGE } from './claudeCli/texts';
+// Kept only so the not-yet-migrated tests compile; both lines are deleted in Task 8b Step 3.
+export { mapCliMessage as mapSdkMessage } from './claudeCli/stream';
+export { buildOptions, buildPrompt, type QueryFn, type LegacySdkEngineOptions } from './legacySdkEngine';
 
 /** The longest a process is kept open for background tasks after its turn (then they are cut). */
 export const BG_MAX_MS = 2 * 60 * 60_000;
@@ -3816,7 +4134,7 @@ export type ClaudeEngineOptions = {
   tmpRoot?: string;
 };
 
-export class ClaudeEngine implements Engine {
+class CliClaudeEngine implements Engine {
   private readonly bin: ClaudeBin;
   private readonly o: ClaudeEngineOptions;
   private readonly readFile: ReadFile;
@@ -3891,7 +4209,7 @@ export class ClaudeEngine implements Engine {
         settingsPath, mcpConfigPath, ...(req.allowDirs?.length ? { addDirs: req.allowDirs } : {}),
         ...(resume !== undefined ? { resume, forkSession } : { sessionId: randomUUID() }),
       });
-      const env = claudeEnv(this.o.accounts.env(req.account, this.o.baseEnv ?? process.env), PERMISSION_WAIT_MS);
+      const env = claudeEnv(this.o.accounts.env(req.account, this.o.baseEnv ?? process.env), MCP_TOOL_TIMEOUT_MS);
       const p = new ClaudeProcess({ bin: this.bin.bin, args, cwd: req.cwd, env, ...(this.o.spawnFn ? { spawnFn: this.o.spawnFn } : {}), ...(this.o.killGraceMs !== undefined ? { killGraceMs: this.o.killGraceMs } : {}) });
       proc = p;
 
@@ -4044,19 +4362,74 @@ export class ClaudeEngine implements Engine {
     }
   }
 }
+
+/**
+ * Shim until Task 8c. Options with `bin` (the new test, and main.ts from Task 8c) run the CLI engine; options
+ * without it (every pre-existing test, which passes `queryFn`, and today's main.ts) run the moved SDK engine
+ * unchanged. Task 8c deletes this class and renames CliClaudeEngine to ClaudeEngine.
+ */
+export class ClaudeEngine implements Engine {
+  private readonly impl: CliClaudeEngine | LegacySdkEngine;
+  constructor(opts: ClaudeEngineOptions | LegacySdkEngineOptions) {
+    this.impl = 'bin' in opts ? new CliClaudeEngine(opts) : new LegacySdkEngine(opts);
+  }
+  runTurn(req: TurnRequest): AsyncIterable<EngineEvent> {
+    return this.impl.runTurn(req);
+  }
+  async close(): Promise<void> {
+    if (this.impl instanceof CliClaudeEngine) await this.impl.close();
+  }
+}
 ```
 
 Notes for the implementer:
-- `home` is gone from the options (it only fed the SDK's env); drop `home: cfg.home` in `main.ts` and `home:` in migrated tests together.
+- `home` is not in `ClaudeEngineOptions` (it only fed the SDK's env); `LegacySdkEngineOptions` keeps it until Task 8c, where `home: cfg.home` is dropped from `main.ts`. Migrated tests drop `home:` in Task 8b.
 - The `yield fail(src.text)` inside `try` returns through `finally`, so the temp dir and the registration are cleaned up.
-- The two `ClaudeEngine.ts` re-exports (`toolAudit`, `mapCliMessage`, …) exist so the migrated tests import from one place; nothing else in `src/server` imports the moved names from `ClaudeEngine.ts` after Step 6 (check with `grep -rn "from './ClaudeEngine'" src/server`).
+- The `ClaudeEngine.ts` re-exports (`toolAudit`, `mapCliMessage`, …) exist so the migrated tests import from one place; nothing else in `src/server` imports the moved names from `ClaudeEngine.ts` after Task 8b (check with `grep -rn "from './ClaudeEngine'" src/server`).
+- `'bin' in opts` is the only discriminator the shim needs: `LegacySdkEngineOptions` has no `bin` field, and every `ClaudeEngineOptions` has one.
 
-- [ ] **Step 5: Run the new engine test and see it pass**
+- [ ] **Step 6: Run the new engine test and see it pass**
 
 Run: `npx vitest run src/server/engine/ClaudeEngine.cli.test.ts --maxWorkers=4`
-Expected: PASS (10 tests).
+Expected: PASS (11 tests).
 
-- [ ] **Step 6: Migrate the remaining tests**
+- [ ] **Step 7: Run the untouched suites and see them still pass through the shim**
+
+Run: `npx vitest run src/server/engine src/server/turn src/server/ws.activity.test.ts src/server/ws.background.test.ts src/server/ws.bottleneck.test.ts src/server/ws.newSession.test.ts src/server/ws.outside.test.ts src/server/ws.status.test.ts --maxWorkers=4` and `npx tsc --noEmit -p .`
+Expected: PASS, no type errors. None of these files changed in this task; they construct `ClaudeEngine` with `queryFn` and no `bin`, so they run on `LegacySdkEngine` exactly as before. A failure here means Step 4 changed more than the two names — diff `legacySdkEngine.ts` against the pre-task `ClaudeEngine.ts` (`git show HEAD:src/server/engine/ClaudeEngine.ts`).
+
+- [ ] **Step 8: Hygiene**
+
+Run: `npx vitest run src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4`
+Expected: PASS.
+
+- [ ] **Step 9 (conditional on spike D9): hide the bridge tool from the model**
+
+If `fixtures/self-call.meta.json` shows the tool in init `tools` **and** `fixtures/permission-allow-disallowed.meta.json` shows the prompt tool still answered (`calls.length === 1`), add `'--disallowedTools', PERMISSION_TOOL` to `claudeArgs` after `--permission-prompt-tool`, with an `args.test.ts` case asserting it, and re-run `npx vitest run src/server/engine/claudeCli/args.test.ts --maxWorkers=4`. Otherwise leave argv as is; `SELF_CALL_MESSAGE` (Task 4) already denies a direct call, and "the bridge tool is visible to the model" stays in Lost or changed features.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/server/engine/ClaudeEngine.ts src/server/engine/legacySdkEngine.ts src/server/engine/ClaudeEngine.cli.test.ts src/server/engine/claudeCli/texts.ts src/server/engine/claudeCli/fakeClaudeCli.ts src/server/engine/claudeCli/args.ts src/server/engine/claudeCli/args.test.ts
+git commit -m "feat(claude-engine): claude CLI 엔진 추가 — 기존 SDK 엔진은 bin 없는 옵션용 임시 경로로 유지"
+```
+
+---
+
+### Task 8b: Migrate the old engine tests to the fake CLI, delete `fakeSdk.ts`
+
+Every test that drives `ClaudeEngine` moves from `fakeSdk`/`queryFn` to `fakeClaudeCli`/`spawnFn` + `bin: 'claude'`, so it exercises `CliClaudeEngine` through the shim. Production is untouched: `main.ts` still builds the engine without `bin` until Task 8c.
+
+**Files:**
+- Modify (migration): `src/server/engine/ClaudeEngine.test.ts`, `ClaudeEngine.activity.test.ts`, `ClaudeEngine.background.test.ts`, `ClaudeEngine.fork.test.ts`, `ClaudeEngine.handoff.test.ts`, `ClaudeEngine.uuids.test.ts`, `thinking.test.ts`, `slashCommands.test.ts`, `src/server/turn/TurnRunner.background.test.ts`, `TurnRunner.steer.test.ts`, `src/server/ws.activity.test.ts`, `ws.background.test.ts`, `ws.bottleneck.test.ts`, `ws.newSession.test.ts`, `ws.outside.test.ts`, `ws.status.test.ts`
+- Modify: `src/server/engine/ClaudeEngine.ts` (drop the two test-only re-export lines)
+- Delete: `src/server/engine/fakeSdk.ts`
+
+**Interfaces:**
+- Consumes: `ClaudeEngine` shim, `ClaudeEngineOptions`, `fakeClaudeCli` with `spawns[i].files` (Task 8a).
+- Produces: nothing new; after this task no test references `queryFn`, `QueryFn`, `fakeSdk`, `sdk.*`, `buildOptions`, `buildPrompt` or `mapSdkMessage`.
+
+- [ ] **Step 1: Migrate the tests**
 
 Mechanical rules, applied to every file in the Files list:
 
@@ -4074,19 +4447,69 @@ Mechanical rules, applied to every file in the Files list:
 | `buildOptions(...)` assertions on `PostToolUse` / `PostToolUseFailure` / `PermissionDenied` | `ToolTracker` tests in `stream.test.ts` (Task 5): delete |
 | `buildOptions(...)` `extraArgs['replay-user-messages']` with `steer: false` | `--replay-user-messages` is always present; assert `live.steer` is absent with `steer: false` instead |
 | `buildPrompt(...)` | `toUserMessage(...)` from `./claudeCli/prompt` (string content when there are no images) |
-| `fork.test.ts` `resumeSessionAt` assertions | replaced by the fork cases in `ClaudeEngine.cli.test.ts`; keep "the fork reports the id the CLI gives it" rewritten on the new engine with a parent transcript written into a temp `projectsDir` (as in Step 2) |
-| tests that never push a result and rely on `f.end()` | unchanged: `end()` before spawn is queued (Step 1) |
+| `fork.test.ts` `resumeSessionAt` assertions | replaced by the fork cases in `ClaudeEngine.cli.test.ts`; keep "the fork reports the id the CLI gives it" rewritten on the new engine with a parent transcript written into a temp `projectsDir` (as in Task 8a Step 2) |
+| tests that never push a result and rely on `f.end()` | unchanged: `end()` before spawn is queued (Task 8a Step 1) |
+| `import { ClaudeEngine, type QueryFn } from './engine/ClaudeEngine'` — `src/server/ws.activity.test.ts:9`, `src/server/ws.outside.test.ts:10`, `src/server/ws.status.test.ts:9` | `import { ClaudeEngine } from './engine/ClaudeEngine'` plus `import { fakeClaudeCli, cli } from './engine/claudeCli/fakeClaudeCli'`; delete the module-level `const queryFn: QueryFn = (p) => fake.queryFn(p);` (lines 34 / 39 / 27) and pass `bin: 'claude', spawnFn: fake.spawnFn` instead of `queryFn` in the `new ClaudeEngine({ … })` inside the `TurnRunner` options (lines 46 / 51 / 41). Where a test closes over `p.options` (a wrapper of the form `(p) => { seen = p.options; return fake.queryFn(p); }`), read the same facts after the turn from `fake.spawns[i].files.settings` (`permissions.allow`, `hooks`) and `fake.spawns[i].args` via `argValue` (add `argValue` to the import then) |
 
 Because the child is now a stream that ends on exit, a test that previously left the fake stream open until `end()` while asserting "input still open" must assert `f.state.inputClosed === false` *before* pushing the final result, exactly as today.
 
 TurnRunner tests that use `StubEngine` (not `fakeSdk`) and expect `'Claude Code process aborted by user'` from a stub stay unchanged — the text there is the stub's own.
 
-- [ ] **Step 7: Run the migrated suites and see them pass**
+- [ ] **Step 2: Run the migrated suites and see them pass**
 
 Run: `npx vitest run src/server/engine src/server/turn src/server/ws.activity.test.ts src/server/ws.background.test.ts src/server/ws.bottleneck.test.ts src/server/ws.newSession.test.ts src/server/ws.outside.test.ts src/server/ws.status.test.ts --maxWorkers=4`
 Expected: PASS. Any failure is a migration slip (compare the old assertion with the table) or a real behaviour difference; a real difference goes into "Lost or changed features" with the assertion changed to the new behaviour, never silently deleted.
 
-- [ ] **Step 8: Write the failing SDK guard and remove the SDK**
+- [ ] **Step 3: Drop the test-only re-exports and delete the SDK fake**
+
+In `ClaudeEngine.ts` delete the two lines under `// Kept only so the not-yet-migrated tests compile; …` (the `mapSdkMessage` alias and the `buildOptions, buildPrompt, QueryFn, LegacySdkEngineOptions` re-export). Then:
+
+```bash
+git rm src/server/engine/fakeSdk.ts
+```
+
+Run: `grep -rn "fakeSdk\|queryFn\|QueryFn\|mapSdkMessage\|buildOptions\|buildPrompt" src --include='*.ts' --include='*.tsx' | grep -v 'src/server/engine/legacySdkEngine.ts'`
+Expected: exactly one hit, the comment at `src/server/turn/TurnRunner.test.ts:412` (`captured on account b with deck's buildOptions` — prose, not a reference; leave it). The SDK engine itself, which Task 8c deletes, is excluded by the second `grep`.
+
+Run: `npx tsc --noEmit -p .` and `npx vitest run src/server src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4`
+Expected: no type errors; PASS.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A src/server/engine src/server/turn src/server/ws.activity.test.ts src/server/ws.background.test.ts src/server/ws.bottleneck.test.ts src/server/ws.newSession.test.ts src/server/ws.outside.test.ts src/server/ws.status.test.ts
+git commit -m "test(claude-engine): 엔진 테스트를 fake claude CLI 로 이전하고 fakeSdk 삭제"
+```
+
+---
+
+### Task 8c: Remove the SDK, guard test, startup wiring
+
+The production switch: `main.ts` builds the engine with `bin: cfg.claudeBin`, the shim and `LegacySdkEngine` are deleted, and `@anthropic-ai/claude-agent-sdk` leaves `package.json`.
+
+**Files:**
+- Create: `src/server/engine/claudeCli/noSdk.test.ts`
+- Delete: `src/server/engine/legacySdkEngine.ts`
+- Modify: `src/server/engine/ClaudeEngine.ts` (delete the shim, rename `CliClaudeEngine` → `ClaudeEngine`)
+- Modify: `src/hygiene.private.test.ts` (line 73 example), `package.json`, `package-lock.json`
+- Modify: `src/server/config.ts` (`claudeBin`), `src/server/config.test.ts`, `src/server/main.ts` (engine options, startup log, shutdown)
+
+**Interfaces:**
+- Consumes: `CliClaudeEngine`, `ClaudeEngineOptions` (Task 8a); `resolveClaudeBin`, `ClaudeBin`, `MIN_CLAUDE_VERSION`, `RECOMMENDED_CLAUDE_VERSION` (Task 1).
+- Produces:
+  ```ts
+  // ClaudeEngine.ts — the shim is gone; the CLI engine takes the public name
+  export class ClaudeEngine implements Engine {
+    constructor(opts: ClaudeEngineOptions);
+    runTurn(req: TurnRequest): AsyncIterable<EngineEvent>;
+    /** Closes the bridge (server shutdown). */
+    close(): Promise<void>;
+  }
+  // config.ts
+  claudeBin: ClaudeBin;   // new DeckConfig field
+  ```
+
+- [ ] **Step 1: Write the failing SDK guard**
 
 ```ts
 // src/server/engine/claudeCli/noSdk.test.ts
@@ -4120,21 +4543,17 @@ describe('the Agent SDK is gone', () => {
 ```
 
 Run: `npx vitest run src/server/engine/claudeCli/noSdk.test.ts --maxWorkers=4`
-Expected: FAIL on `package.json` (and on `fakeSdk.ts` if Step 6 left it).
+Expected: FAIL on `package.json` and on `src/server/engine/legacySdkEngine.ts`.
 
-Then:
+- [ ] **Step 2: Delete the shim and the SDK engine**
+
+In `ClaudeEngine.ts`: delete the `import { LegacySdkEngine, type LegacySdkEngineOptions } from './legacySdkEngine';` line and the whole shim (the doc comment `Shim until Task 8c …` and `export class ClaudeEngine` below it), then rename `class CliClaudeEngine implements Engine` to `export class ClaudeEngine implements Engine`. Then:
 
 ```bash
-git rm src/server/engine/fakeSdk.ts
-npm uninstall @anthropic-ai/claude-agent-sdk
+git rm src/server/engine/legacySdkEngine.ts
 ```
 
-`npm uninstall` edits `package.json` and `package-lock.json` only (no network needed to remove). In `src/hygiene.private.test.ts` line 73 change the example to another scoped package: `['an npm scope', '@types/node'],`. In `src/server/sessions/ProcessHolders.test.ts` the `SDK` constant is a `ps` row string, not an import; leave it (the guard only matches `from '…'`).
-
-Run: `npx vitest run src/server/engine/claudeCli/noSdk.test.ts src/hygiene.private.test.ts --maxWorkers=4`
-Expected: PASS.
-
-- [ ] **Step 9: Startup wiring**
+- [ ] **Step 3: Startup wiring**
 
 `src/server/config.ts`: add to the config type
 
@@ -4167,17 +4586,26 @@ const claudeLabel = (b: ClaudeBin) => (b.ok ? `${b.version}${b.belowRecommended 
 
 and `shutdown` adds `void claude.close();` next to `ws.close()`.
 
-Run: `npx vitest run src/server/config.test.ts --maxWorkers=4` and `npx tsc --noEmit -p .`
-Expected: PASS, no type errors.
-
-- [ ] **Step 10 (conditional on spike D9): hide the bridge tool from the model**
-
-If `fixtures/self-call.meta.json` shows the tool in init `tools` **and** `fixtures/permission-allow-disallowed.meta.json` shows the prompt tool still answered (`calls.length === 1`), add `'--disallowedTools', PERMISSION_TOOL` to `claudeArgs` after `--permission-prompt-tool`, with an `args.test.ts` case asserting it, and re-run `npx vitest run src/server/engine/claudeCli/args.test.ts --maxWorkers=4`. Otherwise leave argv as is; `SELF_CALL_MESSAGE` (Task 4) already denies a direct call, and "the bridge tool is visible to the model" stays in Lost or changed features.
-
-- [ ] **Step 11: Commit**
+- [ ] **Step 4: Remove the SDK dependency**
 
 ```bash
-git add -A src/server/engine src/server/turn src/server/ws.*.test.ts src/server/config.ts src/server/config.test.ts src/server/main.ts src/hygiene.private.test.ts package.json package-lock.json
+npm uninstall @anthropic-ai/claude-agent-sdk
+```
+
+`npm uninstall` edits `package.json` and `package-lock.json` only (no network needed to remove). In `src/hygiene.private.test.ts` line 73 change the example to another scoped package: `['an npm scope', '@types/node'],`. In `src/server/sessions/ProcessHolders.test.ts` the `SDK` constant is a `ps` row string, not an import; leave it (the guard only matches `from '…'`).
+
+- [ ] **Step 5: Run the guard, config, hygiene and type check**
+
+Run: `npx vitest run src/server/engine/claudeCli/noSdk.test.ts src/server/config.test.ts src/hygiene.test.ts src/hygiene.private.test.ts --maxWorkers=4` and `npx tsc --noEmit -p .`
+Expected: PASS, no type errors. A type error in `main.ts` about `home` or a missing `bin` means Step 3 was skipped: with the shim gone, `ClaudeEngineOptions` is the only accepted shape.
+
+Run: `npx vitest run src/server --maxWorkers=4`
+Expected: PASS (all engine tests already run on the CLI engine since Task 8b).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A src/server/engine src/server/config.ts src/server/config.test.ts src/server/main.ts src/hygiene.private.test.ts package.json package-lock.json
 git commit -m "feat(claude-engine): Agent SDK 대신 설치된 claude CLI 를 자식 프로세스로 실행"
 ```
 
@@ -4216,7 +4644,7 @@ Expected: no output. `node_modules` may still hold the package until the next `n
 
 - [ ] **Step 5: The child scripts run under plain node**
 
-Run: `node --disable-warning=ExperimentalWarning src/server/engine/claudeCli/hookRelay.ts --sock /nonexistent.sock --token x --fail deny < /dev/null; echo "exit $?"`
+Run: `DECK_BRIDGE_TOKEN=x node --disable-warning=ExperimentalWarning src/server/engine/claudeCli/hookRelay.ts --sock /nonexistent.sock --fail deny < /dev/null; echo "exit $?"`
 Expected: one JSON line with `"permissionDecision":"deny"` and `HOOK_RELAY_FAILED_MESSAGE`, then `exit 0` (fail-deny path, no tsx needed).
 
 Run: `printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' | DECK_BRIDGE_SOCK=/nonexistent.sock DECK_BRIDGE_TOKEN=x node --disable-warning=ExperimentalWarning src/server/engine/claudeCli/permissionMcp.ts`
@@ -4239,21 +4667,23 @@ No commit (nothing changed). If any step required a fix, that fix was committed 
 | Feature | Before (SDK) | After (CLI child) | Why |
 |---|---|---|---|
 | Stop one background task (`LiveInput.stopTask`) | `Query.stopTask` | **Lost.** `stopTask` is absent; the UI hides the button. Stopping the whole turn still works (SIGINT). | Only reachable through the stdin control protocol, which this plan does not use. |
-| Mid-process permission-mode change (`setPermissionMode`) | `Query.setPermissionMode`, enforced by the CLI | **Changed.** deck's PreToolUse gate (`ModeGate`) enforces the new mode for edit tools from the next tool call: plan → edits denied with `PLAN_GATE_MESSAGE`; acceptEdits → edits allowed; back to default → asked. Leaving plan mode in the middle of a turn that started in plan is only fully effective from the next turn (the CLI itself still believes it is in plan). | Control protocol only. |
+| Mid-process permission-mode change (`setPermissionMode`) | `Query.setPermissionMode`, enforced by the CLI | **Changed.** deck's PreToolUse gate (`ModeGate`) enforces the new mode for edit tools from the next tool call: plan → edits denied with `PLAN_GATE_MESSAGE`; acceptEdits → edits allowed; back to default → asked. Leaving plan mode in the middle of a turn that started in plan is only fully effective from the next turn (the CLI itself still believes it is in plan). The gate's matcher is `EDIT_TOOL_MATCHER` (edit tools only): **Bash and MCP tools are not restricted by deck** after a mid-process switch to plan — they still go through the CLI's own permission flow for the mode the process started in (a process started in default asks for them through the prompt tool; one started in acceptEdits/bypass does whatever that mode allows). A switch to plan therefore stops file edits at once but not shell commands until the next turn. | Control protocol only; widening the matcher to Bash would deny read-only commands the CLI's plan mode allows. |
 | Fork at a message (`resumeSessionAt`) | SDK option | **Redesigned**: a truncated copy of the parent transcript (chain up to the message) in the per-process temp dir, then `--resume=<path> --fork-session`. If spike F1 fails, editing an earlier message falls back to `FORK_AT_UNSUPPORTED` (the edit is refused with a Korean message) — lost. | Not in the CLI. |
 | Permission card fields `title`, `decisionReason`, `blockedPath`, `defaultToNo`, `suppressAlwaysAllowRule` | From `canUseTool` options | **Lost**: the prompt tool receives only `tool_name`, `input`, `tool_use_id` (and `permission_suggestions` if spike D3 shows it). The card shows the tool and its input. | Not passed to the prompt tool. |
-| "Always allow" suggestions on the card | `suggestions` from the SDK | Shown only if `permission_suggestions` arrives (spike D3); otherwise the card offers 한 번 / 이 세션 built by deck from the tool name, and `SessionGrants` keeps 이 세션 for the process. | Prompt-tool payload. |
+| "Always allow" suggestions on the card | `suggestions` from the SDK | The CLI's `permission_suggestions` are passed through when they arrive (spike D3). When they are absent, deck synthesizes one session suggestion itself (`synthesizedSuggestions`, Task 4 Step 16): `addRules` / `allow` / `destination: 'session'` with the tool name, plus `ruleContent` = the exact command for Bash. So `pr.suggestions` is never empty for a normal tool, TurnRunner's `addGrants` gets a rule to persist, the card always offers 한 번 / 이 세션, and `SessionGrants` keeps 이 세션 for the process. Not synthesized for ExitPlanMode (plan approval is not a reusable grant). A synthesized Bash rule matches only the exact command, not a prefix — broader than nothing, narrower than the CLI's own suggestion would be. | Prompt-tool payload. |
 | Tool audit (PostToolUse / PostToolUseFailure / PermissionDenied hooks) | In-process hooks | Rebuilt from the stream (`ToolTracker`, `deniedCalls`); error results are attributed when the turn's result arrives instead of immediately. | Hooks replaceable by stream events are removed (spec §5.2). |
 | `DECK_STEER=0` | Removed the replay flag and steer | Removes only `LiveInput.steer`; `--replay-user-messages` is always on (ownership and steer echo need it). | deck's own-entry tracking reads the replays. |
 | Steer folding into the running turn | `priority: 'next'` via the SDK | Same frame on stdin. If spike C2 fails, a steer becomes its own turn right after the current one. | Undocumented field on the CLI side. |
-| Outside-write detection | `entrypoint === 'sdk-ts'` | deck remembers the uuids and message ids its own children wrote (in memory, bounded); lines younger than 3 s are 'pending'. Legacy `sdk-ts` lines still count as deck's. After a deck restart, entries written before the restart by a still-running deck child cannot exist (children die with the server), so in-memory is enough — but a handoff that spans a restart treats deck's last pre-restart entries as old, not foreign. | Spec proposed a session-id set; that would hide a terminal `claude --resume` of a deck session, which is exactly the case to detect. |
+| Outside-write detection | `entrypoint === 'sdk-ts'` | deck remembers the uuids and message ids its own children wrote (in memory, bounded); lines younger than 3 s are 'pending'. Legacy `sdk-ts` lines still count as deck's. After a deck restart, entries written before the restart by a still-running deck child cannot exist (children die with the server), so in-memory is enough — but a handoff that spans a restart treats deck's last pre-restart entries as old, not foreign. | **Deviation from spec §5.2**: the spec proposed a session-id set for `foreignWrites` ("sessions deck started are deck's"); this plan uses an own-entry set (uuids / message ids) instead (Task 6), because a session-id set would hide a terminal `claude --resume` of a deck session, which is exactly the case to detect. |
 | Process holders ("who else has this session open") | Matched SDK process roots (`ownRoots`) | Matches deck's marker flag in the command line. `ownRoots` is gone. | No SDK process tree anymore. |
 | The deck bridge MCP tool | n/a | Visible to the model unless spike D9 allows `--disallowedTools` for it; a direct call is denied with `SELF_CALL_MESSAGE`. | Prompt tool must be an MCP tool. |
 | Background tasks after the turn | SDK kept the process | Same design (stdin open). If spike H1 fails, background work is cut when the turn's result arrives and the BG timers are unused. | CLI behaviour after a result in stream-json mode. |
 | Fixture captures | n/a | Run with project settings only, so captures do not depend on the developer's personal settings. | Reproducibility, hygiene. |
 | Cost per edit-tool call | In-process hook | One extra short `node` process per edit-tool PreToolUse (the hook relay). | Hooks are commands. |
 | Packaging | SDK bundled its CLI | Uses the user's installed `claude` (minimum 2.1.259); `permissionMcp.ts` and `hookRelay.ts` must ship with the server sources. Missing or old `claude` → a Korean message on each Claude turn; Codex/Gemini unaffected. | Spec §5.2. |
-| Abort text | `Claude Code process aborted by user` from the SDK | `중단됨` from the engine, `terminalReason: 'aborted'`. | Same text the UI already hides. |
+| Abort text | `Claude Code process aborted by user` from the SDK | `중단됨` from the engine, `terminalReason: 'aborted'`. An abort that lands before the turn starts spawns nothing (Task 8a test). | Same text the UI already hides. |
+| Long-waiting permission cards | The SDK's `canUseTool` promise could wait indefinitely | deck sets `MCP_TOOL_TIMEOUT` = 12 h on the child and auto-denies at `PERMISSION_WAIT_MS` = 12 h − 2 min, so deck's own denial always wins over the CLI's tool timeout. If spike D10 (`permission-slow` vs `permission-slow-20s`, Task 4 Step 10) shows that `MCP_TOOL_TIMEOUT` does **not** apply to the prompt tool, a card that waits longer than the CLI's internal limit is **auto-denied** by the CLI; `PERMISSION_WAIT_MS` is then set to that measured limit minus 2 minutes so deck's denial (with its Korean reason) still comes first, and a user who answers later sees the card closed. | The prompt tool is an MCP call with the CLI's tool timeout. |
+| AskUserQuestion (only if spike D6 is negative) | `canUseTool` answered with `updatedInput.answers` | Not reachable: the plan stops at the Task 3 gate (Step 11) and asks for a decision; it does not ship without AskUserQuestion. | Prompt-tool `updatedInput` must carry the answers. |
 
 ---
 
@@ -4263,41 +4693,42 @@ No commit (nothing changed). If any step required a fix, that fix was committed 
 
 | Spec item | Where |
 |---|---|
-| Options cwd, env, model, effort | Task 1 (`claudeArgs`, `claudeEnv`), Task 8 (spawn `cwd`, account env) |
-| resume, forkSession | Task 1 (`--resume=`, `--fork-session`), Task 8 |
+| Options cwd, env, model, effort | Task 1 (`claudeArgs`, `claudeEnv`), Task 8a (spawn `cwd`, account env) |
+| resume, forkSession | Task 1 (`--resume=`, `--fork-session`), Task 3 Step 10 (spike F1), Task 8a |
 | resumeSessionAt | Task 6 (truncated copy fork), Lost or changed features |
 | permissionMode, settingSources, includePartialMessages, replay-user-messages | Task 1 |
-| abort → SIGINT, force → SIGTERM | Task 3 (`ClaudeProcess.interrupt/terminate`), Task 8 |
+| abort → SIGINT, force → SIGTERM | Task 3 (`ClaudeProcess.interrupt/terminate`, spike B1), Task 8a (incl. abort before spawn) |
 | settings(permissions.allow), additionalDirectories | Task 1 (`buildSettings`, `--add-dir=`) |
 | canUseTool → `--permission-prompt-tool` via per-process stdio MCP server, AskUserQuestion via `updatedInput.answers` | Task 4 |
 | hooks: PreToolUse, UserPromptSubmit kept as `--settings` commands; PostToolUse, PostToolUseFailure, PermissionDenied replaced by stream events | Task 5 |
 | Messages system(init, compact, task_*, permission_denied), stream_event, assistant, user, result | Task 2 (parser + mapper moved), Task 7 (task_* recorded) |
 | No control protocol | Global Constraints; stopTask/setPermissionMode consequences in Lost or changed features |
 | `--session-id` and foreign-write redesign | Task 1 (`--session-id=` for new sessions), Task 6 (own-entry set instead of a session-id set; reason in Lost or changed features) |
-| No `--bare` | Global Constraints, asserted in Task 1 and Task 8 tests |
-| Minimum 2.1.259, recommended 2.1.283, `claude --version` at startup | Task 1 (`resolveClaudeBin`), Task 8 (config, startup log) |
-| SDK removed | Task 8 (uninstall, guard test), Task 9 |
+| No `--bare` | Global Constraints, asserted in Task 1 and Task 8a tests |
+| Minimum 2.1.259, recommended 2.1.283, `claude --version` at startup | Task 1 (`resolveClaudeBin`), Task 8c (config, startup log) |
+| SDK removed | Task 8a (SDK engine isolated behind a shim), Task 8b (`fakeSdk.ts` deleted), Task 8c (uninstall, guard test), Task 9 |
 | Out of scope (not touched) | usage-deck removal, same-vendor rotation opt-in |
 
-**Placeholder scan:** no "TBD", "later", "similar to", or unnamed files. The two places that depend on runtime facts are written as conditional steps with both branches spelled out: Task 8 Step 10 (spike D9) and the fallbacks in the spike steps of Tasks 3–7. The test migration in Task 8 Step 6 is a rule table rather than per-file diffs; it is mechanical and every rule names the exact replacement.
+**Placeholder scan:** no to-be-decided markers, no "later", no "same as another task" shortcuts, no unnamed files (the grep in the plan review returns nothing). The places that depend on runtime facts are written as conditional steps with both branches spelled out: Task 8a Step 9 (spike D9), the go/no-go spikes in Task 3 Steps 7–11 (E1/E3, D6, H1, F1 — each with a positive and a negative criterion and a fallback), D10 in Task 4 Step 10, and the fallbacks in the capture steps of Tasks 4–7. The test migration in Task 8b Step 1 is a rule table rather than per-file diffs; it is mechanical and every rule names the exact replacement.
 
 **Type consistency (checked across tasks):**
-- `ClaudeBin` (Task 1) is consumed by `ClaudeEngineOptions.bin` and `DeckConfig.claudeBin` (Task 8); the `too_old` branch carries `version` for `claudeTooOldText`.
+- `ClaudeBin` (Task 1) is consumed by `ClaudeEngineOptions.bin` and `DeckConfig.claudeBin` (Task 8c); the `too_old` branch carries `version` for `claudeTooOldText`.
 - `ArgsInput` fields used by the engine: `model`, `effort`, `permissionMode`, `settingsPath`, `mcpConfigPath`, `addDirs`, `resume`, `forkSession`, `sessionId`. Matches Task 1.
 - `SettingsInput.relay: RelaySpec` and `buildMcpConfig({node, script, socketPath, token})`: the engine fills both from one `BridgeRegistration` (`token`, `socketPath`) (Task 4).
-- `ClaudeProcess` members used in Task 8 (`start`, `messages`, `write`, `inputOpen`, `interrupt`, `stop`, `terminate`, `exited`, `exit`, `stderrTail`) all exist in Task 3's interface.
+- `ClaudeProcess` members used in Task 8a (`start`, `messages`, `write`, `inputOpen`, `interrupt`, `stop`, `terminate`, `exited`, `exit`, `stderrTail`) all exist in Task 3's interface.
 - `permissionHandler(req, audit, gate, grants)` (Task 4) and `hookHandler(req, audit, gate)` (Task 5) share one `ModeGate` per process; `LiveInput.setPermissionMode` writes `gate.mode`.
 - `OwnedEntries.add/note/has` (Task 6) are fed by the engine (`add` for stdin uuids, `note` for every frame) and read by `foreignWrites` through `deckWrites.has`.
-- `ToolTracker.apply(m)` (Task 5) is awaited per frame in Task 8.
+- `ToolTracker.apply(m)` (Task 5) is awaited per frame in Task 8a.
 - `writeForkSource` returns `ForkSource`; the engine uses `src.path` / `src.text` (Task 6).
-- `FakeSpawn.files` is added in Task 8 Step 1; `ask` (Task 4) and `hook` (Task 5) switch to it in the same step.
+- `FakeSpawn.files` is added in Task 8a Step 1; `ask` (Task 4) and `hook` (Task 5) switch to it in the same step.
 - `ABORTED_TEXT` equals `TurnRunner.ABORTED` ('중단됨').
 
 **Undetermined until the spikes run (each has a written fallback):**
 - B1: SIGINT in stream-json input mode ends the turn with a result (otherwise the engine synthesizes 중단됨 from the exit).
 - C1–C3: stdin `uuid` is echoed as a replay; `priority: 'next'` folds a steer into the running turn; results carry `user_message_uuids`.
-- D2/D5: `updatedPermissions` and `setMode` returned by the prompt tool are honoured (otherwise `SessionGrants` and the PreToolUse gate cover it). D3: an allow runs the tool, and whether `permission_suggestions` arrives. D6: AskUserQuestion through the prompt tool (no fallback; the plan stops if it fails). D9: the bridge tool can be hidden.
-- `MCP_TOOL_TIMEOUT` lets a permission card wait up to 12 hours.
+- D2/D5: `updatedPermissions` and `setMode` returned by the prompt tool are honoured (otherwise `SessionGrants` and the PreToolUse gate cover it). D3: an allow runs the tool, and whether `permission_suggestions` arrives. D6: AskUserQuestion through the prompt tool (answered in Task 3 Step 8; no fallback — the plan stops at the Task 3 gate if it fails). D9: the bridge tool can be hidden.
+- D10: `MCP_TOOL_TIMEOUT` applies to the prompt tool, so a permission card can wait up to `PERMISSION_WAIT_MS` = 12 h − 2 min (deck's auto-deny) before the CLI's 12 h tool timeout. Measured by `permission-slow` (3 s timeout, allow after 6 s) against `permission-slow-20s` (20 s timeout); fallback in Task 4 Step 10 and Lost or changed features.
+- Go/no-go answered early, in Task 3 Steps 7–11 (`fixtures/go-no-go.meta.json`): E1/E3 (hook decision and `additionalContext` honoured), D6 (AskUserQuestion through the prompt tool), H1 (process survives a result while a background task runs), F1 (fork from a truncated transcript). E3 or D6 negative stops the plan at Task 3; H1 and F1 negative have written fallbacks (Task 8a closes stdin at the first result; Task 6 item 1 deferred).
 - E1–E4: the hook command's JSON output is honoured (`permissionDecision`, `additionalContext`).
 - F0/F1: transcript uuids match stdout uuids; `--resume=<path>` with `--fork-session` accepts a truncated copy and writes the new session under the cwd's project dir.
 - G1/G2: which entries the CLI writes per turn and that deck's stdout/stdin ids cover them.
