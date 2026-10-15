@@ -33,7 +33,7 @@ export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (si
     let exited = false;
     const ctl: FakeCtl = {
       push: (...ms) => { if (!exited) for (const m of ms) stdout.write(JSON.stringify(m) + '\n'); },
-      raw: (text) => { if (!exited) stdout.write(text); },
+      raw: (text) => { if (!exited) stdout.write(text + '\n'); },
       exit: (code, signal = null) => {
         if (exited) return;
         exited = true;

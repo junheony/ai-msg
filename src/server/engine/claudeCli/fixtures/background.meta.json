@@ -1,0 +1,1 @@
+{"cli":"2.1.283","scenario":"background","maxTurns":3,"sawLevel":true,"sawTaskStarted":true,"results":[{"uuids":["00000000-0000-4000-8000-000000000001"],"tasksLive":1},{"uuids":null,"tasksLive":0}],"aliveAfterFirstResult":true,"sawNotification":true,"exit":{"code":0,"signal":null}}
