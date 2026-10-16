@@ -1,8 +1,10 @@
-# HANDOFF — deck (갱신 2026-10-15)
+# HANDOFF — deck (갱신 2026-10-17)
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 이 저장소는 비공개 원본(원격 없음)이고, 공개본은 `scripts/export-public.sh` 로 뽑아 따로 올린다.
 
-## 지금 상태 (2026-10-16)
+## 지금 상태 (2026-10-17)
+
+**한 줄(최신, 10-17 새벽):** ① **CLI 사용량 모드**(`DECK_USAGE_SOURCE=cli`, 제품화 스펙 §0) 구현. usage-deck 없이 CLI `rate_limit_event` 관측으로 사용량 카드와 라우팅을 채움(fetch 0회, `claude-usage-observed.json`). 관측값은 창 리셋까지 하한으로 믿음(`trustUntil`, 최대 24h, 카드 "추정"). overage 또는 Opus 계열 rejected → 그 계정 Fable 100%. 기본값: 주소를 직접 설정했거나 usage-deck 응답 기록이 있으면 usage-deck(이 맥은 usage-deck 유지). 독립 리뷰 2회 반영. ② **계정 분배 고침:** 캐시가 식은 세션은 5h 가 비슷해도 주간이 25%p 이상 낮은 계정(방금 리셋된 C 등)으로 옮김(`WEEKLY_GAP_PCT`). 전에는 5h 만 비교해 주간 70% 인 A 에 남았음. 둘 다 커밋·공개본 반영, UI 빌드 반영. **서버 코드라 재시작 전엔 미적용 — 재시작은 사용자 지시 때만.** 재시작 대기 누적: CLI 사용량 모드, 분배 규칙. 남은 판단: 5h 넘게 안 쓴 계정은 마지막 관측 10분 뒤부터 "모름"(보수적으로 둠).
 
 **한 줄(최신, 10-16 오후):** ① 받아쓰기 중복 수정(`mergeTranscripts`: Safari 재등장·Android 누적 결과 걸러냄. 같은 말을 연달아 하면 두 번째가 빠지는 부작용 있음). ② 첨부 이미지 편집기(`ImageEditor.tsx`·`imageEdit.ts`): 칩을 누르면 자르기·90° 회전·빨간 펜·되돌리기, 원본 해상도로 교체 업로드(16MP 상한). 독립 리뷰 10건 반영. UI 빌드 반영 — 새로고침만 하면 됨. 커밋·공개본 반영. 실기기(iPhone 핸들·펜 스크롤·세로 JPEG 방향) 확인은 아직. 가끔 실패하는 테스트: `ws.bottleneck` 은 정리 재시도로 고침. `http.test` 의 chunked 413 은 단독 실행해도 3번 중 1번 실패 — 아직 안 고침.
 
