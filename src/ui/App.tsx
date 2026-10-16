@@ -486,6 +486,8 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
+      // The attachment image editor owns the keyboard: no ⌘K / ⌘/ / settings / type-to-compose over it.
+      if (document.querySelector('.img-editor')) return;
       // ⌘1 … ⌘9: the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
       // repeats are taken too (not reopened), or the browser would switch tabs on them.
       const pin = matchPinShortcut(e, MAC);

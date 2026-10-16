@@ -9,6 +9,29 @@ export function recognitionCtor(w: object = window): RecCtor | null {
   return g.SpeechRecognition ?? g.webkitSpeechRecognition ?? null;
 }
 
+const norm = (s: string) => s.replace(/[\s\p{P}]/gu, '');
+
+/**
+ * Join per-result transcripts into one dictated string without the browser-specific duplicates:
+ * Android Chrome may put the whole sentence-so-far into a new result (cumulative → replace), and
+ * Safari re-emits already-final spans (repeat → skip). Comparison ignores whitespace/punctuation;
+ * output keeps the original text. Anything else is appended as-is (desktop Chrome).
+ */
+export function mergeTranscripts(results: readonly string[]): string {
+  const segs: string[] = [];
+  for (const t of results) {
+    const n = norm(t);
+    if (!n) continue;
+    const all = norm(segs.join(''));
+    const last = segs.length ? norm(segs[segs.length - 1]!) : '';
+    if (last.includes(n) || all.endsWith(n)) continue;
+    if (all && n.startsWith(all)) segs.splice(0, segs.length, t);
+    else if (last && n.startsWith(last)) segs[segs.length - 1] = t;
+    else segs.push(t);
+  }
+  return segs.join('');
+}
+
 /** Composer mic: Web Speech dictation (ko-KR). Interim text replaces the dictated span of the draft; tap again to stop. Hidden when unsupported. */
 export function DictationButton({ text, onText }: { text: string; onText: (t: string) => void }) {
   const Ctor = recognitionCtor();
@@ -29,8 +52,7 @@ export function DictationButton({ text, onText }: { text: string; onText: (t: st
     const base = live.current.text;
     const sep = base && !/\s$/.test(base) ? ' ' : '';
     r.onresult = (e) => {
-      let said = '';
-      for (let i = 0; i < e.results.length; i++) said += e.results[i]![0]!.transcript;
+      const said = mergeTranscripts(Array.from(e.results, (r) => r[0]?.transcript ?? ''));
       live.current.onText(said ? base + sep + said : base);
     };
     const done = () => { rec.current = null; setOn(false); };

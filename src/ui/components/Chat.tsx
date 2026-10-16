@@ -10,7 +10,7 @@ import { latestContext } from '../context';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
-import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, usePasteUploads, type UploadFn } from '../upload';
+import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
@@ -93,6 +93,8 @@ export type ChatProps = {
   onSessionSandbox?: (s: CodexSandbox) => void;
   onAttach: (a: UploadedAttachment) => void;
   onUnattach: (id: string) => void;
+  /** An edited image replaces attachment `id` (uploaded; its old preview already released); absent = no image editor. */
+  onReattach?: (id: string, a: UploadedAttachment) => void;
   /** 이 세션은 B 써 (Claude sessions): the pinned account (null = 자동), the account it runs on, usage for the menu. */
   accountPin?: Account | null;
   account?: Seat | null;
@@ -275,7 +277,10 @@ export function Chat(p: ChatProps) {
   const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
   const scroll = useStickToBottom(bodyRef, content, p.sessionId);
   // Read-only: no paste / drop / 첨부 uploads either. Long text pastes become 붙여넣은 텍스트 chips (pasted-N.txt).
-  const { addFiles, onPaste, uploading, error, pastedTexts } = usePasteUploads({ uploadFn: p.uploadFn ?? uploadFile, attachments: p.attachments, onUploaded: p.onAttach, onUploadFailed: (t) => setText((v) => v + t), disabled: !!p.readOnly });
+  // The live attachment list for ImageEditor's 완료 (its upload may outlast this render).
+  const attachmentsRef = useRef(p.attachments);
+  attachmentsRef.current = p.attachments;
+  const { addFiles, onPaste, uploading, error, pastedTexts, uploadOne } = usePasteUploads({ uploadFn: p.uploadFn ?? uploadFile, attachments: p.attachments, onUploaded: p.onAttach, onUploadFailed: (t) => setText((v) => v + t), disabled: !!p.readOnly });
   const coarse = useCoarsePointer();
   // Set between compositionstart/end: some browsers report isComposing late or not at all.
   const composing = useRef(false);
@@ -625,7 +630,8 @@ export function Chat(p: ChatProps) {
             enterKeyHint={coarse ? 'enter' : 'send'}
           />
           {(p.attachments.length > 0 || uploading > 0 || error) && (
-            <div className="composer-files"><AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} pastedTexts={pastedTexts} /></div>
+            <div className="composer-files"><AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} pastedTexts={pastedTexts}
+              {...(p.onReattach && !p.readOnly ? { onReplace: (old: UploadedAttachment, f: File) => replaceAttachment(old, f, uploadOne, () => attachmentsRef.current, (a) => p.onReattach!(old.id, a)) } : {})} /></div>
           )}
           {/* One toolbar row, as in Claude: [+] · model pill · 계정/권한 pill (they truncate, never wrap) · mic · send/stop. */}
           <div className="composer-row">

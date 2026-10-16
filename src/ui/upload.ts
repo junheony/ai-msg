@@ -93,7 +93,32 @@ export function useUploads({ uploadFn, current, onUploaded }: { uploadFn: Upload
   }, [uploadFn, current, onUploaded]);
   /** Files taken but not attached yet — all of them, also those still queued behind the one uploading now. */
   const reserved = useCallback(() => pendingRef.current, []);
-  return { addFiles, uploading, error, reserved };
+  /** One upload that replaces an attachment (no new slot): counted in `uploading` so nothing is sent meanwhile. */
+  const uploadOne = useCallback(async (f: File) => {
+    if (f.size > MAX_ATTACHMENT_BYTES) throw new Error(`첨부가 너무 큽니다(최대 ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MiB)`);
+    setUploading((n) => n + 1);
+    try { return await uploadFn(f); } finally { setUploading((n) => n - 1); }
+  }, [uploadFn]);
+  return { addFiles, uploading, error, reserved, uploadOne };
+}
+
+export const REPLACE_GONE = '첨부가 이미 전송·삭제되었습니다';
+
+/**
+ * ImageEditor's 완료: uploads `file` and swaps it in for `old` — only if `old` is still attached by then (`current()`
+ * reads the live list, never a stale render's). Gone (sent or removed meanwhile): the new preview is released and it
+ * throws REPLACE_GONE, so the editor stays open with that message. Returns the new attachment's id.
+ */
+export async function replaceAttachment(old: UploadedAttachment, file: File, upload: UploadFn, current: () => UploadedAttachment[], apply: (a: UploadedAttachment) => void): Promise<string> {
+  const a = await upload(file);
+  const cur = current().find((x) => x.id === old.id);
+  if (!cur) {
+    if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+    throw new Error(REPLACE_GONE);
+  }
+  if (cur.previewUrl) URL.revokeObjectURL(cur.previewUrl);
+  apply(a);
+  return a.id;
 }
 
 /**
@@ -119,7 +144,7 @@ export function usePasteUploads({ uploadFn, attachments, onUploaded, onUploadFai
     if (t !== undefined) setPastedTexts((m) => ({ ...m, [a.id]: t }));
     return a;
   };
-  const { addFiles: upload, uploading, error, reserved } = useUploads({ uploadFn: uploadWithText, current: attachments.length, onUploaded });
+  const { addFiles: upload, uploading, error, reserved, uploadOne } = useUploads({ uploadFn: uploadWithText, current: attachments.length, onUploaded });
   // Once nothing is uploading, texts of removed chips go (all of them, and the numbering restarts, when none is left).
   useEffect(() => {
     if (uploading !== 0) return;
@@ -148,5 +173,5 @@ export function usePasteUploads({ uploadFn, attachments, onUploaded, onUploadFai
     pastedFiles.current.set(file, pasted);
     void addFiles([file]);
   };
-  return { addFiles, onPaste, uploading, error, pastedTexts };
+  return { addFiles, onPaste, uploading, error, pastedTexts, uploadOne };
 }

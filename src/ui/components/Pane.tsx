@@ -595,6 +595,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             if (url) URL.revokeObjectURL(url);
             dispatch({ type: 'unattach', id, paneId: pane.id });
           }}
+          onReattach={(id, attachment) => dispatch({ type: 'reattach', id, attachment, paneId: pane.id })}
         />
         </RegenerateContext.Provider>
       ) : (

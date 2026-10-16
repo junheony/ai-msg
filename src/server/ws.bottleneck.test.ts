@@ -64,7 +64,7 @@ beforeAll(async () => {
   close = async () => { watch.stop(); wsApi.close(); await new Promise<void>((r) => server.close(() => r())); };
 });
 afterEach(() => { vi.restoreAllMocks(); });
-afterAll(async () => { await close(); await fs.rm(base, { recursive: true, force: true }); await bridge.close(); });
+afterAll(async () => { await close(); await fs.rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); await bridge.close(); });
 
 const state = (sessionId: string, over: Partial<ClaudeSessionState> = {}): ClaudeSessionState => ({ sessionId, cwd: base, account: 'a', projectDir: base, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', ...over });
 const startedOf = (p: TurnParams): ServerMessage => ({ type: 'turn_started', turnId: p.turnId, sessionId: p.sessionId, cwd: p.cwd, account: 'a', model: 'opus', reason: 'r', attempt: 0, engine: 'claude' });

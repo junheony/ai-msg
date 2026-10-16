@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type
 import type { UploadedAttachment } from '../state';
 import { usePopoverPlacement } from './usePopoverPlacement';
 import { lineCount } from '../upload';
+import { ImageEditor } from './ImageEditor';
+import { attachmentUrl } from './Lightbox';
 
 function kb(n: number): string {
   return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
@@ -119,27 +121,56 @@ function PastedChip({ text, onRemove }: { text: string; onRemove: () => void }) 
   );
 }
 
-/** Left cluster of the composer's bottom row: [+] attach, then the attached files as chips (`onFiles` absent: chips only). */
-export function AttachmentBar({ attachments, uploading, error, onFiles, onRemove, pastedTexts }: {
+/**
+ * Left cluster of the composer's bottom row: [+] attach, then the attached files as chips (`onFiles` absent: chips only).
+ * With `onReplace`, an image chip opens the ImageEditor (자르기·회전·펜); its result goes to `onReplace` in place of the chip.
+ */
+export function AttachmentBar({ attachments, uploading, error, onFiles, onRemove, onReplace, pastedTexts }: {
   attachments: UploadedAttachment[];
   uploading: number;
   error: string | null;
   onFiles?: (files: File[]) => void;
   onRemove: (id: string) => void;
+  /** Uploads the edited image for attachment `old` and swaps the chip; resolves to the new id. Rejecting keeps the editor open. */
+  onReplace?: (old: UploadedAttachment, file: File) => Promise<string | void>;
   /** Long pastes by attachment id: shown as 붙여넣은 텍스트 chips with a preview. */
   pastedTexts?: Record<string, string>;
 }) {
+  const [editing, setEditing] = useState<UploadedAttachment | null>(null);
+  // After the editor: focus goes to this chip (the edited one, else the original), or to the composer when it's gone.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  // The edited attachment left the list (sent, removed, pane cleared): the editor goes with it.
+  useEffect(() => { if (editing && !attachments.some((a) => a.id === editing.id)) { setEditing(null); setFocusId(editing.id); } }, [attachments, editing]);
+  useEffect(() => {
+    if (focusId === null) return;
+    setFocusId(null);
+    const chip = Array.from(barRef.current?.querySelectorAll<HTMLElement>('[data-attachment-id]') ?? []).find((el) => el.dataset.attachmentId === focusId)?.querySelector<HTMLElement>('.attach-edit');
+    if (chip) { chip.focus(); return; }
+    barRef.current?.closest('.composer, .newchat-box')?.querySelector<HTMLElement>('textarea')?.focus({ preventScroll: true });
+  }, [focusId]);
+  const close = (id: string) => { setEditing(null); setFocusId(id); };
   return (
-    <div className="attachment-bar">
+    <div ref={barRef} className="attachment-bar">
       {onFiles && <AttachMenu onFiles={onFiles} />}
-      {attachments.map((a) => pastedTexts?.[a.id] !== undefined ? <PastedChip key={a.id} text={pastedTexts[a.id]!} onRemove={() => onRemove(a.id)} /> : (
-        <span key={a.id} className={`chip attachment ${a.previewUrl ? 'has-thumb' : ''}`} title={a.name}>
-          {a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{a.name} <span className="muted">{kb(a.size)}</span>
-          <button type="button" className="chip-remove" aria-label="첨부 제거" onClick={() => onRemove(a.id)}>✕</button>
-        </span>
-      ))}
+      {attachments.map((a) => {
+        if (pastedTexts?.[a.id] !== undefined) return <PastedChip key={a.id} text={pastedTexts[a.id]!} onRemove={() => onRemove(a.id)} />;
+        const label = <>{a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{a.name} <span className="muted">{kb(a.size)}</span></>;
+        return (
+          <span key={a.id} className={`chip attachment ${a.previewUrl ? 'has-thumb' : ''}`} title={a.name} data-attachment-id={a.id}>
+            {onReplace && a.isImage
+              ? <button type="button" className="attach-edit" aria-label={`이미지 편집: ${a.name}`} title="눌러서 자르기·회전·펜 표시" onClick={() => setEditing(a)}>{label}</button>
+              : label}
+            <button type="button" className="chip-remove" aria-label="첨부 제거" onClick={() => onRemove(a.id)}>✕</button>
+          </span>
+        );
+      })}
       {uploading > 0 && <span className="muted">업로드 중 {uploading}</span>}
       {error && <span className="error">{error}</span>}
+      {editing && onReplace && (
+        <ImageEditor src={editing.previewUrl ?? attachmentUrl(editing.id)} name={editing.name} onCancel={() => close(editing.id)}
+          onDone={async (file) => { const id = await onReplace(editing, file); close(id || editing.id); }} />
+      )}
     </div>
   );
 }
