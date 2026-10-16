@@ -540,6 +540,14 @@ describe('panes (D6)', () => {
     expect(s.questions).toEqual([]);
   });
 
+  it('reattach swaps an edited image in place, keeping the order', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    s = reducer(s, { type: 'attach', attachment: { id: 'a1', name: 'shot.png', size: 3, isImage: true } });
+    s = reducer(s, { type: 'attach', attachment: { id: 'a2', name: 'b.txt', size: 1, isImage: false } });
+    s = reducer(s, { type: 'reattach', id: 'a1', attachment: { id: 'a3', name: 'shot.png', size: 2, isImage: true } });
+    expect(pane(s).attachments.map((a) => a.id)).toEqual(['a3', 'a2']);
+  });
+
   it('PF13: history resets a model that does not belong to the session engine', () => {
     const hist = (sessionId: string, engine: 'claude' | 'codex'): ServerMessage => ({ type: 'history', sessionId, cwd: '/w', account: engine === 'codex' ? 'gpt' : 'b', engine, sandbox: engine === 'codex' ? 'read-only' : null, runningTurnId: null, messages: [] });
     let s = reducer(initialState, { type: 'set_model', model: 'gpt-6-astra' });

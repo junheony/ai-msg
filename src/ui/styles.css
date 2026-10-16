@@ -936,6 +936,47 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .lightbox { padding: 8px; }
 }
 
+/* Attachment image editor (ImageEditor): full screen, theme colors; the crop box dims the rest with its shadow. */
+.attach-edit { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.attach-edit:hover .attach-preview { box-shadow: 0 0 0 1.5px var(--accent); }
+.img-editor { position: fixed; inset: 0; z-index: 110; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); outline: none; overscroll-behavior: contain; touch-action: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+.img-editor-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.img-editor-title { flex: 1; min-width: 0; text-align: center; color: var(--muted); font-size: calc(13px * var(--font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.img-editor-stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 20px; overflow: hidden; background: color-mix(in srgb, var(--bg) 60%, #000); }
+.img-editor-canvas { position: relative; flex: none; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.img-editor-canvas canvas { display: block; width: 100%; height: 100%; }
+.img-editor button { touch-action: manipulation; }
+.img-editor-canvas.mode-pen { cursor: crosshair; }
+.img-crop { position: absolute; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .55); outline: 1px solid rgba(255, 255, 255, .85); pointer-events: none; }
+.mode-crop .img-crop { pointer-events: auto; cursor: move; }
+.img-crop-h { position: absolute; width: 20px; height: 20px; border: 0 solid #fff; }
+.img-crop-h::before { content: ''; position: absolute; inset: -12px; }
+.img-crop-h.h-nw { left: -3px; top: -3px; border-width: 3px 0 0 3px; cursor: nwse-resize; }
+.img-crop-h.h-ne { right: -3px; top: -3px; border-width: 3px 3px 0 0; cursor: nesw-resize; }
+.img-crop-h.h-se { right: -3px; bottom: -3px; border-width: 0 3px 3px 0; cursor: nwse-resize; }
+.img-crop-h.h-sw { left: -3px; bottom: -3px; border-width: 0 0 3px 3px; cursor: nesw-resize; }
+.img-crop-h.h-n, .img-crop-h.h-s { left: calc(50% - 10px); height: 3px; background: #fff; border-radius: 2px; cursor: ns-resize; }
+.img-crop-h.h-n { top: -3px; }
+.img-crop-h.h-s { bottom: -3px; }
+.img-crop-h.h-e, .img-crop-h.h-w { top: calc(50% - 10px); width: 3px; background: #fff; border-radius: 2px; cursor: ew-resize; }
+.img-crop-h.h-e { right: -3px; }
+.img-crop-h.h-w { left: -3px; }
+.img-editor-error { padding: 6px 12px; text-align: center; font-size: calc(13px * var(--font-scale, 1)); }
+.img-editor-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 6px; padding: 8px 12px 10px; border-top: 1px solid var(--line); }
+.img-tool { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 56px; height: 48px; padding: 0 8px; border-radius: 8px; color: var(--muted); font-size: calc(11.5px * var(--font-scale, 1)); }
+.img-tool:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
+.img-tool.on { color: var(--accent); background: var(--accent-soft); }
+.img-tool:disabled { opacity: .4; }
+.img-ratios { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.img-ratio { min-width: 44px; height: 32px; padding: 0 8px; border-radius: 6px; color: var(--muted); font-size: calc(12.5px * var(--font-scale, 1)); }
+.img-ratio.on { color: var(--fg); background: var(--selected); }
+@media (max-width: 720px) {
+  .img-editor-stage { padding: 16px; }
+  .img-editor-bar .btn { height: 36px; min-width: 56px; }
+  .img-ratio { height: 40px; }
+}
+
 /* === diff & sessions === */
 :root { --diff-add-bg: rgba(87, 171, 90, .16); --diff-add-fg: #8fd18b; --diff-del-bg: rgba(226, 103, 91, .15); --diff-del-fg: #f0948a; }
 :root[data-theme="light"] { --diff-add-bg: rgba(46, 160, 67, .13); --diff-add-fg: #1f7a32; --diff-del-bg: rgba(207, 34, 46, .1); --diff-del-fg: #b3261e; }

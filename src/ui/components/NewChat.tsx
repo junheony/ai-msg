@@ -3,7 +3,7 @@ import { CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, 
 import type { GeminiStatus } from '../../shared/protocol';
 import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
-import { ATTACHMENT_ONLY_TEXT, filesFrom, uploadFile, usePasteUploads, type UploadFn } from '../upload';
+import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
 import { touchEnterIsNewline } from './Chat';
@@ -87,7 +87,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
   const [drag, setDrag] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const onUploaded = useCallback((a: UploadedAttachment) => setAttachments((all) => (all.some((x) => x.id === a.id) ? all : [...all, a])), []);
-  const { addFiles, onPaste, uploading, error, pastedTexts } = usePasteUploads({ uploadFn: uploadFn ?? uploadFile, attachments, onUploaded, onUploadFailed: (t) => setText((v) => { const nv = v + t; saveDraft(draftKey, nv); return nv; }) });
+  const { addFiles, onPaste, uploading, error, pastedTexts, uploadOne } = usePasteUploads({ uploadFn: uploadFn ?? uploadFile, attachments, onUploaded, onUploadFailed: (t) => setText((v) => { const nv = v + t; saveDraft(draftKey, nv); return nv; }) });
   const cwd = picked ?? (defaultCwd && projects.some((p) => p.cwd === defaultCwd) ? defaultCwd : projects[0]?.cwd ?? null);
   const project = projects.find((p) => p.cwd === cwd) ?? null;
   const pinned = projects.filter((p) => p.pinned);
@@ -124,6 +124,8 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
     if (url) URL.revokeObjectURL(url);
     return all.filter((a) => a.id !== id);
   });
+  const replace = (old: UploadedAttachment, f: File) =>
+    replaceAttachment(old, f, uploadOne, () => unsent.current, (a) => setAttachments((all) => all.map((x) => (x.id === old.id ? a : x))));
   const option = (p: ProjectEntry) => <option key={p.cwd} value={p.cwd}>{p.name}</option>;
   const card = ({ s, name }: (typeof live)[number], open: NonNullable<typeof onOpenSession>, pin: boolean) => (
     <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => open(s.sessionId, s.cwd, s.title)}>
@@ -151,7 +153,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (!e.shiftKey && !e.altKey && !touchEnterIsNewline()))) { e.preventDefault(); start(); }
               }} />
             {(attachments.length > 0 || uploading > 0 || error) && (
-              <div className="newchat-files"><AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} pastedTexts={pastedTexts} /></div>
+              <div className="newchat-files"><AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} onReplace={replace} pastedTexts={pastedTexts} /></div>
             )}
             <div className="newchat-row">
               <AttachMenu onFiles={(f) => void addFiles(f)} />

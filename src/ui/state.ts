@@ -388,6 +388,8 @@ export type Action =
   | { type: 'set_permission_mode'; mode: PermMode; paneId?: string }
   | { type: 'attach'; attachment: UploadedAttachment; paneId?: string }
   | { type: 'unattach'; id: string; paneId?: string }
+  /** An edited image (ImageEditor) takes the place of attachment `id`, same position. */
+  | { type: 'reattach'; id: string; attachment: UploadedAttachment; paneId?: string }
   | { type: 'add_pane' }
   /** Back to the empty / new-chat screen (⌘N, the shown session was deleted). */
   | { type: 'clear_pane'; paneId?: string }
@@ -1192,6 +1194,7 @@ export function reducer(state: AppState, action: Action): AppState {
     });
     case 'attach': return updatePane(state, action.paneId, (p) => (p.attachments.some((a) => a.id === action.attachment.id) ? p : { ...p, attachments: [...p.attachments, action.attachment] }));
     case 'unattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== action.id) }));
+    case 'reattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.map((a) => (a.id === action.id ? action.attachment : a)) }));
     case 'clear_pane': return updatePane({ ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId))) }, action.paneId, (p) => ({
       ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET, loading: false,
       handoff: null, handoffFrom: null, prefill: null, notices: [],
