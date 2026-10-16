@@ -12,6 +12,8 @@ export const STALE_MAX_MS = 600_000;
 export const WARM_MS = 55 * 60_000;
 /** 고르게 분산: 5h usage within this many points counts as a tie (weekly, then the reset-urgency score decide). */
 export const BALANCE_TIE_PCT = 5;
+/** 고르게 분산, cold cache: a 5h-tied account this many weekly points lower is also a clear win (e.g. one that just reset). */
+export const WEEKLY_GAP_PCT = 25;
 const DEFAULT_RESET_HOURS = 168;
 
 export type RouterInput = {
@@ -408,16 +410,19 @@ export function chooseAccount(input: RouterInput): RouterDecision {
   const coldWhy = input.justCompacted ? '방금 압축' : sinceLast === null ? '첫 턴' : sinceLast >= WARM_MS ? `${Math.round(sinceLast / 60_000)}분 경과` : null;
   // A `down` current card does not block the cold-cache move: nothing is lost by moving when the cache is cold.
   // 고르게 분산 hysteresis: 5h moves a lot, so a cold session on a safe account (the protected one included) only moves
-  // for a clear win (more than BALANCE_TIE_PCT lower, both known) — not B→C→B on every idle hour, each one a relocate().
+  // for a clear win (5h more than BALANCE_TIE_PCT lower, both known; or 5h no worse than the tie band and weekly at least
+  // WEEKLY_GAP_PCT lower) — not B→C→B on every idle hour, each one a relocate().
   const curCand = candidates.find((c) => c.account === cur);
-  const marginal = (input.policy ?? 'balance') === 'balance' && !!best && !!curCand && isSafe(curCand) &&
-    !(best.fiveHourKnown && curCand.fiveHourKnown && best.fiveHourPct + BALANCE_TIE_PCT < curCand.fiveHourPct);
+  const fiveHourWin = !!best && !!curCand && best.fiveHourKnown && curCand.fiveHourKnown && best.fiveHourPct + BALANCE_TIE_PCT < curCand.fiveHourPct;
+  const weeklyWin = !!best && !!curCand && best.fiveHourKnown && curCand.fiveHourKnown &&
+    best.fiveHourPct <= curCand.fiveHourPct + BALANCE_TIE_PCT && best.weeklyPct + WEEKLY_GAP_PCT <= curCand.weeklyPct;
+  const marginal = (input.policy ?? 'balance') === 'balance' && !!best && !!curCand && isSafe(curCand) && !fiveHourWin && !weeklyWin;
   if (coldWhy && best && best.account !== cur && !marginal) {
     return { ...base, account: best.account, switched: true, reason: `캐시 식음(${coldWhy}) → ${LABEL(best.account)} · ${bestWhy(input, candidates)}` };
   }
   if (cu.status === 'down') return { ...base, account: cur, switched: false, reason: `잔여량 정보 없음 · ${LABEL(cur)} 유지` };
   if (coldWhy) {
-    const why = best ? (best.account !== cur ? `현재 계정이 최적(5h 차이 ${BALANCE_TIE_PCT}%p 이내)` : '현재 계정이 최적') : '자격 있는 대안 없음';
+    const why = best ? (best.account !== cur ? `현재 계정이 최적(5h 차이 ${BALANCE_TIE_PCT}%p 이내 · 주간 차이 ${WEEKLY_GAP_PCT}%p 미만)` : '현재 계정이 최적') : '자격 있는 대안 없음';
     return { ...base, account: cur, switched: false, reason: `캐시 식음(${coldWhy}) · ${why} · ${LABEL(cur)} 유지` };
   }
   // A warm session stays put; it only leaves on a forced switch or when the cache goes cold.

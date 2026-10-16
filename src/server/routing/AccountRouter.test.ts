@@ -454,6 +454,21 @@ describe('chooseAccount · default policy (no policy given = balance)', () => {
     expect(chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 2 * H })).account).toBe('b');
   });
 
+  it('cold session: a 5h-tied account with a much lower weekly (just reset) is a clear win', () => {
+    // On A (weekly 70), C just reset (weekly 2), 5h equal → moves to C.
+    const reset = snap({ s: 1, w: 70 }, { s: 0, w: 79 }, { s: 1, w: 2 });
+    const moved = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: reset }));
+    expect(moved).toMatchObject({ account: 'c', switched: true });
+    expect(moved.reason).toMatch(/캐시 식음/);
+    // Exactly WEEKLY_GAP_PCT lower is enough; one point short is not.
+    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: snap({ s: 1, w: 30 }, { s: 0, w: 79 }, { s: 1, w: 5 }) })).account).toBe('c');
+    const short = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: snap({ s: 1, w: 29 }, { s: 0, w: 79 }, { s: 1, w: 5 }) }));
+    expect(short).toMatchObject({ account: 'a', switched: false });
+    expect(short.reason).toMatch(/주간 차이 25%p 미만/);
+    // A warm session stays even with the weekly gap.
+    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 10 * 60_000, usage: reset }))).toMatchObject({ account: 'a', switched: false });
+  });
+
   it('a missing 5h row is unknown, not 0%: ranked after known values, still a safe candidate', () => {
     // A (protected) past the 5h threshold: B is the one safe account with a known 5h, C has none.
     const usage = snap({ s: 85, w: 0 }, { s: 40, w: 30 }, { s: null, w: 10 });
