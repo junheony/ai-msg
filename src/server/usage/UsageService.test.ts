@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { UsageService, parseDeckState, parseDeckCards, type FetchLike } from './UsageService';
+import { CLI_TRUST_MAX_MS, UsageService, parseDeckState, parseDeckCards, type FetchLike } from './UsageService';
 import { buildRegistry } from '../../shared/accounts';
 import { remainingPct, usageOf, emptySnapshot } from '../../shared/usage-types';
-import { rankCandidates } from '../routing/AccountRouter';
+import { STALE_MAX_MS, noFableWhy, rankCandidates } from '../routing/AccountRouter';
 import { testRegistry } from '../../shared/accounts.testkit';
 
 const LIVE = {
@@ -459,5 +459,241 @@ describe('UsageService · usageSource (usage-deck 을 본 적이 있는가)', ()
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain(file);
     expect(await fsp.readFile(file, 'utf8')).toBe(body);
+  });
+});
+
+describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () => {
+  const T0 = Date.parse('2026-10-17T10:00:00.000Z');
+  async function tmpFile() {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'deck-usage-cli-'));
+    return path.join(dir, 'claude-usage-observed.json');
+  }
+  const make = (o: { file?: string; clock: { ms: number }; fetchFn?: FetchLike; strict?: boolean | null; log?: (l: string) => void }) =>
+    new UsageService({ mode: 'cli', deckUrl: 'http://usage-deck.invalid', fetchFn: o.fetchFn ?? vi.fn<FetchLike>(), now: () => new Date(o.clock.ms), accounts: testRegistry(), intervalMs: 10, ...(o.file ? { observedFile: o.file } : {}), ...(o.strict === undefined ? {} : { strict: o.strict }), ...(o.log ? { log: o.log } : {}) });
+  const rank = (s: UsageService, nowMs: number, needFable = false) => rankCandidates({ current: null, usage: s.routingSnapshot(), nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: {}, protectedAccount: null, needFable, accounts: testRegistry() });
+  const FIVE = { usedPct: 20, resetsAt: new Date(T0 + 2 * 3_600_000).toISOString() };
+  const WEEK = { usedPct: 66, resetsAt: new Date(T0 + 3 * 86_400_000).toISOString() };
+
+  it('never sends a request to usage-deck: construction, polls, start/stop, turns', async () => {
+    const fetchFn = vi.fn<FetchLike>(async () => ({ ok: true, json: async () => ({ cards: [] }) }));
+    const clock = { ms: T0 };
+    const s = make({ clock, fetchFn, file: await tmpFile() });
+    await s.pollOnce();
+    s.start();
+    await new Promise((r) => setTimeout(r, 40));
+    s.stop();
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    await s.pollOnce();
+    expect(fetchFn).toHaveBeenCalledTimes(0);
+    expect(s.snapshot()).toMatchObject({ usageMode: 'cli', deckReachable: false });
+  });
+
+  it('a never-observed account is unknown (down, no numbers); a rate_limit_event fills 5h/weekly with the observation time', async () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null });
+    const seen = vi.fn();
+    s.onChange(seen);
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(usageOf(s.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: FIVE.resetsAt, fiveHour: FIVE, weekly: WEEK, fable: null });
+    expect(usageOf(s.snapshot(), 'b').status).toBe('down');
+    expect(usageOf(s.snapshot(), 'b')).not.toHaveProperty('trustUntil');
+  });
+
+  it('saves each observation (0600, atomic, no temp file left) and loads it after a restart', async () => {
+    const file = await tmpFile();
+    const clock = { ms: T0 };
+    const s = make({ clock, file });
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    clock.ms = T0 + 60_000;
+    s.applyTurn('b', { fiveHour: { usedPct: 5, resetsAt: null } });
+    expect((await fsp.stat(file)).mode & 0o777).toBe(0o600);
+    expect(await fsp.readdir(path.dirname(file))).toEqual(['claude-usage-observed.json']);
+    const saved = JSON.parse(await fsp.readFile(file, 'utf8'));
+    expect(saved.accounts.a).toEqual({ fiveHour: { ...FIVE, at: T0 }, weekly: { ...WEEK, at: T0 } });
+    expect(saved.accounts.b).toEqual({ fiveHour: { usedPct: 5, resetsAt: null, at: T0 + 60_000 } });
+    const again = make({ clock, file });
+    expect(usageOf(again.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: FIVE.resetsAt, fiveHour: FIVE, weekly: WEEK, fable: null });
+    expect(usageOf(again.snapshot(), 'b')).toMatchObject({ fiveHour: { usedPct: 5, resetsAt: null }, weekly: null });
+  });
+
+  it('per window, an older observation never replaces a newer one; a partial event keeps the other window and its time', async () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK }, T0);
+    s.applyTurn('a', { fiveHour: { usedPct: 99, resetsAt: null } }, T0 - 1000);
+    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual(FIVE);
+    clock.ms = T0 + 120_000;
+    s.applyTurn('a', { fiveHour: { usedPct: 30, resetsAt: FIVE.resetsAt } });
+    // fetchedAt = the oldest window shown (the weekly from T0).
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ fiveHour: { usedPct: 30 }, weekly: WEEK, fetchedAt: new Date(T0).toISOString() });
+  });
+
+  it('a window whose resetsAt has passed reads 0 % and estimated (on a poll, after a restart, and for routing)', async () => {
+    const file = await tmpFile();
+    const clock = { ms: T0 };
+    const s = make({ clock, file });
+    s.applyTurn('a', { fiveHour: { usedPct: 97, resetsAt: new Date(T0 + 5 * 60_000).toISOString() }, weekly: WEEK });
+    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 97, resetsAt: new Date(T0 + 5 * 60_000).toISOString() });
+    clock.ms = T0 + 6 * 60_000; // past the 5h reset, still within STALE_MAX_MS of the observation
+    await s.pollOnce();
+    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 0, resetsAt: new Date(T0 + 5 * 60_000).toISOString(), estimated: true });
+    expect(usageOf(s.snapshot(), 'a').weekly).toEqual(WEEK);
+    expect(rank(s, clock.ms).candidates.map((c) => c.account)).toEqual(['a']);
+    expect(usageOf(make({ clock, file }).snapshot(), 'a').fiveHour).toMatchObject({ usedPct: 0, estimated: true });
+  });
+
+  it('without a reset time the plain stale rule holds: ok within STALE_MAX_MS of the observation, then out of the candidates (unknown)', async () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 66, resetsAt: null } });
+    expect(usageOf(s.snapshot(), 'a').trustUntil).toBe(new Date(T0 + STALE_MAX_MS).toISOString());
+    clock.ms = T0 + STALE_MAX_MS;
+    expect(rank(s, clock.ms).candidates.map((c) => c.account)).toEqual(['a']);
+    clock.ms = T0 + STALE_MAX_MS + 1000;
+    // routingSnapshot reads the observation now, even before a poll refreshes the published snapshot.
+    expect(usageOf(s.snapshot(), 'a').status).toBe('ok');
+    const r = rank(s, clock.ms);
+    expect(r.candidates).toEqual([]);
+    expect(r.excluded.a).toMatch(/^stale 자료/);
+    expect(r.unknown).toContain('a');
+    await s.pollOnce();
+    expect(usageOf(s.snapshot(), 'a').status).toBe('stale');
+  });
+
+  it('MED-1: an old observation stays a (stale) candidate as a lower bound until the earliest reset, then unknown', async () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    clock.ms = T0 + 30 * 60_000; // well past STALE_MAX_MS, before the 5h reset (T0 + 2h)
+    await s.pollOnce();
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ status: 'stale', trustUntil: FIVE.resetsAt, fiveHour: FIVE });
+    const r = rank(s, clock.ms);
+    expect(r.candidates).toMatchObject([{ account: 'a', stale: true, fiveHourPct: 20, weeklyPct: 66 }]);
+    expect(r.unknown).toEqual(expect.not.arrayContaining(['a']));
+    clock.ms = T0 + 2 * 3_600_000 + 1000; // past the 5h reset: no longer a promise
+    const after = rank(s, clock.ms);
+    expect(after.candidates).toEqual([]);
+    expect(after.excluded.a).toMatch(/^stale 자료/);
+    expect(after.unknown).toContain('a');
+  });
+
+  it('MED-1: trustUntil is at most CLI_TRUST_MAX_MS after the oldest observation', () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    s.applyTurn('a', { weekly: WEEK }); // resets in 3 days
+    expect(usageOf(s.snapshot(), 'a').trustUntil).toBe(new Date(T0 + CLI_TRUST_MAX_MS).toISOString());
+    clock.ms = T0 + CLI_TRUST_MAX_MS - 1000;
+    expect(rank(s, clock.ms).candidates.map((c) => c.account)).toEqual(['a']);
+    clock.ms = T0 + CLI_TRUST_MAX_MS + 1000;
+    expect(rank(s, clock.ms).unknown).toContain('a');
+  });
+
+  it('MED-1: 고르게 분산 — on a full tie a fresh account beats a stale one', () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    clock.ms = T0 + 30 * 60_000;
+    s.applyTurn('b', { fiveHour: FIVE, weekly: WEEK });
+    const r = rank(s, clock.ms);
+    expect(r.candidates.map((c) => [c.account, c.stale])).toEqual([['b', false], ['a', true]]);
+  });
+
+  it('MED-2: a poll rebuilds GPT from its rollout observation — a passed reset reads 0 % estimated, status recomputed', async () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    s.applyTurn('gpt', { weekly: { usedPct: 70, resetsAt: new Date(T0 + 60_000).toISOString() }, fiveHour: { usedPct: 30, resetsAt: new Date(T0 + 120_000).toISOString() } });
+    expect(s.snapshot().gpt).toMatchObject({ status: 'ok', weekly: { usedPct: 70 } });
+    clock.ms = T0 + 90_000; // weekly reset passed, 5h not yet
+    await s.pollOnce();
+    expect(s.snapshot().gpt).toMatchObject({ status: 'ok', fetchedAt: new Date(T0).toISOString(), weekly: { usedPct: 0, estimated: true }, fiveHour: { usedPct: 30 } });
+    clock.ms = T0 + 180_000; // both passed
+    await s.pollOnce();
+    expect(s.snapshot().gpt).toMatchObject({ status: 'stale', weekly: { usedPct: 0, estimated: true }, fiveHour: { usedPct: 0, estimated: true } });
+  });
+
+  it('MED-3: a spent-Fable signal records Fable 100 % (saved, until its reset) and sends Fable turns to Opus', async () => {
+    const file = await tmpFile();
+    const clock = { ms: T0 };
+    const s = make({ clock, file });
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK, fable: { usedPct: 100, resetsAt: WEEK.resetsAt } });
+    s.applyTurn('b', { fiveHour: FIVE, weekly: WEEK });
+    expect(usageOf(s.snapshot(), 'a').fable).toEqual({ usedPct: 100, resetsAt: WEEK.resetsAt });
+    expect(usageOf(s.snapshot(), 'b').fable).toBeNull();
+    expect(usageOf(make({ clock, file }).snapshot(), 'a').fable).toEqual({ usedPct: 100, resetsAt: WEEK.resetsAt });
+    const r = rank(s, T0, true);
+    expect(r.excluded.a).toBe('Fable 100%');
+    expect(r.candidates.map((c) => c.account)).toEqual(['b']);
+    expect(noFableWhy({ usage: s.routingSnapshot(), accounts: testRegistry() })).toBe('Fable 여유 계정 없음');
+    // Without a reset time it is kept for STALE_MAX_MS only.
+    s.applyTurn('b', { fable: { usedPct: 100, resetsAt: null } });
+    expect(usageOf(s.snapshot(), 'b').fable).toMatchObject({ usedPct: 100 });
+    clock.ms = T0 + STALE_MAX_MS + 1000;
+    await s.pollOnce();
+    expect(usageOf(s.snapshot(), 'b').fable).toBeNull();
+    expect(usageOf(s.snapshot(), 'a').fable).toMatchObject({ usedPct: 100 });
+  });
+
+  it('MED-4: a future `at` in the file is read as now on load (it neither freezes nor stays fresh)', async () => {
+    const file = await tmpFile();
+    const future = T0 + 30 * 86_400_000;
+    await fsp.writeFile(file, JSON.stringify({ version: 1, accounts: { a: { fiveHour: { usedPct: 50, resetsAt: null, at: future }, weekly: { usedPct: 60, resetsAt: null, at: future } } } }));
+    const clock = { ms: T0 };
+    const s = make({ clock, file });
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ status: 'ok', fetchedAt: new Date(T0).toISOString() });
+    clock.ms = T0 + STALE_MAX_MS + 1000;
+    await s.pollOnce();
+    expect(usageOf(s.snapshot(), 'a').status).toBe('stale');
+    // A new turn (later than the clamped time) replaces it.
+    s.applyTurn('a', { fiveHour: { usedPct: 7, resetsAt: null } });
+    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 7, resetsAt: null });
+  });
+
+  it('MED-4: a kept observation from the future (the clock went back while running) never blocks a new value', () => {
+    const clock = { ms: T0 + 86_400_000 };
+    const s = make({ clock });
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    clock.ms = T0; // the clock goes back a day
+    s.applyTurn('a', { fiveHour: { usedPct: 41, resetsAt: FIVE.resetsAt } });
+    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 41, resetsAt: FIVE.resetsAt });
+    // An older reading than a kept one that is not in the future is still refused.
+    s.applyTurn('a', { fiveHour: { usedPct: 99, resetsAt: null } }, T0 - 1000);
+    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 41, resetsAt: FIVE.resetsAt });
+  });
+
+  it('Fable is never known: usageSource none (lax — unknown Fable does not force Opus) unless DECK_USAGE_STRICT=1', () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    expect(s.snapshot().usageSource).toBe('none');
+    expect(rank(s, T0, true).candidates.map((c) => c.account)).toEqual(['a']);
+    const strict = make({ clock, strict: true });
+    strict.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    expect(strict.snapshot().usageSource).toBe('deck');
+    expect(rank(strict, T0, true).excluded.a).toBe('Fable 값 없음');
+  });
+
+  it('GPT (rollout) and Gemini readings still apply in cli mode and keep usageMode', () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    s.applyTurn('gpt', { weekly: { usedPct: 40, resetsAt: null } });
+    expect(s.snapshot().gpt).toMatchObject({ status: 'ok', weekly: { usedPct: 40 } });
+    s.applyGemini({ status: 'ok', fetchedAt: null, loggedIn: true, buckets: [] });
+    expect(s.snapshot()).toMatchObject({ usageMode: 'cli', gemini: { status: 'ok' } });
+  });
+
+  it('an unreadable file starts empty with one log line; unknown accounts and junk entries are skipped', async () => {
+    const file = await tmpFile();
+    await fsp.writeFile(file, '{');
+    const logs: string[] = [];
+    const clock = { ms: T0 };
+    expect(usageOf(make({ clock, file, log: (l) => logs.push(l) }).snapshot(), 'a').status).toBe('down');
+    expect(logs).toHaveLength(1);
+    await fsp.writeFile(file, JSON.stringify({ version: 1, accounts: { zz: { fiveHour: { usedPct: 1, resetsAt: null, at: T0 } }, a: { fiveHour: { usedPct: 'x', at: T0 } }, b: { weekly: { usedPct: 3, resetsAt: null, at: T0 } } } }));
+    const s = make({ clock, file });
+    expect(s.snapshot().accounts).not.toHaveProperty('zz');
+    expect(usageOf(s.snapshot(), 'a').status).toBe('down');
+    expect(usageOf(s.snapshot(), 'b').weekly).toEqual({ usedPct: 3, resetsAt: null });
   });
 });

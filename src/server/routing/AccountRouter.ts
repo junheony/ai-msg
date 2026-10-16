@@ -1,7 +1,7 @@
 import type { Account, AccountNames } from '../../shared/accounts';
 import { FABLE_MAX_PCT } from '../../shared/models';
 import type { RoutingPolicy } from '../../shared/protocol';
-import { parseIsoUtc, usageOf, type UsageSnapshot } from '../../shared/usage-types';
+import { parseIsoUtc, trusted, usageOf, type UsageSnapshot } from '../../shared/usage-types';
 
 export { FABLE_MAX_PCT };
 
@@ -123,7 +123,8 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
     if (u.status === 'down') { excluded[account] = '잔여량 정보 없음'; if (!cooling) unknown.push(account); continue; }
     if (u.status === 'stale') {
       const age = u.fetchedAt ? input.nowMs - parseIsoUtc(u.fetchedAt) : Number.NaN;
-      if (Number.isNaN(age) || age > STALE_MAX_MS) {
+      // `cli` mode: an old observation is still a lower bound until its window resets (`trustUntil`): a stale candidate.
+      if ((Number.isNaN(age) || age > STALE_MAX_MS) && !trusted(u, input.nowMs)) {
         excluded[account] = `stale 자료 ${Number.isNaN(age) ? '?' : Math.round(age / 1000)}초 경과`;
         // Its last numbers at the limit: old, but no reason to try it before anything else.
         const atLimit = (u.fiveHour?.usedPct ?? 0) >= EXCLUDE_PCT || (u.weekly?.usedPct ?? 0) >= EXCLUDE_PCT;
@@ -162,7 +163,7 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
   const rank = (a: Account) => (a === input.protectedAccount ? 2 : reg.isHome(a) ? 1 : 0);
   const lastWeekly = (a: Account) => usageOf(input.usage, a).weekly?.usedPct ?? Infinity;
   unknown.sort((x, y) => rank(x) - rank(y) || (lastWeekly(x) === lastWeekly(y) ? 0 : lastWeekly(x) - lastWeekly(y)));
-  return { candidates: (input.policy ?? 'balance') === 'balance' ? balanceOrder(candidates) : candidates, excluded, unknown };
+  return { candidates: (input.policy ?? 'balance') === 'balance' ? balanceOrder(candidates, input.usage.usageMode === 'cli') : candidates, excluded, unknown };
 }
 
 /**
@@ -181,7 +182,7 @@ function drainOrder(reg: AccountNames): (x: Candidate, y: Candidate) => number {
     order.indexOf(y.account) - order.indexOf(x.account);
 }
 
-/** Under both force-switch thresholds (down/cooldown/stale/≥95 never become candidates). */
+/** Under both force-switch thresholds (down/cooldown/untrusted stale/≥95 never become candidates). */
 function isSafe(c: Candidate): boolean {
   return c.fiveHourPct < FIVE_HOUR_SWITCH_PCT && c.weeklyPct < WEEKLY_SWITCH_PCT;
 }
@@ -192,19 +193,26 @@ function isSafe(c: Candidate): boolean {
  * ties), then the drain order (score). Safe candidates with no 5h row follow (unknown is not 0%, so it never wins over
  * a known value), in drain order. The ones past a threshold follow in drain order — so with no safe candidate this is
  * exactly the drain ranking.
+ * `cli` usage mode: a stale candidate's numbers are only a lower bound (kept until `trustUntil`), so every freshly
+ * observed safe candidate comes first, then the stale safe ones — each group in the order above.
  */
-function balanceOrder(drainSorted: Candidate[]): Candidate[] {
-  const pool = drainSorted.filter((c) => isSafe(c) && c.fiveHourKnown);
-  const out: Candidate[] = [];
-  while (pool.length > 0) {
-    const low = Math.min(...pool.map((c) => c.fiveHourPct));
-    // `pool` is in drain order and the sort is stable: a full tie keeps the score order.
-    const pick = pool.filter((c) => c.fiveHourPct <= low + BALANCE_TIE_PCT)
-      .sort((x, y) => x.weeklyPct - y.weeklyPct || Number(x.protected) - Number(y.protected))[0] as Candidate;
-    out.push(pick);
-    pool.splice(pool.indexOf(pick), 1);
-  }
-  return [...out, ...drainSorted.filter((c) => isSafe(c) && !c.fiveHourKnown), ...drainSorted.filter((c) => !isSafe(c))];
+function balanceOrder(drainSorted: Candidate[], cli = false): Candidate[] {
+  const safeOrder = (group: Candidate[]): Candidate[] => {
+    const pool = group.filter((c) => c.fiveHourKnown);
+    const out: Candidate[] = [];
+    while (pool.length > 0) {
+      const low = Math.min(...pool.map((c) => c.fiveHourPct));
+      // `pool` is in drain order and the sort is stable: a full tie keeps the score order.
+      const pick = pool.filter((c) => c.fiveHourPct <= low + BALANCE_TIE_PCT)
+        .sort((x, y) => x.weeklyPct - y.weeklyPct || Number(x.protected) - Number(y.protected))[0] as Candidate;
+      out.push(pick);
+      pool.splice(pool.indexOf(pick), 1);
+    }
+    return [...out, ...group.filter((c) => !c.fiveHourKnown)];
+  };
+  const safe = drainSorted.filter(isSafe);
+  const head = cli ? [...safeOrder(safe.filter((c) => !c.stale)), ...safeOrder(safe.filter((c) => c.stale))] : safeOrder(safe);
+  return [...head, ...drainSorted.filter((c) => !isSafe(c))];
 }
 
 /** A candidate's 5h for reasons and logs: '?' when the card has no 5h row. */
@@ -213,12 +221,13 @@ function pct5(c: Candidate): string {
 }
 
 /** Why `cands[0]` (safe) won under 고르게 분산, against the runner-up. */
-function balanceWhy(reg: AccountNames, cands: Candidate[]): string {
+function balanceWhy(reg: AccountNames, cands: Candidate[], cli = false): string {
   const [b, n] = cands as [Candidate, Candidate | undefined];
   const B = reg.label(b.account);
   if (!n) return `분산: 5h ${B} ${pct5(b)} · 유일한 후보`;
   const N = reg.label(n.account);
   if (!isSafe(n)) return `분산: 5h ${B} ${pct5(b)} · ${N} 문턱 근접`;
+  if (cli && !b.stale && n.stale) return `분산: 5h ${B} ${pct5(b)} · ${N} 오래된 관측(추정)`;
   if (b.fiveHourKnown && !n.fiveHourKnown) return `분산: 5h ${B} ${pct5(b)} · ${N} 5h 값 없음`;
   if (n.fiveHourPct - b.fiveHourPct > BALANCE_TIE_PCT) return `분산: 5h ${B} ${pct5(b)} < ${N} ${pct5(n)}`;
   if (b.weeklyPct < n.weeklyPct) return `분산: 5h 비슷(${B} ${pct5(b)} · ${N} ${pct5(n)}) · 주간 ${B} ${b.weeklyPct}% < ${N} ${n.weeklyPct}%`;
@@ -232,7 +241,7 @@ function bestWhy(input: RouterInput, cands: Candidate[]): string {
   const reg = input.accounts;
   const drain = `리셋 임박 ${reg.label(b.account)}(주간 ${b.weeklyPct}% · ${Math.round(b.hoursToReset)}시간 뒤 리셋)`;
   if ((input.policy ?? 'balance') === 'drain') return drain;
-  return isSafe(b) ? balanceWhy(reg, cands) : `안전한 후보 없음 → ${drain}`;
+  return isSafe(b) ? balanceWhy(reg, cands, input.usage.usageMode === 'cli') : `안전한 후보 없음 → ${drain}`;
 }
 
 /** The server log line for a routed turn: decision, candidates and exclusions (usage numbers only, no secrets). */

@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { type Account, type AccountNames, type UsageSeat } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type UsageMode, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
-export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits };
+export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits; /** Claude, `cli` mode only: a Fable/Opus value the CLI told (see stream.ts fableSpentOf). */ fable?: UsageWindow };
 
 export type FetchLike = (
   url: string,
@@ -76,6 +76,28 @@ export function parseDeckState(json: unknown, reg: AccountNames): Record<Account
   return parseDeckCards(json, reg).accounts;
 }
 
+/** One window as last observed from a deck turn's `rate_limit_event` (`cli` mode), with when. */
+type CliWindowObs = { w: UsageWindow; at: number };
+type CliAccountObs = { fiveHour?: CliWindowObs; weekly?: CliWindowObs; /** Only when the CLI told one (spent = 100 %, or a warning's utilization). */ fable?: CliWindowObs };
+const CLI_WINDOWS = ['fiveHour', 'weekly', 'fable'] as const;
+
+/** `cli` mode: past STALE_MAX_MS an observation still counts as a lower bound until its window resets, but never past this. */
+export const CLI_TRUST_MAX_MS = 24 * 3_600_000;
+
+/** A saved window; a future `at` (clock went back, a hand edit) is read as now, so it can neither freeze nor stay fresh. */
+function windowObsOf(v: unknown, nowMs: number): CliWindowObs | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  const used = num(o.usedPct), at = num(o.at);
+  if (used === null || at === null) return undefined;
+  return { w: { usedPct: used, resetsAt: str(o.resetsAt) }, at: Math.min(at, nowMs) };
+}
+
+/** A window whose `resetsAt` has passed reads 0 % with `estimated` (the next observation tells the real value). */
+function estimateWindow(w: UsageWindow, nowMs: number): UsageWindow {
+  return w.resetsAt !== null && parseIsoUtc(w.resetsAt) <= nowMs ? { usedPct: 0, resetsAt: w.resetsAt, estimated: true } : w;
+}
+
 export class UsageService {
   private snap: UsageSnapshot;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -102,6 +124,11 @@ export class UsageService {
   /** `sourceFile` is there and unreadable: read as seen (the strict side), written again by the next answer. */
   private recordBroken = false;
   private firstAttemptDone = false;
+  private readonly mode: UsageMode;
+  /** `cli` mode: `<configDir>/claude-usage-observed.json`; null = kept in memory only. */
+  private readonly observedFile: string | null;
+  /** `cli` mode: per Claude account, the last observed 5h/weekly windows (loaded from `observedFile`). */
+  private cliObs = new Map<Account, CliAccountObs>();
 
   /**
    * `accounts`: the registry.
@@ -109,8 +136,10 @@ export class UsageService {
    * null → by the record) decide the snapshot's `usageSource`; with neither, the snapshot has none (= 'deck').
    * `deckConfigured`: the user set the usage-deck address (not the default), so with no record yet a failed first fetch
    * still reads as 'deck' (usage-deck is late or down, not absent). Order: `strict` > the record > this > the first fetch.
+   * `mode` 'cli' (`DECK_USAGE_SOURCE`, default 'usage-deck' here; config picks the real default): usage-deck is never
+   * asked — Claude accounts carry only what deck's own turns observed (`observedFile`, kept across restarts).
    */
-  constructor(opts: { deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; deckConfigured?: boolean; log?: (line: string) => void }) {
+  constructor(opts: { mode?: UsageMode; observedFile?: string; deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; deckConfigured?: boolean; log?: (line: string) => void }) {
     this.url = opts.deckUrl.replace(/\/+$/, '') + '/api/state';
     this.fetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
     this.intervalMs = opts.intervalMs ?? 60_000;
@@ -121,8 +150,94 @@ export class UsageService {
     this.strict = opts.strict ?? null;
     this.deckConfigured = opts.deckConfigured ?? false;
     this.log = opts.log ?? (() => {});
+    this.mode = opts.mode ?? 'usage-deck';
+    this.observedFile = opts.observedFile ?? null;
+    if (this.mode === 'cli') {
+      if (this.observedFile) this.readObserved(this.observedFile);
+      this.snap = this.withSource({ ...emptySnapshot(this.now(), this.reg.all()), accounts: this.cliAccounts(), usageMode: 'cli' });
+      return;
+    }
     if (this.sourceFile) this.readRecord(this.sourceFile);
     this.snap = this.withSource(emptySnapshot(this.now(), this.reg.all()));
+  }
+
+  private readObserved(file: string): void {
+    const nowMs = this.now().getTime();
+    let json: unknown;
+    try {
+      json = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') this.log(`deck: ${file} 을 읽을 수 없어 관측값 없이 시작합니다 — ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    const accounts = json && typeof json === 'object' ? (json as { accounts?: unknown }).accounts : null;
+    if (!accounts || typeof accounts !== 'object') return;
+    for (const [a, v] of Object.entries(accounts as Record<string, unknown>)) {
+      if (!this.reg.has(a) || !v || typeof v !== 'object') continue;
+      const o: CliAccountObs = {};
+      for (const k of CLI_WINDOWS) { const x = windowObsOf((v as Record<string, unknown>)[k], nowMs); if (x) o[k] = x; }
+      if (o.fiveHour || o.weekly || o.fable) this.cliObs.set(a, o);
+    }
+  }
+
+  /** Atomically, 0600; a failure is logged and the numbers stay in memory. */
+  private writeObserved(): void {
+    if (!this.observedFile) return;
+    const out: Record<string, Record<string, { usedPct: number; resetsAt: string | null; at: number }>> = {};
+    for (const [a, o] of this.cliObs) {
+      const e: (typeof out)[string] = {};
+      for (const k of CLI_WINDOWS) { const x = o[k]; if (x) e[k] = { usedPct: x.w.usedPct, resetsAt: x.w.resetsAt, at: x.at }; }
+      out[a] = e;
+    }
+    const tmp = `${this.observedFile}.${process.pid}.tmp`;
+    try {
+      fs.mkdirSync(path.dirname(this.observedFile), { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify({ version: 1, accounts: out }), { mode: 0o600 });
+      fs.renameSync(tmp, this.observedFile);
+    } catch (err) {
+      fs.rmSync(tmp, { force: true });
+      this.log(`deck: ${this.observedFile} 을 쓰지 못했습니다 — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * `cli` mode: an account as its last observation reads now. Never observed → 'down' (unknown). A window whose
+   * `resetsAt` has passed reads 0 % with `estimated` (estimateWindow). `fetchedAt` is the oldest observation among the
+   * 5h/weekly windows shown, and past STALE_MAX_MS the account is 'stale'. Usage within a window never goes down, so
+   * the numbers stay a lower bound until the window resets: `trustUntil` = the earliest `resetsAt` of the windows shown
+   * (a window without one: its observation + STALE_MAX_MS, i.e. the plain stale rule), at most CLI_TRUST_MAX_MS after
+   * the oldest observation. The router keeps a stale account as a candidate until then, and only then treats it as unknown.
+   * Fable: rate_limit_event carries no Fable window (only five_hour / seven_day in every captured event), so it is
+   * null — see `source()` for how unknown Fable is then treated — unless the CLI told a Fable/Opus value (spent = 100 %,
+   * or a warning's utilization; kept until its reset, without a reset time for STALE_MAX_MS).
+   */
+  private cliAccount(a: Account, nowMs: number): AccountUsage {
+    const o = this.cliObs.get(a);
+    const fable = o?.fable && (o.fable.w.resetsAt !== null || nowMs - o.fable.at <= STALE_MAX_MS) ? estimateWindow(o.fable.w, nowMs) : null;
+    if (!o || (!o.fiveHour && !o.weekly)) return { ...emptyAccountUsage(), fable };
+    const shown = [o.fiveHour, o.weekly].filter((x): x is CliWindowObs => x !== undefined);
+    const oldest = Math.min(...shown.map((x) => x.at));
+    const until = (x: CliWindowObs) => { const r = x.w.resetsAt === null ? Number.NaN : parseIsoUtc(x.w.resetsAt); return Number.isNaN(r) ? x.at + STALE_MAX_MS : r; };
+    const trustUntil = Math.min(...shown.map(until), oldest + CLI_TRUST_MAX_MS);
+    return {
+      status: nowMs - oldest > STALE_MAX_MS ? 'stale' : 'ok', fetchedAt: new Date(oldest).toISOString(), trustUntil: new Date(trustUntil).toISOString(),
+      fiveHour: o.fiveHour ? estimateWindow(o.fiveHour.w, nowMs) : null, weekly: o.weekly ? estimateWindow(o.weekly.w, nowMs) : null, fable,
+    };
+  }
+
+  /** `cli` mode: the GPT seat from its last rollout observation, read now (passed resets estimated, obsStatus again). */
+  private cliGpt(): AccountUsage {
+    const obs = this.turnObs.get('gpt');
+    const cur = this.seatOf(this.snap, 'gpt');
+    if (!obs) return cur;
+    const nowMs = this.now().getTime();
+    const est = (x: UsageWindow | undefined) => (x ? estimateWindow(x, nowMs) : null);
+    return this.withCredits({ ...cur, status: this.obsStatus(obs.w), fetchedAt: new Date(obs.atMs).toISOString(), fiveHour: est(obs.w.fiveHour) ?? cur.fiveHour, weekly: est(obs.w.weekly) ?? cur.weekly });
+  }
+
+  private cliAccounts(): Record<Account, AccountUsage> {
+    const nowMs = this.now().getTime();
+    return Object.fromEntries(this.reg.all().map((a) => [a, this.cliAccount(a, nowMs)]));
   }
 
   private readRecord(file: string): void {
@@ -166,6 +281,11 @@ export class UsageService {
   /** null = not judged here (no record file and no switch): the snapshot carries no `usageSource`. */
   private source(): 'deck' | 'none' | null {
     if (this.strict !== null) return this.strict ? 'deck' : 'none';
+    // `cli` mode has no usage-deck, so no Fable number ever: the install is the "never had usage-deck" kind ('none').
+    // Strict ('deck') would read every unknown Fable as "no Fable left" and turn every Fable request into Opus for
+    // good; 'none' keeps Fable unless a known value is at the limit, as for any install without usage-deck.
+    // DECK_USAGE_STRICT=1 (above) still forces the strict side.
+    if (this.mode === 'cli') return 'none';
     if (!this.sourceFile) return null;
     // Before the first fetch attempt has ended nothing is known yet: the strict side.
     return this.deckSeen || this.recordBroken || this.deckConfigured || !this.firstAttemptDone ? 'deck' : 'none';
@@ -187,6 +307,8 @@ export class UsageService {
    * account within TURN_OK_TRUST_MS (see `lift`). Never published — the UI keeps the real status.
    */
   routingSnapshot(): UsageSnapshot {
+    // `cli`: read the observations at this moment, so the stale cut-off is exact, not as of the last refresh.
+    if (this.mode === 'cli') return { ...this.snap, accounts: this.cliAccounts() };
     let accounts: UsageSnapshot['accounts'] | null = null;
     for (const a of this.reg.all()) {
       const cur = usageOf(this.snap, a);
@@ -281,6 +403,11 @@ export class UsageService {
   }
 
   async pollOnce(): Promise<void> {
+    // `cli`: never a request to usage-deck; a poll only re-reads the observations (ages, passed resets), GPT's too.
+    if (this.mode === 'cli') {
+      this.publish({ ...this.snap, generatedAt: this.now().toISOString(), accounts: this.cliAccounts(), gpt: this.cliGpt() });
+      return;
+    }
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), this.timeoutMs);
     try {
@@ -325,6 +452,7 @@ export class UsageService {
    * currently `setup_needed` — a newer deck card still wins afterwards (see `overlay`).
    */
   applyTurn(seat: UsageSeat, w: TurnWindows, observedAtMs: number = this.now().getTime()): void {
+    if (this.mode === 'cli' && seat !== 'gpt') return this.applyCliTurn(seat, w, observedAtMs);
     const prev = this.turnObs.get(seat);
     // F3: the rollout poller may report a reading older than one a turn already gave; never go back in time.
     if (prev && observedAtMs < prev.atMs) return;
@@ -338,6 +466,25 @@ export class UsageService {
     const generatedAt = this.now().toISOString();
     if (seat === 'gpt') this.publish({ ...this.snap, generatedAt, gpt: next });
     else this.publish({ ...this.snap, generatedAt, accounts: { ...this.snap.accounts, [seat]: next } });
+  }
+
+  /**
+   * `cli` mode: a Claude turn's windows become the account's numbers (per window, never back in time), saved to disk.
+   * A kept time in the future (the clock went back) never blocks a new value.
+   */
+  private applyCliTurn(account: Account, w: TurnWindows, observedAtMs: number): void {
+    if (!w.fiveHour && !w.weekly && !w.fable) return;
+    const prev = this.cliObs.get(account) ?? {};
+    const next: CliAccountObs = { ...prev };
+    const nowMs = this.now().getTime();
+    for (const k of CLI_WINDOWS) {
+      const x = w[k], p = prev[k];
+      if (x && (!p || observedAtMs >= p.at || p.at > nowMs)) next[k] = { w: { usedPct: x.usedPct, resetsAt: x.resetsAt }, at: observedAtMs };
+    }
+    if (CLI_WINDOWS.every((k) => next[k] === prev[k])) return;
+    this.cliObs.set(account, next);
+    this.writeObserved();
+    this.publish({ ...this.snap, generatedAt: this.now().toISOString(), accounts: { ...this.snap.accounts, [account]: this.cliAccount(account, this.now().getTime()) } });
   }
 
   /** deck just completed a turn on `account` (result ok): affects `routingSnapshot` only (see `lift`); nothing is published. */

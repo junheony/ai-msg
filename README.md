@@ -174,6 +174,7 @@ All settings are environment variables. None is required.
 | `DECK_DRAIN_MAX_MIN` | `15` | On graceful restart, minutes to wait for running turns and live background work (subagents, Monitor); work still running then is cut, announced in its session, and told to the model on the next turn (a note added to its first prompt by a hook). |
 | `DECK_BG_MAX_MIN` | `360` | Minutes a CLI process may stay open for background tasks after its turn. When the limit cuts work, deck records it and sends the session on by itself (at most twice in a row). |
 | `DECK_BACKUP_RETENTION_DAYS` | `30` | Age at which fork backups and trashed sessions are deleted. |
+| `DECK_USAGE_SOURCE` | `cli` | Where Claude usage comes from: `cli` (the official CLI's own per-turn output) or `usage-deck` (an external dashboard at `DECK_URL`). Unset: `usage-deck` only when the dashboard address is set (`DECK_URL` or the `deck_url` file), otherwise `cli`. See [Usage data](#usage-data). |
 | `DECK_USAGE_STRICT` | unset | `1` = unknown quota means Opus / engine switch, `0` = never. Unset: decided by `usage-source.json`. |
 | `DECK_URL` | `http://127.0.0.1:9310` | Base URL of the optional usage dashboard. When unset, the first line of `~/.config/claude-pick/deck_url` is used if that file exists (an optional path shared with the author's other tools). |
 | `CLAUDE_PROTECT` | unset | Protected account id. Falls back to `~/.config/offload/protect` (optional, shared with the author's other tools). |
@@ -191,7 +192,12 @@ Server-wide settings changed in the UI (default permission mode, routing policy)
 
 ### Usage data
 
-quarterdeck can poll an external usage dashboard at `DECK_URL` (`GET /api/state`, every 60 seconds) for per-account usage windows. **This is optional.** The dashboard is a separate program and not part of this repository; the expected response is:
+There are two sources for the Claude usage cards, chosen with `DECK_USAGE_SOURCE`:
+
+- **`cli` (default).** quarterdeck never calls a usage endpoint. Each Claude account's 5-hour and weekly numbers come only from the `rate_limit_event` that the official `claude` CLI prints during a turn quarterdeck runs on that account. The last reading and when it was taken are kept per account in `<config dir>/claude-usage-observed.json` (mode 0600), so they survive a restart. A card shows when its numbers were observed ("마지막 턴 기준 · 12분 전" — as of the last turn, 12 minutes ago), or that the account has not been observed yet. A window whose reset time has passed is shown as 0 % and marked as an estimate. Usage within a window never goes down, so after 10 minutes a reading still counts for routing as a lower bound until the earliest reset time of its windows (at most 24 hours after it was taken; a window with no reset time: 10 minutes). The card then says "추정 · 마지막 턴 12분 전" (estimate, last turn 12 minutes ago), and a fresher account wins over it. Past that point the card is dimmed and routing treats the account as unknown. The CLI reports no Fable window, so the Fable limit stays unknown (the Fable row says "CLI 미제공", not provided by the CLI); as in any install without a dashboard, that alone does not turn a Fable request into Opus (set `DECK_USAGE_STRICT=1` if you want it to). When the CLI says the account is on overage, or that the Opus-family limit refused a request, Fable counts as spent until that limit resets, and Fable requests go to Opus.
+- **`usage-deck`.** Chosen automatically when you set the dashboard address (`DECK_URL`, or the `deck_url` file) or when a dashboard at the default address has answered this install before (recorded in `<config dir>/usage-source.json`), or with `DECK_USAGE_SOURCE=usage-deck`. Described below.
+
+In `usage-deck` mode, quarterdeck polls an external usage dashboard at `DECK_URL` (`GET /api/state`, every 60 seconds) for per-account usage windows. The dashboard is a separate program and not part of this repository; the expected response is:
 
 ```json
 { "cards": [ { "id": "claude:main", "status": "ok", "fetchedAt": "2026-01-01T00:00:00Z",

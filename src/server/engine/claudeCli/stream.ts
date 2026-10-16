@@ -308,6 +308,28 @@ function windowOf(w: unknown): RateLimitSignal['fiveHour'] {
   return { usedPct: Math.round(u * 100), resetsAt: isoFromEpochSec((w as Rec).resetsAt) };
 }
 
+/** `rateLimitType` values the SDK declares (sdk.d.ts SDKRateLimitInfo) — fixtures show five_hour; anything else is logged once. */
+const KNOWN_LIMIT_TYPES = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_overage_included', 'overage']);
+const loggedLimitTypes = new Set<string>();
+
+/**
+ * What a rate_limit_event says about Fable. Spent (100 %, until `resetsAt`): the account already runs on overage (the
+ * plan's limits are used up), or the Opus family's limit (Fable shares it) refuses. A warning on that limit carries its
+ * own `utilization` when there is one (a warning can come at ~60 %: not a spent Fable); without one it says nothing.
+ */
+function fableSpentOf(info: Rec): RateLimitSignal['fiveHour'] {
+  const type = typeof info.rateLimitType === 'string' ? info.rateLimitType : null;
+  if (type !== null && !KNOWN_LIMIT_TYPES.has(type) && !loggedLimitTypes.has(type)) {
+    loggedLimitTypes.add(type);
+    console.warn(`deck: rate_limit_event 의 처음 보는 rateLimitType "${type}" (status ${String(info.status)})`);
+  }
+  const resetsAt = isoFromEpochSec(info.resetsAt);
+  const family = type !== null && /opus|fable/.test(type);
+  if (info.isUsingOverage === true || (family && info.status === 'rejected')) return { usedPct: 100, resetsAt };
+  if (family && info.status === 'allowed_warning' && typeof info.utilization === 'number') return { usedPct: Math.round(info.utilization * 100), resetsAt };
+  return null;
+}
+
 function usageOf(u: unknown): TurnUsage {
   const r = (u ?? {}) as Rec;
   const n = (k: string) => (typeof r[k] === 'number' ? (r[k] as number) : 0);
@@ -392,7 +414,8 @@ export function mapCliMessage(m: CliMessage): EngineEvent[] {
     case 'rate_limit_event': {
       const info = m.rate_limit_info as unknown as Rec;
       const uw = (info.unifiedWindows ?? {}) as Rec;
-      return [{ kind: 'rate_limit', info: { status: info.status as RateLimitSignal['status'], fiveHour: windowOf(uw.five_hour), weekly: windowOf(uw.seven_day) } }];
+      const fable = fableSpentOf(info);
+      return [{ kind: 'rate_limit', info: { status: info.status as RateLimitSignal['status'], fiveHour: windowOf(uw.five_hour), weekly: windowOf(uw.seven_day), ...(fable ? { fable } : {}) } }];
     }
     case 'result': {
       const ok = m.subtype === 'success' && !m.is_error;

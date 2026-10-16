@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Account, AccountNames, AccountRegistry, AccountRoot } from '../shared/accounts';
+import type { UsageMode } from '../shared/usage-types';
 import { loadAccountRegistry } from './accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
 import { resolveClaudeBin, type ClaudeBin } from './engine/claudeCli/version';
@@ -69,6 +70,10 @@ export type DeckConfig = {
   usageStrict: boolean | null;
   /** The usage-deck address was set by the user (`DECK_URL`, or `~/.config/claude-pick/deck_url`), not the default: an install that expects usage-deck. */
   deckUrlConfigured: boolean;
+  /** `DECK_USAGE_SOURCE` (`cli` | `usage-deck`); unset or junk → `usage-deck` when the address was set by the user or usage-deck has answered before (`usageSourceFile`), else `cli` (see usageModeOf). */
+  usageMode: UsageMode;
+  /** `cli` mode: the last `rate_limit_event` windows per Claude account and when they were observed (0600). */
+  claudeUsageFile: string;
   usageIndexFile: string;
   /** The format-1 index a build before configurable accounts wrote: converted once into `usageIndexFile`, never written. */
   usageIndexV1File: string;
@@ -104,6 +109,28 @@ export function readDeckUrl(file: string, fallback = DEFAULT_DECK_URL): string {
   }
 }
 
+/**
+ * Where Claude usage comes from. An explicit `DECK_USAGE_SOURCE` wins; otherwise an install that expects usage-deck
+ * (`deckExpected`: the user set its address, or it has answered this install before — usage-source.json) keeps
+ * usage-deck, and any other install (the public default) reads only the CLI's own `rate_limit_event` — no call to a
+ * private usage endpoint (spec 2026-10-15 §3 rule 2).
+ */
+export function usageModeOf(env: NodeJS.ProcessEnv, deckExpected: boolean): UsageMode {
+  const v = env.DECK_USAGE_SOURCE?.trim();
+  if (v === 'cli' || v === 'usage-deck') return v;
+  return deckExpected ? 'usage-deck' : 'cli';
+}
+
+/** usage-source.json (UsageService's record) says usage-deck has answered: a readable `deckSeenAt`. Anything else: false. */
+export function readDeckSeen(file: string): boolean {
+  try {
+    const at = (JSON.parse(fs.readFileSync(file, 'utf8')) as { deckSeenAt?: unknown } | null)?.deckSeenAt;
+    return typeof at === 'string' && !Number.isNaN(Date.parse(at));
+  } catch {
+    return false;
+  }
+}
+
 /** Review fix 2: extra new-session roots exist for the E2E harnesses only — honoured on a loopback-only server, and `/` is never a root. */
 function extraCwdRoots(env: NodeJS.ProcessEnv): string[] {
   if (env.DECK_LOOPBACK_ONLY !== '1') return [];
@@ -127,6 +154,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
   // CLAUDE_PROTECT wins over the file; a value that is not a configured account falls through to the file, with a warning.
   if (env.CLAUDE_PROTECT && !accounts.has(env.CLAUDE_PROTECT)) log(`deck: CLAUDE_PROTECT="${env.CLAUDE_PROTECT}" 는 설정에 없는 계정이라 무시합니다 (계정: ${accounts.all().join(', ')})`);
   const deckUrlFromFile = readDeckUrl(path.join(home, '.config', 'claude-pick', 'deck_url'), '');
+  const deckUrlConfigured = !!env.DECK_URL || deckUrlFromFile !== '';
+  // A usage-deck at the default address (no DECK_URL, no deck_url) that has answered before still counts as expected.
+  const deckExpected = deckUrlConfigured || readDeckSeen(path.join(configDir, 'usage-source.json'));
+  if (env.DECK_USAGE_SOURCE && !['cli', 'usage-deck'].includes(env.DECK_USAGE_SOURCE.trim())) log(`deck: DECK_USAGE_SOURCE="${env.DECK_USAGE_SOURCE}" 는 cli 나 usage-deck 이 아니라 무시합니다 — ${usageModeOf({}, deckExpected)} 로 시작합니다`);
   const protectedAccount = accounts.has(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'), accounts, log);
   return {
     home,
@@ -164,7 +195,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     pushSubscriptionsFile: path.join(configDir, 'push-subscriptions.json'),
     usageSourceFile: path.join(configDir, 'usage-source.json'),
     usageStrict: env.DECK_USAGE_STRICT === '1' ? true : env.DECK_USAGE_STRICT === '0' ? false : null,
-    deckUrlConfigured: !!env.DECK_URL || deckUrlFromFile !== '',
+    deckUrlConfigured,
+    usageMode: usageModeOf(env, deckExpected),
+    claudeUsageFile: path.join(configDir, 'claude-usage-observed.json'),
     usageIndexFile: path.join(configDir, 'usage-index-v2.json'),
     usageIndexV1File: path.join(configDir, 'usage-index.json'),
     vapidSubject: /^(https:|mailto:)/.test(env.DECK_VAPID_SUBJECT ?? '') ? env.DECK_VAPID_SUBJECT! : null,

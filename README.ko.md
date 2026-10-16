@@ -174,6 +174,7 @@ CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c  (계정
 | `DECK_DRAIN_MAX_MIN` | `15` | 재시작할 때 돌고 있는 턴을 기다리는 최대 분. |
 | `DECK_BG_MAX_MIN` | `120` | 턴이 끝난 뒤 백그라운드 작업 때문에 CLI 프로세스를 열어 두는 최대 분. |
 | `DECK_BACKUP_RETENTION_DAYS` | `30` | 분기 백업과 삭제한 세션을 지우는 기준 일수. |
+| `DECK_USAGE_SOURCE` | `cli` | Claude 사용량을 어디서 얻는가: `cli`(공식 CLI 가 턴마다 내는 출력) 또는 `usage-deck`(`DECK_URL` 의 외부 대시보드). 미설정이면 대시보드 주소를 설정했을 때(`DECK_URL` 또는 `deck_url` 파일)만 `usage-deck`, 아니면 `cli`. [사용량 자료](#사용량-자료) 참고. |
 | `DECK_USAGE_STRICT` | 미설정 | `1` = 잔여량 모름 → Opus·엔진 전환, `0` = 전환 안 함. 미설정이면 `usage-source.json` 으로 정한다. |
 | `DECK_URL` | `http://127.0.0.1:9310` | 선택 사항인 사용량 대시보드의 주소. 미설정이면 `~/.config/claude-pick/deck_url` 파일이 있을 때 그 첫 줄을 쓴다(작성자의 다른 도구와 공유하는 선택적 경로이며 없어도 된다). |
 | `CLAUDE_PROTECT` | 미설정 | 보호 계정 id. 없으면 `~/.config/offload/protect`(작성자의 다른 도구와 공유하는 선택적 경로, 없어도 된다). |
@@ -191,7 +192,12 @@ CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c  (계정
 
 ### 사용량 자료
 
-quarterdeck 은 `DECK_URL` 의 외부 사용량 대시보드를 60초마다 조회해(`GET /api/state`) 계정별 사용량 창을 받을 수 있다. **없어도 된다.** 대시보드는 별도 프로그램이고 이 저장소에 들어 있지 않다. 기대하는 응답은 다음과 같다.
+Claude 사용량 카드의 출처는 둘이고 `DECK_USAGE_SOURCE` 로 고른다.
+
+- **`cli` (기본).** 사용량 엔드포인트를 전혀 호출하지 않는다. 계정별 5시간·주간 값은 quarterdeck 이 그 계정으로 돌린 턴에서 공식 `claude` CLI 가 내는 `rate_limit_event` 에서만 얻는다. 마지막 값과 관측 시각은 계정별로 `<설정 디렉터리>/claude-usage-observed.json`(권한 0600)에 저장되어 재시작 뒤에도 남는다. 카드에는 언제 관측했는지("마지막 턴 기준 · 12분 전")가, 관측이 없는 계정에는 "아직 관측 없음"이 보인다. 리셋 시각이 지난 창은 0% 로 보되 "추정"으로 표시한다. 한 창 안의 사용량은 줄지 않으므로, 관측 뒤 10분이 지나도 그 값은 창들 중 가장 이른 리셋 시각까지(관측 뒤 최대 24시간, 리셋 시각이 없는 창은 10분) 라우팅에서 하한값으로 쓴다. 그동안 카드는 "추정 · 마지막 턴 12분 전"으로 보이고, 더 최근에 관측한 계정이 먼저 뽑힌다. 그 뒤에는 카드가 흐려지고 라우팅은 그 계정을 모름으로 본다. CLI 는 Fable 한도를 알려 주지 않으므로 Fable 잔여량은 모르는 채로 두고(Fable 행은 "CLI 미제공"), 대시보드 없는 설치와 마찬가지로 그것만으로 Fable 요청을 Opus 로 바꾸지 않는다(바꾸려면 `DECK_USAGE_STRICT=1`). CLI 가 그 계정이 초과 사용(overage) 중이라거나 Opus 계열 한도가 요청을 거절했다고 알리면, 그 한도가 리셋될 때까지 Fable 은 소진으로 보고 Fable 요청을 Opus 로 보낸다.
+- **`usage-deck`.** 대시보드 주소를 설정했거나(`DECK_URL` 또는 `deck_url` 파일) 기본 주소의 대시보드가 이 설치에 응답한 적이 있으면(`<설정 디렉터리>/usage-source.json` 에 기록) 자동으로, 또는 `DECK_USAGE_SOURCE=usage-deck` 으로 고른다. 아래 설명.
+
+`usage-deck` 모드에서 quarterdeck 은 `DECK_URL` 의 외부 사용량 대시보드를 60초마다 조회해(`GET /api/state`) 계정별 사용량 창을 받는다. 대시보드는 별도 프로그램이고 이 저장소에 들어 있지 않다. 기대하는 응답은 다음과 같다.
 
 ```json
 { "cards": [ { "id": "claude:main", "status": "ok", "fetchedAt": "2026-01-01T00:00:00Z",

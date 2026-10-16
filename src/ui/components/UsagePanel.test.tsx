@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { UsagePanel, bucketLabel, countdown, creditsText, fullestWindow, geminiHint, resetStamp, shortCountdown } from './UsagePanel';
+import { UsagePanel, agoText, bucketLabel, countdown, creditsText, fullestWindow, geminiHint, observedText, resetStamp, shortCountdown } from './UsagePanel';
 import type { UsageSnapshot } from '../../shared/usage-types';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -333,5 +333,94 @@ describe('UsagePanel 남음 caption, colour notes and the measured compact switc
     const first = screen.getByRole('tooltip').children[1] as HTMLElement;
     expect(first.textContent).toContain('남은 양');
     expect(first.textContent).toContain('노랑 = 20% 이하 남음');
+  });
+});
+
+describe('UsagePanel · cli usage mode (observed times)', () => {
+  afterEach(cleanup);
+  const cliUsage: UsageSnapshot = {
+    generatedAt: 'x',
+    deckReachable: false,
+    usageMode: 'cli',
+    accounts: {
+      a: { status: 'stale', fetchedAt: new Date(NOW - 12 * 60_000).toISOString(), fiveHour: { usedPct: 0, resetsAt: new Date(NOW - 60_000).toISOString(), estimated: true }, weekly: { usedPct: 40, resetsAt: null }, fable: null },
+      b: { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null },
+      c: { status: 'ok', fetchedAt: new Date(NOW - 20_000).toISOString(), fiveHour: { usedPct: 10, resetsAt: null }, weekly: { usedPct: 3, resetsAt: null }, fable: null },
+    },
+  };
+
+  it('agoText / observedText', () => {
+    expect(agoText(null, NOW)).toBe('');
+    expect(agoText('junk', NOW)).toBe('');
+    expect(agoText(new Date(NOW - 30_000).toISOString(), NOW)).toBe('방금');
+    expect(agoText(new Date(NOW - 12 * 60_000).toISOString(), NOW)).toBe('12분 전');
+    expect(agoText(new Date(NOW - 3 * 3_600_000).toISOString(), NOW)).toBe('3시간 전');
+    expect(agoText(new Date(NOW - 50 * 3_600_000).toISOString(), NOW)).toBe('2일 전');
+    expect(observedText(cliUsage.accounts.a!, NOW)).toBe('마지막 턴 기준 · 12분 전');
+    expect(observedText(cliUsage.accounts.b!, NOW)).toBe('아직 관측 없음');
+  });
+
+  it('each Claude card says when its numbers were observed (title and popover); no usage-deck stale tag', () => {
+    render(<UsagePanel usage={cliUsage} current={null} now={NOW} />);
+    // a: stale with no trustUntil — dimmed, and the title says routing treats it as unknown.
+    expect(screen.getByTestId('account-a').title).toBe('마지막 턴 기준 · 12분 전 · 라우팅은 모름으로 봄');
+    expect(screen.getByTestId('account-a').className).toContain('stale');
+    expect(screen.getByTestId('account-b').title).toBe('아직 관측 없음');
+    expect(screen.getByTestId('account-c').title).toBe('마지막 턴 기준 · 방금');
+    expect(screen.queryByText('오래된 값')).toBeNull();
+    // The assumed reset is said in the row title and in the popover.
+    expect(screen.getByTestId('a-fiveHour').title).toContain('추정');
+    expect(screen.getByTestId('a-weekly').title).not.toContain('추정');
+    fireEvent.click(screen.getByTestId('account-a'));
+    expect(screen.getByTestId('a-observed').textContent).toContain('마지막 턴 기준 · 12분 전');
+    expect(screen.getByRole('tooltip').textContent).toContain('5h 100% 남음 (추정)');
+    fireEvent.click(screen.getByTestId('account-a'));
+    fireEvent.click(screen.getByTestId('account-b'));
+    expect(screen.getByTestId('b-observed').textContent).toContain('아직 관측 없음');
+    // GPT has no observation label (its numbers come from the Codex rollout, not a Claude turn).
+    expect(screen.getByTestId('account-gpt').title).not.toContain('usage-deck');
+  });
+
+  it('MED-1: a stale card within trustUntil is not dimmed and reads "추정 · 마지막 턴 N분 전"; past it, dimmed', () => {
+    const a = { ...cliUsage.accounts.a!, fiveHour: { usedPct: 30, resetsAt: new Date(NOW + 3_600_000).toISOString() }, trustUntil: new Date(NOW + 3_600_000).toISOString() };
+    const kept: UsageSnapshot = { ...cliUsage, accounts: { ...cliUsage.accounts, a } };
+    expect(observedText(a, NOW)).toBe('추정 · 마지막 턴 12분 전');
+    expect(observedText(a, NOW + 2 * 3_600_000)).toBe('마지막 턴 기준 · 2시간 전');
+    const { unmount } = render(<UsagePanel usage={kept} current={null} now={NOW} />);
+    expect(screen.getByTestId('account-a').title).toBe('추정 · 마지막 턴 12분 전');
+    expect(screen.getByTestId('account-a').className).toContain('kept');
+    expect(screen.getByTestId('account-a').className).not.toContain('stale');
+    unmount();
+    render(<UsagePanel usage={kept} current={null} now={NOW + 2 * 3_600_000} />);
+    expect(screen.getByTestId('account-a').className).toContain('stale');
+    expect(screen.getByTestId('account-a').title).toContain('라우팅은 모름으로 봄');
+  });
+
+  it('MED-3: in cli mode an unknown Fable row says "CLI 미제공" (row and popover); a known one shows its %', () => {
+    const withFable: UsageSnapshot = { ...cliUsage, accounts: { ...cliUsage.accounts, c: { ...cliUsage.accounts.c!, fable: { usedPct: 100, resetsAt: null } } } };
+    render(<UsagePanel usage={withFable} current={null} now={NOW} />);
+    expect(screen.getByTestId('a-fable').textContent).toContain('CLI 미제공');
+    expect(screen.getByTestId('a-fable').title).toBe('Fable · CLI 미제공');
+    expect(screen.getByTestId('c-fable').textContent).toContain('소진');
+    fireEvent.click(screen.getByTestId('account-a'));
+    expect(screen.getByRole('tooltip').textContent).toContain('Fable CLI 미제공');
+  });
+
+  it('LOW-5: an estimated row carries the estimated class (striped bar, dashed number — no hover needed)', () => {
+    render(<UsagePanel usage={cliUsage} current={null} now={NOW} />);
+    expect(screen.getByTestId('a-fiveHour').className).toContain('estimated');
+    expect(screen.getByTestId('a-weekly').className).not.toContain('estimated');
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.usage-row\.estimated \.usage-bar > i \{ background: repeating-linear-gradient/);
+    expect(css).toMatch(/\.usage-row\.estimated \.usage-value \{ text-decoration: underline dashed/);
+  });
+
+  it('usage-deck mode shows no observed label', () => {
+    render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    expect(screen.getByTestId('account-a').title).toBe('');
+    // No "CLI 미제공" and no trust rule outside cli mode.
+    expect(document.body.textContent).not.toContain('CLI 미제공');
+    fireEvent.click(screen.getByTestId('account-a'));
+    expect(screen.queryByTestId('a-observed')).toBeNull();
   });
 });

@@ -4,7 +4,7 @@ import { useAccounts } from '../accounts';
 import { useIsPhone } from '../useIsPhone';
 import { ClaudeMark, GeminiMark, OpenAIMark } from './EngineMark';
 import { isGeminiAccount } from '../../shared/accounts';
-import { emptyAccountUsage, parseIsoUtc, remainingPct, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 type WindowKey = 'fiveHour' | 'weekly' | 'fable';
 const WINDOWS: { key: WindowKey; name: string }[] = [
@@ -61,6 +61,37 @@ export function resetStamp(resetsAt: string | null): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/** How long ago, short: "방금", "12분 전", "3시간 전", "2일 전"; '' when unreadable. */
+export function agoText(iso: string | null, now: number): string {
+  if (!iso) return '';
+  const t = parseIsoUtc(iso);
+  if (Number.isNaN(t)) return '';
+  const min = Math.floor(Math.max(0, now - t) / 60_000);
+  if (min < 1) return '방금';
+  if (min < 60) return `${min}분 전`;
+  const h = Math.floor(min / 60);
+  return h < 24 ? `${h}시간 전` : `${Math.floor(h / 24)}일 전`;
+}
+
+/**
+ * `cli` usage mode: when a Claude card's numbers were observed ("마지막 턴 기준 · 12분 전"), or that they never were.
+ * Old but still a lower bound (stale within `trustUntil`): "추정 · 마지막 턴 12분 전".
+ */
+export function observedText(u: AccountUsage, now: number): string {
+  const ago = u.fiveHour || u.weekly ? agoText(u.fetchedAt, now) : '';
+  if (!ago) return '아직 관측 없음';
+  return u.status === 'stale' && trusted(u, now) ? `추정 · 마지막 턴 ${ago}` : `마지막 턴 기준 · ${ago}`;
+}
+
+/** `cli` usage mode: the Fable row when no turn told a value (rate_limit_event has no Fable window). */
+const CLI_NO_FABLE = 'CLI 미제공';
+
+/** `cli` usage mode: a dimmed card (stale past `trustUntil`) — what the router does with it. */
+const UNTRUSTED = '라우팅은 모름으로 봄';
+
+/** A window assumed reset (its observed reset time has passed): said in the titles and the popover. */
+const ESTIMATED = '추정 — 관측한 리셋 시각이 지나 0%로 봄';
+
 /** Whole credits with thousands separators ("49,563"); null when there is nothing to spend. */
 export function creditsText(c: GptCredits | null | undefined): string | null {
   if (!c || !c.hasCredits) return null;
@@ -97,10 +128,10 @@ function useClock(fixed: number | undefined, periodMs = 30_000): number {
 type Pop = { seat: Seat; x: number; y: number; pinned: boolean };
 
 /** One window row: label · rounded bar · remaining %; a spent window collapses into a muted "소진 · reset" pill. */
-function WindowRow({ seat, name, k, w, now, short }: { seat: Seat; name: string; /** Row id for the test id: a window key, or a Gemini bucket's. */ k: string; w: UsageWindow | null; now: number; /** Show the short countdown after the % (the card's fullest window). */ short?: boolean }) {
+function WindowRow({ seat, name, k, w, now, short, empty }: { seat: Seat; name: string; /** Row id for the test id: a window key, or a Gemini bucket's. */ k: string; w: UsageWindow | null; now: number; /** Show the short countdown after the % (the card's fullest window). */ short?: boolean; /** Said instead of '—' when there is no value. */ empty?: string }) {
   const rem = remainingPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
-  const title = rem === null ? `${name} · 알 수 없음` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`;
+  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '');
   if (rem === 0) {
     const at = resetStamp(w?.resetsAt ?? null);
     return (
@@ -111,10 +142,10 @@ function WindowRow({ seat, name, k, w, now, short }: { seat: Seat; name: string;
     );
   }
   return (
-    <div data-testid={`${seat}-${k}`} className={`usage-row ${levelClass(w)}`} title={title}>
+    <div data-testid={`${seat}-${k}`} className={`usage-row ${levelClass(w)}${w?.estimated ? ' estimated' : ''}`} title={title}>
       <span className="usage-label">{name}</span>
       <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
-      <span className="usage-value">{rem === null ? '—' : <>{rem}<small>%</small></>}</span>
+      <span className="usage-value">{rem === null ? (empty ? <span className="usage-na">{empty}</span> : '—') : <>{rem}<small>%</small></>}</span>
       {/* Right after the % on the same baseline ("19% · 5일", the dot is CSS): the row says which window resets. */}
       {short && w?.resetsAt && <small className="usage-cd" data-testid={`${seat}-${k}-cd`} title={`${name} · ${reset}`}>{shortCountdown(w.resetsAt, now)}</small>}
       {reset && <span className="usage-reset">{reset}</span>}
@@ -123,9 +154,13 @@ function WindowRow({ seat, name, k, w, now, short }: { seat: Seat; name: string;
 }
 
 /** One seat as a small card: mark + letter, then aligned rows; reset times on hover (title) and in a tap popover. */
-function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHistory, next }: {
+function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHistory, next, observed, cli }: {
   seat: Seat; u: AccountUsage; windows: { key: WindowKey; name: string }[]; current: boolean; now: number;
   pop: Pop | null; onPop: (p: Pop | null) => void; hint?: string; onOpenHistory?: () => void;
+  /** `cli` usage mode: when these numbers were observed (observedText), on the card's title and in the popover. */
+  observed?: string;
+  /** `cli` usage mode (a Claude card): a stale card within `trustUntil` is not dimmed; Fable with no value says CLI_NO_FABLE. */
+  cli?: boolean;
   /** The active session's next turn would run here (route_preview). */
   next?: RouteNext | null;
 }) {
@@ -136,6 +171,10 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
   };
   const open = pop?.seat === seat;
   const credits = seat === 'gpt' ? creditsText(u.credits) : null;
+  // `cli`: old numbers are a lower bound until the window resets (routing keeps the account): dimmed only after that.
+  const kept = !!cli && u.status === 'stale' && trusted(u, now);
+  const dim = !!cli && u.status === 'stale' && !kept;
+  const emptyOf = (key: WindowKey) => (cli && key === 'fable' ? CLI_NO_FABLE : undefined);
   // Compact layouts (phone, tablet) show one number per seat: the least left of 5h / 주간, the windows that gate every model.
   // Fable only gates Fable (a spent Fable must not read "소진" for the whole seat); its bar still shows.
   const fullest = fullestWindow(u, windows.map((w) => w.key));
@@ -149,8 +188,8 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
   return (
     <div
       data-testid={`account-${seat}`}
-      className={`usage-card ${seat === 'gpt' ? 'gpt' : 'claude'} ${current ? 'current' : ''} ${u.status} ${open ? 'open' : ''}`}
-      title={hint ?? ''}
+      className={`usage-card ${seat === 'gpt' ? 'gpt' : 'claude'} ${current ? 'current' : ''} ${kept ? 'kept' : u.status} ${open ? 'open' : ''}`}
+      title={[hint, observed, dim ? UNTRUSTED : ''].filter(Boolean).join(' · ')}
       role="button"
       tabIndex={0}
       aria-expanded={open}
@@ -171,7 +210,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
         {!worst ? '—' : worst.rem === 0 ? '소진' : <>{worst.rem}<small>%</small></>}
       </span>
       <div className="usage-rows">
-        {windows.map(({ key, name }) => <WindowRow key={key} seat={seat} name={name} k={key} w={u[key]} now={now} short={key === fullest} />)}
+        {windows.map(({ key, name }) => <WindowRow key={key} seat={seat} name={name} k={key} w={u[key]} now={now} short={key === fullest} {...(emptyOf(key) ? { empty: emptyOf(key) } : {})} />)}
         {credits && (
           <div data-testid="gpt-credits" className="usage-row credits" title="ChatGPT 크레딧 잔액 — 주간 한도가 끝난 뒤 쓰는 유료 크레딧">
             <span className="usage-label">크레딧</span>
@@ -187,12 +226,13 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
           <div className="usage-pop-title">{label} 계정{current ? ' · 현재' : ''}</div>
           <div className="usage-pop-row hint">{LEGEND}</div>
           {hint && <div className="usage-pop-row hint">{hint}</div>}
+          {observed && <div className="usage-pop-row" data-testid={`${seat}-observed`}><span>관측</span><b>{observed}</b></div>}
           {windows.map(({ key, name }) => {
             const w = u[key];
             const rem = remainingPct(w);
             return (
-              <div key={key} className="usage-pop-row">
-                <span>{name} {rem === null ? '—' : rem === 0 ? '한도 소진' : `${rem}% 남음`}</span>
+              <div key={key} className="usage-pop-row" {...(w?.estimated ? { title: ESTIMATED } : {})}>
+                <span>{name} {rem === null ? (emptyOf(key) ?? '—') : rem === 0 ? '한도 소진' : `${rem}% 남음`}{w?.estimated ? ' (추정)' : ''}</span>
                 <b>{w?.resetsAt ? (rem === 0 ? `${resetStamp(w.resetsAt)} 리셋` : countdown(w.resetsAt, now)) : '리셋 시각 없음'}</b>
               </div>
             );
@@ -357,20 +397,22 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
   const gemini = usage.gemini ?? null;
   const cards = active.length + 1 + (gemini ? 1 : 0);
   const dense = cards > 5 || (phone && cards > 4) || cramped;
+  const cli = usage.usageMode === 'cli';
   return (
     <div ref={panelRef} className="usage-panel" data-cards={cards} {...(dense ? { 'data-dense': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})} style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}>
       {/* Said once for the whole row, not on every card: the numbers are what is left, and what amber / red mean. */}
       <span className="usage-caption" title={`${LEGEND} · 카드를 누르면 리셋 시각`}>남음</span>
       {/* The 다음 턴 label only where the route leaves the current account or its model (staying put needs no news). */}
       {active.map(({ id: a }) => (
-        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} next={next?.account === a && (a !== current || next.asOpus) ? next : null} />
+        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} next={next?.account === a && (a !== current || next.asOpus) ? next : null} {...(cli ? { observed: observedText(usageOf(usage, a), now), cli } : {})} />
       ))}
       <SeatCard
         seat="gpt" u={gpt} windows={GPT_WINDOWS} current={current === 'gpt'} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory}
-        {...(gpt.status === 'down' ? { hint: 'GPT 잔여량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {})}
+        {...(gpt.status === 'down' ? { hint: cli ? 'GPT 잔여량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다' : 'GPT 잔여량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {})}
       />
       {gemini && <GeminiCard g={gemini} current={isGeminiAccount(current)} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />}
-      {!usage.deckReachable && <span className="usage-stale" title="usage-deck 에 닿지 않아 마지막 값을 보여 줍니다">오래된 값</span>}
+      {/* `cli` never asks usage-deck: deckReachable is always false there and says nothing. */}
+      {!cli && !usage.deckReachable && <span className="usage-stale" title="usage-deck 에 닿지 않아 마지막 값을 보여 줍니다">오래된 값</span>}
     </div>
   );
 }

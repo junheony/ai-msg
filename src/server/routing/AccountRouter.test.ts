@@ -841,3 +841,32 @@ describe('같은 벤더 계정 자동 순환 꺼짐 (sameVendorRotation: false)'
     expect(chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, sameVendorRotation: true })).account).not.toBe('c');
   });
 });
+
+describe('cli usage mode: trusted stale candidates (trustUntil)', () => {
+  // a: excluded (5h at the limit) so B and C decide; B stale for 30 min but trusted until its 5h reset.
+  const trust = new Date(NOW + 2 * H).toISOString();
+  const usageOf3 = (mode: UsageSnapshot['usageMode'], bTrust: boolean, bAge = 30 * 60_000): UsageSnapshot => {
+    const s = snap({ s: 99, w: 10 }, { s: 10, w: 20, status: 'stale', age: bAge }, { s: 40, w: 20 });
+    if (bTrust) s.accounts.b = { ...s.accounts.b!, trustUntil: trust };
+    return mode ? { ...s, usageMode: mode } : s;
+  };
+
+  it('a trusted stale account stays a candidate (stale: true); without trustUntil it is unknown', () => {
+    expect(rankCandidates(dflt({ usage: usageOf3('cli', true) })).candidates.find((c) => c.account === 'b')).toMatchObject({ stale: true });
+    const r = rankCandidates(dflt({ usage: usageOf3('cli', false) }));
+    expect(r.candidates.map((c) => c.account)).toEqual(['c']);
+    expect(r.unknown).toContain('b');
+  });
+
+  it('고르게 분산: a fresh safe candidate beats a trusted-stale lower bound (B stale 10% vs C fresh 40% → C), with its reason', () => {
+    const u = usageOf3('cli', true);
+    expect(rankCandidates(dflt({ usage: u })).candidates.map((c) => c.account)).toEqual(['c', 'b']);
+    expect(chooseAccount(dflt({ usage: u })).reason).toBe('새 세션 · 분산: 5h C 40% · B 오래된 관측(추정)');
+  });
+
+  it('usage-deck mode keeps the old order and reason: a stale card within STALE_MAX_MS is ranked by its numbers', () => {
+    const u = usageOf3(undefined, false, 5 * 60_000);
+    expect(rankCandidates(dflt({ usage: u })).candidates.map((c) => [c.account, c.stale])).toEqual([['b', true], ['c', false]]);
+    expect(chooseAccount(dflt({ usage: u })).reason).toBe('새 세션 · 분산: 5h B 10% < C 40%');
+  });
+});
