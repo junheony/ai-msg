@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import type { Seat } from '../../shared/accounts';
 import { useAccounts } from '../accounts';
 import { useIsPhone } from '../useIsPhone';
@@ -27,8 +27,8 @@ export function countdown(resetsAt: string | null, now: number): string {
 }
 
 /**
- * The always-on short form next to a card's fullest window: "47분 후", "3시간 후", "1일 5시간 후" (under 48 hours the
- * hours still count), "2일 후", "리셋됨"; '' without a (readable) reset time.
+ * The always-on short form after the % of a card's fullest window ("19% · 5일"): "47분", "3시간", "1일 5시간" (under 48
+ * hours the hours still count), "2일", "리셋됨"; '' without a (readable) reset time. The title has the full wording.
  */
 export function shortCountdown(resetsAt: string | null, now: number): string {
   if (!resetsAt) return '';
@@ -36,10 +36,10 @@ export function shortCountdown(resetsAt: string | null, now: number): string {
   if (Number.isNaN(ms)) return '';
   if (ms <= 0) return '리셋됨';
   const h = Math.floor(ms / 3_600_000);
-  if (h >= 48) return `${Math.floor(h / 24)}일 후`;
-  if (h >= 24) return h > 24 ? `1일 ${h - 24}시간 후` : '1일 후';
-  if (h >= 1) return `${h}시간 후`;
-  return `${Math.max(1, Math.floor(ms / 60_000))}분 후`;
+  if (h >= 48) return `${Math.floor(h / 24)}일`;
+  if (h >= 24) return h > 24 ? `1일 ${h - 24}시간` : '1일';
+  if (h >= 1) return `${h}시간`;
+  return `${Math.max(1, Math.floor(ms / 60_000))}분`;
 }
 
 /** The window whose short countdown a card shows: the highest usedPct, ties 5h > 주간 > Fable; null when no window has a value. */
@@ -77,6 +77,12 @@ function levelClass(w: UsageWindow | null): string {
   return 'ok';
 }
 
+/** What the numbers and colours mean: the 남음 caption's title and the first line of a card's popover. */
+const LEGEND = '숫자는 각 한도의 남은 양(%) · 노랑 = 20% 이하 남음 · 빨강 = 5% 이하 남음';
+
+/** What the amber / red of a row means, for its title ('' while green). */
+const LEVEL_NOTE: Record<string, string> = { warn: ' · 노랑: 20% 이하 남음', danger: ' · 빨강: 5% 이하 남음' };
+
 /** Review M9: the countdowns re-render every 30 s instead of freezing at the last snapshot. */
 function useClock(fixed: number | undefined, periodMs = 30_000): number {
   const [tick, setTick] = useState(() => Date.now());
@@ -91,10 +97,10 @@ function useClock(fixed: number | undefined, periodMs = 30_000): number {
 type Pop = { seat: Seat; x: number; y: number; pinned: boolean };
 
 /** One window row: label · rounded bar · remaining %; a spent window collapses into a muted "소진 · reset" pill. */
-function WindowRow({ seat, name, k, w, now, short }: { seat: Seat; name: string; /** Row id for the test id: a window key, or a Gemini bucket's. */ k: string; w: UsageWindow | null; now: number; /** Show the short countdown next to the % (the card's fullest window). */ short?: boolean }) {
+function WindowRow({ seat, name, k, w, now, short }: { seat: Seat; name: string; /** Row id for the test id: a window key, or a Gemini bucket's. */ k: string; w: UsageWindow | null; now: number; /** Show the short countdown after the % (the card's fullest window). */ short?: boolean }) {
   const rem = remainingPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
-  const title = rem === null ? `${name} · 알 수 없음` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}`;
+  const title = rem === null ? `${name} · 알 수 없음` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`;
   if (rem === 0) {
     const at = resetStamp(w?.resetsAt ?? null);
     return (
@@ -109,7 +115,8 @@ function WindowRow({ seat, name, k, w, now, short }: { seat: Seat; name: string;
       <span className="usage-label">{name}</span>
       <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
       <span className="usage-value">{rem === null ? '—' : <>{rem}<small>%</small></>}</span>
-      {short && w?.resetsAt && <small className="usage-cd" data-testid={`${seat}-${k}-cd`}>{shortCountdown(w.resetsAt, now)}</small>}
+      {/* Right after the % on the same baseline ("19% · 5일", the dot is CSS): the row says which window resets. */}
+      {short && w?.resetsAt && <small className="usage-cd" data-testid={`${seat}-${k}-cd`} title={`${name} · ${reset}`}>{shortCountdown(w.resetsAt, now)}</small>}
       {reset && <span className="usage-reset">{reset}</span>}
     </div>
   );
@@ -147,7 +154,7 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
       role="button"
       tabIndex={0}
       aria-expanded={open}
-      aria-label={`${label} 잔여량${current ? ' (현재)' : ''}`}
+      aria-label={`${label} 잔여량${current ? ' (현재)' : ''}${next ? ` · 다음 턴 여기${next.asOpus ? '(Opus)' : ''}` : ''}`}
       onMouseEnter={(e) => { if (!pop?.pinned) onPop(at(e.currentTarget, false)); }}
       onMouseLeave={() => { if (!pop?.pinned) onPop(null); }}
       onClick={(e) => { e.stopPropagation(); onPop(open && pop?.pinned ? null : at(e.currentTarget, true)); }}
@@ -156,13 +163,9 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPop(open ? null : at(e.currentTarget, true)); }
       }}
     >
-      {current && <span className="usage-dot" aria-hidden="true" />}
       <div className="usage-id">
         {seat === 'gpt' ? <OpenAIMark className="usage-mark gpt" /> : <ClaudeMark className="usage-mark claude" />}
         <span className="usage-letter" title={label}>{label}</span>
-        {/* Next-turn routing preview: the account (and model) the next message of the active pane will go to. Inside the id
-            column, never overhanging the card — the cards fill the top bar's height, so an overhang gets clipped. */}
-        {next && <span className="usage-next" data-testid={`next-${seat}`} title={`다음 턴은 이 계정으로 갑니다: ${next.reason}`}>{next.asOpus ? '다음 턴 · Opus' : '다음 턴'}</span>}
       </div>
       <span className={`usage-sum ${worst ? levelClass(worst.w) : 'none'}`} aria-hidden="true" title={worst ? `가장 적게 남은 한도 · ${worst.name} ${worst.rem}%` : '잔여량 알 수 없음'}>
         {!worst ? '—' : worst.rem === 0 ? '소진' : <>{worst.rem}<small>%</small></>}
@@ -176,9 +179,13 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
           </div>
         )}
       </div>
+      {/* Next-turn routing preview: the account (and model) the next message of the active pane will go to. A label laid on
+          the card's bottom edge (positioned, so the letter and rows sit exactly where they do on every other card). */}
+      {next && <span className="usage-next" data-testid={`next-${seat}`} title={`다음 턴은 이 계정으로 갑니다: ${next.reason}`}>{next.asOpus ? '→ 다음 턴 · Opus' : '→ 다음 턴'}</span>}
       {open && (
         <div className="usage-pop" role="tooltip" style={{ left: pop.x, top: pop.y }}>
           <div className="usage-pop-title">{label} 계정{current ? ' · 현재' : ''}</div>
+          <div className="usage-pop-row hint">{LEGEND}</div>
           {hint && <div className="usage-pop-row hint">{hint}</div>}
           {windows.map(({ key, name }) => {
             const w = u[key];
@@ -249,7 +256,6 @@ function GeminiCard({ g, current, now, pop, onPop, onOpenHistory }: { g: GeminiU
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPop(open ? null : at(e.currentTarget, true)); }
       }}
     >
-      {current && <span className="usage-dot" aria-hidden="true" />}
       <div className="usage-id">
         <GeminiMark className="usage-mark gemini" />
         <span className="usage-letter" title="Gemini (Antigravity)">Gemini</span>
@@ -265,6 +271,7 @@ function GeminiCard({ g, current, now, pop, onPop, onOpenHistory }: { g: GeminiU
       {open && (
         <div className="usage-pop" role="tooltip" style={{ left: pop.x, top: pop.y }}>
           <div className="usage-pop-title">Gemini{current ? ' · 현재' : ''}</div>
+          <div className="usage-pop-row hint">{LEGEND}</div>
           {hint && <div className="usage-pop-row hint">{hint}</div>}
           {rows.map((r) => {
             const rem = remainingPct(r.w);
@@ -290,11 +297,48 @@ function GeminiCard({ g, current, now, pop, onPop, onOpenHistory }: { g: GeminiU
 /** Where the active session's next turn would go (route_preview), as the card tag shows it. */
 export type RouteNext = { account: Seat; reason: string; asOpus?: boolean };
 
+/** Below this the compact layouts (styles.css, max-width: 1100px) apply; the measured switch below is for the full cards only. */
+const COMPACT_QUERY = '(max-width: 1100px)';
+
+/**
+ * True while the full cards do not fit the width they get (their rows overflow the card even with the bars dropped): the
+ * top bar's other items do not shrink, so the room for the cards depends on more than the window width. Measured on the
+ * cards (the panel itself is display: contents in the two-row layouts): while the full cards show, after every render
+ * (new numbers, a countdown growing, the 30 s clock) and on every card resize; the width the full cards needed is kept,
+ * since the compact card cannot measure it, and the switch turns back off only once the cards are 16px wider than that.
+ */
+function useCramped(panel: RefObject<HTMLDivElement | null>, ids: string): boolean {
+  const [cramped, setCramped] = useState(false);
+  const on = useRef(false);
+  const need = useRef(0);
+  const check = useCallback(() => {
+    const set = (v: boolean) => { if (v !== on.current) { on.current = v; setCramped(v); } };
+    const list = panel.current ? [...panel.current.querySelectorAll<HTMLElement>(':scope > .usage-card')] : [];
+    if (!list.length || (typeof window.matchMedia === 'function' && window.matchMedia(COMPACT_QUERY).matches)) return set(false);
+    if (on.current) { if (Math.min(...list.map((c) => c.clientWidth)) >= need.current + 16) set(false); return; }
+    const over = list.filter((c) => c.scrollWidth > c.clientWidth + 1);
+    if (over.length) { need.current = Math.max(...over.map((c) => c.scrollWidth)); set(true); }
+  }, [panel]);
+  // Before paint, so an overflowing full card never shows for a frame.
+  useLayoutEffect(() => { if (!on.current) check(); });
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el || !ids || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(check);
+    for (const c of el.querySelectorAll(':scope > .usage-card')) ro.observe(c);
+    check();
+    return () => ro.disconnect();
+  }, [panel, ids, check]);
+  return cramped;
+}
+
 export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next = null }: { usage: UsageSnapshot | null; current: Seat | null; now?: number; onOpenHistory?: () => void; next?: RouteNext | null }) {
   const now = useClock(fixedNow);
   const { active } = useAccounts();
   const phone = useIsPhone();
   const [pop, setPop] = useState<Pop | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const cramped = useCramped(panelRef, usage ? [...active.map((a) => a.id), 'gpt', ...(usage.gemini ? ['gemini'] : [])].join(' ') : '');
   useEffect(() => {
     if (!pop?.pinned) return;
     const close = () => setPop(null);
@@ -309,14 +353,17 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
   // One card per active account, one for GPT, one for Gemini when it is set up: the grid's column count. Up to five cards
   // keep the rows of numbers (five go to two rows below 1600px, see styles.css); past five there is no room for them at any
   // width: the compact card (label over the lowest remaining %). A phone has that room for four cards only. From seven
-  // cards a phone shows two rows.
+  // cards a phone shows two rows. Fewer cards take the compact card too while the full ones do not fit (useCramped).
   const gemini = usage.gemini ?? null;
   const cards = active.length + 1 + (gemini ? 1 : 0);
-  const dense = cards > 5 || (phone && cards > 4);
+  const dense = cards > 5 || (phone && cards > 4) || cramped;
   return (
-    <div className="usage-panel" data-cards={cards} {...(dense ? { 'data-dense': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})} style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}>
+    <div ref={panelRef} className="usage-panel" data-cards={cards} {...(dense ? { 'data-dense': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})} style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}>
+      {/* Said once for the whole row, not on every card: the numbers are what is left, and what amber / red mean. */}
+      <span className="usage-caption" title={`${LEGEND} · 카드를 누르면 리셋 시각`}>남음</span>
+      {/* The 다음 턴 label only where the route leaves the current account or its model (staying put needs no news). */}
       {active.map(({ id: a }) => (
-        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} next={next?.account === a ? next : null} />
+        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} next={next?.account === a && (a !== current || next.asOpus) ? next : null} />
       ))}
       <SeatCard
         seat="gpt" u={gpt} windows={GPT_WINDOWS} current={current === 'gpt'} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory}

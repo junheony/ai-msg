@@ -251,7 +251,7 @@ describe('account palette (styles.css)', () => {
     expect(tile).toMatch(/min-width: 20px/);
     expect(tile).toMatch(/padding: 0 4px/);
     expect(tile).not.toMatch(/[^-]width: 20px/);
-    expect(css).toMatch(/\.usage-panel \{[^}]*grid-template-columns: repeat\(var\(--usage-cards, 4\), minmax\(0,/);
+    expect(css).toMatch(/\.usage-panel \{[^}]*grid-template-columns: auto repeat\(var\(--usage-cards, 4\), minmax\(0,/);
   });
 
   it('a long label is cut at 12 characters in the badge and in the picker (the whole of it is in the title)', () => {

@@ -510,12 +510,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .switch-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-raised); transition: transform .15s; }
 /* === usage header === */
 /* Each seat is a small card: mark + letter, then aligned rows (label · rounded bar · remaining %).
-   Colour follows what is left (green → amber ≤20% → red ≤5%); the current account gets a quiet accent ring + dot.
+   Colour follows what is left (green → amber ≤20% → red ≤5%); the current account gets a quiet accent ring.
    Never scrolls sideways: ≥1280px one row; below, a second row where the four cards share the width equally
    (bars drop out when a card gets narrow); on a phone the cards stack into mini cards (letter on top, numbers below). */
 .topbar { height: 70px; }
 .usage-panel {
-  display: grid; grid-auto-flow: column; grid-template-columns: repeat(var(--usage-cards, 4), minmax(0, 240px)); grid-auto-columns: auto;
+  display: grid; grid-auto-flow: column; grid-template-columns: auto repeat(var(--usage-cards, 4), minmax(0, 240px)); grid-auto-columns: auto;
   align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; height: 100%;
 }
 .usage-loading { color: var(--muted); font-size: calc(13.5px * var(--font-scale, 1)); white-space: nowrap; }
@@ -530,7 +530,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-card:hover, .usage-card.open { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .usage-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .usage-card.current { background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
-.usage-dot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar), 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); }
 .usage-id { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 24px; line-height: 1; flex-shrink: 0; }
 .usage-mark.claude { width: 14px; height: 14px; flex-shrink: 0; }
 .usage-mark.gpt { width: 14px; height: 14px; flex-shrink: 0; color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
@@ -551,7 +550,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ok); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
 .usage-row.warn .usage-bar > i { background: var(--warn); }
 .usage-row.danger .usage-bar > i { background: var(--danger); }
-.usage-value { justify-self: end; min-width: 38px; text-align: right; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
+.usage-value { justify-self: end; align-self: baseline; line-height: 16px; min-width: 38px; text-align: right; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
 .usage-value small { margin-left: 1px; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
 .usage-row.warn .usage-value { color: var(--warn); }
 .usage-row.danger .usage-value { color: var(--danger); }
@@ -565,9 +564,20 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-credits { grid-column: 2 / -1; justify-self: start; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
 .usage-reset { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .usage-stale { flex-shrink: 0; padding: 2px 8px; border-radius: 9px; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
-/* Short countdown next to a card's fullest window (always on, desktop); the 다음 tag = where the active session's next turn goes. */
-.usage-cd { margin-left: 5px; min-width: 48px; text-align: right; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
-.usage-next { display: inline-block; padding: 0 5px; height: 13px; line-height: 13px; border-radius: 7px; font-size: calc(10px * var(--font-scale, 1)); font-weight: 600; white-space: nowrap; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+/* Short countdown of a card's fullest window, right after its % on the same baseline ("19% · 5일"; always on, desktop). */
+.usage-cd { align-self: baseline; margin-left: 4px; line-height: 16px; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; font-variant-numeric: tabular-nums; color: var(--muted); }
+.usage-cd::before { content: "· "; }
+/* 다음 턴 = where the active session's next turn goes: a label laid on the card's bottom edge (opaque, so it cuts the
+   border line). Positioned, so every card keeps the same letter and rows; it reaches ~4px below the card, into the space
+   the top bar leaves around it (a clipping compact card lets it through, see the compact layouts). */
+.usage-next {
+  position: absolute; left: 8px; bottom: -.45em; max-width: calc(100% - 16px); box-sizing: border-box;
+  padding: 0 5px; line-height: 1.15; border-radius: 5px; overflow: hidden; text-overflow: ellipsis;
+  font-size: calc(9.5px * var(--font-scale, 1)); font-weight: 600; white-space: nowrap;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--sidebar)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+/* "남음", once before the cards: the numbers are what is left (the title adds what amber / red mean). */
+.usage-caption { align-self: center; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; white-space: nowrap; color: var(--faint); cursor: help; }
 /* Top bar status chips (작업 현황, 재시작 대기, 재시작됨): small muted pills like the stale tag. */
 .top-chip { flex-shrink: 0; padding: 2px 8px; border: 0; border-radius: 9px; font: inherit; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
 button.top-chip { cursor: pointer; }
@@ -613,6 +623,7 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .topbar > .topbar-end { order: 3; }
   .usage-panel { display: contents; }
   .usage-stale { order: 2; }
+  .usage-caption { order: 10; flex: 0 0 auto; }
   .usage-card { order: 10; flex: 1 1 0; }
   .usage-loading { order: 10; flex: 1 0 100%; padding: 4px 0 6px; }
   /* The top row is shared with the logo and actions: chips take their short form and may shrink (ellipsis). */
@@ -633,6 +644,7 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .topbar:has(> .usage-panel[data-cards="5"]) > .topbar-end { order: 3; min-width: 0; flex-shrink: 1; }
   .topbar > .usage-panel[data-cards="5"] { display: contents; }
   .usage-panel[data-cards="5"] .usage-stale { order: 2; }
+  .usage-panel[data-cards="5"] .usage-caption { order: 10; flex: 0 0 auto; }
   .usage-panel[data-cards="5"] .usage-card { order: 10; flex: 1 1 0; max-width: none; }
   .usage-panel[data-cards="5"] .usage-loading { order: 10; flex: 1 0 100%; padding: 4px 0 6px; }
   .topbar:has(> .usage-panel[data-cards="5"]) .top-chip { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -648,7 +660,6 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .topbar > .brand { display: inline-flex; height: 46px; margin-right: 2px; }
   .topbar-end { margin-left: auto; }
   .usage-card { flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 7px 5px; border-radius: 10px; cursor: pointer; }
-  .usage-dot { top: 6px; right: 6px; width: 5px; height: 5px; }
   .usage-id { flex-direction: row; justify-content: flex-start; gap: 4px; min-width: 0; height: 15px; }
   .usage-mark.claude { width: 12px; height: 12px; }
   .usage-mark.gpt, .usage-mark.gemini { width: 12px; height: 12px; }
@@ -1572,14 +1583,15 @@ button.hl-head:hover { background: var(--hover); }
    (5h · 주간 · Fable side by side). Exact numbers and reset times stay in the tap popover. */
 @media (max-width: 1100px) {
   .usage-card { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto 3px; align-items: center; column-gap: 6px; row-gap: 4px; padding: 5px 8px 6px; border-radius: 9px; cursor: pointer; overflow: hidden; }
-  .usage-dot { top: 4px; right: 4px; width: 5px; height: 5px; }
   .usage-id { flex-direction: row; justify-content: flex-start; gap: 3px; min-width: 0; height: auto; overflow: hidden; }
   .usage-mark.claude { width: 12px; height: 12px; }
   .usage-mark.gpt, .usage-mark.gemini { width: 12px; height: 12px; }
   .usage-letter { font-size: calc(14px * var(--font-scale, 1)); }
   .usage-card.gpt .usage-letter, .usage-card.gemini .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
-  /* A narrow card has no room for the "다음 턴" tag next to the number; the tap popover names the route. */
-  @container usage-card (max-width: 150px) { .usage-next { display: none; } }
+  /* The 다음 턴 label sits on the bottom edge: the card lets it out (its id and number clip themselves). No room for the
+     남음 caption here; the tap popover says "N% 남음". */
+  .usage-card:has(> .usage-next) { overflow: visible; }
+  .usage-caption { display: none; }
   .usage-sum { display: block; justify-self: end; min-width: 0; overflow: hidden; white-space: nowrap; line-height: 1.2; font-size: calc(13.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
   .usage-sum small { margin-left: 1px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
   .usage-sum.warn { color: var(--warn); }
@@ -1987,7 +1999,6 @@ button.hl-head:hover { background: var(--hover); }
 /* More than four cards (four accounts + GPT and up): no room for the rows of numbers, so at every width a card is the
    label over the lowest remaining %, over thin bars (5h · 주간 · Fable); the tap popover has the numbers. */
 .usage-panel[data-dense] .usage-card { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 3px; align-items: center; row-gap: 2px; padding: 4px 6px 5px; border-radius: 9px; cursor: pointer; overflow: hidden; }
-.usage-panel[data-dense] .usage-dot { top: 4px; right: 4px; width: 5px; height: 5px; }
 .usage-panel[data-dense] .usage-id { flex-direction: row; justify-content: flex-start; gap: 3px; min-width: 0; height: auto; overflow: hidden; }
 .usage-panel[data-dense] .usage-mark { width: 12px; height: 12px; }
 .usage-panel[data-dense] .usage-letter { min-width: 0; max-width: none; text-align: left; font-size: calc(13px * var(--font-scale, 1)); line-height: 1.2; }
@@ -2004,6 +2015,7 @@ button.hl-head:hover { background: var(--hover); }
 .usage-panel[data-dense] .usage-label, .usage-panel[data-dense] .usage-value, .usage-panel[data-dense] .usage-pill, .usage-panel[data-dense] .usage-credits { display: none; }
 .usage-panel[data-dense] .usage-bar { display: block; height: 100%; border-radius: 0; background: transparent; }
 .usage-panel[data-dense] .usage-bar > i { border-radius: 2px; }
+.usage-panel[data-dense] .usage-card:has(> .usage-next) { overflow: visible; }
 @media (max-width: 1100px) { .usage-panel[data-dense] .usage-mark { display: none; } }
 @media (max-width: 720px) {
   .usage-panel[data-dense] .usage-card { padding: 4px 4px 5px; }
