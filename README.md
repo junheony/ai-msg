@@ -78,6 +78,8 @@ npm run restart                         # graceful restart: refused while turns 
 
 The service reads environment variables from `~/.config/deck/env` (`KEY=value` lines). The file is read as a shell script (`scripts/launchd/run.sh` sources it), so keep it writable by you only (`chmod 600`).
 
+When server code (`src/server`, `src/shared`) changed since the server started, the top bar shows *서버 업데이트 대기 · 파일 N개*; *지금 재시작* runs the same graceful drain as `npm run restart`. It is offered only when the relaunch loop or the LaunchAgent will start the server again (`DECK_SUPERVISED=1`, set by `scripts/relaunch.sh`, and the loop still running as the server's parent — checked on every request); a server started by hand, or one left running after `relaunch.sh stop`, refuses it. Detection compares file modification times, so a file whose timestamp changed without a content change (e.g. after `git checkout` or `git stash`) counts too.
+
 If the repo lives under `~/Documents` (or Desktop/Downloads), give **Full Disk Access** to the node binary the installer prints (System Settings → Privacy & Security). The LaunchAgent starts that node (`scripts/launchd/boot.mjs`), and macOS checks folder access against the job's own program — so node's grant covers the shell scripts and the server it starts.
 
 ## Multiple Claude accounts

@@ -78,6 +78,8 @@ npm run restart                         # 재시작: 돌던 턴이 끝난 뒤 �
 
 서비스는 `~/.config/deck/env` 의 환경변수(`KEY=value` 한 줄씩)를 읽는다. 이 파일은 셸 스크립트로 읽히므로(`scripts/launchd/run.sh` 가 source) 본인만 쓸 수 있게 둔다(`chmod 600`).
 
+서버가 뜬 뒤 서버 코드(`src/server`, `src/shared`)가 바뀌면 상단에 *서버 업데이트 대기 · 파일 N개* 가 뜨고, *지금 재시작* 은 `npm run restart` 와 같은 drain 으로 재시작한다. relaunch 루프나 LaunchAgent 가 서버를 다시 켜 줄 때만(`scripts/relaunch.sh` 가 넣는 `DECK_SUPERVISED=1`, 그리고 그 루프가 지금도 서버의 부모로 살아 있을 때 — 요청마다 확인) 보이고, 손으로 띄운 서버나 `relaunch.sh stop` 뒤 남은 서버는 거절한다. 파일 수정 시각으로 판단하므로 내용은 그대로인데 시각만 바뀐 파일(`git checkout`·`git stash` 뒤 등)도 바뀐 것으로 센다.
+
 저장소가 `~/Documents`(또는 데스크탑·다운로드) 아래에 있으면 설치 스크립트가 알려 주는 node 에 **전체 디스크 접근 권한**을 준다(시스템 설정 → 개인정보 보호 및 보안). LaunchAgent 는 그 node 로 시작하고(`scripts/launchd/boot.mjs`), macOS 는 폴더 접근을 작업의 첫 프로그램 기준으로 판단하므로 node 의 권한이 그 아래 셸 스크립트와 서버까지 덮는다.
 
 ## Claude 계정 여러 개 쓰기

@@ -14,7 +14,8 @@ import { CodexEngine } from './engine/CodexEngine';
 import { SlashCommandCache } from './engine/slashCommands';
 import { FileLister } from './files';
 import { GeminiEngine, GeminiLogin } from './engine/GeminiEngine';
-import { createRequestHandler } from './http';
+import { createRequestHandler, type ServerUpdateDeps } from './http';
+import { ServerUpdateWatch, supervisionCheck } from './serverUpdate';
 import { installCrashHandlers } from './crash';
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
 import { EventLog } from './highlights';
@@ -42,6 +43,8 @@ import { GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
 import type { PermMode } from '../shared/permission';
 
 async function main(): Promise<void> {
+  // When this process started: code edited later is what a restart would bring in.
+  const startedAt = Date.now() - Math.round(process.uptime() * 1000);
   const cfg = loadConfig();
   const token = await loadOrCreateToken(cfg.tokenFile);
   const accounts = cfg.accounts;
@@ -141,7 +144,12 @@ async function main(): Promise<void> {
     retry: (r) => submitRetry(r),
   });
   await events.load();
-  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events });
+  const updates = new ServerUpdateWatch({ root: cfg.repoRoot, startedAt });
+  await updates.start();
+  // Bound once installGracefulShutdown has run (after listening).
+  let restartCtl: ReturnType<typeof installGracefulShutdown> = { draining: () => false, request: () => {} };
+  const serverUpdate: ServerUpdateDeps = { check: () => updates.check(), supervised: supervisionCheck({ env: cfg.supervised, pidFile: path.join(cfg.configDir, 'relaunch.pid') }), draining: () => restartCtl.draining(), restart: () => restartCtl.request('UI 재시작') };
+  const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
   const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); }, onUserSend: (sessionId) => watch.userSent(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
@@ -166,7 +174,7 @@ async function main(): Promise<void> {
     // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
     void flushThenExit(() => Promise.all([events.flush(), claude.close()]).then(() => {}), () => process.exit(0));
   };
-  installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });
+  restartCtl = installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });
 }
 
 const claudeLabel = (b: ClaudeBin) => (b.ok ? `${b.version}${b.belowRecommended ? ` (${RECOMMENDED_CLAUDE_VERSION} 이상 권장)` : ''}` : b.reason === 'too_old' ? `${b.version} (너무 오래됨 — ${MIN_CLAUDE_VERSION} 이상 필요)` : '없음');

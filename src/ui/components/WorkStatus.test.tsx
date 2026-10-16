@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { HighlightsBadge, ServerChip, WorkStatus, idleLabel, uptimeLabel } from './WorkStatus';
+import { HighlightsBadge, ServerChip, ServerUpdateChip, WorkStatus, idleLabel, restartConfirmText, uptimeLabel } from './WorkStatus';
+import type { SessionActivity } from '../../shared/protocol';
 
 const M = 60_000;
 const ok = (n: number) => new Response(JSON.stringify({ hours: 24, events: Array.from({ length: n }, (_, i) => ({ at: i })) }), { status: 200 });
@@ -187,5 +188,60 @@ describe('HighlightsBadge', () => {
     expect(badgeText()).toBe('하이라이트 7');
     fireEvent.click(screen.getByTestId('hl-badge'));
     expect(onOpen).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ServerUpdateChip', () => {
+  const act1 = (over: Partial<SessionActivity>): SessionActivity => ({ sessionId: 's', cwd: '/p', turnId: 't', running: false, bg: 0, forMs: 0, ...over });
+  const upd = (changedFiles: number, supervised = true) => new Response(JSON.stringify({ changedFiles, newestAt: 1, supervised, draining: false }), { status: 200 });
+
+  it('restartConfirmText: turns plus background tasks, or 바로 when idle', () => {
+    expect(restartConfirmText([])).toBe('바로 재시작합니다');
+    expect(restartConfirmText([act1({ running: true, bg: 2 }), act1({ sessionId: 'b', bg: 1 })])).toBe('진행 중 작업 4개가 끝나면 재시작합니다');
+  });
+
+  it('shows 서버 업데이트 대기 · 파일 N when code changed under a supervisor; hidden unsupervised, unchanged or draining', async () => {
+    const f = vi.fn(async () => upd(3));
+    const { rerender } = render(<ServerUpdateChip ready draining={false} activity={[]} fetchFn={f as unknown as typeof fetch} />);
+    await flush();
+    expect(f).toHaveBeenCalledWith('/api/server-update');
+    expect(screen.getByTestId('update-chip').querySelector('.chip-long')!.textContent).toBe('서버 업데이트 대기 · 파일 3개 지금 재시작');
+    rerender(<ServerUpdateChip ready draining activity={[]} fetchFn={f as unknown as typeof fetch} />);
+    expect(screen.queryByTestId('update-chip')).toBeNull();
+    cleanup();
+    for (const r of [() => upd(2, false), () => upd(0)]) {
+      render(<ServerUpdateChip ready draining={false} activity={[]} fetchFn={(async () => r()) as unknown as typeof fetch} />);
+      await flush();
+      expect(screen.queryByTestId('update-chip')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('지금 재시작 → a confirm with what it waits for; 재시작 posts /api/restart, 취소 does not', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const f = vi.fn(async (url: string, init?: RequestInit) => { calls.push({ url, init }); return url === '/api/restart' ? new Response('{"ok":true,"draining":true}', { status: 200 }) : upd(1); });
+    render(<ServerUpdateChip ready draining={false} activity={[act1({ running: true })]} fetchFn={f as unknown as typeof fetch} />);
+    await flush();
+    fireEvent.click(screen.getByTestId('update-chip'));
+    expect(screen.getByRole('dialog', { name: '서버 재시작' }).textContent).toContain('진행 중 작업 1개가 끝나면 재시작합니다');
+    fireEvent.click(screen.getByText('취소'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(calls.some((c) => c.url === '/api/restart')).toBe(false);
+    fireEvent.click(screen.getByTestId('update-chip'));
+    fireEvent.click(screen.getByText('재시작'));
+    await flush();
+    expect(calls.filter((c) => c.url === '/api/restart').map((c) => c.init?.method)).toEqual(['POST']);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a refused restart shows the server\'s message and keeps the confirm open', async () => {
+    const f = async (url: string) => (url === '/api/restart' ? new Response(JSON.stringify({ error: '관리자 없이 실행 중' }), { status: 409 }) : upd(1));
+    render(<ServerUpdateChip ready draining={false} activity={[]} fetchFn={f as unknown as typeof fetch} />);
+    await flush();
+    fireEvent.click(screen.getByTestId('update-chip'));
+    expect(screen.getByRole('dialog').textContent).toContain('바로 재시작합니다');
+    fireEvent.click(screen.getByText('재시작'));
+    await flush();
+    expect(screen.getByRole('alert').textContent).toBe('관리자 없이 실행 중');
   });
 });

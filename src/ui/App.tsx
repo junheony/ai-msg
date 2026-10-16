@@ -22,7 +22,7 @@ import { Sidebar, type SidebarView } from './components/Sidebar';
 import { UsagePanel } from './components/UsagePanel';
 import { UsageView } from './components/UsageView';
 import { Highlights } from './components/Highlights';
-import { HighlightsBadge, ServerChip, WorkStatus, type WorkRow } from './components/WorkStatus';
+import { HighlightsBadge, ServerChip, ServerUpdateChip, WorkStatus, type WorkRow } from './components/WorkStatus';
 import { isGeminiAccount } from '../shared/accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
@@ -1194,6 +1194,7 @@ export function App() {
         <div className="topbar-end">
           {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onNewChat={() => newChat()} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={openWorkRow} />}
           {!phone && has('highlights') && <HighlightsBadge ready={state.ready} running={state.activity.filter((a) => a.running).length} onOpen={() => setHighlightsOpen(true)} />}
+          {has('serverUpdate') && <ServerUpdateChip ready={state.ready} draining={state.draining} activity={state.activity} />}
           {!phone && <ServerChip startedAt={state.serverStartedAt} restartedAt={state.restartedAt} draining={state.draining} busy={busySessions} activity={state.activity} titleOf={titleOf} onOpen={openWorkRow} onDismissRestart={() => dispatch({ type: 'dismiss_restart' })} />}
           <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={usageOpen} data-sheet-return="" title="토큰 사용량 기록 (주별·일별)">사용량</button>
           {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (⋮⋮ 를 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
