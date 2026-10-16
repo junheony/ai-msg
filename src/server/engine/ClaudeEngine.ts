@@ -25,8 +25,13 @@ export { BackgroundTracker, ProgressMeter, isActivity, isInjectedNoopResult, too
 export { toUserMessage, type ReadFile } from './claudeCli/prompt';
 export { NO_TOOLS_MESSAGE, KEEP_PLANNING_MESSAGE } from './claudeCli/texts';
 
-/** Background waiting caps: total wait after the first result, and how long an emptied set may stay idle. */
-export const BG_MAX_MS = 6 * 60 * 60_000;
+/**
+ * Background waiting caps: total wait after the first result (default Infinity — no cap, the process is held until its
+ * background work ends; a finite `bgMaxMs` restores one), and how long an emptied set may stay idle.
+ */
+export const BG_MAX_MS = Infinity;
+/** setTimeout fires at once for delays it cannot hold (Infinity, or beyond 2^31-1 ms): those mean no cap timer at all. */
+const MAX_TIMER_MS = 2_147_483_647;
 export const BG_GRACE_MS = 60_000;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -79,7 +84,7 @@ export class ClaudeEngine implements Engine {
    * background tasks are live: when one settles, the CLI injects its notification and runs another turn by itself
    * (yielded as `continue` + that turn's events + its result), and `onLive().send` can add user messages. Stdin
    * closes — and the child ends — after a result with no live background task and no unanswered message, after an
-   * emptied set stays idle for `bgGraceMs`, after `bgMaxMs` (the child is terminated), or on abort (SIGINT).
+   * emptied set stays idle for `bgGraceMs`, after a finite `bgMaxMs` (the child is terminated), or on abort (SIGINT).
    */
   async *runTurn(req: TurnRequest): AsyncIterable<EngineEvent> {
     // A fork gets its own id from init; the parent's id must never be reported as the turn's session.
@@ -265,7 +270,8 @@ export class ClaudeEngine implements Engine {
         if (aborted) break; // changed
         if (unanswered.length === 0 && bg.tasks().length === 0) break;
         idle = unanswered.length === 0;
-        if (!capTimer) { capTimer = setTimeout(() => finish('cap'), this.o.bgMaxMs ?? BG_MAX_MS); capTimer.unref?.(); }
+        const capMs = this.o.bgMaxMs ?? BG_MAX_MS;
+        if (!capTimer && capMs <= MAX_TIMER_MS) { capTimer = setTimeout(() => finish('cap'), capMs); capTimer.unref?.(); }
         armGrace();
       }
       // changed: the SDK threw on a dead process; the child's exit is read instead.

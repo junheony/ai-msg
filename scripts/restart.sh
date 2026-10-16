@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Graceful restart of the running deck server: SIGUSR2 → it stops taking sends that need a new process, waits for
-# running turns and live background work (subagents, Monitor; DECK_DRAIN_MAX_MIN, default 15 min) — a process held
-# open with no work left is ended at once — then exits; launchd (KeepAlive) starts it again. Work still running at the
-# deadline is cut: the pane says so and the session's next turn tells the model. Without launchd the server just
-# stops — start it again yourself.
+# running turns and live background work (subagents, Monitor) until they end — or, with DECK_DRAIN_MAX_MIN set, for at
+# most that many minutes — a process held open with no work left is ended at once — then exits; launchd (KeepAlive)
+# starts it again. Work still running at a DECK_DRAIN_MAX_MIN deadline, or when a second signal forces the exit, is
+# cut: the pane says so and the session's next turn tells the model. Without launchd the server just stops — start it
+# again yourself.
 # Before signalling, the server's activity file ($DECK_CONFIG_DIR/activity.json) is read: with a turn running or
 # background work live, or the server already draining (a second signal skips the wait), nothing is sent (exit 2)
 # unless --force. An activity file that is missing or unreadable is reported on one line and the restart goes ahead.
@@ -69,10 +70,10 @@ else
     elif [[ -n "$busy" ]]; then
       echo "$busy" >&2
       if [[ $FORCE -eq 0 ]]; then
-        echo "deck: 진행 중인 작업이 있어 재시작하지 않습니다 — 끝난 뒤 다시 하거나 --force (기다리는 작업은 최대 DECK_DRAIN_MAX_MIN 뒤 끊김)" >&2
+        echo "deck: 진행 중인 작업이 있어 재시작하지 않습니다 — 끝난 뒤 다시 하거나 --force (서버는 작업이 끝날 때까지 기다림 — DECK_DRAIN_MAX_MIN 을 주면 그 시간 뒤 끊김)" >&2
         exit 2
       fi
-      echo "deck: --force — 위 작업이 끝나기를 최대 DECK_DRAIN_MAX_MIN 동안 기다린 뒤 재시작합니다" >&2
+      echo "deck: --force — 위 작업이 끝나기를 기다린 뒤 재시작합니다 (DECK_DRAIN_MAX_MIN 을 주면 최대 그 시간, 한 번 더 --force 하면 즉시)" >&2
     fi
   fi
 fi

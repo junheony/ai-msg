@@ -134,6 +134,22 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     expect(rest.some((e) => e.kind === 'result')).toBe(false);
   });
 
+  it('with no cap (default, or a bgMaxMs setTimeout cannot hold) the process waits until the work ends', async () => {
+    for (const over of [{}, { bgMaxMs: Infinity }, { bgMaxMs: 2 ** 31 }]) {
+      const f = fakeClaudeCli();
+      const r = reader((await engine(f, { bgGraceMs: 20, ...over })).runTurn(req()));
+      f.push(cli.init(), cli.bgLevel([{ id: 't1', desc: 'long watch' }]), cli.result('r'));
+      await r.until('result');
+      await new Promise((res) => setTimeout(res, 50));
+      expect(f.state.inputClosed).toBe(false);
+      f.push(cli.bgLevel([]));
+      const rest = await r.rest();
+      expect(rest.some((e) => e.kind === 'bg_cap' || e.kind === 'notice')).toBe(false);
+      expect(rest).toMatchObject([{ kind: 'background', tasks: [] }]);
+      await bridge?.close(); bridge = null; fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('abort while waiting stops the process and clears the background status', async () => {
     const f = fakeClaudeCli();
     const ac = new AbortController();

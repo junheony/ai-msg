@@ -20,23 +20,27 @@ DOMAIN="gui/$(id -u)"
 
 envval() { [[ -f "$ENV_FILE" ]] && sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n1 | tr -d "\"'" || true; }
 PORT="$(envval DECK_PORT)"; PORT="${PORT:-${DECK_PORT:-9320}}"
-DRAIN_MIN="$(envval DECK_DRAIN_MAX_MIN)"; DRAIN_MIN="${DRAIN_MIN:-15}"
-DRAIN_S="$(awk -v m="$DRAIN_MIN" 'BEGIN { s = int(m * 60); print (s > 0 ? s : 900) }')"
+# DECK_DRAIN_MAX_MIN unset, empty or 0: the server drains until its work ends (DRAIN_S=0 here = no limit).
+DRAIN_MIN="$(envval DECK_DRAIN_MAX_MIN)"
+DRAIN_S="$(awk -v m="$DRAIN_MIN" 'BEGIN { s = int(m * 60); print (s > 0 ? s : 0) }')"
+if (( DRAIN_S > 0 )); then DRAIN_TXT="최대 ${DRAIN_MIN}분"; else DRAIN_TXT="끝날 때까지 — Ctrl-C 로 그만 기다림"; fi
+# launchd SIGKILLs a job it stops after ExitTimeOut; with no drain limit, a day (0 would mean forever and can stall logout).
+EXIT_TIMEOUT=$(( DRAIN_S > 0 ? DRAIN_S + 60 : 86400 ))
 
 listener() { lsof -nP -t -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -n1; }
 loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
 
-# SIGTERM = graceful drain (new turns refused, running ones finish); a second SIGTERM after the window.
+# SIGTERM = graceful drain (new turns refused, running ones finish); a second SIGTERM after the window (none with no limit).
 stop_listener() {
   local pid
   pid="$(listener || true)"
   [[ -z "$pid" ]] && return 0
-  echo "deck: 포트 $PORT 의 서버(pid $pid)에 SIGTERM — 진행 중인 턴이 끝나길 최대 ${DRAIN_MIN}분 기다립니다"
+  echo "deck: 포트 $PORT 의 서버(pid $pid)에 SIGTERM — 진행 중인 턴이 끝나길 기다립니다 (${DRAIN_TXT})"
   echo "      (이 변경 전 버전의 서버라면 기다리지 않고 바로 끝나며 진행 중인 턴도 끊깁니다)"
   kill -TERM "$pid" 2>/dev/null || true
   local waited=0
   while kill -0 "$pid" 2>/dev/null; do
-    if (( waited >= DRAIN_S + 30 )); then
+    if (( DRAIN_S > 0 && waited >= DRAIN_S + 30 )); then
       echo "deck: 대기 시간 초과 — 즉시 종료 신호를 다시 보냅니다"
       kill -TERM "$pid" 2>/dev/null || true
       sleep 3
@@ -52,9 +56,9 @@ stop_listener() {
 
 unload() {
   if loaded; then
-    echo "deck: 기존 LaunchAgent 내림 (SIGTERM → 드레인, 최대 ${DRAIN_MIN}분)"
+    echo "deck: 기존 LaunchAgent 내림 (SIGTERM → 드레인, ${DRAIN_TXT})"
     launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-    for _ in $(seq 1 $((DRAIN_S + 60))); do loaded || break; sleep 1; done
+    for _ in $(seq 1 "$EXIT_TIMEOUT"); do loaded || break; sleep 1; done
   fi
 }
 
@@ -80,8 +84,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
   {
     echo "# deck 서버 환경 (launchd 가 시작할 때마다 scripts/launchd/run.sh 가 읽음). KEY=value 한 줄씩."
     echo "DECK_EXTRA_HOSTS=${DECK_EXTRA_HOSTS:-}"
-    echo "# DECK_DRAIN_MAX_MIN=15   # 재시작 때 진행 중 작업을 기다리는 최대 분"
-    echo "# DECK_BG_MAX_MIN=120     # 턴 뒤 백그라운드 작업을 기다리는 최대 분"
+    echo "# DECK_DRAIN_MAX_MIN=15   # 재시작 때 진행 중 작업을 기다리는 최대 분 (기본·0: 끝날 때까지, 다시 신호를 보내면 즉시 종료)"
+    echo "# DECK_BG_MAX_MIN=120     # 턴 뒤 백그라운드 작업을 기다리는 최대 분 (기본·0: 끝날 때까지)"
     echo "# DECK_STEER=0            # 실행 중 보낸 메시지를 턴에 끼워 넣지 않고 턴 뒤로 미룸 (기본 켜짐)"
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
@@ -94,7 +98,7 @@ sh "$REPO/scripts/relaunch.sh" install >/dev/null
 cp "$REPO/scripts/launchd/boot.mjs" "$CONF_DIR/boot.mjs"
 
 TMP="$(mktemp)"
-sed -e "s|__NODE__|$NODE|g" -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" -e "s|__PATH__|$LAUNCH_PATH|g" -e "s|__EXIT_TIMEOUT__|$((DRAIN_S + 60))|g" "$PLIST_SRC" > "$TMP"
+sed -e "s|__NODE__|$NODE|g" -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" -e "s|__PATH__|$LAUNCH_PATH|g" -e "s|__EXIT_TIMEOUT__|$EXIT_TIMEOUT|g" "$PLIST_SRC" > "$TMP"
 plutil -lint "$TMP" >/dev/null
 
 unload
