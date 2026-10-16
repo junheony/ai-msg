@@ -29,7 +29,7 @@ import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload }
 import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
-import { dockedPanes, initialState, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
+import { dockedPanes, initialState, openPanes, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
@@ -1256,7 +1256,15 @@ export function App() {
           <Sidebar
             projects={state.projects}
             currentSessionId={active.session?.sessionId ?? null}
-            onOpen={(sessionId, cwd, title) => openIn(active.id, sessionId, cwd, title)}
+            onOpen={(sessionId, cwd, title) => {
+              // Already shown in another pane / card: that one comes forward instead of a second copy here.
+              const shown = active.session?.sessionId === sessionId ? undefined : state.panes.find((p) => p.session?.sessionId === sessionId);
+              if (!shown) { openIn(active.id, sessionId, cwd, title); return; }
+              dispatch({ type: 'focus_pane', paneId: shown.id });
+              setDrawer(false); closePeek();
+              requestFocus(shown.id);
+            }}
+            openPanes={openPanes(state.panes)}
             onOpenSplit={openSplit}
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
@@ -1313,7 +1321,7 @@ export function App() {
         <div ref={panesRef} className="panes" data-count={phone ? 1 : docked.length} style={{ '--cols': phone ? 1 : docked.length, ...(!phone && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
           {phone && state.panes.length > 1 && (
             <div className="pane-switch" {...tabs.stripProps}>
-              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
+              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} {...(p.session?.sessionId ? { title: `분할 ${i + 1}번 패널에 열림` } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
               <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}>+</button>
             </div>
           )}

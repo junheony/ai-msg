@@ -638,15 +638,40 @@ describe('App split view (D6)', () => {
     openSession('two'); // p1 (active) → s2
     expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
     expect(closes()).toEqual([]);
-    openSession('one'); // p1 switches s2 → s1: s2 is released, s1 still shown by p0
+    // A second view of s1 (the sidebar row would only bring p0 forward): ⋯ 분할 보기로 열기 → p2.
+    fireEvent.click(within(document.querySelector('.sidebar') as HTMLElement).getByText('one').closest('li')!.querySelector('[aria-label="세션 메뉴"]')!);
+    fireEvent.click(screen.getByRole('menuitem', { name: '분할 보기로 열기' }));
+    fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('패널 닫기')); // s2 is released
     expect(closes()).toEqual(['s2']);
-    fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('패널 닫기')); // p0 still shows s1
+    fireEvent.click(within(screen.getByTestId('pane-p2')).getByLabelText('패널 닫기')); // p0 still shows s1
     expect(closes()).toEqual(['s2']);
     fireEvent.click(screen.getByText(/^\+ 분할/));
     openSession('two');
     fireEvent.click(within(lastPane()).getByLabelText('패널 닫기'));
     expect(closes()).toEqual(['s2', 's2']);
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
+  });
+
+  it('a sidebar row already open in another pane brings that pane forward (no second copy); a row open nowhere loads into the focused pane', async () => {
+    await boot();
+    openSession('one'); // p0 → s1
+    fireEvent.click(screen.getByText(/^\+ 분할/)); // p1 (blank) active
+    const opens = () => frames().filter((f) => f.type === 'open_session').length;
+    const before = opens();
+    const side = document.querySelector('.sidebar') as HTMLElement;
+    expect(within(side).getByRole('img', { name: '분할 1번 패널에 열림' })).toBeTruthy();
+    openSession('one');
+    expect(screen.getByTestId('pane-p0').classList.contains('active')).toBe(true);
+    expect(within(screen.getByTestId('pane-p1')).queryByTitle('one')).toBeNull();
+    expect(opens()).toBe(before);
+    expect(closes()).toEqual([]);
+    // Back to the blank p1: a session no pane shows opens there as before.
+    fireEvent.mouseDown(screen.getByTestId('pane-p1'));
+    expect(screen.getByTestId('pane-p1').classList.contains('active')).toBe(true);
+    openSession('two');
+    expect(within(screen.getByTestId('pane-p1')).getByTitle('two')).toBeTruthy();
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
+    expect(within(side).getByRole('img', { name: '분할 2번 패널에 열림' })).toBeTruthy();
   });
 
   it('T9 (b): a pane closed while its open_session reply is in flight never gets its history into a blank pane', async () => {
