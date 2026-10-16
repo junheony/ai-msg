@@ -454,6 +454,21 @@ describe('chooseAccount · default policy (no policy given = balance)', () => {
     expect(chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 2 * H })).account).toBe('b');
   });
 
+  it('cold session: a 5h-tied account with a much lower weekly (just reset) is a clear win', () => {
+    // On A (weekly 70), C just reset (weekly 2), 5h equal → moves to C.
+    const reset = snap({ s: 1, w: 70 }, { s: 0, w: 79 }, { s: 1, w: 2 });
+    const moved = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: reset }));
+    expect(moved).toMatchObject({ account: 'c', switched: true });
+    expect(moved.reason).toMatch(/캐시 식음/);
+    // Exactly WEEKLY_GAP_PCT lower is enough; one point short is not.
+    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: snap({ s: 1, w: 30 }, { s: 0, w: 79 }, { s: 1, w: 5 }) })).account).toBe('c');
+    const short = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: snap({ s: 1, w: 29 }, { s: 0, w: 79 }, { s: 1, w: 5 }) }));
+    expect(short).toMatchObject({ account: 'a', switched: false });
+    expect(short.reason).toMatch(/주간 차이 25%p 미만/);
+    // A warm session stays even with the weekly gap.
+    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 10 * 60_000, usage: reset }))).toMatchObject({ account: 'a', switched: false });
+  });
+
   it('a missing 5h row is unknown, not 0%: ranked after known values, still a safe candidate', () => {
     // A (protected) past the 5h threshold: B is the one safe account with a known 5h, C has none.
     const usage = snap({ s: 85, w: 0 }, { s: 40, w: 30 }, { s: null, w: 10 });
@@ -824,5 +839,34 @@ describe('같은 벤더 계정 자동 순환 꺼짐 (sameVendorRotation: false)'
   it('absent or true keeps the full router', () => {
     expect(chooseAccount(input({ sameVendorRotation: true })).account).toBe('b');
     expect(chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, sameVendorRotation: true })).account).not.toBe('c');
+  });
+});
+
+describe('cli usage mode: trusted stale candidates (trustUntil)', () => {
+  // a: excluded (5h at the limit) so B and C decide; B stale for 30 min but trusted until its 5h reset.
+  const trust = new Date(NOW + 2 * H).toISOString();
+  const usageOf3 = (mode: UsageSnapshot['usageMode'], bTrust: boolean, bAge = 30 * 60_000): UsageSnapshot => {
+    const s = snap({ s: 99, w: 10 }, { s: 10, w: 20, status: 'stale', age: bAge }, { s: 40, w: 20 });
+    if (bTrust) s.accounts.b = { ...s.accounts.b!, trustUntil: trust };
+    return mode ? { ...s, usageMode: mode } : s;
+  };
+
+  it('a trusted stale account stays a candidate (stale: true); without trustUntil it is unknown', () => {
+    expect(rankCandidates(dflt({ usage: usageOf3('cli', true) })).candidates.find((c) => c.account === 'b')).toMatchObject({ stale: true });
+    const r = rankCandidates(dflt({ usage: usageOf3('cli', false) }));
+    expect(r.candidates.map((c) => c.account)).toEqual(['c']);
+    expect(r.unknown).toContain('b');
+  });
+
+  it('고르게 분산: a fresh safe candidate beats a trusted-stale lower bound (B stale 10% vs C fresh 40% → C), with its reason', () => {
+    const u = usageOf3('cli', true);
+    expect(rankCandidates(dflt({ usage: u })).candidates.map((c) => c.account)).toEqual(['c', 'b']);
+    expect(chooseAccount(dflt({ usage: u })).reason).toBe('새 세션 · 분산: 5h C 40% · B 오래된 관측(추정)');
+  });
+
+  it('usage-deck mode keeps the old order and reason: a stale card within STALE_MAX_MS is ranked by its numbers', () => {
+    const u = usageOf3(undefined, false, 5 * 60_000);
+    expect(rankCandidates(dflt({ usage: u })).candidates.map((c) => [c.account, c.stale])).toEqual([['b', true], ['c', false]]);
+    expect(chooseAccount(dflt({ usage: u })).reason).toBe('새 세션 · 분산: 5h B 10% < C 40%');
   });
 });

@@ -9,6 +9,8 @@ export type RateLimitSignal = {
   status: 'allowed' | 'allowed_warning' | 'rejected';
   fiveHour: UsageWindow | null;
   weekly: UsageWindow | null;
+  /** Set only when the CLI tells a Fable/Opus value: 100 % on `isUsingOverage` or an Opus-family `rejected`; a warning's own `utilization`. */
+  fable?: UsageWindow;
 };
 
 export type EngineResult = {

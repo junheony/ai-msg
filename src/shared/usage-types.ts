@@ -1,6 +1,11 @@
 import type { Account } from './accounts';
 
-export type UsageWindow = { usedPct: number; resetsAt: string | null };
+export type UsageWindow = {
+  usedPct: number;
+  resetsAt: string | null;
+  /** `cli` usage mode: the last observation's `resetsAt` has passed, so 0 % is assumed, not observed. */
+  estimated?: boolean;
+};
 
 /** ChatGPT pay-as-you-go credits from the Codex rollout's `rate_limits.credits`: usable after the plan's weekly is spent (they cost money). */
 export type GptCredits = { hasCredits: boolean; unlimited: boolean; balance: number | null };
@@ -13,6 +18,12 @@ export type AccountUsage = {
   fable: UsageWindow | null;
   /** GPT seat only: credits, when the rollout reported them. */
   credits?: GptCredits | null;
+  /**
+   * `cli` usage mode: until when the last observation still counts (ISO). Usage within a window never goes down, so the
+   * observed numbers are a lower bound until the window resets: routing keeps a 'stale' account as a candidate until
+   * then (see `trusted`). Absent = no such promise (usage-deck mode, never observed).
+   */
+  trustUntil?: string;
 };
 
 /** One Antigravity quota bucket (a model or model family) as `agy -p=/usage` reports it. */
@@ -34,7 +45,14 @@ export type UsageSnapshot = {
   /** Gemini via agy; absent = agy not installed (no card). */
   gemini?: GeminiUsage;
   /** 'none' = this install has never had an answer from usage-deck: unknown usage alone does not change the model or engine. Absent = 'deck'. */ usageSource?: 'deck' | 'none';
+  /**
+   * Where the Claude account numbers come from (`DECK_USAGE_SOURCE`). 'cli' = only the `rate_limit_event` of deck's own
+   * turns (no usage-deck): an account's `fetchedAt` is when that was last observed. Absent = 'usage-deck'.
+   */
+  usageMode?: UsageMode;
 };
+
+export type UsageMode = 'cli' | 'usage-deck';
 
 export function remainingPct(w: UsageWindow | null): number | null {
   if (!w) return null;
@@ -48,6 +66,11 @@ export function emptyAccountUsage(): AccountUsage {
 /** An account's usage; one the snapshot does not carry is unknown ('down'). */
 export function usageOf(s: Pick<UsageSnapshot, 'accounts'>, account: Account): AccountUsage {
   return (Object.hasOwn(s.accounts, account) ? s.accounts[account] : undefined) ?? emptyAccountUsage();
+}
+
+/** A 'stale' account whose numbers still hold as a lower bound (`trustUntil` not yet reached): routing keeps it. */
+export function trusted(u: AccountUsage, nowMs: number): boolean {
+  return u.trustUntil !== undefined && parseIsoUtc(u.trustUntil) > nowMs;
 }
 
 /** `accounts`: the ids to carry (the server passes its registry's). */

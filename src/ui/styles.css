@@ -555,6 +555,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-row.warn .usage-value { color: var(--warn); }
 .usage-row.danger .usage-value { color: var(--danger); }
 .usage-row.none .usage-value { color: var(--faint); font-weight: 500; }
+/* `cli` usage mode: a window assumed reset (estimated) is striped and its number underlined dashed — seen without hover (phones). */
+.usage-row.estimated .usage-bar > i { background: repeating-linear-gradient(135deg, var(--ok) 0 3px, color-mix(in srgb, var(--ok) 35%, transparent) 3px 6px); }
+.usage-row.estimated .usage-value { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
+.usage-value .usage-na { font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; color: var(--faint); }
 .usage-pill {
   grid-column: 2 / -1; justify-self: start; display: inline-block; height: 16px; line-height: 16px; padding: 0 8px; border-radius: 9px;
   font-size: calc(13px * var(--font-scale, 1)); font-weight: 500; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis;
@@ -1642,6 +1646,7 @@ button.hl-head:hover { background: var(--hover); }
   .usage-row, .usage-row.spent, .usage-row.credits { display: block; flex: 1 1 0; height: 3px; min-width: 0; border-radius: 2px; background: var(--track); overflow: hidden; }
   .usage-row.credits { display: none; }
   .usage-row.spent { background: color-mix(in srgb, var(--danger) 60%, transparent); }
+  .usage-row.estimated .usage-bar > i { background: repeating-linear-gradient(135deg, var(--ok) 0 2px, transparent 2px 4px); }
   .usage-label, .usage-value, .usage-pill, .usage-credits { display: none; }
   .usage-bar { display: block; height: 100%; border-radius: 0; background: transparent; }
   .usage-bar > i { border-radius: 2px; }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadConfig, readDeckUrl, readProtect } from './config';
+import { loadConfig, readDeckSeen, readDeckUrl, readProtect, usageModeOf } from './config';
 import { testRegistry } from '../shared/accounts.testkit';
 
 describe('config', () => {
@@ -54,6 +54,45 @@ describe('config', () => {
     fs.writeFileSync(path.join(home, '.config', 'claude-pick', 'deck_url'), 'http://100.64.0.1:9310\n');
     expect(of()).toMatchObject({ deckUrl: 'http://100.64.0.1:9310', deckUrlConfigured: true });
     expect(of({ DECK_URL: 'http://deck:9310' })).toMatchObject({ deckUrl: 'http://deck:9310', deckUrlConfigured: true });
+  });
+
+  it('DECK_USAGE_SOURCE: explicit cli/usage-deck wins; otherwise usage-deck only when the address was set by the user, else cli', () => {
+    expect(usageModeOf({}, false)).toBe('cli');
+    expect(usageModeOf({}, true)).toBe('usage-deck');
+    expect(usageModeOf({ DECK_USAGE_SOURCE: 'cli' }, true)).toBe('cli');
+    expect(usageModeOf({ DECK_USAGE_SOURCE: 'usage-deck' }, false)).toBe('usage-deck');
+    expect(usageModeOf({ DECK_USAGE_SOURCE: ' cli ' }, true)).toBe('cli');
+    expect(usageModeOf({ DECK_USAGE_SOURCE: 'oauth' }, false)).toBe('cli');
+    expect(usageModeOf({ DECK_USAGE_SOURCE: '' }, true)).toBe('usage-deck');
+    const home = path.join(dir, 'home-usage-mode');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const logs: string[] = [];
+    const of = (env: NodeJS.ProcessEnv = {}) => loadConfig({ DECK_CONFIG_DIR: '/cfg', ...env }, home, '/repo', (l) => logs.push(l));
+    expect(of()).toMatchObject({ usageMode: 'cli', claudeUsageFile: '/cfg/claude-usage-observed.json' });
+    expect(of({ DECK_URL: 'http://deck:9310' }).usageMode).toBe('usage-deck');
+    expect(of({ DECK_URL: 'http://deck:9310', DECK_USAGE_SOURCE: 'cli' }).usageMode).toBe('cli');
+    expect(logs).toEqual([]);
+    expect(of({ DECK_USAGE_SOURCE: 'nope' }).usageMode).toBe('cli');
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('DECK_USAGE_SOURCE');
+    fs.mkdirSync(path.join(home, '.config', 'claude-pick'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', 'claude-pick', 'deck_url'), 'http://100.64.0.1:9310\n');
+    expect(of().usageMode).toBe('usage-deck');
+  });
+
+  it('DECK_USAGE_SOURCE default: usage-deck at the default address that answered before (usage-source.json) stays usage-deck', () => {
+    const home = path.join(dir, 'home-usage-seen');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-cfg-seen-'));
+    const of = (env: NodeJS.ProcessEnv = {}) => loadConfig({ DECK_CONFIG_DIR: cfg, ...env }, home, '/repo', () => {});
+    expect(of().usageMode).toBe('cli');
+    fs.writeFileSync(path.join(cfg, 'usage-source.json'), '{');
+    expect(readDeckSeen(path.join(cfg, 'usage-source.json'))).toBe(false);
+    expect(of().usageMode).toBe('cli');
+    fs.writeFileSync(path.join(cfg, 'usage-source.json'), JSON.stringify({ deckSeenAt: '2026-10-01T00:00:00.000Z' }));
+    expect(readDeckSeen(path.join(cfg, 'usage-source.json'))).toBe(true);
+    expect(of()).toMatchObject({ usageMode: 'usage-deck', deckUrlConfigured: false });
+    expect(of({ DECK_USAGE_SOURCE: 'cli' }).usageMode).toBe('cli');
   });
 
   it('loadConfig derives paths from HOME and honours env overrides', () => {

@@ -113,6 +113,33 @@ describe('rate limits ride the stream, never stderr (review M4)', () => {
     const [res] = mapCliMessage({ type: 'result', subtype: 'success', is_error: true, result: 'Claude AI usage limit reached|1800000000', session_id: 's' }) as unknown as [{ ok: boolean; errorText: string | null }];
     expect(classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: null, rateLimitStatus: null })).toBe('limit');
   });
+
+  it('MED-3: overage in use, or an Opus-family limit rejected → Fable 100 %; a warning gives its utilization (none: nothing); the fixtures\' shape adds nothing', () => {
+    const uw = { five_hour: { utilization: 0.2, resetsAt: 1_800_000_000 }, seven_day: { utilization: 0.66, resetsAt: 1_800_100_000 } };
+    const info = (o: Record<string, unknown>) => (mapCliMessage({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', resetsAt: 1_800_000_000, unifiedWindows: uw, ...o } })[0] as unknown as { info: Record<string, unknown> }).info;
+    const spent = { usedPct: 100, resetsAt: new Date(1_800_000_000_000).toISOString() };
+    expect(info({ rateLimitType: 'five_hour', overageStatus: 'rejected', overageDisabledReason: 'org_level_disabled', isUsingOverage: false })).not.toHaveProperty('fable');
+    expect(info({ rateLimitType: 'five_hour', isUsingOverage: true }).fable).toEqual(spent);
+    expect(info({ rateLimitType: 'seven_day_opus', status: 'allowed_warning' })).not.toHaveProperty('fable');
+    expect(info({ rateLimitType: 'seven_day_opus', status: 'allowed_warning', utilization: 0.612 }).fable).toEqual({ ...spent, usedPct: 61 });
+    expect(info({ rateLimitType: 'seven_day_opus', status: 'rejected' }).fable).toEqual(spent);
+    expect(info({ rateLimitType: 'seven_day_opus', status: 'allowed' })).not.toHaveProperty('fable');
+    expect(info({ rateLimitType: 'seven_day_sonnet', status: 'rejected' })).not.toHaveProperty('fable');
+  });
+
+  it('MED-3: an unseen rateLimitType is logged once', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const ev = (t: string) => mapCliMessage({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: t } });
+      ev('seven_day'); ev('five_hour');
+      expect(warn).not.toHaveBeenCalled();
+      ev('weird_window_x'); ev('weird_window_x');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('weird_window_x');
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('abort fixture (real CLI capture)', () => {
