@@ -1,10 +1,12 @@
 /**
  * Graceful restart. SIGTERM (launchd stop / kickstart -k) and SIGUSR2 (`npm run restart`) drain:
  * sends that need a new process are refused; running turns and processes whose background work
- * (subagents, Monitor) is still live may finish for up to `maxMs` (a process held open with no work
- * left is ended at once — ws.ts endHeld); then whatever is left is aborted (SHUTDOWN_ABORT: the pane
- * says so and the session's next turn tells the model) and the process exits so the supervisor
- * (launchd KeepAlive) starts it again. A second signal, or SIGINT, skips the wait.
+ * (subagents, Monitor) is still live may finish (a process held open with no work left is ended at
+ * once — ws.ts endHeld). With `maxMs` Infinity (the default, DECK_DRAIN_MAX_MIN unset or 0) the drain
+ * waits until they all end; with a finite `maxMs` whatever is left at the deadline is aborted
+ * (SHUTDOWN_ABORT: the pane says so and the session's next turn tells the model). Then the process
+ * exits so the supervisor (launchd KeepAlive) starts it again. A second signal, or SIGINT, skips the
+ * wait — the way to force a restart.
  */
 
 export type DrainTarget = {
@@ -14,6 +16,7 @@ export type DrainTarget = {
 };
 
 export type DrainOptions = {
+  /** Infinity: no deadline — wait until no turn is left. */
   maxMs: number;
   pollMs?: number;
   /** After the abort at the deadline: how long aborted turns get to report their end. */
@@ -25,7 +28,7 @@ export type DrainOptions = {
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Drains `target`; resolves 'drained' when no turn is left, 'timeout' when the deadline aborted the rest. */
+/** Drains `target`; resolves 'drained' when no turn is left, 'timeout' when a finite deadline aborted the rest. */
 export async function drain(target: DrainTarget, o: DrainOptions): Promise<'drained' | 'timeout'> {
   const sleep = o.sleep ?? defaultSleep;
   const now = o.now ?? (() => Date.now());
@@ -38,7 +41,7 @@ export async function drain(target: DrainTarget, o: DrainOptions): Promise<'drai
     const n = target.activeTurns();
     if (n === 0) return 'drained';
     if (now() >= deadline) break;
-    if (n !== lastLogged) { log(`deck: 재시작 대기 — 진행 중인 턴/백그라운드 작업 ${n}개 (최대 ${Math.ceil((deadline - now()) / 60_000)}분)`); lastLogged = n; }
+    if (n !== lastLogged) { log(`deck: 재시작 대기 — 진행 중인 턴/백그라운드 작업 ${n}개 (${Number.isFinite(deadline) ? `최대 ${Math.ceil((deadline - now()) / 60_000)}분` : '끝날 때까지 — 다시 보내면 즉시 종료'})`); lastLogged = n; }
     await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
   }
   log(`deck: 재시작 대기 시간(${Math.round(o.maxMs / 60_000)}분) 초과 — 남은 턴 ${target.activeTurns()}개를 중단합니다`);

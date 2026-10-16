@@ -32,6 +32,17 @@ describe('drain', () => {
     expect(w.now()).toBe(5 * 60_000);
   });
 
+  it('with no limit (maxMs Infinity) waits until the work ends, never aborting', async () => {
+    const w = world([1000, 5 * 60 * 60_000]);
+    const logs: string[] = [];
+    expect(await drain(w.target, { maxMs: Infinity, pollMs: 60_000, now: w.now, sleep: w.sleep, log: (m) => logs.push(m) })).toBe('drained');
+    expect(w.calls).toEqual(['drain']);
+    expect(w.now()).toBe(5 * 60 * 60_000);
+    expect(logs.join('\n')).toContain('끝날 때까지 — 다시 보내면 즉시 종료');
+    expect(logs.join('\n')).toContain('2개');
+    expect(logs.join('\n')).not.toContain('최대');
+  });
+
   it('with nothing running it is done immediately', async () => {
     const w = world([]);
     expect(await drain(w.target, { maxMs: 1000, now: w.now, sleep: w.sleep })).toBe('drained');
@@ -99,6 +110,24 @@ describe('installGracefulShutdown', () => {
     expect(logs.join('\n')).toContain('disk full');
   });
 
+  it('with no limit a second signal still exits at once', async () => {
+    const h = host();
+    let active = 1;
+    const calls: string[] = [];
+    const target: DrainTarget = { drain: () => calls.push('drain'), activeTurns: () => active, abortAll: () => { calls.push('abort'); active = 0; } };
+    const exits: string[] = [];
+    let t = 0;
+    installGracefulShutdown(h, target, { maxMs: Infinity, pollMs: 60_000, now: () => t, sleep: async (ms) => { t += ms; await new Promise((r) => setTimeout(r, 0)); }, exit: (r) => exits.push(r) });
+    h.fire('SIGTERM');
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(t).toBeGreaterThan(0);
+    expect(calls).toEqual(['drain']);
+    expect(exits).toEqual([]);
+    h.fire('SIGUSR2');
+    expect(calls).toEqual(['drain', 'drain', 'abort']);
+    expect(exits).toEqual(['SIGUSR2']);
+  });
+
   it('SIGINT does not wait', () => {
     const h = host();
     const calls: string[] = [];
@@ -131,14 +160,15 @@ describe('flushThenExit', () => {
 });
 
 describe('config: drain and background limits', () => {
-  it('defaults to 15 min drain and 360 min background hold; env minutes override, junk is ignored', () => {
+  it('defaults to no drain or background limit; positive env minutes set one; 0, empty and junk mean no limit', () => {
     const d = loadConfig({ PATH: '/nonexistent' }, '/h', '/repo');
-    expect(d.drainMaxMs).toBe(15 * 60_000);
-    expect(d.bgMaxMs).toBe(360 * 60_000);
+    expect(d.drainMaxMs).toBe(Infinity);
+    expect(d.bgMaxMs).toBe(Infinity);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_DRAIN_MAX_MIN: '0', DECK_BG_MAX_MIN: '' }, '/h', '/repo')).toMatchObject({ drainMaxMs: Infinity, bgMaxMs: Infinity });
     const o = loadConfig({ PATH: '/nonexistent', DECK_DRAIN_MAX_MIN: '30', DECK_BG_MAX_MIN: '0.5' }, '/h', '/repo');
     expect(o.drainMaxMs).toBe(30 * 60_000);
     expect(o.bgMaxMs).toBe(30_000);
-    expect(loadConfig({ PATH: '/nonexistent', DECK_DRAIN_MAX_MIN: 'x', DECK_BG_MAX_MIN: '-1' }, '/h', '/repo')).toMatchObject({ drainMaxMs: 15 * 60_000, bgMaxMs: 360 * 60_000 });
+    expect(loadConfig({ PATH: '/nonexistent', DECK_DRAIN_MAX_MIN: 'x', DECK_BG_MAX_MIN: '-1' }, '/h', '/repo')).toMatchObject({ drainMaxMs: Infinity, bgMaxMs: Infinity });
   });
 
   it('steering is on unless DECK_STEER=0', () => {

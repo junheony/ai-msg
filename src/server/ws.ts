@@ -245,8 +245,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /**
    * While draining, only a process waiting with no work left is ended at once (the 10-09 incident: such processes sat
    * out the whole drain window and took the real turns down with them at the deadline). A process held open for live
-   * background tasks (subagents, Monitor; DECK_BG_MAX_MIN) is work in progress: the drain waits for it, and the deadline
-   * ends it like a running turn (abortAll, SHUTDOWN_ABORT). Nor is one with a send on its way in (pendingRefs: a
+   * background tasks (subagents, Monitor; DECK_BG_MAX_MIN) is work in progress: the drain waits for it (by default until it
+   * ends), and a finite deadline (DECK_DRAIN_MAX_MIN) ends it like a running turn (abortAll, SHUTDOWN_ABORT). Nor is one with a send on its way in (pendingRefs: a
    * follow-up queued behind the turn that just ended).
    */
   const endHeld = (t: Turn) => { if (draining && t.current === null && t.bg === null && t.pendingRefs.size === 0 && !t.recycling) { t.recycling = true; t.ac.abort(); } };

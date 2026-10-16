@@ -1413,7 +1413,7 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
     server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: '5h 여유', asOpus: true } as ServerMessage);
     const tag = screen.getByTestId('next-c');
-    expect(tag.textContent).toBe('다음 턴 · Opus');
+    expect(tag.textContent).toBe('→ 다음 턴 · Opus');
     expect(tag.title).toContain('5h 여유');
     server({ type: 'route_preview', sessionId: 'other', account: 'a', reason: 'x' } as ServerMessage);
     expect(screen.queryByTestId(/^next-/)).toBeNull(); // an answer for another session is not shown

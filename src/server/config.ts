@@ -51,9 +51,9 @@ export type DeckConfig = {
   cwdRoots: string[];
   /** Claude Desktop's Code-tab session records (read-only; titles/recency of Desktop sessions). */
   desktopSessionsRoot: string;
-  /** Graceful restart (SIGTERM/SIGUSR2): how long running turns and background work may finish (`DECK_DRAIN_MAX_MIN`, default 15). */
+  /** Graceful restart (SIGTERM/SIGUSR2): how long running turns and background work may finish (`DECK_DRAIN_MAX_MIN`; default, 0 or empty: Infinity — wait until they end; a second signal or SIGINT still exits at once). */
   drainMaxMs: number;
-  /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`, default 360 — long analyses and multi-hour subagents are normal; a cut here loses their results, and the model only hears of it through TurnRunner.continueAfterCap). */
+  /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`; default, 0 or empty: Infinity — held until the work ends. Long analyses and multi-hour subagents are normal; a cut loses their results, and the model only hears of it through TurnRunner.continueAfterCap). */
   bgMaxMs: number;
   /** Messages typed while a Claude turn runs go into it at the next tool boundary (`DECK_STEER=0` turns it off: queued for after the turn). */
   steer: boolean;
@@ -110,10 +110,10 @@ function extraCwdRoots(env: NodeJS.ProcessEnv): string[] {
   return (env.DECK_EXTRA_CWD_ROOTS ?? '').split(',').map((s) => s.trim()).filter((s) => s.startsWith('/') && path.resolve(s) !== '/');
 }
 
-/** Positive minutes from env as ms, else the default. */
-function minutes(v: string | undefined, fallbackMin: number): number {
+/** A limit in minutes → ms; unset, empty, 0 or junk → Infinity (no limit). */
+function limitMinutes(v: string | undefined): number {
   const n = Number(v);
-  return (Number.isFinite(n) && n > 0 ? n : fallbackMin) * 60_000;
+  return Number.isFinite(n) && n > 0 ? n * 60_000 : Infinity;
 }
 
 export function repoRootDefault(): string {
@@ -156,8 +156,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     settingsFile: path.join(configDir, 'settings.json'),
     cwdRoots: [home, ...extraCwdRoots(env)],
     desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
-    drainMaxMs: minutes(env.DECK_DRAIN_MAX_MIN, 15),
-    bgMaxMs: minutes(env.DECK_BG_MAX_MIN, 360),
+    drainMaxMs: limitMinutes(env.DECK_DRAIN_MAX_MIN),
+    bgMaxMs: limitMinutes(env.DECK_BG_MAX_MIN),
     steer: env.DECK_STEER !== '0',
     backupRetentionDays: Number(env.DECK_BACKUP_RETENTION_DAYS) > 0 ? Number(env.DECK_BACKUP_RETENTION_DAYS) : 30,
     vapidFile: path.join(configDir, 'vapid.json'),
