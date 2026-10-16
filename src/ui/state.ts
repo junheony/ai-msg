@@ -278,6 +278,17 @@ function rememberSize(by: Record<string, FloatRect> | undefined, key: string, re
 /** The panes in the grid, left to right (floating cards excluded). */
 export const dockedPanes = (panes: readonly PaneState[]): PaneState[] => panes.filter((p) => !p.float);
 
+/**
+ * Where each open session is shown, for the sidebar's markers: its split number (the docked panes left to right, from 1 —
+ * on a phone, its tab number) or 'float' when only a floating card shows it. A session in two panes: the first number.
+ */
+export function openPanes(panes: readonly PaneState[]): Map<string, number | 'float'> {
+  const at = new Map<string, number | 'float'>();
+  dockedPanes(panes).forEach((p, i) => { const id = p.session?.sessionId; if (id && !at.has(id)) at.set(id, i + 1); });
+  for (const p of panes) { const id = p.session?.sessionId; if (p.float && id && !at.has(id)) at.set(id, 'float'); }
+  return at;
+}
+
 export type PaneNotice = { sessionId: string | null; message: string; level: 'notice' | 'error' };
 
 /** Adds a bar (a repeat moves to the end) and keeps the newest three. */

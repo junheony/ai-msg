@@ -88,6 +88,26 @@ describe('installGracefulShutdown', () => {
     expect(exits).toEqual(['SIGTERM:drained']);
   });
 
+  it('request starts the same drain without a signal; while draining it does nothing (no forced exit)', async () => {
+    const h = host();
+    let active = 1;
+    const calls: string[] = [];
+    const target: DrainTarget = { drain: () => calls.push('drain'), activeTurns: () => active, abortAll: () => calls.push('abort') };
+    const exits: string[] = [];
+    let drains = 0;
+    const g = installGracefulShutdown(h, target, { maxMs: Infinity, pollMs: 1, sleep: () => new Promise((r) => setTimeout(r, 1)), exit: (r) => exits.push(r), onDrain: () => { drains++; } });
+    g.request('UI 재시작');
+    expect(g.draining()).toBe(true);
+    g.request('UI 재시작');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.filter((c) => c === 'abort')).toEqual([]);
+    expect(drains).toBe(1);
+    expect(exits).toEqual([]);
+    active = 0;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(exits).toEqual(['UI 재시작:drained']);
+  });
+
   it('onDrain runs once when a graceful drain starts', () => {
     const h = host();
     let drains = 0;

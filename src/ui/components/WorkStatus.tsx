@@ -220,6 +220,99 @@ export function ServerChip({ startedAt, restartedAt, draining, busy, onDismissRe
   );
 }
 
+/** How often the 서버 업데이트 chip asks whether server code changed (also once on every connect). */
+const UPDATE_POLL_MS = 60_000;
+
+/** The restart confirm's line: what the drain waits for, or that it goes at once. */
+export function restartConfirmText(activity: SessionActivity[]): string {
+  const work = activity.filter((a) => a.running).length + activity.reduce((n, a) => n + Math.max(0, a.bg), 0);
+  return work > 0 ? `진행 중 작업 ${work}개가 끝나면 재시작합니다` : '바로 재시작합니다';
+}
+
+/**
+ * 서버 업데이트 대기 · 파일 N: server code changed since the server started (GET /api/server-update, on connect and every
+ * minute). Shown only under a supervisor that starts the server again, and not while draining (the 서버 chip says so
+ * then). 지금 재시작 opens a confirm; its OK sends POST /api/restart — the same drain as `npm run restart`.
+ */
+export function ServerUpdateChip({ ready, draining, activity, fetchFn = fetch }: {
+  /** Connected (hello in): asks right away and starts polling. */
+  ready: boolean;
+  draining: boolean;
+  /** What the drain would wait for (the confirm counts turns and background tasks). */
+  activity: SessionActivity[];
+  fetchFn?: typeof fetch;
+}) {
+  const [info, setInfo] = useState<{ changedFiles: number; supervised: boolean } | null>(null);
+  const [pop, setPop] = useState<{ right: number; y: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const chip = useRef<HTMLButtonElement>(null);
+  const load = useCallback(async () => {
+    try {
+      const r = await fetchFn('/api/server-update');
+      if (!r.ok) return;
+      const j = (await r.json()) as { changedFiles?: unknown; supervised?: unknown };
+      setInfo({ changedFiles: typeof j.changedFiles === 'number' ? j.changedFiles : 0, supervised: j.supervised === true });
+    } catch { /* offline: keep what is shown */ }
+  }, [fetchFn]);
+  useEffect(() => {
+    // Disconnected (a restart, maybe): what the old server said no longer holds.
+    if (!ready) { setInfo(null); return; }
+    void load();
+    const t = setInterval(() => void load(), UPDATE_POLL_MS);
+    return () => clearInterval(t);
+  }, [ready, load]);
+  const show = !draining && info !== null && info.supervised && info.changedFiles > 0;
+  const open = show && pop !== null;
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setPop(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setPop(null); chip.current?.focus(); } };
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    document.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  if (!show) return null;
+  const restart = async () => {
+    setSending(true);
+    setError(null);
+    try {
+      const r = await fetchFn('/api/restart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      if (!r.ok) { setError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `재시작 요청 실패 (${r.status})`); return; }
+      setPop(null);
+    } catch { setError('서버에 닿지 못했어요 — 연결되면 다시 눌러 주세요'); } finally { setSending(false); }
+  };
+  return (
+    <>
+      <button
+        ref={chip} type="button" className="top-chip update-chip" data-testid="update-chip" aria-expanded={open} aria-haspopup="dialog"
+        title={`서버가 뜬 뒤 서버 코드 파일 ${info.changedFiles}개가 바뀌었습니다 — 눌러서 재시작`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setError(null);
+          const r = e.currentTarget.getBoundingClientRect();
+          setPop(open ? null : { right: Math.max(8, window.innerWidth - r.right), y: r.bottom + 6 });
+        }}
+      >
+        <span className="chip-long">서버 업데이트 대기 · 파일 {info.changedFiles}개 <b className="update-go">지금 재시작</b></span>
+        <span className="chip-short" aria-hidden="true">업데이트 · {info.changedFiles}</span>
+      </button>
+      {open && pop && (
+        <div className="usage-pop work-pop update-pop" role="dialog" aria-label="서버 재시작" style={{ right: pop.right, top: pop.y }} onClick={(e) => e.stopPropagation()}>
+          <div className="usage-pop-title">서버 재시작</div>
+          <div className="usage-pop-row hint">{restartConfirmText(activity)}</div>
+          {error && <div className="usage-pop-row hint update-error" role="alert">{error}</div>}
+          <div className="update-actions">
+            <button type="button" className="btn ghost" onClick={() => setPop(null)}>취소</button>
+            <button type="button" className="btn primary" disabled={sending} onClick={() => void restart()}>재시작</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** How often the 하이라이트 badge asks for its count, and how long after a turn ends. */
 const HL_POLL_MS = 5 * 60_000;
 const HL_AFTER_TURN_MS = 2_000;

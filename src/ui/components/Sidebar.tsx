@@ -36,7 +36,7 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked, openPanes }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
   /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
@@ -94,6 +94,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onOpenSplit?: (sessionId: string, cwd: string, title: string) => void;
   /** Why 분할 보기로 열기 cannot run now (all panes in use): the item shows disabled with this as its title. */
   splitBlocked?: string | null;
+  /** Sessions open in a pane (its split number, left to right) or only in a floating card: a marker on their rows. */
+  openPanes?: ReadonlyMap<string, number | 'float'>;
 }) {
   const [localView, setLocalView] = useState<SidebarView>(viewProp ?? 'projects');
   const view = viewProp ?? localView;
@@ -216,6 +218,13 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     if (unreadSet.has(sessionId)) return <span className="row-dot unread" role="img" aria-label="새 응답" title="새 응답" />;
     return null;
   };
+  /** 분할 N / ◱ (a floating card): the session is open already — a click brings that pane forward. A 갈래 row: any member. */
+  const openMark = (ids: string[]) => {
+    const at = ids.map((id) => openPanes?.get(id)).find((x) => x !== undefined);
+    if (at === undefined) return null;
+    const label = at === 'float' ? '떠 있는 카드에 열림' : `분할 ${at}번 패널에 열림`;
+    return <span className="open-mark" role="img" aria-label={label} title={label}>{at === 'float' ? '◱' : at}</span>;
+  };
   const waitingSet = new Set(waiting);
   /** What the row says in place of its time, same order as the dot (승인 대기 first: it needs the user). A 갈래 row: any member. */
   const status = (ids: string[]): string | null => {
@@ -259,6 +268,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           ) : (
             <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}><EngineMark engine={engine} decorative />{target.title}</span>
           )}
+          {!edit && openMark(members)}
           {/* meta + actions: one trailing group (a hover overlay with a mouse, line 2 + end column on touch / narrow) */}
           <span className="row-end">
           <span className="session-meta" {...(s.imported ? { title: s.codexArchived ? 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다' : s.cwdMissing ? '폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다' : s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project, s.codexExec ? '자동 실행' : null, s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, status(members) ?? ago(s.lastModified, now)].filter(Boolean).join(' · ')}</span>
@@ -305,6 +315,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         <span className="session-row">
           {dot(d.sessionId)}
           <span className="session-title"><EngineMark engine="claude" decorative />{d.title}</span>
+          {openMark([d.sessionId])}
           <span className="row-end">
           <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {status([d.sessionId]) ?? ago(d.lastModified, now)}</span>
           {(onTogglePin || onOpenSplit) && (

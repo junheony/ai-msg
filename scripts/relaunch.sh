@@ -82,9 +82,10 @@ while :; do
   rotate
   start=$(date +%s)
   # A clean environment: no CLAUDECODE/CLAUDE_* leftovers from whichever session started this loop.
+  # DECK_SUPERVISED=1: this loop starts the server again, so the UI may offer 지금 재시작.
   env -i HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}" SHELL=/bin/zsh TMPDIR="${TMPDIR:-/tmp}" LANG=ko_KR.UTF-8 \
     PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-    DECK_ENV_FILE="$CONF/env" \
+    DECK_ENV_FILE="$CONF/env" DECK_SUPERVISED=1 \
     /bin/bash "$DECK_DIR/scripts/launchd/run.sh" >> "$LOG" 2>&1 &
   child=$!
   wait "$child"; rc=$?

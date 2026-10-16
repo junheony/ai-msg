@@ -46,6 +46,12 @@ describe('scripts/relaunch.sh', () => {
     expect(text).toContain('포기하지 않음');
   }, 15_000);
 
+  it('the server it starts sees DECK_SUPERVISED=1 (the UI may offer 지금 재시작)', async () => {
+    const w = await world('echo "sup=${DECK_SUPERVISED:-none}"; sleep 2');
+    const loop = w.run(); procs.push(loop);
+    expect(await w.until((t) => t.includes('sup='))).toContain('sup=1');
+  }, 15_000);
+
   it('only one loop at a time: a second start is refused; stop ends the loop but leaves the server running', async () => {
     const w = await world('echo "server up $$" >> "$HOME/../server.pid" 2>/dev/null; sleep 30');
     const loop = w.run(); procs.push(loop);

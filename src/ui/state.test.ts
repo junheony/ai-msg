@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { HANDOFF_PROMPT, handoffFirstMessage } from '../shared/handoff';
 import { nextPermMode } from '../shared/permission';
 import { ACCEPTED_REFS_TTL_MS, type ServerMessage } from '../shared/protocol';
-import { PANE_LIMIT, answersFor, engineOf, fromTranscript, modelFor, initialState, nextQueued, nextUserN, paneMode, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
+import { PANE_LIMIT, answersFor, engineOf, fromTranscript, modelFor, initialState, newPane, nextQueued, openPanes, nextUserN, paneMode, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 
@@ -1743,5 +1743,21 @@ describe('pane widths (resize_panes)', () => {
     expect(sizes(s)).toEqual([1.5, 1.5, 3, 2]);
     s = reducer(s, { type: 'close_pane', paneId: 'p1' });
     expect(sizes(s)).toEqual([1.5, 3, 2]);
+  });
+});
+
+describe('openPanes (sidebar markers)', () => {
+  const at = (id: string, sessionId: string | null, float = false) => ({ ...newPane(id), session: sessionId === null ? null : { sessionId, cwd: '/w', account: null, title: sessionId, engine: null, sandbox: null }, ...(float ? { float: { x: 0, y: 0, w: 300, h: 200 } } : {}) });
+
+  it('numbers the docked panes left to right (cards skipped), marks card-only sessions float, skips blank panes', () => {
+    const m = openPanes([at('p0', 's1'), at('p1', 's2', true), at('p2', null), at('p3', 's3')]);
+    expect([...m]).toEqual([['s1', 1], ['s3', 3], ['s2', 'float']]);
+  });
+
+  it('a session in two places keeps its first split number; a pane beats a card', () => {
+    const m = openPanes([at('p0', 's1', true), at('p1', 's2'), at('p2', 's2'), at('p3', 's1')]);
+    expect(m.get('s2')).toBe(1);
+    expect(m.get('s1')).toBe(3);
+    expect(openPanes([at('p0', null)]).size).toBe(0);
   });
 });

@@ -62,20 +62,21 @@ export type SignalHost = { on(sig: NodeJS.Signals, fn: () => void): unknown };
 
 /**
  * Wires the signals: SIGTERM/SIGUSR2 → drain then `exit`; a repeat or SIGINT → abort now and `exit`.
- * `exit` runs once (it closes sockets/timers and ends the process).
+ * `exit` runs once (it closes sockets/timers and ends the process). `request` starts the same drain without a signal
+ * (지금 재시작 in the UI); while already draining it does nothing (unlike a repeated signal).
  */
-export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void; onDrain?: () => void }): { draining: () => boolean } {
+export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void; onDrain?: () => void }): { draining: () => boolean; request: (reason: string) => void } {
   let draining = false;
   let exited = false;
   const log = o.log ?? (() => {});
   const exit = (reason: string) => { if (exited) return; exited = true; o.exit(reason); };
-  const now = (sig: NodeJS.Signals) => {
+  const now = (sig: string) => {
     log(`deck: ${sig} — 기다리지 않고 종료합니다`);
     target.drain();
     target.abortAll();
     exit(sig);
   };
-  const graceful = (sig: NodeJS.Signals) => {
+  const graceful = (sig: string) => {
     if (draining) { now(sig); return; }
     draining = true;
     try { o.onDrain?.(); } catch (err) { log(`deck: 종료 준비 기록 실패 — ${err instanceof Error ? err.message : String(err)}`); }
@@ -85,5 +86,5 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
   host.on('SIGTERM', () => graceful('SIGTERM'));
   host.on('SIGUSR2', () => graceful('SIGUSR2'));
   host.on('SIGINT', () => now('SIGINT'));
-  return { draining: () => draining };
+  return { draining: () => draining, request: (reason) => { if (!draining) graceful(reason); } };
 }

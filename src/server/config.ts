@@ -54,6 +54,10 @@ export type DeckConfig = {
   desktopSessionsRoot: string;
   /** Graceful restart (SIGTERM/SIGUSR2): how long running turns and background work may finish (`DECK_DRAIN_MAX_MIN`; default, 0 or empty: Infinity — wait until they end; a second signal or SIGINT still exits at once). */
   drainMaxMs: number;
+  /** The deck source root (src/server, src/shared): scanned for code edited since start (serverUpdate.ts). */
+  repoRoot: string;
+  /** `DECK_SUPERVISED=1` (set by relaunch.sh / run.sh under the loop): required before 지금 재시작 is offered; the live check is serverUpdate.ts supervisionCheck. */
+  supervised: boolean;
   /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`; default, 0 or empty: Infinity — held until the work ends. Long analyses and multi-hour subagents are normal; a cut loses their results, and the model only hears of it through TurnRunner.continueAfterCap). */
   bgMaxMs: number;
   /** Messages typed while a Claude turn runs go into it at the next tool boundary (`DECK_STEER=0` turns it off: queued for after the turn). */
@@ -188,6 +192,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     cwdRoots: [home, ...extraCwdRoots(env)],
     desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
     drainMaxMs: limitMinutes(env.DECK_DRAIN_MAX_MIN),
+    repoRoot,
+    supervised: env.DECK_SUPERVISED === '1',
     bgMaxMs: limitMinutes(env.DECK_BG_MAX_MIN),
     steer: env.DECK_STEER !== '0',
     backupRetentionDays: Number(env.DECK_BACKUP_RETENTION_DAYS) > 0 ? Number(env.DECK_BACKUP_RETENTION_DAYS) : 30,

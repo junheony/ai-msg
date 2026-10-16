@@ -245,13 +245,24 @@ describe('POST /api/attachments (D7)', () => {
         'x-deck-filename': 'big.bin',
       };
       if (opts.declareLength !== false) reqHeaders['content-length'] = String(size);
-      const req = http.request({ host: '127.0.0.1', port: addr.port, path: '/api/attachments', method: 'POST', headers: reqHeaders }, (res) => {
+      // A dedicated keep-alive Agent per call, rather than the default global agent: the default
+      // agent can hand the *next* uploadRaw() call in the same test the exact socket this one just
+      // used, as soon as this call's own write+read looks done to the client — but the server's
+      // drainAndClose (http.ts) is still consuming this request's trailing oversized-body bytes on
+      // that socket and only closes it once that finishes. If the next request's bytes land there
+      // first, the server's cleanup close cuts it off mid-flight ("socket hang up"), intermittently
+      // depending on event-loop timing — worse under load. A private agent's pool can't be handed to
+      // another call, so there is nothing to race. (`agent: false` would also give a fresh socket,
+      // but it makes Node send `Connection: close`, which re-triggers the exact ECONNRESET/EPIPE bug
+      // the comment above `drainAndClose` describes — keepAlive must stay true here.)
+      const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+      const req = http.request({ host: '127.0.0.1', port: addr.port, path: '/api/attachments', method: 'POST', headers: reqHeaders, agent }, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
-        res.on('error', reject);
+        res.on('end', () => { agent.destroy(); resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }); });
+        res.on('error', (e) => { agent.destroy(); reject(e); });
       });
-      req.on('error', reject);
+      req.on('error', (e) => { agent.destroy(); reject(e); });
       const chunkSize = 1024 * 1024;
       let remaining = size;
       const writeNext = () => {

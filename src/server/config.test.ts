@@ -41,6 +41,13 @@ describe('config', () => {
     expect(of('yes').usageStrict).toBeNull();
   });
 
+  it('DECK_SUPERVISED=1 marks a supervised server; repoRoot is the source root', () => {
+    const home = path.join(dir, 'home-sup');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    expect(loadConfig({ DECK_CONFIG_DIR: '/cfg' }, home, '/repo')).toMatchObject({ supervised: false, repoRoot: '/repo' });
+    expect(loadConfig({ DECK_CONFIG_DIR: '/cfg', DECK_SUPERVISED: '1' }, home, '/repo').supervised).toBe(true);
+  });
+
   it('deckUrlConfigured: true only when the address was set (DECK_URL or the claude-pick file), not for the default', () => {
     const home = path.join(dir, 'home-deck-url');
     fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });

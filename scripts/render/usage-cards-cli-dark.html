@@ -1,0 +1,46 @@
+<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
+<!-- `cli` usage-mode states fixture for scripts/render-check.sh (keep in step with UsagePanel.tsx):
+     estimated rows (striped bar, dotted-underline value), a kept card (stale-but-trusted, not dimmed),
+     a stale dimmed card, and the Fable "CLI 미제공" row every claude card gets in cli mode.
+     Forced to the dark theme. See usage-cards-cli.html for the light theme (this file forces dark). -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>body { margin: 0; }</style>
+</head><body>
+<div class="topbar" style="width:auto"><div class="usage-panel" style="--usage-cards:4">
+<div class="usage-card claude ok" title="마지막 턴 기준 · 3분 전">
+  <div class="usage-id"><svg class="usage-mark claude" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#d97757"/></svg><span class="usage-letter">D</span></div>
+  <span class="usage-sum warn" aria-hidden="true">18<small>%</small></span>
+  <div class="usage-rows">
+    <div class="usage-row warn estimated" title="5h · 18% 남음 · 2시간 후 리셋 · 노랑: 20% 이하 남음 · 추정 — 관측한 리셋 시각이 지나 0%로 봄"><span class="usage-label">5h</span><span class="usage-bar" aria-hidden="true"><i style="width:18%"></i></span><span class="usage-value">18<small>%</small></span><small class="usage-cd">2시간</small></div>
+    <div class="usage-row ok" title="주간 · 54% 남음"><span class="usage-label">주간</span><span class="usage-bar" aria-hidden="true"><i style="width:54%"></i></span><span class="usage-value">54<small>%</small></span></div>
+    <div class="usage-row none" title="Fable · 알 수 없음"><span class="usage-label">Fable</span><span class="usage-bar" aria-hidden="true"><i style="width:0%"></i></span><span class="usage-value"><span class="usage-na">CLI 미제공</span></span></div>
+  </div>
+</div>
+<div class="usage-card claude kept" title="추정 · 마지막 턴 12분 전">
+  <div class="usage-id"><svg class="usage-mark claude" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#d97757"/></svg><span class="usage-letter">E</span></div>
+  <span class="usage-sum ok" aria-hidden="true">61<small>%</small></span>
+  <div class="usage-rows">
+    <div class="usage-row ok estimated" title="5h · 72% 남음 · 5시간 후 리셋 · 추정 — 관측한 리셋 시각이 지나 0%로 봄"><span class="usage-label">5h</span><span class="usage-bar" aria-hidden="true"><i style="width:72%"></i></span><span class="usage-value">72<small>%</small></span><small class="usage-cd">5시간</small></div>
+    <div class="usage-row ok" title="주간 · 61% 남음"><span class="usage-label">주간</span><span class="usage-bar" aria-hidden="true"><i style="width:61%"></i></span><span class="usage-value">61<small>%</small></span></div>
+    <div class="usage-row none" title="Fable · 알 수 없음"><span class="usage-label">Fable</span><span class="usage-bar" aria-hidden="true"><i style="width:0%"></i></span><span class="usage-value"><span class="usage-na">CLI 미제공</span></span></div>
+  </div>
+</div>
+<div class="usage-card claude stale" title="마지막 턴 기준 · 42분 전 · 라우팅은 모름으로 봄">
+  <div class="usage-id"><svg class="usage-mark claude" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#d97757"/></svg><span class="usage-letter">F</span></div>
+  <span class="usage-sum danger" aria-hidden="true">3<small>%</small></span>
+  <div class="usage-rows">
+    <div class="usage-row danger" title="5h · 3% 남음 · 40분 후 리셋 · 빨강: 5% 이하 남음"><span class="usage-label">5h</span><span class="usage-bar" aria-hidden="true"><i style="width:3%"></i></span><span class="usage-value">3<small>%</small></span><small class="usage-cd">40분</small></div>
+    <div class="usage-row warn" title="주간 · 15% 남음 · 노랑: 20% 이하 남음"><span class="usage-label">주간</span><span class="usage-bar" aria-hidden="true"><i style="width:15%"></i></span><span class="usage-value">15<small>%</small></span></div>
+    <div class="usage-row none" title="Fable · 알 수 없음"><span class="usage-label">Fable</span><span class="usage-bar" aria-hidden="true"><i style="width:0%"></i></span><span class="usage-value"><span class="usage-na">CLI 미제공</span></span></div>
+  </div>
+</div>
+<div class="usage-card gpt down" title="GPT 잔여량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다">
+  <div class="usage-id"><svg class="usage-mark gpt" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#ddd"/></svg><span class="usage-letter">GPT</span></div>
+  <span class="usage-sum none" aria-hidden="true">—</span>
+  <div class="usage-rows">
+    <div class="usage-row none" title="주간 · 알 수 없음"><span class="usage-label">주간</span><span class="usage-bar" aria-hidden="true"><i style="width:0%"></i></span><span class="usage-value">—</span></div>
+    <div class="usage-row none" title="5h · 알 수 없음"><span class="usage-label">5h</span><span class="usage-bar" aria-hidden="true"><i style="width:0%"></i></span><span class="usage-value">—</span></div>
+  </div>
+</div>
+</div></div>
+</body></html>

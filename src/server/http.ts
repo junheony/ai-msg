@@ -19,6 +19,7 @@ import type { SessionIndex } from './sessions/SessionIndex';
 import type { TurnRunner } from './turn/TurnRunner';
 import type { UsageIndex } from './usage/UsageIndex';
 import type { EventLog } from './highlights';
+import type { ServerUpdate } from './serverUpdate';
 import { DEFAULT_HIGHLIGHT_HOURS, HIGHLIGHT_HOURS } from '../shared/highlights';
 import type { UsageService } from './usage/UsageService';
 
@@ -51,7 +52,20 @@ export type HttpDeps = {
   usageHistory?: Pick<UsageIndex, 'history' | 'refresh'>;
   /** 하이라이트 (events.jsonl); absent = no /api/highlights. */
   highlights?: Pick<EventLog, 'query'>;
+  /** 서버 업데이트 대기 / 지금 재시작; absent = no /api/server-update, /api/restart. */
+  serverUpdate?: ServerUpdateDeps;
 };
+
+export type ServerUpdateDeps = {
+  check: () => Promise<ServerUpdate>;
+  /** A supervisor (relaunch loop / launchd boot) starts the server again after it exits, as of now: only then is a restart offered. */
+  supervised: () => Promise<boolean>;
+  draining: () => boolean;
+  /** The drain SIGUSR2 starts (lifecycle `request`). */
+  restart: () => void;
+};
+
+export const UNSUPERVISED_MESSAGE = '이 서버는 자동으로 다시 켜 주는 관리자(relaunch 루프·launchd) 없이 실행 중이라 여기서 재시작하면 꺼진 채로 남습니다 — 터미널에서 직접 다시 시작하세요';
 
 /** /api/usage/history: how long `refresh=1` waits for the scan before answering with what is indexed so far. */
 const USAGE_REFRESH_WAIT_MS = 15_000;
@@ -306,6 +320,20 @@ export function createRequestHandler(deps: HttpDeps) {
           if (!body || typeof body !== 'object' || Array.isArray(body)) { json(res, 400, { error: '잘못된 요청입니다' }); return; }
           if (++diagWindow.n <= 30) console.log(`deck: diag ${JSON.stringify(body).slice(0, 2000)}`);
           json(res, 200, { ok: true });
+          return;
+        }
+        if (deps.serverUpdate && url.pathname === '/api/server-update' && req.method === 'GET') {
+          const su = deps.serverUpdate;
+          const [update, supervised] = await Promise.all([su.check(), su.supervised()]);
+          json(res, 200, { ...update, supervised, draining: su.draining() });
+          return;
+        }
+        if (deps.serverUpdate && url.pathname === '/api/restart' && req.method === 'POST') {
+          const su = deps.serverUpdate;
+          if (!(await su.supervised())) { json(res, 409, { error: UNSUPERVISED_MESSAGE }); return; }
+          // Already draining: nothing more (a second SIGUSR2 would skip the wait — the UI never does that).
+          if (!su.draining()) su.restart();
+          json(res, 200, { ok: true, draining: su.draining() });
           return;
         }
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }

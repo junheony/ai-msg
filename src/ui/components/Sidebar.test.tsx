@@ -614,3 +614,43 @@ describe('Sidebar ⋯ 분할 보기로 열기', () => {
     expect(screen.queryByRole('menuitem', { name: '분할 보기로 열기' })).toBeNull();
   });
 });
+
+describe('Sidebar open-session markers', () => {
+  afterEach(cleanup);
+  const s = (id: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1 });
+  const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'first'), s('s2', 'second'), s('s3', 'third'), s('s4', 'fourth')] }];
+  const rowOf = (container: HTMLElement, title: string) => [...container.querySelectorAll('li')].find((li) => li.querySelector('.session-title')?.textContent === title)!;
+  const mark = (container: HTMLElement, title: string) => rowOf(container, title).querySelector('.open-mark');
+
+  it('marks every open session with its split number (◱ for a card), not just the focused one; the rest stay unmarked', () => {
+    const openPanes = new Map<string, number | 'float'>([['s3', 1], ['s1', 2], ['s4', 'float']]);
+    const { container } = render(<Sidebar projects={projects} currentSessionId="s1" onOpen={noop} onNew={noop} onRefresh={noop} view="projects" openPanes={openPanes} />);
+    expect(mark(container, 'third')?.textContent).toBe('1');
+    expect(mark(container, 'first')?.textContent).toBe('2');
+    expect(mark(container, 'fourth')?.textContent).toBe('◱');
+    expect(mark(container, 'second')).toBeNull();
+    expect(container.querySelectorAll('.open-mark')).toHaveLength(3);
+    // The focused row keeps its stronger highlight and carries the marker too; other open rows are not highlighted.
+    expect(rowOf(container, 'first').classList.contains('active')).toBe(true);
+    expect(rowOf(container, 'third').classList.contains('active')).toBe(false);
+  });
+
+  it('names where the session is open (aria-label and tooltip)', () => {
+    const openPanes = new Map<string, number | 'float'>([['s2', 3], ['s4', 'float']]);
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="projects" openPanes={openPanes} />);
+    const split = screen.getByRole('img', { name: '분할 3번 패널에 열림' });
+    expect(split.getAttribute('title')).toBe('분할 3번 패널에 열림');
+    expect(split.textContent).toBe('3');
+    expect(screen.getByRole('img', { name: '떠 있는 카드에 열림' }).textContent).toBe('◱');
+  });
+
+  it('a pinned (and a Desktop) row is marked too; no openPanes = no markers', () => {
+    const desktop = [{ sessionId: 'd1', account: 'a' as const, title: 'desk', cwd: '/elsewhere', project: 'elsewhere', lastModified: stamp() }];
+    const openPanes = new Map<string, number | 'float'>([['s2', 1], ['d1', 2]]);
+    const { container, rerender } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="projects" pins={['s2']} onTogglePin={noop} desktop={desktop} openPanes={openPanes} />);
+    expect(screen.getByTestId('pinned-group').querySelector('.open-mark')?.textContent).toBe('1');
+    expect(screen.getByTestId('desktop-group').querySelector('.open-mark')?.textContent).toBe('2');
+    rerender(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="projects" pins={['s2']} onTogglePin={noop} desktop={desktop} />);
+    expect(container.querySelectorAll('.open-mark')).toHaveLength(0);
+  });
+});
