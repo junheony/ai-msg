@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 import { contextUsageOf } from '../../shared/turn-types';
-import { redactSecrets } from '../engine/redact';
+import { TOKEN_PATTERNS, redactSecrets } from '../engine/redact';
 
 /** `headless`: every record in the head that names its writer is a non-interactive `claude -p` run (`sdk-cli`) — a script's one-shot, or deck's own CLI child (SessionIndex tells them apart). */
 export type HeadInfo = { cwd: string | null; title: string | null; headless?: boolean };
@@ -118,7 +119,13 @@ function queuedPrompt(r: Rec): { content: unknown; source: string | null } | nul
 
 /** Input-message ids already shown as user messages (a steer can be logged as a user record and as a queued_command). */
 class SeenPrompts {
-  private ids = new Set<string>();
+  private ids: Set<string>;
+  constructor(ids: Iterable<string> = []) {
+    this.ids = new Set(ids);
+  }
+  list(): string[] {
+    return [...this.ids];
+  }
   /** false = this id was shown before (skip it). */
   first(id: string | null): boolean {
     if (!id) return true;
@@ -219,6 +226,9 @@ function parseLine(line: string): Rec | null {
   }
 }
 
+/** Everything a `TranscriptBuilder` carries from one line to the next: resuming from it reads on as if from the start. */
+type BuilderState = { out: TranscriptMessage[]; lastAssistantId: string | null; userCount: number; seen: string[] };
+
 /** Incremental jsonl → TranscriptMessage[] (assistant chunks with the same message id merge). */
 class TranscriptBuilder {
   private out: TranscriptMessage[] = [];
@@ -229,9 +239,20 @@ class TranscriptBuilder {
   private readonly max: number;
   private readonly maxChars: number;
 
-  constructor(opts: TranscriptOptions) {
+  constructor(opts: TranscriptOptions, state?: BuilderState) {
     this.max = opts.maxMessages ?? Infinity;
     this.maxChars = opts.maxToolResultChars ?? Infinity;
+    if (state) {
+      this.out = state.out;
+      this.lastAssistantId = state.lastAssistantId;
+      this.userCount = state.userCount;
+      this.seen = new SeenPrompts(state.seen);
+    }
+  }
+
+  /** Shares `out` with the builder (only its last entry is ever changed again). */
+  state(): BuilderState {
+    return { out: this.out, lastAssistantId: this.lastAssistantId, userCount: this.userCount, seen: this.seen.list() };
   }
 
   private push(m: TranscriptMessage): void {
@@ -316,8 +337,11 @@ export function parseTranscript(text: string, opts: TranscriptOptions = {}): Tra
   return b.result();
 }
 
-/** Streams the jsonl line by line (large sessions reach hundreds of MB); defaults: last 200 messages, 8 KB per tool result. */
-export async function readTranscript(file: string, opts: TranscriptOptions = {}): Promise<TranscriptMessage[]> {
+/** Line ends exactly as readline splits them (`crlfDelay: Infinity`): `\r\n`, `\n`, or a lone `\r`. */
+const LINE_END = /\r?\n|\r(?!\n)/;
+
+/** The whole file through readline: the reference the cached read must match, and the path for unbounded windows. */
+export async function readTranscriptUncached(file: string, opts: TranscriptOptions = {}): Promise<TranscriptMessage[]> {
   const b = new TranscriptBuilder({ maxMessages: opts.maxMessages ?? 200, maxToolResultChars: opts.maxToolResultChars ?? 8192 });
   const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   for await (const line of rl) {
@@ -325,6 +349,293 @@ export async function readTranscript(file: string, opts: TranscriptOptions = {})
     if (r) b.add(r);
   }
   return b.result();
+}
+
+/**
+ * Where a cached read stopped: the builder state after the last complete line (`offset` = the byte after its `\n`), and
+ * what identifies the file it came from (dev/ino, a hash of its first and of the last bytes before `offset`). The jsonl
+ * is append-only; a file that shrank, moved or was rewritten fails the check and is read from the start.
+ */
+type CacheEntry = { file: string; key: string; dev: string; ino: string; offset: number; headLen: number; headHash: string; tailLen: number; tailHash: string; state: BuilderState };
+
+const FINGERPRINT_BYTES = 4096;
+const READ_CHUNK = 4 * 1024 * 1024;
+/** The in-memory cache's rough size cap (UTF-16 length of each window's JSON): the least recently used go first. */
+const MEMORY_MAX_BYTES = 64 * 1024 * 1024;
+/** Snapshots past this are not written (the window holds at most maxMessages messages; tool results are already cut). */
+const SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
+/** Raise by hand whenever the output's shape changes in a way the hashed code below does not show. */
+const CACHE_FORMAT = 1;
+/** Snapshots written by different parsing code are not used: the code (and the constants it reads) that shapes the output is part of the key. */
+export const CODE_VERSION_SOURCE = [
+  `format:${CACHE_FORMAT}`,
+  ...[TranscriptBuilder, systemRow, textOfContent, queuedPrompt, isRealUser, hookMessage, stringify, parseLine, contextUsageOf, redactSecrets, message, hasToolResult, originKind, row, tag].map(String),
+  ...[HIDDEN_META_RE, HOOK_RE, GOAL_RE, ...TOKEN_PATTERNS].map(String),
+  JSON.stringify(TASK_LABEL),
+  String(SYSTEM_ROW_MAX),
+].join('\0');
+const CODE_VERSION = createHash('sha1').update(CODE_VERSION_SOURCE).digest('hex').slice(0, 16);
+
+const memory = new Map<string, { e: CacheEntry; bytes: number }>();
+let memoryBytes = 0;
+let memoryMax = MEMORY_MAX_BYTES;
+const locks = new Map<string, Promise<unknown>>();
+let snapshotDir: string | null = null;
+
+/** Where the cache survives a restart (`<configDir>/transcript-cache`); null = memory only (the default). */
+export function setTranscriptCacheDir(dir: string | null): void {
+  snapshotDir = dir;
+}
+
+/** Forgets the in-memory cache (as a restart would). */
+export function clearTranscriptCache(): void {
+  memory.clear();
+  memoryBytes = 0;
+}
+
+/** Tests: the in-memory cache's byte cap (null = the default). */
+export function setTranscriptMemoryLimit(bytes: number | null): void {
+  memoryMax = bytes ?? MEMORY_MAX_BYTES;
+}
+
+/** Tests: the sessions held in memory (least recently used first) and their estimated size. */
+export function transcriptMemoryState(): { files: string[]; bytes: number } {
+  return { files: [...memory.values()].map((m) => m.e.file), bytes: memoryBytes };
+}
+
+const sha1 = (b: Buffer) => createHash('sha1').update(b).digest('hex');
+
+async function readAt(fh: fs.FileHandle, start: number, len: number): Promise<Buffer> {
+  const buf = Buffer.alloc(len);
+  let got = 0;
+  while (got < len) {
+    const { bytesRead } = await fh.read(buf, got, len - got, start + got);
+    if (bytesRead === 0) break;
+    got += bytesRead;
+  }
+  return buf.subarray(0, got);
+}
+
+function snapshotFile(key: string): string | null {
+  return snapshotDir ? path.join(snapshotDir, `${createHash('sha1').update(key).digest('hex')}.json`) : null;
+}
+
+async function loadSnapshot(key: string): Promise<CacheEntry | null> {
+  const f = snapshotFile(key);
+  if (!f) return null;
+  try {
+    const e = JSON.parse(await fs.readFile(f, 'utf8')) as CacheEntry;
+    const s = e?.state;
+    const ok = e.key === key && typeof e.file === 'string' && typeof e.dev === 'string' && typeof e.ino === 'string' && Number.isSafeInteger(e.offset) && e.offset >= 0
+      && Number.isSafeInteger(e.headLen) && Number.isSafeInteger(e.tailLen) && typeof e.headHash === 'string' && typeof e.tailHash === 'string'
+      && e.headLen <= e.offset && e.tailLen <= e.offset
+      && s && Array.isArray(s.out) && s.out.every((m) => m && typeof m === 'object' && typeof (m as Rec).kind === 'string') && Array.isArray(s.seen) && Number.isSafeInteger(s.userCount) && (s.lastAssistantId === null || typeof s.lastAssistantId === 'string');
+    return ok ? e : null;
+  } catch {
+    return null; // missing or damaged: rebuilt from the jsonl
+  }
+}
+
+let writing: Promise<void> = Promise.resolve();
+function saveSnapshot(e: CacheEntry, max: number): void {
+  const f = snapshotFile(e.key);
+  if (!f) return;
+  // Serialized now: the builder keeps changing the window's last entry after this.
+  // `file` first: pruning reads only the head of each snapshot to find its source.
+  const { file, ...rest } = e;
+  const json = JSON.stringify({ file, ...rest, state: { ...e.state, out: e.state.out.slice(-max) } });
+  if (Buffer.byteLength(json, 'utf8') > SNAPSHOT_MAX_BYTES) return;
+  writing = writing.then(async () => {
+    const tmp = `${f}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+      await fs.mkdir(path.dirname(f), { recursive: true, mode: 0o700 });
+      await fs.writeFile(tmp, json, { mode: 0o600 });
+      await fs.rename(tmp, f);
+    } catch {
+      await fs.rm(tmp, { force: true }).catch(() => {});
+    }
+  });
+}
+
+/** Snapshot dir size cap: past it the least recently written snapshots go first. */
+export const SNAPSHOT_DIR_MAX_BYTES = 200 * 1024 * 1024;
+/** Snapshots not written for this long are dropped (each read that uses one rewrites it only when the session grew). */
+const SNAPSHOT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const SNAPSHOT_SOURCE_RE = /^\{"file":("(?:[^"\\]|\\.)*")/;
+
+/**
+ * Removes snapshots whose session file is gone (or that do not say which it is), ones not written for 14 days, then the
+ * oldest until the rest fit `maxBytes`. Returns the removed paths.
+ */
+export async function pruneTranscriptSnapshots(dir: string, opts: { maxBytes?: number; maxAgeMs?: number } = {}): Promise<string[]> {
+  const maxBytes = opts.maxBytes ?? SNAPSHOT_DIR_MAX_BYTES;
+  const maxAgeMs = opts.maxAgeMs ?? SNAPSHOT_MAX_AGE_MS;
+  let names: string[];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+  const now = Date.now();
+  const removed: string[] = [];
+  const kept: { f: string; size: number; mtime: number }[] = [];
+  for (const n of names) {
+    if (!n.endsWith('.json')) continue;
+    const f = path.join(dir, n);
+    try {
+      const st = await fs.stat(f);
+      let drop = now - st.mtimeMs >= maxAgeMs;
+      if (!drop) {
+        const fh = await fs.open(f, 'r');
+        const head = await readAt(fh, 0, 8192).finally(() => fh.close());
+        const m = SNAPSHOT_SOURCE_RE.exec(head.toString('utf8'));
+        const src = m ? (JSON.parse(m[1]!) as string) : null;
+        drop = !src || !(await fs.stat(src).then(() => true, () => false));
+      }
+      if (!drop) {
+        kept.push({ f, size: st.size, mtime: st.mtimeMs });
+        continue;
+      }
+      await fs.rm(f, { force: true });
+      removed.push(f);
+    } catch {
+      // vanished meanwhile, or unreadable: left for the next run
+    }
+  }
+  kept.sort((a, b) => a.mtime - b.mtime);
+  let total = kept.reduce((t, k) => t + k.size, 0);
+  for (const k of kept) {
+    if (total <= maxBytes) break;
+    try {
+      await fs.rm(k.f, { force: true });
+      removed.push(k.f);
+      total -= k.size;
+    } catch {
+      // left for the next run
+    }
+  }
+  return removed;
+}
+
+/** Resolves once pending snapshot writes are done (tests, shutdown). */
+export function flushTranscriptCache(): Promise<void> {
+  return writing;
+}
+
+function forget(key: string): void {
+  memoryBytes -= memory.get(key)?.bytes ?? 0;
+  memory.delete(key);
+}
+
+function remember(e: CacheEntry, bytes = JSON.stringify(e.state.out).length): void {
+  forget(e.key);
+  memory.set(e.key, { e, bytes });
+  memoryBytes += bytes;
+  // The entry just used stays even when it alone is past the cap.
+  while (memoryBytes > memoryMax && memory.size > 1) forget(memory.keys().next().value!);
+}
+
+async function stillValid(fh: fs.FileHandle, e: CacheEntry, dev: string, ino: string, size: number): Promise<boolean> {
+  if (e.dev !== dev || e.ino !== ino || size < e.offset) return false;
+  if (sha1(await readAt(fh, 0, e.headLen)) !== e.headHash) return false;
+  return sha1(await readAt(fh, e.offset - e.tailLen, e.tailLen)) === e.tailHash;
+}
+
+function feed(b: TranscriptBuilder, text: string): void {
+  for (const line of text.split(LINE_END)) {
+    const r = parseLine(line);
+    if (r) b.add(r);
+  }
+}
+
+/** A snapshot that passes the checks but still breaks the read is dropped, and the file read once more from the start. */
+async function readCached(file: string, opts: Required<TranscriptOptions>, key: string): Promise<TranscriptMessage[]> {
+  try {
+    return await readCachedFrom(file, opts, key, true);
+  } catch {
+    forget(key);
+    const f = snapshotFile(key);
+    if (f) await fs.rm(f, { force: true }).catch(() => {});
+    return readCachedFrom(file, opts, key, false);
+  }
+}
+
+async function readCachedFrom(file: string, opts: Required<TranscriptOptions>, key: string, useCache: boolean): Promise<TranscriptMessage[]> {
+  const fh = await fs.open(file, 'r');
+  try {
+    const st = await fh.stat({ bigint: true });
+    const size = Number(st.size);
+    const dev = String(st.dev);
+    const ino = String(st.ino);
+    const cached = useCache ? memory.get(key) : undefined;
+    let entry = useCache ? (cached?.e ?? (await loadSnapshot(key))) : null;
+    if (entry && !(await stillValid(fh, entry, dev, ino, size))) entry = null;
+    forget(key); // the builder changes the state in place: not cached again until it is consistent
+    const b = new TranscriptBuilder(opts, entry?.state);
+    const start = entry?.offset ?? 0;
+    let pos = start;
+    let carry: Buffer = Buffer.alloc(0);
+    while (pos < size) {
+      const chunk = await readAt(fh, pos, Math.min(READ_CHUNK, size - pos));
+      if (chunk.length === 0) break;
+      pos += chunk.length;
+      const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+      const nl = buf.lastIndexOf(10);
+      if (nl < 0) {
+        carry = buf;
+        continue;
+      }
+      feed(b, buf.toString('utf8', 0, nl + 1));
+      carry = buf.subarray(nl + 1);
+    }
+    const offset = pos - carry.length;
+    const state = b.state();
+    const headLen = Math.min(FINGERPRINT_BYTES, offset);
+    const tailLen = Math.min(FINGERPRINT_BYTES, offset);
+    const next: CacheEntry = {
+      file: path.resolve(file), key, dev, ino, offset, state,
+      headLen, headHash: entry && entry.headLen === headLen ? entry.headHash : sha1(await readAt(fh, 0, headLen)),
+      tailLen, tailHash: entry && offset === start && entry.tailLen === tailLen ? entry.tailHash : sha1(await readAt(fh, offset - tailLen, tailLen)),
+    };
+    // Nothing new read: the window (and so its size) is the cached one.
+    remember(next, entry && offset === start && cached?.e === entry ? cached.bytes : undefined);
+    if (offset !== start) saveSnapshot(next, opts.maxMessages);
+    // A last line without its `\n` yet (being written, or the file's end): read like readline does, but not kept.
+    let out = state.out;
+    const tail = carry.toString('utf8');
+    if (tail.split(LINE_END).some((l) => parseLine(l))) {
+      const t = new TranscriptBuilder(opts, structuredClone({ ...state, out: state.out.slice(-1) }));
+      feed(t, tail);
+      out = [...state.out.slice(0, -1), ...t.state().out];
+    }
+    const res = out.slice(-opts.maxMessages);
+    // The window's last entry may still grow on a later read; callers get their own copy.
+    const shared = res.lastIndexOf(state.out[state.out.length - 1]!);
+    if (shared >= 0) res[shared] = structuredClone(res[shared]!);
+    return res;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * The transcript's last messages (default: 200, 8 KB per tool result). Large sessions reach hundreds of MB, so a bounded
+ * window is read incrementally: where the last read stopped is cached (memory, plus a snapshot under
+ * `setTranscriptCacheDir`) and only what was appended since is read. Same output as `readTranscriptUncached`.
+ */
+export async function readTranscript(file: string, opts: TranscriptOptions = {}): Promise<TranscriptMessage[]> {
+  const o = { maxMessages: opts.maxMessages ?? 200, maxToolResultChars: opts.maxToolResultChars ?? 8192 };
+  // An unbounded window (search) is not kept: it would hold the whole session. (`slice(-0)` makes 0 unbounded too.)
+  if (!Number.isFinite(o.maxMessages) || o.maxMessages < 1) return readTranscriptUncached(file, o);
+  const key = `${CODE_VERSION}\0${o.maxMessages}\0${o.maxToolResultChars}\0${path.resolve(file)}`;
+  const prev = locks.get(key) ?? Promise.resolve();
+  const run = prev.catch(() => {}).then(() => readCached(file, o, key));
+  locks.set(key, run);
+  const done = () => {
+    if (locks.get(key) === run) locks.delete(key);
+  };
+  run.then(done, done);
+  return run;
 }
 
 /** The text of a user prompt record or folded steer (what the transcript shows as a user message, counted by `n`), else null. */

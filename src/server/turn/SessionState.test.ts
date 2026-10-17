@@ -181,3 +181,65 @@ describe('Codex session state (D4)', () => {
     await fs.rm(base, { recursive: true, force: true });
   });
 });
+
+describe('pendingRetry.commanderHop (보안 #3)', () => {
+  it('a booking with a valid hop loads as is; one whose hop is not a positive integer is dropped whole (fail closed)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const base = { cwd: '/w', account: 'b', projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' };
+    const retry = { text: 'go', atMs: 9, hops: 1 };
+    await fs.writeFile(file, JSON.stringify({
+      ok: { ...base, sessionId: 'ok', pendingRetry: { ...retry, commanderHop: 3 } },
+      plain: { ...base, sessionId: 'plain', pendingRetry: retry },
+      ...Object.fromEntries(['x', 0, -1, 1.5, null].map((h, i) => [`bad${i}`, { ...base, sessionId: `bad${i}`, pendingRetry: { ...retry, commanderHop: h } }])),
+    }));
+    const s = new SessionStateStore(file);
+    await s.load();
+    expect(s.get('ok')?.pendingRetry).toEqual({ ...retry, commanderHop: 3 });
+    expect(s.get('plain')?.pendingRetry).toEqual(retry);
+    for (let i = 0; i < 5; i++) {
+      expect(s.get(`bad${i}`)).toMatchObject({ sessionId: `bad${i}` });
+      expect(s.get(`bad${i}`)).not.toHaveProperty('pendingRetry');
+    }
+  });
+});
+
+describe('commanderEdited (재검토 #2)', () => {
+  const base = { sessionId: 'x', cwd: '/w', account: 'b' as const, projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' as const };
+
+  it('set via setCommanderEdited only: set() keeps the stored flag, drops an incoming one, and it survives a reload', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const s = new SessionStateStore(file);
+    await s.load();
+    expect(await s.setCommanderEdited('x', true)).toBe(false);
+    await s.set({ ...base, commanderEdited: true });
+    expect(s.get('x')).not.toHaveProperty('commanderEdited');
+    expect(await s.setCommanderEdited('x', true)).toBe(true);
+    // a turn rebuilding the state without the flag (TurnRunner ~1702) does not clear it
+    await s.set({ ...base, lastTurnAtMs: 9 });
+    expect(s.get('x')).toMatchObject({ lastTurnAtMs: 9, commanderEdited: true });
+    const s2 = new SessionStateStore(file);
+    await s2.load();
+    expect(s2.get('x')?.commanderEdited).toBe(true);
+    expect(await s2.setCommanderEdited('x', false)).toBe(true);
+    expect(s2.get('x')).not.toHaveProperty('commanderEdited');
+  });
+
+  it('load(): false is off, any other value that is there stays on (fail closed)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    await fs.writeFile(file, JSON.stringify({
+      off: { ...base, sessionId: 'off', commanderEdited: false },
+      odd: { ...base, sessionId: 'odd', commanderEdited: 'yes' },
+      on: { ...base, sessionId: 'on', commanderEdited: true },
+      none: { ...base, sessionId: 'none' },
+    }));
+    const s = new SessionStateStore(file);
+    await s.load();
+    expect(s.get('off')).not.toHaveProperty('commanderEdited');
+    expect(s.get('odd')?.commanderEdited).toBe(true);
+    expect(s.get('on')?.commanderEdited).toBe(true);
+    expect(s.get('none')).not.toHaveProperty('commanderEdited');
+  });
+});

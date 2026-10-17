@@ -19,7 +19,8 @@ const hhmm = (ms: number) => new Date(ms).toTimeString().slice(0, 5);
 
 type Timer = unknown;
 export type WatchStore = { get(id: string): SessionState | null; list(): SessionState[]; set(s: SessionState): Promise<void> };
-export type RetryRequest = { sessionId: string; cwd: string; text: string; hop: number };
+/** `commanderHop` is set when the failed turn was an automatic (commander) one — its retry must stay gated (보안 #3). */
+export type RetryRequest = { sessionId: string; cwd: string; text: string; hop: number; commanderHop?: number };
 
 /**
  * 병목 알림: the moments a session sits waiting on the user — an unanswered permission / question card, a turn that
@@ -215,7 +216,7 @@ export class BottleneckWatch {
     const st = this.deps.store.get(sessionId);
     if (!st?.pendingRetry) return;
     try {
-      this.deps.retry?.({ sessionId, cwd: st.cwd, text: st.pendingRetry.text, hop: st.pendingRetry.hops });
+      this.deps.retry?.({ sessionId, cwd: st.cwd, text: st.pendingRetry.text, hop: st.pendingRetry.hops, ...(st.pendingRetry.commanderHop ? { commanderHop: st.pendingRetry.commanderHop } : {}) });
     } catch (err) {
       console.error('deck: 자동 재시도 실패', err instanceof Error ? err.message : err);
     }

@@ -28,13 +28,25 @@ type SessionBase = {
    * 대안 계정 없음으로 실패한 턴의 자동 재시도 예약(BottleneckWatch 가 `atMs` 에 ws 의 send 경로로 넣는다). `hops`: 이번이 몇 번째
    * 재시도인지(최대 2). 다음 턴의 시작, 또는 사용자가 먼저 보내면 지운다.
    */
-  pendingRetry?: { text: string; atMs: number; hops: number };
+  pendingRetry?: {
+    text: string;
+    atMs: number;
+    hops: number;
+    /** The failed turn was a 총사령탑 automatic turn (TurnParams.commanderHop): the retry runs with the same gate. */
+    commanderHop?: number;
+  };
   /**
    * 총사령탑(commander) 상태 — `docs/superpowers/specs/2026-10-18-commander-design.md` §6. 변경은 전용 `setCommander`
    * 로만(`accountPin`·`setAccountPin` 과 같은 급): `set()` 에 실려 온 값은 버리고 기존 값을 그대로 지킨다. TurnRunner 가
    * 턴 끝마다 상태를 스프레드 없이 새로 만들어도(`TurnRunner.ts` ~1680행) 이 보존 덕에 지워지지 않는다.
    */
   commander?: CommanderState;
+  /**
+   * 총사령탑 보안: 자동 턴(commanderHop)에서 편집 도구가 불렸다 — 그 뒤의 자동 턴(새 프로세스 포함)에서도 테스트 러너·git 은
+   * ask(rules.ts GateContext). 사람이 보낸 턴이 시작되면 지운다. commander 와 같은 급: 변경은 `setCommanderEdited` 로만,
+   * `set()` 에 실려 온 값은 버리고 기존 값을 지킨다(TurnRunner 가 턴 끝에 상태를 새로 만들어도 풀리지 않게).
+   */
+  commanderEdited?: true;
 };
 
 export type ClaudeSessionState = SessionBase & {
@@ -112,6 +124,13 @@ export class SessionStateStore {
       // 손으로 고쳤거나 예전 모양으로 남은 commander 는 세션 전체가 아니라 그 필드만 버린다.
       for (const s of Object.values(parsed)) {
         if (s && typeof s === 'object' && 'commander' in s && !isCommanderState(s.commander)) delete (s as { commander?: CommanderState }).commander;
+        // commanderEdited: fail closed — `false` means off, any other value that is there (hand-edited, odd shape) stays on.
+        if (s && typeof s === 'object' && 'commanderEdited' in s) {
+          if ((s as { commanderEdited?: unknown }).commanderEdited === false) delete (s as { commanderEdited?: true }).commanderEdited;
+          else (s as { commanderEdited?: true }).commanderEdited = true;
+        }
+        // 보안 #3: a retry booking whose commanderHop is not a positive integer could run an automatic turn ungated — dropped.
+        if (s && typeof s === 'object' && s.pendingRetry && typeof s.pendingRetry === 'object' && 'commanderHop' in s.pendingRetry && !(Number.isInteger(s.pendingRetry.commanderHop) && s.pendingRetry.commanderHop! > 0)) delete (s as { pendingRetry?: unknown }).pendingRetry;
       }
       this.map = new Map(Object.entries(parsed));
     } catch (err) {
@@ -167,7 +186,20 @@ export class SessionStateStore {
       const { commander: _drop, ...rest } = s;
       s = prev?.commander ? { ...rest, commander: prev.commander } : rest;
     }
+    if ('commanderEdited' in s || prev?.commanderEdited) {
+      const { commanderEdited: _drop, ...rest } = s;
+      s = prev?.commanderEdited ? { ...rest, commanderEdited: true } : rest;
+    }
     return this.save(s);
+  }
+
+  /** Sets or clears a session's commanderEdited flag. False when there is no state for `id`. */
+  setCommanderEdited(id: string, on: boolean): Promise<boolean> {
+    const prev = this.map.get(id);
+    if (!prev) return Promise.resolve(false);
+    if (!!prev.commanderEdited === on) return Promise.resolve(true);
+    const { commanderEdited: _drop, ...rest } = prev;
+    return this.save(on ? { ...rest, commanderEdited: true } : rest).then(() => true);
   }
 
   /** Pins a Claude session to an account (null = 자동). False when there is no Claude state for `id`. */

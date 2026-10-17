@@ -155,6 +155,36 @@ describe('ws: submitRetry keeps its hop on every path', () => {
   });
 });
 
+describe('ws: an automatic (commander) turn\'s retry stays gated (보안 #3)', () => {
+  it('a new turn carries commanderHop with the hop', async () => {
+    const S = '78787878-7878-4787-8787-787878787878';
+    const calls: TurnParams[] = [];
+    vi.spyOn(runner, 'run').mockImplementation(async (p, sink) => { calls.push(p); sink.emit(startedOf(p)); sink.emit(resultOf(p)); });
+    wsApi.submitRetry({ sessionId: S, cwd: base, text: 'go', hop: 1, commanderHop: 3 });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({ sessionId: S, text: 'go', retryHop: 1, commanderHop: 3 });
+  });
+
+  it('a busy session refuses it with a log line (no follow-up into a process that may be ungated); a person\'s retry still joins', async () => {
+    const S = '79797979-7979-4797-8797-797979797979';
+    const h = heldRun();
+    vi.spyOn(runner, 'foreignWrites').mockResolvedValue(false);
+    const follow = vi.spyOn(runner, 'followUp').mockReturnValue({ queuedBehind: null });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    wsApi.submitRetry({ sessionId: S, cwd: base, text: 'first', hop: 1 });
+    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    wsApi.submitRetry({ sessionId: S, cwd: base, text: 'auto', hop: 2, commanderHop: 2 });
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^deck: retry deferred — /));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(follow).not.toHaveBeenCalled();
+    expect(h.calls).toHaveLength(1);
+    wsApi.submitRetry({ sessionId: S, cwd: base, text: 'person', hop: 2 });
+    await vi.waitFor(() => expect(follow).toHaveBeenCalledWith(S, expect.objectContaining({ text: 'person', retryHop: 2 })));
+    expect(follow.mock.calls.every(([, f]) => !('commanderHop' in f))).toBe(true);
+    h.release();
+  });
+});
+
 describe('ws: 자동 재시도 end to end', () => {
   it('a limit failure with a booking → the watch fires it through ws → its turn_started settles the booking and the reminder', async () => {
     const S = '76767676-7676-4767-8767-767676767676';

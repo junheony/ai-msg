@@ -287,6 +287,42 @@ describe('TurnRunner: background work after the turn result', () => {
     expect(of(msgs2, 'turn_result').at(-1)).toMatchObject({ turnId: 't2', ok: true });
   });
 
+  it('총사령탑 commanderHop is carried to the cap continuation (its process gets the gate too)', async () => {
+    const { f, msgs, sink, runner, deps } = await setup({ bgMaxMs: 20 });
+    const hops: (number | undefined)[] = [];
+    const engine = deps.engine;
+    deps.engine = { runTurn: (r) => { hops.push(r.commanderHop); return engine.runTurn(r); } };
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', commanderHop: 4 }, sink);
+    f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'slow analysis' }]), cli.result('launched', SID));
+    await waitFor(() => of(msgs, 'turn_started').length === 2, 'the automatic continuation');
+    f.push(cli.init(SID), cli.result('resumed', SID));
+    await done;
+    expect(of(msgs, 'turn_started')[1]).toMatchObject({ turnId: 't1:cap1' });
+    expect(hops).toEqual([4, 4]);
+  });
+
+  it('보안 #3: a follow-up joining a commanderHop turn\'s held process stays gated (same process, same hook settings, no auto-approve)', async () => {
+    const { f, msgs, sink, runner, deps } = await setup();
+    const reqs: Parameters<typeof deps.engine.runTurn>[0][] = [];
+    const engine = deps.engine;
+    deps.engine = { runTurn: (r) => { reqs.push(r); return engine.runTurn(r); } };
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', commanderHop: 4 }, sink);
+    f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    expect(runner.followUp(SID, { turnId: 'f1', text: 'now push it' })).toEqual({ queuedBehind: null });
+    await waitFor(() => f.inputs.length === 2, 'follow-up written into the same process');
+    expect(f.state.calls).toBe(1);
+    expect(reqs.map((r) => r.commanderHop)).toEqual([4]);
+    expect(reqs[0]!.autoApprove!()).toBe(false);
+    // The follow-up's tool calls hit the same fail-closed .* hook and are judged by the gate.
+    expect(await f.hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git push' }, tool_use_id: 'b1' })).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' } });
+    expect(await f.hook({ hook_event_name: 'PreToolUse', tool_name: 'WebFetch', tool_input: { url: 'x' }, tool_use_id: 'b2' })).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' } });
+    f.push(cli.result('asked', SID));
+    await waitFor(() => of(msgs, 'turn_result').length === 2, 'follow-up result');
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.result('built', SID));
+    await done;
+  });
+
   it('the background wait limit cutting work: deck records it and sends 이어서 진행해 주세요 itself, telling the model it is an automatic continuation', async () => {
     const { f, msgs, sink, runner, store, procs } = await setup({ bgMaxMs: 20 });
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
@@ -431,6 +467,22 @@ describe('TurnRunner: background work after the turn result', () => {
       expect(store.get(SID)).not.toHaveProperty('interrupted');
     });
 
+    it('총사령탑 commanderHop is carried to the turn that goes on on the other account', async () => {
+      const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const hops: (number | undefined)[] = [];
+      const engine = deps.engine;
+      deps.engine = { runTurn: (r) => { hops.push(r.commanderHop); return engine.runTurn(r); } };
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', commanderHop: 2 }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'), limited);
+      await waitFor(() => f.state.calls === 2, 'the continuation process');
+      f.push(cli.init(SID), cli.delta('resumed'), cli.result('resumed', SID));
+      await done;
+      expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.account])).toEqual([['t1', 'b'], ['t1:bg1', 'b'], ['t1:bg1', 'a']]);
+      expect(hops).toEqual([2, 2]);
+    });
+
     it('같은 벤더 순환 꺼짐: the segment does not go on on another Claude account; it ends as failed and the retry is booked', async () => {
       const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove, sameVendorRotation: () => false });
       const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
@@ -511,6 +563,25 @@ describe('TurnRunner: background work after the turn result', () => {
       await done;
       expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 'f1', ok: false, errorText: expect.stringContaining('대안 계정 없음') });
       expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '고쳐 줘', hops: 2 });
+    });
+
+    it('보안 #3: a commanderHop process failing with no account left books its retry (continuation or follow-up) with the hop', async () => {
+      const a = await setup({ usage: await usageCards(), move: okMove });
+      const doneA = a.runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2, commanderHop: 2 }, a.sink);
+      a.f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(a.msgs, 'turn_result').length === 1, 'first result');
+      a.f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'), limited);
+      await doneA;
+      expect(a.deps.store.get(SID)?.pendingRetry).toEqual(expect.objectContaining({ text: '이어서 진행해 주세요.', hops: 1, commanderHop: 2 }));
+
+      const b = await setup({ usage: await usageCards(), move: okMove });
+      const doneB = b.runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2, commanderHop: 5 }, b.sink);
+      b.f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(b.msgs, 'turn_result').length === 1, 'first result');
+      expect(b.runner.followUp(SID, { turnId: 'f1', text: '고쳐 줘', retryHop: 1 })).toEqual({ queuedBehind: null });
+      b.f.push(limited);
+      await doneB;
+      expect(b.deps.store.get(SID)?.pendingRetry).toEqual(expect.objectContaining({ text: '고쳐 줘', hops: 2, commanderHop: 5 }));
     });
 
     it('a follow-up with files failing on a limit with no account left is not booked', async () => {

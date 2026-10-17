@@ -107,7 +107,7 @@ export class ClaudeEngine implements Engine {
     const reg = (await this.bridge()).register({
       permission: permissionHandler(req, audit, gate, new SessionGrants()),
       hook: hookHandler(req, audit, gate),
-    });
+    }, { failClosed: !!req.commanderHop });
     let proc: ClaudeProcess | null = null;
     let aborted = false;
     const onAbort = () => { aborted = true; reg.abortAll(); proc?.interrupt(); };
@@ -118,7 +118,7 @@ export class ClaudeEngine implements Engine {
       const relay = { node: this.o.node ?? process.execPath, script: HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
       const settingsPath = path.join(procDir, 'settings.json');
       const mcpConfigPath = path.join(procDir, 'mcp.json');
-      await fs.writeFile(settingsPath, JSON.stringify(buildSettings({ ...(req.allowRules?.length ? { allowRules: req.allowRules } : {}), ...(req.noTools ? { noTools: true } : {}), ...(req.systemNote ? { systemNote: req.systemNote } : {}), relay })), { mode: 0o600 });
+      await fs.writeFile(settingsPath, JSON.stringify(buildSettings({ ...(req.allowRules?.length ? { allowRules: req.allowRules } : {}), ...(req.noTools ? { noTools: true } : {}), ...(req.systemNote ? { systemNote: req.systemNote } : {}), ...(req.commanderHop ? { commander: true } : {}), relay })), { mode: 0o600 });
       await fs.writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: relay.node, script: PERMISSION_MCP, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
 
       let resume = req.resumeSessionId ?? undefined;

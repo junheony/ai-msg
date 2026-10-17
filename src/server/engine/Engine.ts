@@ -225,6 +225,17 @@ export type TurnRequest = {
   noTools?: boolean;
   /** deck 의 메모(모델만 본다): 이 프로세스의 첫 사용자 프롬프트에만 UserPromptSubmit 훅의 additionalContext 로 붙는다. */
   systemNote?: string;
+  /**
+   * 총사령탑 자동 턴(TurnParams.commanderHop): Bash·`mcp__*` 도 PreToolUse 훅으로 가서 기본 ask, 허용 목록만 allow
+   * (commander/rules.ts), 훅 실패는 deny. 없으면 기존 동작 그대로.
+   */
+  commanderHop?: number;
+  /** 자동 턴 훅의 판정마다 한 번(감사 `commander_gate`). 입력 자체는 넘기지만 기록하지 않는다(해시만). */
+  onCommanderGate?: (e: { toolName: string; input: unknown; toolUseId: string; decision: 'allow' | 'ask' | 'deny' }) => Promise<void>;
+  /** 자동 턴: 이전 자동 턴의 편집이 세션 상태에 남아 있다(SessionState.commanderEdited) — 시작부터 테스트 러너·git 은 ask. */
+  commanderEdited?: boolean;
+  /** 자동 턴에서 편집 도구가 처음 불릴 때 한 번(그 편집이 실행되기 전에) — 세션 상태에 commanderEdited 를 남긴다. */
+  onCommanderEdit?: () => Promise<void>;
 };
 
 export interface Engine {

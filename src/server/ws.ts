@@ -217,9 +217,11 @@ export type WsHandle = {
    * An automatic retry (BottleneckWatch, SessionState.pendingRetry): `text` sent to the session as a device's send would
    * be (busy, follow-up and draining rules alike — not reported as the user's send), from no device. `hop` rides the turn
    * as TurnParams.retryHop on every path (a new turn, a follow-up into a held process, a send waiting for one to close);
-   * a refusal is only logged (the booking stays for the next restart's rearm).
+   * a refusal is only logged (the booking stays for the next restart's rearm). `commanderHop` (the failed turn was an
+   * automatic one, 보안 #3) rides a new turn only: such a retry on a busy session is refused, since a follow-up carries no
+   * commanderHop and the held process may be a person's ungated one.
    */
-  submitRetry(r: { sessionId: string; cwd: string; text: string; hop: number }): void;
+  submitRetry(r: { sessionId: string; cwd: string; text: string; hop: number; commanderHop?: number }): void;
 };
 
 /** The sender of a server-made send (submitRetry): never open, so nothing is sent to it and it views nothing. */
@@ -648,7 +650,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         : null;
   };
 
-  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false, retryHop?: number) => {
+  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false, retryHop?: number, commanderHop?: number) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
     const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
     // A socket that closed while its send waited (foreign-write check, recycle) still gets its message run; it just views nothing.
@@ -679,6 +681,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       return;
     }
     if (msg.sessionId && busy.has(msg.sessionId)) {
+      // 보안 #3: an automatic turn's retry never joins a running process (FollowUpParams has no commanderHop).
+      if (commanderHop) { send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref }); return; }
       // The session's process may only be waiting for background work: then the message joins it (TurnRunner.followUp).
       const base = turns.get(busy.get(msg.sessionId)!);
       const sid = msg.sessionId;
@@ -893,6 +897,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.sessionId === null && msg.permissionMode ? { permissionMode: msg.permissionMode } : {}),
           ...(msg.handoff ? { handoff: true } : {}),
           ...hop,
+          ...(commanderHop ? { commanderHop } : {}),
         }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
@@ -1255,8 +1260,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // Only processes waiting with no work left end now (see endHeld); live background work is waited for.
       for (const t of turns.values()) endHeld(t);
     },
-    submitRetry({ sessionId, cwd, text, hop }) {
-      startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, hop);
+    submitRetry({ sessionId, cwd, text, hop, commanderHop }) {
+      startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, hop, commanderHop);
     },
     /** Processes still up (running a prompt, or closing after `drain` ended them): the restart waits for these. */
     activeTurns: () => turns.size,

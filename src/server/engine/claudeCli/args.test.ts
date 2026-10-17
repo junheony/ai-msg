@@ -1,7 +1,11 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   claudeArgs, buildSettings, buildMcpConfig, relayCommand, shellQuote, claudeEnv, validResume,
-  PERMISSION_TOOL, EDIT_TOOL_MATCHER,
+  PERMISSION_TOOL, EDIT_TOOL_MATCHER, COMMANDER_TOOL_MATCHER, HOOK_TIMEOUT_S,
 } from './args';
 
 const base = { model: 'opus' as const, permissionMode: 'default' as const, settingsPath: '/t/p/settings.json', mcpConfigPath: '/t/p/mcp.json' };
@@ -64,6 +68,45 @@ describe('buildSettings', () => {
   });
 });
 
+describe('buildSettings — 총사령탑 자동 턴(commander)', () => {
+  const rules = ['Bash(npm test:*)', 'Bash', 'mcp__github__create_issue', 'Edit(/w/**)', 'WebFetch(domain:example.com)'];
+  it('without commander the output is unchanged (byte for byte)', () => {
+    for (const s of [{ allowRules: rules, relay }, { relay }, { systemNote: 'n', relay }, { noTools: true, allowRules: rules, relay }]) {
+      expect(JSON.stringify(buildSettings({ ...s, commander: false }))).toBe(JSON.stringify(buildSettings(s)));
+    }
+  });
+  it('보안 #4·#5: one PreToolUse hook for every tool (matcher .*), relayed fail-closed', () => {
+    const s = buildSettings({ allowRules: rules, commander: true, relay }) as any;
+    expect(COMMANDER_TOOL_MATCHER).toBe('.*');
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+    expect(s.hooks.PreToolUse[0].matcher).toBe('.*');
+    expect(s.hooks.PreToolUse[0].hooks).toHaveLength(1);
+    expect(s.hooks.PreToolUse[0].hooks[0]).toMatchObject({ type: 'command', timeout: HOOK_TIMEOUT_S });
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toContain("'--fail' 'closed'");
+  });
+  it('without commander the relay modes stay open / deny', () => {
+    const plain = buildSettings({ systemNote: 'n', relay }) as any;
+    expect(plain.hooks.PreToolUse[0].hooks[0].command).toContain("'--fail' 'open'");
+    expect((buildSettings({ noTools: true, relay }) as any).hooks.PreToolUse[0].hooks[0].command).toContain("'--fail' 'deny'");
+  });
+  it('Bash and mcp__ allow rules never reach permissions.allow; the others stay', () => {
+    const s = buildSettings({ allowRules: rules, commander: true, relay }) as any;
+    expect(s.permissions).toEqual({ allow: ['Edit(/w/**)', 'WebFetch(domain:example.com)'] });
+    expect(buildSettings({ allowRules: ['Bash(ls)', 'mcp__x__y'], commander: true, relay })).not.toHaveProperty('permissions');
+    expect(buildSettings({ allowRules: ['BashOutput'], commander: true, relay })).toHaveProperty('permissions', { allow: ['BashOutput'] });
+  });
+  it('noTools wins over commander (every tool denied)', () => {
+    const s = buildSettings({ noTools: true, commander: true, relay }) as any;
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+    expect(s.hooks.PreToolUse[0].matcher).toBe('*');
+  });
+  it('the UserPromptSubmit note hook is the same with or without commander', () => {
+    const a = buildSettings({ systemNote: 'n', commander: true, relay }) as any;
+    const b = buildSettings({ systemNote: 'n', relay }) as any;
+    expect(a.hooks.UserPromptSubmit).toEqual(b.hooks.UserPromptSubmit);
+  });
+});
+
 describe('relayCommand / shellQuote', () => {
   it('quotes every part; the token travels as an env prefix, never as a node argv flag', () => {
     expect(shellQuote("a'b")).toBe(`'a'\\''b'`);
@@ -71,6 +114,35 @@ describe('relayCommand / shellQuote', () => {
       `DECK_BRIDGE_TOKEN='tok' '/usr/bin/node' '--disable-warning=ExperimentalWarning' '/app/hookRelay.ts' '--sock' '/t/qd-1/bridge.sock' '--fail' 'open'`,
     );
     expect(relayCommand(relay, 'open')).not.toContain('--token');
+  });  it('재검토 #3: closed is wrapped so any non-zero exit becomes 2; open / deny are not wrapped', () => {
+    expect(relayCommand(relay, 'closed')).toBe(
+      `( DECK_BRIDGE_TOKEN='tok' '/usr/bin/node' '--disable-warning=ExperimentalWarning' '/app/hookRelay.ts' '--sock' '/t/qd-1/bridge.sock' '--fail' 'closed' ) || exit 2`,
+    );
+    expect(relayCommand(relay, 'deny')).not.toContain('exit 2');
+    const s = buildSettings({ systemNote: 'n', commander: true, relay }) as any;
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toMatch(/\) \|\| exit 2$/);
+    expect(s.hooks.UserPromptSubmit[0].hooks[0].command).not.toContain('exit 2');
+  });
+  it('재검토 #3: run through sh — a SIGKILLed or missing relay exits 2 when closed; exit 0 + JSON passes through', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-relaycmd-'));
+    try {
+      const fake = (name: string, body: string) => { const f = path.join(dir, name); fs.writeFileSync(f, `#!/bin/sh\n${body}\n`, { mode: 0o700 }); return f; };
+      const sh = (cmd: string) => spawnSync('/bin/sh', ['-c', cmd], { encoding: 'utf8', input: '{}' });
+      const killed = fake('killed', 'kill -9 $$');
+      const answer = fake('answer', `cat >/dev/null; printf '%s' '{"hookSpecificOutput":{"permissionDecision":"ask"}}'; exit 0`);
+      const missing = path.join(dir, 'no-such-node');
+      // before: the bare command dies by SIGKILL (sh may exec it: no status at all) / exits 127 — not 2, so the CLI would run the tool
+      expect(sh(relayCommand({ ...relay, node: killed }, 'open')).status).not.toBe(2);
+      expect(sh(relayCommand({ ...relay, node: missing }, 'open')).status).toBe(127);
+      expect(sh(relayCommand({ ...relay, node: killed }, 'closed')).status).toBe(2);
+      expect(sh(relayCommand({ ...relay, node: missing }, 'closed')).status).toBe(2);
+      expect(sh(relayCommand({ ...relay, node: fake('one', 'exit 1') }, 'closed')).status).toBe(2);
+      const ok = sh(relayCommand({ ...relay, node: answer }, 'closed'));
+      expect(ok.status).toBe(0);
+      expect(JSON.parse(ok.stdout)).toEqual({ hookSpecificOutput: { permissionDecision: 'ask' } });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -98,7 +98,8 @@ export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (si
       const settings = s.files.settings as { hooks: Record<string, { hooks: { command: string }[] }[]> };
       const cmd = Object.values(settings.hooks)[0]![0]!.hooks[0]!.command;
       const word = (flag: string) => (cmd.match(new RegExp(`'${flag}' '([^']*)'`)) ?? [])[1]!;
-      const token = (cmd.match(/^DECK_BRIDGE_TOKEN='([^']*)' /) ?? [])[1]!;
+      // `( … ) || exit 2` around a fail-closed (commander) command — args.ts relayCommand.
+      const token = (cmd.match(/^(?:\( )?DECK_BRIDGE_TOKEN='([^']*)' /) ?? [])[1]!;
       const r = await postBridge(word('--sock'), token, '/v1/hook', input);
       return JSON.parse(r.body) as Record<string, unknown>;
     },

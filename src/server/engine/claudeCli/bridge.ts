@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { asPermissionUpdates, type PermissionUpdate } from './permissionTypes';
-import { PERMISSION_ERROR_MESSAGE, PERMISSION_TIMEOUT_MESSAGE } from './texts';
+import { COMMANDER_GATE_FAILED_MESSAGE, PERMISSION_ERROR_MESSAGE, PERMISSION_TIMEOUT_MESSAGE } from './texts';
 
 export type PermissionCall = { tool_name: string; input: Record<string, unknown>; tool_use_id: string; permission_suggestions?: PermissionUpdate[] };
 export type PermissionReply =
@@ -29,9 +29,19 @@ export const MCP_TOOL_TIMEOUT_MS = 12 * 60 * 60_000;
 export const PERMISSION_WAIT_MS = MCP_TOOL_TIMEOUT_MS - 2 * 60_000;
 /** Below the 30 s command-hook timeout written into the settings file. */
 export const HOOK_WAIT_MS = 25_000;
+/**
+ * A fail-closed registration (총사령탑 자동 턴): its hook answers a deny after this long. Order (each layer answers before
+ * the one outside it gives up): relay deadline 20 s (hookRelay CLOSED_RELAY_DEADLINE_MS) < this < CLI hook timeout 30 s
+ * (args HOOK_TIMEOUT_S) — a hook the CLI times out on would let the tool run.
+ */
+export const CLOSED_HOOK_WAIT_MS = 22_000;
+/** What a fail-closed registration's hook answers when the handler timed out or threw. */
+const CLOSED_HOOK_DENY = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: COMMANDER_GATE_FAILED_MESSAGE } };
 const MAX_BODY = 1024 * 1024;
 
-type Reg = { handlers: BridgeHandlers; inflight: Set<AbortController> };
+/** `failClosed`: a hook that times out or throws answers a deny instead of `{}` (no opinion). */
+export type RegisterOptions = { failClosed?: boolean };
+type Reg = { handlers: BridgeHandlers; inflight: Set<AbortController>; failClosed: boolean };
 
 function parseCall(v: unknown): PermissionCall | null {
   if (!v || typeof v !== 'object') return null;
@@ -52,9 +62,9 @@ export class PermissionBridge {
   private readonly regs = new Map<string, Reg>();
   /** Disposed registrations answer 410 (a process outliving its turn), unknown tokens 401. */
   private readonly disposedTokens = new Set<string>();
-  private constructor(private readonly server: http.Server, readonly socketPath: string, private readonly dir: string, private readonly waitMs: number, private readonly hookWaitMs: number) {}
+  private constructor(private readonly server: http.Server, readonly socketPath: string, private readonly dir: string, private readonly waitMs: number, private readonly hookWaitMs: number, private readonly closedHookWaitMs: number) {}
 
-  static async open(opts: { waitMs?: number; hookWaitMs?: number } = {}): Promise<PermissionBridge> {
+  static async open(opts: { waitMs?: number; hookWaitMs?: number; closedHookWaitMs?: number } = {}): Promise<PermissionBridge> {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'qd-'));
     await fs.chmod(dir, 0o700);
     const socketPath = path.join(dir, 'b.sock');
@@ -63,15 +73,15 @@ export class PermissionBridge {
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socketPath, () => resolve()); });
     await fs.chmod(socketPath, 0o600);
     server.unref();
-    self = new PermissionBridge(server, socketPath, dir, opts.waitMs ?? PERMISSION_WAIT_MS, opts.hookWaitMs ?? HOOK_WAIT_MS);
+    self = new PermissionBridge(server, socketPath, dir, opts.waitMs ?? PERMISSION_WAIT_MS, opts.hookWaitMs ?? HOOK_WAIT_MS, opts.closedHookWaitMs ?? CLOSED_HOOK_WAIT_MS);
     return self;
   }
 
   get registrations(): number { return this.regs.size; }
 
-  register(handlers: BridgeHandlers): BridgeRegistration {
+  register(handlers: BridgeHandlers, opts: RegisterOptions = {}): BridgeRegistration {
     const token = randomBytes(24).toString('hex');
-    const reg: Reg = { handlers, inflight: new Set() };
+    const reg: Reg = { handlers, inflight: new Set(), failClosed: !!opts.failClosed };
     this.regs.set(token, reg);
     const abortAll = () => { for (const ac of reg.inflight) ac.abort(); };
     const dispose = () => {
@@ -111,10 +121,11 @@ export class PermissionBridge {
     const ac = new AbortController();
     reg.inflight.add(ac);
     res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const hookFailed = reg.failClosed ? CLOSED_HOOK_DENY : {};
     const cap = setTimeout(() => {
       ac.abort();
-      send(200, kind === 'permission' ? { behavior: 'deny', message: PERMISSION_TIMEOUT_MESSAGE } : {});
-    }, kind === 'permission' ? this.waitMs : this.hookWaitMs);
+      send(200, kind === 'permission' ? { behavior: 'deny', message: PERMISSION_TIMEOUT_MESSAGE } : hookFailed);
+    }, kind === 'permission' ? this.waitMs : reg.failClosed ? this.closedHookWaitMs : this.hookWaitMs);
     cap.unref();
     try {
       if (kind === 'permission') {
@@ -126,7 +137,7 @@ export class PermissionBridge {
         send(200, await reg.handlers.hook(body as Record<string, unknown>, ac.signal));
       }
     } catch {
-      send(200, kind === 'permission' ? { behavior: 'deny', message: PERMISSION_ERROR_MESSAGE } : {});
+      send(200, kind === 'permission' ? { behavior: 'deny', message: PERMISSION_ERROR_MESSAGE } : hookFailed);
     } finally {
       clearTimeout(cap);
       reg.inflight.delete(ac);
