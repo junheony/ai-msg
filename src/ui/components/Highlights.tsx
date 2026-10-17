@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { DEFAULT_HIGHLIGHT_HOURS, HIGHLIGHT_HOURS, type HighlightEvent } from '../../shared/highlights';
 import type { EngineKind } from '../../shared/models';
 import { ago } from './Activity';
 import { Sheet } from './Dialogs';
 import { EngineMark } from './EngineMark';
+import { lastResultOf, plainFirstSentence, sectionHighlights, type HighlightLive } from './highlightSections';
 
 export type HighlightFilter = 'all' | 'done' | 'failed' | 'ask' | 'task' | 'interrupted';
 const FILTERS: { id: HighlightFilter; label: string }[] = [
@@ -92,8 +93,7 @@ export function digestOf(c: HighlightCard): HighlightEvent[] {
 
 /** The line a digest shows for an event: a turn's reply line without its 완료/실패 prefix ('' = nothing to show). */
 export function digestLine(e: HighlightEvent): string {
-  if (e.kind !== 'turn') return e.body;
-  return e.body.replace(/^(완료|실패)(\s*·\s*|$)/, '').trim();
+  return plainFirstSentence(e.kind === 'turn' ? e.body.replace(/^(완료|실패)(\s*·\s*|$)/, '') : e.body);
 }
 
 function hhmm(at: number): string {
@@ -110,7 +110,11 @@ function savedHours(): number {
   }
 }
 
-function Card({ c, now, engine, onOpen }: { c: HighlightCard; now: number; engine?: EngineKind | undefined; onOpen?: (() => void) | undefined }) {
+function Card({ c, now, engine, onOpen, need }: {
+  c: HighlightCard; now: number; engine?: EngineKind | undefined; onOpen?: (() => void) | undefined;
+  /** 확인 필요: what the session needs, shown under its head. */
+  need?: { text: string; tone: 'warn' | 'danger' } | undefined;
+}) {
   const [open, setOpen] = useState(false);
   const project = c.server ? 'deck' : c.cwd.split('/').filter(Boolean).pop() ?? c.cwd;
   const summary = summaryOf(c);
@@ -123,10 +127,11 @@ function Card({ c, now, engine, onOpen }: { c: HighlightCard; now: number; engin
   );
   const digest = digestOf(c);
   return (
-    <li className={`hl-card${c.server ? ' server' : ''}`} data-testid="hl-card">
+    <li className={`hl-card${c.server ? ' server' : ''}${need ? ` need tone-${need.tone}` : ''}`} data-testid="hl-card">
       {onOpen
         ? <button type="button" className="hl-head" onClick={onOpen} title="이 세션 열기">{head}</button>
         : <div className="hl-head">{head}</div>}
+      {need && <div className={`hl-need tone-${need.tone}`} data-testid="hl-need">{need.text}</div>}
       {digest.length > 0 && (
         <ul className="hl-digest" data-testid="hl-digest">
           {digest.map((e, i) => {
@@ -159,9 +164,59 @@ function Card({ c, now, engine, onOpen }: { c: HighlightCard; now: number; engin
   );
 }
 
+function projectOf(c: HighlightCard): string {
+  return c.cwd.split('/').filter(Boolean).pop() ?? c.cwd;
+}
+
+/** 진행 중: one small line per session at work; tapping opens it. */
+function ProgressRow({ c, status, onOpen }: { c: HighlightCard; status: string; onOpen?: (() => void) | undefined }) {
+  const inner = (
+    <>
+      <span className="hl-row-title">{c.title}</span>
+      <span className="hl-row-project">{projectOf(c)}</span>
+      <span className="hl-row-status">{status}</span>
+    </>
+  );
+  return (
+    <li className="hl-row progress" data-testid="hl-progress">
+      {onOpen ? <button type="button" className="hl-row-main" onClick={onOpen} title="이 세션 열기">{inner}</button> : <div className="hl-row-main">{inner}</div>}
+    </li>
+  );
+}
+
+/** 끝남: one line per finished session (제목 · 프로젝트 · 완료 N · 마지막 결과 · 시각); tapping unfolds its card. */
+function DoneRow({ c, now, engine, onOpen }: { c: HighlightCard; now: number; engine?: EngineKind | undefined; onOpen?: (() => void) | undefined }) {
+  const [open, setOpen] = useState(false);
+  const summary = summaryOf(c);
+  const result = lastResultOf(c);
+  return (
+    <li className={`hl-row done${open ? ' open' : ''}`} data-testid="hl-done">
+      <button type="button" className="hl-row-main" aria-expanded={open} onClick={() => setOpen((v) => !v)} title={open ? '접기' : '펼치기'}>
+        <span className="hl-row-title">{engine && <EngineMark engine={engine} decorative />}{c.title}</span>
+        <span className="hl-row-project">{projectOf(c)}</span>
+        {summary && <span className="hl-row-count">{summary}</span>}
+        <span className="hl-row-result">{result}</span>
+        <span className="hl-row-time">{ago(now - c.last)}</span>
+      </button>
+      {open && <ul className="hl-grid hl-row-card"><Card c={c} now={now} engine={engine} onOpen={onOpen} /></ul>}
+    </li>
+  );
+}
+
+function Section({ title, count, children, testId }: { title: string; count: number; children: ReactNode; testId: string }) {
+  return (
+    <section className="hl-section" data-testid={testId}>
+      <h3 className="hl-section-head">{title} <span className="hl-section-count">{count}</span></h3>
+      {children}
+    </section>
+  );
+}
+
 /** 하이라이트: what happened per session over the last 6/12/24 hours (GET /api/highlights). */
-export function Highlights({ onClose, onOpenSession, engineOf, fetchFn = fetch, now }: {
+export function Highlights({ onClose, onOpenSession, engineOf, live, fetchFn = fetch, now }: {
   onClose: () => void;
+  /** Cards waiting for an answer and sessions at work right now: they decide 확인 필요 / 진행 중. */
+  live?: HighlightLive;
   onOpenSession: (sessionId: string, cwd: string, title: string) => void;
   engineOf?: (sessionId: string) => EngineKind | undefined;
   fetchFn?: typeof fetch;
@@ -203,6 +258,13 @@ export function Highlights({ onClose, onOpenSession, engineOf, fetchFn = fetch, 
   const at = now ?? Date.now();
   const events = loaded && loaded.hours === hours ? loaded.events : null;
   const cards = events ? groupHighlights(events, filter) : [];
+  const sections = filter === 'all' && cards.length > 0 ? sectionHighlights(cards, live, at) : null;
+  const openOf = (c: HighlightCard) => {
+    const sid = c.sessionId;
+    return sid ? () => onOpenSession(sid, c.cwd, c.title) : undefined;
+  };
+  const cardOf = (c: HighlightCard, need?: { text: string; tone: 'warn' | 'danger' }) =>
+    <Card key={c.key} c={c} now={at} engine={c.sessionId ? engineOf?.(c.sessionId) : undefined} onOpen={openOf(c)} need={need} />;
 
   return (
     <Sheet className="usage-view highlights-view" label="하이라이트" onClose={onClose}>
@@ -221,14 +283,23 @@ export function Highlights({ onClose, onOpenSession, engineOf, fetchFn = fetch, 
         {error && <div className="uv-note error">{error}</div>}
         {!events && !error && <div className="uv-note muted">불러오는 중…</div>}
         {events && cards.length === 0 && <div className="uv-note muted">지난 {hours}시간 동안 기록된 일이 없습니다</div>}
-        {cards.length > 0 && (
-          <ul className="hl-grid">
-            {cards.map((c) => {
-              const sid = c.sessionId;
-              return <Card key={c.key} c={c} now={at} engine={sid ? engineOf?.(sid) : undefined} onOpen={sid ? () => onOpenSession(sid, c.cwd, c.title) : undefined} />;
-            })}
-          </ul>
+        {cards.length > 0 && filter !== 'all' && <ul className="hl-grid">{cards.map((c) => cardOf(c))}</ul>}
+        {sections && sections.attention.length > 0 && (
+          <Section title="확인 필요" count={sections.attention.length} testId="hl-sec-attention">
+            <ul className="hl-grid">{sections.attention.map((a) => cardOf(a.card, { text: a.need, tone: a.tone }))}</ul>
+          </Section>
         )}
+        {sections && sections.progress.length > 0 && (
+          <Section title="진행 중" count={sections.progress.length} testId="hl-sec-progress">
+            <ul className="hl-rows">{sections.progress.map((p) => <ProgressRow key={p.card.key} c={p.card} status={p.status} onOpen={openOf(p.card)} />)}</ul>
+          </Section>
+        )}
+        {sections && sections.done.length > 0 && (
+          <Section title="끝남" count={sections.done.length} testId="hl-sec-done">
+            <ul className="hl-rows">{sections.done.map((c) => <DoneRow key={c.key} c={c} now={at} engine={c.sessionId ? engineOf?.(c.sessionId) : undefined} onOpen={openOf(c)} />)}</ul>
+          </Section>
+        )}
+        {sections && sections.system.length > 0 && <ul className="hl-grid hl-system">{sections.system.map((c) => cardOf(c))}</ul>}
       </div>
     </Sheet>
   );
