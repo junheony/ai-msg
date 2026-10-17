@@ -1,22 +1,99 @@
 /**
  * 총사령탑 3층(실행 중 차단) — 설계 §5. 자동 턴(`commanderHop`)의 PreToolUse 훅이 Bash·`mcp__*` 호출마다 묻는다.
  * 기본은 `ask`(권한 카드), 작은 허용 목록만 `allow`. 순수 함수.
- * 1층 `screenInstruction` 은 상태 머신(4단계)과 함께 들어온다.
+ * 1층 `screenInstruction` 은 상태 머신(4단계)과 함께 들어온다. 읽기 도구 경로 판정(`gateReadTool`)만 realpath 로 디스크를 본다.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 
 export type GateDecision = 'allow' | 'ask';
 
-/** 이 세그먼트(프로세스)에서 편집 도구가 한 번이라도 불렸는지 — 그 뒤 테스트 러너·git 은 ask(편집+러너 = 임의 코드 실행). */
+/**
+ * 자동 턴에서 편집 도구가 한 번이라도 불렸는지 — 그 뒤 테스트 러너·git 은 ask(편집+러너 = 임의 코드 실행). 이 프로세스의
+ * 편집에 더해, 세션 상태(`SessionState.commanderEdited`)에 남은 이전 자동 턴의 편집도 포함(사람 턴이 시작되면 풀린다).
+ */
 export type GateContext = { runnerConfigChanged: boolean };
 
 /**
  * 자동 턴에서 손대면 사람 확인(ask)이 필요한 경로: `.claude/`(CLI 설정·훅·명령) 와 `.git/`(훅·설정) 아래, 그리고 그 자체.
- * 경로 조각 단위 비교(`.gitignore`·`.claudeignore` 는 아님). 슬래시·백슬래시 모두.
+ * 경로 조각 단위 비교(`.gitignore`·`.claudeignore` 는 아님). 슬래시·백슬래시 모두. 대소문자 무시(macOS 기본 파일시스템은
+ * `.Claude/` 가 `.claude/` 와 같은 디렉터리).
  */
-const PROTECTED_EDIT_RE = /(?:^|[\\/])\.(?:claude|git)(?:[\\/]|$)/;
+const PROTECTED_EDIT_RE = /(?:^|[\\/])\.(?:claude|git)(?:[\\/]|$)/i;
+/** 어느 디렉터리에 있든 모델 지시·MCP 설정 파일: `CLAUDE.md`·`CLAUDE.local.md`·`AGENTS.md`·`.mcp.json`. */
+const PROTECTED_FILE_RE = /(?:^|[\\/])(?:claude(?:\.local)?\.md|agents\.md|\.mcp\.json)$/i;
 
 export function isProtectedEditPath(filePath: string): boolean {
-  return PROTECTED_EDIT_RE.test(filePath);
+  return PROTECTED_EDIT_RE.test(filePath) || PROTECTED_FILE_RE.test(filePath);
+}
+
+/** 자동 턴의 읽기 도구 판정에 쓰는 루트: 세션 cwd 와 이 세션에 허용된 디렉터리. `home` 은 `~` 풀이용. */
+export type ReadRoots = { cwd: string; allowDirs: readonly string[]; home: string; /** 상대 경로를 풀 기준(훅 입력의 cwd). 없으면 `cwd`. */ base?: string };
+
+/** cwd 안이어도 읽기는 ask 인 파일: `.env`·`.env.*`(대소문자 무시). */
+const SECRET_FILE_RE = /^\.env(?:\..*)?$/i;
+/**
+ * glob 패턴이 루트 밖을 가리킬 수 있는지: 맨 앞·중괄호 대안(`{`·`,` 뒤)의 `/`·`~`, `..` 조각, 백슬래시(윈도 경로·이스케이프).
+ * `**\/*.{ts,tsx}` 같은 흔한 꼴은 통과.
+ */
+const GLOB_OUTSIDE = /(?:^|[{,])\s*[\/~]|(?:^|[\/{,])\.\.(?:[\/},]|$)|\\/;
+/** glob 패턴이 `.env` 파일을 겨냥하는지. */
+const GLOB_SECRET = /(?:^|[\/{,])\.env/i;
+
+/** 있는 데까지 realpath 로 풀고 없는 꼬리는 그대로 붙인다(심볼릭 링크 디렉터리로 바깥을 가리키는 것까지 본다). */
+function realish(p: string): string {
+  const abs = path.resolve(p);
+  const tail: string[] = [];
+  let cur = abs;
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(cur), ...tail.reverse());
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return abs;
+      tail.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+function within(p: string, root: string): boolean {
+  return p === root || p.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+}
+
+/**
+ * 읽기 도구(Read·NotebookRead·Glob·Grep·LS)의 경로 판정. 'pass' = 판정 없이 통과(CLI 의 보통 권한 흐름), 'ask' = 사람 확인.
+ * 대상(`file_path`·`notebook_path`·`path`, Glob·Grep·LS 는 없으면 cwd)을 `~` 풀고 상대면 `base` 기준으로 풀어 realpath 로
+ * 본다 — 세션 cwd·allowDirs 밖이면 ask. `.env`·`.env.*` 는 안이어도 ask. Glob 의 `pattern`·Grep 의 `glob` 이 바깥이나
+ * `.env` 를 가리켜도 ask. 경로가 문자열이 아니거나 `~user` 같이 애매하면 ask.
+ */
+export function gateReadTool(toolName: string, input: unknown, roots: ReadRoots): 'pass' | 'ask' {
+  const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const key = toolName === 'Read' ? 'file_path' : toolName === 'NotebookRead' ? 'notebook_path' : 'path';
+  const raw = i[key];
+  let target: string;
+  if (raw === undefined || raw === null || raw === '') {
+    if (key !== 'path') return 'ask';
+    target = roots.base ?? roots.cwd;
+  } else if (typeof raw !== 'string' || raw.includes('\0')) {
+    return 'ask';
+  } else if (raw === '~' || raw.startsWith('~/')) {
+    target = path.join(roots.home, raw.slice(1));
+  } else if (raw.startsWith('~')) {
+    return 'ask';
+  } else {
+    target = path.resolve(roots.base ?? roots.cwd, raw);
+  }
+  if (!roots.cwd || !path.isAbsolute(roots.cwd)) return 'ask';
+  const real = realish(target);
+  if (SECRET_FILE_RE.test(path.basename(target)) || SECRET_FILE_RE.test(path.basename(real))) return 'ask';
+  const rootList = [roots.cwd, ...roots.allowDirs.filter((d) => path.isAbsolute(d))].map(realish);
+  if (!rootList.some((r) => within(real, r))) return 'ask';
+  for (const g of [toolName === 'Glob' ? i.pattern : undefined, toolName === 'Grep' ? i.glob : undefined]) {
+    if (g === undefined) continue;
+    if (typeof g !== 'string' || GLOB_OUTSIDE.test(g) || GLOB_SECRET.test(g)) return 'ask';
+  }
+  return 'pass';
 }
 
 /**

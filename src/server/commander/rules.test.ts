@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { gateTool, isAllowedCommand, isProtectedEditPath } from './rules';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { gateReadTool, gateTool, isAllowedCommand, isProtectedEditPath } from './rules';
 
 const clean = { runnerConfigChanged: false };
 const changed = { runnerConfigChanged: true };
@@ -94,5 +97,81 @@ describe('isProtectedEditPath — .claude/·.git/ 아래 편집은 ask', () => {
   });
   it.each(['/w/src/a.ts', '/w/package.json', '/w/.gitignore', '/w/.github/workflows/ci.yml', '/w/.claudeignore', '/w/my.claude/x'])('no: %s', (p) => {
     expect(isProtectedEditPath(p)).toBe(false);
+  });
+});
+
+describe('isProtectedEditPath — 대소문자 우회·지시 파일(재검토 #4)', () => {
+  it.each(['/w/.Claude/settings.json', '/w/.CLAUDE/hooks/x', '/w/.Git/hooks/pre-commit', '/w/.GIT', '/w/CLAUDE.md', '/w/sub/claude.md', '/w/CLAUDE.local.md', 'AGENTS.md', '/w/pkg/Agents.MD', '/w/.mcp.json', '/w/sub/.MCP.json', 'a\\CLAUDE.md'])('yes: %s', (p) => {
+    expect(isProtectedEditPath(p)).toBe(true);
+  });
+  it.each(['/w/docs/CLAUDE.md.bak', '/w/MYCLAUDE.md', '/w/mcp.json', '/w/agents.mdx', '/w/src/claude.ts'])('no: %s', (p) => {
+    expect(isProtectedEditPath(p)).toBe(false);
+  });
+});
+
+describe('gateReadTool — 자동 턴 읽기 도구의 경로(재검토 #1)', () => {
+  // it.each 의 인자가 수집 시점에 평가되므로 경로는 describe 본문에서 정한다(디렉터리는 beforeAll 에서 만든다).
+  const tmp = path.join(os.tmpdir(), `deck-gate-${process.pid}-${Date.now()}`);
+  const cwd = path.join(tmp, 'proj');
+  const extra = path.join(tmp, 'extra');
+  const outside = path.join(tmp, 'secret');
+  const roots = { cwd, allowDirs: [extra], home: tmp };
+  beforeAll(() => {
+    for (const d of [cwd, path.join(cwd, 'src'), extra, outside]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'key.txt'), 'x');
+    fs.writeFileSync(path.join(cwd, 'src', 'a.ts'), 'x');
+    fs.writeFileSync(path.join(cwd, '.env'), 'x');
+    fs.symlinkSync(outside, path.join(cwd, 'link'));
+    fs.symlinkSync(path.join(cwd, '.env'), path.join(cwd, 'innocent.txt'));
+  });
+  afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('pass: paths inside cwd or an allowed dir; Glob/Grep without path (= cwd); ordinary globs', () => {
+    expect(gateReadTool('Read', { file_path: path.join(cwd, 'src', 'a.ts') }, roots)).toBe('pass');
+    expect(gateReadTool('Read', { file_path: path.join(cwd, 'src', 'not-yet.ts') }, roots)).toBe('pass');
+    expect(gateReadTool('Read', { file_path: path.join(extra, 'b.md') }, roots)).toBe('pass');
+    expect(gateReadTool('Glob', { pattern: '**/*.{ts,tsx}' }, roots)).toBe('pass');
+    expect(gateReadTool('Grep', { pattern: 'foo', glob: '*.ts' }, roots)).toBe('pass');
+    expect(gateReadTool('Grep', { pattern: 'foo', path: 'src' }, roots)).toBe('pass');
+    expect(gateReadTool('Grep', { pattern: 'foo', path: 'src' }, { ...roots, base: outside })).toBe('ask');
+    expect(gateReadTool('LS', {}, roots)).toBe('pass');
+    expect(gateReadTool('Read', { file_path: path.join(cwd, '.envrc.example.ts') }, roots)).toBe('pass');
+  });
+  it.each([
+    ['Read', { file_path: '/etc/passwd' }],
+    ['Read', { file_path: path.join(outside, 'key.txt') }],
+    ['Read', { file_path: '~/.ssh/id_rsa' }],
+    ['Read', { file_path: '~root/.ssh/id_rsa' }],
+    ['Read', { file_path: '../secret/key.txt' }],
+    ['Read', { file_path: path.join(cwd, 'src', '..', '..', 'secret', 'key.txt') }],
+    ['Read', { file_path: path.join(cwd, 'link', 'key.txt') }],
+    ['Read', { file_path: path.join(cwd, 'innocent.txt') }],
+    ['Read', { file_path: path.join(cwd, '.env') }],
+    ['Read', { file_path: path.join(cwd, '.env.local') }],
+    ['Read', { file_path: path.join(cwd, 'src', '.ENV.production') }],
+    ['Read', {}],
+    ['Read', { file_path: 42 }],
+    ['NotebookRead', { notebook_path: '/etc/x.ipynb' }],
+    ['Glob', { pattern: '*', path: '/etc' }],
+    ['Glob', { pattern: '/etc/**' }],
+    ['Glob', { pattern: '../secret/*' }],
+    ['Glob', { pattern: '~/.ssh/*' }],
+    ['Glob', { pattern: '{/etc/passwd,x}' }],
+    ['Glob', { pattern: 'src/{a,../../secret}/*' }],
+    ['Glob', { pattern: '**/.env*' }],
+    ['Glob', { pattern: '*', path: path.join(cwd, 'link') }],
+    ['Grep', { pattern: 'x', path: '/' }],
+    ['Grep', { pattern: 'x', path: '..' }],
+    ['Grep', { pattern: 'x', path: '.env' }],
+    ['Grep', { pattern: 'x', glob: '../../**' }],
+    ['Grep', { pattern: 'x', glob: '/etc/*' }],
+    ['Grep', { pattern: 'x', glob: '.env*' }],
+    ['Grep', { pattern: 'x', glob: 7 }],
+    ['LS', { path: '/Users' }],
+  ] as [string, unknown][])('ask: %s %j', (tool, input) => {
+    expect(gateReadTool(tool, input, roots)).toBe('ask');
+  });
+  it('ask when the session cwd is unknown', () => {
+    expect(gateReadTool('Read', { file_path: '/w/a' }, { cwd: '', allowDirs: [], home: tmp })).toBe('ask');
   });
 });

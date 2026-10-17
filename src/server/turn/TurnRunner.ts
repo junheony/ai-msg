@@ -163,6 +163,8 @@ const GEMINI_LIMIT_RE = /\bRESOURCE_EXHAUSTED\b|exhausted your (daily )?quota|\b
 type Attempt = {
   result: EngineResult | null; rateLimit: RateLimitSignal | null; sessionId: string | null; compacted: boolean; initCwd: string | null;
   rest: AsyncIterator<EngineEvent>; live: LiveInput | null; bgTasks: string[];
+  /** 자동 턴(commanderHop)에서 편집 도구가 불렸다 — runClaudeTurn 이 상태를 쓴 뒤 SessionState.commanderEdited 로 남긴다. */
+  commanderEdited?: boolean;
 };
 
 /** What the next Claude turn of a session would be routed to (previewRoute): no turn is run, nothing is moved or stored. */
@@ -926,6 +928,8 @@ export class TurnRunner {
     const commanderHop = p.commanderHop ?? (this.deps.devCommanderGate ? 1 : undefined);
     // 보안 #8: a person's turn gated only by DECK_DEV_COMMANDER_GATE is labelled in the audit log.
     const devGate = commanderHop !== undefined && p.commanderHop === undefined;
+    // An edit on an earlier automatic turn of this session still holds test runners and git at ask (rules.ts GateContext).
+    const priorEdited = commanderHop !== undefined && resumeSessionId !== null && !!this.deps.store.get(resumeSessionId)?.commanderEdited;
     const events = this.deps.engine.runTurn({
       account,
       cwd,
@@ -1000,6 +1004,12 @@ export class TurnRunner {
         onCommanderGate: (g) => {
           const cmd = g.toolName === 'Bash' && g.input && typeof g.input === 'object' ? (g.input as { command?: unknown }).command : undefined;
           return recordAudit(this.deps.auditFile, { kind: 'commander_gate', ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, hop: commanderHop, toolName: g.toolName, decision: g.decision, inputSha256: hashInput(typeof cmd === 'string' ? cmd : g.input), ...(devGate ? { dev: true as const } : {}) });
+        },
+        ...(priorEdited ? { commanderEdited: true } : {}),
+        onCommanderEdit: async () => {
+          out.commanderEdited = true;
+          // A fork's id is not the stored one until init; a brand-new session has no state yet — runClaudeTurn records it then.
+          if (out.sessionId) await this.deps.store.setCommanderEdited(out.sessionId, true);
         },
       } : {}),
     });
@@ -1665,6 +1675,12 @@ export class TurnRunner {
     if (p.retryHop) early.unshift(AUTO_RETRY_NOTICE);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
+    // 사람이 보낸 턴(자동 턴·deck 이 스스로 보낸 이어가기·재시도·failover 가 아님)이 시작되면 자동 턴의 편집 표시를 지운다.
+    if (state?.commanderEdited && !forkAt && p.commanderHop === undefined && !p.retryHop && !p.bgCapHop && !p.failoverHop) {
+      await deps.store.setCommanderEdited(state.sessionId, false);
+      const { commanderEdited: _cleared, ...rest } = state;
+      state = rest;
+    }
     const tried: Account[] = [];
     const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])] };
     // Handoff turns keep the mode as is: noTools denies every call before any mode is consulted.
@@ -1716,6 +1732,10 @@ export class TurnRunner {
           ...(carried ? { interrupted: carried } : {}),
         };
         await deps.store.set(state);
+        if (a.commanderEdited) {
+          await deps.store.setCommanderEdited(sessionId, true);
+          state = { ...state, commanderEdited: true };
+        }
         if (cut && res.ok) {
           const st = deps.store.get(sessionId);
           if (st && !isCodexState(st) && !isGeminiState(st)) { const { interrupted: _told, ...kept } = st; await deps.store.set(kept); }

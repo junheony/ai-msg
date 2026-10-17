@@ -1,5 +1,7 @@
 // src/server/engine/claudeCli/hooks.ts
-import { gateTool, isProtectedEditPath } from '../../commander/rules';
+import os from 'node:os';
+import path from 'node:path';
+import { gateReadTool, gateTool, isProtectedEditPath } from '../../commander/rules';
 import type { TurnRequest } from '../Engine';
 import { EDIT_TOOL_MATCHER } from './args';
 import type { BridgeHandlers } from './bridge';
@@ -7,14 +9,16 @@ import type { ModeGate } from './permissions';
 import type { ToolAudit } from './stream';
 import { COMMANDER_ASK_MESSAGE, COMMANDER_GATE_FAILED_MESSAGE, NO_TOOLS_MESSAGE, PLAN_GATE_MESSAGE } from './texts';
 
-export type HookDeps = Pick<TurnRequest, 'noTools' | 'systemNote' | 'commanderHop' | 'onCommanderGate'>;
+export type HookDeps = Pick<TurnRequest, 'noTools' | 'systemNote' | 'commanderHop' | 'onCommanderGate' | 'commanderEdited' | 'onCommanderEdit'> & Partial<Pick<TurnRequest, 'cwd' | 'allowDirs'>>;
 
 const EDIT_TOOLS = new Set(EDIT_TOOL_MATCHER.split('|'));
 /**
- * 총사령탑 자동 턴: 판정 없이 통과(의견 없음 `{}` — CLI 의 보통 권한 흐름 그대로)하는 도구. 읽기 전용이거나 늘 사람에게 가는
- * 것(AskUserQuestion·ExitPlanMode)만. 여기 없는 도구는 이름을 몰라도 ask.
+ * 총사령탑 자동 턴: 판정 없이 통과(의견 없음 `{}` — CLI 의 보통 권한 흐름 그대로)하는 도구. 늘 사람에게 가는 것
+ * (AskUserQuestion·ExitPlanMode)과 TodoWrite 만. 여기 없는 도구는 이름을 몰라도 ask.
  */
-const COMMANDER_PASS_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'TodoWrite', 'AskUserQuestion', 'ExitPlanMode']);
+const COMMANDER_PASS_TOOLS = new Set(['TodoWrite', 'AskUserQuestion', 'ExitPlanMode']);
+/** 읽기 도구: 대상 경로가 세션 cwd·allowDirs 안이고 `.env` 가 아니면 통과, 아니면 ask(rules.ts gateReadTool). */
+const COMMANDER_READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead']);
 
 const pre = (permissionDecision: 'allow' | 'deny' | 'ask', reason?: string) => ({
   hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, ...(reason ? { permissionDecisionReason: reason } : {}) },
@@ -30,8 +34,9 @@ function editedPath(input: unknown): string | null {
 /** Answers the `--settings` command hooks of one process (relayed by hookRelay.ts). */
 export function hookHandler(req: HookDeps, audit: ToolAudit, gate: ModeGate): BridgeHandlers['hook'] {
   let noteSent = false;
-  // 총사령탑: 이 프로세스에서 편집 도구가 한 번이라도 불렸으면 테스트 러너·git 도 ask.
-  let runnerConfigChanged = false;
+  // 총사령탑: 이 프로세스(또는 세션 상태에 남은 이전 자동 턴)에서 편집 도구가 한 번이라도 불렸으면 테스트 러너·git 도 ask.
+  let runnerConfigChanged = !!req.commanderEdited;
+  let editRecorded = false;
   return async (input) => {
     if (input.hook_event_name === 'PreToolUse') {
       const call = { tool_name: String(input.tool_name ?? ''), tool_input: input.tool_input ?? null, tool_use_id: String(input.tool_use_id ?? '') };
@@ -52,10 +57,22 @@ export function hookHandler(req: HookDeps, audit: ToolAudit, gate: ModeGate): Br
           return decision === 'allow' ? pre('allow') : decision === 'ask' ? pre('ask', COMMANDER_ASK_MESSAGE) : pre('deny', COMMANDER_GATE_FAILED_MESSAGE);
         };
         if (EDIT_TOOLS.has(call.tool_name)) {
-          // 편집 뒤의 러너 실행 = 임의 코드 실행: 어떤 편집이든 그 뒤 테스트 러너·git 은 ask.
+          // 편집 뒤의 러너 실행 = 임의 코드 실행: 어떤 편집이든 그 뒤 테스트 러너·git 은 ask — 다음 자동 턴(새 프로세스)도.
           runnerConfigChanged = true;
+          if (!editRecorded) {
+            editRecorded = true;
+            try {
+              await req.onCommanderEdit?.();
+            } catch {
+              // best-effort: this process still asks; TurnRunner records it again once the attempt ends
+            }
+          }
           const p = editedPath(call.tool_input);
           if (p === null || isProtectedEditPath(p)) return judged(() => 'ask');
+        } else if (COMMANDER_READ_TOOLS.has(call.tool_name)) {
+          const base = typeof input.cwd === 'string' && path.isAbsolute(input.cwd) ? input.cwd : undefined;
+          const roots = { cwd: req.cwd ?? '', allowDirs: req.allowDirs ?? [], home: os.homedir(), ...(base ? { base } : {}) };
+          if (gateReadTool(call.tool_name, call.tool_input, roots) !== 'pass') return judged(() => 'ask');
         } else {
           return judged(() => gateTool(call.tool_name, call.tool_input, { runnerConfigChanged }));
         }

@@ -50,7 +50,7 @@ describe('hookHandler PreToolUse — 총사령탑 자동 턴(commanderHop)', () 
   const bash = (command: string, id = 'b1') => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: id });
   const mkc = (gate?: ModeGate) => {
     const gated: { toolName: string; toolUseId: string; decision: string; input: unknown }[] = [];
-    const r = mk({ commanderHop: 1, onCommanderGate: async (e) => { gated.push(e); } }, gate);
+    const r = mk({ commanderHop: 1, cwd: '/w', onCommanderGate: async (e) => { gated.push(e); } }, gate);
     return { ...r, gated };
   };
   const ask = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: COMMANDER_ASK_MESSAGE } };
@@ -95,15 +95,72 @@ describe('hookHandler PreToolUse — 총사령탑 자동 턴(commanderHop)', () 
     expect(await edit('Edit', { file_path: '/w/src/a.ts' }, 'p4')).toEqual(allow);
     expect(gated.map((g) => [g.toolName, g.toolUseId, g.decision])).toEqual([['Write', 'p1', 'ask'], ['Edit', 'p2', 'ask'], ['NotebookEdit', 'p3', 'ask']]);
   });
-  it('보안 #5: read-only tools pass with no opinion (not audited); any other tool, known or not, is ask', async () => {
+  it('보안 #5: read-only tools inside the cwd pass with no opinion (not audited); any other tool, known or not, is ask', async () => {
     const { h, gated } = mkc();
-    for (const t of ['Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'TodoWrite', 'AskUserQuestion', 'ExitPlanMode']) expect(await h(pre(t), sig)).toEqual({});
+    for (const t of ['Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'TodoWrite', 'AskUserQuestion', 'ExitPlanMode']) {
+      expect(await h({ ...pre(t), tool_input: { file_path: '/w/a', notebook_path: '/w/a.ipynb' } }, sig)).toEqual({});
+    }
     expect(gated).toEqual([]);
     for (const t of ['WebFetch', 'WebSearch', 'Agent', 'Task', 'KillShell', 'SomeFutureTool', '']) expect(await h(pre(t, t), sig)).toEqual(ask);
     expect(gated.map((g) => g.decision)).toEqual(Array(7).fill('ask'));
   });
   it('without commanderHop read-only / unknown tools are unchanged (no opinion)', async () => {
     for (const t of ['Read', 'WebFetch', 'SomeFutureTool']) expect(await mk({}).h(pre(t), sig)).toEqual({});
+    // a person's turn: reads outside the cwd, .env, and protected edits are left to the CLI as before
+    const human = mk({ cwd: '/w' });
+    const call = (tool: string, input: unknown) => human.h({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 'h' }, sig);
+    expect(await call('Read', { file_path: '/etc/passwd' })).toEqual({});
+    expect(await call('Read', { file_path: '/w/.env' })).toEqual({});
+    expect(await call('Grep', { pattern: 'x', path: '/' })).toEqual({});
+    expect(await call('Write', { file_path: '/w/.Claude/settings.json' })).toEqual({});
+  });
+  it('재검토 #1: reads outside the cwd / allowDirs, through .., ~ or a glob, and .env reads are ask (audited); the mode gate cannot allow them', async () => {
+    const { h, gated, gate } = mkc();
+    gate.mode = 'acceptEdits';
+    const call = (tool: string, input: unknown, id: string, extra: Record<string, unknown> = {}) => h({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: id, ...extra }, sig);
+    expect(await call('Read', { file_path: '/etc/passwd' }, 'r1')).toEqual(ask);
+    expect(await call('Read', { file_path: '/w/../etc/passwd' }, 'r2')).toEqual(ask);
+    expect(await call('Read', { file_path: '~/.ssh/id_rsa' }, 'r3')).toEqual(ask);
+    expect(await call('Read', { file_path: '/w/.env' }, 'r4')).toEqual(ask);
+    expect(await call('Glob', { pattern: '/Users/**/.ssh/*' }, 'r5')).toEqual(ask);
+    expect(await call('Grep', { pattern: 'token', path: '/' }, 'r6')).toEqual(ask);
+    expect(await call('Grep', { pattern: 'token', glob: '../../**' }, 'r7')).toEqual(ask);
+    // a relative path resolves against the hook input's cwd, not the session cwd
+    expect(await call('Grep', { pattern: 'token', path: 'x' }, 'r8', { cwd: '/elsewhere' })).toEqual(ask);
+    expect(await call('Read', { file_path: '/w/src/a.ts' }, 'ok1')).toEqual(allow);
+    expect(gated.map((g) => [g.toolName, g.toolUseId, g.decision])).toEqual([
+      ['Read', 'r1', 'ask'], ['Read', 'r2', 'ask'], ['Read', 'r3', 'ask'], ['Read', 'r4', 'ask'], ['Glob', 'r5', 'ask'], ['Grep', 'r6', 'ask'], ['Grep', 'r7', 'ask'], ['Grep', 'r8', 'ask'],
+    ]);
+  });
+  it('재검토 #1: allowDirs count as inside; no session cwd means every read asks', async () => {
+    const withDir = mk({ commanderHop: 1, cwd: '/w', allowDirs: ['/data'] });
+    expect(await withDir.h({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/data/x.csv' }, tool_use_id: 'd' }, sig)).toEqual({});
+    const noCwd = mk({ commanderHop: 1 });
+    expect(await noCwd.h(pre('Read'), sig)).toEqual(ask);
+  });
+  it('재검토 #4: .Claude/ (case) and CLAUDE.md / AGENTS.md / .mcp.json edits are ask', async () => {
+    const { h, gate } = mkc();
+    gate.mode = 'acceptEdits';
+    for (const file_path of ['/w/.Claude/settings.json', '/w/.GIT/hooks/pre-commit', '/w/CLAUDE.md', '/w/sub/AGENTS.md', '/w/.mcp.json', '/w/x/.MCP.JSON']) {
+      expect(await h({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path }, tool_use_id: 'e' }, sig)).toEqual(ask);
+    }
+  });
+  it('재검토 #2: commanderEdited from an earlier automatic turn holds runners and git at ask from the start; the first edit is recorded once, before it runs', async () => {
+    const carried = mk({ commanderHop: 2, cwd: '/w', commanderEdited: true });
+    expect(await carried.h(bash('npm test'), sig)).toEqual(ask);
+    expect(await carried.h(bash('git status'), sig)).toEqual(ask);
+    expect(await carried.h(bash('ls'), sig)).toEqual(allow);
+    const recorded: string[] = [];
+    const fresh = mk({ commanderHop: 1, cwd: '/w', onCommanderEdit: async () => { recorded.push('edit'); } });
+    expect(await fresh.h(bash('npm test'), sig)).toEqual(allow);
+    await fresh.h({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/w/a.ts' }, tool_use_id: 'e1' }, sig);
+    await fresh.h({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: '/w/b.ts' }, tool_use_id: 'e2' }, sig);
+    expect(recorded).toEqual(['edit']);
+    expect(await fresh.h(bash('npm test'), sig)).toEqual(ask);
+    // a failing record does not let the edit (or later runners) through differently
+    const failing = mk({ commanderHop: 1, cwd: '/w', onCommanderEdit: async () => { throw new Error('disk'); } });
+    expect(await failing.h({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: '/w/.claude/x' }, tool_use_id: 'e3' }, sig)).toEqual(ask);
+    expect(await failing.h(bash('npm test'), sig)).toEqual(ask);
   });
   it('fail closed: a gate that throws denies (and is audited as deny)', async () => {
     vi.spyOn(rules, 'gateTool').mockImplementation(() => { throw new Error('boom'); });

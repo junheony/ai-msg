@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   claudeArgs, buildSettings, buildMcpConfig, relayCommand, shellQuote, claudeEnv, validResume,
@@ -110,6 +114,35 @@ describe('relayCommand / shellQuote', () => {
       `DECK_BRIDGE_TOKEN='tok' '/usr/bin/node' '--disable-warning=ExperimentalWarning' '/app/hookRelay.ts' '--sock' '/t/qd-1/bridge.sock' '--fail' 'open'`,
     );
     expect(relayCommand(relay, 'open')).not.toContain('--token');
+  });  it('재검토 #3: closed is wrapped so any non-zero exit becomes 2; open / deny are not wrapped', () => {
+    expect(relayCommand(relay, 'closed')).toBe(
+      `( DECK_BRIDGE_TOKEN='tok' '/usr/bin/node' '--disable-warning=ExperimentalWarning' '/app/hookRelay.ts' '--sock' '/t/qd-1/bridge.sock' '--fail' 'closed' ) || exit 2`,
+    );
+    expect(relayCommand(relay, 'deny')).not.toContain('exit 2');
+    const s = buildSettings({ systemNote: 'n', commander: true, relay }) as any;
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toMatch(/\) \|\| exit 2$/);
+    expect(s.hooks.UserPromptSubmit[0].hooks[0].command).not.toContain('exit 2');
+  });
+  it('재검토 #3: run through sh — a SIGKILLed or missing relay exits 2 when closed; exit 0 + JSON passes through', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-relaycmd-'));
+    try {
+      const fake = (name: string, body: string) => { const f = path.join(dir, name); fs.writeFileSync(f, `#!/bin/sh\n${body}\n`, { mode: 0o700 }); return f; };
+      const sh = (cmd: string) => spawnSync('/bin/sh', ['-c', cmd], { encoding: 'utf8', input: '{}' });
+      const killed = fake('killed', 'kill -9 $$');
+      const answer = fake('answer', `cat >/dev/null; printf '%s' '{"hookSpecificOutput":{"permissionDecision":"ask"}}'; exit 0`);
+      const missing = path.join(dir, 'no-such-node');
+      // before: the bare command dies by SIGKILL (sh may exec it: no status at all) / exits 127 — not 2, so the CLI would run the tool
+      expect(sh(relayCommand({ ...relay, node: killed }, 'open')).status).not.toBe(2);
+      expect(sh(relayCommand({ ...relay, node: missing }, 'open')).status).toBe(127);
+      expect(sh(relayCommand({ ...relay, node: killed }, 'closed')).status).toBe(2);
+      expect(sh(relayCommand({ ...relay, node: missing }, 'closed')).status).toBe(2);
+      expect(sh(relayCommand({ ...relay, node: fake('one', 'exit 1') }, 'closed')).status).toBe(2);
+      const ok = sh(relayCommand({ ...relay, node: answer }, 'closed'));
+      expect(ok.status).toBe(0);
+      expect(JSON.parse(ok.stdout)).toEqual({ hookSpecificOutput: { permissionDecision: 'ask' } });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

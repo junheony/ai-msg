@@ -79,10 +79,17 @@ export interface RelaySpec { node: string; script: string; socketPath: string; t
 /**
  * Hook command line. The registration token goes in as a `DECK_BRIDGE_TOKEN=` env assignment in
  * front of node (same channel as the MCP server's `env`), so it never appears in node's argv / `ps`.
+ *
+ * `closed` (총사령탑 자동 턴 PreToolUse) only: wrapped as `( … ) || exit 2`, so a relay that never answers its own way —
+ * killed (SIGKILL → 137), node missing (127), any other non-zero exit — still blocks the call (the CLI runs the tool on
+ * any exit but 0 and 2). Exit 0 + JSON passes through unchanged. `open` / `deny` stay unwrapped: there a dead relay has
+ * always meant "no opinion" (the CLI's own permission flow, and canUseTool for a noTools turn) — exit 2 would instead
+ * block a person's edit, or a UserPromptSubmit prompt.
  */
 export function relayCommand(r: RelaySpec, fail: 'open' | 'deny' | 'closed'): string {
-  return `DECK_BRIDGE_TOKEN=${shellQuote(r.token)} ` + [r.node, '--disable-warning=ExperimentalWarning', r.script, '--sock', r.socketPath, '--fail', fail]
+  const cmd = `DECK_BRIDGE_TOKEN=${shellQuote(r.token)} ` + [r.node, '--disable-warning=ExperimentalWarning', r.script, '--sock', r.socketPath, '--fail', fail]
     .map(shellQuote).join(' ');
+  return fail === 'closed' ? `( ${cmd} ) || exit 2` : cmd;
 }
 
 /**

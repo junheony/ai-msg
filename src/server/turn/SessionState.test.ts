@@ -203,3 +203,43 @@ describe('pendingRetry.commanderHop (보안 #3)', () => {
     }
   });
 });
+
+describe('commanderEdited (재검토 #2)', () => {
+  const base = { sessionId: 'x', cwd: '/w', account: 'b' as const, projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' as const };
+
+  it('set via setCommanderEdited only: set() keeps the stored flag, drops an incoming one, and it survives a reload', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const s = new SessionStateStore(file);
+    await s.load();
+    expect(await s.setCommanderEdited('x', true)).toBe(false);
+    await s.set({ ...base, commanderEdited: true });
+    expect(s.get('x')).not.toHaveProperty('commanderEdited');
+    expect(await s.setCommanderEdited('x', true)).toBe(true);
+    // a turn rebuilding the state without the flag (TurnRunner ~1702) does not clear it
+    await s.set({ ...base, lastTurnAtMs: 9 });
+    expect(s.get('x')).toMatchObject({ lastTurnAtMs: 9, commanderEdited: true });
+    const s2 = new SessionStateStore(file);
+    await s2.load();
+    expect(s2.get('x')?.commanderEdited).toBe(true);
+    expect(await s2.setCommanderEdited('x', false)).toBe(true);
+    expect(s2.get('x')).not.toHaveProperty('commanderEdited');
+  });
+
+  it('load(): false is off, any other value that is there stays on (fail closed)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    await fs.writeFile(file, JSON.stringify({
+      off: { ...base, sessionId: 'off', commanderEdited: false },
+      odd: { ...base, sessionId: 'odd', commanderEdited: 'yes' },
+      on: { ...base, sessionId: 'on', commanderEdited: true },
+      none: { ...base, sessionId: 'none' },
+    }));
+    const s = new SessionStateStore(file);
+    await s.load();
+    expect(s.get('off')).not.toHaveProperty('commanderEdited');
+    expect(s.get('odd')?.commanderEdited).toBe(true);
+    expect(s.get('on')?.commanderEdited).toBe(true);
+    expect(s.get('none')).not.toHaveProperty('commanderEdited');
+  });
+});

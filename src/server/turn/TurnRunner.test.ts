@@ -388,6 +388,38 @@ describe('TurnRunner', () => {
     expect(lines.map((l) => [l.turnId, l.hop, l.dev])).toEqual([['u', 1, true], ['a', 2, undefined]]);
   });
 
+  it('재검토 #2: an edit on an automatic turn is stored; the next automatic turn (new process) starts with it; a person\'s turn clears it', async () => {
+    const eng = new StubEngine(async (req, call) => {
+      if (call === 0) await req.onCommanderEdit?.();
+      return ok(SID);
+    });
+    const c = await ctx(eng);
+    await seedSession(c, 'b');
+    const st: ClaudeSessionState = { sessionId: SID, cwd: '/w/one', account: 'b', projectDir: path.join(c.roots.b!, '-w-one'), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' };
+    await c.deps.store.set(st);
+    const run = (turnId: string, extra: { commanderHop?: number; retryHop?: number } = {}) => new TurnRunner(c.deps).run({ turnId, cwd: '/w/one', sessionId: SID, text: 'go', ...extra }, c.sink);
+    await run('a1', { commanderHop: 1 });
+    expect(eng.calls[0]).not.toHaveProperty('commanderEdited');
+    expect(c.deps.store.get(SID)?.commanderEdited).toBe(true);
+    await run('a2', { commanderHop: 2 });
+    expect(eng.calls[1]!.commanderEdited).toBe(true);
+    // deck's own retry of a turn is not a person's turn: the flag stays
+    await run('r', { retryHop: 1 });
+    expect(c.deps.store.get(SID)?.commanderEdited).toBe(true);
+    await run('h');
+    expect(eng.calls[3]).not.toHaveProperty('commanderEdited');
+    expect(c.deps.store.get(SID)).not.toHaveProperty('commanderEdited');
+    await run('a3', { commanderHop: 3 });
+    expect(eng.calls[4]).not.toHaveProperty('commanderEdited');
+  });
+
+  it('재검토 #2: a new session edited on its first automatic turn (no state yet when the hook fires) is recorded once the turn stores it', async () => {
+    const eng = new StubEngine(async (req) => { await req.onCommanderEdit?.(); return ok('born1'); });
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi', commanderHop: 1 }, c.sink);
+    expect(c.deps.store.get('born1')?.commanderEdited).toBe(true);
+  });
+
   it('개발용 devCommanderGate: a user turn runs as hop 1 of the gate', async () => {
     const eng = new StubEngine(() => ok('d1'));
     const c = await ctx(eng, { devCommanderGate: true });

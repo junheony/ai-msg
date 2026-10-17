@@ -232,6 +232,10 @@ export type TurnRequest = {
   commanderHop?: number;
   /** 자동 턴 훅의 판정마다 한 번(감사 `commander_gate`). 입력 자체는 넘기지만 기록하지 않는다(해시만). */
   onCommanderGate?: (e: { toolName: string; input: unknown; toolUseId: string; decision: 'allow' | 'ask' | 'deny' }) => Promise<void>;
+  /** 자동 턴: 이전 자동 턴의 편집이 세션 상태에 남아 있다(SessionState.commanderEdited) — 시작부터 테스트 러너·git 은 ask. */
+  commanderEdited?: boolean;
+  /** 자동 턴에서 편집 도구가 처음 불릴 때 한 번(그 편집이 실행되기 전에) — 세션 상태에 commanderEdited 를 남긴다. */
+  onCommanderEdit?: () => Promise<void>;
 };
 
 export interface Engine {
