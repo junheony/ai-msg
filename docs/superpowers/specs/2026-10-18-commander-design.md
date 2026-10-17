@@ -1,6 +1,6 @@
 # 총사령탑(commander) 설계 — 목표를 걸어 두면 세션이 쉴 때마다 판정해 이어 보내는 자동 지휘
 
-> 2026-10-18. 상태: 설계 2판(구현 전, 독립 검토 2건 반영 — 끝의 "검토 반영 기록"). 관련: `2026-10-15-quarterdeck-paid-design.md` §3·§4, `src/server/turn/TurnRunner.ts`, `src/server/turn/SessionState.ts`, `src/server/ws.ts`, `src/server/engine/claudeCli/args.ts`, `src/server/push/BottleneckWatch.ts`.
+> 2026-10-18. 상태: 설계 2판(구현 전, 독립 검토 3건 반영 — 끝의 "검토 반영 기록"). 관련: `2026-10-15-quarterdeck-paid-design.md` §3·§4, `src/server/turn/TurnRunner.ts`, `src/server/turn/SessionState.ts`, `src/server/ws.ts`, `src/server/engine/claudeCli/args.ts`, `src/server/push/BottleneckWatch.ts`.
 > 요금제 위치: 장기적으로 **Pro**("자리를 비워도 멈추지 않는 자동화" 축). v1 은 결제 인프라가 없으므로 Pro 게이팅 대신 **설정 플래그** `commanderEnabled`(기본 꺼짐)로만 연다.
 
 ## 1. 목표 · 비목표
@@ -35,7 +35,7 @@ v1 에서 뺀 입구: composer `/commander` 명령·자동완성, 폰 탭 배지
 
 **실행**: `claude -p --output-format json --model <sonnet> --tools "" --strict-mcp-config --mcp-config <빈 MCP 구성> --setting-sources user --settings=<훅 비활성 settings>` · cwd 는 `configDir/commander/`(프로젝트 세션 목록에 안 섞이고, `entrypoint: sdk-cli` 숨김 규칙으로 사이드바에도 안 뜬다). 타임아웃 90초, 재시도 없음(실패 → `waiting_human`). 입력은 stdin 한 건.
 
-격리 전제는 **구현 전 검증 항목**이다(§9 수동 검증): ① `--tools ""` 로 도구가 실제로 0개인지 ② `--strict-mcp-config` 로 `~/.claude.json` MCP 가 안 붙는지 ③ 빈 `--settings` 는 사용자 설정을 초기화하지 않으므로, 사용자 훅이 판정마다 돌지 않게 할 방법(`disableAllHooks` 등)과 관리 정책 예외 ④ 계정 `CLAUDE.md`·스킬 목록이 입력에 섞여 들어가는 실제 토큰 수(§8).
+격리 전제는 **구현 전 검증 항목**이다(§9 수동 검증): ① `--tools ""` 로 도구가 실제로 0개인지 ② `--strict-mcp-config` 로 `~/.claude.json` MCP 가 안 붙는지 ③ 빈 `--settings` 는 사용자 설정을 초기화하지 않으므로, 사용자 훅이 판정마다 돌지 않게 할 방법(`disableAllHooks` 등)과 관리 정책 예외 — 후보로 `--restricted`(user/project/local 설정을 전부 무시) 도 2단계 수동 검증에서 같이 재보고, 훅 비활성과 비교해 더 단순하면 대체한다 ④ 계정 `CLAUDE.md`·스킬 목록이 입력에 섞여 들어가는 실제 토큰 수(§8).
 
 **입력 — `SegmentDigest`** (세션이 busy 가 된 순간부터 idle 로 돌아갈 때까지의 **세그먼트 전체**를 누적. cap·bg failover·retry 로 이어진 하위 턴 포함.)
 
@@ -44,9 +44,11 @@ v1 에서 뺀 입구: composer `/commander` 명령·자동완성, 폰 탭 배지
 | 목표 · 완료 조건 | `CommanderState` | 각 2,000자 |
 | 자동 턴 수 / 상한, 직전 판정 2건(이유 한 줄씩) | `CommanderState` | 300자 |
 | 마지막 결과 요약 | 세그먼트 마지막 `turn_result.text` 머리 1,500자 + 꼬리 2,500자(중간 생략 표시) | 4,000자 |
-| 바뀐 파일 | Edit·Write·MultiEdit·NotebookEdit `tool_use.input.file_path` 집합(cwd 기준 상대) | 40개 |
-| 테스트 결과 | 테스트 러너 패턴(`vitest|jest|pytest|go test|cargo test|npm test|pnpm test`) Bash 의 **모든 실행**: 명령 1줄 + `tool_result` 출력 꼬리 + exit code(`is_error`/출력에서 추출) + 실행 id(`tool_use_id`) + 실행 시점 이후 파일 변경 여부 | 1,200자 |
+| 바뀐 파일 | Edit·Write·MultiEdit·NotebookEdit `tool_use.input.file_path` 집합(cwd 기준 상대), 그리고 하위 에이전트(Task)가 낸 `sub_tool_call`(`TurnRunner.ts:1001`)의 같은 파일 수정 도구 입력도 합친다 | 40개 |
+| 테스트 결과 | 테스트 러너 패턴(`vitest|jest|pytest|go test|cargo test|npm test|pnpm test`) Bash 의 **모든 실행**(최상위 `tool_result` + 하위 에이전트 `sub_tool_result`, `TurnRunner.ts:1153`): 명령 1줄 + 출력 꼬리 + exit code(`is_error`/출력에서 추출) + 실행 id(`tool_use_id`) + 실행 시점 이후 파일 변경 여부. **출력이 비어 있으면 테스트 증거로 인정하지 않는다** — exit code 만으로 `done` 근거를 채우지 않는다. | 1,200자 |
 | 실패 표시 | `ok`, `errorText`, `classifyFailure` 결과, 서버 오류 서명(§5) | 300자 |
+
+재시도도 하위 턴이다: `pendingRetry` 는 `BottleneckWatch.ts:216-218` 이 예약하고 `ws.submitRetry` 가 `{sessionId, cwd, text, hop}` 로 새 `TurnParams` 를 만들어 보낸다. 이 재시도 턴의 `tool_use`·`tool_result`·`turn_result` 도 같은 세그먼트 누적에 들어가므로, digest 는 cap·bg failover 뿐 아니라 **재시도 턴까지 이어 붙인다**(세그먼트 경계는 여전히 ws idle 단일 지점, §6).
 
 합계 ≈ 8,000자 이하. 첨부·대화 이력·diff 본문은 넣지 않는다.
 
@@ -87,6 +89,8 @@ stopped       : ■ 정지. 종결. 진행 중 자동 턴은 끊지 않는다(�
 waiting_human : 종결 아님. 카드 응답 → running(자동), 자유 메시지 → paused, 재개 탭 → armed.
 ```
 
+**armed→sending 첫 지시**: 첫 턴은 판정기를 거치지 않는다. "목표: … 완료 조건: …" 원문을 그대로, `systemNote`(§6 훅 지점의 문구)와 함께 전송하고 `hop=1`로 시작한다 — 판정기가 다음 지시를 고르는 것은 두 번째 홉부터다.
+
 **epoch**: `CommanderState.epoch` 는 set·stop·pause·resume·카드 응답·재시작 복원마다 1 증가. 판정 요청·전송 예약은 시작 시 epoch 를 들고 가고, **판정 반영 직전과 전송 직전에** 현재 epoch·status 와 대조해 다르면 버린다(늦게 온 판정 폐기). 세션별 처리는 직렬화(한 세션에 판정·전송이 동시에 둘 이상 없음).
 
 **전이 규칙**: `judging` 에서 `continue` 라도 ①예산 초과(§5) ②진척 없음(§5) ③`risk !== 'none'` ④1층 규칙 매치 ⑤`confidence==='low'` ⑥판정기 호출 실패·타임아웃·JSON 위반·한도 중 하나면 `waiting_human`. `done` 은 완료 근거 검사를 통과해야 `done`.
@@ -104,7 +108,8 @@ waiting_human : 종결 아님. 카드 응답 → running(자동), 자유 메시�
 | 진척 없음 | `commander/signature.ts` | 모델이 고른 문자열 대신 **서버가 정규화한 오류 서명**: 실패 테스트 이름 집합 + `errorText` 첫 줄(경로·숫자·해시 제거) 해시. 최근 3세그먼트에서 같은 서명 2회, 또는 A/B 교대, 또는 3세그먼트 연속 바뀐 파일 0·테스트 결과 동일 → `waiting_human`("진척 없음"). |
 | 중복 자동화 | TurnRunner·ws | `continueAfterCap`·`failoverAfterBackground`·`bookRetry` 는 세그먼트 안의 복구로 두고, 사령탑은 세션이 idle 로 돌아간 뒤 한 번만 판정. `pendingRetry` 가 있으면 idle 로 보지 않는다. |
 | 권한 모드 | `commander_set`·모드 변경 | bypass 세션이면 set 거절(`commander_bypass`). 활성 중 bypass 전환 요청은 **거절**(`commander_active`) — 정지 후에만. |
-| 감사 | `appendAudit` | 자동 전송마다 `{kind:'commander_send', sessionId, epoch, hop, sendKey, hashInput(next)}`, 판정마다 `{kind:'commander_verdict', epoch, digestId, verdict, reason, judgeAccount, usage}`, 3층 훅 결정마다 `{kind:'commander_gate', decision, toolName, hashInput(cmd)}`. |
+| 감사 | `appendAudit` | 자동 전송마다 `{kind:'commander_send', sessionId, epoch, hop, sendKey, hashInput(next)}`, 판정마다 `{kind:'commander_verdict', epoch, digestId, verdict, reason, judgeAccount, usage}`, 3층 훅 결정마다 `{kind:'commander_gate', decision, toolName, hashInput(cmd)}`. `audit.ts:6-15` 의 `AuditEntry` 는 지금 `toolName`·`decision` 이 필수인 단일 형태라 이 세 종류를 그대로 못 담는다 — `kind` 로 분기하는 유니언으로 확장하고(`commander_verdict`·`commander_send`·`commander_gate` 각각 자기 필드만 필수), 기존 도구 감사 항목은 `kind:'tool'`(또는 동급 태그)로 유지한다. |
+| 중복 푸시 | `BottleneckWatch`·`Commander` | 자동 턴이 실패하면 `BottleneckWatch` 실패 푸시와 사령탑의 `waiting_human` 푸시가 같은 이유로 두 번 뜬다. 사령탑이 활성(armed 이외)인 세션은 `BottleneckWatch` 의 실패 푸시를 **억제**하고 사령탑 푸시 하나만 보낸다. |
 
 **구현 전 검증 항목(실제 CLI)**: ① PreToolUse 훅의 `ask` 가 `permissions.allow` 매치보다 우선하는지 ② 훅 타임아웃·비정상 종료 때 CLI 가 실행을 허용하는지(공식 문서상 일반 훅 실패는 막지 않는다 — 그렇다면 자동 턴에선 `allowRules` 를 `permissions.allow` 로 넘기지 않는 방식으로 대체) ③ 스크립트 간접 실행(`bash scripts/x.sh`, 바뀐 `npm test`)이 ask 로 가는지. ①·② 중 하나라도 실패하면 자동 전송 단계(§10 4단계)로 넘어가지 않는다.
 
@@ -127,12 +132,16 @@ waiting_human : 종결 아님. 카드 응답 → running(자동), 자유 메시�
 
 **훅 지점**
 - `TurnParams.commanderHop?: number`(서버 내부, `bgCapHop` 과 같은 급). turnId 접미 `:cmd<n>`. cap·failover·retry 로 파생된 하위 턴에도 `commanderHop` 을 물려 3층 훅 설정이 유지되게 한다. `systemNote` 에 "deck 총사령탑 자동 지시 n/상한 — 목표: … 완료 조건: … 되돌리기 어려운 행동은 하지 말고 멈춰서 보고하세요" 를 덧붙인다.
-- TurnRunner 는 새 dep `onSegmentEvent?(sessionId, ev)` 로 `tool_use`(입력, 기존 `onToolAudit` 자리)·`tool_result`(출력, ~1007·~1159행)·`turn_result`(성공·실패 경로 모두, cap 재귀 `run` 포함)를 흘린다. 누적은 `digest.ts` 가 한다.
+- TurnRunner 는 새 dep `onSegmentEvent?(sessionId, ev)` 로 `tool_use`(입력, 기존 `onToolAudit` 자리)·`tool_result`(출력, ~1007·~1159행)·`sub_tool_call`/`sub_tool_result`(하위 에이전트 입출력, `TurnRunner.ts:1001`·`:1153`)·`turn_result`(성공·실패 경로 모두, cap 재귀 `run` 포함)를 흘린다. 누적은 `digest.ts` 가 한다.
 - **판정 트리거는 하나**: `ws.ts` 가 busy 를 해제하는 지점(~751행)에서 `onSessionIdle(sessionId, digest)`. `turn_result` emit(~1720행)·`followThrough`(~1725행, 백그라운드가 끝날 때까지 열려 있음)·실패 경로(~1662·~1770행)·`continueAfterCap` 이 모두 결국 이 지점을 지나므로 세그먼트당 정확히 1회. `pendingRetry` 가 예약돼 있으면 idle 로 보지 않는다.
 - `turn_result` 에 `auto?: 'commander'` 를 넣어 PushNotifier 가 완료 푸시를 건너뛰게 한다(`BottleneckWatch.observe` 는 그대로).
 - 사용자 개입: 지금 `onUserSend` 는 send(~1072행)에서만 부르고 steer(~1084행)는 안 부른다. steer 경로에도 `userSent` 호출을 추가한다(기존 구독자 영향 확인 포함).
 
-**main.ts 배선**: `commander = new Commander({ store, judge, send: (r) => ws.submitServerSend(r), push: (p) => void push.sendAll(p), record: (e) => events.add(e), broadcast })`. `onUserSend` 에 `commander.userIntervened`, 시작 시 `commander.restore(store.list())`, 종료 시 `commander.stop()`. `ws.submitRetry` 는 `submitServerSend({…, kind:'retry'|'commander', sendKey})` 로 일반화(NO_DEVICE 경로 공유). `sendKey`(= `${epoch}:${hop}`)가 이미 처리된 것이면 ws 가 버린다(중복 제거).
+**main.ts 배선**: `commander = new Commander({ store, judge, send: (r) => ws.submitServerSend(r), push: (p) => void push.sendAll(p), record: (e) => events.record(e), broadcast })`. `onUserSend` 에 `commander.userIntervened`, 시작 시 `commander.restore(store.list())`, 종료 시 `commander.stop()`. `ws.submitRetry` 는 `submitServerSend({…, kind:'retry'|'commander', sendKey})` 로 일반화(NO_DEVICE 경로 공유). `sendKey`(= `${epoch}:${hop}`)가 이미 처리된 것이면 ws 가 버린다(중복 제거). 이벤트 기록 API 는 `events.add` 가 아니라 `events.record(ServerMessage)` 다 — 감사·브로드캐스트 겸용 호출부 전부 이 이름으로 맞춘다.
+
+`submitServerSend(kind:'commander')` 는 `ws.ts:681-736` 의 기존 busy 처리(715행 follow-up 합류, 685·734행 `afterRelease` 대기)에 **합류하지 않는다** — `busy.has(sessionId)` 이거나 이미 `afterRelease` 대기 중이면 그 자리에서 동기 거절하고 사령탑은 `waiting_human` 으로 넘어간다(`release()` 가 751행 직후 759-764행에서 대기 중인 사용자 send 를 바로 시작하는 경로와 사령탑 전송이 뒤섞이지 않게). epoch·status 확인과 `submit` 호출은 같은 동기 블록 안에서 끝낸다 — `store.save` 는 세션 맵을 동기로 갱신하므로 디스크 write 완료를 기다리지 않는다. 이를 위해 `Commander.ts` 의 deps 에 `isBusy(sessionId): boolean` 을 추가한다.
+
+`submitServerSend(kind:'retry')` 는 `store.get(sessionId).commander?.status === 'running'` 일 때만 재시도 턴에 `commanderHop` 을 붙여 보낸다. `stopped`·`waiting_human`·`paused` 등 그 외 상태면 재시도를 버리고 `pendingRetry` 를 지운다(사령탑이 멈춘 세션에 재시도가 몰래 이어지지 않도록).
 
 **전송 순서**: ① `sendKey` 를 만들고 status=`sending` 으로 **먼저 저장** ② 전송 ③ 수락되면 `running` 저장. 판정 반영 때는 `digestId` 를 `processedDigestIds` 에 저장한 뒤 다음 행동. 같은 digestId 는 두 번 판정하지 않는다.
 
@@ -169,7 +178,7 @@ waiting_human : 종결 아님. 카드 응답 → running(자동), 자유 메시�
 
 ## 10. 단계별 구현 순서(각각 독립 검증, v1 = 1~6)
 
-1. **상태 보존·타입**: `types.ts`, `SessionState.set` 의 `commander` 보존 + `setCommander`. 검증: 재구성 뒤 유지 테스트 + 기존 테스트 전부 통과(동작 변화 0).
+1. **상태 보존·타입**: `types.ts`, `SessionState.set` 의 `commander` 보존 + `setCommander`. `set` 에 새 항목으로 들어온 `s.commander` 는 무시하고 버린다 — `commander` 는 오직 `setCommander` 로만 설정한다(호출부가 실수로 섞어 보내도 상태 머신이 깨지지 않도록). 검증: 재구성 뒤 유지 테스트 + 기존 테스트 전부 통과(동작 변화 0).
 2. **세그먼트 누적·서명·판정기**: `digest.ts`·`signature.ts`·`Judge.ts`·`judgeArgs` + TurnRunner `onSegmentEvent`, ws idle 훅(구독자 없음). 검증: 단위·정책 테스트, idle 훅 1회 통합 테스트, 수동으로 실제 판정 1건 + 격리 4항목 + 토큰 실측.
 3. **실행 차단·감사(자동 전송 이전)**: 자동 턴 전용 PreToolUse 매처(`Bash`·`mcp__.*`)·`gateTool` 허용 목록·fail closed·`commanderHop` 하위 턴 전파·`commander_gate` 감사. 이 단계에선 사용자가 직접 보낸 턴에 `commanderHop` 을 붙이는 개발용 플래그로만 켠다. 검증: `rules.test`·정책 테스트 + §5 구현 전 검증 3항목(실패 시 4단계 진행 금지).
 4. **상태 머신 + 자동 전송**: `Commander.ts`(epoch·직렬화·예산·watchdog·진척 없음·완료 근거), `submitServerSend`·`sendKey`, steer 의 `userSent`, 카드 응답 자동 재개, bypass 전환 거절, 프로토콜 메시지·RefusalCode, `commanderEnabled` 플래그. 검증: `Commander.test`·`ws.commander.test`·`TurnRunner.commander.test`.
@@ -207,4 +216,11 @@ v1 이후: Pro 게이팅, composer 명령·자동완성, 폰 배지, 전용 설�
 - 하위 에이전트(Task)·사용자 훅도 우회 경로다 — 하위 에이전트의 Bash 도 같은 PreToolUse 훅을 지나는지는 §5 구현 전 검증 ③에 포함해 실측으로 확인한다. 별도 설계는 두지 않았다.
 - 전역 판정 동시성 상한 — 세션별 직렬화만 두었다. 사령탑을 건 세션 수 자체가 적어 v1 에선 불필요하다고 판단.
 - `accountPin` 을 failover 에서도 존중하라 — 판정기는 재시도를 없애 해당 없음. 작업 턴 failover 정책은 이 설계 범위 밖.
-- `--restricted` 플래그 사용 — 판정기는 도구 자체가 없어(`--tools ""`) 불필요.
+- `--restricted` 플래그 사용 — ~~판정기는 도구 자체가 없어(`--tools ""`) 불필요라며 거절했으나~~, 이 사유는 틀렸다: `--restricted` 가 막는 것은 user/project/local 설정(훅 포함)이고 `--tools ""` 가 막는 것은 도구이므로 서로 다른 문제다. ③(사용자 훅 비활성)의 대안 후보로 다시 올려 2단계 수동 검증에 넣었다(§3).
+
+**3차 검토(적대 검토 2) 반영**
+- `submitServerSend(kind:'commander')` 가 busy·`afterRelease` 대기와 뒤섞이는 문제 — 반영. `isBusy` 동기 거절을 §6 에 추가했다.
+- 재시도(`pendingRetry`)가 하위 턴이 아니라 `BottleneckWatch`→`ws.submitRetry` 의 별도 경로라는 지적 — 반영. §3·§6 에 재시도 턴의 digest 포함·`running` 상태 확인을 명시했다.
+- armed→sending 첫 지시 본문이 미정이었던 문제 — 반영. §4 에 "판정 없이 목표·완료 조건 원문 전송, hop=1" 을 명시했다.
+- digest 가 하위 에이전트 입출력을 빠뜨리는 문제 — 반영. §3·§6 에 `sub_tool_call`/`sub_tool_result` 를 추가하고, 출력 없는 실행은 테스트 증거로 인정하지 않기로 했다.
+- `AuditEntry` 가 세 가지 사령탑 감사 종류를 담을 수 없는 문제, `events.add` 라는 존재하지 않는 API 명칭, 자동 턴 실패 시 이중 푸시 문제 — 모두 반영. §5·§6 에 유니언 확장·API 명칭 정정·`BottleneckWatch` 억제 결정을 추가했다.
