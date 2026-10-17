@@ -206,6 +206,14 @@ describe('BottleneckWatch · 자동 재시도', () => {
     expect(c.store.get('s1')).not.toHaveProperty('blocked');
   });
 
+  it('a booking from an automatic (commander) turn carries its commanderHop to the retry (보안 #3)', async () => {
+    const c = await setup();
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 5 * MIN, hops: 2, commanderHop: 3 } }));
+    c.watch.observe(failed('대안 계정 없음'));
+    c.advance(5 * MIN);
+    expect(c.retries).toEqual([{ sessionId: 's1', cwd: '/w/proj', text: 'go', hop: 2, commanderHop: 3 }]);
+  });
+
   it('the user sending first calls it off', async () => {
     const c = await setup();
     await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 5 * MIN, hops: 1 } }));

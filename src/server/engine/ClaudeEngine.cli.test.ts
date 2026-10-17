@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { ClaudeEngine, type ClaudeEngineOptions } from './ClaudeEngine';
 import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { fakeClaudeCli, cli, argValue } from './claudeCli/fakeClaudeCli';
@@ -160,6 +160,20 @@ describe('ClaudeEngine over the claude CLI', () => {
     expect(reply).toMatchObject({ behavior: 'allow', updatedInput: { command: 'ls' } });
     f.push(cli.result('ok', 's1'));
     for (let r = await it.next(); !r.done; r = await it.next()) { /* drain */ }
+  });
+
+  it('보안 #4: a commanderHop turn registers fail-closed and writes one fail-closed .* hook; other turns register as before', async () => {
+    const { f, engine } = await setup();
+    const spy = vi.spyOn(bridge!, 'register');
+    f.push(cli.init('s1'), cli.result('a', 's1'));
+    await drain(engine.runTurn(req({ commanderHop: 2 })));
+    expect(spy.mock.calls[0]![1]).toEqual({ failClosed: true });
+    const hooks = (f.spawns[0]!.files.settings as { hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] } }).hooks.PreToolUse;
+    expect(hooks.map((h) => h.matcher)).toEqual(['.*']);
+    expect(hooks[0]!.hooks[0]!.command).toContain("'--fail' 'closed'");
+    f.push(cli.init('s2'), cli.result('a', 's2'));
+    await drain(engine.runTurn(req()));
+    expect(spy.mock.calls[1]![1]).toEqual({ failClosed: false });
   });
 
   it('setPermissionMode mid-process: the PreToolUse gate refuses edits after a switch to plan; stopTask is not offered', async () => {

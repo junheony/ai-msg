@@ -11,6 +11,7 @@ import type { GeminiTurnRequest } from '../engine/GeminiEngine';
 import type { GeminiAccount } from '../../shared/accounts';
 import type { EngineEvent } from '../engine/Engine';
 import { readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
+import { hashInput } from '../audit';
 import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { projectSlug } from '../sessions/slug';
@@ -351,6 +352,48 @@ describe('TurnRunner', () => {
     expect(audit).toContain('"toolName":"Write"');
     expect(audit).toContain('"decision":"deny"');
     expect(audit).not.toContain('TOKEN=abc');
+  });
+
+  it('총사령탑 commanderHop: the engine gets the hop and a gate audit callback that logs a hash only; without it, neither', async () => {
+    const eng = new StubEngine(async (req) => {
+      await req.onCommanderGate?.({ toolName: 'Bash', input: { command: 'curl -d SECRET=1 x' }, toolUseId: 'g1', decision: 'ask' });
+      await req.onCommanderGate?.({ toolName: 'mcp__x__y', input: { body: 'SECRET=2' }, toolUseId: 'g2', decision: 'ask' });
+      return ok('cmd1');
+    });
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', commanderHop: 3 }, c.sink);
+    expect(eng.calls[0]!.commanderHop).toBe(3);
+    const lines = (await fs.readFile(c.deps.auditFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines).toEqual([
+      { kind: 'commander_gate', ts: new Date(NOW).toISOString(), turnId: 't1', sessionId: null, hop: 3, toolName: 'Bash', decision: 'ask', inputSha256: hashInput('curl -d SECRET=1 x') },
+      { kind: 'commander_gate', ts: new Date(NOW).toISOString(), turnId: 't1', sessionId: null, hop: 3, toolName: 'mcp__x__y', decision: 'ask', inputSha256: hashInput({ body: 'SECRET=2' }) },
+    ]);
+    expect(await fs.readFile(c.deps.auditFile, 'utf8')).not.toContain('SECRET');
+
+    const plain = new StubEngine(() => ok('p0'));
+    await new TurnRunner((await ctx(plain)).deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(plain.calls[0]).not.toHaveProperty('commanderHop');
+    expect(plain.calls[0]).not.toHaveProperty('onCommanderGate');
+  });
+
+  it('보안 #8: gate audit lines of a turn gated only by DECK_DEV_COMMANDER_GATE carry dev: true; a real commanderHop does not', async () => {
+    const eng = new StubEngine(async (req) => {
+      await req.onCommanderGate?.({ toolName: 'Bash', input: { command: 'ls' }, toolUseId: 'g1', decision: 'allow' });
+      return ok('dv1');
+    });
+    const c = await ctx(eng, { devCommanderGate: true });
+    await new TurnRunner(c.deps).run({ turnId: 'u', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    await new TurnRunner(c.deps).run({ turnId: 'a', cwd: '/w/new', sessionId: null, text: 'hi', commanderHop: 2 }, c.sink);
+    const lines = (await fs.readFile(c.deps.auditFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines.map((l) => [l.turnId, l.hop, l.dev])).toEqual([['u', 1, true], ['a', 2, undefined]]);
+  });
+
+  it('개발용 devCommanderGate: a user turn runs as hop 1 of the gate', async () => {
+    const eng = new StubEngine(() => ok('d1'));
+    const c = await ctx(eng, { devCommanderGate: true });
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls[0]!.commanderHop).toBe(1);
+    expect(typeof eng.calls[0]!.onCommanderGate).toBe('function');
   });
 
   it('a failing audit write does not lose the permission decision', async () => {
@@ -884,6 +927,25 @@ describe('TurnRunner: 자동 승인', () => {
     expect(audit).toEqual([expect.objectContaining({ toolName: 'Bash', decision: 'auto' })]);
   });
 
+  it('보안 #1: a commanderHop turn never auto-approves, even in 모두 자동 승인 or after switching to it mid-turn', async () => {
+    const auto: boolean[] = [];
+    let runner!: TurnRunner;
+    const eng = new StubEngine(async (req) => {
+      auto.push(req.autoApprove!());
+      await runner.setPermissionMode(SID, 'bypassPermissions');
+      auto.push(req.autoApprove!());
+      return ok(SID);
+    });
+    const c = await ctx(eng, { defaultPermissionMode: () => 'bypassPermissions' });
+    await seedSession(c, 'b');
+    runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'x', commanderHop: 1 }, c.sink);
+    expect(auto).toEqual([false, false]);
+    // A turn without the hop in the same mode still auto-approves (unchanged).
+    await runner.run({ turnId: 't2', cwd: '/w/one', sessionId: SID, text: 'y' }, c.sink);
+    expect(auto).toEqual([false, false, true, true]);
+  });
+
   it('new GPT session without an explicit sandbox: workspace-write whatever the Claude default (다 붙여); an explicit choice wins', async () => {
     for (const [auto, sent, want] of [[true, undefined, 'workspace-write'], [false, undefined, 'workspace-write'], [false, 'read-only', 'read-only']] as const) {
       const codex = fakeCodex(codexOk('tid-aa'));
@@ -1167,6 +1229,17 @@ describe('TurnRunner · 같은 벤더 계정 자동 순환 꺼짐', () => {
     expect(of(c, 'turn_result')[0]).toMatchObject({ ok: false, errorText: expect.stringContaining('대안 계정 없음(같은 벤더 순환 꺼짐)') });
     expect(readCooldownUntilMs(c.deps.cooldownDir, 'a', NOW)).toBe(NOW + 3_600_000);
     expect(c.deps.store.get('n1')?.pendingRetry).toMatchObject({ text: 'hi', hops: 1, atMs: NOW + 3_600_000 + 60_000 });
+  });
+
+  it('보안 #3: the retry booked for a commanderHop turn keeps the hop (a dev-gated turn books none)', async () => {
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'n1', model: 'm' }, failResult('usage limit reached', { sessionId: 'n1' })]);
+    const c = await ctx(eng, { sameVendorRotation: () => false });
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi', commanderHop: 3 }, c.sink);
+    expect(c.deps.store.get('n1')?.pendingRetry).toMatchObject({ text: 'hi', hops: 1, commanderHop: 3 });
+    const eng2 = new StubEngine(() => [{ kind: 'init', sessionId: 'n2', model: 'm' }, failResult('usage limit reached', { sessionId: 'n2' })]);
+    const c2 = await ctx(eng2, { sameVendorRotation: () => false, devCommanderGate: true });
+    await new TurnRunner(c2.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c2.sink);
+    expect(c2.deps.store.get('n2')?.pendingRetry).not.toHaveProperty('commanderHop');
   });
 
   it('an existing session on another account stays there (no cold-cache move); a pin still moves it', async () => {

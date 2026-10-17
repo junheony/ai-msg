@@ -28,7 +28,13 @@ type SessionBase = {
    * 대안 계정 없음으로 실패한 턴의 자동 재시도 예약(BottleneckWatch 가 `atMs` 에 ws 의 send 경로로 넣는다). `hops`: 이번이 몇 번째
    * 재시도인지(최대 2). 다음 턴의 시작, 또는 사용자가 먼저 보내면 지운다.
    */
-  pendingRetry?: { text: string; atMs: number; hops: number };
+  pendingRetry?: {
+    text: string;
+    atMs: number;
+    hops: number;
+    /** The failed turn was a 총사령탑 automatic turn (TurnParams.commanderHop): the retry runs with the same gate. */
+    commanderHop?: number;
+  };
   /**
    * 총사령탑(commander) 상태 — `docs/superpowers/specs/2026-10-18-commander-design.md` §6. 변경은 전용 `setCommander`
    * 로만(`accountPin`·`setAccountPin` 과 같은 급): `set()` 에 실려 온 값은 버리고 기존 값을 그대로 지킨다. TurnRunner 가
@@ -112,6 +118,8 @@ export class SessionStateStore {
       // 손으로 고쳤거나 예전 모양으로 남은 commander 는 세션 전체가 아니라 그 필드만 버린다.
       for (const s of Object.values(parsed)) {
         if (s && typeof s === 'object' && 'commander' in s && !isCommanderState(s.commander)) delete (s as { commander?: CommanderState }).commander;
+        // 보안 #3: a retry booking whose commanderHop is not a positive integer could run an automatic turn ungated — dropped.
+        if (s && typeof s === 'object' && s.pendingRetry && typeof s.pendingRetry === 'object' && 'commanderHop' in s.pendingRetry && !(Number.isInteger(s.pendingRetry.commanderHop) && s.pendingRetry.commanderHop! > 0)) delete (s as { pendingRetry?: unknown }).pendingRetry;
       }
       this.map = new Map(Object.entries(parsed));
     } catch (err) {

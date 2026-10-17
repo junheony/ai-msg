@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   claudeArgs, buildSettings, buildMcpConfig, relayCommand, shellQuote, claudeEnv, validResume,
-  PERMISSION_TOOL, EDIT_TOOL_MATCHER,
+  PERMISSION_TOOL, EDIT_TOOL_MATCHER, COMMANDER_TOOL_MATCHER, HOOK_TIMEOUT_S,
 } from './args';
 
 const base = { model: 'opus' as const, permissionMode: 'default' as const, settingsPath: '/t/p/settings.json', mcpConfigPath: '/t/p/mcp.json' };
@@ -61,6 +61,45 @@ describe('buildSettings', () => {
     const s = buildSettings({ systemNote: 'note', relay }) as any;
     expect(s.hooks.UserPromptSubmit[0].hooks[0].type).toBe('command');
     expect(JSON.stringify(s)).not.toContain('note"'); // the note itself is served over the bridge, not written to disk
+  });
+});
+
+describe('buildSettings — 총사령탑 자동 턴(commander)', () => {
+  const rules = ['Bash(npm test:*)', 'Bash', 'mcp__github__create_issue', 'Edit(/w/**)', 'WebFetch(domain:example.com)'];
+  it('without commander the output is unchanged (byte for byte)', () => {
+    for (const s of [{ allowRules: rules, relay }, { relay }, { systemNote: 'n', relay }, { noTools: true, allowRules: rules, relay }]) {
+      expect(JSON.stringify(buildSettings({ ...s, commander: false }))).toBe(JSON.stringify(buildSettings(s)));
+    }
+  });
+  it('보안 #4·#5: one PreToolUse hook for every tool (matcher .*), relayed fail-closed', () => {
+    const s = buildSettings({ allowRules: rules, commander: true, relay }) as any;
+    expect(COMMANDER_TOOL_MATCHER).toBe('.*');
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+    expect(s.hooks.PreToolUse[0].matcher).toBe('.*');
+    expect(s.hooks.PreToolUse[0].hooks).toHaveLength(1);
+    expect(s.hooks.PreToolUse[0].hooks[0]).toMatchObject({ type: 'command', timeout: HOOK_TIMEOUT_S });
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toContain("'--fail' 'closed'");
+  });
+  it('without commander the relay modes stay open / deny', () => {
+    const plain = buildSettings({ systemNote: 'n', relay }) as any;
+    expect(plain.hooks.PreToolUse[0].hooks[0].command).toContain("'--fail' 'open'");
+    expect((buildSettings({ noTools: true, relay }) as any).hooks.PreToolUse[0].hooks[0].command).toContain("'--fail' 'deny'");
+  });
+  it('Bash and mcp__ allow rules never reach permissions.allow; the others stay', () => {
+    const s = buildSettings({ allowRules: rules, commander: true, relay }) as any;
+    expect(s.permissions).toEqual({ allow: ['Edit(/w/**)', 'WebFetch(domain:example.com)'] });
+    expect(buildSettings({ allowRules: ['Bash(ls)', 'mcp__x__y'], commander: true, relay })).not.toHaveProperty('permissions');
+    expect(buildSettings({ allowRules: ['BashOutput'], commander: true, relay })).toHaveProperty('permissions', { allow: ['BashOutput'] });
+  });
+  it('noTools wins over commander (every tool denied)', () => {
+    const s = buildSettings({ noTools: true, commander: true, relay }) as any;
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+    expect(s.hooks.PreToolUse[0].matcher).toBe('*');
+  });
+  it('the UserPromptSubmit note hook is the same with or without commander', () => {
+    const a = buildSettings({ systemNote: 'n', commander: true, relay }) as any;
+    const b = buildSettings({ systemNote: 'n', relay }) as any;
+    expect(a.hooks.UserPromptSubmit).toEqual(b.hooks.UserPromptSubmit);
   });
 });
 

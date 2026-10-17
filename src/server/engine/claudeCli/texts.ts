@@ -12,6 +12,10 @@ export const PERMISSION_TIMEOUT_MESSAGE = '권한 요청이 오래 응답되지 
 export const PERMISSION_ERROR_MESSAGE = '권한 요청을 처리하다 오류가 나서 거부했습니다';
 /** A mid-process switch into plan mode (live.setPermissionMode): edits are refused by deck's PreToolUse hook. */
 export const PLAN_GATE_MESSAGE = '계획 모드로 바뀌었습니다 — 파일을 바꾸지 말고 계획을 이어 가 주세요';
+/** 총사령탑 자동 턴: 허용 목록 밖의 Bash·`mcp__*` 호출을 권한 카드로 올릴 때의 사유. */
+export const COMMANDER_ASK_MESSAGE = '총사령탑 자동 턴 — 허용 목록 밖의 도구 호출이라 사람 확인이 필요합니다';
+/** 총사령탑 자동 턴: 판정 자체가 실패하면 실행하지 않는다(fail closed). */
+export const COMMANDER_GATE_FAILED_MESSAGE = '총사령탑 자동 턴 — 도구 호출을 판정하지 못해 거부했습니다';
 /** Mirrors hookRelay.ts (which may import node built-ins only). */
 export const HOOK_RELAY_FAILED_MESSAGE = '도구 사용 여부를 deck 에 확인하지 못해 거부했습니다';
 /** 메시지 편집 갈래: the parent transcript was not found in the profile. */

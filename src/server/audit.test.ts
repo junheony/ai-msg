@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { appendAudit, hashInput, type AuditEntry } from './audit';
+import { appendAudit, hashInput, recordAudit, type AuditEntry } from './audit';
 
 const entry = (i: number): AuditEntry => ({ ts: `t${i}`, turnId: 'tu', sessionId: 's', toolName: 'Bash', decision: 'allow', source: 'rule', inputSha256: hashInput({ i }) });
 
@@ -43,6 +43,37 @@ describe('appendAudit', () => {
       expect(warn).toHaveBeenCalled();
     } finally {
       warn.mockRestore();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('commander audit entries / recordAudit', () => {
+  it('the three commander kinds go in next to tool lines (which keep their shape without kind)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-audit-'));
+    const file = path.join(dir, 'audit.log');
+    const lines: AuditEntry[] = [
+      entry(0),
+      { kind: 'commander_verdict', ts: 't', sessionId: 's', epoch: 2, digestId: 'd1', verdict: 'human', reason: '확신 없음', judgeAccount: 'a', usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } },
+      { kind: 'commander_send', ts: 't', sessionId: 's', epoch: 2, hop: 3, sendKey: '2:3', inputSha256: hashInput('next') },
+      { kind: 'commander_gate', ts: 't', turnId: 'tu:cmd3', sessionId: 's', hop: 3, toolName: 'Bash', decision: 'ask', inputSha256: hashInput('rm x') },
+    ];
+    for (const l of lines) await recordAudit(file, l);
+    const read = (await fs.readFile(file, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as AuditEntry);
+    expect(read).toEqual(lines);
+    expect(read[0]).not.toHaveProperty('kind');
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  it('recordAudit never rejects (a failed write is logged)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-audit-'));
+    const file = path.join(dir, 'audit.log');
+    await fs.mkdir(file);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(recordAudit(file, entry(0))).resolves.toBeUndefined();
+      expect(err).toHaveBeenCalledOnce();
+    } finally {
+      err.mockRestore();
       await fs.rm(dir, { recursive: true, force: true });
     }
   });

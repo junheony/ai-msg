@@ -181,3 +181,25 @@ describe('Codex session state (D4)', () => {
     await fs.rm(base, { recursive: true, force: true });
   });
 });
+
+describe('pendingRetry.commanderHop (보안 #3)', () => {
+  it('a booking with a valid hop loads as is; one whose hop is not a positive integer is dropped whole (fail closed)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const base = { cwd: '/w', account: 'b', projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' };
+    const retry = { text: 'go', atMs: 9, hops: 1 };
+    await fs.writeFile(file, JSON.stringify({
+      ok: { ...base, sessionId: 'ok', pendingRetry: { ...retry, commanderHop: 3 } },
+      plain: { ...base, sessionId: 'plain', pendingRetry: retry },
+      ...Object.fromEntries(['x', 0, -1, 1.5, null].map((h, i) => [`bad${i}`, { ...base, sessionId: `bad${i}`, pendingRetry: { ...retry, commanderHop: h } }])),
+    }));
+    const s = new SessionStateStore(file);
+    await s.load();
+    expect(s.get('ok')?.pendingRetry).toEqual({ ...retry, commanderHop: 3 });
+    expect(s.get('plain')?.pendingRetry).toEqual(retry);
+    for (let i = 0; i < 5; i++) {
+      expect(s.get(`bad${i}`)).toMatchObject({ sessionId: `bad${i}` });
+      expect(s.get(`bad${i}`)).not.toHaveProperty('pendingRetry');
+    }
+  });
+});

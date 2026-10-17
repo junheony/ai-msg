@@ -6,6 +6,12 @@ export const BRIDGE_SERVER = 'deck_bridge';
 export const PERMISSION_TOOL = `mcp__${BRIDGE_SERVER}__permission`;
 /** Tools whose auto-approval depends on the permission mode (acceptEdits) — gated by the PreToolUse relay. */
 export const EDIT_TOOL_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit';
+/** 총사령탑 자동 턴(`commander`)의 PreToolUse 매처: 모든 도구가 훅을 거친다 — 읽기 전용만 통과, 나머지는 판정(hooks.ts). */
+export const COMMANDER_TOOL_MATCHER = '.*';
+/** The CLI's limit for one command hook (seconds). Above the fail-closed bridge cap and relay deadline (bridge.ts, hookRelay.ts). */
+export const HOOK_TIMEOUT_S = 30;
+/** Allow rules the commander hook gates itself: never handed to `permissions.allow` on an automatic turn. */
+const COMMANDER_GATED_RULE = /^(?:Bash(?:\(|$)|mcp__)/;
 
 export type CliPermissionMode = 'default' | 'acceptEdits' | 'plan';
 
@@ -74,25 +80,34 @@ export interface RelaySpec { node: string; script: string; socketPath: string; t
  * Hook command line. The registration token goes in as a `DECK_BRIDGE_TOKEN=` env assignment in
  * front of node (same channel as the MCP server's `env`), so it never appears in node's argv / `ps`.
  */
-export function relayCommand(r: RelaySpec, fail: 'open' | 'deny'): string {
+export function relayCommand(r: RelaySpec, fail: 'open' | 'deny' | 'closed'): string {
   return `DECK_BRIDGE_TOKEN=${shellQuote(r.token)} ` + [r.node, '--disable-warning=ExperimentalWarning', r.script, '--sock', r.socketPath, '--fail', fail]
     .map(shellQuote).join(' ');
 }
 
-export interface SettingsInput { allowRules?: string[]; noTools?: boolean; systemNote?: string; relay: RelaySpec }
+/**
+ * `commander`: a 총사령탑 automatic turn — every tool call goes to the hook (matcher `.*`), relayed fail-closed (`--fail
+ * closed`: a relay error / timeout / crash denies with exit 2), and Bash / `mcp__*` allow rules stay out of
+ * `permissions.allow` so the CLI cannot approve them on its own.
+ */
+export interface SettingsInput { allowRules?: string[]; noTools?: boolean; systemNote?: string; commander?: boolean; relay: RelaySpec }
 
 /**
  * Contents of the per-process `--settings` file (0600, inside a 0700 temp dir). Merged by the CLI
  * on top of user/project/local settings, exactly like the SDK's `settings` option was.
  */
 export function buildSettings(s: SettingsInput): Record<string, unknown> {
-  const hook = (fail: 'open' | 'deny') => ({ type: 'command', command: relayCommand(s.relay, fail), timeout: 30 });
+  const hook = (fail: 'open' | 'deny' | 'closed') => ({ type: 'command', command: relayCommand(s.relay, fail), timeout: HOOK_TIMEOUT_S });
+  const commander = !!s.commander && !s.noTools;
   const hooks: Record<string, unknown> = {
-    PreToolUse: [{ matcher: s.noTools ? '*' : EDIT_TOOL_MATCHER, hooks: [hook(s.noTools ? 'deny' : 'open')] }],
+    PreToolUse: commander
+      ? [{ matcher: COMMANDER_TOOL_MATCHER, hooks: [hook('closed')] }]
+      : [{ matcher: s.noTools ? '*' : EDIT_TOOL_MATCHER, hooks: [hook(s.noTools ? 'deny' : 'open')] }],
   };
   if (s.systemNote) hooks.UserPromptSubmit = [{ hooks: [hook('open')] }];
   const out: Record<string, unknown> = { hooks };
-  if (s.allowRules?.length) out.permissions = { allow: [...s.allowRules] };
+  const allow = commander ? (s.allowRules ?? []).filter((r) => !COMMANDER_GATED_RULE.test(r)) : s.allowRules ?? [];
+  if (allow.length) out.permissions = { allow: [...allow] };
   return out;
 }
 

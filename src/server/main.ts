@@ -113,6 +113,7 @@ async function main(): Promise<void> {
     defaultPermissionMode: () => settings.get().defaultPermissionMode,
     routingPolicy: () => settings.get().routingPolicy,
     sameVendorRotation: () => settings.get().sameVendorRotation,
+    devCommanderGate: cfg.devCommanderGate,
     routeLog: (line) => console.log(line),
     onPermissionMode: (sessionId, mode) => notifyPermissionMode(sessionId, mode),
     accounts,

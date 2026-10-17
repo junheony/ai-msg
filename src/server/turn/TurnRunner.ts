@@ -6,7 +6,7 @@ import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
-import { appendAudit, hashInput } from '../audit';
+import { appendAudit, hashInput, recordAudit } from '../audit';
 import type { CodexEngine } from '../engine/CodexEngine';
 import type { GeminiEngine } from '../engine/GeminiEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
@@ -77,6 +77,11 @@ export type TurnParams = {
   retryHop?: number;
   /** Server-internal (continueAfterCap): this turn is the n-th continuation deck sent by itself after the background wait limit cut the session's work. */
   bgCapHop?: number;
+  /**
+   * Server-internal (총사령탑 3층): this turn runs with the automatic-turn tool gate (TurnRequest.commanderHop — Bash and
+   * `mcp__*` ask unless allowlisted, hooks fail closed). Carried to the cap continuation and the failover turn it spawns.
+   */
+  commanderHop?: number;
 };
 
 /** The background wait limit (ClaudeEngine bgMaxMs) cutting work → at most this many continuations deck sends by itself in a row (continueAfterCap). */
@@ -109,6 +114,8 @@ export type TurnRunnerDeps = {
   routingPolicy?: () => RoutingPolicy;
   /** 같은 벤더 계정 자동 순환 (DeckSettings.sameVendorRotation, read per turn); absent = on (main passes the setting, off by default). */
   sameVendorRotation?: () => boolean;
+  /** 개발용(총사령탑 3단계, DECK_DEV_COMMANDER_GATE=1): every Claude turn without a commanderHop runs as hop 1 of the gate. */
+  devCommanderGate?: boolean;
   /** One line per routed Claude turn (main: console.log); absent = not logged. */
   routeLog?: (line: string) => void;
   /** A session's mode changed during a turn (approved plan, 이 세션's "allow all edits") or via setPermissionMode. */
@@ -162,7 +169,11 @@ type Attempt = {
 export type RoutePreview = { account: Account; asOpus?: boolean; reason: string };
 
 /** A user message for a session whose process is still open for background work (see `followUp`). */
-/** `retryHop`: an automatic retry (TurnParams.retryHop) that found the session's process held open. */
+/**
+ * `retryHop`: an automatic retry (TurnParams.retryHop) that found the session's process held open.
+ * No `commanderHop` on purpose: a follow-up goes into a process that already runs with its own turn's gate (or none) —
+ * the hook settings, fail-closed registration and autoApprove of that process apply to it as they are.
+ */
 export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string; retryHop?: number };
 
 /**
@@ -912,6 +923,9 @@ export class TurnRunner {
     const scope = () => ({ turnId: cur.turnId, sessionId: out.sessionId, cwd });
     // The effort applies to the resolved model (a Fable → Opus downgrade keeps it when Opus supports it).
     const effort = effortFor(model, p.effort);
+    const commanderHop = p.commanderHop ?? (this.deps.devCommanderGate ? 1 : undefined);
+    // 보안 #8: a person's turn gated only by DECK_DEV_COMMANDER_GATE is labelled in the audit log.
+    const devGate = commanderHop !== undefined && p.commanderHop === undefined;
     const events = this.deps.engine.runTurn({
       account,
       cwd,
@@ -943,8 +957,9 @@ export class TurnRunner {
         }
         return decision;
       },
-      // 모두 자동 승인 is read per call, so a mode change mid-turn applies to the next tool call.
-      autoApprove: () => modeRef.mode === 'bypassPermissions',
+      // 모두 자동 승인 is read per call, so a mode change mid-turn applies to the next tool call. Never on an automatic
+      // (commanderHop) turn: the gate's ask would reach the permission tool and be approved there unseen.
+      autoApprove: commanderHop ? () => false : () => modeRef.mode === 'bypassPermissions',
       onAutoApproved: async (pr) => {
         try {
           await appendAudit(this.deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, toolName: pr.toolName, decision: 'auto', source: 'auto', inputSha256: hashInput(pr.input) });
@@ -980,6 +995,13 @@ export class TurnRunner {
       onLive: (l) => { out.live = l; this.inputs.set(p.turnId, l); },
       ...(p.handoff ? { noTools: true } : {}),
       ...(systemNote ? { systemNote } : {}),
+      ...(commanderHop ? {
+        commanderHop,
+        onCommanderGate: (g) => {
+          const cmd = g.toolName === 'Bash' && g.input && typeof g.input === 'object' ? (g.input as { command?: unknown }).command : undefined;
+          return recordAudit(this.deps.auditFile, { kind: 'commander_gate', ts: new Date(this.now()).toISOString(), turnId: cur.turnId, sessionId: out.sessionId, hop: commanderHop, toolName: g.toolName, decision: g.decision, inputSha256: hashInput(typeof cmd === 'string' ? cmd : g.input), ...(devGate ? { dev: true as const } : {}) });
+        },
+      } : {}),
     });
     const rest = events[Symbol.asyncIterator]();
     // A fork's id is the one init reports, never the parent's.
@@ -1245,7 +1267,7 @@ export class TurnRunner {
     }
     sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId, cwd, message: `백그라운드 작업 ${n}개가 ${need.minutes}분 한도로 끊김: ${need.tasks.join(', ')} — 이어서 진행하도록 자동으로 보냅니다` });
     try {
-      await this.run({ cwd, sessionId, turnId: `${p.turnId}:cap${hop}`, text: '이어서 진행해 주세요.', bgCapHop: hop }, sink);
+      await this.run({ cwd, sessionId, turnId: `${p.turnId}:cap${hop}`, text: '이어서 진행해 주세요.', bgCapHop: hop, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}) }, sink);
     } catch (err) {
       console.error('deck: 한도 뒤 자동 이어가기 실패', err instanceof Error ? err.message : err);
     }
@@ -1766,7 +1788,7 @@ export class TurnRunner {
         // Nowhere to go on a limit: the same prompt is tried again by itself once a limit should have lifted (written before
         // the result, so BottleneckWatch sees the booking with it). Not for a fork, a handoff note or a turn with files.
         const sid = shownId();
-        if (failure === 'limit' && !moveRefused && sid && !p.handoff && !p.attachments?.length) await this.bookRetry(sid, p.text, p.retryHop, res.errorText).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
+        if (failure === 'limit' && !moveRefused && sid && !p.handoff && !p.attachments?.length) await this.bookRetry(sid, p.text, p.retryHop, res.errorText, p.commanderHop).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
         sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : `대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`} · ${shownError ?? ''}`.trim() });
         announceMode();
         return done();
@@ -1785,7 +1807,7 @@ export class TurnRunner {
    * the limit text names (+1 min), else a minute after the earliest account cooldown ends, else in 30 minutes. The
    * (MAX_RETRY_HOPS+1)-th failure in a row books nothing. BottleneckWatch fires it through ws's send path.
    */
-  private async bookRetry(sessionId: string, text: string, prevHop: number | undefined, errorText: string | null): Promise<void> {
+  private async bookRetry(sessionId: string, text: string, prevHop: number | undefined, errorText: string | null, commanderHop: number | undefined): Promise<void> {
     const hops = (prevHop ?? 0) + 1;
     if (hops > MAX_RETRY_HOPS) return;
     const st = this.deps.store.get(sessionId);
@@ -1795,7 +1817,8 @@ export class TurnRunner {
     // 같은 벤더 계정 자동 순환 off: the retry runs on the session's own account, so only its cooldown counts.
     const cooled = Object.values(readAllCooldownsMs(this.deps.cooldownDir, now, this.rotation() || isCodexState(st) || isGeminiState(st) ? this.accounts.list() : [st.account])).filter((v): v is number => v !== undefined);
     const atMs = reset !== null ? reset + 60_000 : cooled.length ? Math.min(...cooled) + 60_000 : now + 30 * 60_000;
-    await this.deps.store.set({ ...st, pendingRetry: { text, atMs, hops } });
+    // The retry of an automatic turn runs gated too (보안 #3): the hop rides the booking to ws's send path.
+    await this.deps.store.set({ ...st, pendingRetry: { text, atMs, hops, ...(commanderHop ? { commanderHop } : {}) } });
   }
 
   /**
@@ -1820,7 +1843,7 @@ export class TurnRunner {
     // A background continuation is booked as '이어서 진행해 주세요.', a failed follow-up as its own text (not with files).
     const retryText = need.followUp ? (need.followUp.f.attachments?.length ? null : need.followUp.f.text) : '이어서 진행해 주세요.';
     const none = async () => {
-      if (need.failure === 'limit' && retryText) await this.bookRetry(sessionId, retryText, need.followUp ? need.followUp.f.retryHop : p.retryHop, need.errorText).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
+      if (need.failure === 'limit' && retryText) await this.bookRetry(sessionId, retryText, need.followUp ? need.followUp.f.retryHop : p.retryHop, need.errorText, p.commanderHop).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
       fail(noneLeft);
     };
     try {
@@ -1847,7 +1870,7 @@ export class TurnRunner {
         // is the continuation turn's whole point), for a resent follow-up only when background work was cut with it.
         if (!need.followUp || need.tasks.length) await deps.store.set({ ...st, interrupted: { atMs: this.now(), tasks: need.tasks, cause: `${this.label(account)} 계정 ${why}` } });
       }
-      const next = { cwd, sessionId, failoverHop: hop + 1 };
+      const next = { cwd, sessionId, failoverHop: hop + 1, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}) };
       const ofFollowUp = (f: FollowUpParams): TurnParams => ({ ...next, turnId: f.turnId, text: f.text, ...(f.model ? { model: f.model } : {}), ...(f.attachments ? { attachments: f.attachments } : {}), ...(f.clientRef ? { clientRef: f.clientRef } : {}), ...(f.retryHop ? { retryHop: f.retryHop } : {}) });
       // The continuation refused before its turn_started (attachment purged, session gone): the segment that got the
       // turn_retry still needs an end, else the pane waits on it.
