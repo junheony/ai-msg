@@ -29,6 +29,7 @@ import { pruneRootsOf, startBackupPruning } from './sessions/backupPrune';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
 import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { TranscriptSearch } from './sessions/search';
+import { setTranscriptCacheDir } from './sessions/transcript';
 import { SettingsStore } from './settings';
 import { ProcessHolders } from './sessions/ProcessHolders';
 import { SessionIndex } from './sessions/SessionIndex';
@@ -46,6 +47,7 @@ async function main(): Promise<void> {
   // When this process started: code edited later is what a restart would bring in.
   const startedAt = Date.now() - Math.round(process.uptime() * 1000);
   const cfg = loadConfig();
+  setTranscriptCacheDir(path.join(cfg.configDir, 'transcript-cache'));
   const token = await loadOrCreateToken(cfg.tokenFile);
   const accounts = cfg.accounts;
   const usage = new UsageService({ mode: cfg.usageMode, observedFile: cfg.claudeUsageFile, deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, deckConfigured: cfg.deckUrlConfigured, log: (line) => console.error(line) });
