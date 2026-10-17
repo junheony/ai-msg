@@ -984,7 +984,7 @@ describe('App ⌘1 … ⌘9 (고정됨)', () => {
     expect(press(3)).toBe(true);
     expect(press(9)).toBe(true);
     expect(press(1, { shiftKey: true })).toBe(true);
-    expect(press(1, { altKey: true })).toBe(true);
+    expect(press(2, { altKey: true })).toBe(true); // ⌘⌥N is the split-pane key: no 2nd pane, so left alone
     expect(press(1, { repeat: true })).toBe(false); // a held key is kept from the browser, but opens nothing
     expect(press(1, { ctrlKey: false })).toBe(true);
     fireEvent.keyDown(window, { code: 'KeyK', key: 'k', ctrlKey: true });

@@ -445,6 +445,8 @@ export function Chat(p: ChatProps) {
       return;
     }
     if (e.key !== 'Enter') return;
+    // ⌘⇧Enter is the global 패널 최대화: left to it.
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey) return;
     if (e.metaKey || e.ctrlKey) { e.preventDefault(); submit(); return; }
     // Touch screens: Enter is a newline while the on-screen keyboard is up (send with the button); with a hardware
     // keyboard (iPad + Magic Keyboard, a phone with a BT keyboard) Enter sends like on a computer.

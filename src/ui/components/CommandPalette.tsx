@@ -3,6 +3,7 @@ import { fuzzyFilter } from '../fuzzy';
 import type { SearchHit } from '../sessionApi';
 import type { EngineKind } from '../../shared/models';
 import { EngineMark } from './EngineMark';
+import { isMacPlatform } from '../shortcuts';
 
 export type PaletteSession = { sessionId: string; title: string; cwd: string; project: string; lastModified: number; engine?: EngineKind };
 export type PaletteAction = { id: string; label: string; hint?: string; run: () => void };
@@ -20,13 +21,18 @@ type Item =
 
 /**
  * ⌘K: actions and sessions (fuzzy over title + project), plus 대화 내용 hits from the transcript search.
- * ↑/↓ move, Enter runs, Esc closes; keys pressed while an IME is composing are left to the IME.
+ * ↑/↓ move, Enter runs, Esc closes; keys pressed while an IME is composing are left to the IME. On a session, ⌘Enter
+ * (Ctrl elsewhere) opens it in a new split pane and ⇧Enter as a floating card, when those are given (a click likewise).
  */
-export function CommandPalette({ sessions, actions, onOpenSession, onOpenHit, searchFn, onClose }: {
+export function CommandPalette({ sessions, actions, onOpenSession, onOpenSessionSplit, onOpenSessionFloat, onOpenHit, searchFn, onClose }: {
   /** Newest first. */
   sessions: PaletteSession[];
   actions: PaletteAction[];
   onOpenSession: (s: PaletteSession) => void;
+  /** ⌘Enter / ⌘-click on a session: in a new split pane. */
+  onOpenSessionSplit?: (s: PaletteSession) => void;
+  /** ⇧Enter / ⇧-click on a session: as a floating card. */
+  onOpenSessionFloat?: (s: PaletteSession) => void;
   onOpenHit?: (h: SearchHit) => void;
   searchFn?: (q: string) => Promise<{ hits: SearchHit[] }>;
   onClose: () => void;
@@ -58,11 +64,14 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenHit, se
   const cur = Math.min(sel, Math.max(items.length - 1, 0));
   useEffect(() => { listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' }); }, [cur]);
 
-  const run = (it: Item | undefined) => {
+  const mac = isMacPlatform();
+  const run = (it: Item | undefined, how: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean } | null = null) => {
     if (!it) return;
     onClose();
+    const split = !!how && (mac ? how.metaKey && !how.ctrlKey : how.ctrlKey && !how.metaKey) && !how.shiftKey && !how.altKey;
+    const float = !!how && how.shiftKey && !how.metaKey && !how.ctrlKey && !how.altKey;
     if (it.kind === 'action') it.a.run();
-    else if (it.kind === 'session') onOpenSession(it.s);
+    else if (it.kind === 'session') (split && onOpenSessionSplit ? onOpenSessionSplit : float && onOpenSessionFloat ? onOpenSessionFloat : onOpenSession)(it.s);
     else onOpenHit?.(it.h);
   };
 
@@ -71,7 +80,7 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenHit, se
     if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
     if (e.key === 'ArrowDown') { e.preventDefault(); setSel(items.length ? (cur + 1) % items.length : 0); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); setSel(items.length ? (cur - 1 + items.length) % items.length : 0); return; }
-    if (e.key === 'Enter') { e.preventDefault(); run(items[cur]); }
+    if (e.key === 'Enter') { e.preventDefault(); run(items[cur], e); }
   };
 
   let lastKind: Item['kind'] | null = null;
@@ -90,7 +99,7 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenHit, se
             return [
               head,
               <li key={it.key} id={`palette-${i}`} role="option" aria-selected={i === cur} className={`palette-item ${i === cur ? 'on' : ''}`}
-                onMouseMove={() => { if (i !== cur) setSel(i); }} onClick={() => run(it)}>
+                onMouseMove={() => { if (i !== cur) setSel(i); }} onClick={(e) => run(it, e)}>
                 {it.kind === 'action' && <><span className="palette-title">{it.a.label}</span>{it.a.hint && <kbd className="palette-hint">{it.a.hint}</kbd>}</>}
                 {it.kind === 'session' && <><span className="palette-title"><EngineMark engine={it.s.engine ?? 'claude'} decorative />{it.s.title}</span><span className="palette-meta">{it.s.project}</span></>}
                 {it.kind === 'hit' && (
@@ -103,7 +112,7 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenHit, se
             ];
           })}
         </ul>
-        <div className="palette-foot muted">↑↓ 이동 · Enter 열기 · Esc 닫기</div>
+        <div className="palette-foot muted">↑↓ 이동 · Enter 열기{onOpenSessionSplit ? ` · ${mac ? '⌘' : 'Ctrl+'}Enter 새 분할` : ''}{onOpenSessionFloat ? ' · ⇧Enter 카드로' : ''} · Esc 닫기</div>
       </div>
     </div>
   );

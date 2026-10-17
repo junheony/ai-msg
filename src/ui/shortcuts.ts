@@ -1,5 +1,5 @@
 /** Global keyboard shortcuts: ⌘ on Mac, Ctrl elsewhere. */
-export type ShortcutId = 'palette' | 'help' | 'new-chat' | 'new-pane' | 'prev-session' | 'next-session' | 'toggle-sidebar' | 'settings' | 'prev-pane' | 'next-pane' | 'close-pane' | 'arrange-cards';
+export type ShortcutId = 'palette' | 'help' | 'new-chat' | 'new-pane' | 'prev-session' | 'next-session' | 'toggle-sidebar' | 'settings' | 'prev-pane' | 'next-pane' | 'close-pane' | 'arrange-cards' | 'max-pane' | 'move-pane-left' | 'move-pane-right' | 'toggle-side';
 
 /**
  * By physical key (`code`), so a Korean input source still matches. `typing`: also fires while a text field
@@ -7,7 +7,8 @@ export type ShortcutId = 'palette' | 'help' | 'new-chat' | 'new-pane' | 'prev-se
  *
  * Pane keys avoid the browsers' own: ⌘⌥←/→ switches tabs in Chrome / Firefox (and Ctrl+Alt+←/→ switches workspaces on
  * Linux desktops), so panes step on ⌘⌥[ / ⌘⌥]; ⌘⇧W closes the window in Safari / Chrome (a page cannot keep it), so a
- * pane closes on ⌘⇧X.
+ * pane closes on ⌘⇧X. ⌘⇧[ / ⌘⇧] switch tabs in Safari / Chrome, so a pane moves on ⌘⌥⇧[ / ⌘⌥⇧] (the same keys as
+ * stepping, with ⇧). ⌘⇧Enter only maximizes: the composers send on ⌘Enter without ⇧.
  */
 const BINDINGS: { id: ShortcutId; code: string; shift: boolean; alt?: boolean; typing: boolean; keys: string; label: string }[] = [
   { id: 'palette', code: 'KeyK', shift: false, typing: true, keys: 'K', label: '명령 팔레트 · 세션 검색' },
@@ -18,6 +19,10 @@ const BINDINGS: { id: ShortcutId; code: string; shift: boolean; alt?: boolean; t
   { id: 'prev-pane', code: 'BracketLeft', shift: false, alt: true, typing: true, keys: '⌥[', label: '이전 패널 (왼쪽)' },
   { id: 'next-pane', code: 'BracketRight', shift: false, alt: true, typing: true, keys: '⌥]', label: '다음 패널 (오른쪽)' },
   { id: 'close-pane', code: 'KeyX', shift: true, typing: true, keys: '⇧X', label: '지금 패널 닫기 (마지막 패널은 그대로)' },
+  { id: 'move-pane-left', code: 'BracketLeft', shift: true, alt: true, typing: true, keys: '⌥⇧[', label: '지금 패널을 왼쪽으로 옮기기' },
+  { id: 'move-pane-right', code: 'BracketRight', shift: true, alt: true, typing: true, keys: '⌥⇧]', label: '지금 패널을 오른쪽으로 옮기기' },
+  { id: 'max-pane', code: 'Enter', shift: true, typing: true, keys: '⇧Enter', label: '지금 패널 최대화/복원 (다른 패널 숨김)' },
+  { id: 'toggle-side', code: 'KeyE', shift: true, typing: true, keys: '⇧E', label: '오른쪽 문서 패널 열기/닫기' },
   { id: 'arrange-cards', code: 'KeyG', shift: true, typing: true, keys: '⇧G', label: '떠 있는 카드 정렬 (카드 2장 이상일 때)' },
   { id: 'toggle-sidebar', code: 'Backslash', shift: false, typing: true, keys: '\\', label: '사이드바 열기/닫기' },
   { id: 'settings', code: 'Comma', shift: false, typing: true, keys: ',', label: '설정' },
@@ -25,7 +30,7 @@ const BINDINGS: { id: ShortcutId; code: string; shift: boolean; alt?: boolean; t
 ];
 
 /** `code` fallback from `key` for synthetic events / old browsers. */
-const KEY_TO_CODE: Record<string, string> = { k: 'KeyK', n: 'KeyN', o: 'KeyO', x: 'KeyX', g: 'KeyG', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '/': 'Slash', ',': 'Comma' };
+const KEY_TO_CODE: Record<string, string> = { k: 'KeyK', n: 'KeyN', o: 'KeyO', x: 'KeyX', g: 'KeyG', e: 'KeyE', enter: 'Enter', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '/': 'Slash', ',': 'Comma' };
 
 export function isMacPlatform(nav: { platform?: string; userAgent?: string } | undefined = typeof navigator === 'undefined' ? undefined : navigator): boolean {
   return /Mac|iPhone|iPad|iPod/i.test(nav?.platform || nav?.userAgent || '');
@@ -48,7 +53,7 @@ export function matchShortcut(e: ShortcutKey, opts: { mac: boolean; typing: bool
   if (e.isComposing || e.keyCode === 229) return null;
   const mod = opts.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
   if (!mod) return null;
-  const code = e.code || KEY_TO_CODE[e.key.toLowerCase()] || '';
+  const code = e.code === 'NumpadEnter' ? 'Enter' : e.code || KEY_TO_CODE[e.key.toLowerCase()] || '';
   const b = BINDINGS.find((x) => x.code === code && x.shift === e.shiftKey && !!x.alt === e.altKey);
   if (!b || (opts.typing && !b.typing)) return null;
   // Ctrl+Alt off a Mac is AltGr on many layouts: in a text field that key types a character, so it stays the field's.
@@ -70,6 +75,19 @@ export function isPlainMod(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'shift
  */
 export function matchPinShortcut(e: ShortcutKey, mac: boolean): number | null {
   if (e.isComposing || e.keyCode === 229 || !isPlainMod(e, mac)) return null;
+  const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code ? null : /^([1-9])$/.exec(e.key));
+  return digit ? Number(digit[1]) - 1 : null;
+}
+
+/**
+ * ⌘⌥1 … ⌘⌥9 (Ctrl+Alt elsewhere): the index of the split pane to focus (left to right), or null. By physical key, so a
+ * Korean input source (or ⌥ turning the digit into a symbol on a Mac) still matches; never with Shift or mid-IME.
+ * Ctrl+Alt off a Mac in a text field is AltGr there, so it stays the field's.
+ */
+export function matchPaneShortcut(e: ShortcutKey, opts: { mac: boolean; typing: boolean }): number | null {
+  if (e.isComposing || e.keyCode === 229 || e.shiftKey || !e.altKey) return null;
+  if (!(opts.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return null;
+  if (!opts.mac && opts.typing) return null;
   const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code ? null : /^([1-9])$/.exec(e.key));
   return digit ? Number(digit[1]) - 1 : null;
 }

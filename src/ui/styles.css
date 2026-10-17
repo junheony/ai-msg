@@ -244,6 +244,8 @@ button.conn:hover { background: var(--hover); color: var(--fg); }
 .pane-splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - .5px); width: 1px; background: var(--line); pointer-events: none; }
 .pane-splitter:hover::after, .pane-splitter:active::after { left: calc(50% - 1px); width: 2px; background: var(--accent); }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); position: relative; }
+/* ⌘⇧Enter: another pane is maximized — this one stays mounted but takes no column. */
+.pane[hidden] { display: none; }
 .panes:not([data-count="1"]) .pane.active::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent); opacity: .5; pointer-events: none; }
 .pane-switch { display: flex; gap: 6px; padding: 6px 10px; background: var(--sidebar); border-bottom: 1px solid var(--line); }
 .pane-switch button { height: 30px; padding: 0 12px; border-radius: 15px; font-size: calc(13.5px * var(--font-scale, 1)); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); white-space: nowrap; }
