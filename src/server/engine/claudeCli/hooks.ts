@@ -1,7 +1,7 @@
 // src/server/engine/claudeCli/hooks.ts
 import os from 'node:os';
 import path from 'node:path';
-import { gateReadTool, gateTool, isProtectedEditPath } from '../../commander/rules';
+import { gateEditPath, gateReadTool, gateTool, type ReadRoots } from '../../commander/rules';
 import type { TurnRequest } from '../Engine';
 import { EDIT_TOOL_MATCHER } from './args';
 import type { BridgeHandlers } from './bridge';
@@ -56,6 +56,8 @@ export function hookHandler(req: HookDeps, audit: ToolAudit, gate: ModeGate): Br
           }
           return decision === 'allow' ? pre('allow') : decision === 'ask' ? pre('ask', COMMANDER_ASK_MESSAGE) : pre('deny', COMMANDER_GATE_FAILED_MESSAGE);
         };
+        const base = typeof input.cwd === 'string' && path.isAbsolute(input.cwd) ? input.cwd : undefined;
+        const roots: ReadRoots = { cwd: req.cwd ?? '', allowDirs: req.allowDirs ?? [], home: os.homedir(), ...(base ? { base } : {}) };
         if (EDIT_TOOLS.has(call.tool_name)) {
           // 편집 뒤의 러너 실행 = 임의 코드 실행: 어떤 편집이든 그 뒤 테스트 러너·git 은 ask — 다음 자동 턴(새 프로세스)도.
           runnerConfigChanged = true;
@@ -67,14 +69,13 @@ export function hookHandler(req: HookDeps, audit: ToolAudit, gate: ModeGate): Br
               // best-effort: this process still asks; TurnRunner records it again once the attempt ends
             }
           }
+          // 보호 경로이거나 realpath 가 세션 cwd·allowDirs 밖이면 ask — acceptEdits·bypass 모드 판정까지 가지 않는다.
           const p = editedPath(call.tool_input);
-          if (p === null || isProtectedEditPath(p)) return judged(() => 'ask');
+          if (p === null || gateEditPath(p, roots) !== 'pass') return judged(() => 'ask');
         } else if (COMMANDER_READ_TOOLS.has(call.tool_name)) {
-          const base = typeof input.cwd === 'string' && path.isAbsolute(input.cwd) ? input.cwd : undefined;
-          const roots = { cwd: req.cwd ?? '', allowDirs: req.allowDirs ?? [], home: os.homedir(), ...(base ? { base } : {}) };
           if (gateReadTool(call.tool_name, call.tool_input, roots) !== 'pass') return judged(() => 'ask');
         } else {
-          return judged(() => gateTool(call.tool_name, call.tool_input, { runnerConfigChanged }));
+          return judged(() => gateTool(call.tool_name, call.tool_input, { runnerConfigChanged, roots }));
         }
       }
       if (gate.mode === gate.startedIn) return {};

@@ -4,8 +4,10 @@ import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { gateReadTool, gateTool, isAllowedCommand, isProtectedEditPath } from './rules';
 
-const clean = { runnerConfigChanged: false };
-const changed = { runnerConfigChanged: true };
+// 읽기 명령의 경로 판정 루트: 없는 디렉터리라 realpath 는 글자 그대로 풀린다.
+const lexRoots = { cwd: '/w', allowDirs: [], home: '/home/u' };
+const clean = { runnerConfigChanged: false, roots: lexRoots };
+const changed = { runnerConfigChanged: true, roots: lexRoots };
 const bash = (command: unknown) => gateTool('Bash', { command }, clean);
 
 describe('gateTool — 허용 목록', () => {
@@ -173,5 +175,53 @@ describe('gateReadTool — 자동 턴 읽기 도구의 경로(재검토 #1)', ()
   });
   it('ask when the session cwd is unknown', () => {
     expect(gateReadTool('Read', { file_path: '/w/a' }, { cwd: '', allowDirs: [], home: tmp })).toBe('ask');
+  });
+});
+
+describe('gateTool — 읽기 명령의 경로 인자를 realpath 로(재검토 2차 #1)', () => {
+  const tmp = path.join(os.tmpdir(), `deck-gate-bash-${process.pid}-${Date.now()}`);
+  const cwd = path.join(tmp, 'proj');
+  const extra = path.join(tmp, 'extra');
+  const outside = path.join(tmp, 'secret');
+  const ctx = { runnerConfigChanged: false, roots: { cwd, allowDirs: [extra], home: tmp } };
+  const cmd = (c: string) => gateTool('Bash', { command: c }, ctx);
+  beforeAll(() => {
+    for (const d of [path.join(cwd, 'src'), extra, outside]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'key.txt'), 'x');
+    fs.writeFileSync(path.join(cwd, 'src', 'a.ts'), 'x');
+    fs.writeFileSync(path.join(cwd, '.env'), 'x');
+    fs.writeFileSync(path.join(extra, 'data.csv'), 'x');
+    fs.symlinkSync(outside, path.join(cwd, 'link'));
+    fs.symlinkSync(path.join(cwd, '.env'), path.join(cwd, 'innocent.txt'));
+  });
+  afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it.each([
+    'cat .env', 'head .env.local', 'cat src/../.ENV', 'cat link/key.txt', 'cat innocent.txt', 'ls link', 'wc -l link/key.txt',
+    'rg -L token .', 'rg --follow token .', 'rg -nL token', 'grep -R token .', 'grep -rnR token .', 'grep --dereference-recursive token .', 'grep -rS token .',
+    'ls -L .', 'ls -laL', 'grep -f .env src', 'grep -f.env src', 'rg --file=.env src', 'rg --ignore-file=link/key.txt x', 'wc --files0-from=list',
+    'cat .e*', 'cat lin*/key.txt', 'cat innocent.tx?', 'cat "link"/key.txt', "cat 'unterminated",
+    // zsh glob 한정자는 코드를 실행한다
+    'ls *(e:touch\\ x:)', 'git log *(e:x:)',
+  ])('ask: %j', (c) => {
+    expect(cmd(c)).toBe('ask');
+  });
+  it.each([
+    'cat src/a.ts', 'ls', 'ls -la src', 'grep -rn token src', 'grep -rn "foo bar" src', "grep -n 'a.*b' src/a.ts", 'rg -n TODO', 'head -n 3 src/a.ts',
+    `cat ${path.join(extra, 'data.csv')}`, 'grep -L token src', 'grep -e "*.ts" src', "rg '--glob=*.ts' x",
+  ])('allow: %s', (c) => {
+    expect(cmd(c)).toBe('allow');
+  });
+  it('without roots (unknown session cwd) every read command asks', () => {
+    expect(isAllowedCommand('cat src/a.ts', { runnerConfigChanged: false })).toBe(false);
+  });
+});
+
+describe('isProtectedEditPath — 프로필 설정 디렉터리·.claude.json(재검토 2차 #2)', () => {
+  it.each(['/Users/u/.claude-b/settings.json', '/Users/u/.Claude-work/hooks/x', '/Users/u/.claude.json', '/Users/u/.CLAUDE.JSON', '/w/.claude-b'])('yes: %s', (p) => {
+    expect(isProtectedEditPath(p)).toBe(true);
+  });
+  it.each(['/w/.claudeignore', '/w/my.claude-x/y', '/w/claude.json', '/w/.claude.jsonc'])('no: %s', (p) => {
+    expect(isProtectedEditPath(p)).toBe(false);
   });
 });

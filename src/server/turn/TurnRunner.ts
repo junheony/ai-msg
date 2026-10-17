@@ -921,6 +921,17 @@ export class TurnRunner {
     return ages.length ? Math.min(...ages) : null;
   }
 
+  /** Ids of sessions with `commanderEdited` whose cwd is the same folder as `cwd` (compared by realpath). */
+  private async editedInFolder(cwd: string): Promise<string[]> {
+    const marked = this.deps.store.list().filter((s) => s.commanderEdited);
+    if (!marked.length) return [];
+    const real = (d: string) => fs.realpath(d).catch(() => path.resolve(d));
+    const here = await real(cwd);
+    const out: string[] = [];
+    for (const s of marked) if ((await real(s.cwd)) === here) out.push(s.sessionId);
+    return out;
+  }
+
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, forkAt: string | null, sink: TurnSink, grants: SessionGrants, modeRef: ModeRef, attachments: Attachment[], cur: Cursor, systemNote?: string): Promise<Attempt> {
     const scope = () => ({ turnId: cur.turnId, sessionId: out.sessionId, cwd });
     // The effort applies to the resolved model (a Fable → Opus downgrade keeps it when Opus supports it).
@@ -928,8 +939,10 @@ export class TurnRunner {
     const commanderHop = p.commanderHop ?? (this.deps.devCommanderGate ? 1 : undefined);
     // 보안 #8: a person's turn gated only by DECK_DEV_COMMANDER_GATE is labelled in the audit log.
     const devGate = commanderHop !== undefined && p.commanderHop === undefined;
-    // An edit on an earlier automatic turn of this session still holds test runners and git at ask (rules.ts GateContext).
-    const priorEdited = commanderHop !== undefined && resumeSessionId !== null && !!this.deps.store.get(resumeSessionId)?.commanderEdited;
+    // An edit on an earlier automatic turn of this session — or of any session in the same (realpath) folder — still holds
+    // test runners and git at ask (rules.ts GateContext).
+    const priorEdited = commanderHop !== undefined
+      && ((resumeSessionId !== null && !!this.deps.store.get(resumeSessionId)?.commanderEdited) || (await this.editedInFolder(cwd)).length > 0);
     const events = this.deps.engine.runTurn({
       account,
       cwd,
@@ -1675,11 +1688,16 @@ export class TurnRunner {
     if (p.retryHop) early.unshift(AUTO_RETRY_NOTICE);
     const pinMark = () => (byPin ? { pinned: true } : {});
 
-    // 사람이 보낸 턴(자동 턴·deck 이 스스로 보낸 이어가기·재시도·failover 가 아님)이 시작되면 자동 턴의 편집 표시를 지운다.
-    if (state?.commanderEdited && !forkAt && p.commanderHop === undefined && !p.retryHop && !p.bgCapHop && !p.failoverHop) {
-      await deps.store.setCommanderEdited(state.sessionId, false);
-      const { commanderEdited: _cleared, ...rest } = state;
-      state = rest;
+    // 사람이 보낸 턴(자동 턴·deck 이 스스로 보낸 이어가기·재시도·failover 가 아님)이 시작되면 자동 턴의 편집 표시를 지운다 —
+    // 이 세션과, 같은 폴더(realpath)를 쓰는 다른 세션의 것까지(표시가 폴더 단위로 러너·git 을 막으므로 사람이 그 폴더로 돌아오면 함께 푼다).
+    if (!forkAt && p.commanderHop === undefined && !p.retryHop && !p.bgCapHop && !p.failoverHop) {
+      const edited = new Set(await this.editedInFolder(cwd));
+      if (state?.commanderEdited) edited.add(state.sessionId);
+      for (const id of edited) await deps.store.setCommanderEdited(id, false);
+      if (state?.commanderEdited) {
+        const { commanderEdited: _cleared, ...rest } = state;
+        state = rest;
+      }
     }
     const tried: Account[] = [];
     const grants: SessionGrants = { rules: [...(state?.allowRules ?? [])], dirs: [...(state?.allowDirs ?? [])] };

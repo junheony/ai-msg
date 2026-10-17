@@ -12,14 +12,19 @@ export type GateDecision = 'allow' | 'ask';
  * 자동 턴에서 편집 도구가 한 번이라도 불렸는지 — 그 뒤 테스트 러너·git 은 ask(편집+러너 = 임의 코드 실행). 이 프로세스의
  * 편집에 더해, 세션 상태(`SessionState.commanderEdited`)에 남은 이전 자동 턴의 편집도 포함(사람 턴이 시작되면 풀린다).
  */
-export type GateContext = { runnerConfigChanged: boolean };
+export type GateContext = {
+  runnerConfigChanged: boolean;
+  /** 읽기 명령(cat·grep…)의 경로 인자를 판정할 루트(`gateReadTool` 과 같은 기준). 없으면 읽기 명령도 ask. */
+  roots?: ReadRoots;
+};
 
 /**
- * 자동 턴에서 손대면 사람 확인(ask)이 필요한 경로: `.claude/`(CLI 설정·훅·명령) 와 `.git/`(훅·설정) 아래, 그리고 그 자체.
+ * 자동 턴에서 손대면 사람 확인(ask)이 필요한 경로: `.claude/`·`.claude-<이름>/`(CLI 설정·훅·명령, 프로필별 설정 디렉터리) 와
+ * `.git/`(훅·설정) 아래, 그리고 그 자체. `.claude.json`(CLI 전역 설정·MCP).
  * 경로 조각 단위 비교(`.gitignore`·`.claudeignore` 는 아님). 슬래시·백슬래시 모두. 대소문자 무시(macOS 기본 파일시스템은
  * `.Claude/` 가 `.claude/` 와 같은 디렉터리).
  */
-const PROTECTED_EDIT_RE = /(?:^|[\\/])\.(?:claude|git)(?:[\\/]|$)/i;
+const PROTECTED_EDIT_RE = /(?:^|[\\/])(?:\.(?:claude(?:-[^\\/]*)?|git)(?:[\\/]|$)|\.claude\.json$)/i;
 /** 어느 디렉터리에 있든 모델 지시·MCP 설정 파일: `CLAUDE.md`·`CLAUDE.local.md`·`AGENTS.md`·`.mcp.json`. */
 const PROTECTED_FILE_RE = /(?:^|[\\/])(?:claude(?:\.local)?\.md|agents\.md|\.mcp\.json)$/i;
 
@@ -61,6 +66,29 @@ function within(p: string, root: string): boolean {
   return p === root || p.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
 }
 
+/** 절대 경로 `target` 이 realpath 기준으로 세션 cwd·allowDirs 안이고 `.env`·`.env.*` 가 아닌지. */
+function insideRoots(target: string, roots: ReadRoots): boolean {
+  if (!roots.cwd || !path.isAbsolute(roots.cwd)) return false;
+  const real = realish(target);
+  if (SECRET_FILE_RE.test(path.basename(target)) || SECRET_FILE_RE.test(path.basename(real))) return false;
+  const rootList = [roots.cwd, ...roots.allowDirs.filter((d) => path.isAbsolute(d))].map(realish);
+  return rootList.some((r) => within(real, r));
+}
+
+/**
+ * 자동 턴 편집 도구의 대상 경로 판정. 보호 경로(원문과 realpath 둘 다 — cwd 안 심볼릭 링크로 `.claude`·`.git` 을 가리키는
+ * 우회 차단)거나 realpath 가 세션 cwd·allowDirs 밖이면 ask. 상대 경로는 `base`(없으면 cwd) 기준.
+ */
+export function gateEditPath(filePath: string, roots: ReadRoots): 'pass' | 'ask' {
+  if (filePath.includes('\0') || isProtectedEditPath(filePath)) return 'ask';
+  if (!roots.cwd || !path.isAbsolute(roots.cwd)) return 'ask';
+  const target = path.resolve(roots.base ?? roots.cwd, filePath);
+  const real = realish(target);
+  if (isProtectedEditPath(target) || isProtectedEditPath(real)) return 'ask';
+  const rootList = [roots.cwd, ...roots.allowDirs.filter((d) => path.isAbsolute(d))].map(realish);
+  return rootList.some((r) => within(real, r)) ? 'pass' : 'ask';
+}
+
 /**
  * 읽기 도구(Read·NotebookRead·Glob·Grep·LS)의 경로 판정. 'pass' = 판정 없이 통과(CLI 의 보통 권한 흐름), 'ask' = 사람 확인.
  * 대상(`file_path`·`notebook_path`·`path`, Glob·Grep·LS 는 없으면 cwd)을 `~` 풀고 상대면 `base` 기준으로 풀어 realpath 로
@@ -84,11 +112,7 @@ export function gateReadTool(toolName: string, input: unknown, roots: ReadRoots)
   } else {
     target = path.resolve(roots.base ?? roots.cwd, raw);
   }
-  if (!roots.cwd || !path.isAbsolute(roots.cwd)) return 'ask';
-  const real = realish(target);
-  if (SECRET_FILE_RE.test(path.basename(target)) || SECRET_FILE_RE.test(path.basename(real))) return 'ask';
-  const rootList = [roots.cwd, ...roots.allowDirs.filter((d) => path.isAbsolute(d))].map(realish);
-  if (!rootList.some((r) => within(real, r))) return 'ask';
+  if (!insideRoots(target, roots)) return 'ask';
   for (const g of [toolName === 'Glob' ? i.pattern : undefined, toolName === 'Grep' ? i.glob : undefined]) {
     if (g === undefined) continue;
     if (typeof g !== 'string' || GLOB_OUTSIDE.test(g) || GLOB_SECRET.test(g)) return 'ask';
@@ -98,9 +122,9 @@ export function gateReadTool(toolName: string, input: unknown, roots: ReadRoots)
 
 /**
  * 셸이 해석하는 연산·치환이 하나라도 있으면 허용 목록 불인정: 파이프·`;`·`&`(&&·||·백그라운드 포함)·리다이렉트·
- * `$`(변수·`$(…)`·`${IFS}`)·백틱·줄바꿈. 따옴표 안에 있어도 그대로 ask(보수적).
+ * `$`(변수·`$(…)`·`${IFS}`)·백틱·괄호(zsh glob 한정자 `*(e:…:)` 는 코드를 실행한다)·줄바꿈. 따옴표 안에 있어도 그대로 ask(보수적).
  */
-const SHELL_META = /[|;&<>$`\n\r\0]/;
+const SHELL_META = /[|;&<>$`()\n\r\0]/;
 
 /**
  * 인자 한 단어가 cwd 밖을 가리킬 수 있는지: 절대경로·`~`(맨 앞, `=` 뒤, 짧은 옵션에 붙은 꼴 포함), `..` 경로 조각,
@@ -197,6 +221,78 @@ function argsAllowed(args: readonly string[], s: ArgSpec): boolean {
 const READ_ONLY = new Set(['ls', 'grep', 'rg', 'cat', 'head', 'tail', 'wc']);
 /** rg 의 `--pre`(파일마다 명령 실행)·`--pre-glob`. */
 const RG_EXEC_OPT = /^--pre(?:-glob)?(?:=|$)/;
+/**
+ * 읽기 명령별로 ask 인 옵션: 심볼릭 링크를 따라 들어가는 것(grep `-R`·BSD `-S`·`--dereference-recursive`, rg `-L`·`--follow`,
+ * ls `-L`·`--dereference`)과 파일 목록을 다른 파일에서 읽는 wc `--files0-from`. 짧은 옵션은 묶음(`-rnR`) 안에서도 찾는다.
+ */
+const READ_ONLY_DENY: Readonly<Record<string, RegExp>> = {
+  grep: /^(?:-[^-]*[RS]|--dereference-recursive(?:=|$))/,
+  rg: /^(?:-[^-]*L|--follow(?:=|$))/,
+  ls: /^(?:-[^-]*L|--dereference(?:=|$))/,
+  wc: /^--files0-from(?:=|$)/,
+};
+/** grep·rg 의 `-f<파일>`(패턴 파일)처럼 짧은 옵션에 붙은 경로. */
+const ATTACHED_FILE = /^-[A-Za-z]*f(.+)$/s;
+
+/**
+ * 셸 단어 나누기: 따옴표·백슬래시를 푼 값과, 따옴표 밖에 glob 문자(`*`·`?`·`[`)가 있었는지. SHELL_META 를 거른 뒤라 치환은
+ * 없다. 따옴표가 닫히지 않으면 null.
+ */
+function shellWords(s: string): { w: string; glob: boolean }[] | null {
+  const out: { w: string; glob: boolean }[] = [];
+  let w = '';
+  let glob = false;
+  let inWord = false;
+  let q = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!;
+    if (q === "'") { if (c === "'") q = ''; else w += c; continue; }
+    if (q === '"') {
+      if (c === '"') q = '';
+      else if (c === '\\' && (s[i + 1] === '"' || s[i + 1] === '\\')) w += s[++i];
+      else w += c;
+      continue;
+    }
+    if (/\s/.test(c)) {
+      if (inWord) out.push({ w, glob });
+      w = ''; glob = false; inWord = false;
+      continue;
+    }
+    inWord = true;
+    if (c === "'" || c === '"') q = c;
+    else if (c === '\\') { if (i + 1 < s.length) w += s[++i]; }
+    else { if (c === '*' || c === '?' || c === '[') glob = true; w += c; }
+  }
+  if (q) return null;
+  if (inWord) out.push({ w, glob });
+  return out;
+}
+
+/**
+ * 읽기 명령의 인자 판정. 위치 인자와 경로를 받는 옵션 값(`--file=…`·`-f…`)은 `gateReadTool` 과 같은 기준(realpath 로
+ * cwd·allowDirs 안, `.env` 아님). 옵션 단어 자체는 예전처럼 글자로도 본다(절대 경로·`..` 가 붙으면 ask). 옵션의 다음 단어도 위치 인자로 본다(패턴이 경로처럼 보이면 ask — 보수적). 따옴표 밖 glob 은
+ * 셸이 무엇으로 펼칠지(심볼릭 링크·`.env`) 미리 볼 수 없어 ask.
+ */
+function readArgsAllowed(head: string, args: readonly { w: string; glob: boolean }[], roots: ReadRoots): boolean {
+  const base = roots.base ?? roots.cwd;
+  // 셸이 펼치는 `~`(맨 앞·`=` 뒤)·중괄호는 글자로 거르고, 나머지(절대 경로·`..`·심볼릭 링크)는 realpath 로 본다.
+  const ok = (p: string) => !/(?:^|=)~|[{]/.test(p) && insideRoots(path.resolve(base, p), roots);
+  let opts = true;
+  for (const { w, glob } of args) {
+    if (glob) return false;
+    if (opts && w === '--') { opts = false; continue; }
+    if (opts && w.startsWith('-')) {
+      if (OUTSIDE_CWD.test(w) || READ_ONLY_DENY[head]?.test(w) || (head === 'rg' && RG_EXEC_OPT.test(w))) return false;
+      const eq = w.startsWith('--') ? w.indexOf('=') : -1;
+      const attached = (head === 'grep' || head === 'rg') && !w.startsWith('--') ? ATTACHED_FILE.exec(w)?.[1] : undefined;
+      const value = eq > 0 ? w.slice(eq + 1) : attached;
+      if (value !== undefined && value !== '' && !ok(value)) return false;
+      continue;
+    }
+    if (!ok(w)) return false;
+  }
+  return true;
+}
 
 /** Bash 명령 하나가 허용 목록에 드는지. 조금이라도 애매하면 false(→ ask). */
 export function isAllowedCommand(command: string, ctx: GateContext): boolean {
@@ -211,9 +307,9 @@ export function isAllowedCommand(command: string, ctx: GateContext): boolean {
   if (runner) return !ctx.runnerConfigChanged && plainHead(runner.at) && argsAllowed(words.slice(runner.at), runner.spec);
   const head = words[0]!;
   if (READ_ONLY.has(head)) {
-    if (!plainHead(1)) return false;
-    const args = words.slice(1);
-    return args.every((a) => !OUTSIDE_CWD.test(a)) && (head !== 'rg' || !args.some((a) => RG_EXEC_OPT.test(a)));
+    if (!plainHead(1) || !ctx.roots) return false;
+    const parsed = shellWords(raw);
+    return !!parsed && readArgsAllowed(head, parsed.slice(1), ctx.roots);
   }
   if (head === 'git') {
     if (ctx.runnerConfigChanged || !plainHead(2)) return false;

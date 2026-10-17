@@ -1,6 +1,7 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
 import { hookHandler } from './hooks';
 import { toolAudit } from './stream';
 import { COMMANDER_ASK_MESSAGE, COMMANDER_GATE_FAILED_MESSAGE, NO_TOOLS_MESSAGE, PLAN_GATE_MESSAGE } from './texts';
@@ -208,5 +209,64 @@ describe('hook fixtures (real CLI captures)', () => {
     expect(meta('hook-ask').calls.map((c: { tool_name: string }) => c.tool_name)).toEqual(['Write']);
     expect(meta('hook-allow').calls).toEqual([]);
     expect(meta('hook-allow').fileWritten).toBe(true);
+  });
+});
+
+describe('hookHandler PreToolUse — 자동 턴 편집의 cwd 경계(재검토 2차 #2)', () => {
+  const tmp = path.join(os.tmpdir(), `deck-hook-edit-${process.pid}-${Date.now()}`);
+  const cwd = path.join(tmp, 'proj');
+  const extra = path.join(tmp, 'extra');
+  const home = path.join(tmp, 'home');
+  beforeAll(() => {
+    for (const d of [path.join(cwd, 'src'), path.join(cwd, '.git'), extra, path.join(home, '.claude-b')]) fs.mkdirSync(d, { recursive: true });
+    fs.symlinkSync(path.join(cwd, '.git'), path.join(cwd, 'gitlink'));
+    fs.symlinkSync(path.join(home, '.claude-b'), path.join(cwd, 'cfg'));
+    fs.symlinkSync(home, path.join(cwd, 'homelink'));
+  });
+  afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  const ask = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: COMMANDER_ASK_MESSAGE } };
+  const allow = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } };
+  const edit = (h: ReturnType<typeof mk>['h'], tool: string, input: Record<string, unknown>) => h({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 'e' }, sig);
+
+  it('acceptEdits (from the start or switched to) cannot let an automatic turn write outside the cwd / allowDirs, through a symlink, or into .claude-* / .claude.json', async () => {
+    for (const startedIn of ['acceptEdits', 'default'] as const) {
+      // started in acceptEdits: no opinion = the CLI auto-accepts; switched to acceptEdits mid-process: the hook allows
+      const { h } = mk({ commanderHop: 1, cwd, allowDirs: [extra] }, { mode: 'acceptEdits', startedIn });
+      const passed = startedIn === 'acceptEdits' ? {} : allow;
+      for (const [tool, input] of [
+        ['Write', { file_path: path.join(home, '.zshrc') }],
+        ['Edit', { file_path: path.join(home, '.claude-b', 'settings.json') }],
+        ['Write', { file_path: path.join(home, '.claude.json') }],
+        ['MultiEdit', { file_path: path.join(cwd, '..', 'outside.ts') }],
+        ['NotebookEdit', { notebook_path: '/etc/x.ipynb' }],
+        ['Write', { file_path: path.join(cwd, 'homelink', '.zshrc') }],
+        ['Write', { file_path: path.join(cwd, 'gitlink', 'hooks', 'pre-commit') }],
+        ['Write', { file_path: path.join(cwd, 'cfg', 'settings.json') }],
+      ] as const) {
+        expect(await edit(h, tool, input), `${startedIn} ${tool} ${JSON.stringify(input)}`).toEqual(ask);
+      }
+      expect(await edit(h, 'Write', { file_path: path.join(cwd, 'src', 'new.ts') })).toEqual(passed);
+      expect(await edit(h, 'Edit', { file_path: path.join(extra, 'x.ts') })).toEqual(passed);
+    }
+  });
+  it('a relative path resolves against the hook input cwd; inside the cwd the mode gate still decides', async () => {
+    const { h, gate } = mk({ commanderHop: 1, cwd });
+    gate.mode = 'acceptEdits';
+    const call = (file_path: string, hookCwd: string) => h({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path }, tool_use_id: 'r', cwd: hookCwd }, sig);
+    expect(await call('src/b.ts', cwd)).toEqual(allow);
+    expect(await call('src/b.ts', home)).toEqual(ask);
+  });
+  it("a person's turn: edits outside the cwd are left to the CLI and the mode gate as before", async () => {
+    const { h, gate } = mk({ cwd });
+    gate.mode = 'acceptEdits';
+    expect(await edit(h, 'Write', { file_path: path.join(home, '.zshrc') })).toEqual(allow);
+    expect(await edit(mk({ cwd }).h, 'Write', { file_path: path.join(home, '.claude.json') })).toEqual({});
+  });
+  it('Bash read commands are judged against the same roots (cat .env / symlink out are ask)', async () => {
+    const { h } = mk({ commanderHop: 1, cwd });
+    const bash = (command: string) => h({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'b' }, sig);
+    expect(await bash('cat .env')).toEqual(ask);
+    expect(await bash('cat homelink/.zshrc')).toEqual(ask);
+    expect(await bash('ls src')).toEqual(allow);
   });
 });

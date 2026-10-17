@@ -420,6 +420,31 @@ describe('TurnRunner', () => {
     expect(c.deps.store.get('born1')?.commanderEdited).toBe(true);
   });
 
+  it('재검토 2차 #3: an edit flag on another session in the same folder holds automatic turns there too; a person\'s turn in the folder clears it', async () => {
+    const born = ['', 'born2', 'born3', '', ''];
+    const eng = new StubEngine(async (_req, call) => ok(born[call] || SID));
+    const c = await ctx(eng);
+    await seedSession(c, 'b');
+    await c.deps.store.set({ sessionId: SID, cwd: '/w/one', account: 'b', projectDir: path.join(c.roots.b!, '-w-one'), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    // same folder, written differently (the comparison is by realpath / resolved path)
+    await c.deps.store.set({ sessionId: OTHER, cwd: '/w/x/../one/', account: 'b', projectDir: path.join(c.roots.b!, '-w-one'), lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
+    await c.deps.store.setCommanderEdited(OTHER, true);
+    const run = (turnId: string, cwd: string, sessionId: string | null, commanderHop?: number) =>
+      new TurnRunner(c.deps).run({ turnId, cwd, sessionId, text: 'go', ...(commanderHop ? { commanderHop } : {}) }, c.sink);
+    await run('a1', '/w/one', SID, 1);
+    expect(eng.calls[0]!.commanderEdited).toBe(true);
+    await run('a2', '/w/one', null, 1);
+    expect(eng.calls[1]!.commanderEdited).toBe(true);
+    await run('a3', '/w/two', null, 1);
+    expect(eng.calls[2]).not.toHaveProperty('commanderEdited');
+    await run('h', '/w/one', SID);
+    expect(eng.calls[3]).not.toHaveProperty('commanderEdited');
+    expect(c.deps.store.get(OTHER)).not.toHaveProperty('commanderEdited');
+    await run('a4', '/w/one', SID, 2);
+    expect(eng.calls[4]).not.toHaveProperty('commanderEdited');
+  });
+
   it('개발용 devCommanderGate: a user turn runs as hop 1 of the gate', async () => {
     const eng = new StubEngine(() => ok('d1'));
     const c = await ctx(eng, { devCommanderGate: true });
