@@ -58,7 +58,10 @@ export function ShortcutHelp({ mac, onClose }: { mac: boolean; onClose: () => vo
           {shortcutList(mac).map((s) => (
             <div key={s.id} className="shortcut-row"><dt><kbd>{s.keys}</kbd></dt><dd>{s.label}</dd></div>
           ))}
-          <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}Enter</kbd></dt><dd>메시지 보내기</dd></div>
+          <div className="shortcut-row"><dt><kbd>{mac ? '⌘⌥' : 'Ctrl+Alt+'}1–9</kbd></dt><dd>N번째 분할 패널로 이동 (왼쪽부터)</dd></div>
+          <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}1–9</kbd></dt><dd>N번째 고정 세션 열기</dd></div>
+          <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}Enter</kbd></dt><dd>메시지 보내기 · 새 대화 화면에서는 새 분할 패널로 시작 (보내기 키가 Enter 일 때)</dd></div>
+          <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}Enter · ⇧Enter</kbd></dt><dd>명령 팔레트의 세션: 새 분할 패널로 · 떠 있는 카드로 열기</dd></div>
           <div className="shortcut-row"><dt><kbd>⇧Tab</kbd></dt><dd>권한 모드 바꾸기 (입력창에서)</dd></div>
           <div className="shortcut-row"><dt><kbd>{mac ? '⌥' : 'Alt+'}↑/↓</kbd></dt><dd>고정 항목 순서 이동 (고정됨 줄의 버튼에서)</dd></div>
           <div className="shortcut-row"><dt><kbd>⇧Esc</kbd></dt><dd>입력창으로 포커스</dd></div>

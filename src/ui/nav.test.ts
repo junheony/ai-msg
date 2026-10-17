@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dateGroupOf, groupByDate } from './dateGroups';
 import { fuzzyFilter, fuzzyScore } from './fuzzy';
-import { isMacPlatform, matchPinShortcut, matchShortcut, pinKeyLabel, shortcutList, type ShortcutKey } from './shortcuts';
+import { isMacPlatform, matchPaneShortcut, matchPinShortcut, matchShortcut, pinKeyLabel, shortcutList, type ShortcutKey } from './shortcuts';
 
 describe('fuzzyScore / fuzzyFilter', () => {
   it('matches substrings and in-order subsequences, case-insensitively; misses are null', () => {
@@ -120,5 +120,39 @@ describe('shortcuts', () => {
     expect(matchPinShortcut(key('Digit2', { ctrlKey: true }), false)).toBe(1);
     expect(matchPinShortcut({ ...key(''), key: '3', metaKey: true }, true)).toBe(2); // no `code`: by key
     expect([pinKeyLabel(0, true), pinKeyLabel(8, false), pinKeyLabel(9, true)]).toEqual(['⌘1', 'Ctrl+9', null]);
+  });
+
+  it('pane keys: ⌘⇧Enter maximizes, ⌘⌥⇧[ / ] move, ⌘⇧E side panel — by physical key, also from a text field', () => {
+    const m = (code: string, extra: Partial<ShortcutKey> = {}, typing = true) => matchShortcut(key(code, { metaKey: true, ...extra }), { mac: true, typing });
+    expect(m('Enter', { shiftKey: true })).toBe('max-pane');
+    expect(m('NumpadEnter', { shiftKey: true })).toBe('max-pane');
+    expect(m('', { key: 'Enter', shiftKey: true })).toBe('max-pane');
+    expect(m('Enter')).toBeNull(); // ⌘Enter stays the composer's send
+    expect(m('BracketLeft', { shiftKey: true, altKey: true, key: '”' })).toBe('move-pane-left');
+    expect(m('BracketRight', { shiftKey: true, altKey: true, key: '’' })).toBe('move-pane-right');
+    expect(m('BracketLeft', { shiftKey: true })).toBeNull(); // ⌘⇧[ is the browser's tab switch
+    expect(m('KeyE', { shiftKey: true, key: 'ㄸ' })).toBe('toggle-side');
+    expect(m('KeyE')).toBeNull();
+    expect(m('KeyE', { shiftKey: true, isComposing: true })).toBeNull();
+    expect(matchShortcut(key('BracketLeft', { ctrlKey: true, altKey: true, shiftKey: true }), { mac: false, typing: true })).toBeNull(); // AltGr
+    expect(matchShortcut(key('BracketLeft', { ctrlKey: true, altKey: true, shiftKey: true }), { mac: false, typing: false })).toBe('move-pane-left');
+    expect(shortcutList(true).find((s) => s.id === 'max-pane')?.keys).toBe('⌘⇧Enter');
+    expect(shortcutList(false).find((s) => s.id === 'move-pane-right')?.keys).toBe('Ctrl+Alt+⇧]');
+    expect(shortcutList(true).find((s) => s.id === 'toggle-side')?.keys).toBe('⌘⇧E');
+  });
+  it('⌘⌥1 … ⌘⌥9 → the split pane index: by physical key (⌥ symbols, Korean input), never mid-IME / with Shift', () => {
+    const m = (code: string, extra: Partial<ShortcutKey> = {}, opts = { mac: true, typing: true }) => matchPaneShortcut(key(code, { metaKey: true, altKey: true, ...extra }), opts);
+    expect(m('Digit1', { key: '¡' })).toBe(0);
+    expect(m('Digit9', { key: 'ª' })).toBe(8);
+    expect(m('Digit0')).toBeNull();
+    expect(m('Digit1', { altKey: false })).toBeNull(); // ⌘1 is the 고정됨 row
+    expect(m('Digit1', { shiftKey: true })).toBeNull();
+    expect(m('Digit1', { isComposing: true })).toBeNull();
+    expect(m('Digit1', { keyCode: 229 })).toBeNull();
+    expect(m('Digit1', { ctrlKey: true })).toBeNull();
+    expect(m('', { key: '2' })).toBe(1);
+    expect(matchPaneShortcut(key('Digit3', { ctrlKey: true, altKey: true }), { mac: false, typing: false })).toBe(2);
+    expect(matchPaneShortcut(key('Digit3', { ctrlKey: true, altKey: true }), { mac: false, typing: true })).toBeNull(); // AltGr
+    expect(matchPinShortcut(key('Digit1', { metaKey: true, altKey: true }), true)).toBeNull();
   });
 });

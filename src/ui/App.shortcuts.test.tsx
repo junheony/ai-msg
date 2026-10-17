@@ -310,4 +310,101 @@ describe('desktop-like navigation', () => {
     expect(document.activeElement).not.toBe(box);
     expect(screen.queryByRole('dialog', { name: '명령 팔레트' })).not.toBeNull();
   });
+
+  it('Ctrl+Alt+1…9 focus the nth split pane (missing numbers ignored); Ctrl+⇧Enter shows the active pane alone and back', async () => {
+    await boot();
+    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByText(/^\+ 분할/));
+    const panes = () => screen.getAllByTestId(/^pane-/);
+    const activeIndex = () => panes().findIndex((p) => p.classList.contains('active'));
+    expect(activeIndex()).toBe(2);
+    expect(press('Digit1', { altKey: true, key: '¡' })).toBe(false); // taken (preventDefault)
+    expect(activeIndex()).toBe(0);
+    press('Digit2', { altKey: true });
+    expect(activeIndex()).toBe(1);
+    expect(press('Digit4', { altKey: true })).toBe(true); // no 4th pane: left to the browser
+    expect(activeIndex()).toBe(1);
+    press('Digit3', { altKey: true, isComposing: true });
+    expect(activeIndex()).toBe(1);
+
+    const hidden = () => panes().map((p) => p.hidden);
+    press('Enter', { shiftKey: true });
+    expect(hidden()).toEqual([true, false, true]);
+    expect(document.querySelector('.panes')!.getAttribute('data-count')).toBe('1');
+    expect(document.querySelector('.pane-splitter')).toBeNull();
+    press('Enter', { shiftKey: true });
+    expect(hidden()).toEqual([false, false, false]);
+    // Another pane coming forward ends the maximize.
+    press('Enter', { shiftKey: true });
+    press('Digit1', { altKey: true });
+    expect(activeIndex()).toBe(0);
+    expect(hidden()).toEqual([false, false, false]);
+    press('Slash');
+    const help = screen.getByRole('dialog', { name: '단축키' }).textContent ?? '';
+    for (const k of ['Ctrl+Alt+1–9', 'Ctrl+⇧Enter', 'Ctrl+Alt+⇧[', 'Ctrl+Alt+⇧]', 'Ctrl+⇧E']) expect(help).toContain(k);
+  });
+
+  it('Ctrl+Alt+⇧[ / ] move the active pane left / right, as ⋯ 왼쪽으로 / 오른쪽으로 이동', async () => {
+    await boot();
+    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByText(/^\+ 분할/));
+    const ids = () => screen.getAllByTestId(/^pane-/).map((p) => p.dataset.testid);
+    const [a, b, c] = ids();
+    press('BracketLeft', { altKey: true, shiftKey: true });
+    expect(ids()).toEqual([a, c, b]);
+    press('BracketLeft', { altKey: true, shiftKey: true });
+    expect(ids()).toEqual([c, a, b]);
+    press('BracketLeft', { altKey: true, shiftKey: true }); // already leftmost
+    expect(ids()).toEqual([c, a, b]);
+    press('BracketRight', { altKey: true, shiftKey: true });
+    expect(ids()).toEqual([a, c, b]);
+    expect(screen.getAllByTestId(/^pane-/)[1]!.classList.contains('active')).toBe(true);
+  });
+
+  it('Ctrl+⇧E opens the active pane\'s side panel (file picker) and closes it again', async () => {
+    await boot();
+    fireEvent.click(within(sidebar()).getByText('one'));
+    const pane = () => screen.getAllByTestId(/^pane-/)[0]!;
+    expect(pane().classList.contains('with-side')).toBe(false);
+    press('KeyE', { shiftKey: true });
+    expect(pane().classList.contains('with-side')).toBe(true);
+    press('KeyE', { shiftKey: true });
+    await waitFor(() => expect(pane().classList.contains('with-side')).toBe(false));
+  });
+
+  it('palette: Ctrl+Enter opens the session in a new split pane, ⇧Enter as a floating card', async () => {
+    await boot();
+    press('KeyK');
+    expect(document.querySelector('.palette-foot')!.textContent).toContain('Ctrl+Enter 새 분할');
+    fireEvent.change(screen.getByLabelText('세션 검색 또는 명령'), { target: { value: 'tw' } });
+    fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Enter', ctrlKey: true });
+    expect(screen.queryByRole('dialog', { name: '명령 팔레트' })).toBeNull();
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
+    expect(opened()).toEqual(['s2']);
+    expect(screen.getAllByTestId(/^pane-/)[1]!.classList.contains('active')).toBe(true);
+    press('KeyK');
+    fireEvent.change(screen.getByLabelText('세션 검색 또는 명령'), { target: { value: 'one' } });
+    fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Enter', shiftKey: true });
+    expect(screen.getAllByTestId(/^pane-/)).toHaveLength(3);
+    expect(opened()).toEqual(['s2', 's1']);
+    const card = document.querySelector('.float-card');
+    expect(card).not.toBeNull();
+    expect(within(card as HTMLElement).getAllByText('one').length).toBeGreaterThan(0);
+  });
+
+  it('new-chat screen: Ctrl+Enter starts the chat in a new split pane; this one stays, emptied', async () => {
+    await boot();
+    const box = within(screen.getAllByTestId(/^pane-/)[0]!).getByLabelText('첫 메시지') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '안녕' } });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    const panes = screen.getAllByTestId(/^pane-/);
+    expect(panes).toHaveLength(2);
+    expect(frames().find((f) => f.type === 'send')).toMatchObject({ type: 'send', sessionId: null, cwd: '/w', text: '안녕' });
+    expect((within(panes[0]!).getByLabelText('첫 메시지') as HTMLTextAreaElement).value).toBe('');
+    expect(within(panes[1]!).queryByLabelText('첫 메시지')).toBeNull();
+    // Ctrl+⇧Enter is the maximize, not a start.
+    fireEvent.change(within(panes[0]!).getByLabelText('첫 메시지'), { target: { value: '둘' } });
+    fireEvent.keyDown(within(panes[0]!).getByLabelText('첫 메시지'), { key: 'Enter', ctrlKey: true, shiftKey: true });
+    expect(frames().filter((f) => f.type === 'send')).toHaveLength(1);
+  });
 });

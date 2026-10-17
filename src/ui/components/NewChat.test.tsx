@@ -161,4 +161,39 @@ describe('NewChat', () => {
     render(<NewChat projects={projects} onStart={vi.fn()} gemini={{ available: true, loggedIn: { g1: false, g2: false } }} />);
     expect((screen.getByRole('option', { name: 'Gemini · 로그인 필요' }) as HTMLOptionElement).disabled).toBe(true);
   });
+
+  it('Ctrl+Enter starts in a new split (text and draft leave this screen); Enter on the 프로젝트 picker starts here', () => {
+    const projects2 = [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }, { cwd: '/v', name: 'v', pinned: false, sessions: [] }] as unknown as ProjectEntry[];
+    const onStart = vi.fn();
+    const onStartSplit = vi.fn();
+    render(<NewChat projects={projects2} onStart={onStart} onStartSplit={onStartSplit} draftKey="k" />);
+    const box = screen.getByLabelText('첫 메시지') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '안녕' } });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true, isComposing: true });
+    expect(onStartSplit).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    expect(onStartSplit).toHaveBeenCalledWith('/w', 'w', '안녕', [], { engine: 'claude', sandbox: expect.any(String) });
+    expect(onStart).not.toHaveBeenCalled();
+    expect(box.value).toBe('');
+    expect(loadDraft('k')).toBe('');
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true, shiftKey: true }); // the global maximize's
+    expect(onStartSplit).toHaveBeenCalledTimes(1);
+    const picker = screen.getByLabelText('프로젝트');
+    fireEvent.change(picker, { target: { value: '/v' } });
+    fireEvent.keyDown(picker, { key: 'Enter' });
+    expect(onStart).toHaveBeenCalledWith('/v', 'v', '', [], expect.anything());
+    fireEvent.keyDown(picker, { key: 'Enter', ctrlKey: true });
+    expect(onStartSplit).toHaveBeenLastCalledWith('/v', 'v', '', [], expect.anything());
+  });
+
+  it('with ⌘Enter as the send key (설정), Ctrl+Enter still starts here', () => {
+    localStorage.setItem('deck.prefs.v1', JSON.stringify({ sendKey: 'mod-enter' }));
+    const onStart = vi.fn();
+    const onStartSplit = vi.fn();
+    render(<NewChat projects={projects} onStart={onStart} onStartSplit={onStartSplit} />);
+    fireEvent.change(screen.getByLabelText('첫 메시지'), { target: { value: 'x' } });
+    fireEvent.keyDown(screen.getByLabelText('첫 메시지'), { key: 'Enter', ctrlKey: true });
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onStartSplit).not.toHaveBeenCalled();
+  });
 });

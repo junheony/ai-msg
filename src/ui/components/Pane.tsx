@@ -180,7 +180,10 @@ export type SessionActions = {
   onDuplicate?: (sessionId: string) => void;
 };
 
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts }: {
+/** ⌘⇧E: `detail` is the pane id whose side panel opens (the file picker) or closes, as its ⋯ 파일 열기 / 파일 패널 닫기. */
+export const TOGGLE_SIDE_EVENT = 'deck:toggle-side';
+
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'usage' | 'projects' | 'defaultPermMode' | 'pins'>>;
   active: boolean;
@@ -213,6 +216,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   onOpenSession?: (sessionId: string, cwd: string, title: string) => void;
   /** The empty pane's start box: a new session in `cwd`, `text` (if any) sent as its first message with `attachments`. */
   onStartChat?: (cwd: string, name: string, text: string, attachments: UploadedAttachment[]) => void;
+  /** The start box's ⌘Enter: the same, in a new split pane. */
+  onStartChatSplit?: (cwd: string, name: string, text: string, attachments: UploadedAttachment[]) => void;
+  /** Another pane is maximized (⌘⇧Enter): this one stays mounted (drafts, scroll) but is not shown. */
+  hidden?: boolean;
   /** The empty pane's preselected project. */
   newChatCwd?: string | null;
   uploadFn?: UploadFn;
@@ -280,6 +287,15 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [side, active, closeSide]);
+  useEffect(() => {
+    if (!s) return;
+    const on = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== pane.id) return;
+      if (side && !closing) closeSide(); else openSide({ kind: 'pick' });
+    };
+    window.addEventListener(TOGGLE_SIDE_EVENT, on);
+    return () => window.removeEventListener(TOGGLE_SIDE_EVENT, on);
+  }, [s, pane.id, side, closing, closeSide, openSide]);
   // Stop: ux-state — the queue stays but pauses, so the next message does not fire into the stop.
   // A stop that never left (socket down) changes nothing: the turn runs on, so no 중단됨 and no pause — a notice says so.
   const sendInterrupt = (turnId: string): boolean => {
@@ -478,7 +494,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     return { title: id === pane.handoffFrom?.sessionId && !t.cwd ? pane.handoffFrom.title : t.title, open: () => onOpenSession?.(id, t.cwd ?? s.cwd, t.title) };
   };
   return (
-    <section ref={sectionRef} className={`pane ${active ? 'active' : ''}${side && s ? ' with-side' : ''}`} data-testid={`pane-${pane.id}`} data-pane={pane.id} onMouseDownCapture={focus} onFocusCapture={focus}>
+    <section ref={sectionRef} className={`pane ${active ? 'active' : ''}${side && s ? ' with-side' : ''}`} data-testid={`pane-${pane.id}`} data-pane={pane.id} hidden={hidden || undefined} onMouseDownCapture={focus} onFocusCapture={focus}>
       <SidePanelContext.Provider value={s ? openSide : null}>
       {s ? (
         <RegenerateContext.Provider value={regen}>
@@ -602,7 +618,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         <>
           {(close || handle) && <div className="chat-head"><span className="spacer" />{handle}{close}</div>}
           {onStartChat
-            ? <NewChat projects={projects} pins={app.pins ?? []} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} gemini={app.gemini ?? null}
+            ? <NewChat projects={projects} pins={app.pins ?? []} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} {...(onStartChatSplit ? { onStartSplit: onStartChatSplit } : {})} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} gemini={app.gemini ?? null}
                 onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })} onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}
                 modelPicker={<ModelPicker models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} />} />
             : <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>}

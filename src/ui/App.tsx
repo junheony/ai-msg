@@ -15,7 +15,7 @@ import { Toasts, type ToastItem } from './components/Toasts';
 import { postPin, postPinOrder } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
-import { Pane, sendFromPane, useQueueRunner } from './components/Pane';
+import { Pane, sendFromPane, TOGGLE_SIDE_EVENT, useQueueRunner } from './components/Pane';
 import { PermissionCard } from './components/PermissionCard';
 import { QuestionCard } from './components/QuestionCard';
 import { Sidebar, type SidebarView } from './components/Sidebar';
@@ -31,7 +31,7 @@ import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, sn
 import { findSession } from './push';
 import { dockedPanes, initialState, openPanes, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
-import { isMacPlatform, isTypingTarget, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
+import { isMacPlatform, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { useTouchTooltip } from './useTouchTooltip';
 import { FIND_EVENT } from './components/FindBar';
@@ -118,6 +118,14 @@ function recentSessions(projects: { name: string; sessions: SessionEntry[] }[]):
   for (const p of projects) for (const s of p.sessions) if (!s.archived && !seen.has(s.sessionId)) seen.set(s.sessionId, { ...s, project: p.name });
   return [...seen.values()].sort((a, b) => b.lastModified - a.lastModified);
 }
+/** The ⌘⇧Enter-maximized pane while it still stands (see `maxPane`), else null. */
+function maxedPane(id: string | null, state: Pick<AppState, 'panes' | 'activePaneId'>): string | null {
+  if (!id) return null;
+  const docked = dockedPanes(state.panes);
+  if (docked.length < 2 || !docked.some((p) => p.id === id)) return null;
+  const active = state.panes.find((p) => p.id === state.activePaneId);
+  return !active || active.id === id || active.float ? id : null;
+}
 /** Tab title: "● <chat> — deck" while any turn runs; "✓ …" when one finished while the tab was hidden, until it is shown. */
 function useTabTitle(running: boolean, chat: string | null) {
   const was = useRef(running);
@@ -183,6 +191,11 @@ export function App() {
   }, [setPref]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  /**
+   * ⌘⇧Enter: the docked pane shown alone (the others stay mounted, hidden); not kept over a reload. It lapses once that
+   * pane is gone, floated, the only docked one, or another docked pane becomes active (a card coming forward keeps it).
+   */
+  const [maxPane, setMaxPane] = useState<string | null>(null);
   const [sidebarView, setSidebarView] = useState<SidebarView>(() => (readLocal(VIEW_KEY) === 'projects' ? 'projects' : 'recent'));
   const [sidebarHidden, setSidebarHidden] = useState(() => readLocal(HIDDEN_KEY) === '1');
   useEffect(() => { writeLocal(VIEW_KEY, sidebarView); }, [sidebarView]);
@@ -283,6 +296,8 @@ export function App() {
   }, [state.error]);
   const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const onShortcut = useRef<(id: ShortcutId) => void>(() => {});
+  /** ⌘⌥1 … ⌘⌥9: focuses the nth split pane (left to right; on a phone the nth tab); false when there is none. */
+  const focusPaneAt = useRef<(index: number) => boolean>(() => false);
   /** ⌘1 … ⌘9: set by the sidebar — opens the nth 고정됨 row it shows, as a click on it would; false when there is none. */
   const openPinned = useRef<(index: number, peek?: boolean) => boolean>(() => false);
   const lastSaved = useRef<string | null>(null);
@@ -495,7 +510,13 @@ export function App() {
         if (!hasOpenModal() && openPinned.current(pin, e.repeat)) e.preventDefault();
         return;
       }
-      const id = matchShortcut(e, { mac: MAC, typing: isTypingTarget(e.target) });
+      const typing = isTypingTarget(e.target);
+      const paneAt = matchPaneShortcut(e, { mac: MAC, typing });
+      if (paneAt !== null) {
+        if (!hasOpenModal() && focusPaneAt.current(paneAt)) e.preventDefault();
+        return;
+      }
+      const id = matchShortcut(e, { mac: MAC, typing });
       if (!id) {
         // Type-to-compose: the key lands in the focused pane's composer (focus moves before the key's default action).
         // An IME key only moves focus (and is swallowed) so the composition never garbles.
@@ -572,6 +593,8 @@ export function App() {
     }
   }, [state.ready, previewKey?.key]);
 
+  const maxed = maxedPane(maxPane, state);
+  useEffect(() => { if (maxPane && !maxed) setMaxPane(null); }, [maxPane, maxed]);
   const accounts = useMemo(() => uiAccounts(state.accounts), [state.accounts]);
   // A phone has tabs instead of a grid: a floating card means nothing there, so any float is parked (a tab at the end,
   // its box remembered) and the tabs are the panes in array order; a wide screen again floats the parked ones back.
@@ -1069,6 +1092,21 @@ export function App() {
     // Same first-turn defaults as the composer of a new session: pane model/engine/sandbox, 새 세션 기본 권한.
     if (text && pane) sendFromPane(pane, text, attachments, dispatch, send, latest.current.defaultPermMode);
   };
+  /** The start box's ⌘Enter: a new split pane (with the start pane's engine / sandbox / model), the chat started there. */
+  const startChatSplit = (fromId: string, cwd: string, name: string, text: string, attachments: UploadedAttachment[]) => {
+    const from = latest.current.panes.find((p) => p.id === fromId);
+    const before = latest.current.panes.length;
+    apply({ type: 'add_pane' });
+    // No room for another pane: started where it was asked.
+    if (latest.current.panes.length === before) { startChat(fromId, cwd, name, text, attachments); return; }
+    const id = latest.current.activePaneId;
+    if (from) {
+      apply({ type: 'set_engine', engine: from.engine, paneId: id });
+      apply({ type: 'set_sandbox', sandbox: from.sandbox, paneId: id });
+      apply({ type: 'set_model', model: from.model, picked: from.modelPicked, paneId: id });
+    }
+    startChat(id, cwd, name, text, attachments);
+  };
   const openHit = (h: SearchHit) => {
     if (active.session?.sessionId !== h.sessionId) openIn(active.id, h.sessionId, h.cwd, h.title);
     else { setDrawer(false); closePeek(); }
@@ -1107,6 +1145,31 @@ export function App() {
     apply({ type: 'close_pane', paneId: active.id });
     requestFocus();
   };
+  focusPaneAt.current = (index) => {
+    const target = (phone ? state.panes : docked)[index];
+    if (!target) return false;
+    dispatch({ type: 'focus_pane', paneId: target.id });
+    requestFocus(target.id);
+    return true;
+  };
+  /** ⌘⇧Enter: a card maximizes / comes back as its header double-click does; a docked pane is shown alone / with the rest. */
+  const toggleMaxPane = () => {
+    if (phone) return;
+    if (active.float) { toggleMaxCard(active.id); return; }
+    if (docked.length < 2) return;
+    const on = maxed !== active.id;
+    setMaxPane(on ? active.id : null);
+    announce(on ? '패널을 최대화했습니다' : '패널 배치를 되돌렸습니다');
+    requestFocus(active.id);
+  };
+  /** ⌘⌥⇧[ / ⌘⌥⇧]: the active docked pane one place left / right, as ⋯ 왼쪽으로 / 오른쪽으로 이동. */
+  const shiftActivePane = (dir: -1 | 1) => {
+    const i = docked.findIndex((p) => p.id === active.id);
+    const to = i + dir;
+    if (i < 0 || to < 0 || to >= docked.length) return;
+    dispatch({ type: 'move_pane', paneId: active.id, to });
+    announce(`${to + 1}번째 자리로 옮겼습니다`);
+  };
   onShortcut.current = (id) => {
     if (id === 'palette') { setHelpOpen(false); setPaletteOpen((o) => !o); }
     else if (id === 'help') { setPaletteOpen(false); setHelpOpen((o) => !o); }
@@ -1119,6 +1182,9 @@ export function App() {
     else if (id === 'prev-pane' || id === 'next-pane') stepPane(id === 'prev-pane' ? -1 : 1);
     else if (id === 'close-pane') closeActivePane();
     else if (id === 'arrange-cards') arrangeCards();
+    else if (id === 'max-pane') toggleMaxPane();
+    else if (id === 'move-pane-left' || id === 'move-pane-right') shiftActivePane(id === 'move-pane-left' ? -1 : 1);
+    else if (id === 'toggle-side') window.dispatchEvent(new CustomEvent(TOGGLE_SIDE_EVENT, { detail: active.id }));
   };
   const mod = MAC ? '⌘' : 'Ctrl+';
   const actions: PaletteAction[] = [
@@ -1213,7 +1279,10 @@ export function App() {
       {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
       {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
-      {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)} onOpenHit={openHit} searchFn={searchTranscripts} />}
+      {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)}
+        onOpenSessionSplit={(s) => openSplit(s.sessionId, s.cwd, s.title)}
+        onOpenSessionFloat={phone ? undefined : (s) => { const before = latest.current.panes.length; openSplit(s.sessionId, s.cwd, s.title); if (latest.current.panes.length > before) floatPane(latest.current.activePaneId); }}
+        onOpenHit={openHit} searchFn={searchTranscripts} />}
       {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
       {layouts && <LayoutsDialog layouts={layouts.list} error={layouts.error} onClose={() => setLayouts(null)} onSave={saveCurrentLayout} onLoad={loadLayout} onDelete={(name) => setLayouts({ list: deleteLayout(name), error: null })} />}
       {cwdFor && <SessionCwdDialog title={cwdFor.title} cwd={cwdFor.cwd} onClose={() => setCwdFor(null)} onPick={(cwd) => { setCwdFor(null); send({ type: 'set_cwd', sessionId: cwdFor.sessionId, cwd }); }} />}
@@ -1318,7 +1387,7 @@ export function App() {
             onNewChat={() => newChat()}
           />
         </div>
-        <div ref={panesRef} className="panes" data-count={phone ? 1 : docked.length} style={{ '--cols': phone ? 1 : docked.length, ...(!phone && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
+        <div ref={panesRef} className="panes" data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
           {phone && state.panes.length > 1 && (
             <div className="pane-switch" {...tabs.stripProps}>
               {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} {...(p.session?.sessionId ? { title: `분할 ${i + 1}번 패널에 열림` } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
@@ -1327,13 +1396,14 @@ export function App() {
           )}
           {(phone ? [active] : docked).map((p, i, shown) => (
             <Fragment key={p.id}>
-            {i > 0 && (
+            {i > 0 && !maxed && (
               <div className="pane-splitter" role="separator" aria-orientation="vertical" aria-label="패널 폭 조절" title="드래그: 폭 조절 · 더블클릭: 균등"
                 onPointerDown={(e) => startPaneResize(e, shown[i - 1]!.id, p.id)}
                 onDoubleClick={() => dispatch({ type: 'resize_panes', sizes: Object.fromEntries(docked.map((x) => [x.id, 1])) })} />
             )}
             <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
-              onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
+              onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
+              hidden={!!maxed && p.id !== maxed}
               {...(!phone && (docked.length > 1 || floats.length > 0) ? { grip: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => startPaneDrag(e, p.id), onKeyDown: (e: ReactKeyboardEvent<HTMLButtonElement>) => gripKey(e, p.id) } } : {})}
               {...(!phone && docked.length > 1 ? { onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
               onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />
@@ -1346,7 +1416,7 @@ export function App() {
               <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}${p.floatCollapsed ? ' collapsed' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.floatCollapsed ? COLLAPSED_H : p.float!.h }}
                 onDoubleClick={(e) => { if (onCardHead(e.target)) { if (p.floatCollapsed) toggleCollapseCard(p.id); else toggleMaxCard(p.id); } }}>
                 <Pane pane={p} app={state} active={p.id === state.activePaneId} closable dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
-                  onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
+                  onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
                   floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})}
                   onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore}
                   collapsed={!!p.floatCollapsed} onToggleCollapse={() => toggleCollapseCard(p.id)} onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />

@@ -10,6 +10,8 @@ import { touchEnterIsNewline } from './Chat';
 import { PinIcon } from './icons';
 import { useAutoGrow } from '../useAutoGrow';
 import { clearDraft, loadDraft, saveDraft } from '../drafts';
+import { isMacPlatform } from '../shortcuts';
+import { usePrefs } from '../usePrefs';
 
 const RECENT_CARDS = 10;
 
@@ -51,7 +53,7 @@ function Pick({ className, label, children, ...rest }: { className?: string; lab
  * its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSession, now, uploadFn, modelPicker, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, onEngine, onSandbox }: {
+export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, modelPicker, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, onEngine, onSandbox }: {
   projects: ProjectEntry[];
   /** Pinned session ids in pin order (AppState.pins): shown above 최근 대화 and left out of it. */
   pins?: string[];
@@ -59,6 +61,8 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
   defaultCwd?: string | null;
   /** Opens a new session in `cwd`; non-empty `text` is sent as its first message, with `attachments`. */
   onStart: (cwd: string, name: string, text: string, attachments: UploadedAttachment[], options: NewChatOptions) => void;
+  /** ⌘Enter (Ctrl elsewhere): the same start, in a new split pane; this screen stays, emptied. */
+  onStartSplit?: (cwd: string, name: string, text: string, attachments: UploadedAttachment[], options: NewChatOptions) => void;
   onOpenSession?: (sessionId: string, cwd: string, title: string) => void;
   now?: number;
   uploadFn?: UploadFn;
@@ -109,11 +113,31 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
 
   const hasDraft = text.trim().length > 0 || attachments.length > 0;
   const canStart = !!project && uploading === 0;
-  const start = () => {
+  const [{ sendKey }] = usePrefs();
+  const start = (split = false) => {
     if (!project || !canStart) return;
     const msg = text.trim() || (attachments.length ? ATTACHMENT_ONLY_TEXT : '');
     clearDraft(draftKey);
+    if (split && onStartSplit) {
+      // This screen stays: the text and the picks (their previews now ride the new pane) leave it.
+      setText('');
+      setAttachments([]);
+      onStartSplit(project.cwd, project.name, msg, attachments, { engine, sandbox });
+      return;
+    }
     onStart(project.cwd, project.name, msg, attachments, { engine, sandbox });
+  };
+  /**
+   * Enter in the composer or on the 프로젝트 picker: start here; ⌘Enter (Ctrl elsewhere): in a new split pane — unless
+   * ⌘Enter is the send key (설정), then it starts here as it always did. ⌘⇧Enter is the global 패널 최대화.
+   */
+  const startKey = (e: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; keyCode: number; nativeEvent: { isComposing: boolean }; preventDefault: () => void }, plainEnter: boolean): void => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229 || e.key !== 'Enter') return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.shiftKey) return;
+    if (!mod && !plainEnter) return;
+    e.preventDefault();
+    start(mod && sendKey !== 'mod-enter' && (isMacPlatform() ? e.metaKey : e.ctrlKey));
   };
   const edit = (v: string) => { setText(v); saveDraft(draftKey, v); };
   const geminiReady = !!gemini && (gemini.loggedIn.g1 || gemini.loggedIn.g2);
@@ -148,10 +172,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
             <textarea ref={taRef} value={text} onChange={(e) => edit(e.target.value)} rows={2} placeholder="무엇을 도와드릴까요?" aria-label="첫 메시지"
               name="deck-message" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore="" data-lpignore="true"
               onPaste={onPaste}
-              onKeyDown={(e) => {
-                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (!e.shiftKey && !e.altKey && !touchEnterIsNewline()))) { e.preventDefault(); start(); }
-              }} />
+              onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey && !touchEnterIsNewline())} />
             {(attachments.length > 0 || uploading > 0 || error) && (
               <div className="newchat-files"><AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} onReplace={replace} pastedTexts={pastedTexts} /></div>
             )}
@@ -160,7 +181,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onOpenSessio
               <label className="newchat-project" title={cwd ?? ''}>
                 <FolderIcon />
                 <span className="sr-only">프로젝트</span>
-                <select value={cwd ?? ''} onChange={(e) => setPicked(e.target.value)} aria-label="프로젝트">
+                <select value={cwd ?? ''} onChange={(e) => setPicked(e.target.value)} onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey)} aria-label="프로젝트">
                   {pinned.length > 0 && <optgroup label="고정">{pinned.map(option)}</optgroup>}
                   {others.length > 0 && <optgroup label="최근">{others.map(option)}</optgroup>}
                 </select>
