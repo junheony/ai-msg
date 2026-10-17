@@ -33,7 +33,7 @@ v1 에서 뺀 입구: composer `/commander` 명령·자동완성, 폰 탭 배지
 
 ## 3. 판정기 입력 · 출력
 
-**실행**: `claude -p --output-format json --model <sonnet> --tools "" --strict-mcp-config --mcp-config <빈 MCP 구성> --setting-sources user --settings=<훅 비활성 settings>` · cwd 는 `configDir/commander/`(프로젝트 세션 목록에 안 섞이고, `entrypoint: sdk-cli` 숨김 규칙으로 사이드바에도 안 뜬다). 타임아웃 90초, 재시도 없음(실패 → `waiting_human`). 입력은 stdin 한 건.
+**실행**: `claude -p --output-format json --model <sonnet> --tools "" --strict-mcp-config --mcp-config <빈 MCP 구성> --restricted --settings=<훅 비활성 settings>`(실측: 도구 0개, 입력 ~14k→~5k 토큰) · cwd 는 `configDir/commander/`(프로젝트 세션 목록에 안 섞이고, `entrypoint: sdk-cli` 숨김 규칙으로 사이드바에도 안 뜬다). 타임아웃 90초, 재시도 없음(실패 → `waiting_human`). 입력은 stdin 한 건.
 
 격리 전제는 **구현 전 검증 항목**이다(§9 수동 검증): ① `--tools ""` 로 도구가 실제로 0개인지 ② `--strict-mcp-config` 로 `~/.claude.json` MCP 가 안 붙는지 ③ 빈 `--settings` 는 사용자 설정을 초기화하지 않으므로, 사용자 훅이 판정마다 돌지 않게 할 방법(`disableAllHooks` 등)과 관리 정책 예외 — 후보로 `--restricted`(user/project/local 설정을 전부 무시) 도 2단계 수동 검증에서 같이 재보고, 훅 비활성과 비교해 더 단순하면 대체한다 ④ 계정 `CLAUDE.md`·스킬 목록이 입력에 섞여 들어가는 실제 토큰 수(§8).
 

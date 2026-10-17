@@ -1,7 +1,7 @@
 /**
  * 총사령탑(commander) 타입 — `docs/superpowers/specs/2026-10-18-commander-design.md` §4·§6.
- * 1단계(상태 보존)만 구현된 현재는 이 파일이 `SessionState.commander` 의 모양을 정의할 뿐,
- * 판정·전송·실행 차단 로직(§6 의 digest.ts·signature.ts·rules.ts·Judge.ts·Commander.ts)은 이후 단계에서 들어온다.
+ * 2단계까지 digest.ts·signature.ts·Judge.ts 가 들어왔고(아직 TurnRunner·ws 에 연결 안 됨),
+ * 실행 차단·상태 머신(§6 의 rules.ts·Commander.ts)은 이후 단계에서 들어온다.
  */
 
 /** §4 상태 머신의 노드. */
@@ -32,9 +32,44 @@ export type Verdict = {
   confidence: (typeof CONFIDENCES)[number];
 };
 
-/** §3 입력 — 세그먼트 누적기(digest.ts, 이후 단계)가 만드는 판정 입력. 필드는 이후 단계에서 채운다. */
+/** §3 테스트 결과 한 건 — 테스트 러너 패턴 Bash 의 실행 하나(최상위 또는 하위 에이전트). */
+export type TestRun = {
+  /** 실행 id(`tool_use_id`) — 판정기의 `evidence.testRunId` 와 대조한다. */
+  testRunId: string;
+  /** 명령 1줄(절단). */
+  command: string;
+  /** 출력 꼬리(절단). 비어 있으면 테스트 증거로 인정하지 않는다. */
+  outputTail: string;
+  hasOutput: boolean;
+  /** 결과가 아직 안 왔으면 null. */
+  exitCode: number | null;
+  /** 이 실행 뒤 세그먼트에 파일 변경(Edit·Write·MultiEdit·NotebookEdit)이 있었는지. */
+  filesChangedAfter: boolean;
+  /** 하위 에이전트(Task)의 실행. */
+  sub: boolean;
+};
+
+/** §3 입력 — 세그먼트 누적기(digest.ts)가 만드는 판정 입력. 각 항목은 §3 표의 상한으로 절단돼 있다. */
 export type SegmentDigest = {
   digestId: string;
+  /** 세그먼트 안 `turn_result` 수(cap·bg failover·retry 하위 턴 포함). */
+  turns: number;
+  /** 마지막 `turn_result.text` 머리+꼬리, ≤ 4,000자. */
+  summary: string;
+  /** cwd 기준 상대 경로, ≤ 40개. */
+  changedFiles: string[];
+  /** 절단 전 바뀐 파일 수. */
+  changedFileCount: number;
+  /** 최근 실행부터 채워 명령+출력 합 ≤ 1,200자, 시간순. */
+  testRuns: TestRun[];
+  failure: {
+    ok: boolean;
+    /** ≤ 200자. */
+    errorText: string | null;
+    kind: 'limit' | 'auth' | 'other' | null;
+  };
+  /** 서버 정규화 세그먼트 서명(signature.ts) — `CommanderState.signatures` 에 들어간다. */
+  signature: string;
 };
 
 /** §6 `types.ts` — `SessionState.commander` 의 모양. */
