@@ -2,7 +2,7 @@
 export const STDERR_MAX = 2048;
 const DISPLAY_MAX = 2600;
 
-const TOKEN_PATTERNS: RegExp[] = [
+export const TOKEN_PATTERNS: RegExp[] = [
   /\bsk-ant-[A-Za-z0-9_-]+/g,
   /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi,
   /\b((?:api[_-]?key|token|secret|password|passwd|authorization|cookie|deck_session)["']?\s*[:=]\s*["']?)[^\s"',;]{6,}/gi,

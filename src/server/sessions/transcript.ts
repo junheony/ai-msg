@@ -5,7 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 import { contextUsageOf } from '../../shared/turn-types';
-import { redactSecrets } from '../engine/redact';
+import { TOKEN_PATTERNS, redactSecrets } from '../engine/redact';
 
 /** `headless`: every record in the head that names its writer is a non-interactive `claude -p` run (`sdk-cli`) — a script's one-shot, or deck's own CLI child (SessionIndex tells them apart). */
 export type HeadInfo = { cwd: string | null; title: string | null; headless?: boolean };
@@ -356,20 +356,29 @@ export async function readTranscriptUncached(file: string, opts: TranscriptOptio
  * what identifies the file it came from (dev/ino, a hash of its first and of the last bytes before `offset`). The jsonl
  * is append-only; a file that shrank, moved or was rewritten fails the check and is read from the start.
  */
-type CacheEntry = { key: string; dev: string; ino: string; offset: number; headLen: number; headHash: string; tailLen: number; tailHash: string; state: BuilderState };
+type CacheEntry = { file: string; key: string; dev: string; ino: string; offset: number; headLen: number; headHash: string; tailLen: number; tailHash: string; state: BuilderState };
 
 const FINGERPRINT_BYTES = 4096;
 const READ_CHUNK = 4 * 1024 * 1024;
-const MEMORY_ENTRIES = 16;
+/** The in-memory cache's rough size cap (UTF-16 length of each window's JSON): the least recently used go first. */
+const MEMORY_MAX_BYTES = 64 * 1024 * 1024;
 /** Snapshots past this are not written (the window holds at most maxMessages messages; tool results are already cut). */
 const SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
-/** Snapshots written by different parsing code are not used: the code that shapes the output is part of the key. */
-const CODE_VERSION = createHash('sha1')
-  .update([TranscriptBuilder, systemRow, textOfContent, queuedPrompt, isRealUser, hookMessage, stringify, parseLine, contextUsageOf, redactSecrets].map(String).join('\0'))
-  .digest('hex')
-  .slice(0, 16);
+/** Raise by hand whenever the output's shape changes in a way the hashed code below does not show. */
+const CACHE_FORMAT = 1;
+/** Snapshots written by different parsing code are not used: the code (and the constants it reads) that shapes the output is part of the key. */
+export const CODE_VERSION_SOURCE = [
+  `format:${CACHE_FORMAT}`,
+  ...[TranscriptBuilder, systemRow, textOfContent, queuedPrompt, isRealUser, hookMessage, stringify, parseLine, contextUsageOf, redactSecrets, message, hasToolResult, originKind, row, tag].map(String),
+  ...[HIDDEN_META_RE, HOOK_RE, GOAL_RE, ...TOKEN_PATTERNS].map(String),
+  JSON.stringify(TASK_LABEL),
+  String(SYSTEM_ROW_MAX),
+].join('\0');
+const CODE_VERSION = createHash('sha1').update(CODE_VERSION_SOURCE).digest('hex').slice(0, 16);
 
-const memory = new Map<string, CacheEntry>();
+const memory = new Map<string, { e: CacheEntry; bytes: number }>();
+let memoryBytes = 0;
+let memoryMax = MEMORY_MAX_BYTES;
 const locks = new Map<string, Promise<unknown>>();
 let snapshotDir: string | null = null;
 
@@ -381,6 +390,17 @@ export function setTranscriptCacheDir(dir: string | null): void {
 /** Forgets the in-memory cache (as a restart would). */
 export function clearTranscriptCache(): void {
   memory.clear();
+  memoryBytes = 0;
+}
+
+/** Tests: the in-memory cache's byte cap (null = the default). */
+export function setTranscriptMemoryLimit(bytes: number | null): void {
+  memoryMax = bytes ?? MEMORY_MAX_BYTES;
+}
+
+/** Tests: the sessions held in memory (least recently used first) and their estimated size. */
+export function transcriptMemoryState(): { files: string[]; bytes: number } {
+  return { files: [...memory.values()].map((m) => m.e.file), bytes: memoryBytes };
 }
 
 const sha1 = (b: Buffer) => createHash('sha1').update(b).digest('hex');
@@ -406,9 +426,10 @@ async function loadSnapshot(key: string): Promise<CacheEntry | null> {
   try {
     const e = JSON.parse(await fs.readFile(f, 'utf8')) as CacheEntry;
     const s = e?.state;
-    const ok = e.key === key && typeof e.dev === 'string' && typeof e.ino === 'string' && Number.isSafeInteger(e.offset) && e.offset >= 0
+    const ok = e.key === key && typeof e.file === 'string' && typeof e.dev === 'string' && typeof e.ino === 'string' && Number.isSafeInteger(e.offset) && e.offset >= 0
       && Number.isSafeInteger(e.headLen) && Number.isSafeInteger(e.tailLen) && typeof e.headHash === 'string' && typeof e.tailHash === 'string'
-      && s && Array.isArray(s.out) && Array.isArray(s.seen) && Number.isSafeInteger(s.userCount) && (s.lastAssistantId === null || typeof s.lastAssistantId === 'string');
+      && e.headLen <= e.offset && e.tailLen <= e.offset
+      && s && Array.isArray(s.out) && s.out.every((m) => m && typeof m === 'object' && typeof (m as Rec).kind === 'string') && Array.isArray(s.seen) && Number.isSafeInteger(s.userCount) && (s.lastAssistantId === null || typeof s.lastAssistantId === 'string');
     return ok ? e : null;
   } catch {
     return null; // missing or damaged: rebuilt from the jsonl
@@ -420,8 +441,10 @@ function saveSnapshot(e: CacheEntry, max: number): void {
   const f = snapshotFile(e.key);
   if (!f) return;
   // Serialized now: the builder keeps changing the window's last entry after this.
-  const json = JSON.stringify({ ...e, state: { ...e.state, out: e.state.out.slice(-max) } });
-  if (json.length > SNAPSHOT_MAX_BYTES) return;
+  // `file` first: pruning reads only the head of each snapshot to find its source.
+  const { file, ...rest } = e;
+  const json = JSON.stringify({ file, ...rest, state: { ...e.state, out: e.state.out.slice(-max) } });
+  if (Buffer.byteLength(json, 'utf8') > SNAPSHOT_MAX_BYTES) return;
   writing = writing.then(async () => {
     const tmp = `${f}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     try {
@@ -434,15 +457,82 @@ function saveSnapshot(e: CacheEntry, max: number): void {
   });
 }
 
+/** Snapshot dir size cap: past it the least recently written snapshots go first. */
+export const SNAPSHOT_DIR_MAX_BYTES = 200 * 1024 * 1024;
+/** Snapshots not written for this long are dropped (each read that uses one rewrites it only when the session grew). */
+const SNAPSHOT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const SNAPSHOT_SOURCE_RE = /^\{"file":("(?:[^"\\]|\\.)*")/;
+
+/**
+ * Removes snapshots whose session file is gone (or that do not say which it is), ones not written for 14 days, then the
+ * oldest until the rest fit `maxBytes`. Returns the removed paths.
+ */
+export async function pruneTranscriptSnapshots(dir: string, opts: { maxBytes?: number; maxAgeMs?: number } = {}): Promise<string[]> {
+  const maxBytes = opts.maxBytes ?? SNAPSHOT_DIR_MAX_BYTES;
+  const maxAgeMs = opts.maxAgeMs ?? SNAPSHOT_MAX_AGE_MS;
+  let names: string[];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+  const now = Date.now();
+  const removed: string[] = [];
+  const kept: { f: string; size: number; mtime: number }[] = [];
+  for (const n of names) {
+    if (!n.endsWith('.json')) continue;
+    const f = path.join(dir, n);
+    try {
+      const st = await fs.stat(f);
+      let drop = now - st.mtimeMs >= maxAgeMs;
+      if (!drop) {
+        const fh = await fs.open(f, 'r');
+        const head = await readAt(fh, 0, 8192).finally(() => fh.close());
+        const m = SNAPSHOT_SOURCE_RE.exec(head.toString('utf8'));
+        const src = m ? (JSON.parse(m[1]!) as string) : null;
+        drop = !src || !(await fs.stat(src).then(() => true, () => false));
+      }
+      if (!drop) {
+        kept.push({ f, size: st.size, mtime: st.mtimeMs });
+        continue;
+      }
+      await fs.rm(f, { force: true });
+      removed.push(f);
+    } catch {
+      // vanished meanwhile, or unreadable: left for the next run
+    }
+  }
+  kept.sort((a, b) => a.mtime - b.mtime);
+  let total = kept.reduce((t, k) => t + k.size, 0);
+  for (const k of kept) {
+    if (total <= maxBytes) break;
+    try {
+      await fs.rm(k.f, { force: true });
+      removed.push(k.f);
+      total -= k.size;
+    } catch {
+      // left for the next run
+    }
+  }
+  return removed;
+}
+
 /** Resolves once pending snapshot writes are done (tests, shutdown). */
 export function flushTranscriptCache(): Promise<void> {
   return writing;
 }
 
-function remember(e: CacheEntry): void {
-  memory.delete(e.key);
-  memory.set(e.key, e);
-  while (memory.size > MEMORY_ENTRIES) memory.delete(memory.keys().next().value!);
+function forget(key: string): void {
+  memoryBytes -= memory.get(key)?.bytes ?? 0;
+  memory.delete(key);
+}
+
+function remember(e: CacheEntry, bytes = JSON.stringify(e.state.out).length): void {
+  forget(e.key);
+  memory.set(e.key, { e, bytes });
+  memoryBytes += bytes;
+  // The entry just used stays even when it alone is past the cap.
+  while (memoryBytes > memoryMax && memory.size > 1) forget(memory.keys().next().value!);
 }
 
 async function stillValid(fh: fs.FileHandle, e: CacheEntry, dev: string, ino: string, size: number): Promise<boolean> {
@@ -458,16 +548,29 @@ function feed(b: TranscriptBuilder, text: string): void {
   }
 }
 
+/** A snapshot that passes the checks but still breaks the read is dropped, and the file read once more from the start. */
 async function readCached(file: string, opts: Required<TranscriptOptions>, key: string): Promise<TranscriptMessage[]> {
+  try {
+    return await readCachedFrom(file, opts, key, true);
+  } catch {
+    forget(key);
+    const f = snapshotFile(key);
+    if (f) await fs.rm(f, { force: true }).catch(() => {});
+    return readCachedFrom(file, opts, key, false);
+  }
+}
+
+async function readCachedFrom(file: string, opts: Required<TranscriptOptions>, key: string, useCache: boolean): Promise<TranscriptMessage[]> {
   const fh = await fs.open(file, 'r');
   try {
     const st = await fh.stat({ bigint: true });
     const size = Number(st.size);
     const dev = String(st.dev);
     const ino = String(st.ino);
-    let entry = memory.get(key) ?? (await loadSnapshot(key));
+    const cached = useCache ? memory.get(key) : undefined;
+    let entry = useCache ? (cached?.e ?? (await loadSnapshot(key))) : null;
     if (entry && !(await stillValid(fh, entry, dev, ino, size))) entry = null;
-    memory.delete(key); // the builder changes the state in place: not cached again until it is consistent
+    forget(key); // the builder changes the state in place: not cached again until it is consistent
     const b = new TranscriptBuilder(opts, entry?.state);
     const start = entry?.offset ?? 0;
     let pos = start;
@@ -490,11 +593,12 @@ async function readCached(file: string, opts: Required<TranscriptOptions>, key: 
     const headLen = Math.min(FINGERPRINT_BYTES, offset);
     const tailLen = Math.min(FINGERPRINT_BYTES, offset);
     const next: CacheEntry = {
-      key, dev, ino, offset, state,
+      file: path.resolve(file), key, dev, ino, offset, state,
       headLen, headHash: entry && entry.headLen === headLen ? entry.headHash : sha1(await readAt(fh, 0, headLen)),
       tailLen, tailHash: entry && offset === start && entry.tailLen === tailLen ? entry.tailHash : sha1(await readAt(fh, offset - tailLen, tailLen)),
     };
-    remember(next);
+    // Nothing new read: the window (and so its size) is the cached one.
+    remember(next, entry && offset === start && cached?.e === entry ? cached.bytes : undefined);
     if (offset !== start) saveSnapshot(next, opts.maxMessages);
     // A last line without its `\n` yet (being written, or the file's end): read like readline does, but not kept.
     let out = state.out;

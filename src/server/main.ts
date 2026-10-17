@@ -29,7 +29,7 @@ import { pruneRootsOf, startBackupPruning } from './sessions/backupPrune';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
 import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { TranscriptSearch } from './sessions/search';
-import { setTranscriptCacheDir } from './sessions/transcript';
+import { pruneTranscriptSnapshots, setTranscriptCacheDir } from './sessions/transcript';
 import { SettingsStore } from './settings';
 import { ProcessHolders } from './sessions/ProcessHolders';
 import { SessionIndex } from './sessions/SessionIndex';
@@ -47,7 +47,17 @@ async function main(): Promise<void> {
   // When this process started: code edited later is what a restart would bring in.
   const startedAt = Date.now() - Math.round(process.uptime() * 1000);
   const cfg = loadConfig();
-  setTranscriptCacheDir(path.join(cfg.configDir, 'transcript-cache'));
+  const transcriptCacheDir = path.join(cfg.configDir, 'transcript-cache');
+  setTranscriptCacheDir(transcriptCacheDir);
+  const pruneTranscriptCache = () => {
+    pruneTranscriptSnapshots(transcriptCacheDir).then(
+      (removed) => { if (removed.length) console.log(`deck: transcript 캐시 스냅샷 ${removed.length}개 정리`); },
+      (err: unknown) => console.error('deck: transcript cache cleanup failed', err instanceof Error ? err.message : err),
+    );
+  };
+  pruneTranscriptCache();
+  const transcriptPruneTimer = setInterval(pruneTranscriptCache, 6 * 60 * 60 * 1000);
+  transcriptPruneTimer.unref?.();
   const token = await loadOrCreateToken(cfg.tokenFile);
   const accounts = cfg.accounts;
   const usage = new UsageService({ mode: cfg.usageMode, observedFile: cfg.claudeUsageFile, deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, deckConfigured: cfg.deckUrlConfigured, log: (line) => console.error(line) });
@@ -173,7 +183,7 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    ws.close(); watch.stop(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); for (const s of servers) s.close();
+    ws.close(); watch.stop(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
     // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
     void flushThenExit(() => Promise.all([events.flush(), claude.close()]).then(() => {}), () => process.exit(0));
   };

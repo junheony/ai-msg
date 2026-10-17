@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { clearTranscriptCache, flushTranscriptCache, readTranscript, readTranscriptUncached, setTranscriptCacheDir } from './transcript';
+import {
+  CODE_VERSION_SOURCE, clearTranscriptCache, flushTranscriptCache, pruneTranscriptSnapshots, readTranscript, readTranscriptUncached, setTranscriptCacheDir,
+  setTranscriptMemoryLimit, transcriptMemoryState,
+} from './transcript';
 import type { TranscriptOptions } from './transcript';
 
 const L = (o: unknown) => JSON.stringify(o);
@@ -146,6 +150,156 @@ describe('readTranscript — snapshot on disk', () => {
     await flushTranscriptCache();
     clearTranscriptCache();
     await fs.appendFile(f, records(5).join('\n') + '\n');
+    await same(f);
+  });
+});
+
+const sha1hex = (b: Buffer) => createHash('sha1').update(b).digest('hex');
+
+/** A cache dir holding one snapshot of `f` (read once, written to disk); returns the snapshot's path. */
+async function snapshotOf(cache: string, f: string): Promise<string> {
+  setTranscriptCacheDir(cache);
+  await readTranscript(f);
+  await flushTranscriptCache();
+  const names = (await fs.readdir(cache)).filter((n) => n.endsWith('.json'));
+  expect(names).toHaveLength(1);
+  return path.join(cache, names[0]!);
+}
+
+describe('pruneTranscriptSnapshots', () => {
+  it('removes snapshots of deleted sessions, ones unused for 14 days, and the oldest past the size cap', async () => {
+    const cache = await tmp();
+    const src = await tmp();
+    setTranscriptCacheDir(cache);
+    const files: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const f = path.join(src, `s${i}.jsonl`);
+      await fs.writeFile(f, records(40 + i).join('\n') + '\n');
+      await readTranscript(f);
+      files.push(f);
+    }
+    await flushTranscriptCache();
+    const snaps = (await fs.readdir(cache)).map((n) => path.join(cache, n));
+    expect(snaps).toHaveLength(5);
+    // Which snapshot is whose: the source path is kept in the snapshot.
+    const byFile = new Map<string, string>();
+    for (const s of snaps) byFile.set((JSON.parse(await fs.readFile(s, 'utf8')) as { file: string }).file, s);
+    const snap = (i: number) => byFile.get(path.resolve(files[i]!))!;
+    expect(snaps.every((s) => [...byFile.values()].includes(s))).toBe(true);
+
+    const now = Date.now();
+    const at = async (s: string, ageMs: number) => fs.utimes(s, new Date(now - ageMs), new Date(now - ageMs));
+    // (a) source gone
+    await fs.rm(files[0]!);
+    // (b) not touched for 14 days
+    await at(snap(1), 14 * 24 * 3600 * 1000 + 1000);
+    // (c) the rest: s2 oldest, s4 newest; the cap fits only the newest one
+    await at(snap(2), 3000);
+    await at(snap(3), 2000);
+    await at(snap(4), 1000);
+    const size4 = (await fs.stat(snap(4))).size;
+
+    const removed = await pruneTranscriptSnapshots(cache, { maxBytes: size4 + 1 });
+    expect(removed.sort()).toEqual([snap(0), snap(1), snap(2), snap(3)].sort());
+    expect(await fs.readdir(cache)).toEqual([path.basename(snap(4))]);
+    // Nothing more to do; a missing dir is not an error.
+    expect(await pruneTranscriptSnapshots(cache, { maxBytes: size4 + 1 })).toEqual([]);
+    expect(await pruneTranscriptSnapshots(path.join(cache, 'missing'))).toEqual([]);
+  });
+});
+
+describe('CODE_VERSION inputs', () => {
+  it('include the module constants that shape the output and a manual format number', () => {
+    for (const s of ['local-command-caveat', 'Goal check-in:', 'hook (?:feedback|blocking error)', '백그라운드 작업 완료', 'sk-ant-', 'tool_result', 'task-notification']) {
+      expect(CODE_VERSION_SOURCE).toContain(s);
+    }
+    expect(CODE_VERSION_SOURCE).toMatch(/^format:\d+\0/);
+  });
+});
+
+describe('readTranscript — memory cache bounded by size', () => {
+  it('drops the least recently used entries once the byte total passes the limit', async () => {
+    const dir = await tmp();
+    const f = (i: number) => path.join(dir, `s${i}.jsonl`);
+    for (let i = 0; i < 3; i++) await fs.writeFile(f(i), records(300).join('\n') + '\n');
+    try {
+      await readTranscript(f(0));
+      const one = transcriptMemoryState().bytes;
+      expect(one).toBeGreaterThan(1000);
+      setTranscriptMemoryLimit(Math.floor(one * 2.5));
+      await readTranscript(f(1));
+      await readTranscript(f(2));
+      expect(transcriptMemoryState().files).toEqual([path.resolve(f(1)), path.resolve(f(2))]);
+      await readTranscript(f(1)); // used again: now the newest
+      await readTranscript(f(0));
+      expect(transcriptMemoryState().files).toEqual([path.resolve(f(1)), path.resolve(f(0))]);
+      expect(transcriptMemoryState().bytes).toBeLessThanOrEqual(Math.floor(one * 2.5));
+      await same(f(2));
+    } finally {
+      setTranscriptMemoryLimit(null);
+    }
+  });
+});
+
+describe('readTranscript — snapshot size cap counts UTF-8 bytes', () => {
+  it('does not write a snapshot under 64M code units but over 64 MB', async () => {
+    const cache = await tmp();
+    setTranscriptCacheDir(cache);
+    const f = path.join(await tmp(), 's.jsonl');
+    // 10 prompts × 2.3M Hangul syllables: ~23M UTF-16 units, ~69 MB in UTF-8.
+    const big = '가'.repeat(2_300_000);
+    await fs.writeFile(f, Array.from({ length: 10 }, (_, i) => L({ type: 'user', uuid: `u${i}`, message: { role: 'user', content: big } })).join('\n') + '\n');
+    const out = await readTranscript(f);
+    expect(out).toHaveLength(10);
+    await flushTranscriptCache();
+    expect(await fs.readdir(cache)).toEqual([]);
+  }, 60_000);
+});
+
+describe('readTranscript — damaged snapshots are not trusted', () => {
+  async function setup(): Promise<{ f: string; snap: string; lines: string[] }> {
+    const f = path.join(await tmp(), 's.jsonl');
+    const lines = records(80);
+    await fs.writeFile(f, lines.slice(0, 50).join('\n') + '\n');
+    const snap = await snapshotOf(await tmp(), f);
+    await fs.appendFile(f, lines.slice(50).join('\n') + '\n');
+    clearTranscriptCache();
+    return { f, snap, lines };
+  }
+
+  it('headLen past offset (with a matching head hash) is rejected', async () => {
+    const { f, snap } = await setup();
+    const e = JSON.parse(await fs.readFile(snap, 'utf8'));
+    const whole = await fs.readFile(f);
+    e.headLen = whole.length; // beyond the offset
+    e.headHash = sha1hex(whole);
+    e.state.out = [];
+    await fs.writeFile(snap, JSON.stringify(e));
+    await same(f);
+  });
+
+  it('out entries without a kind are rejected', async () => {
+    const { f, snap } = await setup();
+    const e = JSON.parse(await fs.readFile(snap, 'utf8'));
+    e.state.out = [null, { text: 'x' }];
+    await fs.writeFile(snap, JSON.stringify(e));
+    await same(f);
+  });
+
+  it('a snapshot that passes the checks but breaks the parser falls back to a full read', async () => {
+    const f = path.join(await tmp(), 's.jsonl');
+    const chunk = (c: unknown[]) => L({ type: 'assistant', message: { id: 'aX', model: 'm', role: 'assistant', content: c } });
+    await fs.writeFile(f, L({ type: 'user', message: { role: 'user', content: 'go' } }) + '\n' + chunk([{ type: 'text', text: 'one' }]) + '\n');
+    const snap = await snapshotOf(await tmp(), f);
+    const e = JSON.parse(await fs.readFile(snap, 'utf8'));
+    delete e.state.out.at(-1).toolCalls; // the next same-id chunk pushes into it
+    await fs.writeFile(snap, JSON.stringify(e));
+    clearTranscriptCache();
+    await fs.appendFile(f, chunk([{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }]) + '\n');
+    await same(f);
+    // The broken snapshot was replaced: a restart resumes cleanly.
+    await flushTranscriptCache();
+    clearTranscriptCache();
     await same(f);
   });
 });
