@@ -79,6 +79,89 @@ describe('SessionStateStore', () => {
   });
 });
 
+describe('commander state (1단계 상태 보존)', () => {
+  const commander = {
+    goal: '목표', done: '완료 조건', maxTurns: 20, hop: 0, epoch: 1, status: 'armed' as const, startedAtMs: 1000,
+    budget: { maxAutoTurns: 20, autoTurnsUsed: 0, maxTokens: 2_000_000, tokensUsed: 0, maxWallClockMs: 43_200_000, maxInternalRetries: 5, internalRetriesUsed: 0 },
+    lastVerdicts: [], processedDigestIds: [], signatures: [],
+  };
+
+  it('setCommander persists across reload and clears with undefined', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const s = new SessionStateStore(file);
+    await s.load();
+    const base = { sessionId: 'x', cwd: '/w', account: 'b' as const, projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' as const };
+    expect(await s.setCommander('x', commander)).toBe(false);
+    await s.set(base);
+    expect(await s.setCommander('x', commander)).toBe(true);
+    expect(s.get('x')).toMatchObject({ commander });
+    const s2 = new SessionStateStore(file);
+    await s2.load();
+    expect(s2.get('x')).toMatchObject({ commander });
+    expect(await s2.setCommander('x', undefined)).toBe(true);
+    expect(s2.get('x')).not.toHaveProperty('commander');
+  });
+
+  it('set() keeps the stored commander and drops any commander carried by the incoming state (change only via setCommander)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const s = new SessionStateStore(file);
+    await s.load();
+    const base = { sessionId: 'x', cwd: '/w', account: 'b' as const, projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' as const };
+    // A new entry's incoming commander is dropped too.
+    await s.set({ ...base, commander });
+    expect(s.get('x')?.commander).toBeUndefined();
+    await s.setCommander('x', commander);
+    // A turn writing a fresh state object (no commander field at all, as TurnRunner rebuilds it) does not drop it.
+    await s.set({ ...base, lastTurnAtMs: 9 });
+    expect(s.get('x')).toMatchObject({ lastTurnAtMs: 9, commander });
+    // Nor does a turn that happens to carry its own (stale) commander value win over the stored one.
+    const other = { ...commander, epoch: 99 };
+    await s.set({ ...base, lastTurnAtMs: 10, commander: other });
+    expect(s.get('x')).toMatchObject({ lastTurnAtMs: 10, commander });
+    const s2 = new SessionStateStore(file);
+    await s2.load();
+    expect(s2.get('x')).toMatchObject({ commander });
+  });
+
+  it('TurnRunner 가 턴 끝마다 상태를 스프레드 없이 새로 만드는 지점(TurnRunner.ts ~1680행)을 흉내내도 commander 가 사라지지 않는다', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    const s = new SessionStateStore(file);
+    await s.load();
+    await s.set({ sessionId: 'x', cwd: '/w', account: 'b', projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus' });
+    await s.setCommander('x', commander);
+    // Mirrors the literal object TurnRunner builds at ~1680: no `...state` spread, just the fields it knows about.
+    await s.set({
+      sessionId: 'x',
+      cwd: '/w',
+      account: 'b',
+      projectDir: '/p',
+      lastTurnAtMs: 7,
+      justCompacted: false,
+      defaultModel: 'opus',
+      mode: 'default',
+    });
+    expect(s.get('x')).toMatchObject({ lastTurnAtMs: 7, mode: 'default', commander });
+    const s2 = new SessionStateStore(file);
+    await s2.load();
+    expect(s2.get('x')).toMatchObject({ commander });
+  });
+
+  it('a malformed commander on disk is dropped while the rest of the session state is kept', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-st-'));
+    const file = path.join(dir, 'session-state.json');
+    await fs.writeFile(file, JSON.stringify({
+      x: { sessionId: 'x', cwd: '/w', account: 'b', projectDir: '/p', lastTurnAtMs: 5, justCompacted: false, defaultModel: 'opus', commander: { goal: '목표만 있고 나머지는 없음' } },
+    }));
+    const s = new SessionStateStore(file);
+    await s.load();
+    expect(s.get('x')).not.toHaveProperty('commander');
+    expect(s.get('x')).toMatchObject({ sessionId: 'x', lastTurnAtMs: 5 });
+  });
+});
+
 describe('Codex session state (D4)', () => {
   it('round-trips a codex state, lists it for the sidebar as account gpt, and Plan 1 states stay claude', async () => {
     const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-state-codex-'));

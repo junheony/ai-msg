@@ -4,6 +4,7 @@ import type { Account, GeminiAccount } from '../../shared/accounts';
 import type { ClaudeModel, CodexModel, CodexSandbox, GeminiModel } from '../../shared/models';
 import type { PermMode } from '../../shared/permission';
 import type { SessionEntry } from '../../shared/session-types';
+import { isCommanderState, type CommanderState } from '../commander/types';
 
 type SessionBase = {
   sessionId: string;
@@ -28,6 +29,12 @@ type SessionBase = {
    * 재시도인지(최대 2). 다음 턴의 시작, 또는 사용자가 먼저 보내면 지운다.
    */
   pendingRetry?: { text: string; atMs: number; hops: number };
+  /**
+   * 총사령탑(commander) 상태 — `docs/superpowers/specs/2026-10-18-commander-design.md` §6. 변경은 전용 `setCommander`
+   * 로만(`accountPin`·`setAccountPin` 과 같은 급): `set()` 에 실려 온 값은 버리고 기존 값을 그대로 지킨다. TurnRunner 가
+   * 턴 끝마다 상태를 스프레드 없이 새로 만들어도(`TurnRunner.ts` ~1680행) 이 보존 덕에 지워지지 않는다.
+   */
+  commander?: CommanderState;
 };
 
 export type ClaudeSessionState = SessionBase & {
@@ -102,6 +109,10 @@ export class SessionStateStore {
     try {
       const parsed = JSON.parse(raw) as Record<string, SessionState>;
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+      // 손으로 고쳤거나 예전 모양으로 남은 commander 는 세션 전체가 아니라 그 필드만 버린다.
+      for (const s of Object.values(parsed)) {
+        if (s && typeof s === 'object' && 'commander' in s && !isCommanderState(s.commander)) delete (s as { commander?: CommanderState }).commander;
+      }
       this.map = new Map(Object.entries(parsed));
     } catch (err) {
       const bad = `${this.file}.bad-${Date.now()}`;
@@ -142,7 +153,8 @@ export class SessionStateStore {
 
   /**
    * The stored pin wins over the one `s` carries (turns hold a state read before the user changed the pin);
-   * only a new entry takes `s.accountPin`. Use setAccountPin to change it.
+   * only a new entry takes `s.accountPin`. Use setAccountPin to change it. commander is kept the same way
+   * (§6): a new entry's incoming `s.commander` is dropped — change it only via setCommander.
    */
   set(s: SessionState): Promise<void> {
     const prev = this.map.get(s.sessionId);
@@ -150,6 +162,10 @@ export class SessionStateStore {
       const { accountPin: _drop, ...rest } = s;
       const pin = !isCodexState(prev) && !isGeminiState(prev) ? prev.accountPin : undefined;
       s = pin ? { ...rest, accountPin: pin } : rest;
+    }
+    if ('commander' in s || prev?.commander) {
+      const { commander: _drop, ...rest } = s;
+      s = prev?.commander ? { ...rest, commander: prev.commander } : rest;
     }
     return this.save(s);
   }
@@ -160,6 +176,14 @@ export class SessionStateStore {
     if (!prev || isCodexState(prev) || isGeminiState(prev)) return Promise.resolve(false);
     const { accountPin: _drop, ...rest } = prev;
     return this.save(pin ? { ...rest, accountPin: pin } : rest).then(() => true);
+  }
+
+  /** Sets or clears a session's commander state (§6). False when there is no state for `id`. */
+  setCommander(id: string, commander: CommanderState | undefined): Promise<boolean> {
+    const prev = this.map.get(id);
+    if (!prev) return Promise.resolve(false);
+    const { commander: _drop, ...rest } = prev;
+    return this.save(commander ? { ...rest, commander } : rest).then(() => true);
   }
 
   private save(s: SessionState): Promise<void> {
