@@ -149,20 +149,75 @@ async function commonPrefixLength(a: string, b: string): Promise<number> {
   const [fa, fb] = await Promise.all([fs.open(a, 'r'), fs.open(b, 'r')]);
   try {
     const [sa, sb] = await Promise.all([fa.stat(), fb.stat()]);
-    const max = Math.min(sa.size, sb.size);
-    const CHUNK = 1 << 20;
-    const ba = Buffer.alloc(CHUNK);
-    const bb = Buffer.alloc(CHUNK);
-    for (let pos = 0; pos < max; pos += CHUNK) {
-      const n = Math.min(CHUNK, max - pos);
-      const [ra, rb] = await Promise.all([fa.read(ba, 0, n, pos), fb.read(bb, 0, n, pos)]);
-      const m = Math.min(ra.bytesRead, rb.bytesRead);
-      for (let i = 0; i < m; i++) if (ba[i] !== bb[i]) return pos + i;
-      if (m < n) return pos + m;
-    }
-    return max;
+    return await handlesPrefixLength(fa, fb, Math.min(sa.size, sb.size));
   } finally {
     await Promise.all([fa.close(), fb.close()]);
+  }
+}
+
+/** Length of the common byte prefix of two open files, looking at the first `max` bytes only. */
+async function handlesPrefixLength(fa: fs.FileHandle, fb: fs.FileHandle, max: number): Promise<number> {
+  const CHUNK = 1 << 20;
+  const ba = Buffer.alloc(CHUNK);
+  const bb = Buffer.alloc(CHUNK);
+  for (let pos = 0; pos < max; pos += CHUNK) {
+    const n = Math.min(CHUNK, max - pos);
+    const [ra, rb] = await Promise.all([fa.read(ba, 0, n, pos), fb.read(bb, 0, n, pos)]);
+    const m = Math.min(ra.bytesRead, rb.bytesRead);
+    if (!ba.subarray(0, m).equals(bb.subarray(0, m))) for (let i = 0; i < m; i++) if (ba[i] !== bb[i]) return pos + i;
+    if (m < n) return pos + m;
+  }
+  return max;
+}
+
+/** The identity and size of a file as `ancestorInfo` saw it. */
+export type FileState = { size: number; mtimeMs: number; dev: number; ino: number };
+
+/**
+ * `isAncestor(x, y)` plus what an incremental cache needs: the common prefix length `n`, why x is not an
+ * ancestor (`conversation` = a complete conversation line in x's tail; `unterminated` = only an unfinished last
+ * line), and the size/identity of both files the answer was computed on. Both files are read through one open
+ * handle each and only up to the sizes in `x`/`y`, so bytes appended meanwhile are not looked at.
+ */
+export async function ancestorInfo(x: string, y: string): Promise<{ ancestor: boolean; n: number; reason: 'conversation' | 'unterminated' | null; x: FileState; y: FileState }> {
+  const [fx, fy] = await Promise.all([fs.open(x, 'r'), fs.open(y, 'r')]);
+  try {
+    const [sx, sy] = await Promise.all([fx.stat(), fy.stat()]);
+    const state = (s: typeof sx): FileState => ({ size: s.size, mtimeMs: s.mtimeMs, dev: s.dev, ino: s.ino });
+    const n = await handlesPrefixLength(fx, fy, Math.min(sx.size, sy.size));
+    const out = (ancestor: boolean, reason: 'conversation' | 'unterminated' | null) => ({ ancestor, n, reason, x: state(sx), y: state(sy) });
+    if (n >= sx.size) return out(true, null);
+    // lastLineEnd on the open handle: the position after the last line break before n.
+    let start = 0;
+    const LB = 1 << 16;
+    const lb = Buffer.alloc(LB);
+    for (let end = n; end > 0; end -= LB) {
+      const s = Math.max(0, end - LB);
+      const { bytesRead } = await fx.read(lb, 0, end - s, s);
+      const i = lb.subarray(0, bytesRead).lastIndexOf(0x0a);
+      if (i >= 0) { start = s + i + 1; break; }
+    }
+    const CHUNK = 1 << 20;
+    const buf = Buffer.alloc(CHUNK);
+    let carry: Buffer[] = [];
+    for (let pos = start; pos < sx.size; ) {
+      const { bytesRead } = await fx.read(buf, 0, Math.min(CHUNK, sx.size - pos), pos);
+      if (bytesRead <= 0) break;
+      pos += bytesRead;
+      const chunk = buf.subarray(0, bytesRead);
+      let from = 0;
+      for (let i = chunk.indexOf(0x0a); i >= 0; i = chunk.indexOf(0x0a, from)) {
+        const piece = chunk.subarray(from, i);
+        const line = (carry.length ? Buffer.concat([...carry, piece]) : piece).toString('utf8');
+        carry = [];
+        from = i + 1;
+        if (line && !isMetaLine(line)) return out(false, 'conversation');
+      }
+      if (from < chunk.length) carry.push(Buffer.from(chunk.subarray(from)));
+    }
+    return carry.length ? out(false, 'unterminated') : out(true, null);
+  } finally {
+    await Promise.all([fx.close(), fy.close()]);
   }
 }
 

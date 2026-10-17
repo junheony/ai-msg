@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account, ProjectsRoots } from '../../shared/accounts';
@@ -6,7 +7,7 @@ import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry, Session
 import { findCopies, resolveCopies, type PrefixFn, type SessionCopy } from './copies';
 import { CodexRolloutIndex } from './CodexImports';
 import { recentDesktopSessions } from './DesktopSessions';
-import { isAncestor } from './SessionMover';
+import { ancestorInfo, type FileState } from './SessionMover';
 import { pathKey } from './slug';
 import { readHead } from './transcript';
 
@@ -129,6 +130,101 @@ export async function readRecent(file: string): Promise<string[]> {
 /** deck-side titles / archive flags (SessionMetaStore) laid over the scanned entries. */
 export type SessionMetaView = { title(sessionId: string): string | null; isArchived(sessionId: string): boolean; /** 새 세션으로 이어가기 links. */ next?(sessionId: string): string | null; prev?(sessionId: string): string | null; /** 메시지 편집 갈래 links. */ branchOf?(sessionId: string): BranchLink | null; /** 작업 폴더 바꾸기: the folder deck runs the session in (the transcript head keeps the old one). */ cwd?(sessionId: string): string | null };
 
+type CachedFile = FileState & { tail: string };
+type CachedPair = { ancestor: boolean; n: number | null; reason: 'conversation' | 'unterminated' | null; x: CachedFile; y: CachedFile };
+
+/** sha256 of the `TAIL_BYTES` before offset `size` of `file`; null when the file is no longer inode `ino` or shorter. */
+const TAIL_BYTES = 4096;
+async function tailHash(file: string, size: number, ino: number): Promise<string | null> {
+  const fh = await fs.open(file, 'r').catch(() => null);
+  if (!fh) return null;
+  try {
+    const st = await fh.stat();
+    if (st.ino !== ino || st.size < size) return null;
+    const start = Math.max(0, size - TAIL_BYTES);
+    const buf = Buffer.alloc(size - start);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+    if (bytesRead !== buf.length) return null;
+    return createHash('sha256').update(buf).digest('hex');
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * `isAncestor(x, y)` answers per (x, y) pair, carried over appends (transcripts are append-only) instead of
+ * re-reading both files whenever one grows. A file counts as appended-to when it is the same inode, larger, and
+ * the 4KB before its old end still hash the same; anything else (shrunk, replaced, rewritten) recomputes.
+ * An answer is carried over only where an append provably cannot change it:
+ * - was an ancestor, x unchanged, y appended-to: n = commonPrefix(x, y) can only grow (y's old bytes stay), so
+ *   x's tail from lastLineEnd(x, n) is a subset of the old tail's whole lines — all complete metadata lines.
+ * - was not, because of a complete conversation line in x's tail (so n < |x|), and either n < old |y| (x[n] ≠ y[n],
+ *   both bytes stay) or y unchanged (n = |y| cannot grow, x's first n bytes stay): n and the tail start stay, and
+ *   that line stays in x's tail.
+ * `full` is the from-scratch computation (a test hook).
+ */
+export class AncestorCache {
+  private readonly pairs = new Map<string, CachedPair>();
+  constructor(private readonly full: typeof ancestorInfo = ancestorInfo, private readonly max = 2000) {}
+
+  async isAncestor(x: string, y: string): Promise<boolean> {
+    const key = `${x}\0${y}`;
+    const prev = this.pairs.get(key);
+    if (prev) {
+      const next = await this.carry(prev, x, y).catch(() => null);
+      if (next) {
+        this.pairs.delete(key);
+        this.pairs.set(key, next);
+        return next.ancestor;
+      }
+      this.pairs.delete(key);
+    }
+    try {
+      const info = await this.full(x, y);
+      const [tx, ty] = await Promise.all([tailHash(x, info.x.size, info.x.ino), tailHash(y, info.y.size, info.y.ino)]);
+      if (tx !== null && ty !== null) {
+        this.pairs.set(key, { ancestor: info.ancestor, n: info.n, reason: info.reason, x: { ...info.x, tail: tx }, y: { ...info.y, tail: ty } });
+        if (this.pairs.size > this.max) this.pairs.delete(this.pairs.keys().next().value!);
+      }
+      return info.ancestor;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The cached answer brought up to date with the files on disk, or null = recompute. */
+  private async carry(prev: CachedPair, x: string, y: string): Promise<CachedPair | null> {
+    const [sx, sy] = await Promise.all([fs.stat(x), fs.stat(y)]);
+    const kind = (old: CachedFile, cur: typeof sx): 'same' | 'grown' | null => {
+      if (cur.dev !== old.dev || cur.ino !== old.ino) return null;
+      if (cur.size === old.size) return cur.mtimeMs === old.mtimeMs ? 'same' : null;
+      return cur.size > old.size ? 'grown' : null;
+    };
+    const kx = kind(prev.x, sx);
+    const ky = kind(prev.y, sy);
+    if (!kx || !ky) return null;
+    if (kx === 'same' && ky === 'same') return prev;
+    let n: number | null;
+    if (prev.ancestor && kx === 'same') {
+      // y appended-to: n stays where y's old end did not cut it short (x[n] ≠ y[n], or all of x matched).
+      n = prev.n !== null && (prev.n < prev.y.size || prev.n >= prev.x.size) ? prev.n : null;
+    } else if (!prev.ancestor && prev.reason === 'conversation' && prev.n !== null && prev.n < prev.x.size && (prev.n < prev.y.size || ky === 'same')) {
+      n = prev.n;
+    } else {
+      return null;
+    }
+    const update = async (file: string, old: CachedFile, cur: typeof sx, k: 'same' | 'grown'): Promise<CachedFile | null> => {
+      if (k === 'same') return old;
+      if ((await tailHash(file, old.size, old.ino)) !== old.tail) return null;
+      const tail = await tailHash(file, cur.size, old.ino);
+      return tail === null ? null : { size: cur.size, mtimeMs: cur.mtimeMs, dev: cur.dev, ino: cur.ino, tail };
+    };
+    const [ux, uy] = await Promise.all([update(x, prev.x, sx, kx), update(y, prev.y, sy, ky)]);
+    if (!ux || !uy) return null;
+    return { ...prev, n, x: ux, y: uy };
+  }
+}
+
 export class SessionIndex {
   private entries: SessionEntry[] = [];
   private grouped: ProjectEntry[] = [];
@@ -137,17 +233,9 @@ export class SessionIndex {
   private recentFolders: string[] = [];
   private recentWrite: Promise<void> = Promise.resolve();
   private desktopList: DesktopSession[] = [];
-  /** Ancestor answers (byte-prefix, or that plus Desktop's metadata lines) by (file, size, mtime) pair: a rescan does not re-read unchanged transcripts. */
-  private prefixCache = new Map<string, boolean>();
-  private readonly cachedPrefix: PrefixFn = async (a, b) => {
-    const key = `${a.file}\0${a.size}\0${a.mtimeMs}\0${b.file}\0${b.size}\0${b.mtimeMs}`;
-    const hit = this.prefixCache.get(key);
-    if (hit !== undefined) return hit;
-    const v = await isAncestor(a.file, b.file).catch(() => false);
-    if (this.prefixCache.size > 2000) this.prefixCache.clear();
-    this.prefixCache.set(key, v);
-    return v;
-  };
+  /** Ancestor answers (byte-prefix, or that plus Desktop's metadata lines), kept per file pair and carried over appends: a rescan or a session open does not re-read transcripts. */
+  private readonly prefixCache = new AncestorCache();
+  private readonly cachedPrefix: PrefixFn = (a, b) => this.prefixCache.isAncestor(a.file, b.file);
 
   private readonly codex: CodexRolloutIndex | null;
 
