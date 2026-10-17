@@ -609,13 +609,14 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
 .usage-pop-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.75; color: var(--muted); }
 .usage-pop-row.hint { display: block; max-width: 260px; line-height: 1.45; margin-bottom: 4px; white-space: normal; }
 .usage-pop-row b { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--fg); }
-/* A narrow card keeps its colored numbers and drops the bars; the exhausted pill keeps only "소진". */
-@container usage-card (max-width: 210px) { .usage-pill-at { display: none; } }
-@container usage-card (max-width: 200px) { .usage-cd { display: none; } }
-@container usage-card (max-width: 156px) {
+/* A narrow card keeps its colored numbers and the reset countdown, and drops the bars first; only a very narrow card
+   loses the exhausted pill's time ("소진") and then the countdown. */
+@container usage-card (max-width: 200px) {
   .usage-bar { display: none; }
-  .usage-rows { grid-template-columns: minmax(36px, max-content) minmax(0, 1fr); }
+  .usage-rows { grid-template-columns: minmax(36px, max-content) minmax(0, 1fr) max-content; }
 }
+@container usage-card (max-width: 175px) { .usage-pill-at { display: none; } }
+@container usage-card (max-width: 150px) { .usage-cd { display: none; } }
 
 /* Two rows (< 1280px): logo + actions on top, the four cards in equal columns underneath.
    The panel dissolves (display: contents) so the stale tag can sit in the top row and the cards on their own line. */
