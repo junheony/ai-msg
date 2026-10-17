@@ -176,7 +176,7 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - routePreview: `route_preview` asks are answered with `route_preview` (and again after usage changes).
  * - highlights: GET /api/highlights answers (세션 하이라이트, events.jsonl).
  * - sessionOps: `set_cwd` (작업 폴더 바꾸기) and `duplicate_session` (복제) are answered; `send.title` is applied.
- * - serverUpdate: GET /api/server-update and POST /api/restart answer (서버 업데이트 대기 · 지금 재시작).
+ * - serverUpdate: GET /api/server-update and POST /api/restart answer (서버 업데이트 대기 · 지금 재시작; `{force:true}` while draining exits now).
  */
 export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate'] as const;
 export type Feature = (typeof FEATURES)[number];

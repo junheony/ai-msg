@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import type { SessionActivity } from '../../shared/protocol';
 
 /** A permission card or question waiting for an answer: its session (null = a new chat before its id is known). */
@@ -223,16 +223,25 @@ export function ServerChip({ startedAt, restartedAt, draining, busy, onDismissRe
 /** How often the 서버 업데이트 chip asks whether server code changed (also once on every connect). */
 const UPDATE_POLL_MS = 60_000;
 
+/** What a drain waits for: running turns plus background tasks. */
+function workCount(activity: SessionActivity[]): number {
+  return activity.filter((a) => a.running).length + activity.reduce((n, a) => n + Math.max(0, a.bg), 0);
+}
+
 /** The restart confirm's line: what the drain waits for, or that it goes at once. */
 export function restartConfirmText(activity: SessionActivity[]): string {
-  const work = activity.filter((a) => a.running).length + activity.reduce((n, a) => n + Math.max(0, a.bg), 0);
+  const work = workCount(activity);
   return work > 0 ? `진행 중 작업 ${work}개가 끝나면 재시작합니다` : '바로 재시작합니다';
 }
 
+export const RESTART_WAIT_WARNING = '재시작을 기다리는 동안 새 메시지는 받지 않습니다 — 진행 중인 턴·백그라운드 작업이 모두 끝나야 재시작됩니다.';
+export const FORCE_RESTART_WARNING = '진행 중인 턴과 백그라운드 작업(데모 서버 등)이 중단됩니다';
+
 /**
  * 서버 업데이트 대기 · 파일 N: server code changed since the server started (GET /api/server-update, on connect and every
- * minute). Shown only under a supervisor that starts the server again, and not while draining (the 서버 chip says so
- * then). 지금 재시작 opens a confirm; its OK sends POST /api/restart — the same drain as `npm run restart`.
+ * minute). Shown only under a supervisor that starts the server again. 지금 재시작 opens a confirm; its OK sends
+ * POST /api/restart — the same drain as `npm run restart`. While draining (under a supervisor) it turns into
+ * 재시작 대기 · N with 작업 끊고 지금 재시작: after a second confirm, POST /api/restart {force:true} — a second SIGUSR2.
  */
 export function ServerUpdateChip({ ready, draining, activity, fetchFn = fetch }: {
   /** Connected (hello in): asks right away and starts polling. */
@@ -246,6 +255,8 @@ export function ServerUpdateChip({ ready, draining, activity, fetchFn = fetch }:
   const [pop, setPop] = useState<{ right: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  /** While draining: the 작업 끊고 지금 재시작 confirm step is showing. */
+  const [confirmForce, setConfirmForce] = useState(false);
   const chip = useRef<HTMLButtonElement>(null);
   const load = useCallback(async () => {
     try {
@@ -262,8 +273,11 @@ export function ServerUpdateChip({ ready, draining, activity, fetchFn = fetch }:
     const t = setInterval(() => void load(), UPDATE_POLL_MS);
     return () => clearInterval(t);
   }, [ready, load]);
-  const show = !draining && info !== null && info.supervised && info.changedFiles > 0;
-  const open = show && pop !== null;
+  const supervised = info !== null && info.supervised;
+  const mode = !supervised ? null : draining ? 'draining' : info.changedFiles > 0 ? 'update' : null;
+  const open = mode !== null && pop !== null;
+  // A switch between update and draining closes what was open (its buttons belong to the other form).
+  useEffect(() => { setPop(null); setConfirmForce(false); setError(null); }, [mode]);
   useEffect(() => {
     if (!open) return;
     const close = () => setPop(null);
@@ -273,39 +287,74 @@ export function ServerUpdateChip({ ready, draining, activity, fetchFn = fetch }:
     document.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); document.removeEventListener('keydown', onKey); };
   }, [open]);
-  if (!show) return null;
-  const restart = async () => {
+  if (mode === null) return null;
+  const files = info?.changedFiles ?? 0;
+  const restart = async (force: boolean) => {
     setSending(true);
     setError(null);
     try {
-      const r = await fetchFn('/api/restart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      const r = await fetchFn('/api/restart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: force ? '{"force":true}' : '{}' });
       if (!r.ok) { setError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `재시작 요청 실패 (${r.status})`); return; }
       setPop(null);
+      setConfirmForce(false);
     } catch { setError('서버에 닿지 못했어요 — 연결되면 다시 눌러 주세요'); } finally { setSending(false); }
   };
+  const toggle = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    setError(null);
+    setConfirmForce(false);
+    const r = e.currentTarget.getBoundingClientRect();
+    setPop(open ? null : { right: Math.max(8, window.innerWidth - r.right), y: r.bottom + 6 });
+  };
+  const close = () => { setPop(null); setConfirmForce(false); };
+  if (mode === 'draining') {
+    const work = workCount(activity);
+    const status = work > 0 ? `재시작 대기 중 · 작업 ${work}개` : '재시작 중…';
+    return (
+      <>
+        <button
+          ref={chip} type="button" className="top-chip warn drain-chip" data-testid="drain-chip" aria-expanded={open} aria-haspopup="dialog"
+          title={`${status} — 눌러서 작업을 끊고 지금 재시작`} onClick={toggle}
+        >
+          <span className="chip-long">작업 끊고 지금 재시작</span>
+          <span className="chip-short" aria-hidden="true">{work > 0 ? `재시작 대기 · ${work}` : '재시작 중…'}</span>
+        </button>
+        {open && pop && (
+          <div className="usage-pop work-pop update-pop" role="dialog" aria-label="재시작 대기 중" style={{ right: pop.right, top: pop.y }} onClick={(e) => e.stopPropagation()}>
+            <div className="usage-pop-title">{status}</div>
+            {!confirmForce
+              ? <div className="usage-pop-row hint">{RESTART_WAIT_WARNING}</div>
+              : <div className="usage-pop-row hint update-error">{FORCE_RESTART_WARNING}</div>}
+            {error && <div className="usage-pop-row hint update-error" role="alert">{error}</div>}
+            <div className="update-actions">
+              <button type="button" className="btn ghost" onClick={close}>{confirmForce ? '취소' : '닫기'}</button>
+              {!confirmForce
+                ? <button type="button" className="btn primary" onClick={() => { setError(null); setConfirmForce(true); }}>작업 끊고 지금 재시작</button>
+                : <button type="button" className="btn primary" disabled={sending} onClick={() => void restart(true)}>중단하고 재시작</button>}
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
   return (
     <>
       <button
         ref={chip} type="button" className="top-chip update-chip" data-testid="update-chip" aria-expanded={open} aria-haspopup="dialog"
-        title={`서버가 뜬 뒤 서버 코드 파일 ${info.changedFiles}개가 바뀌었습니다 — 눌러서 재시작`}
-        onClick={(e) => {
-          e.stopPropagation();
-          setError(null);
-          const r = e.currentTarget.getBoundingClientRect();
-          setPop(open ? null : { right: Math.max(8, window.innerWidth - r.right), y: r.bottom + 6 });
-        }}
+        title={`서버가 뜬 뒤 서버 코드 파일 ${files}개가 바뀌었습니다 — 눌러서 재시작`} onClick={toggle}
       >
-        <span className="chip-long">서버 업데이트 대기 · 파일 {info.changedFiles}개 <b className="update-go">지금 재시작</b></span>
-        <span className="chip-short" aria-hidden="true">업데이트 · {info.changedFiles}</span>
+        <span className="chip-long">서버 업데이트 대기 · 파일 {files}개 <b className="update-go">지금 재시작</b></span>
+        <span className="chip-short" aria-hidden="true">업데이트 · {files}</span>
       </button>
       {open && pop && (
         <div className="usage-pop work-pop update-pop" role="dialog" aria-label="서버 재시작" style={{ right: pop.right, top: pop.y }} onClick={(e) => e.stopPropagation()}>
           <div className="usage-pop-title">서버 재시작</div>
           <div className="usage-pop-row hint">{restartConfirmText(activity)}</div>
+          <div className="usage-pop-row hint">{RESTART_WAIT_WARNING}</div>
           {error && <div className="usage-pop-row hint update-error" role="alert">{error}</div>}
           <div className="update-actions">
-            <button type="button" className="btn ghost" onClick={() => setPop(null)}>취소</button>
-            <button type="button" className="btn primary" disabled={sending} onClick={() => void restart()}>재시작</button>
+            <button type="button" className="btn ghost" onClick={close}>취소</button>
+            <button type="button" className="btn primary" disabled={sending} onClick={() => void restart(false)}>재시작</button>
           </div>
         </div>
       )}

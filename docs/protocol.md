@@ -23,7 +23,7 @@
 | `routePreview` | `route_preview{sessionId, cwd?, model?}` 에 `route_preview{sessionId, account, reason, asOpus?}` 로 답한다(Claude 세션만; GPT·Gemini·모르는 id·뺀 계정 세션, 새 세션의 `자동` 은 답 없음). 소켓마다 마지막 요청을 기억해 사용량이 바뀌어 답이 달라지면 다시 보낸다. `sessionId: null` 에 `cwd` 가 없으면 요청 철회 | 상단 사용량 카드에 `다음` 표시 없음(요청도 보내지 않음) |
 | `highlights` | `GET /api/highlights?hours=6\|12\|24`(그 밖의 값은 24)에 `{ hours, events }` 로 답한다(세션 하이라이트, `events.jsonl` 7일치) | 작업 현황의 `하이라이트 보기 →`, ⌘K `하이라이트 보기`, 설정의 `하이라이트` 를 숨김 |
 | `fileRaw` | `GET /api/file?…&raw=1[&download=1]` 로 원본 바이트를 주고 `POST /api/reveal` 로 서버 Mac 의 Finder 를 연다(아래 "HTTP: 세션 폴더 파일") | 파일 칩·사이드 패널의 `다운로드`·`Finder 에서 보기`·`새 탭에서 크게`, 폴더 칩의 `Finder 에서 열기` 를 숨기고, 답장 안 이미지 경로는 썸네일 대신 칩으로 |
-| `serverUpdate` | `GET /api/server-update` 에 `{ changedFiles, newestAt, supervised, draining }`(서버가 뜬 뒤 바뀐 `src/server`·`src/shared` 의 테스트 아닌 `.ts` 수), `POST /api/restart` 에 SIGUSR2 와 같은 drain 으로 답한다. 관리자(relaunch 루프·launchd) 아래가 아니면 — 요청마다 부모가 relaunch 루프인지 확인 — 409, 이미 drain 중이면 아무것도 안 하고 `{ ok, draining: true }` | `서버 업데이트 대기` 칩·`지금 재시작` 을 숨김 |
+| `serverUpdate` | `GET /api/server-update` 에 `{ changedFiles, newestAt, supervised, draining, activeTurns }`(서버가 뜬 뒤 바뀐 `src/server`·`src/shared` 의 테스트 아닌 `.ts` 수, `activeTurns` = drain 이 기다리는 턴·백그라운드 작업 프로세스 수), `POST /api/restart` 에 SIGUSR2 와 같은 drain 으로 답한다. 관리자(relaunch 루프·launchd) 아래가 아니면 — 요청마다 부모가 relaunch 루프인지 확인 — 409, 이미 drain 중이면 아무것도 안 하고 `{ ok, draining: true }`. 본문 `{"force":true}` 는 두 번째 SIGUSR2 와 같다(작업 끊고 지금 재시작): drain 중일 때만 남은 턴·백그라운드 작업을 중단하고 바로 종료해 관리자가 다시 띄우며 `{ ok, draining: true, forced: true }`, drain 중이 아니면 400 으로 거절하고 아무것도 시작하지 않는다. 쿠키·Origin 검사와 409 는 같다 | `서버 업데이트 대기` 칩·`지금 재시작` 을 숨김 |
 
 기능을 더할 때: `FEATURES` 에 이름을 더하고, UI 는 `has()` 로 갈라 쓰고, 이 표에 한 줄 더한다. 배포된 이름은 지우지 않는다.
 
