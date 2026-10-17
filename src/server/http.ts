@@ -61,9 +61,15 @@ export type ServerUpdateDeps = {
   /** A supervisor (relaunch loop / launchd boot) starts the server again after it exits, as of now: only then is a restart offered. */
   supervised: () => Promise<boolean>;
   draining: () => boolean;
+  /** Turns/processes the drain still waits for (ws activeTurns). */
+  activeTurns: () => number;
   /** The drain SIGUSR2 starts (lifecycle `request`). */
   restart: () => void;
+  /** While draining: abort what is left and exit now — a second SIGUSR2 (lifecycle `force`). */
+  forceRestart: () => void;
 };
+
+export const NOT_DRAINING_MESSAGE = '재시작 대기 중이 아니라 강제로 재시작할 수 없습니다 — 먼저 지금 재시작을 누르세요';
 
 export const UNSUPERVISED_MESSAGE = '이 서버는 자동으로 다시 켜 주는 관리자(relaunch 루프·launchd) 없이 실행 중이라 여기서 재시작하면 꺼진 채로 남습니다 — 터미널에서 직접 다시 시작하세요';
 
@@ -325,13 +331,22 @@ export function createRequestHandler(deps: HttpDeps) {
         if (deps.serverUpdate && url.pathname === '/api/server-update' && req.method === 'GET') {
           const su = deps.serverUpdate;
           const [update, supervised] = await Promise.all([su.check(), su.supervised()]);
-          json(res, 200, { ...update, supervised, draining: su.draining() });
+          json(res, 200, { ...update, supervised, draining: su.draining(), activeTurns: su.activeTurns() });
           return;
         }
         if (deps.serverUpdate && url.pathname === '/api/restart' && req.method === 'POST') {
           const su = deps.serverUpdate;
+          let force = false;
+          try { force = (JSON.parse(await readBody(req, 4096)) as { force?: unknown } | null)?.force === true; } catch { /* no/invalid body: a plain restart */ }
           if (!(await su.supervised())) { json(res, 409, { error: UNSUPERVISED_MESSAGE }); return; }
-          // Already draining: nothing more (a second SIGUSR2 would skip the wait — the UI never does that).
+          // force (작업 끊고 지금 재시작): only while draining — the second SIGUSR2. Not draining: refused, nothing started.
+          if (force) {
+            if (!su.draining()) { json(res, 400, { error: NOT_DRAINING_MESSAGE }); return; }
+            su.forceRestart();
+            json(res, 200, { ok: true, draining: true, forced: true });
+            return;
+          }
+          // Already draining: nothing more without force.
           if (!su.draining()) su.restart();
           json(res, 200, { ok: true, draining: su.draining() });
           return;

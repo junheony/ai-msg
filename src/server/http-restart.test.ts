@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { cookieValueFor } from './auth';
-import { createRequestHandler, UNSUPERVISED_MESSAGE, type ServerUpdateDeps } from './http';
+import { createRequestHandler, NOT_DRAINING_MESSAGE, UNSUPERVISED_MESSAGE, type ServerUpdateDeps } from './http';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageService } from './usage/UsageService';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
@@ -14,11 +14,13 @@ let base = '';
 let server: http.Server;
 let dir: string;
 let restarts = 0;
+let forced = 0;
 let draining = false;
 let supervised = true;
-const su: ServerUpdateDeps = { check: async () => ({ changedFiles: 3, newestAt: 123 }), supervised: async () => supervised, draining: () => draining, restart: () => { restarts++; draining = true; } };
+const su: ServerUpdateDeps = { check: async () => ({ changedFiles: 3, newestAt: 123 }), supervised: async () => supervised, draining: () => draining, activeTurns: () => 2, restart: () => { restarts++; draining = true; }, forceRestart: () => { forced++; } };
 const cookie = `deck_session=${cookieValueFor(TOKEN)}`;
-const post = (headers: Record<string, string>) => fetch(`${base}/api/restart`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+const post = (headers: Record<string, string>, body = '{}') => fetch(`${base}/api/restart`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body });
+const FORCE = '{"force":true}';
 
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-restart-'));
@@ -34,7 +36,7 @@ afterAll(async () => { server.close(); await fs.rm(dir, { recursive: true, force
 describe('server update / restart', () => {
   it('GET /api/server-update needs the cookie and answers changed files, supervision and draining', async () => {
     expect((await fetch(`${base}/api/server-update`)).status).toBe(401);
-    expect(await (await fetch(`${base}/api/server-update`, { headers: { cookie } })).json()).toEqual({ changedFiles: 3, newestAt: 123, supervised: true, draining: false });
+    expect(await (await fetch(`${base}/api/server-update`, { headers: { cookie } })).json()).toEqual({ changedFiles: 3, newestAt: 123, supervised: true, draining: false, activeTurns: 2 });
   });
 
   it('POST /api/restart needs the cookie and our own origin', async () => {
@@ -53,6 +55,37 @@ describe('server update / restart', () => {
     expect(await again.json()).toEqual({ ok: true, draining: true });
     expect(restarts).toBe(1);
     draining = false;
+  });
+
+  it('force while draining exits now (forceRestart), without starting another drain', async () => {
+    draining = true;
+    try {
+      const r = await post({ cookie, origin: base }, FORCE);
+      expect(r.status).toBe(200);
+      expect(await r.json()).toEqual({ ok: true, draining: true, forced: true });
+      expect(forced).toBe(1);
+      expect(restarts).toBe(1);
+    } finally { draining = false; forced = 0; }
+  });
+
+  it('force when not draining: 400, nothing started', async () => {
+    const r = await post({ cookie, origin: base }, FORCE);
+    expect(r.status).toBe(400);
+    expect(await r.json()).toEqual({ error: NOT_DRAINING_MESSAGE });
+    expect(forced).toBe(0);
+    expect(restarts).toBe(1);
+  });
+
+  it('force is refused without the cookie, from another origin, or unsupervised', async () => {
+    draining = true;
+    try {
+      expect((await post({ origin: base }, FORCE)).status).toBe(401);
+      expect((await post({ cookie, origin: 'http://evil.example' }, FORCE)).status).toBe(403);
+      expect((await post({ cookie }, FORCE)).status).toBe(403);
+      supervised = false;
+      expect((await post({ cookie, origin: base }, FORCE)).status).toBe(409);
+      expect(forced).toBe(0);
+    } finally { draining = false; supervised = true; }
   });
 
   it('unsupervised: refused with a Korean message, nothing started', async () => {

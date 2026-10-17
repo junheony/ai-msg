@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { HighlightsBadge, ServerChip, ServerUpdateChip, WorkStatus, idleLabel, restartConfirmText, uptimeLabel } from './WorkStatus';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { FORCE_RESTART_WARNING, HighlightsBadge, RESTART_WAIT_WARNING, ServerChip, ServerUpdateChip, WorkStatus, idleLabel, restartConfirmText, uptimeLabel } from './WorkStatus';
 import type { SessionActivity } from '../../shared/protocol';
 
 const M = 60_000;
@@ -224,6 +224,8 @@ describe('ServerUpdateChip', () => {
     await flush();
     fireEvent.click(screen.getByTestId('update-chip'));
     expect(screen.getByRole('dialog', { name: '서버 재시작' }).textContent).toContain('진행 중 작업 1개가 끝나면 재시작합니다');
+    expect(screen.getByRole('dialog').textContent).toContain(RESTART_WAIT_WARNING);
+    expect(RESTART_WAIT_WARNING).toBe('재시작을 기다리는 동안 새 메시지는 받지 않습니다 — 진행 중인 턴·백그라운드 작업이 모두 끝나야 재시작됩니다.');
     fireEvent.click(screen.getByText('취소'));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(calls.some((c) => c.url === '/api/restart')).toBe(false);
@@ -243,5 +245,52 @@ describe('ServerUpdateChip', () => {
     fireEvent.click(screen.getByText('재시작'));
     await flush();
     expect(screen.getByRole('alert').textContent).toBe('관리자 없이 실행 중');
+  });
+
+  it('draining under a supervisor: 재시작 대기 · N chip; 작업 끊고 지금 재시작 → confirm → POST {force:true}', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const f = vi.fn(async (url: string, init?: RequestInit) => { calls.push({ url, init }); return url === '/api/restart' ? new Response('{"ok":true,"draining":true,"forced":true}', { status: 200 }) : upd(1); });
+    const activity = [act1({ running: true, bg: 1 })];
+    const { rerender } = render(<ServerUpdateChip ready draining={false} activity={activity} fetchFn={f as unknown as typeof fetch} />);
+    await flush();
+    expect(screen.getByTestId('update-chip')).toBeTruthy();
+    rerender(<ServerUpdateChip ready draining activity={activity} fetchFn={f as unknown as typeof fetch} />);
+    expect(screen.queryByTestId('update-chip')).toBeNull();
+    const chip = screen.getByTestId('drain-chip');
+    expect(chip.querySelector('.chip-short')!.textContent).toBe('재시작 대기 · 2');
+    expect(chip.querySelector('.chip-long')!.textContent).toBe('작업 끊고 지금 재시작');
+    fireEvent.click(chip);
+    const dialog = screen.getByRole('dialog', { name: '재시작 대기 중' });
+    expect(dialog.textContent).toContain('재시작 대기 중 · 작업 2개');
+    expect(dialog.textContent).toContain(RESTART_WAIT_WARNING);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '작업 끊고 지금 재시작' }));
+    expect(screen.getByRole('dialog').textContent).toContain('진행 중인 턴과 백그라운드 작업(데모 서버 등)이 중단됩니다');
+    expect(FORCE_RESTART_WARNING).toBe('진행 중인 턴과 백그라운드 작업(데모 서버 등)이 중단됩니다');
+    // 취소 closes without posting.
+    fireEvent.click(screen.getByText('취소'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(calls.some((c) => c.url === '/api/restart')).toBe(false);
+    fireEvent.click(screen.getByTestId('drain-chip'));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '작업 끊고 지금 재시작' }));
+    fireEvent.click(screen.getByText('중단하고 재시작'));
+    await flush();
+    expect(calls.filter((c) => c.url === '/api/restart').map((c) => [c.init?.method, c.init?.body])).toEqual([['POST', '{"force":true}']]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('draining: no force chip unsupervised; a refused force shows the server message', async () => {
+    render(<ServerUpdateChip ready draining activity={[]} fetchFn={(async () => upd(1, false)) as unknown as typeof fetch} />);
+    await flush();
+    expect(screen.queryByTestId('drain-chip')).toBeNull();
+    cleanup();
+    const f = async (url: string) => (url === '/api/restart' ? new Response(JSON.stringify({ error: '재시작 대기 중이 아니라' }), { status: 400 }) : upd(0));
+    render(<ServerUpdateChip ready draining activity={[]} fetchFn={f as unknown as typeof fetch} />);
+    await flush();
+    expect(screen.getByTestId('drain-chip').querySelector('.chip-short')!.textContent).toBe('재시작 중…');
+    fireEvent.click(screen.getByTestId('drain-chip'));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '작업 끊고 지금 재시작' }));
+    fireEvent.click(screen.getByText('중단하고 재시작'));
+    await flush();
+    expect(screen.getByRole('alert').textContent).toBe('재시작 대기 중이 아니라');
   });
 });

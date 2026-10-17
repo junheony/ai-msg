@@ -108,6 +108,21 @@ describe('installGracefulShutdown', () => {
     expect(exits).toEqual(['UI 재시작:drained']);
   });
 
+  it('force: nothing when not draining; while draining it aborts and exits now like a second signal', () => {
+    const h = host();
+    const calls: string[] = [];
+    const target: DrainTarget = { drain: () => calls.push('drain'), activeTurns: () => 1, abortAll: () => calls.push('abort') };
+    const exits: string[] = [];
+    const g = installGracefulShutdown(h, target, { maxMs: Infinity, pollMs: 1, sleep: () => new Promise(() => {}), exit: (r) => exits.push(r) });
+    expect(g.force('UI 강제 재시작')).toBe(false);
+    expect(g.draining()).toBe(false);
+    expect(calls).toEqual([]);
+    g.request('UI 재시작');
+    expect(g.force('UI 강제 재시작')).toBe(true);
+    expect(calls).toEqual(['drain', 'drain', 'abort']);
+    expect(exits).toEqual(['UI 강제 재시작']);
+  });
+
   it('onDrain runs once when a graceful drain starts', () => {
     const h = host();
     let drains = 0;

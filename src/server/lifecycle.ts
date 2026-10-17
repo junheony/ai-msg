@@ -63,9 +63,11 @@ export type SignalHost = { on(sig: NodeJS.Signals, fn: () => void): unknown };
 /**
  * Wires the signals: SIGTERM/SIGUSR2 → drain then `exit`; a repeat or SIGINT → abort now and `exit`.
  * `exit` runs once (it closes sockets/timers and ends the process). `request` starts the same drain without a signal
- * (지금 재시작 in the UI); while already draining it does nothing (unlike a repeated signal).
+ * (지금 재시작 in the UI); while already draining it does nothing (unlike a repeated signal). `force` is the repeated
+ * signal without a signal (작업 끊고 지금 재시작): while draining it aborts what is left and exits now, returning true;
+ * not draining, it does nothing and returns false.
  */
-export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void; onDrain?: () => void }): { draining: () => boolean; request: (reason: string) => void } {
+export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void; onDrain?: () => void }): { draining: () => boolean; request: (reason: string) => void; force: (reason: string) => boolean } {
   let draining = false;
   let exited = false;
   const log = o.log ?? (() => {});
@@ -86,5 +88,9 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
   host.on('SIGTERM', () => graceful('SIGTERM'));
   host.on('SIGUSR2', () => graceful('SIGUSR2'));
   host.on('SIGINT', () => now('SIGINT'));
-  return { draining: () => draining, request: (reason) => { if (!draining) graceful(reason); } };
+  return {
+    draining: () => draining,
+    request: (reason) => { if (!draining) graceful(reason); },
+    force: (reason) => { if (!draining) return false; graceful(reason); return true; },
+  };
 }
