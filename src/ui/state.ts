@@ -422,6 +422,8 @@ export type Action =
   /** deck 에서 새 GPT 세션으로 이어가기: GPT turn `turnId` failed (thread held by another app) — the pane opens a new GPT session, the excerpt prefilled. No server round trip. */
   | { type: 'codex_handoff'; turnId: string; paneId?: string }
   | { type: 'grokbot_handoff'; paneId?: string }
+  /** 작업 폴더 바꾸기 before the first send of a new (not yet created) session — the Grok Bot handoff's folder. Refuses '' and the Grok Bot conversations' home folder. */
+  | { type: 'set_new_cwd'; cwd: string; paneId?: string }
   | { type: 'set_model'; model: ModelChoice; paneId?: string; /** false: put back without marking it picked (갈래 거절 되돌리기) */ picked?: boolean }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
@@ -1015,18 +1017,41 @@ function codexHandoff(pane: PaneState, turnId: string): PaneState {
   };
 }
 
+/** The Grok Bot conversations' folder (the home folder: the app has no project) — never a new session's cwd. */
+function grokBotHome(projects: ProjectEntry[], fallback?: string): string | undefined {
+  for (const pr of projects) for (const e of pr.sessions) if (e.source === 'grokbot') return e.cwd;
+  return fallback;
+}
+
+/** The Grok Bot handoff's default folder: the most recently used project that is not `home`, has a real (non-Grok Bot) session and still exists; '' when there is none. */
+export function grokBotHandoffCwd(projects: ProjectEntry[], home: string): string {
+  let best = '';
+  let at = -Infinity;
+  for (const pr of projects) {
+    if (!pr.cwd || pr.cwd === home) continue;
+    for (const e of pr.sessions) {
+      if (e.source === 'grokbot' || e.cwdMissing || e.lastModified <= at) continue;
+      best = pr.cwd;
+      at = e.lastModified;
+    }
+  }
+  return best;
+}
+
 /**
- * deck Grok 새 세션으로 이어가기: the pane shows a read-only Grok Bot app conversation. It opens a new deck Grok session in
- * the same folder, titled "<old title> (이어서)", with an excerpt of the conversation in the composer — sent only when the
- * user does. Same resets as codexHandoff. Not a Grok Bot conversation: unchanged.
+ * deck Grok 새 세션으로 이어가기: the pane shows a read-only Grok Bot app conversation. It opens a new deck Grok session,
+ * titled "<old title> (이어서)", with an excerpt of the conversation in the composer — sent only when the user does. The
+ * folder is never the Grok Bot conversation's own (the home folder): the most recent other project, shown and changeable
+ * (set_new_cwd) before the send; '' when there is none (the pane asks for one). Same resets as codexHandoff. Not a Grok
+ * Bot conversation: unchanged.
  */
-function grokBotHandoff(pane: PaneState): PaneState {
+function grokBotHandoff(pane: PaneState, projects: ProjectEntry[]): PaneState {
   const s = pane.session;
   if (!s?.sessionId?.startsWith('grokbot-')) return pane;
   const model = isGrokModel(pane.model) ? pane.model : DEFAULT_GROK_MODEL;
   return {
     ...pane,
-    session: { sessionId: null, cwd: s.cwd, account: null, title: handoffTitle(s.title), engine: 'grok', sandbox: null },
+    session: { sessionId: null, cwd: grokBotHandoffCwd(projects, grokBotHome(projects, s.cwd)!), account: null, title: handoffTitle(s.title), engine: 'grok', sandbox: null },
     engine: 'grok', model,
     items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [],
     queue: pane.queue.filter((q) => !isHeld(q)), queuePaused: pane.queuePaused || pane.queue.some((q) => !isHeld(q)),
@@ -1344,9 +1369,14 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'grokbot_handoff': {
       const p = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
-      const next = p ? grokBotHandoff(p) : p;
+      const next = p ? grokBotHandoff(p, state.projects) : p;
       if (!p || !next || next === p) return state;
       return { ...state, panes: state.panes.map((x) => (x.id === p.id ? next : x)) };
+    }
+    case 'set_new_cwd': {
+      const cwd = action.cwd.trim();
+      if (!cwd || cwd === grokBotHome(state.projects)) return state;
+      return updatePane(state, action.paneId, (p) => (p.session && p.session.sessionId === null ? { ...p, session: { ...p.session, cwd } } : p));
     }
     case 'route_fit_resolve': return updatePane(state, action.paneId, (p) => {
       const f = p.routeFit;

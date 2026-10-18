@@ -121,8 +121,11 @@ export type TurnRunnerDeps = {
   grokUsage?: { noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: { inputTokens: number; outputTokens: number }; cooldownUntilMs: number | null; /** The turn's `_x.ai/billing` read, when it had one. */ billing?: GrokBilling }): void } | null;
   /** Null/absent = no `grok` binary. main binds runGrokTurn to the binary and x1's GROK_HOME; tests inject a fake. */
   grok?: { run: (req: GrokTurnRequest) => AsyncIterable<EngineEvent> } | null;
-  /** Processes outside deck holding a Grok session (by id: refused) or running in its folder (a warning); absent = no check. */
-  holders?: { grokHeldBy?(sessionId: string): unknown; grokCwdHeld?(cwd: string): boolean } | null;
+  /**
+   * Processes outside deck holding a Grok session (by id: refused) or running in its folder (a warning); absent = no check.
+   * `refresh({ force: true })` rescans before a send to a Grok session decides on it (a failed scan keeps the last answer).
+   */
+  holders?: { grokHeldBy?(sessionId: string): unknown; grokCwdHeld?(cwd: string): boolean | Promise<boolean>; refresh?(opts?: { force?: boolean }): Promise<boolean> } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
   attachments: AttachmentStore | null;
   codexSessionsRoot: string;
@@ -1372,6 +1375,13 @@ export class TurnRunner {
     }
     let state: SessionState | null = null;
     let notice: string | null = null;
+    // Who holds a Grok session is decided on a scan made now, not on the poll's cached one (once per send).
+    let holdersFresh = false;
+    const freshHolders = async () => {
+      if (holdersFresh) return;
+      holdersFresh = true;
+      await deps.holders?.refresh?.({ force: true }).catch(() => false);
+    };
     if (p.fork && !p.sessionId) {
       // 메시지 편집 갈래: a Claude session only (Codex / Gemini cannot resume at an entry).
       const st = deps.store.get(p.fork.from);
@@ -1391,9 +1401,10 @@ export class TurnRunner {
       if (imported && imported.source === 'grokbot') { sink.emit({ type: 'error', turnId: p.turnId, message: GROKBOT_SEND_REFUSED }); return; }
       if (imported && imported.engine === 'grok') {
         // A Grok CLI session (design §3.1): held by a terminal grok (by id) or folder gone → refused; else resumed with session/load.
+        await freshHolders();
         const blocked = await grokImportBlockReason(imported, deps.holders);
         if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
-        const effort = (p.effort ?? imported.grokEffort ?? DEFAULT_EFFORT.grok) as Effort;
+        const effort: Effort = p.effort ?? imported.grokEffort ?? DEFAULT_EFFORT.grok;
         state = {
           engine: 'grok', account: 'x1', sessionId: imported.sessionId, grokSessionId: imported.sessionId,
           cwd: imported.cwd, canonicalCwd: await fs.realpath(imported.cwd).catch(() => path.resolve(imported.cwd)),
@@ -1402,10 +1413,11 @@ export class TurnRunner {
           lastTurnAtMs: null, justCompacted: false, createdAtMs: this.now(), title: imported.title,
         };
         const age = await deps.index.importActiveAgeMs(imported.sessionId, this.now());
-        if (age !== null || deps.holders?.grokCwdHeld?.(imported.cwd)) notice = elsewhereNotice({ engine: 'grok', title: imported.title === '(제목 없음)' ? null : imported.title, ageMs: age ?? 0 });
+        if (age !== null || (await deps.holders?.grokCwdHeld?.(imported.cwd))) notice = elsewhereNotice({ engine: 'grok', title: imported.title === '(제목 없음)' ? null : imported.title, ageMs: age ?? 0 });
       } else if (imported && imported.engine === 'gemini') {
-        // An agy conversation: resumed with --conversation <id> (its past messages are not replayed in deck).
-        const blocked = await importBlockReason(imported);
+        // An agy conversation: resumed with --conversation <id> (its past messages are not replayed in deck). One agy is
+        // running right now (RUNNING, written within LIVE_ROLLOUT_MS): refused like a held Grok session.
+        const blocked = (await deps.index.importHeldReason(imported.sessionId, this.now())) ?? (await importBlockReason(imported));
         if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
         state = {
           engine: 'gemini', account: isGeminiAccount(imported.account) ? imported.account : 'g1', sessionId: imported.sessionId, cwd: imported.cwd,
@@ -1437,6 +1449,7 @@ export class TurnRunner {
     if (p.commanderHop !== undefined && state && (isOtherEngineState(state))) { sink.emit({ type: 'error', turnId: p.turnId, message: COMMANDER_ENGINE_REFUSED }); return; }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
     // A terminal grok resumed this very session (its id in the arguments): both writing would fork it (imports design §4.1).
+    if (state && isGrokState(state)) await freshHolders();
     if (state && isGrokState(state) && deps.holders?.grokHeldBy?.(state.sessionId)) { sink.emit({ type: 'error', turnId: p.turnId, message: GROK_HELD_NOTICE }); return; }
     // §10-4: a Gemini / Grok session checks every turn whether its engine can do it (Claude / GPT can do anything).
     if (state && (isGeminiState(state) || isGrokState(state)) && !p.ignoreFit) {

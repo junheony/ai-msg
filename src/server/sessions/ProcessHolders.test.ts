@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { ProcessHolders, isGrokCli, parseGrokHolders, parseHolders, parseLsofCwds } from './ProcessHolders';
 
 const A = 'aa000000-0000-4000-8000-000000000001';
@@ -162,15 +165,74 @@ describe('Grok holders', () => {
     expect(await h.refresh()).toBe(true);
     expect(h.grokHeldBy(G)).toBe('other');
     expect(h.grokHeldBy(G.slice(0, 10))).toBeNull();
-    expect(h.grokCwdHeld('/work/a')).toBe(true);
-    expect(h.grokCwdHeld('/work/b')).toBe(false);
+    expect(await h.grokCwdHeld('/work/a')).toBe(true);
+    expect(await h.grokCwdHeld('/work/b')).toBe(false);
     expect(lsofCalls).toEqual([[100]]);
     ps = '1 0 launchd';
     lsofCalls = [];
     now = 10;
     expect(await h.refresh()).toBe(true);
     expect(h.grokHeldBy(G)).toBeNull();
-    expect(h.grokCwdHeld('/work/a')).toBe(false);
+    expect(await h.grokCwdHeld('/work/a')).toBe(false);
     expect(lsofCalls).toEqual([]);
+  });
+
+  it('force: rescans inside the ttl (a send to a Grok session); a failed forced scan keeps the last answer', async () => {
+    let ps: () => Promise<string> = async () => `100 1 grok --resume ${G}`;
+    let calls = 0;
+    const h = new ProcessHolders({ pid: DECK, ttlMs: 60_000, now: () => 0, ps: () => { calls++; return ps(); }, lsof: async () => '' });
+    expect(await h.refresh()).toBe(true);
+    ps = async () => '1 0 launchd';
+    expect(await h.refresh()).toBe(false);
+    expect(h.grokHeldBy(G)).toBe('other');
+    expect(calls).toBe(1);
+    expect(await h.refresh({ force: true })).toBe(true);
+    expect(h.grokHeldBy(G)).toBeNull();
+    expect(calls).toBe(2);
+    ps = async () => `100 1 grok --resume ${G}`;
+    await h.refresh({ force: true });
+    ps = async () => { throw new Error('ps gone'); };
+    expect(await h.refresh({ force: true })).toBe(false);
+    expect(h.grokHeldBy(G)).toBe('other');
+  });
+
+  it('a forced refresh shares a scan already in flight', async () => {
+    let calls = 0;
+    let release: (v: string) => void = () => {};
+    const h = new ProcessHolders({ pid: DECK, ttlMs: 60_000, now: () => 0, ps: () => { calls++; return new Promise((r) => { release = r; }); }, lsof: async () => '' });
+    const a = h.refresh();
+    const b = h.refresh({ force: true });
+    release(`100 1 grok --resume ${G}`);
+    expect(await a).toBe(true);
+    expect(await b).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it('a grok folder that came or went alone counts as a change', async () => {
+    let cwd = 'n/work/a';
+    let now = 0;
+    const h = new ProcessHolders({ pid: DECK, ttlMs: 1, now: () => now, ps: async () => `100 1 grok --resume ${G}`, lsof: async () => `p100\n${cwd}\n` });
+    expect(await h.refresh()).toBe(true);
+    now = 10;
+    expect(await h.refresh()).toBe(false);
+    cwd = 'n/work/b';
+    now = 20;
+    expect(await h.refresh()).toBe(true);
+    expect(await h.grokCwdHeld('/work/b')).toBe(true);
+  });
+
+  it('grokCwdHeld matches through a symlinked path (lsof reports the real one)', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-holders-')));
+    try {
+      const real = path.join(base, 'real');
+      await fs.mkdir(real);
+      await fs.symlink(real, path.join(base, 'link'));
+      const h = new ProcessHolders({ pid: DECK, ps: async () => `100 1 grok --resume ${G}`, lsof: async () => `p100\nn${real}\n` });
+      await h.refresh();
+      expect(await h.grokCwdHeld(path.join(base, 'link'))).toBe(true);
+      expect(await h.grokCwdHeld(path.join(base, 'other'))).toBe(false);
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
   });
 });

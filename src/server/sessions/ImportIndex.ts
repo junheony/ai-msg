@@ -9,6 +9,8 @@ export interface ImportIndex {
   lookup(id: string): SessionEntry | null;
   /** How long ago it was written outside deck, if within LIVE_ROLLOUT_MS; else null. */
   activeAgeMs(id: string, nowMs?: number): Promise<number | null>;
+  /** Why deck must not continue it now because the other app is running it (rescanned first), or null. Absent = never. */
+  heldReason?(id: string, nowMs?: number): Promise<string | null>;
 }
 
 /** The single-flight refresh CodexRolloutIndex uses: one scan at a time, plus at most one more after it. */

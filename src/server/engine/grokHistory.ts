@@ -45,10 +45,16 @@ export async function findGrokSessionDir(grokHome: string, sessionId: string): P
 
 export type GrokTranscriptOptions = { maxMessages?: number; maxToolResultChars?: number };
 
-/** The last `maxBytes` of a Grok `chat_history.jsonl` as transcript messages (a cut first / half-written last line is skipped). */
+/** Rejects anything at `file` but a regular file (a symlink is never followed). */
+async function regularFile(file: string): Promise<void> {
+  if (!(await fs.lstat(file)).isFile()) throw new Error(`not a regular file: ${path.basename(file)}`);
+}
+
+/** The last `maxBytes` of a Grok `chat_history.jsonl` as transcript messages (a cut first / half-written last line is skipped; anything but a regular file throws). */
 export async function readGrokTranscriptTail(file: string, maxBytes = 16 * 1024 * 1024, opts: GrokTranscriptOptions = {}): Promise<TranscriptMessage[]> {
   const maxMessages = opts.maxMessages ?? 200;
   const maxTool = opts.maxToolResultChars ?? 8192;
+  await regularFile(file);
   const fh = await fs.open(file, 'r');
   let text: string;
   try {
@@ -95,6 +101,7 @@ export async function readGrokTranscriptTail(file: string, maxBytes = 16 * 1024 
 
 /** The first user prompt's first line (80 chars) in the first `maxBytes` of a `chat_history.jsonl`: a title fallback. */
 export async function readGrokFirstPrompt(file: string, maxBytes = 2 * 1024 * 1024): Promise<string | null> {
+  if (!(await regularFile(file).then(() => true, () => false))) return null;
   const stream = createReadStream(file, { encoding: 'utf8', start: 0, end: maxBytes - 1 });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   try {

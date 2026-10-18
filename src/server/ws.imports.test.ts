@@ -9,7 +9,7 @@ import type { SessionEntry } from '../shared/session-types';
 import { cookieValueFor } from './auth';
 import { StubEngine } from './engine/StubEngine';
 import { createRequestHandler } from './http';
-import { GROKBOT_READONLY_NOTICE } from './sessions/GrokBotImports';
+import { GROKBOT_READONLY_NOTICE, GROKBOT_SEND_REFUSED } from './sessions/GrokBotImports';
 import { GROK_HELD_NOTICE } from './sessions/GrokImports';
 import type { ImportIndex } from './sessions/ImportIndex';
 import { SessionIndex } from './sessions/SessionIndex';
@@ -57,7 +57,7 @@ beforeAll(async () => {
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
   api = attachWebSocket([server], {
     token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [base], accounts,
-    holders: { refresh: async () => false, grokHeldBy: (id) => (id === 'g-held' ? 'other' : null), grokCwdHeld: () => false },
+    holders: { refresh: async () => false, grokHeldBy: (id) => (id === 'g-held' ? 'other' : null), grokCwdHeld: async () => false },
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   host = `127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -84,6 +84,7 @@ async function client() {
 }
 type History = Extract<ServerMessage, { type: 'history' }>;
 type Notice = Extract<ServerMessage, { type: 'turn_notice' }>;
+type Err = Extract<ServerMessage, { type: 'error' }>;
 
 describe('ws: open_session for conversations made outside deck', () => {
   it('a Grok CLI session: its chat_history as history, engine grok', async () => {
@@ -115,6 +116,41 @@ describe('ws: open_session for conversations made outside deck', () => {
     c.say({ type: 'open_session', sessionId: 'grokbot-a' });
     expect(await c.until<History>((m) => m.type === 'history' && m.sessionId === 'grokbot-a')).toMatchObject({ engine: 'grok', messages: [] });
     expect(await c.until<Notice>((m) => m.type === 'turn_notice' && m.sessionId === 'grokbot-a')).toMatchObject({ message: GROKBOT_READONLY_NOTICE });
+    c.ws.close();
+  });
+});
+
+describe('ws: a Grok Bot conversation is never written to', () => {
+  const errors = (got: ServerMessage[]) => got.filter((m): m is Err => m.type === 'error');
+  const nothingRan = (got: ServerMessage[]) => expect(got.some((m) => m.type === 'turn_started' || m.type === 'turn_result')).toBe(false);
+
+  it('send, its retry (new ref, other model) and a resend of the same ref are all refused; nothing runs', async () => {
+    const c = await client();
+    c.say({ type: 'send', sessionId: 'grokbot-a', cwd: work, text: '이어서', clientRef: 'gb-1' });
+    await c.until((m) => m.type === 'error' && m.message === GROKBOT_SEND_REFUSED);
+    c.say({ type: 'send', sessionId: 'grokbot-a', cwd: work, text: '이어서', model: 'grok-4.7', clientRef: 'gb-2' });
+    await c.until(() => errors(c.got).length >= 2);
+    c.say({ type: 'send', sessionId: 'grokbot-a', cwd: work, text: '이어서', clientRef: 'gb-1' });
+    await c.until(() => errors(c.got).length >= 3);
+    expect(errors(c.got).map((m) => m.message)).toEqual([GROKBOT_SEND_REFUSED, GROKBOT_SEND_REFUSED, expect.any(String)]);
+    await new Promise((r) => setTimeout(r, 50));
+    nothingRan(c.got);
+    c.ws.close();
+  });
+
+  it('복제 (duplicate_session) is refused', async () => {
+    const c = await client();
+    c.say({ type: 'duplicate_session', sessionId: 'grokbot-a' });
+    expect(await c.until<Err>((m) => m.type === 'error')).toMatchObject({ sessionId: 'grokbot-a', message: 'Grok Bot 대화는 복제할 수 없어요 — deck Grok 새 세션으로 이어가기를 쓰세요' });
+    c.ws.close();
+  });
+
+  it('새 세션으로 이어가기 (handoff) is refused: only Claude conversations hand off', async () => {
+    const c = await client();
+    c.say({ type: 'send', sessionId: 'grokbot-a', cwd: work, text: 'x', handoff: true, clientRef: 'gb-h' });
+    expect(await c.until<Err>((m) => m.type === 'error')).toMatchObject({ message: '이어서 새 세션은 Claude 대화에서만 돼요' });
+    await new Promise((r) => setTimeout(r, 50));
+    nothingRan(c.got);
     c.ws.close();
   });
 });

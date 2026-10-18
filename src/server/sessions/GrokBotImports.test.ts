@@ -48,6 +48,22 @@ describe('blob names', () => {
     await write('sand-secrets.json', roster([row()]));
     expect(await readBlob(path.join(dir, 'sand-secrets.json'), 'roster')).toBeNull();
   });
+
+  it('an allowlisted name that is a symlink (or a directory) is never followed: not read, not listed', async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-grokbot-out-'));
+    try {
+      await fs.writeFile(path.join(outside, 'target.json'), JSON.stringify(roster([row()])));
+      await fs.symlink(path.join(outside, 'target.json'), path.join(dir, blobName('roster.last-roster')));
+      await fs.mkdir(path.join(dir, blobName('weekly-usage.cache')));
+      expect(await readBlob(path.join(dir, blobName('roster.last-roster')), 'roster')).toBeNull();
+      expect(await readBlob(path.join(dir, blobName('weekly-usage.cache')), 'usage')).toBeNull();
+      const idx = new GrokBotIndex(dir, '/home/test');
+      await idx.refresh();
+      expect(idx.list()).toEqual([]);
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('GrokBotIndex', () => {

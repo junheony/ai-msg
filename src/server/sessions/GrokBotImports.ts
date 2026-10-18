@@ -61,9 +61,10 @@ export function classifyBlob(fileName: string): { kind: GrokBotBlobKind; agentId
 
 const warned = new Set<string>();
 
-/** An allowed blob's `value` when its `schemaVersion` is known; null otherwise (unknown version: one log line per kind). Refuses any file name off the allowlist. */
+/** An allowed blob's `value` when its `schemaVersion` is known; null otherwise (unknown version: one log line per kind). Refuses any file name off the allowlist, and anything but a regular file (a symlink is never followed). */
 export async function readBlob(file: string, kind: GrokBotBlobKind, log: (m: string) => void = (m) => console.log(m)): Promise<unknown> {
   if (classifyBlob(path.basename(file))?.kind !== kind) return null;
+  if (!(await fs.lstat(file).then((st) => st.isFile(), () => false))) return null;
   let r: Rec | null;
   try { r = rec(JSON.parse(await fs.readFile(file, 'utf8'))); } catch { return null; }
   if (!r) return null;
@@ -76,10 +77,10 @@ export async function readBlob(file: string, kind: GrokBotBlobKind, log: (m: str
 
 type Blobs = { rosters: string[]; transcripts: Map<string, string>; usage: string[] };
 
-/** The allowed blobs in `dir` (one readdir; nothing is opened). */
+/** The allowed blobs in `dir` that are regular files (one readdir; nothing is opened, symlinks are left out). */
 async function listBlobs(dir: string): Promise<Blobs | null> {
   let names: string[];
-  try { names = await fs.readdir(dir); } catch { return null; }
+  try { names = (await fs.readdir(dir, { withFileTypes: true })).filter((d) => d.isFile()).map((d) => d.name); } catch { return null; }
   const out: Blobs = { rosters: [], transcripts: new Map(), usage: [] };
   for (const n of names) {
     const c = classifyBlob(n);

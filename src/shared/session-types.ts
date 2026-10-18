@@ -1,6 +1,6 @@
 import type { Seat } from './accounts';
 import type { BranchLink } from './branches';
-import type { CodexSandbox, EngineKind } from './models';
+import type { CodexSandbox, Effort, EngineKind } from './models';
 import type { ContextUsage } from './turn-types';
 
 /** Who else has a Claude session open: Claude Desktop's own CLI process, or another one (a terminal `claude --resume`). */
@@ -46,7 +46,7 @@ export type SessionEntry = {
   autoRun?: boolean;
   /** An imported Grok CLI session's last model / effort (`summary.json`): the defaults when deck continues it. */
   grokModel?: string;
-  grokEffort?: string;
+  grokEffort?: Effort;
   /** Where an imported entry comes from when `engine` alone does not say: `grokbot` = the Grok Bot app (engine 'grok', read-only). */
   source?: 'grokbot';
   /** View only: deck can never send in this conversation (Grok Bot). */

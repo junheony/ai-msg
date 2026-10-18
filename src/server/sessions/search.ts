@@ -3,6 +3,8 @@ import type { Seat } from '../../shared/accounts';
 import type { EngineKind } from '../../shared/models';
 import type { SessionEntry, TranscriptMessage } from '../../shared/session-types';
 import { readCodexTranscript } from '../engine/codexRollout';
+import { readGrokTranscriptTail } from '../engine/grokHistory';
+import { readGrokBotTranscript } from './GrokBotImports';
 import { readTranscript } from './transcript';
 
 export type SearchHit = {
@@ -36,7 +38,12 @@ export type SearchOptions = {
   maxCharsPerSession?: number;
   readClaude?: (file: string) => Promise<TranscriptMessage[]>;
   readCodex?: (file: string) => Promise<TranscriptMessage[]>;
+  readGrok?: (file: string) => Promise<TranscriptMessage[]>;
+  readGrokBot?: (file: string) => Promise<TranscriptMessage[]>;
 };
+
+/** A Grok `chat_history.jsonl` is read from its end, at most this much (a long CLI session can grow past the file cap). */
+const GROK_TAIL_BYTES = 16 * 1024 * 1024;
 
 const SNIPPET_BEFORE = 60;
 const SNIPPET_AFTER = 120;
@@ -57,16 +64,26 @@ export class TranscriptSearch {
     this.maxChars = opts.maxCharsPerSession ?? 2_000_000;
   }
 
+  /** The reader for the session's own format: Claude / Codex / Grok CLI / Grok Bot; null = not searched (agy's db is never opened in place). */
+  private reader(s: SessionEntry): ((file: string) => Promise<TranscriptMessage[]>) | null {
+    if (s.source === 'grokbot') return this.opts.readGrokBot ?? readGrokBotTranscript;
+    switch (s.engine ?? 'claude') {
+      case 'codex': return this.opts.readCodex ?? ((f) => readCodexTranscript(f));
+      case 'grok': return this.opts.readGrok ?? ((f) => readGrokTranscriptTail(f, GROK_TAIL_BYTES, { maxMessages: Number.POSITIVE_INFINITY, maxToolResultChars: 0 }));
+      case 'gemini': return null;
+      default: return this.opts.readClaude ?? ((f) => readTranscript(f, { maxMessages: Number.POSITIVE_INFINITY, maxToolResultChars: 0 }));
+    }
+  }
+
   private async docs(s: SessionEntry): Promise<Doc[] | 'too-large' | null> {
-    if (!s.file) return null;
+    const read = this.reader(s);
+    if (!s.file || !read) return null;
     let st: import('node:fs').Stats;
     try { st = await fs.stat(s.file); } catch { return null; }
-    if (st.size > this.maxFileBytes) return 'too-large';
+    // A Grok CLI history is read from its end only: no file is too large for it.
+    if (st.size > this.maxFileBytes && s.engine !== 'grok') return 'too-large';
     const hit = this.cache.get(s.file);
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.docs;
-    const read = s.engine === 'codex'
-      ? (this.opts.readCodex ?? ((f) => readCodexTranscript(f)))
-      : (this.opts.readClaude ?? ((f) => readTranscript(f, { maxMessages: Number.POSITIVE_INFINITY, maxToolResultChars: 0 })));
     let messages: TranscriptMessage[];
     try { messages = await read(s.file); } catch { return null; }
     const docs: Doc[] = [];

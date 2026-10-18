@@ -318,7 +318,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const viewing = new Map<WebSocket, Set<string>>();
   const view = (ws: WebSocket, sessionId: string) => { let s = viewing.get(ws); if (!s) { s = new Set(); viewing.set(ws, s); } s.add(sessionId); };
   /** Sidebar listing: profile scan + deck-created Codex sessions (D4). */
-  const projects = () => deps.index.projects(deps.store.codexEntries());
+  /** Sessions deck started whose CLI named them but whose first turn has not stored them yet (`new:` busy key still held). */
+  const ownUnstored = () => [...turns.values()].flatMap((t) => (t.sessionId && busy.get(`new:${t.turnId}`) === t.turnId ? [t.sessionId] : []));
+  const projects = () => deps.index.projects(deps.store.codexEntries(), { own: ownUnstored() });
   const pinList = () => deps.pins?.list() ?? [];
   const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList(), desktop: deps.index.desktop() });
 
@@ -427,9 +429,19 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     return queuedRescan;
   };
 
-  /** Rescans who else holds sessions open (cached a few seconds); the index goes out again only when a holder came or went. */
-  const syncHolders = () => {
-    void deps.holders?.refresh().then((changed) => { if (changed) { deps.index.regroup(); broadcast(indexMsg()); } }).catch(() => undefined);
+  /** A Grok session deck can send in (its own, or an imported Grok CLI one — not a Grok Bot conversation). */
+  const isGrokTarget = (id: string) => {
+    const st = deps.store.get(id);
+    if (st) return isGrokState(st);
+    const e = deps.index.importOf(id);
+    return e?.engine === 'grok' && e.source !== 'grokbot';
+  };
+  /**
+   * Rescans who else holds sessions open (cached a few seconds; `force`: now — a send to a Grok session, whose runner
+   * joins this scan before deciding); the index goes out again only when a holder came or went.
+   */
+  const syncHolders = (force = false) => {
+    void deps.holders?.refresh(force ? { force } : undefined).then((changed) => { if (changed) { deps.index.regroup(); broadcast(indexMsg()); } }).catch(() => undefined);
   };
   /**
    * Per socket and Claude session it views: when its history was last sent (entries another process wrote after that are
@@ -711,7 +723,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
     // A socket that closed while its send waited (foreign-write check, recycle) still gets its message run; it just views nothing.
     if (msg.sessionId && clients.has(ws)) view(ws, msg.sessionId);
-    if (!checked) syncHolders();
+    if (!checked) syncHolders(!!msg.sessionId && isGrokTarget(msg.sessionId));
     // The client's correlation id rides this send's turn_started and every error refusing the send (which pane sent it).
     const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
     const hop = retryHop ? { retryHop } : {};
@@ -1168,11 +1180,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (imported && imported.engine === 'grok') {
         view(ws, sessionId);
         const messages = await readGrokTranscriptTail(imported.file).catch(() => []);
-        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'x1', engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL, ...(imported.grokEffort ? { sessionEffort: imported.grokEffort as never } : {}), messages, ...runningOf(sessionId) });
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'x1', engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL, ...(imported.grokEffort ? { sessionEffort: imported.grokEffort } : {}), messages, ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t) replay(ws, t, sessionId);
         const age = await deps.index.importActiveAgeMs(sessionId);
-        if (age !== null || deps.holders?.grokCwdHeld?.(imported.cwd)) note(elsewhereNotice({ engine: 'grok', title: untitled(imported.title), ageMs: age ?? 0 }));
+        if (age !== null || (await deps.holders?.grokCwdHeld?.(imported.cwd))) note(elsewhereNotice({ engine: 'grok', title: untitled(imported.title), ageMs: age ?? 0 }));
         const blocked = await grokImportBlockReason(imported, deps.holders);
         if (blocked) note(blocked);
         return;
@@ -1185,7 +1197,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         if (t) replay(ws, t, sessionId);
         const age = await deps.index.importActiveAgeMs(sessionId);
         if (age !== null) note(elsewhereNotice({ engine: 'gemini', title: untitled(imported.title), ageMs: age }));
-        const blocked = await importBlockReason(imported);
+        const blocked = (await deps.index.importHeldReason(sessionId)) ?? (await importBlockReason(imported));
         if (blocked) note(blocked);
         return;
       }

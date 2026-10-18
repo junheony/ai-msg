@@ -434,6 +434,11 @@ export class SessionIndex {
     return owner.lookup(id);
   }
 
+  /** Why an imported conversation cannot be continued while its own app runs it (agy RUNNING), else null. */
+  async importHeldReason(id: string, nowMs = Date.now()): Promise<string | null> {
+    return (await this.ownerOf(id)?.heldReason?.(id, nowMs)) ?? null;
+  }
+
   /** How long ago an imported conversation was written outside deck (within 2 min), else null. */
   async importActiveAgeMs(id: string, nowMs = Date.now()): Promise<number | null> {
     return (await this.ownerOf(id)?.activeAgeMs(id, nowMs)) ?? null;
@@ -475,12 +480,14 @@ export class SessionIndex {
    * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice;
    * if Codex has since archived it (its newest rollout is in archived_sessions), deck's entry is archived too.
    * `all`: headless sessions deck does not know are included (search, file lookup) — the sidebar leaves them out.
+   * `own`: ids of sessions deck started that are not stored yet (a new session's first turn still running): an import
+   * list that already sees them (agy's db) does not list them as made outside deck.
    */
-  projects(extra: SessionEntry[] = [], opts: { all?: boolean } = {}): ProjectEntry[] {
+  projects(extra: SessionEntry[] = [], opts: { all?: boolean; own?: Iterable<string> } = {}): ProjectEntry[] {
     extra = this.codexOwned(extra);
     const all = this.codex?.list() ?? [];
     const archivedInCodex = new Set(all.filter((e) => e.codexArchived).map((e) => e.sessionId));
-    const own = new Set(extra.map((e) => e.sessionId));
+    const own = new Set([...extra.map((e) => e.sessionId), ...(opts.own ?? [])]);
     const mine = archivedInCodex.size ? extra.map((e) => (archivedInCodex.has(e.sessionId) ? { ...e, archived: true, codexArchived: true } : e)) : extra;
     const imports = [...all, ...this.others.flatMap((x) => x.list())].filter((e) => !own.has(e.sessionId));
     if (opts.all) return this.group([...this.entries, ...mine, ...imports], true);

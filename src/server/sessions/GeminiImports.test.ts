@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { GeminiConversationIndex, SUMMARIES_DB, geminiRowToEntry, parseGeminiTime, snapshotSqlite, type GeminiRow } from './GeminiImports';
+import { GEMINI_RUNNING_NOTICE, GeminiConversationIndex, SUMMARIES_DB, geminiRowToEntry, parseGeminiTime, snapshotSqlite, type GeminiRow } from './GeminiImports';
 
 let base: string;
 let state: string;
@@ -95,6 +95,34 @@ describe('GeminiConversationIndex', () => {
     await idx.refresh();
     expect(idx.lookup('c1')).toMatchObject({ account: 'g2' });
     expect(await idx.activeAgeMs('c1', 0)).toBe(0);
+  });
+
+  it('heldReason: a RUNNING row touched within 2 minutes refuses (rescanned first); an older RUNNING or an idle one does not', async () => {
+    const t = Date.parse('2026-10-18T01:02:03.456Z');
+    makeDb([row({ status: 'CASCADE_RUN_STATUS_RUNNING' }), row({ conversation_id: 'c-idle' })]).close();
+    const idx = new GeminiConversationIndex([{ account: 'g1', dir: state }], tmp, undefined, undefined, () => {});
+    expect(await idx.heldReason('c1', t + 60_000)).toBe(GEMINI_RUNNING_NOTICE);
+    expect(await idx.heldReason('c1', t + 3 * 60_000)).toBeNull();
+    expect(await idx.activeAgeMs('c1', t + 3 * 60_000)).toBe(0);
+    expect(await idx.heldReason('c-idle', t + 1000)).toBeNull();
+    expect(await idx.heldReason('nope', t)).toBeNull();
+  });
+
+  it('a db torn copy after copy logs each reason once, again only after a good read', async () => {
+    makeDb([row()]).close();
+    const logs: string[] = [];
+    let torn = true;
+    const idx = new GeminiConversationIndex([{ account: 'g1', dir: state }], tmp, undefined, async (src, root) => (torn ? null : snapshotSqlite(src, root)), (m) => logs.push(m));
+    const touch = async (k: number) => fs.utimes(path.join(state, SUMMARIES_DB), new Date(), new Date(Date.now() + k * 5000));
+    for (let k = 1; k <= 3; k++) { await touch(k); await idx.refresh(); }
+    expect(logs).toHaveLength(1);
+    torn = false;
+    await touch(4);
+    await idx.refresh();
+    torn = true;
+    await touch(5);
+    await idx.refresh();
+    expect(logs).toHaveLength(2);
   });
 
   it('no db: empty', async () => {

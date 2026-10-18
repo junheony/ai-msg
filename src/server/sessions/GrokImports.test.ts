@@ -32,6 +32,17 @@ describe('readGrokSummary', () => {
     const bad = await session('s2', { info: { id: 's2', cwd: 'rel' } });
     expect(await readGrokSummary(bad)).toBeNull();
   });
+
+  it('reasoning_effort: only an effort Grok takes from deck is kept (case-insensitive); max / NONE / junk are dropped', async () => {
+    for (const [v, want] of [['xhigh', 'xhigh'], ['HIGH', 'high'], ['max', null], ['NONE', null], ['', null], [3, null], [null, null]] as const) {
+      const dir = await session(`e-${String(v)}`, { reasoning_effort: v });
+      expect((await readGrokSummary(dir))?.effort).toBe(want);
+    }
+    await session('weird', { reasoning_effort: 'max' });
+    const idx = new GrokSessionIndex(home, undefined, undefined, quiet);
+    await idx.refresh();
+    expect(idx.lookup('weird')).not.toHaveProperty('grokEffort');
+  });
 });
 
 describe('GrokSessionIndex', () => {

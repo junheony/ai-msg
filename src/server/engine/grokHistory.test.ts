@@ -70,3 +70,15 @@ describe('findGrokSessionDir', () => {
     expect(await findGrokSessionDir(path.join(base, 'none'), 'sess-1')).toBeNull();
   });
 });
+
+describe('symlinked chat_history.jsonl', () => {
+  it('is never followed: the tail read throws and the title fallback is null', async () => {
+    const real = path.join(base, 'real.jsonl');
+    await fs.writeFile(real, `${JSON.stringify({ type: 'user', content: '비밀' })}\n`);
+    const link = path.join(base, 'chat_history.jsonl');
+    await fs.symlink(real, link);
+    await expect(readGrokTranscriptTail(link)).rejects.toThrow(/regular file/);
+    expect(await readGrokFirstPrompt(link)).toBeNull();
+    expect(await readGrokFirstPrompt(real)).toBe('비밀');
+  });
+});

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { isEffort, type Effort } from '../../shared/models';
 import type { SessionEntry } from '../../shared/session-types';
 import { GROK_SESSION_ID_RE } from '../engine/GrokEngine';
 import { readGrokFirstPrompt } from '../engine/grokHistory';
@@ -11,16 +12,20 @@ const rec = (v: unknown): Rec | null => (v && typeof v === 'object' && !Array.is
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
 const UNTITLED = '(제목 없음)';
+const effortOf = (v: unknown): Effort | null => { const s = str(v)?.toLowerCase(); return isEffort(s) ? s : null; };
 
 export const GROK_HELD_NOTICE = '터미널에서 grok 이 이 대화를 열고 있어 이어서 보낼 수 없음 — 그쪽 grok 을 끝낸 뒤 다시 보내세요';
 
 /** What `summary.json` says about a Grok CLI session (only what the list needs). */
 export type GrokHead = {
   id: string; cwd: string; title: string | null; updatedMs: number | null; createdMs: number | null;
-  numChatMessages: number | null; model: string | null; effort: string | null; grokHome: string | null; kind: string | null;
+  numChatMessages: number | null; model: string | null; effort: Effort | null; grokHome: string | null; kind: string | null;
 };
 
-/** `summary.json` of a session dir; null when it is unreadable, half-written or not a Grok session summary. */
+/**
+ * `summary.json` of a session dir; null when it is unreadable, half-written or not a Grok session summary. `reasoning_effort`
+ * is kept only when it is one Grok takes from deck (GROK_EFFORT: low / medium / high / xhigh); anything else is dropped.
+ */
 export async function readGrokSummary(dir: string): Promise<GrokHead | null> {
   let r: Rec | null;
   try { r = rec(JSON.parse(await fs.readFile(path.join(dir, 'summary.json'), 'utf8'))); } catch { return null; }
@@ -35,7 +40,7 @@ export async function readGrokSummary(dir: string): Promise<GrokHead | null> {
     title: str(r.generated_title) ?? str(r.session_summary)?.split('\n')[0]?.slice(0, 80) ?? null,
     updatedMs: ms(r.updated_at) ?? ms(r.last_active_at), createdMs: ms(r.created_at),
     numChatMessages: typeof r.num_chat_messages === 'number' ? r.num_chat_messages : null,
-    model: str(r.current_model_id), effort: str(r.reasoning_effort), grokHome: str(r.grok_home), kind: str(r.session_kind),
+    model: str(r.current_model_id), effort: effortOf(r.reasoning_effort), grokHome: str(r.grok_home), kind: str(r.session_kind),
   };
 }
 

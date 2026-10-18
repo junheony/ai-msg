@@ -1,29 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { codexHandoffExcerpt, grokBotHandoffMessage } from '../shared/handoff';
 import type { ServerMessage } from '../shared/protocol';
-import type { SessionEntry } from '../shared/session-types';
+import type { ProjectEntry, SessionEntry } from '../shared/session-types';
 import { deleteBlockedReason } from './components/SessionMenu';
 import { grokBotTags, importTitle } from './components/Sidebar';
 import { grokBotLine } from './components/UsagePanel';
-import { initialState, reducer, type AppState } from './state';
+import { grokBotHandoffCwd, initialState, reducer, type AppState } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 const play = (msgs: ServerMessage[], start: AppState) => msgs.reduce((s, msg) => reducer(s, { type: 'server', msg }), start);
 
+const e = (over: Partial<SessionEntry>): SessionEntry => ({ sessionId: 'x', account: 'x1', engine: 'grok', cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 0, imported: true, ...over });
+const proj = (cwd: string, sessions: SessionEntry[]): ProjectEntry => ({ cwd, name: cwd, pinned: false, sessions });
+
 describe('reducer: deck Grok 새 세션으로 이어가기 (grokbot_handoff)', () => {
-  const opened = () => {
-    const s = reducer(initialState, { type: 'open', sessionId: 'grokbot-a', cwd: '/h', title: '여행 계획' });
+  // The Grok Bot conversation lives in the home folder '/h'; '/w/new' is the most recent other project, '/w/gone' is gone.
+  const projects = [
+    proj('/h', [e({ sessionId: 'grokbot-a', source: 'grokbot', cwd: '/h', lastModified: 9 }), e({ sessionId: 'c-home', engine: 'claude', imported: false, cwd: '/h', lastModified: 8 })]),
+    proj('/w/old', [e({ sessionId: 'c-old', engine: 'claude', imported: false, cwd: '/w/old', lastModified: 2 })]),
+    proj('/w/new', [e({ sessionId: 'c-new', engine: 'claude', imported: false, cwd: '/w/new', lastModified: 5 })]),
+    proj('/w/gone', [e({ sessionId: 'g-gone', cwd: '/w/gone', cwdMissing: true, lastModified: 7 })]),
+  ];
+  const opened = (ps: ProjectEntry[] = projects) => {
+    const s = reducer({ ...initialState, projects: ps }, { type: 'open', sessionId: 'grokbot-a', cwd: '/h', title: '여행 계획' });
     return play([{ type: 'history', sessionId: 'grokbot-a', cwd: '/h', account: 'x1', engine: 'grok', sandbox: null, runningTurnId: null, messages: [
       { kind: 'user', text: '도쿄 가고 싶어', ts: null },
       { kind: 'assistant', text: '언제 갈까요?', model: null, toolCalls: [], ts: null },
     ] }], s);
   };
 
-  it('opens a new deck Grok session in the same folder with the excerpt prefilled; nothing is sent', () => {
+  it('opens a new deck Grok session in the most recent non-home project with the excerpt prefilled; nothing is sent', () => {
     const before = opened();
     const s = reducer(before, { type: 'grokbot_handoff', paneId: pane(before).id });
     const p = pane(s);
-    expect(p.session).toMatchObject({ sessionId: null, cwd: '/h', title: '여행 계획 (이어서)', engine: 'grok', sandbox: null });
+    expect(p.session).toMatchObject({ sessionId: null, cwd: '/w/new', title: '여행 계획 (이어서)', engine: 'grok', sandbox: null });
     expect(p.engine).toBe('grok');
     expect(p.items).toEqual([]);
     expect(p.awaitingStart).toBe(false);
@@ -33,13 +43,29 @@ describe('reducer: deck Grok 새 세션으로 이어가기 (grokbot_handoff)', (
     expect(p.prefill).toContain('**Grok:** 언제 갈까요?');
   });
 
+  it('never the home folder: no other project leaves the folder empty (the pane asks for one)', () => {
+    const before = opened([projects[0]!]);
+    expect(pane(reducer(before, { type: 'grokbot_handoff', paneId: pane(before).id })).session?.cwd).toBe('');
+    expect(grokBotHandoffCwd([projects[0]!, projects[3]!], '/h')).toBe('');
+  });
+
+  it('the folder can be changed before the first send; the home folder and an empty pick are refused, a created session is untouched', () => {
+    const before = opened();
+    const s = reducer(before, { type: 'grokbot_handoff', paneId: pane(before).id });
+    const id = pane(s).id;
+    const picked = reducer(s, { type: 'set_new_cwd', cwd: '/w/old', paneId: id });
+    expect(pane(picked).session?.cwd).toBe('/w/old');
+    expect(pane(picked).prefill).toBe(pane(s).prefill);
+    expect(reducer(picked, { type: 'set_new_cwd', cwd: '/h', paneId: id })).toBe(picked);
+    expect(reducer(picked, { type: 'set_new_cwd', cwd: '  ', paneId: id })).toBe(picked);
+    expect(pane(reducer(before, { type: 'set_new_cwd', cwd: '/w/old', paneId: id })).session?.cwd).toBe('/h');
+  });
+
   it('not a Grok Bot conversation: unchanged', () => {
     const s = play([{ type: 'history', sessionId: 'X1', cwd: '/w', account: 'x1', engine: 'grok', sandbox: null, runningTurnId: null, messages: [] }], reducer(initialState, { type: 'open', sessionId: 'X1', cwd: '/w', title: 't' }));
     expect(reducer(s, { type: 'grokbot_handoff', paneId: pane(s).id })).toBe(s);
   });
 });
-
-const e = (over: Partial<SessionEntry>): SessionEntry => ({ sessionId: 'x', account: 'x1', engine: 'grok', cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 0, imported: true, ...over });
 
 describe('import rows', () => {
   it('Grok Bot tags: app, awaiting reply, unread, group, read-only', () => {

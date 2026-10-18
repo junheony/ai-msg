@@ -8,6 +8,8 @@ import { isTempCwd, LIVE_ROLLOUT_MS } from './CodexImports';
 import { singleFlight, type ImportIndex } from './ImportIndex';
 
 const UNTITLED = '(제목 없음)';
+export const GEMINI_RUNNING_NOTICE = 'agy 가 이 대화를 실행 중이라 이어서 보낼 수 없음 — agy 쪽 작업이 끝난 뒤 다시 보내세요';
+const isRunning = (row: GeminiRow) => /_RUNNING$/.test(row.status ?? '');
 export const SUMMARIES_DB = 'conversation_summaries.db';
 
 export { GEMINI_IMPORT_NOTE } from '../../shared/handoff';
@@ -111,6 +113,8 @@ export class GeminiConversationIndex implements ImportIndex {
   private rows = new Map<string, { row: GeminiRow; entry: SessionEntry }[]>();
   private byId = new Map<string, { row: GeminiRow; entry: SessionEntry }>();
   private entries: SessionEntry[] = [];
+  /** Reasons already logged since the last good read (a db being written tears copy after copy: one line each). */
+  private logged = new Set<string>();
   readonly refresh: () => Promise<void>;
 
   constructor(
@@ -130,10 +134,11 @@ export class GeminiConversationIndex implements ImportIndex {
       if (stamp.startsWith('-|')) { this.rows.delete(dir); this.stamps.delete(dir); continue; }
       if (this.stamps.get(dir) === stamp) continue;
       const snap = await this.snapshot(db, this.tmpRoot);
-      if (!snap) { this.log('gemini imports: copy changed while reading, keeping the last list'); continue; }
+      if (!snap) { this.logOnce('gemini imports: copy changed while reading, keeping the last list'); continue; }
       try {
         const rows = await readSummaries(snap.db, this.sqlite);
-        if (!rows) { this.log('gemini imports: summaries unreadable (sqlite missing or torn copy), keeping the last list'); continue; }
+        if (!rows) { this.logOnce('gemini imports: summaries unreadable (sqlite missing or torn copy), keeping the last list'); continue; }
+        this.logged.clear();
         const gone = new Map<string, boolean>();
         for (const r of rows) { const c = cwdOf(r.workspace_uris); if (c && !gone.has(c)) gone.set(c, !(await fs.stat(c).then((s) => s.isDirectory(), () => false))); }
         this.rows.set(dir, rows.flatMap((row) => { const entry = geminiRowToEntry(row, account, db, (c) => gone.get(c) ?? true); return entry ? [{ row, entry }] : []; }));
@@ -146,6 +151,12 @@ export class GeminiConversationIndex implements ImportIndex {
     this.entries = [...this.byId.values()].map((x) => x.entry);
   }
 
+  private logOnce(msg: string): void {
+    if (this.logged.has(msg)) return;
+    this.logged.add(msg);
+    this.log(msg);
+  }
+
   list(): SessionEntry[] {
     return this.entries;
   }
@@ -154,11 +165,24 @@ export class GeminiConversationIndex implements ImportIndex {
     return this.byId.get(id)?.entry ?? null;
   }
 
+  /**
+   * GEMINI_RUNNING_NOTICE while agy runs the conversation now: RUNNING and written within LIVE_ROLLOUT_MS, read after a
+   * rescan (cheap when the db did not change). An older RUNNING is a run that died without saying so: only the warning
+   * (activeAgeMs) stands.
+   */
+  async heldReason(id: string, nowMs = Date.now()): Promise<string | null> {
+    await this.refresh().catch(() => undefined);
+    const x = this.byId.get(id);
+    if (!x || !isRunning(x.row)) return null;
+    const t = parseGeminiTime(x.row.last_modified_time);
+    return t !== null && nowMs - t < LIVE_ROLLOUT_MS ? GEMINI_RUNNING_NOTICE : null;
+  }
+
   /** 0 while agy reports the conversation running; else the age of `last_modified_time` when within LIVE_ROLLOUT_MS. */
   async activeAgeMs(id: string, nowMs = Date.now()): Promise<number | null> {
     const x = this.byId.get(id);
     if (!x) return null;
-    if (x.row.not_fully_idle || /_RUNNING$/.test(x.row.status ?? '')) return 0;
+    if (x.row.not_fully_idle || isRunning(x.row)) return 0;
     const t = parseGeminiTime(x.row.last_modified_time);
     return t !== null && nowMs - t < LIVE_ROLLOUT_MS ? Math.max(0, nowMs - t) : null;
   }

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs/promises';
 import type { SessionHolder } from '../../shared/session-types';
 
 // `--resume=<id>`, `--resume <id>` and the short `-r <id>`.
@@ -167,26 +168,37 @@ export class ProcessHolders {
     return this.grok.tokens.has(sessionId) ? 'other' : null;
   }
 
-  /** A `grok` outside deck runs in this folder (which session is unknown): a warning only. */
-  grokCwdHeld(cwd: string): boolean {
-    return this.grokCwds.has(cwd.normalize('NFC'));
+  /**
+   * A `grok` outside deck runs in this folder (which session is unknown): a warning only. lsof reports real paths, so
+   * `cwd` is compared as given and as its real path (`/tmp/x` vs `/private/tmp/x`).
+   */
+  async grokCwdHeld(cwd: string): Promise<boolean> {
+    if (!this.grokCwds.size) return false;
+    if (this.grokCwds.has(cwd.normalize('NFC'))) return true;
+    const real = await fs.realpath(cwd).catch(() => null);
+    return real !== null && this.grokCwds.has(real.normalize('NFC'));
   }
 
-  /** Rescans unless the last scan is fresh. True when a holder came, went or changed kind. Never throws. */
-  refresh(): Promise<boolean> {
+  /**
+   * Rescans unless the last scan is fresh (`force`: whatever its age — a send to a Grok session decides on it). A scan
+   * already in flight is shared. True when a holder came, went or changed kind, or a grok's folder did. Never throws.
+   */
+  refresh(opts: { force?: boolean } = {}): Promise<boolean> {
     if (this.scan) return this.scan;
-    if (this.now() - this.at < this.ttlMs) return Promise.resolve(false);
+    if (!opts.force && this.now() - this.at < this.ttlMs) return Promise.resolve(false);
     // A failed / timed-out `ps` says nothing about who holds what: the last scan's answer stands, "unchanged".
     this.scan = this.ps()
       .then(async (text) => {
         const next = parseHolders(text, this.self);
         const grok = parseGrokHolders(text, this.self);
+        // No lsof when no grok runs; a failed lsof means "no folder known" (the cwd match only warns).
+        const cwds = grok.pids.length ? parseLsofCwds(await this.lsof(grok.pids).catch(() => '')) : new Set<string>();
+        const differ = (a: Set<string>, b: Set<string>) => a.size !== b.size || [...a].some((t) => !b.has(t));
         const changed = next.size !== this.held.size || [...next].some(([id, kind]) => this.held.get(id) !== kind)
-          || grok.tokens.size !== this.grok.tokens.size || [...grok.tokens].some((t) => !this.grok.tokens.has(t));
+          || differ(grok.tokens, this.grok.tokens) || differ(cwds, this.grokCwds);
         this.held = next;
         this.grok = grok;
-        // No lsof when no grok runs; a failed lsof means "no folder known" (the cwd match only warns).
-        this.grokCwds = grok.pids.length ? parseLsofCwds(await this.lsof(grok.pids).catch(() => '')) : new Set();
+        this.grokCwds = cwds;
         return changed;
       })
       .catch(() => false)

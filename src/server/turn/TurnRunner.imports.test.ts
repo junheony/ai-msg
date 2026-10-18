@@ -9,6 +9,7 @@ import type { GeminiTurnRequest } from '../engine/GeminiEngine';
 import type { GrokTurnRequest } from '../engine/GrokEngine';
 import { StubEngine } from '../engine/StubEngine';
 import { GROKBOT_SEND_REFUSED } from '../sessions/GrokBotImports';
+import { GEMINI_RUNNING_NOTICE } from '../sessions/GeminiImports';
 import { GROK_HELD_NOTICE } from '../sessions/GrokImports';
 import type { ImportIndex } from '../sessions/ImportIndex';
 import { SessionIndex } from '../sessions/SessionIndex';
@@ -38,11 +39,11 @@ const ok = (sid: string): EngineEvent[] => [
   { kind: 'result', sessionId: sid, ok: true, text: 'ok', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' },
 ];
 
-async function setup(lists: { grok?: SessionEntry[]; gemini?: SessionEntry[]; grokBot?: SessionEntry[]; age?: number | null }, over: Partial<TurnRunnerDeps> = {}) {
+async function setup(lists: { grok?: SessionEntry[]; gemini?: SessionEntry[]; grokBot?: SessionEntry[]; age?: number | null; geminiHeld?: string | null }, over: Partial<TurnRunnerDeps> = {}) {
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
   const index = new SessionIndex({
     roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'),
-    grokImports: list(lists.grok ?? [], lists.age ?? null), geminiImports: list(lists.gemini ?? [], lists.age ?? null), grokBotImports: list(lists.grokBot ?? []),
+    grokImports: list(lists.grok ?? [], lists.age ?? null), geminiImports: { ...list(lists.gemini ?? [], lists.age ?? null), ...(lists.geminiHeld !== undefined ? { heldReason: async () => lists.geminiHeld ?? null } : {}) }, grokBotImports: list(lists.grokBot ?? []),
   });
   await index.refresh();
   const store = new SessionStateStore(path.join(base, 'state.json'));
@@ -116,6 +117,26 @@ describe('TurnRunner: continuing an imported Grok CLI session', () => {
     expect(c.grokCalls).toHaveLength(1);
   });
 
+  it('the holder list is rescanned (TTL ignored) right before the send: a grok that just opened the session refuses it', async () => {
+    let holding = false;
+    const forced: unknown[] = [];
+    const c = await setup({ grok: [entry({ sessionId: 'g-1' })] }, { holders: { grokHeldBy: (id) => (holding && id === 'g-1' ? 'other' : null), refresh: async (opts) => { forced.push(opts); holding = true; return true; } } });
+    await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'g-1', text: 'x' }, c.sink);
+    expect(forced).toEqual([{ force: true }]);
+    expect(c.msgs).toEqual([{ type: 'error', turnId: 't1', message: GROK_HELD_NOTICE }]);
+    expect(c.grokCalls).toEqual([]);
+  });
+
+  it('a failed rescan keeps the last answer: held stays refused, free stays sendable', async () => {
+    const fail = async () => { throw new Error('ps failed'); };
+    const held = await setup({ grok: [entry({ sessionId: 'g-1' })] }, { holders: { grokHeldBy: () => 'other', refresh: fail } });
+    await held.runner.run({ turnId: 't1', cwd: work, sessionId: 'g-1', text: 'x' }, held.sink);
+    expect(held.msgs).toEqual([{ type: 'error', turnId: 't1', message: GROK_HELD_NOTICE }]);
+    const free = await setup({ grok: [entry({ sessionId: 'g-1' })] }, { holders: { grokHeldBy: () => null, refresh: fail } });
+    await free.runner.run({ turnId: 't1', cwd: work, sessionId: 'g-1', text: 'x' }, free.sink);
+    expect(free.grokCalls).toHaveLength(1);
+  });
+
   it('folder gone: refused with the cwd-missing notice', async () => {
     const c = await setup({ grok: [entry({ sessionId: 'g-1', cwd: path.join(base, 'gone'), cwdMissing: true })] });
     await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'g-1', text: 'x' }, c.sink);
@@ -135,7 +156,32 @@ describe('TurnRunner: continuing an imported agy conversation', () => {
   });
 });
 
+describe('TurnRunner: an agy conversation agy is running right now', () => {
+  it('refused with the running notice, no engine call, not stored', async () => {
+    const c = await setup({ gemini: [entry({ sessionId: 'conv-1', engine: 'gemini', account: 'g2', title: 'agy 대화' })], geminiHeld: GEMINI_RUNNING_NOTICE });
+    await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'conv-1', text: '계속' }, c.sink);
+    expect(c.msgs).toEqual([{ type: 'error', turnId: 't1', message: GEMINI_RUNNING_NOTICE }]);
+    expect(c.geminiCalls).toEqual([]);
+    expect(c.store.get('conv-1')).toBeFalsy();
+  });
+
+  it('an old RUNNING row (no held reason) only warns and goes through', async () => {
+    const c = await setup({ gemini: [entry({ sessionId: 'conv-1', engine: 'gemini', account: 'g2', title: 'agy 대화' })], age: 0, geminiHeld: null });
+    await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'conv-1', text: '계속' }, c.sink);
+    expect(c.geminiCalls).toHaveLength(1);
+    expect(c.msgs.find((m) => m.type === 'turn_notice')).toBeTruthy();
+  });
+});
+
 describe('SessionIndex: import lists', () => {
+  it('ids of running new-session turns count as deck\'s own: an agy rescan does not list them twice', async () => {
+    const c = await setup({ gemini: [entry({ sessionId: 'conv-new', engine: 'gemini', account: 'g1' }), entry({ sessionId: 'conv-1', engine: 'gemini', account: 'g1' })] });
+    const ids = (own?: string[]) => c.index.projects(c.store.codexEntries(), own ? { own } : undefined).flatMap((p) => p.sessions).map((s) => s.sessionId).sort();
+    expect(ids()).toEqual(['conv-1', 'conv-new']);
+    expect(ids(['conv-new'])).toEqual(['conv-1']);
+  });
+
+
   it('merges Grok / agy / Grok Bot imports into projects and drops ids deck owns', async () => {
     const c = await setup({ grok: [entry({ sessionId: 'g-1' })], gemini: [entry({ sessionId: 'conv-1', engine: 'gemini', account: 'g1' })], grokBot: [entry({ sessionId: 'grokbot-a', source: 'grokbot', readOnly: true })] });
     const ids = () => c.index.projects(c.store.codexEntries()).flatMap((p) => p.sessions).map((s) => [s.sessionId, !!s.imported]);
