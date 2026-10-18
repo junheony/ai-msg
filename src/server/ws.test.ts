@@ -654,23 +654,23 @@ describe('ws', () => {
     const pa = collect(a.ws, (m) => m.type === 'settings');
     const pb = collect(b.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: true }));
-    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 } });
-    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 } });
-    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 });
+    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false } });
+    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false } });
+    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false });
     const pc = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: false }));
-    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 } });
+    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false } });
     const pd = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', defaultPermissionMode: 'plan' }));
-    expect((await pd).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 } });
+    expect((await pd).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false } });
     const pe = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', routingPolicy: 'drain' }));
-    expect((await pe).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 } });
+    expect((await pe).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false } });
     expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8')).routingPolicy).toBe('drain');
     const pf = collect(b.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 }));
     // A commanderEnabled patch (총사령탑 토글) sends the feature list again: no 'commander' while it is off.
-    expect((await pf).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 }, features: expect.not.arrayContaining(['commander']) });
+    expect((await pf).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false }, features: expect.not.arrayContaining(['commander']) });
     expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8')).sameVendorRotation).toBe(true);
     a.ws.close(); b.ws.close();
   });
@@ -736,7 +736,8 @@ describe('ws', () => {
     expect(hello).not.toHaveProperty('gemini');
     const p = collect(ws, (m) => m.type === 'history');
     ws.send(JSON.stringify({ type: 'open_session', sessionId: GID }));
-    expect((await p).at(-1)).toMatchObject({ sessionId: GID, cwd: '/w/g', account: 'g2', engine: 'gemini', sandbox: 'read-only', messages: [] });
+    // The model 자동 (or the user) picked rides the history: a reopened pane keeps it instead of Gemini's default.
+    expect((await p).at(-1)).toMatchObject({ sessionId: GID, cwd: '/w/g', account: 'g2', engine: 'gemini', sandbox: 'read-only', sessionModel: 'gemini-pro', messages: [] });
     ws.close();
   });
 
@@ -749,7 +750,7 @@ describe('ws', () => {
     expect((hello as Extract<ServerMessage, { type: 'hello' }>).features).not.toContain('grok');
     const p = collect(ws, (m) => m.type === 'history');
     ws.send(JSON.stringify({ type: 'open_session', sessionId: XID }));
-    expect((await p).at(-1)).toMatchObject({ sessionId: XID, cwd: '/w/x', account: 'x1', engine: 'grok', permissionMode: 'acceptEdits', messages: [] });
+    expect((await p).at(-1)).toMatchObject({ sessionId: XID, cwd: '/w/x', account: 'x1', engine: 'grok', permissionMode: 'acceptEdits', sessionModel: 'grok-4.5', sessionEffort: 'high', messages: [] });
     ws.close();
   });
 
@@ -952,7 +953,7 @@ describe('multi-session viewing and Codex sessions (D4, D6)', () => {
     expect(hello?.type === 'hello' && hello.projects.flatMap((p) => p.sessions).find((s) => s.sessionId === tid)).toMatchObject({ account: 'gpt', engine: 'codex' });
     ws.send(JSON.stringify({ type: 'open_session', sessionId: tid }));
     const h = (await collect(ws, (m) => m.type === 'history')).at(-1);
-    expect(h).toMatchObject({ type: 'history', sessionId: tid, cwd: work, account: 'gpt', engine: 'codex', sandbox: 'read-only', runningTurnId: null });
+    expect(h).toMatchObject({ type: 'history', sessionId: tid, cwd: work, account: 'gpt', engine: 'codex', sandbox: 'read-only', sessionModel: 'gpt-6-sol', runningTurnId: null });
     expect(h && h.type === 'history' ? h.messages : []).toEqual([
       { kind: 'user', text: 'Reply with exactly: ok', ts: '2026-09-30T14:59:28.268Z' },
       { kind: 'assistant', text: 'ok', model: null, toolCalls: [], ts: null },

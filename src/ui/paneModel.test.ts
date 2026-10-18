@@ -67,18 +67,18 @@ describe('pane model: an existing session runs on its own default unless the use
     expect(sendOf(s)).not.toHaveProperty('model');
   });
 
-  it('a new session shows Fable and sends it; after its first send it keeps sending its model', () => {
+  it('a new session on the 자동 engine shows 자동 and sends it; after its first send it keeps sending its model', () => {
     let s = openExisting('sonnet');
     s = reducer(s, { type: 'open', sessionId: null, cwd: '/w', title: '새 세션' });
-    expect(pane(s).model).toBe('fable');
-    expect(sendOf(s)).toMatchObject({ sessionId: null, model: 'fable' });
+    expect(pane(s).model).toBe('auto');
+    expect(sendOf(s)).toMatchObject({ sessionId: null, model: 'auto' });
     s = reducer(s, { type: 'sent', text: 'hi', clientRef: 'r1' });
     expect(pane(s).modelPicked).toBe(true);
     // The id arrives; a later history keeps the pane's model and later sends carry it.
     s = { ...s, panes: s.panes.map((p) => ({ ...p, session: { ...p.session!, sessionId: 's9' }, awaitingStart: false })) };
     s = msg(s, history('s9', { sessionModel: 'opus' }));
-    expect(pane(s).model).toBe('fable');
-    expect(sendOf(s)).toMatchObject({ sessionId: 's9', model: 'fable' });
+    expect(pane(s).model).toBe('auto');
+    expect(sendOf(s)).toMatchObject({ sessionId: 's9', model: 'auto' });
   });
 
   it('a reload keeps the rule: an unpicked pane still sends no model, a picked one still sends its pick', () => {

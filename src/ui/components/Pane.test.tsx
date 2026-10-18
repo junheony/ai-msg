@@ -60,6 +60,9 @@ describe('Pane (D6)', () => {
       return <Pane pane={state.panes[0]!} app={state} active closable={false} dispatch={dispatch} send={() => {}} onClose={() => {}} />;
     }
     render(<Harness />);
+    // A new pane starts on 자동 (it may land on GPT, so the sandbox picker shows); Claude hides it.
+    expect((screen.getByTestId('engine-select') as HTMLSelectElement).value).toBe('auto');
+    fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'claude' } });
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
@@ -74,6 +77,8 @@ describe('Pane (D6)', () => {
     let s0: AppState = reducer(initialState, { type: 'add_pane' });
     s0 = reducer(s0, { type: 'open', sessionId: null, cwd: '/w', title: 'n0', paneId: 'p0' });
     s0 = reducer(s0, { type: 'open', sessionId: null, cwd: '/w', title: 'n1', paneId: 'p1' });
+    // New panes start on 자동; this test is about Fable's effort.
+    for (const paneId of ['p0', 'p1']) s0 = reducer(s0, { type: 'set_model', model: 'fable', picked: false, paneId });
     s0 = { ...s0, codexAvailable: true };
     const frames: ClientMessage[] = [];
     function Harness() {
@@ -259,6 +264,18 @@ describe('Pane: Esc stops the running turn from anywhere in the pane', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('a closed usage popover still in the DOM (aria-hidden="true") does not take the Esc: the turn stops', () => {
+    const send = mount();
+    const pop = document.createElement('div');
+    pop.setAttribute('role', 'tooltip');
+    pop.setAttribute('aria-hidden', 'true');
+    pop.style.display = 'none';
+    document.body.append(pop);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    pop.remove();
+    expect(send).toHaveBeenCalledWith({ type: 'interrupt', turnId: 't1' });
+  });
+
   it('focus outside the pane (top bar, sidebar) keeps Esc away from the turn', () => {
     const send = mount();
     const btn = document.createElement('button');
@@ -345,5 +362,46 @@ describe('Pane: the socket is down', () => {
     fireEvent.click(screen.getByText('취소'));
     expect(state().panes[0]!.awaitingStart).toBe(false);
     expect((screen.getByPlaceholderText(/메시지/) as HTMLTextAreaElement).value).toBe('hello');
+  });
+});
+
+describe('Pane: route_fit card (자동 분배)', () => {
+  afterEach(cleanup);
+
+  it('shows 이 작업은 … 가 필요합니다; 그래도 보내기 resends the held message with ignoreFit', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    s = reducer(s, { type: 'set_engine', engine: 'grok', paneId: 'p0' });
+    s = reducer(s, { type: 'sent', text: '스크린샷 봐줘', paneId: 'p0', clientRef: 'r1', attachments: [{ id: 'a1', name: 'x.png', isImage: true }] });
+    s = reducer(s, { type: 'server', msg: { type: 'route_fit', turnId: 't1', sessionId: null, engine: 'grok', need: '이미지 입력', clientRef: 'r1' } });
+    const sent: ClientMessage[] = [];
+    function Harness() {
+      const [state, dispatch] = useReducer(reducer, s);
+      return <Pane pane={state.panes[0]!} app={state} active closable={false} dispatch={dispatch} send={(m) => { sent.push(m); }} onClose={() => {}} />;
+    }
+    render(<Harness />);
+    expect(screen.getByTestId('route-fit').textContent).toContain('이 작업은 이미지 입력 가 필요합니다');
+    fireEvent.click(screen.getByTestId('route-fit-send'));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: 'send', sessionId: null, text: '스크린샷 봐줘', engine: 'grok', attachments: ['a1'], ignoreFit: true });
+    expect(screen.queryByTestId('route-fit')).toBeNull();
+    expect(screen.getAllByText('스크린샷 봐줘')).toHaveLength(1);
+  });
+});
+
+describe('Pane: route_fit 그래도 보내기 double click (review #8)', () => {
+  afterEach(cleanup);
+
+  it('a second click on the same card (before the pane re-renders without it) sends nothing more', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    s = reducer(s, { type: 'set_engine', engine: 'grok', paneId: 'p0' });
+    s = reducer(s, { type: 'sent', text: '스크린샷 봐줘', paneId: 'p0', clientRef: 'r1' });
+    s = reducer(s, { type: 'server', msg: { type: 'route_fit', turnId: 't1', sessionId: null, engine: 'grok', need: '이미지 입력', clientRef: 'r1' } });
+    const sent: ClientMessage[] = [];
+    // The reducer's update has not reached this render yet: the card is still there for the second click.
+    render(<Pane pane={s.panes[0]!} app={s} active closable={false} dispatch={() => {}} send={(m) => { sent.push(m); }} onClose={() => {}} />);
+    const btn = screen.getByTestId('route-fit-send');
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    expect(sent).toHaveLength(1);
   });
 });

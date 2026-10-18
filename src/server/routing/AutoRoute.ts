@@ -239,10 +239,17 @@ function geminiState(l: GeminiLimits, model: AnyModel, nowMs: number): EngineCap
   const group: GeminiGroup = model === 'gemini-flash' ? 'flash' : 'pro';
   const name = group === 'pro' ? 'Gemini Pro' : 'Gemini Flash';
   if (stale(l.observedAtMs, nowMs)) return cap('unknown', l.observedAtMs === null ? `${name} 관측 없음` : `${name} 관측 ${ageMin(l.observedAtMs, nowMs)}분 전`);
-  const known = l.seats.filter((s) => s.enabled).map((s) => s.remainingPct[group]).filter((x): x is number => typeof x === 'number');
+  const enabled = l.seats.filter((s) => s.enabled);
+  const known = enabled.map((s) => s.remainingPct[group]).filter((x): x is number => typeof x === 'number');
   if (known.length === 0) return cap('unknown', `${name} 잔여량 모름`);
   const best = Math.max(...known);
-  return best < GEMINI_MIN_REMAINING_PCT ? cap('blocked', `${name} 남은 ${best}%`) : cap('ok', `${name} 남은 ${best}%`);
+  if (best < GEMINI_MIN_REMAINING_PCT) {
+    // review #6: a logged-in seat with no number of its own (not in cooldown) is unknown, not a 0 — one blocked (or
+    // cooling) seat does not speak for a seat deck has no data on.
+    if (enabled.some((s) => typeof s.remainingPct[group] !== 'number')) return cap('unknown', `${name} 잔여량 모름(계정별 다름)`);
+    return cap('blocked', `${name} 남은 ${best}%`);
+  }
+  return cap('ok', `${name} 남은 ${best}%`);
 }
 
 function grokState(l: GrokLimits, nowMs: number): EngineCapacity {
@@ -344,7 +351,7 @@ function engineDefault(engine: EngineKind, d: TaskDifficulty, grok: GrokModel): 
 }
 
 /** The closest supported effort at or below `want`. */
-function clampEffort(model: AnyModel, want: Effort): Effort {
+export function clampEffort(model: AnyModel, want: Effort): Effort {
   const allowed = MODEL_EFFORTS[model];
   for (let i = EFFORTS.indexOf(want); i >= 0; i--) {
     const e = EFFORTS[i] as Effort;
@@ -439,6 +446,13 @@ export function chooseRoute(i: RouteInput): RouteDecision {
     if (engine === 'claude') {
       const a = claudeAuto();
       return route({ engine, model: a.model }, ['Claude 지정', ...a.notes], [], { fit });
+    }
+    // review #5: the picked engine is not even available (not installed / not logged in) — unlike a merely capacity-
+    // blocked engine (cooldown, quota), there is no way to run it at all: fall back to Claude, as before, reason shown.
+    const missing = available(engine, i.limits);
+    if (missing) {
+      const a = claudeAuto();
+      return route({ engine: 'claude', model: a.model }, [`${ENGINE_LABEL[engine]} 지정`, missing, ...a.notes]);
     }
     const column = cellOf(task, grok, claudeAuto()).filter((c) => c.engine === engine).map((c) => ({ engine: c.engine, model: c.model }));
     const cands = column.length > 0 ? column : [{ engine, model: engineDefault(engine, task.difficulty, grok) }];

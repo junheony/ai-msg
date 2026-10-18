@@ -106,7 +106,7 @@ export const DEFAULT_EFFORT: Record<EngineKind, Effort> = { claude: 'high', code
  * (routing/AutoModel); later turns keep that model. Never a mid-session switch (prompt cache).
  */
 export type ModelChoice = AnyModel | 'auto';
-export const AUTO_MODEL_INFO = { name: '자동', description: '첫 턴 내용으로 Sonnet · Opus · Fable 중 선택' } as const;
+export const AUTO_MODEL_INFO = { name: '자동', description: '첫 턴 내용과 남은 한도로 엔진·모델 선택 (Claude·GPT·Gemini·Grok)' } as const;
 /** Effort 자동 uses when the user did not set one explicitly. */
 export const AUTO_EFFORT: Record<ClaudeModel, Effort> = { sonnet: 'medium', opus: 'high', fable: 'high' };
 
@@ -138,7 +138,7 @@ export function isGrokModel(x: unknown): x is GrokModel {
 /** Fable (7d) usage at or above this is not Fable-eligible (routing) and downgrades to Opus (model policy). */
 export const FABLE_MAX_PCT = 80;
 
-/** Spec §4.3: the engine is fixed per session; 'auto' is resolved once when the session is created (Claude or GPT, never Gemini or Grok). */
+/** Spec §4.3: the engine is fixed per session; 'auto' is resolved once when the session is created (chooseRoute: Claude, GPT, or — enabled and consented in settings — Gemini / Grok). */
 export type EngineKind = 'claude' | 'codex' | 'gemini' | 'grok';
 export type EngineChoice = EngineKind | 'auto';
 

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UsagePanel, agoText, bucketLabel, countdown, creditsText, fullestWindow, geminiHint, observedText, resetStamp, shortCountdown } from './UsagePanel';
-import type { UsageSnapshot } from '../../shared/usage-types';
+import { localDay, type GrokUsage, type UsageSnapshot } from '../../shared/usage-types';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const usage: UsageSnapshot = {
@@ -37,44 +37,44 @@ describe('UsagePanel', () => {
 
   it('no Gemini card without the seat; with it, one row per bucket, the lowest remaining as the summary, current when a Gemini session is active', () => {
     const { unmount } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
-    expect(screen.queryByTestId('account-gemini')).toBeNull();
+    expect(screen.queryByTestId('account-g1')).toBeNull();
     unmount();
     const g = { status: 'ok' as const, fetchedAt: new Date(NOW - 60_000).toISOString(), loggedIn: true, error: null, buckets: [
       { name: 'gemini-4-argon', usedPct: 27, resetsAt: new Date(NOW + 2 * 3_600_000 + 10 * 60_000).toISOString() },
       { name: 'gemini-3.8-flash', usedPct: 96, resetsAt: null },
     ] };
     render(<UsagePanel usage={{ ...usage, gemini: g }} current="g1" now={NOW} />);
-    const card = screen.getByTestId('account-gemini');
+    const card = screen.getByTestId('account-g1');
     expect(card.className).toContain('gemini');
     expect(card.className).toContain('current');
     expect(card.className).toContain('ok');
     expect(card.title).toBe('');
+    // Popover rows, one per bucket (always in the DOM — see SeatCard — so these are queryable without a click).
     expect(screen.getByTestId('g1-b0').textContent).toContain('4 Argon');
     expect(screen.getByTestId('g1-b0').textContent).toContain('73%');
     expect(screen.getByTestId('g1-b0').textContent).toContain('2시간 10분');
     expect(screen.getByTestId('g1-b1').textContent).toContain('3.8 Flash');
     expect(screen.getByTestId('g1-b1').className).toContain('danger');
-    expect(screen.queryByTestId('g1-b1-cd')).toBeNull(); // the fullest bucket has no reset time → no short countdown
-    expect(screen.queryByTestId('g1-b0-cd')).toBeNull(); // only the fullest bucket would carry one
-    expect(card.querySelector('.usage-sum')!.textContent).toBe('4%');
-    expect(card.querySelector('.usage-sum')!.className).toContain('danger');
-    expect(card.querySelector('[style*="--usage-cards"]')).toBeNull();
+    // The main row picks the fullest bucket (b1, 96% used → 4% left); it has no reset time, so no short countdown.
+    expect(card.querySelector('.usage-main')!.textContent).toContain('4');
+    expect(card.querySelector('.usage-main')!.className).toContain('danger');
+    expect(card.querySelector('.usage-cd')).toBeNull();
     expect((card.parentElement as HTMLElement).style.getPropertyValue('--usage-cards')).toBe('5');
   });
 
   it('a logged-out Gemini seat shows the login hint and a dash; a stale read shows the reason', () => {
     const out = { status: 'down' as const, fetchedAt: null, loggedIn: false, buckets: [], error: 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인' };
     const { unmount } = render(<UsagePanel usage={{ ...usage, gemini: out }} current={null} now={NOW} />);
-    const card = screen.getByTestId('account-gemini');
+    const card = screen.getByTestId('account-g1');
     expect(card.title).toContain('agy 실행');
     expect(card.className).toContain('down');
-    expect(screen.getByTestId('g1-none').textContent).toContain('—');
-    expect(screen.getByTestId('g1-none').textContent).toContain('로그인');
-    expect(card.querySelector('.usage-sum')!.textContent).toBe('—');
+    // No buckets at all: the main row becomes the login-hint text (reasonLine), same height as a bar would be.
+    expect(screen.getByTestId('g1-main').textContent).toContain('로그인');
+    expect(card.querySelector('.usage-secondary')!.textContent).toBe(' ');
     unmount();
     const stale = { status: 'stale' as const, fetchedAt: null, loggedIn: true, buckets: [{ name: 'x', usedPct: 10, resetsAt: null }], error: 'agy /usage 실패 (exit 1)' };
     render(<UsagePanel usage={{ ...usage, gemini: stale }} current={null} now={NOW} />);
-    expect(screen.getByTestId('account-gemini').title).toBe('Gemini 사용량 오래된 값 — agy /usage 실패 (exit 1)');
+    expect(screen.getByTestId('account-g1').title).toBe('Gemini 사용량 오래된 값 — agy /usage 실패 (exit 1)');
     expect(geminiHint({ ...stale, status: 'down', error: null })).toBe('Gemini 사용량 불명');
     expect(bucketLabel('gemini-4-argon')).toBe('4 Argon');
     expect(bucketLabel('Gemini 3.8 Flash')).toBe('3.8 Flash');
@@ -130,9 +130,10 @@ describe('UsagePanel exhausted window', () => {
     expect(w.querySelector('.usage-pill')!.textContent).toBe(`소진 · ${resetStamp(resetsAt)}`);
     expect(w.textContent).toContain('주간');
     expect(resetStamp(resetsAt)).toMatch(/^\d{1,2}\/\d{1,2} \d{2}:\d{2}$/);
-    fireEvent.click(screen.getByTestId('account-gpt'));
-    expect(screen.getByRole('tooltip').textContent).toContain('주간 한도 소진');
-    expect(screen.getByRole('tooltip').textContent).toContain(`${resetStamp(resetsAt)} 리셋`);
+    // The pill is compact (no "한도"/"리셋" words visible); the full wording lives in the row's title instead.
+    expect(w.title).toContain('주간');
+    expect(w.title).toContain('소진');
+    expect(w.title).toContain(`${resetStamp(resetsAt)} 리셋`);
   });
 
   it('spent weekly with credits shows a 크레딧 line with the whole balance; unlimited and no-credits cases', () => {
@@ -159,7 +160,7 @@ describe('UsagePanel chips', () => {
     fireEvent.click(screen.getByTestId('account-a'));
     const pop = screen.getByRole('tooltip');
     expect(pop.textContent).toContain('2시간 30분 후 리셋');
-    expect(pop.textContent).toContain('리셋 시각 없음');
+    expect(pop.textContent).toContain('93%'); // weekly has no reset time at all — no reset text, just the %
     expect(screen.getByTestId('account-a').querySelector('svg.usage-mark.claude.claude-mark')).not.toBeNull();
     expect(screen.getByTestId('account-a').textContent).not.toContain('✳');
     expect(screen.getByTestId('account-b').getAttribute('aria-label')).toContain('(현재)');
@@ -174,13 +175,20 @@ describe('UsagePanel header layout (styles.css)', () => {
   // these guard the rules that keep all four cards on screen without sideways scrolling.
   const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
   const usage = css.slice(css.indexOf('/* === usage header === */'), css.indexOf('/* === chat polish === */'));
-  it('never scrolls the cards sideways; below 1280px the cards drop to their own row in four equal columns', () => {
+  it('never scrolls the cards sideways; below 1100px the cards drop to their own row, equally stretched', () => {
     expect(usage).not.toMatch(/overflow-x:\s*auto/);
-    expect(usage).toMatch(/\.usage-panel \{[^}]*grid-template-columns: auto repeat\(var\(--usage-cards, 4\), minmax\(0,/);
-    const two = usage.slice(usage.indexOf('@media (max-width: 1279.98px)'));
+    expect(usage).toMatch(/\.usage-panel \{[^}]*display: flex;[^}]*flex-wrap: nowrap;/);
+    const two = usage.slice(usage.indexOf('@media (max-width: 1099.98px)'));
     expect(two).toMatch(/\.topbar \{[^}]*flex-wrap: wrap/);
     expect(two).toMatch(/\.usage-card \{[^}]*flex: 1 1 0/);
     expect(usage).toMatch(/container: usage-card \/ inline-size/);
+  });
+  it('many cards wrap to two rows only in the two-row (< 1100px) layout; the wide one-row bar never wraps (fixed height)', () => {
+    const at = usage.indexOf('@media (max-width: 1099.98px)');
+    const wide = usage.slice(0, at);
+    const two = usage.slice(at, usage.indexOf('\n}\n', at));
+    expect(wide).not.toMatch(/\.usage-panel\[data-wrap\][^{]*\{[^}]*flex-wrap: wrap/);
+    expect(two).toMatch(/\.usage-panel\[data-wrap\] \.usage-card \{[^}]*var\(--usage-cols-wrap\)/);
   });
   it('every @media block in styles.css is closed (an unclosed one swallowed the rules after it)', () => {
     let depth = 0;
@@ -231,15 +239,19 @@ describe('UsagePanel short reset countdown and 다음 tag', () => {
       c: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 90, resetsAt: null }, weekly: { usedPct: 10, resetsAt: at(1000) }, fable: null },
     } };
     render(<UsagePanel usage={u} current={null} now={NOW} />);
-    const cd = screen.getByTestId('a-weekly-cd');
-    expect(cd.textContent).toBe('2일');
-    expect(cd.title).toBe('주간 · 2일 12시간 후 리셋'); // the full wording, naming the window
-    expect(cd.previousElementSibling!.className).toBe('usage-value'); // right after the % of its own row
-    expect(screen.queryByTestId('a-fiveHour-cd')).toBeNull();
-    expect(screen.queryByTestId('a-fable-cd')).toBeNull();
-    expect(screen.getByTestId('b-fiveHour-cd').textContent).toBe('3시간');
-    expect(screen.queryByTestId('b-weekly-cd')).toBeNull();
-    expect(document.querySelector('[data-testid^="c-"][data-testid$="-cd"]')).toBeNull(); // fullest window has no reset time
+    // Only one card-level countdown (`.usage-main .usage-cd`), on whichever window the main row picked (the fullest
+    // of fiveHour/weekly — Fable is never eligible): a picks weekly (30% left < fiveHour's 80%).
+    const cdOf = (seat: string) => screen.getByTestId(`account-${seat}`).querySelector('.usage-cd');
+    const a = cdOf('a')!;
+    expect(a.textContent).toBe('2일');
+    expect(a.getAttribute('title')).toBe('주간 · 2일 12시간 후 리셋'); // the full wording, naming the window
+    expect(a.previousElementSibling!.className).toBe('usage-value'); // right after the % of the main row
+    // b: fiveHour and weekly tie at 70% left — the earlier-listed window (fiveHour) wins the main row.
+    const b = cdOf('b')!;
+    expect(b.textContent).toBe('3시간');
+    expect(b.getAttribute('title')).toBe('5h · 3시간 0분 후 리셋');
+    // c: the fullest window (fiveHour, 90% used) has no reset time at all — no countdown to show.
+    expect(cdOf('c')).toBeNull();
   });
 
   it('다음 tag on the routed Claude card, Opus noted, reason in the title', () => {
@@ -374,7 +386,9 @@ describe('UsagePanel · cli usage mode (observed times)', () => {
     expect(screen.getByTestId('a-weekly').title).not.toContain('추정');
     fireEvent.click(screen.getByTestId('account-a'));
     expect(screen.getByTestId('a-observed').textContent).toContain('마지막 턴 기준 · 12분 전');
-    expect(screen.getByRole('tooltip').textContent).toContain('5h 100% 남음 (추정)');
+    // The assumed-reset window still shows its remaining % and 추정 note in the popover (wording lives in its title).
+    expect(screen.getByTestId('a-fiveHour').textContent).toContain('100');
+    expect(screen.getByTestId('a-fiveHour').title).toContain('추정');
     fireEvent.click(screen.getByTestId('account-a'));
     fireEvent.click(screen.getByTestId('account-b'));
     expect(screen.getByTestId('b-observed').textContent).toContain('아직 관측 없음');
@@ -403,8 +417,9 @@ describe('UsagePanel · cli usage mode (observed times)', () => {
     expect(screen.getByTestId('a-fable').textContent).toContain('CLI 미제공');
     expect(screen.getByTestId('a-fable').title).toBe('Fable · CLI 미제공');
     expect(screen.getByTestId('c-fable').textContent).toContain('소진');
-    fireEvent.click(screen.getByTestId('account-a'));
-    expect(screen.getByRole('tooltip').textContent).toContain('Fable CLI 미제공');
+    // The popover row has no space between the label and the "no numbers" text (adjacent <span>s, no text node between).
+    expect(screen.getByTestId('a-fable').textContent).toContain('Fable');
+    expect(screen.getByTestId('a-fable').textContent).toContain('CLI 미제공');
   });
 
   it('LOW-5: an estimated row carries the estimated class (striped bar, dashed number — no hover needed)', () => {
@@ -423,5 +438,79 @@ describe('UsagePanel · cli usage mode (observed times)', () => {
     expect(document.body.textContent).not.toContain('CLI 미제공');
     fireEvent.click(screen.getByTestId('account-a'));
     expect(screen.queryByTestId('a-observed')).toBeNull();
+  });
+});
+
+describe('UsagePanel · Grok seat (card, chip, cooldown expiry, midnight)', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const today = localDay(new Date(NOW));
+  const yesterday = localDay(new Date(NOW - 86_400_000));
+  const grokUsage = (g: Partial<GrokUsage>): UsageSnapshot => ({
+    ...usage,
+    grokSeats: { x1: { status: 'ok', lastTurnAt: new Date(NOW - 10 * 60_000).toISOString(), lastError: null, cooldownUntil: null, today: { inputTokens: 1200, outputTokens: 34, turns: 3, day: today }, ...g } },
+  });
+  const phone = () => vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(max-width: 599.98px)', addEventListener() {}, removeEventListener() {} }));
+
+  it('no Grok card without grok.bin; with it, the status sentence and today\'s deck tally', () => {
+    const { unmount } = render(<UsagePanel usage={grokUsage({})} current={null} now={NOW} />);
+    expect(screen.queryByTestId('account-x1')).toBeNull();
+    unmount();
+    render(<UsagePanel usage={grokUsage({})} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-main').textContent).toBe('사용 가능 · 마지막 턴 10분 전');
+    expect(screen.getByTestId('x1-secondary').textContent).toBe('오늘 3턴 · 입력 1,200 · 출력 34 · deck 기준');
+    expect(screen.getByTestId('account-x1').querySelector('svg.usage-mark.grok')).not.toBeNull();
+  });
+
+  it('a live cooldown says "한도 — HH:MM 이후" and the chip ●대기', () => {
+    const until = new Date(NOW + 30 * 60_000).toISOString();
+    const { unmount } = render(<UsagePanel usage={grokUsage({ status: 'cooldown', cooldownUntil: until })} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-main').textContent).toBe(`한도 — ${resetStamp(until)} 이후`);
+    expect(screen.getByTestId('account-x1').className).toContain('cooldown');
+    unmount();
+    phone();
+    render(<UsagePanel usage={grokUsage({ status: 'cooldown', cooldownUntil: until })} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('chip-x1').textContent).toContain('●대기');
+  });
+
+  it('a cooldown whose time has passed is no longer shown (card and chip), even while the snapshot still says cooldown', () => {
+    const passed = grokUsage({ status: 'cooldown', cooldownUntil: new Date(NOW - 60_000).toISOString() });
+    const { unmount } = render(<UsagePanel usage={passed} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-main').textContent).toBe('사용 가능 · 마지막 턴 10분 전');
+    expect(screen.getByTestId('account-x1').className).not.toContain('cooldown');
+    expect(screen.queryByTestId('x1-dot')).toBeNull();
+    unmount();
+    phone();
+    render(<UsagePanel usage={passed} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('chip-x1').textContent).not.toContain('대기');
+    expect(screen.getByTestId('chip-x1').textContent).toContain('○가능');
+  });
+
+  it('after local midnight, yesterday\'s tally reads 0 until the next turn', () => {
+    render(<UsagePanel usage={grokUsage({ today: { inputTokens: 1200, outputTokens: 34, turns: 3, day: yesterday } })} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-secondary').textContent).toBe('오늘 0턴 · 입력 0 · 출력 0 · deck 기준');
+  });
+});
+
+describe('UsagePanel · phone chip popover', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const phone = () => vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(max-width: 599.98px)', addEventListener() {}, removeEventListener() {} }));
+
+  it('Esc closes the open chip popover', () => {
+    phone();
+    render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    fireEvent.click(screen.getByTestId('chip-a'));
+    expect(screen.getByRole('tooltip')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('the chip popover has the "토큰 사용량 기록 보기" link, which closes it and opens the history', () => {
+    phone();
+    const onOpenHistory = vi.fn();
+    render(<UsagePanel usage={usage} current={null} now={NOW} onOpenHistory={onOpenHistory} />);
+    fireEvent.click(screen.getByTestId('chip-a'));
+    fireEvent.click(screen.getByRole('button', { name: '토큰 사용량 기록 보기 ›' }));
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });

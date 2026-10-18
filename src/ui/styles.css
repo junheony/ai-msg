@@ -511,20 +511,20 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .switch-track { position: relative; width: 28px; height: 16px; border-radius: 8px; background: var(--line-strong); flex-shrink: 0; transition: background .15s; }
 .switch-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-raised); transition: transform .15s; }
 /* === usage header === */
-/* Each seat is a small card: mark + letter, then aligned rows (label · rounded bar · remaining %).
-   Colour follows what is left (green → amber ≤20% → red ≤5%); the current account gets a quiet accent ring.
-   Never scrolls sideways: ≥1280px one row; below, a second row where the four cards share the width equally
-   (bars drop out when a card gets narrow); on a phone the cards stack into mini cards (letter on top, numbers below). */
+/* Every seat (Claude A/B/C, GPT, Gemini g1/g2, Grok x1) is the same card shape: head (mark + letter + status dot),
+   then a main row (fullest-window bar + % + short countdown, or — no numbers at all — a same-height reason line),
+   then a one-line secondary row summarizing the rest. Colour follows what is left (green → amber ≤20% → red ≤5%);
+   the current account gets a quiet accent ring. Up to 7 cards in one row ≥1100px (wraps to two rows if a card would
+   go under 120px); below that the two-row topbar layout; under 600px the cards become one-line vendor chips. */
 .topbar { height: 70px; }
 .usage-panel {
-  display: grid; grid-auto-flow: column; grid-template-columns: auto repeat(var(--usage-cards, 4), minmax(0, 240px)); grid-auto-columns: auto;
-  align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; height: 100%;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; height: 100%;
 }
 .usage-loading { color: var(--muted); font-size: calc(13.5px * var(--font-scale, 1)); white-space: nowrap; }
 .usage-card {
   container: usage-card / inline-size;
-  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
-  padding: 5px 12px 5px 9px; border-radius: 11px; cursor: default; user-select: none; -webkit-tap-highlight-color: transparent;
+  position: relative; display: flex; align-items: center; gap: 8px; min-width: 120px; flex: 1 1 140px; max-width: 220px;
+  padding: 5px 10px 5px 9px; border-radius: 11px; cursor: default; user-select: none; -webkit-tap-highlight-color: transparent;
   background: color-mix(in srgb, var(--fg) 2.5%, transparent);
   box-shadow: inset 0 0 0 1px var(--line);
   transition: background-color .15s ease, box-shadow .15s ease;
@@ -532,21 +532,47 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-card:hover, .usage-card.open { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .usage-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .usage-card.current { background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
+.usage-card.stale .usage-body, .usage-card.down .usage-body, .usage-card.unknown .usage-body { opacity: .65; }
 .usage-id { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 24px; line-height: 1; flex-shrink: 0; }
-.usage-mark.claude { width: 14px; height: 14px; flex-shrink: 0; }
-.usage-mark.gpt { width: 14px; height: 14px; flex-shrink: 0; color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
-.usage-mark.gemini { width: 14px; height: 14px; flex-shrink: 0; color: #4E8CF5; }
+/* Vendor marks share one size; only the colour differs. */
+.usage-mark { width: 14px; height: 14px; flex-shrink: 0; }
+.usage-mark.gpt { color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
+.usage-mark.gemini { color: #4E8CF5; }
+.usage-mark.grok { color: color-mix(in srgb, var(--fg-strong) 82%, transparent); }
 /* Engine mark at the start of a session title (sidebar, 최근 대화 cards, ⌘K, pane header): inline inside the truncating
    title, so it never wraps or adds height and the ellipsis only eats the text after it. Same marks as the usage cards. */
 .engine-mark { display: inline-block; width: 1em; height: 1em; margin-right: .4em; vertical-align: -.14em; line-height: 1; text-align: center; flex-shrink: 0; }
 .engine-mark.codex { color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
 .engine-mark-svg { display: block; width: 100%; height: 100%; }
 .usage-letter { min-width: 1ch; max-width: 7ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: calc(15px * var(--font-scale, 1)); font-weight: 650; letter-spacing: .2px; color: var(--fg-strong); }
-.usage-card.gpt .usage-letter, .usage-card.gemini .usage-letter { font-size: calc(11.5px * var(--font-scale, 1)); letter-spacing: .5px; color: var(--fg); }
+.usage-card.gpt .usage-letter, .usage-card.gemini .usage-letter, .usage-card.grok .usage-letter { font-size: calc(11.5px * var(--font-scale, 1)); letter-spacing: .5px; color: var(--fg); }
 .usage-card.current .usage-letter { color: var(--accent); }
-.usage-rows { display: grid; grid-template-columns: minmax(36px, max-content) minmax(0, 1fr) max-content max-content; column-gap: 0; row-gap: 1px; align-items: center; flex: 1 1 auto; min-width: 0; }
-.usage-card.stale .usage-rows, .usage-card.down .usage-rows { opacity: .55; }
-.usage-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: 0; align-items: center; height: 16px; min-width: 0; white-space: nowrap; }
+/* Status dot: hidden while 'ok' (the ring alone is the news); otherwise a small coloured dot under the letter. */
+.usage-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.usage-dot.stale, .usage-dot.kept { background: var(--warn); }
+.usage-dot.unknown, .usage-dot.down { background: var(--faint); }
+.usage-dot.cooldown { background: var(--danger); }
+.usage-body { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
+.usage-main { display: flex; align-items: baseline; gap: 0; min-width: 0; height: 16px; }
+/* No numbers at all (Grok, a logged-out Gemini seat): a same-height text line instead of a bar. */
+.usage-main-text { font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-main .usage-bar { margin-right: 7px; height: 5px; min-width: 20px; flex: 1 1 auto; border-radius: 3px; background: var(--track); overflow: hidden; }
+.usage-main .usage-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--lvl, var(--ok)); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
+.usage-main.warn .usage-bar > i { --lvl: var(--warn); }
+.usage-main.danger .usage-bar > i { --lvl: var(--danger); }
+.usage-main .usage-value { flex-shrink: 0; align-self: baseline; line-height: 16px; text-align: right; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
+.usage-main .usage-value small { margin-left: 1px; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
+.usage-main.warn .usage-value { color: var(--warn); }
+.usage-main.danger .usage-value { color: var(--danger); }
+.usage-main.none .usage-value { color: var(--faint); font-weight: 500; }
+.usage-est { margin-left: 1px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; color: var(--faint); }
+/* Short countdown of the card's main window, right after its % on the same baseline ("19% · 5일"). */
+.usage-cd { align-self: baseline; margin-left: 4px; line-height: 16px; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; font-variant-numeric: tabular-nums; color: var(--muted); flex-shrink: 0; }
+.usage-cd::before { content: "· "; }
+/* One line: the windows the main row did not use (Fable included here, never in the main row), or Grok's token tally. */
+.usage-secondary { font-size: calc(11.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The popover's own rows (label · bar · remaining %), unchanged from the old inline card rows. */
+.usage-row { display: grid; grid-template-columns: minmax(36px, max-content) minmax(0, 1fr) max-content max-content; column-gap: 0; align-items: center; height: 16px; min-width: 220px; white-space: nowrap; }
 .usage-label { margin-right: 8px; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); overflow: hidden; }
 .usage-bar { margin-right: 8px; height: 5px; min-width: 0; border-radius: 3px; background: var(--track); overflow: hidden; }
 .usage-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--lvl, var(--ok)); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
@@ -570,9 +596,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-credits { grid-column: 2 / -1; justify-self: start; font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
 .usage-reset { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .usage-stale { flex-shrink: 0; padding: 2px 8px; border-radius: 9px; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
-/* Short countdown of a card's fullest window, right after its % on the same baseline ("19% · 5일"; always on, desktop). */
-.usage-cd { align-self: baseline; margin-left: 4px; line-height: 16px; font-size: calc(11px * var(--font-scale, 1)); font-weight: 500; font-variant-numeric: tabular-nums; color: var(--muted); }
-.usage-cd::before { content: "· "; }
 /* 다음 턴 = where the active session's next turn goes: a label laid on the card's bottom edge (opaque, so it cuts the
    border line). Positioned, so every card keeps the same letter and rows; it reaches ~4px below the card, into the space
    the top bar leaves around it (a clipping compact card lets it through, see the compact layouts). */
@@ -584,6 +607,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 /* "남음", once before the cards: the numbers are what is left (the title adds what amber / red mean). */
 .usage-caption { align-self: center; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; white-space: nowrap; color: var(--faint); cursor: help; }
+/* Cramped (measured — see useCramped, not a seat count): marks give way to the seat letters alone and cards may shrink further. */
+.usage-panel[data-dense] .usage-card { min-width: 72px; max-width: 140px; gap: 5px; padding: 5px 7px; }
+.usage-panel[data-dense] .usage-mark { display: none; }
+.usage-panel[data-dense] .usage-secondary { display: none; }
+/* 7+ seats (data-wrap): two rows only in the two-row top bar below (< 1100px). The one-row bar has a fixed height, so
+   there the cards never wrap — they only go dense. */
 /* Top bar status chips (작업 현황, 재시작 대기, 재시작됨): small muted pills like the stale tag. */
 .top-chip { flex-shrink: 0; padding: 2px 8px; border: 0; border-radius: 9px; font: inherit; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
 button.top-chip { cursor: pointer; }
@@ -611,17 +640,12 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
 .usage-pop-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.75; color: var(--muted); }
 .usage-pop-row.hint { display: block; max-width: 260px; line-height: 1.45; margin-bottom: 4px; white-space: normal; }
 .usage-pop-row b { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--fg); }
-/* A narrow card keeps its colored numbers and drops the bars; the exhausted pill keeps only "소진". */
-@container usage-card (max-width: 210px) { .usage-pill-at { display: none; } }
-@container usage-card (max-width: 200px) { .usage-cd { display: none; } }
-@container usage-card (max-width: 156px) {
-  .usage-bar { display: none; }
-  .usage-rows { grid-template-columns: minmax(36px, max-content) minmax(0, 1fr); }
-}
 
-/* Two rows (< 1280px): logo + actions on top, the four cards in equal columns underneath.
-   The panel dissolves (display: contents) so the stale tag can sit in the top row and the cards on their own line. */
-@media (max-width: 1279.98px) {
+/* Two rows (< 1100px, same cutoff useCramped/COMPACT_QUERY use to stop measuring): logo + actions on top, the cards in
+   equal columns underneath. The panel dissolves (display: contents) so the stale tag can sit in the top row and the
+   cards on their own line. (Simplification vs. the old per-count `data-cards="5"` `:has()` hack: one breakpoint for
+   any seat count — the measured dense mode above already does the narrow-width shrinking that used to need it.) */
+@media (max-width: 1099.98px) {
   .topbar { flex-wrap: wrap; height: auto; column-gap: 6px; row-gap: 0; padding: 0 12px 8px 14px; }
   .topbar::after { content: ""; order: 5; flex: 0 0 100%; }
   .topbar > .menu { order: 0; }
@@ -630,7 +654,11 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .usage-panel { display: contents; }
   .usage-stale { order: 2; }
   .usage-caption { order: 10; flex: 0 0 auto; }
-  .usage-card { order: 10; flex: 1 1 0; }
+  .usage-card { order: 10; flex: 1 1 0; max-width: none; }
+  /* 7+ seats: the card line folds into two rows of --usage-cols-wrap columns (the cards are top bar items here, the panel
+     being display: contents). The basis leaves room for the 6px gaps and the 남음 caption (~32px) that shares the first
+     row, so exactly --usage-cols-wrap cards fit each row and an even count never spills into a third. */
+  .usage-panel[data-wrap] .usage-card { flex: 1 1 calc((100% - 32px) / var(--usage-cols-wrap) - 6px); max-width: calc(100% / var(--usage-cols-wrap)); margin-top: 4px; }
   .usage-loading { order: 10; flex: 1 0 100%; padding: 4px 0 6px; }
   /* The top row is shared with the logo and actions: chips take their short form and may shrink (ellipsis). */
   .topbar-end { min-width: 0; flex-shrink: 1; }
@@ -639,61 +667,25 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .top-chip .chip-short { display: inline; }
 }
 
-/* Five cards (three accounts + GPT + Gemini) keep the full card too, but one row of five fits only from 1600px: below
-   that the same two-row layout as above (the top bar wraps when it holds a five-card panel). The whole block needs
-   `:has` — without it the panel would be unwrapped into a bar that does not wrap — so it is gated as one. */
-@media (min-width: 1280px) and (max-width: 1599.98px) { @supports selector(:has(a)) {
-  .topbar:has(> .usage-panel[data-cards="5"]) { flex-wrap: wrap; height: auto; column-gap: 6px; row-gap: 0; padding: 0 12px 8px 14px; }
-  .topbar:has(> .usage-panel[data-cards="5"])::after { content: ""; order: 5; flex: 0 0 100%; }
-  .topbar:has(> .usage-panel[data-cards="5"]) > .menu { order: 0; }
-  .topbar:has(> .usage-panel[data-cards="5"]) > .brand { order: 1; width: auto; height: 46px; margin-right: 6px; }
-  .topbar:has(> .usage-panel[data-cards="5"]) > .topbar-end { order: 3; min-width: 0; flex-shrink: 1; }
-  .topbar > .usage-panel[data-cards="5"] { display: contents; }
-  .usage-panel[data-cards="5"] .usage-stale { order: 2; }
-  .usage-panel[data-cards="5"] .usage-caption { order: 10; flex: 0 0 auto; }
-  .usage-panel[data-cards="5"] .usage-card { order: 10; flex: 1 1 0; max-width: none; }
-  .usage-panel[data-cards="5"] .usage-loading { order: 10; flex: 1 0 100%; padding: 4px 0 6px; }
-  .topbar:has(> .usage-panel[data-cards="5"]) .top-chip { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .topbar:has(> .usage-panel[data-cards="5"]) .top-chip .chip-long { display: none; }
-  .topbar:has(> .usage-panel[data-cards="5"]) .top-chip .chip-short { display: inline; }
-} }
-
-/* Five cards in one row (1600px up): the long chips (서버 업데이트 대기 · 파일 N개 지금 재시작, 실행 중 …) would squeeze
-   the cards under the width their reset countdowns need (and past it into the compact card), so up to 2200px the chips
-   take their short form. */
-@media (min-width: 1600px) and (max-width: 2199.98px) { @supports selector(:has(a)) {
-  .topbar:has(> .usage-panel[data-cards="5"]) .top-chip .chip-long { display: none; }
-  .topbar:has(> .usage-panel[data-cards="5"]) .top-chip .chip-short { display: inline; }
-} }
-
-/* Phone: mini cards — mark + letter on top, then "label · number" rows; a tap opens the detail popover. */
-@media (max-width: 720px) {
-  .usage-cd { display: none; }
+/* < 600px: the cards give way entirely to a one-line vendor-chip row (UsagePanel swaps markup, not just CSS). */
+.usage-chips { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; overflow: hidden; }
+.usage-chip {
+  display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; height: 22px; padding: 0 7px; border: 0; border-radius: 9px;
+  font: inherit; font-size: calc(12px * var(--font-scale, 1)); font-weight: 600; cursor: pointer;
+  color: var(--fg); background: color-mix(in srgb, var(--fg) 4%, transparent); box-shadow: inset 0 0 0 1px var(--line);
+}
+.usage-chip.current { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+.usage-chip.open { background: var(--hover); }
+.usage-chip-letter { color: var(--muted); font-weight: 500; }
+.usage-chip-num { font-variant-numeric: tabular-nums; }
+.usage-chip.warn .usage-chip-num, .usage-chip.stale .usage-chip-num { color: var(--warn); }
+.usage-chip.danger .usage-chip-num, .usage-chip.cooldown .usage-chip-num { color: var(--danger); }
+.usage-chip.down .usage-chip-num, .usage-chip.unknown .usage-chip-num { color: var(--faint); }
+@media (max-width: 599.98px) {
   .topbar { column-gap: 5px; padding: 0 6px 6px; }
   .topbar > .menu { margin-left: -4px; }
   .topbar > .brand { display: inline-flex; height: 46px; margin-right: 2px; }
   .topbar-end { margin-left: auto; }
-  .usage-card { flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 7px 5px; border-radius: 10px; cursor: pointer; }
-  .usage-id { flex-direction: row; justify-content: flex-start; gap: 4px; min-width: 0; height: 15px; }
-  .usage-mark.claude { width: 12px; height: 12px; }
-  .usage-mark.gpt, .usage-mark.gemini { width: 12px; height: 12px; }
-  .usage-letter { font-size: calc(14px * var(--font-scale, 1)); }
-  .usage-card.gpt .usage-letter, .usage-card.gemini .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
-  .usage-rows { grid-template-columns: auto minmax(0, 1fr); row-gap: 0; }
-  .usage-row { height: 17px; }
-  .usage-bar { display: none; }
-  .usage-label { margin-right: 4px; font-size: calc(11.5px * var(--font-scale, 1)); }
-  .usage-value { line-height: 17px; font-size: calc(13.5px * var(--font-scale, 1)); }
-  .usage-value small { display: none; }
-  .usage-pill { grid-column: 2; justify-self: end; height: 15px; line-height: 15px; padding: 0 6px; font-size: calc(12px * var(--font-scale, 1)); }
-  .usage-pill-at { display: none; }
-  .usage-credits { grid-column: 2; justify-self: end; font-size: calc(13.5px * var(--font-scale, 1)); }
-  .usage-stale { padding: 2px 7px; font-size: calc(11.5px * var(--font-scale, 1)); }
-}
-/* The narrowest phones (≤ ~360px): the credit balance needs the whole row, so its label steps aside (the popover names it). */
-@container usage-card (max-width: 84px) {
-  .usage-row.credits .usage-label { display: none; }
-  .usage-row.credits .usage-credits { grid-column: 1 / -1; }
 }
 /* === chat polish === */
 /* Claude-Desktop reading column: warm dark, one ~760px measure for messages and composer,
@@ -1410,6 +1402,8 @@ button.hl-row-main:hover { background: var(--hover); }
 .settings-consent { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line-strong); }
 .settings-consent p { margin: 0; color: var(--fg-strong); }
 .settings-consent .settings-row { justify-content: flex-end; }
+.auto-engine-list { display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: flex-end; }
+.auto-engine { display: inline-flex; align-items: center; gap: 6px; }
 .settings-info { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: calc(13.5px * var(--font-scale, 1)); }
 .settings-info dt { color: var(--muted); } .settings-info dd { margin: 0; overflow-wrap: anywhere; }
 .settings .notify-pop { position: static; width: auto; box-shadow: none; }
@@ -1645,7 +1639,6 @@ button.hl-row-main:hover { background: var(--hover); }
 .session-meta { max-width: 50%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sidebar-toggle { display: inline-flex; width: 30px; height: 30px; font-size: calc(15px * var(--font-scale, 1)); color: var(--fg); }
 .sidebar-toggle[aria-pressed="false"] { color: var(--muted); }
-.usage-sum { display: none; }
 
 
 /* Sidebar rows on phone + tablet, and on any touch screen (no hover to reveal the meta): title on line 1, meta on
@@ -1664,35 +1657,8 @@ button.hl-row-main:hover { background: var(--hover); }
   .row-more-btn { opacity: .6; }
 }
 
-/* Compact usage cards (phone + tablet): one line per seat — mark, letter, the lowest remaining % — over thin bars
-   (5h · 주간 · Fable side by side). Exact numbers and reset times stay in the tap popover. */
-@media (max-width: 1100px) {
-  .usage-card { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto 3px; align-items: center; column-gap: 6px; row-gap: 4px; padding: 5px 8px 6px; border-radius: 9px; cursor: pointer; overflow: hidden; }
-  .usage-id { flex-direction: row; justify-content: flex-start; gap: 3px; min-width: 0; height: auto; overflow: hidden; }
-  .usage-mark.claude { width: 12px; height: 12px; }
-  .usage-mark.gpt, .usage-mark.gemini { width: 12px; height: 12px; }
-  .usage-letter { font-size: calc(14px * var(--font-scale, 1)); }
-  .usage-card.gpt .usage-letter, .usage-card.gemini .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
-  /* The 다음 턴 label sits on the bottom edge: the card lets it out (its id and number clip themselves). No room for the
-     남음 caption here; the tap popover says "N% 남음". */
-  .usage-card:has(> .usage-next) { overflow: visible; }
-  .usage-caption { display: none; }
-  .usage-sum { display: block; justify-self: end; min-width: 0; overflow: hidden; white-space: nowrap; line-height: 1.2; font-size: calc(13.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
-  .usage-sum small { margin-left: 1px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
-  .usage-sum.warn { color: var(--warn); }
-  .usage-sum.danger { color: var(--danger); }
-  .usage-sum.none { color: var(--faint); font-weight: 500; }
-  .usage-rows { display: flex; grid-column: 1 / -1; flex-direction: row; gap: 3px; height: 3px; }
-  .usage-row, .usage-row.spent, .usage-row.credits { display: block; flex: 1 1 0; height: 3px; min-width: 0; border-radius: 2px; background: var(--track); overflow: hidden; }
-  .usage-row.credits { display: none; }
-  .usage-row.spent { background: color-mix(in srgb, var(--danger) 60%, transparent); }
-  .usage-row.estimated .usage-bar > i { background: repeating-linear-gradient(135deg, var(--lvl, var(--ok)) 0 2px, transparent 2px 4px); }
-  .usage-label, .usage-value, .usage-pill, .usage-credits { display: none; }
-  .usage-bar { display: block; height: 100%; border-radius: 0; background: transparent; }
-  .usage-bar > i { border-radius: 2px; }
-}
-/* Phone: four cards share ~400px, so the letter alone names the seat. */
-@media (max-width: 720px) { .usage-mark { display: none; } }
+/* Usage cards below 1100px: handled by the unified .usage-card rules above (two-row topbar layout, data-dense,
+   data-wrap) and by the <600px chip row — no separate compact-card generation here any more. */
 
 /* Phone header: the title keeps priority; the project chip shrinks, the 편집 자동 승인 / 계획 badge steps aside
    (the composer's permission picker shows the mode; bypass stays as a warning). */
@@ -2073,42 +2039,11 @@ button.hl-row-main:hover { background: var(--hover); }
 /* (An unselected tab is the muted colour already; the picked one keeps its own.) */
 .uv-tabs button.acct-retired, .uv-tabs button.acct-unknown { outline: 1px dashed var(--muted); outline-offset: -1px; }
 
-/* Two-row top bar (above the compact layouts): one or two cards do not stretch across the whole row (four cards never reach this width). */
-@media (min-width: 1100.02px) and (max-width: 1279.98px) { .usage-card { max-width: 320px; } }
-
 /* The label is cut with overflow hidden: room below the line for g/y/p without moving anything. */
 .usage-letter { padding-bottom: .25em; margin-bottom: -.25em; }
-/* Up to four cards in the compact layout: the number keeps its room and a long label is what gets cut (one letter never
-   reaches it, so A/B/C/GPT are laid out as `auto minmax(0, 1fr)` laid them out). */
-@media (max-width: 1100px) { .usage-panel:not([data-dense]) .usage-card { grid-template-columns: auto minmax(min-content, 1fr); } }
-
-/* More than four cards (four accounts + GPT and up): no room for the rows of numbers, so at every width a card is the
-   label over the lowest remaining %, over thin bars (5h · 주간 · Fable); the tap popover has the numbers. */
-.usage-panel[data-dense] .usage-card { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 3px; align-items: center; row-gap: 2px; padding: 4px 6px 5px; border-radius: 9px; cursor: pointer; overflow: hidden; }
-.usage-panel[data-dense] .usage-id { flex-direction: row; justify-content: flex-start; gap: 3px; min-width: 0; height: auto; overflow: hidden; }
-.usage-panel[data-dense] .usage-mark { width: 12px; height: 12px; }
-.usage-panel[data-dense] .usage-letter { min-width: 0; max-width: none; text-align: left; font-size: calc(13px * var(--font-scale, 1)); line-height: 1.2; }
-.usage-panel[data-dense] .usage-card.gpt .usage-letter, .usage-panel[data-dense] .usage-card.gemini .usage-letter { font-size: calc(11px * var(--font-scale, 1)); }
-.usage-panel[data-dense] .usage-sum { display: block; justify-self: start; min-width: 0; overflow: hidden; white-space: nowrap; line-height: 1.2; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg-strong); }
-.usage-panel[data-dense] .usage-sum small { margin-left: 1px; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); }
-.usage-panel[data-dense] .usage-sum.warn { color: var(--warn); }
-.usage-panel[data-dense] .usage-sum.danger { color: var(--danger); }
-.usage-panel[data-dense] .usage-sum.none { color: var(--faint); font-weight: 500; }
-.usage-panel[data-dense] .usage-rows { display: flex; grid-column: 1; flex-direction: row; gap: 3px; height: 3px; }
-.usage-panel[data-dense] .usage-row, .usage-panel[data-dense] .usage-row.spent, .usage-panel[data-dense] .usage-row.credits { display: block; flex: 1 1 0; height: 3px; min-width: 0; border-radius: 2px; background: var(--track); overflow: hidden; }
-.usage-panel[data-dense] .usage-row.credits { display: none; }
-.usage-panel[data-dense] .usage-row.spent { background: color-mix(in srgb, var(--danger) 60%, transparent); }
-.usage-panel[data-dense] .usage-label, .usage-panel[data-dense] .usage-value, .usage-panel[data-dense] .usage-pill, .usage-panel[data-dense] .usage-credits { display: none; }
-.usage-panel[data-dense] .usage-bar { display: block; height: 100%; border-radius: 0; background: transparent; }
-.usage-panel[data-dense] .usage-bar > i { border-radius: 2px; }
-.usage-panel[data-dense] .usage-card:has(> .usage-next) { overflow: visible; }
-@media (max-width: 1100px) { .usage-panel[data-dense] .usage-mark { display: none; } }
+/* The compact (two-row topbar) and dense card layouts are the unified `.usage-card` rules above (see "usage header");
+   nothing card-count-specific is needed here any more. */
 @media (max-width: 720px) {
-  .usage-panel[data-dense] .usage-card { padding: 4px 4px 5px; }
-  .usage-panel[data-dense] .usage-sum small { display: none; }
-  /* Seven cards and up do not fit one row of a phone: two rows (the cards are flex items of the top bar here, the panel
-     being display: contents — the basis leaves room for the 5px gaps, so exactly --usage-cols-wrap fit a row). */
-  .usage-panel[data-wrap] .usage-card { flex: 1 1 calc(100% / var(--usage-cols-wrap) - 5px); max-width: calc(100% / var(--usage-cols-wrap)); margin-top: 4px; }
   /* The picker's phone cap (150px) is a little short of "자동 · " and a 12-character label. */
   .account-picker .mp-button { max-width: 172px; }
 }

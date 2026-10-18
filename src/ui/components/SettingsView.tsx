@@ -3,13 +3,19 @@ import { usePrefs } from '../usePrefs';
 import { useCodeWrap } from '../codeWrap';
 import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
 import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, type PermMode } from '../../shared/permission';
-import type { RoutingPolicy } from '../../shared/protocol';
+import { ENGINE_KINDS, type RoutingPolicy } from '../../shared/protocol';
+import type { EngineKind } from '../../shared/models';
 import { NotifyMenu } from './NotifyMenu';
 import { describeShell } from '../shellFit';
 import { Sheet } from './Dialogs';
 
 /** What turning 같은 벤더 계정 자동 순환 on asks the user to agree to (spec: paid design §3 rule 3). */
 export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁니다. 계정 공유·재판매·한도 회피 목적의 계정 생성은 각 제공자 약관 위반입니다.';
+/** What letting 자동 분배 pick Gemini / Grok asks the user to agree to (auto-route design §10-3). */
+export const AUTO_CONSENT_TEXT = '자동 세션의 코드·대화가 Google(Gemini)/xAI(Grok)로 갈 수 있습니다';
+export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean };
+const AUTO_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
+const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
 
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
 declare const __DECK_VERSION__: string | undefined;
@@ -25,7 +31,7 @@ function Seg<T extends string>({ label, value, options, onPick }: { label: strin
   );
 }
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, claudeAccounts = 0, grokLocked = null, onGrokUnlock, onOpenUsage, onOpenHighlights, onClose }: {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, onOpenUsage, onOpenHighlights, onClose }: {
   build: string | null;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
@@ -39,6 +45,9 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   /** 총사령탑 (server setting; null = not known yet / a server without it). */
   commanderEnabled?: boolean | null;
   onCommanderEnabled?: (on: boolean) => void;
+  /** 자동 분배: engines 자동 may pick, the consented ones, Grok's fast model (server settings; null = not known yet). */
+  autoRoute?: AutoRouteView | null;
+  onAutoRoute?: (patch: Partial<AutoRouteView>) => void;
   /** Active Claude accounts: with one, there is nothing to rotate between and the switch is disabled. */
   claudeAccounts?: number;
   /** Why the Grok engine is locked (a tripwire fired, §14.9-3); null = not locked. */
@@ -53,6 +62,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   const set = <K extends keyof Prefs>(key: K, value: Prefs[K]) => dispatch({ type: 'set', key, value });
   const [askConsent, setAskConsent] = useState(false);
   const single = claudeAccounts <= 1;
+  const [askAuto, setAskAuto] = useState<EngineKind | null>(null);
 
   return (
     <Sheet className="settings" label="설정" onClose={onClose}>
@@ -128,6 +138,46 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
             <p className="muted">{single
               ? 'Claude 계정이 1개라 순환할 계정이 없습니다. 계정을 더 등록하면 켤 수 있습니다.'
               : '꺼짐(기본): 세션은 기본 Claude 계정(또는 세션에서 고른 계정)에만 머물고, 한도에 걸리면 다른 Claude 계정으로 넘기지 않고 리셋 뒤 자동으로 다시 시도합니다. 켜면 위 자동 계정 선택대로 Claude 계정 사이를 옮깁니다. GPT·Gemini 로의 벤더 간 인계는 이 설정과 상관없습니다.'}</p>
+          </>
+        )}
+        {onAutoRoute && autoRoute && (
+          <>
+            <div className="settings-row auto-engines">
+              <span id="auto-engines">자동 분배</span>
+              <div className="auto-engine-list" role="group" aria-labelledby="auto-engines">
+                {ENGINE_KINDS.map((e) => {
+                  const pending = needsConsent(e) && !autoRoute.autoConsent.includes(e);
+                  return (
+                    <span key={e} className="auto-engine">
+                      <label>
+                        <input type="checkbox" checked={autoRoute.autoEngines.includes(e)} data-testid={`auto-engine-${e}`}
+                          onChange={(ev) => onAutoRoute({ autoEngines: ev.target.checked ? [...autoRoute.autoEngines, e] : autoRoute.autoEngines.filter((x) => x !== e) })} />
+                        {' '}{AUTO_ENGINE_LABEL[e]}
+                      </label>
+                      {pending && <button type="button" className="btn ghost" data-testid={`auto-consent-${e}`} onClick={() => setAskAuto(e)}>동의 필요</button>}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+            {askAuto && !autoRoute.autoConsent.includes(askAuto) && (
+              <div className="settings-consent" role="group" aria-label={`${AUTO_ENGINE_LABEL[askAuto]} 자동 분배 동의`}>
+                <p>{AUTO_CONSENT_TEXT}</p>
+                <div className="settings-row">
+                  <button type="button" className="btn" onClick={() => {
+                    const e = askAuto;
+                    setAskAuto(null);
+                    onAutoRoute({ autoConsent: [...autoRoute.autoConsent, e], ...(autoRoute.autoEngines.includes(e) ? {} : { autoEngines: [...autoRoute.autoEngines, e] }) });
+                  }}>동의하고 {AUTO_ENGINE_LABEL[askAuto]} 쓰기</button>
+                  <button type="button" className="btn ghost" onClick={() => setAskAuto(null)}>취소</button>
+                </div>
+              </div>
+            )}
+            <label className="settings-row">
+              <span>Grok 빠른 모델 쓰기(2배 가격)</span>
+              <input type="checkbox" checked={autoRoute.grokFast} data-testid="auto-grok-fast" onChange={(ev) => onAutoRoute({ grokFast: ev.target.checked })} />
+            </label>
+            <p className="muted">엔진을 자동으로 두면 첫 턴 내용과 남은 한도로 엔진·모델을 고릅니다. 체크한 엔진만 후보가 되고, Gemini·Grok 은 동의한 뒤에만 고릅니다. 세션이 시작된 뒤에는 엔진이 바뀌지 않습니다.</p>
           </>
         )}
         <div className="settings-row"><span>토큰 사용량 기록 (주별·일별)</span><button type="button" className="btn ghost" onClick={() => { onClose(); onOpenUsage(); }}>사용량 보기</button></div>

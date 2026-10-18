@@ -532,6 +532,14 @@ describe('chooseRoute — engine and model, direct or 자동 (§7, §10-11)', ()
     expect(route(P.buildMedium, { engine: 'grok' })).toMatchObject({ reason: '자동 · 구현 · Grok 지정 → Grok 4.7' });
   });
 
+  it('review #5: engine 지정 + model 자동, but the engine is not even available (codex not installed) → falls back to Claude, with the reason shown', () => {
+    const claudeFallback = chooseAutoModel({ text: P.buildMedium, attachmentCount: 0, usage: limits({}).claude.usage, nowMs: NOW, cooldownUntilMs: {}, protectedAccount: null, accounts: testRegistry() });
+    expect(picked(route(P.buildMedium, { engine: 'codex' }, { gpt: { installed: false } }))).toBe(`claude/${claudeFallback.model}/${claudeFallback.effort}`);
+    expect(route(P.buildMedium, { engine: 'codex' }, { gpt: { installed: false } })).toMatchObject({ engine: 'claude', reason: expect.stringMatching(/GPT 지정.*codex CLI 없음.*→ Claude/) });
+    // Unavailability (installed/logged in) ≠ capacity blocked: a cooldown-blocked but installed engine still sticks (unchanged above).
+    expect(picked(route(P.buildMedium, { engine: 'gemini' }, { gemini: { installed: false } }))).toBe(`claude/${claudeFallback.model}/${claudeFallback.effort}`);
+  });
+
   // Claude picked + model 자동 = chooseAutoModel, exactly (model and effort).
   it.each<[string, string, ClaudeOpts, string]>([
     ['hard', P.designHard, {}, 'fable'],

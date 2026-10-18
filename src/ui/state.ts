@@ -191,6 +191,13 @@ function requeue(pane: PaneState, back: NonNullable<PaneState['awaitingSend']>, 
   return { ...pane, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, queue, queuePaused: mark ? pane.queuePaused : true };
 }
 
+/** The route_fit card's message back into the queue, paused (the card's ✕); the pane's own wait, if any, is untouched. */
+function routeFitBack(p: PaneState): PaneState {
+  const f = p.routeFit;
+  if (!f) return p;
+  return { ...requeue({ ...p, awaitingRef: null }, { text: f.text, attachments: f.attachments }, 'refused'), routeFit: null, awaitingStart: p.awaitingStart, awaitingRef: p.awaitingRef, awaitingSend: p.awaitingSend, awaitingBehind: p.awaitingBehind };
+}
+
 /** Steer-flagged items back to ordinary (paused) queue items: their answer was lost, so they may or may not have gone in. */
 function unsteer(pane: PaneState, which: (steerId: string) => boolean): PaneState {
   if (!pane.queue.some((q) => q.steer && which(q.steer))) return pane;
@@ -261,6 +268,11 @@ export type PaneState = {
   floatBySize?: Record<string, FloatRect>;
   /** The card folded to its header strip (`toggle_collapse_float`); its box (`float.h`) is kept for when it unfolds. */
   floatCollapsed?: boolean;
+  /**
+   * The server did not send the last message: its engine cannot do that kind of turn (`route_fit`, auto-route §10-4).
+   * The bubble stays; the card offers 그래도 보내기 (the same message again with `ignoreFit`). Absent/null = none.
+   */
+  routeFit?: { engine: EngineKind; need: string; text: string; attachments: SentFile[] } | null;
 };
 
 /** How many body sizes a card remembers its box for. */
@@ -348,6 +360,8 @@ export type AppState = {
   routePreview: RoutePreview | null;
   /** 총사령탑 켜짐 (server setting); null = not known yet, or a server without it. */
   commanderEnabled: boolean | null;
+  /** 자동 분배 settings (engines 자동 may pick, consented ones, Grok fast); null = not known yet / a server without them. */
+  autoRoute: { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean } | null;
   /** The settings' 총사령탑 turn cap (the 걸기 sheet starts there); null = not known yet. */
   commanderMaxTurns: number | null;
   /** 총사령탑 per session, exactly as the server last said (`commander`, SessionFacts.commander) — never stored on the device. */
@@ -386,10 +400,10 @@ function remember(recent: AppState['recent'], p: PaneState | undefined): AppStat
 export const PANE_LIMIT = 24;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: 'auto', modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'auto', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, grok: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
+export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, grok: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, autoRoute: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -400,6 +414,11 @@ export type Action =
   /** A refused edit goes back to its original session: the new pane's whole queue (the edited text first) goes with it. */
   | { type: 'branch_undo'; sessionId: string; paneId?: string }
   | { type: 'sent'; text: string; paneId?: string; attachments?: SentFile[]; /** Echoed by the server on turn_started / refusal; the caller makes it unique. */ clientRef?: string; /** The handoff-note turn (새 세션으로 이어가기). */ handoff?: boolean; /** A message released after a restart: the queue's pause stays for the rest. */ keepPaused?: boolean; /** 다시 생성: the composer's attachments stay (none were sent). */ keepAttachments?: boolean }
+  /**
+   * The route_fit card: 'send' takes its bubble back (the caller sends the message again with ignoreFit, which adds it
+   * anew); 'dismiss' takes it back into the queue, paused, so it is not lost.
+   */
+  | { type: 'route_fit_resolve'; how: 'send' | 'dismiss'; paneId?: string }
   | { type: 'set_model'; model: ModelChoice; paneId?: string; /** false: put back without marking it picked (갈래 거절 되돌리기) */ picked?: boolean }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
@@ -608,7 +627,7 @@ function withSteerBubble(items: ChatItem[], turnId: string, bubble: ChatItem): C
   return out;
 }
 
-const ACTIVITY_RESET = { runStartedAt: null, progress: null, agents: {}, bg: null } as const;
+const ACTIVITY_RESET = { runStartedAt: null, progress: null, agents: {}, bg: null, routeFit: null } as const;
 
 /** The agent card a subagent call belongs to: its own Agent call, or the top card holding the nested Agent call. */
 function agentFor(agents: Record<string, AgentInfo>, parentToolUseId: string): string | null {
@@ -689,14 +708,20 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const engine: EngineKind = msg.engine ?? 'claude';
       // PF13: a Claude session is never sent a GPT model and vice versa. A Claude session the user picked no model for shows
       // the one it runs on: the server's sessionModel, else (an older server, which never sends one) the transcript's last model, else the imported default.
-      const model = engine === 'claude' && !pane.modelPicked ? (msg.sessionModel ?? (has('sessionModel') ? undefined : lastClaudeModel(msg.messages)) ?? IMPORTED_DEFAULT_MODEL) : modelFor(engine, pane.model);
+      // A GPT / Gemini / Grok session (its first model may have been 자동's pick) shows its stored model the same way.
+      const own = !pane.modelPicked && msg.sessionModel && engineOf(msg.sessionModel) === engine ? msg.sessionModel : null;
+      const model = own ?? (engine === 'claude' && !pane.modelPicked ? (has('sessionModel') ? undefined : lastClaudeModel(msg.messages)) ?? IMPORTED_DEFAULT_MODEL : modelFor(engine, pane.model));
+      // A Grok session sends the pane's Grok effort every turn: it starts from the session's stored one.
+      const efforts = !pane.modelPicked && engine === 'grok' && msg.sessionEffort ? { efforts: { ...pane.efforts, grok: msg.sessionEffort } } : {};
       const runStartedAt = msg.runningTurnId ? Date.now() - (msg.runningForMs ?? 0) : null;
       const notice = pane.notices?.some((n) => n.sessionId !== msg.sessionId) ? { notices: pane.notices.filter((n) => n.sessionId === msg.sessionId) } : {};
       // This pane's send is listed as accepted, so its turn_started is behind us (it came ahead of a gap in the stream and
       // was not applied, or with the old socket): the pane stops waiting for it, and the turn running now is its own.
       const mine = pane.awaitingStart && pane.awaitingRef !== null && !!msg.acceptedRefs?.includes(pane.awaitingRef);
       const started = mine ? { awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, ...(msg.runningTurnId && !pane.myTurns.includes(msg.runningTurnId) ? { myTurns: [...pane.myTurns, msg.runningTurnId] } : {}) } : {};
-      return { ...pane, ...started, ...settleQueue(pane, msg, items), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...ACTIVITY_RESET, runStartedAt, ...notice };
+      // A route_fit card up (a reconnect): its message goes back to the queue, paused, as its ✕ would — never lost.
+      const kept = routeFitBack(pane);
+      return { ...kept, ...started, ...settleQueue(kept, msg, items), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...efforts, ...ACTIVITY_RESET, runStartedAt, ...notice };
     }
     case 'catchup': {
       // The device was not behind, or what it missed follows as ordinary events: the transcript stays as it is. Only what a
@@ -719,7 +744,10 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
         // A new GPT/Gemini session runs under the sandbox this pane sent with its first turn (Pane: `sandbox: pane.sandbox`).
         // Nothing else tells the pane until the session is reopened — the chip would show the read-only default meanwhile.
         const sandbox = sess.sessionId === null && engine !== 'claude' ? { sandbox: pane.sandbox } : {};
-        p = { ...pane, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, myTurns: [...pane.myTurns, msg.turnId], session: { ...sess, engine, ...sandbox } };
+        // 자동 routed a new session to GPT/Gemini/Grok: the pane follows the picked model, so later turns (which carry the
+        // pane's model) stay on it instead of that engine's default. Not the user's pick: the next new session goes 자동 again.
+        const routed = sess.sessionId === null && pane.model === 'auto' && engine !== 'claude' && msg.model ? { model: msg.model, modelPicked: false } : {};
+        p = { ...pane, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, myTurns: [...pane.myTurns, msg.turnId], session: { ...sess, engine, ...sandbox }, ...routed };
       }
       if (p.handoff && p.handoff.turnId === null && msg.clientRef !== undefined && msg.clientRef === p.handoff.ref) p = { ...p, handoff: { ...p.handoff, turnId: msg.turnId } };
       if (!belongs(p, msg)) return p;
@@ -874,6 +902,12 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const done: PaneState = { ...next, session, myTurns, queuePaused, activeTurnId: ended ? null : pane.activeTurnId, ...(ended ? { runStartedAt: null, progress: null } : {}) };
       return pane.handoff?.turnId === msg.turnId ? afterHandoffNote(done, msg.ok, accounts) : done;
     }
+    case 'route_fit': {
+      // Not sent: the engine cannot do this turn. Only the send that asked (its clientRef) ends its wait and gets the card.
+      if (pane.awaitingRef === null || msg.clientRef !== pane.awaitingRef || !pane.awaitingSend) return pane;
+      const back = pane.awaitingSend;
+      return { ...pane, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, ...(pane.activeTurnId === null ? { runStartedAt: null, progress: null } : {}), queuePaused: pane.queuePaused || pane.queue.length > 0, routeFit: { engine: msg.engine, need: msg.need, text: back.text, attachments: back.attachments } };
+    }
     case 'error': {
       // This session's open_session failed while messages wait for its history: they stop waiting — ordinary queue items,
       // paused, so nothing hangs on a history that never comes. (Not the drain broadcast: the history still comes.)
@@ -975,6 +1009,10 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
   if ((settings.sameVendorRotation ?? null) !== state.sameVendorRotation) state = { ...state, sameVendorRotation: settings.sameVendorRotation ?? null };
   if ((settings.commanderEnabled ?? null) !== state.commanderEnabled) state = { ...state, commanderEnabled: settings.commanderEnabled ?? null };
   if ((settings.commanderMaxTurns ?? null) !== state.commanderMaxTurns) state = { ...state, commanderMaxTurns: settings.commanderMaxTurns ?? null };
+  if (settings.autoEngines && settings.autoConsent) {
+    const next = { autoEngines: settings.autoEngines, autoConsent: settings.autoConsent, grokFast: settings.grokFast ?? false };
+    if (JSON.stringify(next) !== JSON.stringify(state.autoRoute)) state = { ...state, autoRoute: next };
+  }
   if (settings.autoApprove === state.autoApprove) return state;
   const from = defaultGeminiSandbox(state.autoApprove ?? false);
   const to = defaultGeminiSandbox(settings.autoApprove);
@@ -1101,6 +1139,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       });
       return { ...state, parked, panes, pending: state.pending.filter((p) => p.turnId !== msg.turnId), questions: state.questions.filter((q) => q.turnId !== msg.turnId) };
     }
+    case 'route_fit': return { ...state, panes: mapPanes(state, msg) };
     case 'error': {
       // An answer to a card already resolved elsewhere (this device missed the resolved message): the card goes, and
       // nothing else — no error bar, and no pane's wait or loading placeholder is touched.
@@ -1169,7 +1208,9 @@ export function reducer(state: AppState, action: Action): AppState {
       // Opening the session the pane already shows (a reload of it) keeps its queue and pending send as they are.
       const pane = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
       const same = !!pane && action.sessionId !== null && pane.session?.sessionId === action.sessionId;
-      const s = { ...(same ? state : park(state, action.paneId)), recent: remember(state.recent, pane) };
+      // A route_fit card up: its message goes back to the queue (paused) first, so it is kept (or parked) like any other.
+      const fitted = pane?.routeFit ? updatePane(state, pane.id, routeFitBack) : state;
+      const s = { ...(same ? fitted : park(fitted, action.paneId)), recent: remember(state.recent, pane) };
       // Shown until the history (asked for again on every open) replaces them.
       const cached = action.sessionId !== null ? s.recent[action.sessionId] : undefined;
       // Messages kept with this session (park; a new session: with its folder) come back, paused — and stay kept.
@@ -1184,7 +1225,8 @@ export function reducer(state: AppState, action: Action): AppState {
           ? { queue: [...p.queue, ...(back ?? [])], queuePaused: p.queuePaused || !!back }
           : { awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, queue: back ?? [], queuePaused: !!back, queueSendNow: null,
               // Another session: its model is its own again (history shows it); a new one starts on the default unless picked.
-              modelPicked: false, ...(action.sessionId === null && !p.modelPicked && engineOf(p.model) === 'claude' ? { model: DEFAULT_MODEL } : {}) }),
+              // The 자동 engine: 자동 model again (a model 자동 routed to is never sent with engine 자동).
+              modelPicked: false, ...(action.sessionId === null && !p.modelPicked ? (p.engine === 'auto' ? { model: 'auto' as const } : engineOf(p.model) === 'claude' ? { model: DEFAULT_MODEL } : {}) : {}) }),
         handoff: null, handoffFrom: null, prefill: null, notices: [],
       }));
     }
@@ -1222,16 +1264,24 @@ export function reducer(state: AppState, action: Action): AppState {
         // A new session is sent with the picker's model: the session keeps sending it.
         ...(p.session?.sessionId === null ? { modelPicked: true } : {}),
         items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(n) }],
+        routeFit: null,
         awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingBehind: null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [], ...withN(n), at: Date.now() }, attachments: action.keepAttachments ? p.attachments : [], queuePaused: action.keepPaused ? p.queuePaused : false, prefill: null,
         ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),
         ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
       };
     });
+    case 'route_fit_resolve': return updatePane(state, action.paneId, (p) => {
+      const f = p.routeFit;
+      if (!f) return p;
+      if (action.how === 'dismiss') return routeFitBack(p);
+      const last = p.items[p.items.length - 1];
+      return { ...p, routeFit: null, items: last?.kind === 'user' && last.text === f.text ? p.items.slice(0, -1) : p.items };
+    });
     case 'set_model': return updatePane(state, action.paneId, (p) => ({ ...p, model: action.model, modelPicked: action.picked ?? true }));
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
     case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({
-      ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) || isGrokModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model),
+      ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) || isGrokModel(p.model) ? 'auto' : p.model) : modelFor(action.engine, p.model),
       // Gemini keeps its own default (plan unless 자동 승인); leaving Gemini goes back to the GPT default.
       ...(action.engine === 'gemini' && p.engine !== 'gemini' ? { sandbox: defaultGeminiSandbox(state.autoApprove ?? false) } : action.engine !== 'gemini' && p.engine === 'gemini' ? { sandbox: DEFAULT_SANDBOX } : {}),
     }));

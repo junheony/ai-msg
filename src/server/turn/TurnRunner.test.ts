@@ -11,7 +11,9 @@ import type { GeminiTurnRequest } from '../engine/GeminiEngine';
 import type { GeminiAccount } from '../../shared/accounts';
 import type { GrokTurnRequest } from '../engine/GrokEngine';
 import type { EngineEvent } from '../engine/Engine';
+import { chooseAutoModel } from '../routing/AutoModel';
 import { readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
+import { COOLDOWN_MS } from '../engine/limitDetect';
 import { hashInput } from '../audit';
 import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
 import { SessionIndex } from '../sessions/SessionIndex';
@@ -19,7 +21,7 @@ import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState, type GrokSessionState } from './SessionState';
 import { DEFAULT_EFFORT, DEFAULT_GROK_MODEL, GROK_CLI_ALIAS, type Effort, type GrokModel } from '../../shared/models';
-import { GROK_MODE_NEXT_TURN_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { GROK_MODE_NEXT_TURN_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type AutoRouteSettings, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -846,7 +848,8 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     c.msgs.length = 0;
     await runner.run({ turnId: 'tc2', cwd: '/w', sessionId: null, text: 'y', engine: 'auto' }, c.sink);
     expect(codex.calls).toHaveLength(1);
-    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ reason: expect.stringContaining('GPT 주간 100%') });
+    // 자동 분배: GPT at 100 % is blocked, so the turn stays on Claude (the badge names the pick, not every engine's state).
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ engine: 'claude', reason: expect.stringMatching(/^자동 · .* → Claude /) });
   });
 
   it('a Codex turn.failed JSON blob with status 429 / usage_limit_reached sets the GPT cooldown', async () => {
@@ -869,7 +872,8 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect(readCooldownUntilMs(c.deps.cooldownDir, 'b', NOW)).toBeNull();
     c.msgs.length = 0;
     await runner.run({ turnId: 't4', cwd: '/w', sessionId: null, text: 'y', engine: 'auto' }, c.sink);
-    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'b', reason: expect.stringContaining('GPT 쿨다운') });
+    // GPT has more weekly room than Claude here (the balance would pick it): only the cooldown keeps 자동 on Claude.
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'b', engine: 'claude', reason: expect.stringMatching(/^자동 · .* → Claude /) });
   });
 
   it('auto opens on GPT when it has the headroom; codex requested without a binary falls back to Claude with the reason', async () => {
@@ -1121,7 +1125,7 @@ describe('TurnRunner: Gemini sessions (explicit only)', () => {
     expect(g.calls.map((r) => r.account)).toEqual(['g1', 'g2']);
   });
 
-  it('자동 (engine and model) never opens on Gemini', async () => {
+  it('자동 (engine and model) never opens on Gemini without its external-transfer consent (default settings)', async () => {
     const g = fakeGemini(['g1', 'g2'], () => geminiOk(GSID));
     const eng = new StubEngine(() => ok('c1'));
     const c = await ctx(eng, { gemini: g.dep });
@@ -1267,7 +1271,45 @@ describe('TurnRunner: Grok sessions (explicit only)', () => {
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, errorText: expect.stringContaining('grok login') });
   });
 
-  it('자동 never opens on Grok; a Grok session refuses a cwd change', async () => {
+  it('grokUsage.noteTurn gets the turn outcome: rate_limit → cooldown time, a later success → null, a stopped turn → its kind', async () => {
+    type Note = Parameters<NonNullable<TurnRunnerDeps['grokUsage']>['noteTurn']>;
+    const notes: Note[] = [];
+    let fail: EngineEvent[] | null = grokFail(XSID, 'Grok 한도 — 잠시 뒤', 'rate_limit');
+    const ac = new AbortController();
+    let abortNext = false;
+    const g = fakeGrok(() => {
+      if (abortNext) { ac.abort(); return grokFail(XSID, 'stopped', null as unknown as string); }
+      return fail ?? grokOk(XSID);
+    });
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep, grokUsage: { noteTurn: (...a: Note) => { notes.push(a); } } });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    expect(notes[0]).toEqual(['x1', { ok: false, errorKind: 'rate_limit', usage: ZERO, cooldownUntilMs: NOW + COOLDOWN_MS.limit }]);
+    fail = null;
+    await runner.run({ turnId: 't2', cwd: '/w', sessionId: XSID, text: 'x' }, c.sink);
+    expect(notes[1]).toEqual(['x1', { ok: true, errorKind: null, usage: expect.objectContaining({ inputTokens: 10, outputTokens: 5 }), cooldownUntilMs: null }]);
+    abortNext = true;
+    await runner.run({ turnId: 't3', cwd: '/w', sessionId: XSID, text: 'x' }, { ...c.sink, signal: ac.signal });
+    expect(notes[2]).toMatchObject(['x1', { ok: false, errorKind: null }]);
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false });
+  });
+
+  it('a throwing grokUsage.noteTurn is logged and the turn_result still goes out', async () => {
+    const g = fakeGrok(() => grokOk(XSID));
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep, grokUsage: { noteTurn: () => { throw new Error('disk full'); } } });
+    const logged: unknown[][] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { logged.push(a); };
+    try {
+      await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    } finally {
+      console.error = orig;
+    }
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok' });
+    expect(logged.some((a) => String(a[0]).startsWith('deck: ') && a.includes('disk full'))).toBe(true);
+  });
+
+  it('자동 never opens on Grok without its consent (default settings); a Grok session refuses a cwd change', async () => {
     const g = fakeGrok(() => grokOk(XSID));
     const eng = new StubEngine(() => ok('c1'));
     const c = await ctx(eng, { grok: g.dep });
@@ -1479,5 +1521,166 @@ describe('TurnRunner · 같은 벤더 계정 자동 순환 꺼짐', () => {
     await new TurnRunner(c2.deps).run({ turnId: 't2', cwd: '/w', sessionId: null, text: 'x', engine: 'auto' }, c2.sink);
     expect(offCodex.calls).toHaveLength(1);
     expect(of(c2, 'turn_started')[0]).toMatchObject({ account: 'gpt', engine: 'codex' });
+  });
+});
+
+describe('TurnRunner: 자동 분배 (chooseRoute)', () => {
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  const auto = (o: Partial<AutoRouteSettings>): (() => AutoRouteSettings) => () => ({ autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, ...o });
+  const started = (c: Ctx) => c.msgs.find((m) => m.type === 'turn_started');
+
+  it('engine 자동 → Gemini (consented, the only engine on): the badge reason is the route', async () => {
+    const g = fakeGemini(['g1'], () => geminiOk(GSID));
+    const eng = new StubEngine(() => ok('c1'));
+    const c = await ctx(eng, { gemini: g.dep, autoRoute: auto({ autoEngines: ['gemini'], autoConsent: ['gemini'] }) });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: '이 함수 뭐야?', engine: 'auto', model: 'auto' }, c.sink);
+    expect(eng.calls).toHaveLength(0);
+    expect(g.calls[0]).toMatchObject({ account: 'g1', model: 'gemini-flash', effort: 'low' });
+    expect(started(c)).toMatchObject({ engine: 'gemini', model: 'gemini-flash', reason: '자동 · 설명 · 한도 불명 → Gemini Flash · G1' });
+  });
+
+  it('accountPin + engine 자동: stays on Claude even when only Gemini is on and consented (review #3)', async () => {
+    const g = fakeGemini(['g1'], () => geminiOk(GSID));
+    const eng = new StubEngine(() => ok('c1'));
+    const c = await ctx(eng, { gemini: g.dep, autoRoute: auto({ autoEngines: ['gemini'], autoConsent: ['gemini'] }) });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: '이 함수 뭐야?', engine: 'auto', model: 'auto', accountPin: 'a' }, c.sink);
+    expect(g.calls).toHaveLength(0);
+    expect(eng.calls).toHaveLength(1);
+    expect(started(c)).toMatchObject({ engine: 'claude', account: 'a' });
+  });
+
+  it('engine 자동 → Grok (consented); grokFast picks Grok 4.7 Build Fast', async () => {
+    const g = fakeGrok((req) => grokOk(req.resumeSessionId ?? XSID));
+    const c = await ctx(new StubEngine(() => ok('c1')), { grok: g.dep, autoRoute: auto({ autoEngines: ['grok'], autoConsent: ['grok'] }) });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: c.base, sessionId: null, text: '로그인 기능 구현해줘', engine: 'auto', model: 'auto' }, c.sink);
+    expect(started(c)).toMatchObject({ engine: 'grok', model: 'grok-4.7', reason: expect.stringMatching(/^자동 · 구현.* → Grok 4\.7$/) });
+    const f = fakeGrok((req) => grokOk(req.resumeSessionId ?? XSID));
+    const d = await ctx(new StubEngine(() => ok('c1')), { grok: f.dep, autoRoute: auto({ autoEngines: ['grok'], autoConsent: ['grok'], grokFast: true }) });
+    await new TurnRunner(d.deps).run({ turnId: 't1', cwd: d.base, sessionId: null, text: '로그인 기능 구현해줘', engine: 'auto' }, d.sink);
+    expect(started(d)).toMatchObject({ engine: 'grok', model: 'grok-4.7-build-fast' });
+  });
+
+  it('no consent: Gemini / Grok are never used; with nothing else on, no_route answers an error naming every engine', async () => {
+    const g = fakeGemini(['g1'], () => geminiOk(GSID));
+    const x = fakeGrok(() => grokOk(XSID));
+    const eng = new StubEngine(() => ok('c1'));
+    const c = await ctx(eng, { gemini: g.dep, grok: x.dep, autoRoute: auto({ autoEngines: ['gemini', 'grok'] }) });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: '이 함수 뭐야?', engine: 'auto', model: 'auto' }, c.sink);
+    expect(g.calls).toHaveLength(0);
+    expect(x.calls).toHaveLength(0);
+    expect(eng.calls).toHaveLength(0);
+    expect(c.msgs).toEqual([{ type: 'error', turnId: 't1', message: expect.stringMatching(/^자동 분배: 쓸 수 있는 엔진 없음 — Claude: .+, GPT: .+, Gemini: .*외부 전송 동의 전.*, Grok: .*외부 전송 동의 전/) }]);
+  });
+
+  it('an engine turned off in autoEngines is skipped: GPT with more room stays unused', async () => {
+    const codex = fakeCodex(codexOk('tid-1'));
+    const c = await ctx(new StubEngine(() => ok('c1')), { codex: codex.engine, findRollout: async () => null, autoRoute: auto({ autoEngines: ['claude'] }) }, await usageWithGpt(10));
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'auto' }, c.sink);
+    expect(codex.calls).toHaveLength(0);
+    expect(started(c)).toMatchObject({ engine: 'claude' });
+  });
+
+  it('a commander turn routes to Claude only, whatever engines are on', async () => {
+    const codex = fakeCodex(codexOk('tid-1'));
+    const g = fakeGemini(['g1'], () => geminiOk(GSID));
+    const eng = new StubEngine(() => ok('c1'));
+    const c = await ctx(eng, { codex: codex.engine, gemini: g.dep, findRollout: async () => null, autoRoute: auto({ autoEngines: ['codex', 'gemini'], autoConsent: ['gemini'] }) }, await usageWithGpt(10));
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: '이 함수 뭐야?', engine: 'auto', model: 'auto', commanderHop: 1 }, c.sink);
+    expect(codex.calls).toHaveLength(0);
+    expect(g.calls).toHaveLength(0);
+    expect(eng.calls).toHaveLength(1);
+    expect(started(c)).toMatchObject({ engine: 'claude', reason: expect.stringContaining('총사령탑') });
+  });
+
+  it('engine Claude + model 자동 keeps chooseAutoModel (no chooseRoute badge)', async () => {
+    const eng = new StubEngine(() => ok('c1'));
+    const c = await ctx(eng, { autoRoute: auto({ autoEngines: ['gemini'], autoConsent: ['gemini'] }) });
+    const text = '여러 파일에 걸친 결제 모듈 리팩터링';
+    const want = chooseAutoModel({ text, attachmentCount: 0, usage: c.deps.usage.routingSnapshot(), nowMs: NOW, cooldownUntilMs: {}, protectedAccount: c.deps.protectedAccount, accounts: c.deps.accounts });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text, engine: 'claude', model: 'auto' }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ model: want.model });
+    expect(started(c)).toMatchObject({ engine: 'claude', model: want.model, reason: expect.stringContaining(want.reason) });
+  });
+
+  it('engine Grok + model 자동 + an image → route_fit, nothing runs; ignoreFit sends it anyway', async () => {
+    const g = fakeGrok((req) => grokOk(req.resumeSessionId ?? XSID));
+    const c = await ctx(new StubEngine(() => ok('c1')), { grok: g.dep });
+    const store = new AttachmentStore(path.join(c.base, 'att'));
+    await store.init();
+    const img = await store.save('a.png', PNG);
+    c.deps.attachments = store;
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: c.base, sessionId: null, text: '이 화면 설명해줘', engine: 'grok', model: 'auto', attachments: [img.id] }, c.sink);
+    expect(g.calls).toHaveLength(0);
+    expect(c.msgs).toEqual([{ type: 'route_fit', turnId: 't1', sessionId: null, engine: 'grok', need: '이미지 입력' }]);
+    c.msgs.length = 0;
+    await runner.run({ turnId: 't2', cwd: c.base, sessionId: null, text: '이 화면 설명해줘', engine: 'grok', model: 'auto', attachments: [img.id], ignoreFit: true }, c.sink);
+    expect(g.calls).toHaveLength(1);
+    expect(started(c)).toMatchObject({ engine: 'grok', reason: expect.stringContaining('Grok 지정') });
+  });
+
+  it('an existing Gemini session: a shell cue → route_fit (every turn); ignoreFit runs it; an explain turn just runs', async () => {
+    const g = fakeGemini(['g1'], (req) => geminiOk(req.resumeSessionId ?? GSID));
+    const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
+    await c.deps.store.set({ engine: 'gemini', account: 'g1', sessionId: GSID, cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gemini-pro', sandbox: 'read-only', createdAtMs: 1, title: 't' });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w2', sessionId: GSID, text: '테스트 돌려줘' }, c.sink);
+    expect(g.calls).toHaveLength(0);
+    expect(c.msgs).toEqual([{ type: 'route_fit', turnId: 't1', sessionId: GSID, engine: 'gemini', need: '셸 실행' }]);
+    await runner.run({ turnId: 't2', cwd: '/w2', sessionId: GSID, text: '테스트 돌려줘', ignoreFit: true }, c.sink);
+    await runner.run({ turnId: 't3', cwd: '/w2', sessionId: GSID, text: '이 함수 설명해줘' }, c.sink);
+    expect(g.calls).toHaveLength(2);
+  });
+
+  it('Gemini effort: a picked xhigh becomes high', async () => {
+    const g = fakeGemini(['g1'], () => geminiOk(GSID));
+    const c = await ctx(new StubEngine(async () => []), { gemini: g.dep });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'gemini', model: 'gemini-pro', effort: 'xhigh' }, c.sink);
+    expect(g.calls[0]).toMatchObject({ effort: 'high' });
+  });
+
+  it('#5 engine GPT + model 자동 without the codex CLI falls back to Claude and says why', async () => {
+    const eng = new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]);
+    const c = await ctx(eng, { codex: null });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'codex', model: 'auto' }, c.sink);
+    expect(eng.calls).toHaveLength(1);
+    expect(started(c)).toMatchObject({ engine: 'claude', reason: expect.stringContaining('codex CLI 없음 → Claude') });
+  });
+
+  it('engine 자동 without the codex CLI: never GPT, the turn runs on Claude', async () => {
+    const eng = new StubEngine(async () => [{ kind: 'init', sessionId: SID, model: 'm' }, okResult(SID)]);
+    const c = await ctx(eng, { codex: null }, await usageWithGpt(10));
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'auto', model: 'auto' }, c.sink);
+    expect(eng.calls).toHaveLength(1);
+    expect(started(c)).toMatchObject({ engine: 'claude' });
+  });
+
+  it('an existing Grok session + an image → route_fit (every turn), nothing runs', async () => {
+    const g = fakeGrok((req) => grokOk(req.resumeSessionId ?? XSID));
+    const c = await ctx(new StubEngine(() => ok('c1')), { grok: g.dep });
+    const store = new AttachmentStore(path.join(c.base, 'att'));
+    await store.init();
+    const img = await store.save('a.png', PNG);
+    c.deps.attachments = store;
+    await c.deps.store.set({ engine: 'grok', account: 'x1', sessionId: XSID, grokSessionId: XSID, cwd: c.base, canonicalCwd: c.base, lastTurnAtMs: 1, justCompacted: false, model: 'grok-4.7', effort: 'high', permissionMode: 'default', createdAtMs: 1 });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: c.base, sessionId: XSID, text: '이 화면 설명해줘', attachments: [img.id] }, c.sink);
+    expect(g.calls).toHaveLength(0);
+    expect(c.msgs).toEqual([{ type: 'route_fit', turnId: 't1', sessionId: XSID, engine: 'grok', need: '이미지 입력' }]);
+  });
+
+  it('a Grok auth failure blocks Grok in 자동 until a Grok turn succeeds', async () => {
+    let fail = true;
+    const g = fakeGrok((req) => (fail ? grokFail(req.resumeSessionId ?? XSID, 'not logged in', 'authentication_failed') : grokOk(req.resumeSessionId ?? XSID)));
+    const c = await ctx(new StubEngine(() => ok('c1')), { grok: g.dep, autoRoute: auto({ autoEngines: ['grok'], autoConsent: ['grok'] }) });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: c.base, sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    c.msgs.length = 0;
+    await runner.run({ turnId: 't2', cwd: c.base, sessionId: null, text: '기능 구현해줘', engine: 'auto' }, c.sink);
+    expect(c.msgs).toEqual([{ type: 'error', turnId: 't2', message: expect.stringContaining('Grok: Grok 인증 오류') }]);
+    fail = false;
+    await runner.run({ turnId: 't3', cwd: c.base, sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    c.msgs.length = 0;
+    await runner.run({ turnId: 't4', cwd: c.base, sessionId: null, text: '기능 구현해줘', engine: 'auto' }, c.sink);
+    expect(started(c)).toMatchObject({ engine: 'grok' });
   });
 });

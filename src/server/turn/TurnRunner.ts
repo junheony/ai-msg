@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { GEMINI_ACCOUNTS, GEMINI_LABEL, GROK_LABEL, isGeminiAccount, isGrokAccount, type Account, type AccountNames, type GeminiAccount, type GrokAccount, type ProjectsRoots } from '../../shared/accounts';
-import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, GROK_CLI_ALIAS, IMPORTED_DEFAULT_MODEL, MODEL_EFFORTS, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type GrokModel, type ModelChoice } from '../../shared/models';
+import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, GROK_CLI_ALIAS, IMPORTED_DEFAULT_MODEL, MODEL_EFFORTS, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type GeminiModel, type GrokModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
@@ -16,6 +17,8 @@ import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetAtMs, limitResetH
 import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
 import { NO_ROTATION, chooseAccount, fixedAccount, onlyAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
+import { chooseRoute, clampEffort, classifyTask, turnFits, type RouteDecision } from '../routing/AutoRoute';
+import { buildEngineLimits } from '../routing/engineLimits';
 import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
@@ -85,7 +88,14 @@ export type TurnParams = {
   commanderHop?: number;
   /** Server-internal (총사령탑 §6): appended to this turn's systemNote ("deck 총사령탑 자동 지시 n/상한 — …"). The first turn only, not its cap / failover continuations. */
   commanderNote?: string;
+  /** 그래도 보내기: skip the capability check (auto-route §10-4) that would answer `route_fit` instead of running the turn. */
+  ignoreFit?: boolean;
 };
+
+/** 자동 분배 settings (DeckSettings autoEngines / autoConsent / grokFast). */
+export type AutoRouteSettings = { autoEngines: readonly EngineKind[]; autoConsent: readonly EngineKind[]; grokFast: boolean };
+const DEFAULT_AUTO_ROUTE: AutoRouteSettings = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false };
+const ROUTE_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
 
 /** A commanderHop turn on a Codex/Gemini/Grok session (총사령탑 v1 = Claude only): refused, never run ungated. */
 export const COMMANDER_ENGINE_REFUSED = '총사령탑 자동 턴은 Claude 세션에서만 실행됩니다';
@@ -105,6 +115,8 @@ export type TurnRunnerDeps = {
   gemini?: { engine: Pick<GeminiEngine, 'runTurn'>; loggedIn: (account: GeminiAccount) => boolean } | null;
   /** Re-reads the Gemini quota shortly after a Gemini turn (GeminiUsagePoller.bump); absent = none. */
   geminiUsage?: { bump(): void } | null;
+  /** Notes every ended Grok turn's tokens/error for the usage header's Grok card (GrokUsageTracker.noteTurn); absent = no Grok usage card. */
+  grokUsage?: { noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: { inputTokens: number; outputTokens: number }; cooldownUntilMs: number | null }): void } | null;
   /** Null/absent = no `grok` binary. main binds runGrokTurn to the binary and x1's GROK_HOME; tests inject a fake. */
   grok?: { run: (req: GrokTurnRequest) => AsyncIterable<EngineEvent> } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
@@ -122,6 +134,8 @@ export type TurnRunnerDeps = {
   routingPolicy?: () => RoutingPolicy;
   /** 같은 벤더 계정 자동 순환 (DeckSettings.sameVendorRotation, read per turn); absent = on (main passes the setting, off by default). */
   sameVendorRotation?: () => boolean;
+  /** 자동 분배 settings (read per new session); absent = every engine, no Gemini / Grok consent, Grok 4.7. */
+  autoRoute?: () => AutoRouteSettings;
   /** 개발용(총사령탑 3단계, DECK_DEV_COMMANDER_GATE=1): every Claude turn without a commanderHop runs as hop 1 of the gate. */
   devCommanderGate?: boolean;
   /** One line per routed Claude turn (main: console.log); absent = not logged. */
@@ -265,6 +279,13 @@ function titleOf(text: string): string {
   return first.length > 80 ? first.slice(0, 80) : first || '(제목 없음)';
 }
 
+/** §10-4: whether `cwd` (symlinks resolved) is inside HOME — Gemini edits files only in trusted folders. */
+async function insideHome(cwd: string): Promise<boolean> {
+  const real = async (x: string) => fs.realpath(x).catch(() => path.resolve(x));
+  const [dir, home] = await Promise.all([real(cwd), real(os.homedir())]);
+  return dir === home || dir.startsWith(home.endsWith(path.sep) ? home : home + path.sep);
+}
+
 export class TurnRunner {
   private readonly move: typeof moveSession;
   private readonly replaceDiverged: typeof backupDivergedAndMove;
@@ -293,6 +314,8 @@ export class TurnRunner {
   private geminiCooldownUntil: Partial<Record<GeminiAccount, number>> = {};
   /** In-memory, per Grok account, after a quota failure (design §8). Shown in the badge reason; never switches engines. */
   private grokCooldownUntil: Partial<Record<GrokAccount, number>> = {};
+  /** The last finished Grok turn's failure kind (auth blocks Grok in 자동 분배); cleared by the next successful turn. */
+  private grokLastError: 'auth' | 'other' | null = null;
   /** Home write-backs in flight, by session id (serialized per session; the next turn waits for it). */
   private readonly mirrors = new Map<string, Promise<void>>();
   /** Notices already shown, `${sessionId}\0${message}` — a lasting divergence is told once, not every turn. */
@@ -1381,9 +1404,20 @@ export class TurnRunner {
     // 총사령탑: the gate lives in the Claude engine's hooks only — an automatic turn never reaches another engine.
     if (p.commanderHop !== undefined && state && (isOtherEngineState(state))) { sink.emit({ type: 'error', turnId: p.turnId, message: COMMANDER_ENGINE_REFUSED }); return; }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
+    // §10-4: a Gemini / Grok session checks every turn whether its engine can do it (Claude / GPT can do anything).
+    if (state && (isGeminiState(state) || isGrokState(state)) && !p.ignoreFit) {
+      const engine = isGeminiState(state) ? 'gemini' : 'grok';
+      const fit = turnFits(engine, classifyTask(p.text, { images: attachments.filter((a) => a.isImage).length }), { cwdInsideHome: await insideHome(state.cwd) });
+      if (!fit.ok) { sink.emit({ type: 'route_fit', turnId: p.turnId, sessionId: state.sessionId, engine, need: fit.need }); return; }
+    }
     if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments);
     if (state && isGrokState(state)) return this.runGrok(p, state, sink, `Grok 세션 · ${GROK_LABEL[state.account]}`, attachments);
-    // Gemini and Grok are explicit only: chooseEngine (자동) never sees them.
+    // 자동 분배 (chooseRoute): engine 자동, or an engine other than Claude with model 자동. Claude / no engine keeps chooseEngine below.
+    // review #3: a pinned account forces Claude — engine 자동 never crosses vendors when an account is pinned.
+    if (!state && !p.accountPin && (p.engine === 'auto' || (p.model === 'auto' && (p.engine === 'codex' || p.engine === 'gemini' || p.engine === 'grok')))) {
+      return this.runRouted(p, sink, attachments);
+    }
+    // An explicit Gemini / Grok model: that engine as is.
     if (!state && p.engine === 'gemini') return this.runGemini(p, null, sink, 'Gemini 지정', attachments);
     if (!state && p.engine === 'grok') return this.runGrok(p, null, sink, 'Grok 지정', attachments);
     if (!state) {
@@ -1391,7 +1425,8 @@ export class TurnRunner {
       // 모델 weigh that account alone.
       const claudeAccounts = this.rotation() ? this.accounts : onlyAccount(this.accounts, fixedAccount({ pinned: p.accountPin ?? null, current: null, accounts: this.accounts }));
       const pick = chooseEngine({
-        choice: p.engine ?? 'claude', usage: deps.usage.routingSnapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
+        // review #3: a pinned account forces Claude — chooseEngine's own 자동 (Claude ↔ GPT) decision never fires for it.
+        choice: p.accountPin ? 'claude' : (p.engine ?? 'claude'), usage: deps.usage.routingSnapshot(), nowMs: this.now(), codexAvailable: deps.codex !== null,
         gptCooldownUntilMs: this.gptCooldownUntil, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, this.now(), this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: claudeAccounts,
       });
       if (pick.engine === 'codex') return this.runCodex(p, null, sink, pick.reason, attachments);
@@ -1405,6 +1440,53 @@ export class TurnRunner {
       return this.runClaude(p, null, sink, enginePrefix, attachments);
     }
     return this.runClaude(p, state, sink, null, attachments);
+  }
+
+  /**
+   * 자동 분배 (auto-route design §10): a new session's engine, model and effort from chooseRoute. A turn the picked engine
+   * cannot do answers `route_fit` (unless ignoreFit); no engine at all answers an error. The reason rides the badge; the
+   * full `why` goes to the server log only.
+   */
+  private async runRouted(p: TurnParams, sink: TurnSink, attachments: Attachment[]): Promise<void> {
+    const { deps } = this;
+    const nowMs = this.now();
+    const claudeAccounts = this.rotation() ? this.accounts : onlyAccount(this.accounts, fixedAccount({ pinned: p.accountPin ?? null, current: null, accounts: this.accounts }));
+    const gem = deps.gemini ?? null;
+    const limits = buildEngineLimits({
+      usage: deps.usage.routingSnapshot(), nowMs,
+      claude: { cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, nowMs, this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: claudeAccounts },
+      codex: { installed: deps.codex !== null, cooldownUntilMs: this.gptCooldownUntil },
+      gemini: { installed: gem !== null, loggedIn: { g1: gem?.loggedIn('g1') ?? false, g2: gem?.loggedIn('g2') ?? false }, cooldownUntilMs: this.geminiCooldownUntil },
+      grok: { installed: !!deps.grok, cooldownUntilMs: this.grokCooldownUntil.x1 ?? null, lastError: this.grokLastError },
+    });
+    const settings = deps.autoRoute?.() ?? DEFAULT_AUTO_ROUTE;
+    const d: RouteDecision = chooseRoute({
+      text: p.text, images: attachments.filter((a) => a.isImage).length, engine: p.engine ?? 'auto', model: p.model ?? 'auto',
+      ...(p.effort ? { effort: p.effort } : {}), limits, nowMs, cwdInsideHome: await insideHome(p.cwd),
+      autoEngines: settings.autoEngines, consented: settings.autoConsent, grokFast: settings.grokFast, commander: p.commanderHop !== undefined,
+    });
+    if (d.kind === 'no_route') {
+      deps.routeLog?.(`deck route ${p.turnId}: no route — ${Object.entries(d.reasons).map(([e, r]) => `${e}: ${r}`).join(' | ')}`);
+      const parts = (Object.keys(ROUTE_ENGINE_LABEL) as EngineKind[]).map((e) => `${ROUTE_ENGINE_LABEL[e]}: ${d.reasons[e]}`);
+      sink.emit({ type: 'error', turnId: p.turnId, message: `자동 분배: 쓸 수 있는 엔진 없음 — ${parts.join(', ')}` });
+      return;
+    }
+    deps.routeLog?.(`deck route ${p.turnId}: ${d.why.join(' | ')}`);
+    if (d.fit && !d.fit.ok && !p.ignoreFit) { sink.emit({ type: 'route_fit', turnId: p.turnId, sessionId: null, engine: d.engine, need: d.fit.need }); return; }
+    // A model chosen here: the user's 자동 effort (if any) wins, clamped; else the route's. A picked model keeps the picked effort.
+    const effort = p.model === 'auto' || p.model === undefined ? (p.effort ? clampEffort(d.model, p.effort) : d.effort) : d.effort;
+    const routed: TurnParams = { ...p, model: d.model, effort };
+    // GPT picked (engine GPT + model 자동, or a GPT model) but no codex CLI: Claude, as before 자동 분배, saying why.
+    if (d.engine === 'codex' && !deps.codex) {
+      const auto = chooseAutoModel({ text: p.text, attachmentCount: attachments.length, usage: deps.usage.routingSnapshot(), nowMs, cooldownUntilMs: readAllCooldownsMs(deps.cooldownDir, nowMs, this.accounts.list()), protectedAccount: deps.protectedAccount, accounts: claudeAccounts });
+      return this.runClaude({ ...p, model: auto.model, effort: p.effort ?? auto.effort }, null, sink, `codex CLI 없음 → Claude · ${auto.reason}`, attachments, auto.model);
+    }
+    switch (d.engine) {
+      case 'codex': return this.runCodex(routed, null, sink, d.reason, attachments);
+      case 'gemini': return this.runGemini(routed, null, sink, d.reason, attachments);
+      case 'grok': return this.runGrok(routed, null, sink, d.reason, attachments);
+      case 'claude': return this.runClaude(routed, null, sink, d.reason, attachments, isClaudeModel(d.model) ? d.model : undefined);
+    }
   }
 
   /** D2/D3: one ChatGPT account — no routing, no session move, no retry; sandbox + approval never. */
@@ -1497,7 +1579,8 @@ export class TurnRunner {
     if (sink.signal.aborted) { fail(account, abortedText(sink.signal)); return; }
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini' });
     let result: EngineResult | null = null;
-    const effort = effortFor(model, p.effort) ?? DEFAULT_EFFORT.gemini;
+    // A picked effort Gemini does not have (xhigh) becomes the closest lower one (high).
+    const effort = p.effort ? clampEffort(model, p.effort) : DEFAULT_EFFORT.gemini;
     for await (const ev of gem.engine.runTurn({ account, cwd, resumeSessionId: state?.sessionId ?? null, model, effort, sandbox, prompt: promptWithFiles(p.text, attachments), signal: sink.signal })) {
       switch (ev.kind) {
         case 'init': if (ev.sessionId !== sessionId) sink.sessionKnown?.(ev.sessionId); sessionId = ev.sessionId; break;
@@ -1610,6 +1693,15 @@ export class TurnRunner {
     // Only an id Grok reported is stored, never a rejected resume id echoed back.
     if (sessionId) await record(sessionId, res.ok).catch((err: unknown) => console.error('deck: saving the Grok session failed', err instanceof Error ? err.message : err));
     if (!res.ok && res.errorKind === 'rate_limit') this.grokCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
+    if (res.ok) this.grokLastError = null;
+    else if (!sink.signal.aborted) this.grokLastError = res.errorKind === 'authentication_failed' ? 'auth' : 'other';
+    // The map itself is kept on success (same as the Codex/Gemini cooldowns, which only expire); the card is told a
+    // successful turn means no cooldown, so it does not keep showing "한도" after Grok answered.
+    try {
+      this.deps.grokUsage?.noteTurn(account, { ok: res.ok, errorKind: res.errorKind, usage: res.usage, cooldownUntilMs: res.ok ? null : (this.grokCooldownUntil[account] ?? null) });
+    } catch (err) {
+      console.error('deck: recording Grok usage failed', err instanceof Error ? err.message : err);
+    }
     sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
   }
 

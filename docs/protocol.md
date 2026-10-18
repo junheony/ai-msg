@@ -36,6 +36,8 @@
 
 ws 메시지가 아닌 것: 하이라이트(`GET /api/highlights?hours=6|12|24`, 그 밖의 값은 24 → `{ hours, events }`)는 HTTP 로만 읽는다. 서버는 `highlights` 기능(위 표)으로 알리고, 그 기능이 없는 서버면 UI 는 들어가는 곳을 보이지 않는다.
 
+기능 이름이 아닌 것(규칙 1, 선택 필드): `hello`/`history`/`catchup` 의 `usage`(`UsageSnapshot`, `src/shared/usage-types.ts`) 는 사용량 헤더 개편(`docs/superpowers/specs/2026-10-18-usage-header-design.md`)으로 `geminiSeats?: Partial<Record<'g1' | 'g2', GeminiUsage>>` 와 `grokSeats?: Partial<Record<'x1', GrokUsage>>` 를 더했다. 둘 다 없거나 그 키가 없으면 그 좌석 카드는 없다(옛 서버·agy/grok 미설치·아직 못 돌린 턴). 기존 `gemini`(단일, g1 과 같은 값)는 구버전 UI 호환을 위해 당분간 함께 보낸다 — `geminiSeats` 가 없는 UI 는 `gemini` 만 본다. `GrokUsage`(`{ status, lastTurnAt, lastError, cooldownUntil, today }`) 는 공식 한도 API 가 없어 deck 자신의 Grok 턴 결과에서만 채운다; `status` 는 Grok 엔진의 `hello.grok.bin`(위 `grok` 기능 행)이 없으면 카드 자체를 숨기는 판단에 쓰지 않는다(그건 `grok.bin` 이 정한다).
+
 ## 총사령탑 (`commander`)
 
 기존 Claude 세션에 목표를 걸어 두면 세션이 쉴 때마다 판정해 다음 지시를 보낸다(설계: `docs/superpowers/specs/2026-10-18-commander-design.md`). 모두 `commander` 기능이 있는 서버에서만 쓴다.
@@ -58,6 +60,16 @@ ws 메시지가 아닌 것: 하이라이트(`GET /api/highlights?hours=6|12|24`,
 | `commander_stale_epoch` | 보낸 `epoch` 이 지금 것과 다름(다른 기기가 다시 걸었음 등) | 화면이 오래됐습니다 — 다시 시도 |
 
 - 켜기·끄기: `set_settings.commanderEnabled`(선택). 답인 `settings` 방송에는 그때만 `features`(새 기능 목록)가 붙는다 — UI 는 그 목록으로 `has('commander')` 를 바꾸고, 목록에서 빠지면 캐시한 칩·거절을 비운다. 끌 때 서버는 활성 사령탑을 모두 `stopped`(사유 `설정에서 꺼짐`, epoch 증가)로 바꿔 방송한 뒤 `settings` 를 보낸다. 상한들(`commanderMaxTurns`·`commanderTokenCap`)은 설정 파일에서만.
+
+## 자동 분배 (`engine: 'auto'`)
+
+새 세션 첫 턴에서 엔진·모델을 고른다(설계: `docs/superpowers/specs/2026-10-18-auto-route-design.md` §10). 별도 기능 플래그는 없다.
+
+- `send.engine: 'auto'`(새 세션), 또는 `send.engine` 이 `codex`·`gemini`·`grok` 이고 `model: 'auto'` 이면 서버가 첫 턴 내용·남은 한도·설정으로 정한다. `engine: 'claude'`(또는 없음) + `model: 'auto'` 는 이전처럼 Claude 모델만 고른다. 고른 결과는 `turn_started.reason`(배지, `자동 · … → <엔진> <모델>`)으로 보인다. 총사령탑 턴은 Claude 만.
+- 쓸 수 있는 엔진이 없으면 `error{turnId, sessionId: null, message: "자동 분배: 쓸 수 있는 엔진 없음 — Claude: …, GPT: …, Gemini: …, Grok: …"}`.
+- `route_fit{turnId, sessionId, engine, need, clientRef?}` — 고른(또는 지정한) 엔진이 이 턴을 못 할 때 턴을 시작하지 않고 보낸다. `need` 는 `셸 실행`·`신뢰 폴더(HOME) 밖 파일 편집`·`설명 외 작업(셸·편집 엔진)`(Gemini), `이미지 입력`(Grok). 새 세션이면 `sessionId: null`, 기존 Gemini·Grok 세션은 매 턴 같은 검사를 받고 그 세션 id 가 실린다. `turn_started` 전에 오므로 `clientRef` 가 붙는다. UI 는 "이 작업은 ○○ 가 필요합니다" 카드와 [그래도 보내기]를 띄운다. 새 세션으로 이어가기는 Claude 세션 전용이라 카드에 없다.
+- `send.ignoreFit: true` — 위 검사를 건너뛰고 그대로 보낸다([그래도 보내기]).
+- 설정(`settings` / `set_settings`, 모두 선택): `autoEngines`(자동이 고를 수 있는 엔진, 기본 4개 전부), `autoConsent`(데이터 전송에 동의한 엔진, 기본 `[]` — Gemini·Grok 은 여기 있어야 후보가 된다), `grokFast`(Grok 빠른 모델, 기본 `false`). 엔진 배열은 `claude`·`codex`·`gemini`·`grok` 중에서만, 잘못된 값은 이전 값을 유지한다.
 
 ## HTTP: 세션 폴더 파일
 

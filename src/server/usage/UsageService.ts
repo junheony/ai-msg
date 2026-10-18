@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { type Account, type AccountNames, type UsageSeat } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type UsageMode, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { type Account, type AccountNames, type GrokAccount, type UsageSeat } from '../../shared/accounts';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokUsage, type UsageMode, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits; /** Claude, `cli` mode only: a Fable/Opus value the CLI told (see stream.ts fableSpentOf). */ fable?: UsageWindow };
@@ -324,15 +324,22 @@ export class UsageService {
   }
 
   private publish(next: UsageSnapshot): void {
-    // The Gemini seat is fed by GeminiUsagePoller only: a usage-deck poll carries the last reading over.
+    // The Gemini/Grok seats are each fed by their own poller/tracker only: any other kind of poll carries the last reading over.
     if (next.gemini === undefined && this.snap.gemini !== undefined) next = { ...next, gemini: this.snap.gemini };
+    if (next.geminiSeats === undefined && this.snap.geminiSeats !== undefined) next = { ...next, geminiSeats: this.snap.geminiSeats };
+    if (next.grokSeats === undefined && this.snap.grokSeats !== undefined) next = { ...next, grokSeats: this.snap.grokSeats };
     this.snap = this.withSource(next);
     for (const cb of this.listeners) cb(this.snap);
   }
 
-  /** GeminiUsagePoller: a fresh `/usage` reading (or a login/parse failure) for the Gemini card. */
+  /** GeminiUsagePoller: a fresh `/usage` reading (or a login/parse failure) for the g1 Gemini card (the only seat it polls today). */
   applyGemini(u: GeminiUsage): void {
-    this.publish({ ...this.snap, generatedAt: this.now().toISOString(), gemini: u });
+    this.publish({ ...this.snap, generatedAt: this.now().toISOString(), gemini: u, geminiSeats: { ...this.snap.geminiSeats, g1: u } });
+  }
+
+  /** GrokUsageTracker: a Grok turn just ended on `account` (usage header design §4/§7-4). */
+  applyGrok(account: GrokAccount, u: GrokUsage): void {
+    this.publish({ ...this.snap, generatedAt: this.now().toISOString(), grokSeats: { ...this.snap.grokSeats, [account]: u } });
   }
 
   private seatOf(s: UsageSnapshot, seat: UsageSeat): AccountUsage {
