@@ -4,7 +4,7 @@ import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSe
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
-import { HANDOFF_PROMPT, codexHandoffExcerpt, codexHandoffMessage, handoffFirstMessage, handoffTitle } from '../shared/handoff';
+import { HANDOFF_PROMPT, codexHandoffExcerpt, codexHandoffMessage, grokBotHandoffMessage, handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
@@ -421,6 +421,7 @@ export type Action =
   | { type: 'route_fit_resolve'; how: 'send' | 'dismiss'; paneId?: string }
   /** deck 에서 새 GPT 세션으로 이어가기: GPT turn `turnId` failed (thread held by another app) — the pane opens a new GPT session, the excerpt prefilled. No server round trip. */
   | { type: 'codex_handoff'; turnId: string; paneId?: string }
+  | { type: 'grokbot_handoff'; paneId?: string }
   | { type: 'set_model'; model: ModelChoice; paneId?: string; /** false: put back without marking it picked (갈래 거절 되돌리기) */ picked?: boolean }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
@@ -1014,6 +1015,29 @@ function codexHandoff(pane: PaneState, turnId: string): PaneState {
   };
 }
 
+/**
+ * deck Grok 새 세션으로 이어가기: the pane shows a read-only Grok Bot app conversation. It opens a new deck Grok session in
+ * the same folder, titled "<old title> (이어서)", with an excerpt of the conversation in the composer — sent only when the
+ * user does. Same resets as codexHandoff. Not a Grok Bot conversation: unchanged.
+ */
+function grokBotHandoff(pane: PaneState): PaneState {
+  const s = pane.session;
+  if (!s?.sessionId?.startsWith('grokbot-')) return pane;
+  const model = isGrokModel(pane.model) ? pane.model : DEFAULT_GROK_MODEL;
+  return {
+    ...pane,
+    session: { sessionId: null, cwd: s.cwd, account: null, title: handoffTitle(s.title), engine: 'grok', sandbox: null },
+    engine: 'grok', model,
+    items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [],
+    queue: pane.queue.filter((q) => !isHeld(q)), queuePaused: pane.queuePaused || pane.queue.some((q) => !isHeld(q)),
+    ...ACTIVITY_RESET,
+    handoff: null,
+    notices: [],
+    handoffFrom: { sessionId: s.sessionId, title: s.title },
+    prefill: grokBotHandoffMessage(s.title, codexHandoffExcerpt(pane.items, 'Grok')),
+  };
+}
+
 function mapPanes(state: AppState, msg: ServerMessage): PaneState[] {
   return state.panes.map((p) => paneOnServer(p, msg, false, state.accounts));
 }
@@ -1317,6 +1341,12 @@ export function reducer(state: AppState, action: Action): AppState {
       const next = p ? codexHandoff(p, action.turnId) : p;
       if (!p || !next || next === p) return state;
       return { ...state, parked: parkHeld(state.parked, p.session!.sessionId!, p.session!.cwd, p.queue).parked, panes: state.panes.map((x) => (x.id === p.id ? next : x)) };
+    }
+    case 'grokbot_handoff': {
+      const p = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
+      const next = p ? grokBotHandoff(p) : p;
+      if (!p || !next || next === p) return state;
+      return { ...state, panes: state.panes.map((x) => (x.id === p.id ? next : x)) };
     }
     case 'route_fit_resolve': return updatePane(state, action.paneId, (p) => {
       const f = p.routeFit;
