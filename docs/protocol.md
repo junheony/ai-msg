@@ -36,6 +36,8 @@
 
 ws 메시지가 아닌 것: 하이라이트(`GET /api/highlights?hours=6|12|24`, 그 밖의 값은 24 → `{ hours, events }`)는 HTTP 로만 읽는다. 서버는 `highlights` 기능(위 표)으로 알리고, 그 기능이 없는 서버면 UI 는 들어가는 곳을 보이지 않는다.
 
+기능 이름이 아닌 것(규칙 1, 선택 필드): `hello`/`history`/`catchup` 의 `usage`(`UsageSnapshot`, `src/shared/usage-types.ts`) 는 사용량 헤더 개편(`docs/superpowers/specs/2026-10-18-usage-header-design.md`)으로 `geminiSeats?: Partial<Record<'g1' | 'g2', GeminiUsage>>` 와 `grokSeats?: Partial<Record<'x1', GrokUsage>>` 를 더했다. 둘 다 없거나 그 키가 없으면 그 좌석 카드는 없다(옛 서버·agy/grok 미설치·아직 못 돌린 턴). 기존 `gemini`(단일, g1 과 같은 값)는 구버전 UI 호환을 위해 당분간 함께 보낸다 — `geminiSeats` 가 없는 UI 는 `gemini` 만 본다. `GrokUsage`(`{ status, lastTurnAt, lastError, cooldownUntil, today }`) 는 공식 한도 API 가 없어 deck 자신의 Grok 턴 결과에서만 채운다; `status` 는 Grok 엔진의 `hello.grok.bin`(위 `grok` 기능 행)이 없으면 카드 자체를 숨기는 판단에 쓰지 않는다(그건 `grok.bin` 이 정한다).
+
 ## 총사령탑 (`commander`)
 
 기존 Claude 세션에 목표를 걸어 두면 세션이 쉴 때마다 판정해 다음 지시를 보낸다(설계: `docs/superpowers/specs/2026-10-18-commander-design.md`). 모두 `commander` 기능이 있는 서버에서만 쓴다.

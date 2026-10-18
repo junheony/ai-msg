@@ -115,6 +115,8 @@ export type TurnRunnerDeps = {
   gemini?: { engine: Pick<GeminiEngine, 'runTurn'>; loggedIn: (account: GeminiAccount) => boolean } | null;
   /** Re-reads the Gemini quota shortly after a Gemini turn (GeminiUsagePoller.bump); absent = none. */
   geminiUsage?: { bump(): void } | null;
+  /** Notes every ended Grok turn's tokens/error for the usage header's Grok card (GrokUsageTracker.noteTurn); absent = no Grok usage card. */
+  grokUsage?: { noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: { inputTokens: number; outputTokens: number }; cooldownUntilMs: number | null }): void } | null;
   /** Null/absent = no `grok` binary. main binds runGrokTurn to the binary and x1's GROK_HOME; tests inject a fake. */
   grok?: { run: (req: GrokTurnRequest) => AsyncIterable<EngineEvent> } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
@@ -1693,6 +1695,7 @@ export class TurnRunner {
     if (!res.ok && res.errorKind === 'rate_limit') this.grokCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
     if (res.ok) this.grokLastError = null;
     else if (!sink.signal.aborted) this.grokLastError = res.errorKind === 'authentication_failed' ? 'auth' : 'other';
+    this.deps.grokUsage?.noteTurn(account, { ok: res.ok, errorKind: res.errorKind, usage: res.usage, cooldownUntilMs: this.grokCooldownUntil[account] ?? null });
     sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
   }
 

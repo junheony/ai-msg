@@ -1,4 +1,4 @@
-import type { Account } from './accounts';
+import type { Account, GeminiAccount, GrokAccount } from './accounts';
 
 export type UsageWindow = {
   usedPct: number;
@@ -35,6 +35,22 @@ export type GeminiBucket = { name: string; usedPct: number; resetsAt: string | n
  */
 export type GeminiUsage = { status: 'ok' | 'stale' | 'down'; fetchedAt: string | null; loggedIn: boolean; buckets: GeminiBucket[]; error?: string | null };
 
+/**
+ * The Grok seat (usage header design §4/§7-4/§7-5): no official quota API, so this is only what deck's own Grok turns
+ * observed. `status`: 'unknown' = no Grok turn yet; 'down' = the last turn's error was an auth failure, kept until the
+ * next turn succeeds; 'cooldown' = `cooldownUntil` (read from `TurnRunner.grokCooldownUntil`, the only source) is still
+ * in the future; else 'ok'. `lastError`: the last turn's own classification, independent of `status`'s persistence.
+ * `today`: input+output tokens of every turn that ended (success, stop or error, cancels included) on the local
+ * calendar day `day`; read past midnight it resets (UsageSnapshot readers compare `day` themselves).
+ */
+export type GrokUsage = {
+  status: 'ok' | 'down' | 'cooldown' | 'unknown';
+  lastTurnAt: string | null;
+  lastError: 'auth' | 'limit' | 'busy' | null;
+  cooldownUntil: string | null;
+  today: { inputTokens: number; outputTokens: number; turns: number; day: string };
+};
+
 export type UsageSnapshot = {
   generatedAt: string;
   deckReachable: boolean;
@@ -42,8 +58,12 @@ export type UsageSnapshot = {
   accounts: Record<Account, AccountUsage>;
   /** ChatGPT Pro (usage-deck card `codex`); status 'down' = unknown (D5). Optional only for Plan 1 test literals. */
   gpt?: AccountUsage;
-  /** Gemini via agy; absent = agy not installed (no card). */
+  /** Gemini via agy; absent = agy not installed (no card). Kept for older UIs — `geminiSeats.g1` carries the same value. */
   gemini?: GeminiUsage;
+  /** Gemini seats (usage header design §4/§7-1); absent/missing key = agy not installed or that seat never polled. g2 is unused until that seat exists. */
+  geminiSeats?: Partial<Record<GeminiAccount, GeminiUsage>>;
+  /** Grok seats (usage header design §4/§7-4); absent/missing key = no `grok` binary or no Grok turn yet on that seat. */
+  grokSeats?: Partial<Record<GrokAccount, GrokUsage>>;
   /** 'none' = this install has never had an answer from usage-deck: unknown usage alone does not change the model or engine. Absent = 'deck'. */ usageSource?: 'deck' | 'none';
   /**
    * Where the Claude account numbers come from (`DECK_USAGE_SOURCE`). 'cli' = only the `rate_limit_event` of deck's own
@@ -61,6 +81,16 @@ export function remainingPct(w: UsageWindow | null): number | null {
 
 export function emptyAccountUsage(): AccountUsage {
   return { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null };
+}
+
+/** `day`: the local calendar day (`YYYY-MM-DD`) `today` starts at, e.g. `localDay(new Date())`. */
+export function emptyGrokUsage(day: string): GrokUsage {
+  return { status: 'unknown', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day } };
+}
+
+/** `YYYY-MM-DD` in local time (GrokUsage.today.day resets at local midnight, not UTC). */
+export function localDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** An account's usage; one the snapshot does not carry is unknown ('down'). */
