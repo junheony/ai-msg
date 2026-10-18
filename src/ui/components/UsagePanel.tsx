@@ -258,6 +258,8 @@ export function geminiHint(g: GeminiUsage): string {
 
 /** Short bucket names: "Gemini 4 Argon" → "4 Argon", "gemini-3.8-flash" → "3.8 Flash"; anything else as is. */
 export function bucketLabel(name: string): string {
+  // "<group> · <window>" (agy 1.4.2: "Gemini · 5h", "Argon · 주간") is already a display name: as is.
+  if (name.includes(' · ')) return name;
   const s = name.replace(/^gemini[-_ ]?/i, '').replace(/[-_]+/g, ' ').trim();
   if (!s) return name;
   return s.replace(/\b([a-z])/g, (c) => c.toUpperCase());

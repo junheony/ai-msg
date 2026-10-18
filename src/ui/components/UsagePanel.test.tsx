@@ -80,6 +80,7 @@ describe('UsagePanel', () => {
     expect(bucketLabel('Gemini 3.8 Flash')).toBe('3.8 Flash');
     expect(bucketLabel('Pro')).toBe('Pro');
     expect(bucketLabel('gemini')).toBe('gemini');
+    expect(bucketLabel('Gemini · 5h')).toBe('Gemini · 5h');
   });
 
   afterEach(() => { cleanup(); vi.useRealTimers(); });

@@ -26,7 +26,7 @@ export type AccountUsage = {
   trustUntil?: string;
 };
 
-/** One Antigravity quota bucket (a model or model family) as `agy -p=/usage` reports it. */
+/** One Antigravity quota bucket as `agy -p=/usage` reports it; agy 1.4.2 names it "<group> · <window>" (e.g. `Gemini · 5h`, `Argon · 주간`). */
 export type GeminiBucket = { name: string; usedPct: number; resetsAt: string | null };
 
 /**

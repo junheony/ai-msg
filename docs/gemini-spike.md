@@ -29,10 +29,10 @@ agy                                   # 인자 없이 → 브라우저에서 Goo
 
 | 항목 | 방식 |
 |---|---|
-| 헤드리스 | `agy -p=<프롬프트> --output-format stream-json --model <alias> --effort <e> --mode <m> [--sandbox] --disable-slash-commands --print-timeout 0 [--conversation <id>]`. `-p` 는 **반드시 `-p=` 한 argv 요소**. stdin 은 바로 닫는다. |
+| 헤드리스 | `agy -p=<프롬프트> --output-format stream-json --model <alias> --effort <low\|medium\|high> [--mode accept-edits --sandbox] --disable-slash-commands --print-timeout 0 [--conversation <id>]`. `-p` 는 **반드시 `-p=` 한 argv 요소**. stdin 은 바로 닫는다. |
 | 스트림 | 한 줄 = `{"event":"<이름>",…,"<이름>":{…}}`. 실제 필드는 아래 "실측 1". |
 | 이어하기 | `--conversation <id>` — 실측 동작 확인(같은 id 로 `init`, `step_index` 가 이어짐, 이전 턴 기억함). |
-| 권한 | 읽기 전용 → `--mode plan`, 파일 편집 허용 → `--mode accept-edits --sandbox`. `--dangerously-skip-permissions` 는 절대 쓰지 않는다. 실제 효과는 "실측 4". |
+| 권한 | 읽기 전용 → `--mode` 없음(헤드리스 기본 거부가 쓰기·셸을 막는다), 파일 편집 허용 → `--mode accept-edits --sandbox`. 거부는 턴 알림(`Gemini가 거부함: 파일 쓰기` 등)으로 보인다. `--dangerously-skip-permissions` 는 절대 쓰지 않는다. 실제 효과는 "실측 4". |
 | 인증 | 키체인 로그인만. API 키/Vertex/ADC/베이스 URL 변수와 gemini-cli 잔재는 자식 env 에서 제거. |
 | 미로그인 | stderr `authentication required. Run 'agy' to log in` + result `error: "authentication failed or timed out"`(1.3.5 실측). print 모드는 브라우저 로그인을 60초 기다리며 멈춘다 → 턴·`/usage` 모두 로그인 프로브가 참일 때만. |
 | 한도 | 오류 문구에 quota / rate limit / RESOURCE_EXHAUSTED / 429 가 있으면 그 계정을 메모리에서 쿨다운. (한도 초과 실물은 아직 못 봄.) |
@@ -70,7 +70,7 @@ agy                                   # 인자 없이 → 브라우저에서 Goo
   - **이어하기 턴의 `usage`·`num_turns`·`duration_seconds` 는 대화 누적값이다**: 06 의 `input_tokens 28129` = 03 의 14879 + 06 step 의 13250, `output 361 = 195 + 166`, `num_turns 2`, `duration 93s`(프로세스는 12초). 새 대화 턴에선 step `usage` 합 = result `usage`(03: 12557+2322 = 14879).
 - 종료 코드: 성공·권한 거부 모두 0, 인자 오류 1.
 
-**코드에 주는 결론** — 현재 `GeminiEventMapper` 를 이 픽스처에 돌린 결과(`npx tsx` 로 확인):
+**코드에 주는 결론** — 수정 전 `GeminiEventMapper` 를 이 픽스처에 돌린 결과(`npx tsx` 로 확인, 아래 "코드 수정 필요" 1~5 로 반영 완료):
 - `init` 이 안 나간다(페이로드에서 `conversation_id` 를 찾음) → `result` 때 뒤늦게 init 을 낸다. 본문 delta 가 init 보다 먼저 나간다(01·03).
 - 도구 하나에 `tool_call` 이 **두 번**(id `step-3`, `step-4` — step_update 줄 수로 id 를 만들어서), `write_to_file` 은 `output` 이 없어 `tool_result` 가 영영 안 나간다(03·04) → UI 에 도구가 진행 중으로 남는다.
 - 이어하기 턴 사용량이 누적으로 잡혀 **중복 집계**된다(06).
@@ -90,7 +90,7 @@ agy                                   # 인자 없이 → 브라우저에서 Goo
 ```
 `response` 텍스트: 줄마다 `<그룹>\t<버킷 이름>\t<남은 %>%\t<ISO>` (예 `Gemini Models\tFive Hour Limit Remaining\t100%\t2026-10-18T13:28:03Z`). 퍼센트는 **남은 양**, 정수 반올림.
 
-**코드에 주는 결론**: 현재 `parseGeminiUsage(usage.json)` → **`[]`** (실행 확인) → 카드가 "불명". 이유 셋:
+**코드에 주는 결론**(반영 완료, 아래 8): 수정 전 `parseGeminiUsage(usage.json)` → **`[]`** (실행 확인) → 카드가 "불명". 이유 셋:
 1. 잔여가 `remaining_fraction`(0–1)이다 — `used_percentage`/`remaining_percentage` 키가 없다.
 2. 텍스트 대체 경로는 `:`·`|`·`·` 구분만 받는데 실제는 **탭**.
 3. 버킷 이름이 그룹 간에 겹친다(`Weekly Limit Remaining` 이 두 그룹에) → 버킷 자기 `name` 만 쓰면 이름 중복 제거에서 두 번째 그룹이 사라진다. 이름은 `그룹 + window`(예 `Gemini · 5h`, `Gemini · 주간`, `Argon · 주간`, `Claude/GPT · 5h`)로 만들어야 한다. `Claude and GPT models` 그룹(agy 안의 Claude/GPT 모델 몫)은 deck 이 쓰지 않으니 숨기거나 맨 뒤.
@@ -117,16 +117,22 @@ agy                                   # 인자 없이 → 브라우저에서 Goo
 
 **코드에 주는 결론**: 현재 매퍼·`GeminiEngine` 이 그대로 `ok:false, errorText:<error>` 로 처리한다 — 수정 불필요.
 
-## 코드 수정 필요 (근거 픽스처)
+## 코드 수정 필요 (근거 픽스처) — 1~8 반영 완료 (2026-10-18)
 
-1. **`GeminiEventMapper.map` `init`** — `conversation_id` 를 최상위 `e.conversation_id` 에서(페이로드 것도 계속 허용), 모델은 `p.model`. 근거 `01`, `03`, `06`.
-2. **`GeminiEventMapper.map` `step_update` 도구 id** — `step-${this.steps}` 대신 `step_index`(예 `step-${p.step_index}`; 이어하기 때도 대화 안에서 유일). 이름은 `tool_info.name` ?? `p.tool_name`. 근거 `03`, `04`, `06`.
-3. **`tool_result` 조건** — `state` 가 `DONE`/`ERROR` 면 payload 가 없어도 결과를 낸다(내용 `''` 또는 "완료"), `isError` = `state==='ERROR'` 또는 `tool_info.error`. 근거 `03`(write_to_file DONE·output 없음), `06`(ERROR + error 객체).
-4. **턴 사용량** — `result.usage` 대신 `step_update.usage` 를 합산(이어하기 턴에선 result 가 대화 누적). step usage 가 하나도 없으면 result 로 대체. 근거 `06`(누적), `03`(새 대화에선 합 = result).
-5. **권한 거부 표시** — `result.denied_actions` 가 있으면 결과에 알림을 붙인다(예: 본문 끝 또는 별도 이벤트로 "Gemini 가 파일 쓰기/셸 실행을 요청했지만 헤드리스라 거부됨"). 본문이 비고 거부만 있으면 빈 답장 대신 이 문구. 신뢰 폴더 밖 cwd 이면 `trustedWorkspaces` 안내. 근거 `02`, `04`, `06` 과 각 `.stderr.txt`.
-6. **`geminiArgs`** — 읽기 전용에서 `--mode plan` 제거(또는 유지하되 무효임을 주석으로). `--disable-slash-commands` 는 유지(빼면 `/…` 프롬프트가 확장되고 plan 이 brain 폴더에 계획서를 쓰고 승인을 기다림). 근거 `01`/`04` stderr, `08`.
-7. **`src/shared/models.ts` `MODEL_EFFORTS`** — `gemini-pro`·`gemini-flash` 를 `['low','medium','high']` 로. `GEMINI_CLI_ALIAS` 는 유지. 주석의 "1.3.5" 를 1.4.2 로. 근거 `05`, `models.txt`.
-8. **`GeminiUsagePoller.parseGeminiUsage`** — `remaining_fraction`(0–1, ×100 → `usedPct = 100 − x`) 인식, 경로 `command.data.groups[].buckets[]`, 이름 = 그룹 + `window`(이름 중복 제거 전에), 텍스트 대체 경로에 탭 구분(`그룹\t이름\tNN%\tISO`, NN = 남은 %) 추가. `Claude and GPT models` 그룹은 숨김/후순위 결정. 테스트 `GeminiUsagePoller.test.ts` 첫 케이스를 `usage.json` 실물로 교체. 근거 `usage.json`.
+테스트: `GeminiEngine.test.ts` 의 "agy 1.4.2 fixtures" 묶음(01·02·03·04·05·06·07 픽스처를 매퍼에 그대로 돌림)과 stderr 만 있는 거부, `GeminiUsagePoller.test.ts` 첫 케이스(`usage.json` 실물), `models.test.ts` 의 Gemini effort.
+
+1. **[반영 완료] `GeminiEventMapper.map` `init`** — `conversation_id` 를 최상위 `e.conversation_id` 에서(페이로드 것도 계속 허용), 모델은 `p.model`. 근거 `01`, `03`, `06`.
+2. **[반영 완료] `GeminiEventMapper.map` `step_update` 도구 id** — `step-${this.steps}` 대신 `step_index`(예 `step-${p.step_index}`; 이어하기 때도 대화 안에서 유일). 이름은 `tool_info.name` ?? `p.tool_name`. 근거 `03`, `04`, `06`.
+3. **[반영 완료] `tool_result` 조건** — `state` 가 `DONE`/`ERROR` 면 payload 가 없어도 결과를 낸다(내용 `''` 또는 "완료"), `isError` = `state==='ERROR'` 또는 `tool_info.error`. 근거 `03`(write_to_file DONE·output 없음), `06`(ERROR + error 객체).
+4. **[반영 완료] 턴 사용량** — `result.usage` 대신 `step_update.usage` 를 합산(이어하기 턴에선 result 가 대화 누적). step usage 가 하나도 없으면 result 로 대체. 근거 `06`(누적), `03`(새 대화에선 합 = result).
+5. **[반영 완료] 권한 거부 표시** — `result.denied_actions` 가 있으면 결과에 알림을 붙인다(예: 본문 끝 또는 별도 이벤트로 "Gemini 가 파일 쓰기/셸 실행을 요청했지만 헤드리스라 거부됨"). 본문이 비고 거부만 있으면 빈 답장 대신 이 문구. 신뢰 폴더 밖 cwd 이면 `trustedWorkspaces` 안내. 근거 `02`, `04`, `06` 과 각 `.stderr.txt`.
+   → 반영: `result.denied_actions` 의 `action` 을 동작 종류로만 옮긴 `notice`(`Gemini가 거부함: 파일 쓰기, 셸 명령 실행 — 헤드리스 agy 는 승인을 물을 수 없어 자동 거부됩니다`). 경로·명령줄·`display_name` 은 싣지 않는다. `denied_actions` 가 없으면 stderr 의 `required the "<x>" permission` 으로 대신 판단(그래서 성공 결과도 프로세스 종료까지 기다렸다 낸다). 빈 본문은 그대로 두고 알림만 붙인다. 신뢰 폴더 안내 문구는 아직 없음.
+6. **[반영 완료 — 유지 쪽] `geminiArgs`** — 읽기 전용은 `--mode plan` 을 **유지**하고 무효임을 주석으로 남김(읽기 전용 픽스처가 모두 이 인자로 찍혔고, 빼는 쪽은 실측 없음 — 리뷰 지적). `--disable-slash-commands` 는 유지(빼면 `/…` 프롬프트가 확장되고 plan 이 brain 폴더에 계획서를 쓰고 승인을 기다림). 근거 `01`/`04` stderr, `08`.
+   → 반영: 읽기 전용은 `--mode` 를 아예 넘기지 않는다. `--disable-slash-commands` 유지.
+7. **[반영 완료] `src/shared/models.ts` `MODEL_EFFORTS`** — `gemini-pro`·`gemini-flash` 를 `['low','medium','high']` 로. `GEMINI_CLI_ALIAS` 는 유지. 주석의 "1.3.5" 를 1.4.2 로. 근거 `05`, `models.txt`.
+   → 반영. 저장된 `xhigh` 는 새 정규화 없이 기존 `effortFor` 경로를 탄다 — Gemini 가 받지 않는 값이라 null → `DEFAULT_EFFORT.gemini`(`medium`) 로 보낸다(high 로 올려 주는 기존 경로는 없음). 피커엔 엑스트라가 안 보인다.
+8. **[반영 완료] `GeminiUsagePoller.parseGeminiUsage`** — `remaining_fraction`(0–1, ×100 → `usedPct = 100 − x`) 인식, 경로 `command.data.groups[].buckets[]`, 이름 = 그룹 + `window`(이름 중복 제거 전에), 텍스트 대체 경로에 탭 구분(`그룹\t이름\tNN%\tISO`, NN = 남은 %) 추가. `Claude and GPT models` 그룹은 숨김/후순위 결정. 테스트 `GeminiUsagePoller.test.ts` 첫 케이스를 `usage.json` 실물로 교체. 근거 `usage.json`.
+   → 반영: 이름 `Gemini · 주간`, `Gemini · 5h`, `Argon · 주간`(그룹 이름에서 ` Models`·`Gemini <버전> ` 을 떼고 window 를 `주간`/`5h` 로). `Claude and GPT models` 그룹은 숨긴다. `GeminiBucket` 모양(`name, usedPct, resetsAt`)은 그대로라 프로토콜 변경 없음. UI `bucketLabel` 은 ` · ` 가 든 이름을 그대로 쓴다.
 9. (선택) **thinking** — 스트림에 생각 텍스트가 없으므로 `THINKING_RE` 분기는 실물 근거가 없다. 남겨도 무해.
 
 ## 한계 (남은 미확인)
