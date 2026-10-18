@@ -132,7 +132,7 @@ async function main(): Promise<void> {
   // read at the end of each turn and, while idle, by the poller (same deps — shadow HOME, env, grok inspect — as a turn).
   const grokUsage = grokBin ? new GrokUsageTracker({ file: path.join(cfg.configDir, 'grok-usage.json'), usage, log: (line) => console.error(line) }) : null;
   const grokBilling = grokDeps && grokUsage
-    ? new GrokBillingPoller({ probe: () => probeGrokBilling(grokDeps), tracker: grokUsage, busy: () => grokLock.size > 0, log: (line) => console.error(line) })
+    ? new GrokBillingPoller({ probe: (signal) => probeGrokBilling(grokDeps, undefined, signal), tracker: grokUsage, busy: () => grokLock.size > 0, log: (line) => console.error(line) })
     : null;
   grokBilling?.start();
   const grokStatusBase: GrokStatus = { bin: grok !== null };
@@ -265,9 +265,10 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); grokBilling?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
+    stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
+    // grokBilling.stop() aborts an in-progress billing probe; awaited below so shutdown does not race it (review item 5).
     // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
-    void flushThenExit(() => Promise.all([events.flush(), claude.close()]).then(() => {}), () => process.exit(0));
+    void flushThenExit(() => Promise.all([events.flush(), claude.close(), grokBilling?.stop() ?? Promise.resolve()]).then(() => {}), () => process.exit(0));
   };
   restartCtl = installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });
 }

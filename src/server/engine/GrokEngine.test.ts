@@ -10,9 +10,10 @@ import { agentLog, fakeAgent } from './acp/fakeAcpAgent';
 import type { SpawnFn } from './CodexEngine';
 import type { EngineEvent, EngineResult, LiveInput, PermissionRequest } from './Engine';
 import {
-  GROK_AGENT_ARGS, GROK_INTERJECT_METHOD, GROK_TEXT, GrokEngineLock, classifyGrokError, grokEngineLockedText, isGrokAutoApprovable, runGrokTurn,
+  GROK_AGENT_ARGS, GROK_INTERJECT_METHOD, GROK_TEXT, GROK_TIMEOUTS, GrokEngineLock, classifyGrokError, grokEngineLockedText, isGrokAutoApprovable, runGrokTurn,
   type GrokDeps, type GrokSessionStamp, type GrokTurnRequest,
 } from './GrokEngine';
+import { createGrokBillingSkipState, type GrokBillingSkipState } from './grokBillingCore';
 import { GrokLock, grokLockKey } from './grokLock';
 
 // Agents here are the fake from acp/fakeAcpAgent.ts, shaped after the grok 1.0.62 recordings (fixtures/grok-1.0.62/).
@@ -44,7 +45,7 @@ afterEach(async () => { await fs.rm(tmp, { recursive: true, force: true }); });
 
 const FAST = {
   lockMs: 2000, initializeMs: 2000, sessionMs: 2000, settingMs: 2000, cancelMs: 400, closeMs: 2000, termMs: 500, killMs: 1000,
-  steerMs: 1000, categoryMs: 150, fallbackMs: 300, sampleMs: 2000, billingMs: 300,
+  steerMs: 1000, categoryMs: 150, fallbackMs: 300, sampleMs: 2000, billingMs: 300, turnBillingMs: 300,
 };
 const SID = '01a14e16-8100-7cb3-b038-2b02138059a5';
 const CHILD = '01a14e16-aaaa-7cb3-b038-2b02138059a5';
@@ -62,7 +63,8 @@ function baseDeps(spawnFn: SpawnFn, over: Partial<GrokDeps> = {}): GrokDeps {
   return {
     bin: 'grok', grokHome: home, homesDir, realHome, inspect: async () => CLEAN_INSPECT, readConfig: async () => '',
     engineLock, sessionStamps: stamps, spawnFn, baseEnv: { PATH: process.env.PATH, HOME: realHome }, lock: new GrokLock(), timeouts: FAST,
-    log: () => {}, ...over,
+    // Fresh per call (not the module singleton) unless a test wants to share one across turns: no cross-test leakage.
+    billingSkip: createGrokBillingSkipState(), log: () => {}, ...over,
   };
 }
 
@@ -144,6 +146,43 @@ describe('runGrokTurn: lifecycle and mapping', () => {
   it('no billing request for a turn that never got a PromptResponse (refused before the prompt)', async () => {
     const { log } = await turn(String.raw`on('session/new', (p, id) => fail(id, -32000, 'Authentication required'));`);
     expect(methods(log)).not.toContain('_x.ai/billing');
+  });
+
+  it('review item 1: Method not found permanently skips billing for later turns sharing the state', async () => {
+    const billingSkip = createGrokBillingSkipState();
+    const first = await turn('', { deps: { billingSkip } });
+    expect(methods(first.log)).toContain('_x.ai/billing');
+    expect(billingSkip.unsupported).toBe(true);
+    const second = await turn(String.raw`on('_x.ai/billing', (p, id) => respond(id, { config: { creditUsagePercent: 5 } }));`, { deps: { billingSkip } });
+    expect(methods(second.log)).not.toContain('_x.ai/billing');
+    expect(second.result.grokBilling).toBeUndefined();
+    // Unaffected: the turn's own result.
+    expect(second.result.ok).toBe(true);
+  });
+
+  it('review item 1: three consecutive turn-end billing timeouts skip reads for 30 minutes, then resume', async () => {
+    const billingSkip: GrokBillingSkipState = createGrokBillingSkipState();
+    let now = Date.parse('2026-10-18T10:00:00Z');
+    const nowFn = () => now;
+    const silent = String.raw`on('_x.ai/billing', () => {});`;
+    const answer = String.raw`on('_x.ai/billing', (p, id) => respond(id, { config: { creditUsagePercent: 5 } }));`;
+    for (let i = 0; i < 3; i++) {
+      const r = await turn(silent, { deps: { billingSkip, now: nowFn } });
+      expect(methods(r.log)).toContain('_x.ai/billing');
+    }
+    expect(billingSkip.consecutiveTimeouts).toBe(3);
+    expect(billingSkip.skipUntilMs).toBe(now + 30 * 60_000);
+    const skipped = await turn(answer, { deps: { billingSkip, now: nowFn } });
+    expect(methods(skipped.log)).not.toContain('_x.ai/billing');
+    now += 30 * 60_000 + 1;
+    const resumed = await turn(answer, { deps: { billingSkip, now: nowFn } });
+    expect(methods(resumed.log)).toContain('_x.ai/billing');
+    expect(resumed.result.grokBilling).toMatchObject({ usedPct: 5 });
+  }, 20_000);
+
+  it('review item 1: the turn-end billing read has its own short time limit (2 s), separate from the idle poller\'s', () => {
+    expect(GROK_TIMEOUTS.turnBillingMs).toBe(2_000);
+    expect(GROK_TIMEOUTS.billingMs).toBe(5_000);
   });
 
   it('a picked model goes by the model option; the same effort as the current one sends nothing', async () => {

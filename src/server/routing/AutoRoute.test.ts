@@ -242,6 +242,14 @@ describe('engineState', () => {
     expect(st('grok', 'grok-4.7', { grok: { installed: false } })).toBe('blocked');
   });
 
+  it('review item 4: Grok capacity carries the billing period\'s reset time, mirroring GPT\'s weeklyResetsAtMs', () => {
+    const resetsAtMs = NOW + 2 * H;
+    expect(engineState('grok', 'grok-4.7', limits({ grok: { periodUsedPct: 90, periodResetsAtMs: resetsAtMs } }), NOW))
+      .toMatchObject({ state: 'blocked', weeklyResetsAtMs: resetsAtMs });
+    expect(engineState('grok', 'grok-4.7', limits({ grok: { periodUsedPct: 10, periodResetsAtMs: resetsAtMs } }), NOW))
+      .toMatchObject({ state: 'ok', weeklyResetsAtMs: resetsAtMs });
+  });
+
   it('Claude: the router rules — blocked only when no account is left (EXCLUDE_PCT 95), Fable 80 % rule (Fable only)', () => {
     expect(st('claude', 'opus', { claude: { weekly: 84 } })).toBe('ok');
     expect(st('claude', 'opus', { claude: { weekly: 85 } })).toBe('ok');

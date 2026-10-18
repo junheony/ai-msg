@@ -7,10 +7,12 @@ import type { Effort } from '../../shared/models';
 import { ZERO_USAGE, type PermissionDecision, type TurnUsage } from '../../shared/turn-types';
 import type { GrokBilling } from '../../shared/usage-types';
 import { promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
-import { AcpAbortError, AcpClosedError, AcpConnection, AcpRpcError, AcpTimeoutError } from './acp/AcpConnection';
+import { AcpAbortError, AcpClosedError, AcpConnection, AcpRpcError, AcpTimeoutError, METHOD_NOT_FOUND } from './acp/AcpConnection';
 import type { ChildLike, SpawnFn } from './CodexEngine';
 import type { EngineEvent, EngineResult, FollowUp, LiveInput, PermissionRequest } from './Engine';
-import { GROK_BILLING_METHOD, parseGrokBilling } from './grokBilling';
+import {
+  GROK_BILLING_METHOD, type GrokBillingSkipState, grokBillingNoteOutcome, grokBillingShouldSkip, grokBillingSkipState, parseGrokBilling,
+} from './grokBillingCore';
 import { editAutoAllowed } from './grokEditPaths';
 import { grokEnv } from './grokEnv';
 import { checkGrokInspect, grokInspectRefusal } from './grokInspect';
@@ -119,14 +121,16 @@ export type GrokTimeouts = {
   fallbackMs: number;
   /** Process table sampling for the descendant sweep (§14.9-9). */
   sampleMs: number;
-  /** `_x.ai/billing` after the prompt (and the idle poller's): short — the subscription usage is extra, never the turn. */
+  /** `_x.ai/billing` for the idle poller (probeGrokBilling, its own process, no turn): short — extra, never a turn. */
   billingMs: number;
+  /** `_x.ai/billing` on the turn's own connection, right after the prompt answered: shorter still — review item 1 (2 s). */
+  turnBillingMs: number;
 };
 
 export const GROK_TIMEOUTS: GrokTimeouts = {
   lockMs: 30_000, initializeMs: 15_000, sessionMs: 30_000, settingMs: 10_000,
   cancelMs: 5_000, closeMs: 10_000, termMs: 3_000, killMs: 2_000, steerMs: 10_000,
-  categoryMs: 1_000, fallbackMs: 500, sampleMs: 2_000, billingMs: 5_000,
+  categoryMs: 1_000, fallbackMs: 500, sampleMs: 2_000, billingMs: 5_000, turnBillingMs: 2_000,
 };
 
 /** §14.9-3: once tripped, no Grok turn starts in this server process until unlocked (settings) or restarted. */
@@ -183,6 +187,10 @@ export type GrokDeps = {
   log?: (msg: string) => void;
   /** Process table for the descendant sweep (tests); default runs `ps`, null = skip. */
   listProcesses?: () => Promise<GrokProcEntry[] | null>;
+  /** Review item 1's shared skip state (process-lifetime unsupported flag, timeout streak); default the module singleton. */
+  billingSkip?: GrokBillingSkipState;
+  /** Clock for the turn-end billing read's skip bookkeeping (tests); default Date.now. */
+  now?: () => number;
 };
 
 export type GrokProcEntry = { pid: number; ppid: number; pgid: number };
@@ -608,14 +616,23 @@ class GrokTurn {
 
   /**
    * The subscription's usage on the connection the turn already has: after the prompt answered, before stdin closes. One
-   * short request; any failure (Method not found on an older grok, a time-out, a closed connection) is ignored.
+   * short request, cancellable the same way the rest of the turn is; any failure (Method not found on an older grok, a
+   * time-out, a closed connection) is ignored — review item 1: this is always a side channel, never the turn's result.
+   * A Method not found answer skips every later turn's read for the rest of this process (the binary plainly lacks it);
+   * three timeouts in a row skip reads for 30 minutes (deps.billingSkip, shared across turns — tests inject their own).
    */
   private async readBilling(): Promise<void> {
     const conn = this.conn;
     if (!conn || conn.isClosed || this.exited || !this.promptResponded || this.cancelled || this.tripped !== null) return;
+    const skip = this.deps.billingSkip ?? grokBillingSkipState;
+    const now = this.deps.now ?? Date.now;
+    if (grokBillingShouldSkip(skip, now())) return;
     try {
-      this.billing = parseGrokBilling(await conn.request(GROK_BILLING_METHOD, {}, this.t.billingMs), Date.now());
-    } catch { /* billing is extra: the turn's result does not depend on it */ }
+      this.billing = parseGrokBilling(await conn.request(GROK_BILLING_METHOD, {}, this.t.turnBillingMs, this.cancelAc.signal), now());
+      grokBillingNoteOutcome(skip, 'ok', now());
+    } catch (e) {
+      grokBillingNoteOutcome(skip, e instanceof AcpRpcError && e.code === METHOD_NOT_FOUND ? 'method_not_found' : e instanceof AcpTimeoutError ? 'timeout' : 'other', now());
+    }
   }
 
   /** §14.9-2: `grok inspect --json` with the turn's env, cwd and shadow HOME; anything but a clean answer refuses. */

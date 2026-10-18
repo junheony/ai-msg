@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GrokBilling } from '../../shared/usage-types';
 import type { GrokBillingProbe } from '../engine/grokBilling';
-import { GROK_BILLING_INTERVAL_MS, GrokBillingPoller } from './GrokBillingPoller';
+import { GROK_BILLING_BACKOFF_MAX_MS, GROK_BILLING_BACKOFF_MS, GROK_BILLING_INTERVAL_MS, GrokBillingPoller } from './GrokBillingPoller';
 
 const T0 = Date.parse('2026-10-18T10:00:00Z');
 const MIN = 60_000;
@@ -17,7 +17,7 @@ function setup(answers: Array<GrokBillingProbe | (() => GrokBillingProbe)>, o: {
   const logs: string[] = [];
   const notes: GrokBilling[] = [];
   const poller = new GrokBillingPoller({
-    probe: async () => {
+    probe: async (_signal: AbortSignal) => {
       probes.push(now);
       const a = answers.length > 1 ? answers.shift()! : answers[0]!;
       return typeof a === 'function' ? a() : a;
@@ -96,24 +96,61 @@ describe('GrokBillingPoller', () => {
     expect(s.notes).toHaveLength(0);
   });
 
-  it('other failures keep it going, the same message logged once; a throwing probe counts as one', async () => {
+  it('other failures keep it going with backoff (1h, 2h, 4h), the same message logged once; a throwing probe counts as one', async () => {
     const s = setup([
       { kind: 'error', message: 'Grok 응답 없음' },
       { kind: 'blocked', message: 'grok inspect 거부' },
       { kind: 'blocked', message: 'grok inspect 거부' },
       () => { throw new Error('boom'); },
     ]);
-    for (let i = 0; i < 4; i++) {
-      s.at(T0 + i * GROK_BILLING_INTERVAL_MS);
+    // 1st failure at T0; retries after 1h, then 2h, then 4h (review item 2's backoff).
+    const ticks = [T0, T0 + 1 * 60 * MIN, T0 + 3 * 60 * MIN, T0 + 7 * 60 * MIN];
+    for (const t of ticks) {
+      s.at(t);
       await s.poller.tick();
     }
-    expect(s.probes).toHaveLength(4);
+    expect(s.probes).toEqual(ticks);
     expect(s.poller.running).toBe(true);
     expect(s.logs).toEqual([
       'deck: Grok 구독 사용량 조회 실패 — Grok 응답 없음',
       'deck: Grok 구독 사용량 조회 실패 — grok inspect 거부',
       'deck: Grok 구독 사용량 조회 실패 — boom',
     ]);
+  });
+
+  it('review item 2: backoff doubles up to a 6-hour cap while failures continue', async () => {
+    const s = setup([{ kind: 'error', message: 'boom' }]);
+    let t = T0;
+    s.at(t);
+    await s.poller.tick();
+    expect(s.probes).toHaveLength(1);
+    // Failures: 1h, 2h, 4h, then capped at 6h from then on.
+    const steps = [GROK_BILLING_BACKOFF_MS, GROK_BILLING_BACKOFF_MS * 2, GROK_BILLING_BACKOFF_MAX_MS, GROK_BILLING_BACKOFF_MAX_MS];
+    for (const step of steps) {
+      t += step;
+      s.at(t);
+      await s.poller.tick();
+    }
+    expect(s.probes).toHaveLength(5);
+  });
+
+  it('review item 2: a fresh reading from elsewhere (a turn\'s) resets the backoff to the normal 15-minute cadence', async () => {
+    const s = setup([
+      { kind: 'error', message: 'boom' },
+      () => ({ kind: 'ok', billing: billing(T0 + 10 * MIN) }),
+    ]);
+    s.at(T0);
+    await s.poller.tick();
+    expect(s.probes).toHaveLength(1);
+    // A turn's own billing read lands in the tracker before the 1h backoff would fire.
+    s.setStored(billing(T0 + 10 * MIN));
+    s.at(T0 + 20 * MIN);
+    await s.poller.tick();
+    // The fresh fetchedAt resets the streak, so it is not due yet at +20min (interval is back to 15min from the fresh read).
+    expect(s.probes).toHaveLength(1);
+    s.at(T0 + 10 * MIN + GROK_BILLING_INTERVAL_MS);
+    await s.poller.tick();
+    expect(s.probes).toHaveLength(2);
   });
 
   it('one read at a time: a tick during a read shares it', async () => {
@@ -139,7 +176,31 @@ describe('GrokBillingPoller', () => {
     s.poller.start();
     await s.poller.tick();
     expect(s.probes).toHaveLength(1);
-    s.poller.stop();
+    const stopped = s.poller.stop();
     expect(s.poller.running).toBe(false);
+    await stopped;
+  });
+
+  it('review item 5: stop() aborts a read in flight and its returned promise resolves once that read ends', async () => {
+    let sawAbort = false;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const poller = new GrokBillingPoller({
+      probe: async (signal: AbortSignal) => {
+        signal.addEventListener('abort', () => { sawAbort = true; });
+        await gate;
+        return { kind: 'ok', billing: billing(T0) };
+      },
+      tracker: { noteBilling: () => {}, billingOf: () => null },
+      busy: () => false,
+      now: () => T0,
+      log: () => {},
+    });
+    const tickP = poller.tick();
+    const stopP = poller.stop();
+    expect(poller.running).toBe(false);
+    expect(sawAbort).toBe(true);
+    release();
+    await Promise.all([tickP, stopP]);
   });
 });

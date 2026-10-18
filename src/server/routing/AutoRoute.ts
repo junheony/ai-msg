@@ -159,7 +159,11 @@ export type GeminiLimits = { installed: boolean; loggedIn: boolean; observedAtMs
  * Grok: a cooldown, the last turn's error kind, and the subscription's period usage (`_x.ai/billing`) when deck has read
  * it — `periodUsedPct` null/absent = never read, or its period has ended (a new period is not judged on old numbers).
  */
-export type GrokLimits = { installed: boolean; cooldownUntilMs: number | null; lastError: 'auth' | 'other' | null; periodUsedPct?: number | null };
+export type GrokLimits = {
+  installed: boolean; cooldownUntilMs: number | null; lastError: 'auth' | 'other' | null; periodUsedPct?: number | null;
+  /** review item 4: the billing period's end, mirroring GPT's weeklyResetsAtMs. */
+  periodResetsAtMs?: number | null;
+};
 
 export type EngineLimits = { claude: ClaudeLimits; codex: GptLimits; gemini: GeminiLimits; grok: GrokLimits };
 
@@ -261,9 +265,10 @@ function grokState(l: GrokLimits, nowMs: number): EngineCapacity {
   if (l.lastError === 'auth') return cap('blocked', 'Grok 인증 오류');
   const used = l.periodUsedPct ?? null;
   if (used === null) return cap('ok', 'Grok 한도 관측 없음');
+  const resetsAtMs = l.periodResetsAtMs ?? null;
   // Usage within a period never goes down, so a reading stays a lower bound until the period ends (the caller drops it then).
-  if (used >= WEEKLY_SWITCH_PCT) return cap('blocked', `Grok 구독 ${Math.round(used)}% 사용`);
-  return cap('ok', `Grok 구독 ${Math.round(used)}% 사용`);
+  if (used >= WEEKLY_SWITCH_PCT) return cap('blocked', `Grok 구독 ${Math.round(used)}% 사용`, Math.max(0, 100 - used), resetsAtMs);
+  return cap('ok', `Grok 구독 ${Math.round(used)}% 사용`, Math.max(0, 100 - used), resetsAtMs);
 }
 
 /** §5 + §10-6: one engine model's limit state from the caller's normalized limits. */
