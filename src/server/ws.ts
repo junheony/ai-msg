@@ -1197,7 +1197,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         if (t) replay(ws, t, sessionId);
         const age = await deps.index.importActiveAgeMs(sessionId);
         if (age !== null) note(elsewhereNotice({ engine: 'gemini', title: untitled(imported.title), ageMs: age }));
-        const blocked = (await deps.index.importHeldReason(sessionId)) ?? (await importBlockReason(imported));
+        // deck itself is running this session's turn right now: that is not agy running it elsewhere, never the "agy 실행 중" notice.
+        const blocked = (t?.current ? null : await deps.index.importHeldReason(sessionId)) ?? (await importBlockReason(imported));
         if (blocked) note(blocked);
         return;
       }

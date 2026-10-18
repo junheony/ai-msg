@@ -137,6 +137,15 @@ describe('TurnRunner: continuing an imported Grok CLI session', () => {
     expect(free.grokCalls).toHaveLength(1);
   });
 
+  it('a hung rescan never stalls the send past its 1s timeout: the previous (free) answer is used', async () => {
+    const c = await setup({ grok: [entry({ sessionId: 'g-1' })] }, { holders: { grokHeldBy: () => null, refresh: () => new Promise(() => {}) } });
+    const startedAt = Date.now();
+    await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'g-1', text: 'x' }, c.sink);
+    expect(Date.now() - startedAt).toBeLessThan(5000);
+    expect(c.grokCalls).toHaveLength(1);
+    expect(c.msgs.some((m) => m.type === 'error')).toBe(false);
+  }, 8000);
+
   it('folder gone: refused with the cwd-missing notice', async () => {
     const c = await setup({ grok: [entry({ sessionId: 'g-1', cwd: path.join(base, 'gone'), cwdMissing: true })] });
     await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'g-1', text: 'x' }, c.sink);
@@ -170,6 +179,20 @@ describe('TurnRunner: an agy conversation agy is running right now', () => {
     await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'conv-1', text: '계속' }, c.sink);
     expect(c.geminiCalls).toHaveLength(1);
     expect(c.msgs.find((m) => m.type === 'turn_notice')).toBeTruthy();
+  });
+
+  it('a deck-owned (already stored) Gemini session agy also runs right now: refused on the second send too, not just the first import', async () => {
+    const lists = { gemini: [entry({ sessionId: 'conv-1', engine: 'gemini', account: 'g2', title: 'agy 대화' })], geminiHeld: null as string | null };
+    const c = await setup(lists);
+    await c.store.set({ engine: 'gemini', account: 'g2', sessionId: 'conv-1', cwd: work, defaultModel: 'gemini-pro', sandbox: 'workspace-write', createdAtMs: 0, lastTurnAtMs: 1, justCompacted: false, title: 'agy 대화' });
+    await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'conv-1', text: '계속' }, c.sink);
+    expect(c.geminiCalls).toHaveLength(1);
+    c.msgs.length = 0;
+    c.geminiCalls.length = 0;
+    lists.geminiHeld = GEMINI_RUNNING_NOTICE; // agy starts (or is found) running it, between the first and second send
+    await c.runner.run({ turnId: 't2', cwd: work, sessionId: 'conv-1', text: '또' }, c.sink);
+    expect(c.msgs).toEqual([{ type: 'error', turnId: 't2', message: GEMINI_RUNNING_NOTICE }]);
+    expect(c.geminiCalls).toEqual([]);
   });
 });
 

@@ -109,6 +109,9 @@ export const MAX_BG_CAP_HOPS = 2;
 export const MAX_RETRY_HOPS = 2;
 export const AUTO_RETRY_NOTICE = '한도가 풀려 자동으로 다시 시도합니다';
 
+/** The pre-send `holders.refresh({ force: true })` waits at most this long: a hung `ps`/`lsof` never stalls a send — the last known answer stands. */
+export const FORCE_HOLDERS_SCAN_TIMEOUT_MS = 1000;
+
 export type TurnRunnerDeps = {
   engine: Engine;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
@@ -1375,12 +1378,16 @@ export class TurnRunner {
     }
     let state: SessionState | null = null;
     let notice: string | null = null;
+    // Set once the fresh-import branch below has already run the agy-RUNNING check for this send (no second rescan before runGemini).
+    let geminiHoldChecked = false;
     // Who holds a Grok session is decided on a scan made now, not on the poll's cached one (once per send).
     let holdersFresh = false;
     const freshHolders = async () => {
       if (holdersFresh) return;
       holdersFresh = true;
-      await deps.holders?.refresh?.({ force: true }).catch(() => false);
+      const refreshed = deps.holders?.refresh?.({ force: true }).catch(() => false);
+      if (!refreshed) return;
+      await Promise.race([refreshed, new Promise((resolve) => setTimeout(resolve, FORCE_HOLDERS_SCAN_TIMEOUT_MS))]);
     };
     if (p.fork && !p.sessionId) {
       // 메시지 편집 갈래: a Claude session only (Codex / Gemini cannot resume at an entry).
@@ -1417,6 +1424,7 @@ export class TurnRunner {
       } else if (imported && imported.engine === 'gemini') {
         // An agy conversation: resumed with --conversation <id> (its past messages are not replayed in deck). One agy is
         // running right now (RUNNING, written within LIVE_ROLLOUT_MS): refused like a held Grok session.
+        geminiHoldChecked = true;
         const blocked = (await deps.index.importHeldReason(imported.sessionId, this.now())) ?? (await importBlockReason(imported));
         if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
         state = {
@@ -1451,6 +1459,12 @@ export class TurnRunner {
     // A terminal grok resumed this very session (its id in the arguments): both writing would fork it (imports design §4.1).
     if (state && isGrokState(state)) await freshHolders();
     if (state && isGrokState(state) && deps.holders?.grokHeldBy?.(state.sessionId)) { sink.emit({ type: 'error', turnId: p.turnId, message: GROK_HELD_NOTICE }); return; }
+    // A deck-owned Gemini session agy also runs (RUNNING, written within LIVE_ROLLOUT_MS) right now: refused like a held
+    // Grok session, same as a fresh import's first send above (not re-checked when that branch already did, just above).
+    if (state && isGeminiState(state) && !geminiHoldChecked) {
+      const blocked = await deps.index.importHeldReason(state.sessionId, this.now());
+      if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
+    }
     // §10-4: a Gemini / Grok session checks every turn whether its engine can do it (Claude / GPT can do anything).
     if (state && (isGeminiState(state) || isGrokState(state)) && !p.ignoreFit) {
       const engine = isGeminiState(state) ? 'gemini' : 'grok';

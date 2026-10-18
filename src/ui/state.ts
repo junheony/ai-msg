@@ -249,7 +249,7 @@ export type PaneState = {
   /** 새 세션으로 이어가기, step 1: the handoff-note turn this pane sent (`ref` = its clientRef, `turnId` once started). */
   handoff: { ref: string; turnId: string | null; sessionId: string; title: string; cwd: string } | null;
   /** Step 2: the session this (new) pane session continues — rides its first send as `handoffFrom`, and the 이전 세션 link. */
-  handoffFrom: { sessionId: string; title: string } | null;
+  handoffFrom: { sessionId: string; title: string; /** Grok Bot handoff only: the old entry's own (home) cwd, rejected again by `set_new_cwd` even if the projects list no longer tags it `source: 'grokbot'`. */ grokBotHome?: string } | null;
   /** Composer text to put in once (the new session's first message, sent only when the user presses Enter). */
   prefill: string | null;
   /** Notes / errors about the session no turn owns (e.g. written outside deck just now): dismissible bars in this pane (newest 3), dropped when the pane shows another session. */
@@ -1017,9 +1017,14 @@ function codexHandoff(pane: PaneState, turnId: string): PaneState {
   };
 }
 
+/** A Grok Bot roster entry: tagged `source: 'grokbot'`, or (an older entry the server never tagged) its id still carries the `grokbot-` prefix. */
+function isGrokBotEntry(e: { source?: 'grokbot'; sessionId: string }): boolean {
+  return e.source === 'grokbot' || e.sessionId.startsWith('grokbot-');
+}
+
 /** The Grok Bot conversations' folder (the home folder: the app has no project) — never a new session's cwd. */
 function grokBotHome(projects: ProjectEntry[], fallback?: string): string | undefined {
-  for (const pr of projects) for (const e of pr.sessions) if (e.source === 'grokbot') return e.cwd;
+  for (const pr of projects) for (const e of pr.sessions) if (isGrokBotEntry(e)) return e.cwd;
   return fallback;
 }
 
@@ -1030,7 +1035,7 @@ export function grokBotHandoffCwd(projects: ProjectEntry[], home: string): strin
   for (const pr of projects) {
     if (!pr.cwd || pr.cwd === home) continue;
     for (const e of pr.sessions) {
-      if (e.source === 'grokbot' || e.cwdMissing || e.lastModified <= at) continue;
+      if (isGrokBotEntry(e) || e.cwdMissing || e.lastModified <= at) continue;
       best = pr.cwd;
       at = e.lastModified;
     }
@@ -1049,16 +1054,19 @@ function grokBotHandoff(pane: PaneState, projects: ProjectEntry[]): PaneState {
   const s = pane.session;
   if (!s?.sessionId?.startsWith('grokbot-')) return pane;
   const model = isGrokModel(pane.model) ? pane.model : DEFAULT_GROK_MODEL;
+  const home = grokBotHome(projects, s.cwd)!;
   return {
     ...pane,
-    session: { sessionId: null, cwd: grokBotHandoffCwd(projects, grokBotHome(projects, s.cwd)!), account: null, title: handoffTitle(s.title), engine: 'grok', sandbox: null },
+    session: { sessionId: null, cwd: grokBotHandoffCwd(projects, home), account: null, title: handoffTitle(s.title), engine: 'grok', sandbox: null },
     engine: 'grok', model,
     items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [],
     queue: pane.queue.filter((q) => !isHeld(q)), queuePaused: pane.queuePaused || pane.queue.some((q) => !isHeld(q)),
     ...ACTIVITY_RESET,
     handoff: null,
     notices: [],
-    handoffFrom: { sessionId: s.sessionId, title: s.title },
+    // The old entry's own cwd, kept alongside the live projects lookup: `set_new_cwd` rejects it even once the projects
+    // list is reloaded without a `source: 'grokbot'` tag (an older roster entry carries only the `grokbot-` id prefix).
+    handoffFrom: { sessionId: s.sessionId, title: s.title, grokBotHome: home },
     prefill: grokBotHandoffMessage(s.title, codexHandoffExcerpt(pane.items, 'Grok')),
   };
 }
@@ -1375,7 +1383,9 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'set_new_cwd': {
       const cwd = action.cwd.trim();
-      if (!cwd || cwd === grokBotHome(state.projects)) return state;
+      if (!cwd) return state;
+      const target = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
+      if (cwd === grokBotHome(state.projects) || cwd === target?.handoffFrom?.grokBotHome) return state;
       return updatePane(state, action.paneId, (p) => (p.session && p.session.sessionId === null ? { ...p, session: { ...p.session, cwd } } : p));
     }
     case 'route_fit_resolve': return updatePane(state, action.paneId, (p) => {

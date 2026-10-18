@@ -113,7 +113,7 @@ export class GeminiConversationIndex implements ImportIndex {
   private rows = new Map<string, { row: GeminiRow; entry: SessionEntry }[]>();
   private byId = new Map<string, { row: GeminiRow; entry: SessionEntry }>();
   private entries: SessionEntry[] = [];
-  /** Reasons already logged since the last good read (a db being written tears copy after copy: one line each). */
+  /** Reasons already logged since that root's own last good read (a db being written tears copy after copy: one line each). Keyed `dir|msg`: one root's success never clears another root's. */
   private logged = new Set<string>();
   readonly refresh: () => Promise<void>;
 
@@ -134,11 +134,11 @@ export class GeminiConversationIndex implements ImportIndex {
       if (stamp.startsWith('-|')) { this.rows.delete(dir); this.stamps.delete(dir); continue; }
       if (this.stamps.get(dir) === stamp) continue;
       const snap = await this.snapshot(db, this.tmpRoot);
-      if (!snap) { this.logOnce('gemini imports: copy changed while reading, keeping the last list'); continue; }
+      if (!snap) { this.logOnce(dir, 'gemini imports: copy changed while reading, keeping the last list'); continue; }
       try {
         const rows = await readSummaries(snap.db, this.sqlite);
-        if (!rows) { this.logOnce('gemini imports: summaries unreadable (sqlite missing or torn copy), keeping the last list'); continue; }
-        this.logged.clear();
+        if (!rows) { this.logOnce(dir, 'gemini imports: summaries unreadable (sqlite missing or torn copy), keeping the last list'); continue; }
+        this.clearLogged(dir);
         const gone = new Map<string, boolean>();
         for (const r of rows) { const c = cwdOf(r.workspace_uris); if (c && !gone.has(c)) gone.set(c, !(await fs.stat(c).then((s) => s.isDirectory(), () => false))); }
         this.rows.set(dir, rows.flatMap((row) => { const entry = geminiRowToEntry(row, account, db, (c) => gone.get(c) ?? true); return entry ? [{ row, entry }] : []; }));
@@ -151,10 +151,16 @@ export class GeminiConversationIndex implements ImportIndex {
     this.entries = [...this.byId.values()].map((x) => x.entry);
   }
 
-  private logOnce(msg: string): void {
-    if (this.logged.has(msg)) return;
-    this.logged.add(msg);
+  private logOnce(dir: string, msg: string): void {
+    const key = `${dir}|${msg}`;
+    if (this.logged.has(key)) return;
+    this.logged.add(key);
     this.log(msg);
+  }
+
+  private clearLogged(dir: string): void {
+    const prefix = `${dir}|`;
+    for (const key of this.logged) if (key.startsWith(prefix)) this.logged.delete(key);
   }
 
   list(): SessionEntry[] {

@@ -37,7 +37,7 @@ describe('reducer: deck Grok 새 세션으로 이어가기 (grokbot_handoff)', (
     expect(p.engine).toBe('grok');
     expect(p.items).toEqual([]);
     expect(p.awaitingStart).toBe(false);
-    expect(p.handoffFrom).toEqual({ sessionId: 'grokbot-a', title: '여행 계획' });
+    expect(p.handoffFrom).toEqual({ sessionId: 'grokbot-a', title: '여행 계획', grokBotHome: '/h' });
     const excerpt = codexHandoffExcerpt([{ kind: 'user', text: '도쿄 가고 싶어' }, { kind: 'assistant', text: '언제 갈까요?' }], 'Grok');
     expect(p.prefill).toBe(grokBotHandoffMessage('여행 계획', excerpt));
     expect(p.prefill).toContain('**Grok:** 언제 갈까요?');
@@ -59,6 +59,24 @@ describe('reducer: deck Grok 새 세션으로 이어가기 (grokbot_handoff)', (
     expect(reducer(picked, { type: 'set_new_cwd', cwd: '/h', paneId: id })).toBe(picked);
     expect(reducer(picked, { type: 'set_new_cwd', cwd: '  ', paneId: id })).toBe(picked);
     expect(pane(reducer(before, { type: 'set_new_cwd', cwd: '/w/old', paneId: id })).session?.cwd).toBe('/h');
+  });
+
+  it('home rejection survives a reload that drops the `source` tag: an id-only grokbot- entry still marks it, and the pane keeps rejecting its own recorded home even if the reloaded projects list has none', () => {
+    // An older roster entry the server never tagged `source: 'grokbot'`: only its id still says what it is.
+    const untaggedProjects = [
+      proj('/h', [e({ sessionId: 'grokbot-a', cwd: '/h', lastModified: 9 }), e({ sessionId: 'c-home', engine: 'claude', imported: false, cwd: '/h', lastModified: 8 })]),
+      proj('/w/new', [e({ sessionId: 'c-new', engine: 'claude', imported: false, cwd: '/w/new', lastModified: 5 })]),
+    ];
+    const before = opened(untaggedProjects);
+    const s = reducer(before, { type: 'grokbot_handoff', paneId: pane(before).id });
+    const id = pane(s).id;
+    expect(pane(s).session?.cwd).toBe('/w/new');
+    expect(pane(s).handoffFrom).toMatchObject({ grokBotHome: '/h' });
+    // Even once the live projects list no longer has any `source: 'grokbot'` (or `grokbot-`) entry at all, the pane's
+    // own recorded home from step 1 still refuses it.
+    const reloaded = { ...s, projects: [proj('/w/new', untaggedProjects[1]!.sessions)] };
+    expect(reducer(reloaded, { type: 'set_new_cwd', cwd: '/h', paneId: id })).toBe(reloaded);
+    expect(pane(reducer(reloaded, { type: 'set_new_cwd', cwd: '/w/old', paneId: id })).session?.cwd).toBe('/w/old');
   });
 
   it('not a Grok Bot conversation: unchanged', () => {
