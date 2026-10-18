@@ -7,8 +7,11 @@ import WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import { cookieValueFor } from './auth';
+import type { EngineEvent } from './engine/Engine';
+import type { GeminiTurnRequest } from './engine/GeminiEngine';
 import { StubEngine } from './engine/StubEngine';
 import { createRequestHandler } from './http';
+import { GEMINI_RUNNING_NOTICE } from './sessions/GeminiImports';
 import { GROKBOT_READONLY_NOTICE, GROKBOT_SEND_REFUSED } from './sessions/GrokBotImports';
 import { GROK_HELD_NOTICE } from './sessions/GrokImports';
 import type { ImportIndex } from './sessions/ImportIndex';
@@ -29,6 +32,16 @@ let api: ReturnType<typeof attachWebSocket>;
 
 const list = (entries: SessionEntry[]): ImportIndex => ({ refresh: async () => {}, list: () => entries, lookup: (id) => entries.find((e) => e.sessionId === id) ?? null, activeAgeMs: async () => null });
 
+// `conv-1`'s simulated "agy is running it" state, read by the gemini import's heldReason — null except while the
+// held-notice-suppression tests below flip it on, so the other tests above are unaffected.
+let geminiHeldReason: string | null = null;
+/** Parks a turn open until a test calls it — holds `t.current` truthy on the ws side without a real agy process. */
+let releaseGemini: (() => void) | null = null;
+async function* hangingGeminiTurn(req: GeminiTurnRequest): AsyncIterable<EngineEvent> {
+  await new Promise<void>((r) => { releaseGemini = r; });
+  yield { kind: 'result', sessionId: req.resumeSessionId ?? 'conv-1', ok: true, text: '됐어요', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' };
+}
+
 beforeAll(async () => {
   base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ws-imports-')));
   work = path.join(base, 'work');
@@ -46,14 +59,14 @@ beforeAll(async () => {
   const index = new SessionIndex({
     roots, pinnedFile: path.join(base, 'p.json'),
     grokImports: list([{ ...common, sessionId: 'g-1', account: 'x1', engine: 'grok', file: grokFile, title: 'CLI 대화' }, { ...common, sessionId: 'g-held', account: 'x1', engine: 'grok', file: grokFile, title: '잡힌 대화' }]),
-    geminiImports: list([{ ...common, sessionId: 'conv-1', account: 'g2', engine: 'gemini', file: geminiDb, title: 'agy 대화' }]),
+    geminiImports: { ...list([{ ...common, sessionId: 'conv-1', account: 'g2', engine: 'gemini', file: geminiDb, title: 'agy 대화' }]), heldReason: async () => geminiHeldReason },
     grokBotImports: list([{ ...common, sessionId: 'grokbot-a', account: 'x1', engine: 'grok', source: 'grokbot', readOnly: true, file: botFile, title: '봇 대화' }]),
   });
   await index.refresh();
   const usage = new UsageService({ deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), accounts });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const runner = new TurnRunner({ attachments: null, engine: new StubEngine(async () => []), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions'), accounts });
+  const runner = new TurnRunner({ attachments: null, engine: new StubEngine(async () => []), gemini: { loggedIn: () => true, engine: { runTurn: hangingGeminiTurn } }, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(base, 'codex-sessions'), accounts });
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
   api = attachWebSocket([server], {
     token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [base], accounts,
@@ -118,6 +131,41 @@ describe('ws: open_session for conversations made outside deck', () => {
     expect(await c.until<Notice>((m) => m.type === 'turn_notice' && m.sessionId === 'grokbot-a')).toMatchObject({ message: GROKBOT_READONLY_NOTICE });
     c.ws.close();
   });
+
+  it('an agy conversation agy also reports running: the notice shows when deck is not the one running it, but not while deck itself runs its turn', async () => {
+    try {
+      // Nothing of deck's is running conv-1 yet: agy's own report stands.
+      geminiHeldReason = GEMINI_RUNNING_NOTICE;
+      const before = await client();
+      before.say({ type: 'open_session', sessionId: 'conv-1' });
+      expect(await before.until<Notice>((m) => m.type === 'turn_notice' && m.sessionId === 'conv-1')).toMatchObject({ message: GEMINI_RUNNING_NOTICE });
+      before.ws.close();
+
+      // deck itself starts a turn on conv-1 (held open by the hanging gemini engine); its own send is not refused by
+      // the same report, since TurnRunner's own held gate reads it fresh and agy is about to go quiet again, below.
+      geminiHeldReason = null;
+      const sender = await client();
+      sender.say({ type: 'send', sessionId: 'conv-1', cwd: work, text: '계속' });
+      await sender.until((m) => m.type === 'turn_started' && m.sessionId === 'conv-1');
+
+      // ... agy now also reports the conversation running (its own, separate signal) while deck's turn is still open ...
+      geminiHeldReason = GEMINI_RUNNING_NOTICE;
+
+      // ... and a second device opening the same session while deck runs it gets no "agy 실행 중" notice: deck running it is not agy running it elsewhere.
+      const during = await client();
+      during.say({ type: 'open_session', sessionId: 'conv-1' });
+      await during.until<History>((m) => m.type === 'history' && m.sessionId === 'conv-1');
+      await new Promise((r) => setTimeout(r, 100));
+      expect(during.got.some((m) => m.type === 'turn_notice' && m.sessionId === 'conv-1' && m.message === GEMINI_RUNNING_NOTICE)).toBe(false);
+      during.ws.close();
+
+      releaseGemini?.();
+      await sender.until((m) => m.type === 'turn_result' && m.sessionId === 'conv-1');
+      sender.ws.close();
+    } finally {
+      geminiHeldReason = null;
+    }
+  });
 });
 
 describe('ws: a Grok Bot conversation is never written to', () => {
@@ -132,7 +180,7 @@ describe('ws: a Grok Bot conversation is never written to', () => {
     await c.until(() => errors(c.got).length >= 2);
     c.say({ type: 'send', sessionId: 'grokbot-a', cwd: work, text: '이어서', clientRef: 'gb-1' });
     await c.until(() => errors(c.got).length >= 3);
-    expect(errors(c.got).map((m) => m.message)).toEqual([GROKBOT_SEND_REFUSED, GROKBOT_SEND_REFUSED, expect.any(String)]);
+    expect(errors(c.got).map((m) => m.message)).toEqual([GROKBOT_SEND_REFUSED, GROKBOT_SEND_REFUSED, GROKBOT_SEND_REFUSED]);
     await new Promise((r) => setTimeout(r, 50));
     nothingRan(c.got);
     c.ws.close();

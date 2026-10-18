@@ -208,6 +208,29 @@ describe('Grok holders', () => {
     expect(calls).toBe(1);
   });
 
+  it('a force request arriving after the in-flight scan started waits for it, then runs once more; concurrent forces share that one follow-up', async () => {
+    let calls = 0;
+    let now = 0;
+    const releases: Array<(v: string) => void> = [];
+    const h = new ProcessHolders({ pid: DECK, ttlMs: 60_000, now: () => now, ps: () => { calls++; return new Promise((r) => releases.push(r)); }, lsof: async () => '' });
+    const a = h.refresh(); // scan #1 starts at now=0
+    expect(calls).toBe(1);
+    now = 100; // the force below arrives strictly after scan #1 started
+    const b = h.refresh({ force: true });
+    const c = h.refresh({ force: true }); // concurrent force: shares the same follow-up, not a third scan
+    expect(calls).toBe(1);
+    releases[0]!(`100 1 grok --resume ${G}`); // scan #1 resolves: no holder before, one now
+    expect(await a).toBe(true);
+    // The follow-up only starts once scan #1 settles; it is scan #2.
+    await Promise.resolve().then(() => Promise.resolve());
+    expect(calls).toBe(2);
+    releases[1]!('1 0 launchd'); // scan #2 resolves: the holder from scan #1 is gone again
+    expect(await b).toBe(true);
+    expect(await c).toBe(true);
+    expect(calls).toBe(2);
+    expect(h.grokHeldBy(G)).toBeNull();
+  });
+
   it('a grok folder that came or went alone counts as a change', async () => {
     let cwd = 'n/work/a';
     let now = 0;

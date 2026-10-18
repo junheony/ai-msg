@@ -27,7 +27,7 @@ export const MIN_QUERY_CHARS = 2;
 export const MAX_QUERY_CHARS = 200;
 
 type Doc = { role: 'user' | 'assistant'; text: string };
-type Cached = { mtimeMs: number; size: number; docs: Doc[] };
+type Cached = { mtimeMs: number; size: number; docs: Doc[]; /** A Grok CLI history past the tail cap: older messages were never read. */ tailTruncated: boolean };
 
 export type SearchOptions = {
   /** Sessions to search (already de-duplicated; titles as the sidebar shows them). */
@@ -75,15 +75,16 @@ export class TranscriptSearch {
     }
   }
 
-  private async docs(s: SessionEntry): Promise<Doc[] | 'too-large' | null> {
+  private async docs(s: SessionEntry): Promise<{ docs: Doc[]; tailTruncated: boolean } | 'too-large' | null> {
     const read = this.reader(s);
     if (!s.file || !read) return null;
     let st: import('node:fs').Stats;
     try { st = await fs.stat(s.file); } catch { return null; }
-    // A Grok CLI history is read from its end only: no file is too large for it.
+    // A Grok CLI history is read from its end only: no file is too large for it, but past the tail cap the older half is never read.
     if (st.size > this.maxFileBytes && s.engine !== 'grok') return 'too-large';
+    const tailTruncated = s.engine === 'grok' && st.size > GROK_TAIL_BYTES;
     const hit = this.cache.get(s.file);
-    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.docs;
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return { docs: hit.docs, tailTruncated: hit.tailTruncated };
     let messages: TranscriptMessage[];
     try { messages = await read(s.file); } catch { return null; }
     const docs: Doc[] = [];
@@ -96,8 +97,8 @@ export class TranscriptSearch {
       }
     }
     docs.reverse();
-    this.cache.set(s.file, { mtimeMs: st.mtimeMs, size: st.size, docs });
-    return docs;
+    this.cache.set(s.file, { mtimeMs: st.mtimeMs, size: st.size, docs, tailTruncated });
+    return { docs, tailTruncated };
   }
 
   async search(query: string, limit = 50): Promise<SearchResult> {
@@ -111,9 +112,11 @@ export class TranscriptSearch {
     let scanned = 0;
     let truncated = false;
     for (const s of sessions) {
-      const docs = await this.docs(s);
-      if (docs === 'too-large') { truncated = true; continue; }
-      if (!docs) continue;
+      const result = await this.docs(s);
+      if (result === 'too-large') { truncated = true; continue; }
+      if (!result) continue;
+      if (result.tailTruncated) truncated = true;
+      const docs = result.docs;
       scanned++;
       let found = 0;
       // Newest messages first: the hit most likely wanted is the latest mention.

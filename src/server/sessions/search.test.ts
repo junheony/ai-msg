@@ -118,4 +118,15 @@ describe('TranscriptSearch: conversations made outside deck', () => {
     expect(r.truncated).toBe(false);
     expect(r.hits.map((h) => h.sessionId)).toEqual(['g-big']);
   });
+
+  it('a Grok CLI history over the tail-read cap (GROK_TAIL_BYTES) is still searched, from its end, but reported truncated', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-search-'));
+    const file = path.join(dir, 'chat_history.jsonl');
+    const pad = grokLine({ type: 'assistant', content: 'x'.repeat(16 * 1024 * 1024) });
+    await fs.writeFile(file, pad + grokLine({ type: 'user', content: 'late needle' }));
+    const s = new TranscriptSearch({ sessions: () => [entry({ sessionId: 'g-huge', file })] });
+    const r = await s.search('needle');
+    expect(r.truncated).toBe(true);
+    expect(r.hits.map((h) => h.sessionId)).toEqual(['g-huge']);
+  });
 });

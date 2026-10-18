@@ -143,6 +143,9 @@ export class ProcessHolders {
   private held = new Map<string, SessionHolder>();
   private at = -Infinity;
   private scan: Promise<boolean> | null = null;
+  private scanStartedAt = -Infinity;
+  /** A scan requested with `force` while an older scan (started before the request) was already in flight: one follow-up, shared by every such request until it resolves. */
+  private pendingForce: Promise<boolean> | null = null;
   private readonly ps: () => Promise<string>;
   private readonly now: () => number;
   private readonly ttlMs: number;
@@ -181,12 +184,26 @@ export class ProcessHolders {
 
   /**
    * Rescans unless the last scan is fresh (`force`: whatever its age — a send to a Grok session decides on it). A scan
-   * already in flight is shared. True when a holder came, went or changed kind, or a grok's folder did. Never throws.
+   * already in flight is shared — except a `force` request made after that scan started: its answer may predate
+   * whatever the caller is deciding on, so it waits for the in-flight scan and then runs once more. Concurrent
+   * `force` requests arriving while that follow-up is pending share the one follow-up. True when a holder came,
+   * went or changed kind, or a grok's folder did. Never throws.
    */
   refresh(opts: { force?: boolean } = {}): Promise<boolean> {
-    if (this.scan) return this.scan;
+    if (this.scan) {
+      if (!opts.force || this.scanStartedAt >= this.now()) return this.scan;
+      if (this.pendingForce) return this.pendingForce;
+      const inFlight = this.scan;
+      this.pendingForce = inFlight.then(() => this.runScan()).finally(() => { this.pendingForce = null; });
+      return this.pendingForce;
+    }
     if (!opts.force && this.now() - this.at < this.ttlMs) return Promise.resolve(false);
-    // A failed / timed-out `ps` says nothing about who holds what: the last scan's answer stands, "unchanged".
+    return this.runScan();
+  }
+
+  /** A failed / timed-out `ps` says nothing about who holds what: the last scan's answer stands, "unchanged". */
+  private runScan(): Promise<boolean> {
+    this.scanStartedAt = this.now();
     this.scan = this.ps()
       .then(async (text) => {
         const next = parseHolders(text, this.self);

@@ -26,8 +26,8 @@ const row = (over: Partial<GeminiRow> = {}): GeminiRow => ({
 });
 
 /** A WAL-mode summaries db whose rows sit in the `-wal` only (no checkpoint) — the shape agy leaves while running. Returns the open db (close = checkpoint). */
-function makeDb(rows: GeminiRow[]): DatabaseSync {
-  const db = new DatabaseSync(path.join(state, SUMMARIES_DB));
+function makeDb(rows: GeminiRow[], dir: string = state): DatabaseSync {
+  const db = new DatabaseSync(path.join(dir, SUMMARIES_DB));
   db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;');
   db.exec('CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, preview TEXT, step_count INTEGER, last_modified_time TEXT, workspace_uris TEXT, status TEXT, parent_conversation_id TEXT, nesting_depth INTEGER, killed INTEGER, not_fully_idle INTEGER)');
   const ins = db.prepare('INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?,?,?,?)');
@@ -123,6 +123,38 @@ describe('GeminiConversationIndex', () => {
     await touch(5);
     await idx.refresh();
     expect(logs).toHaveLength(2);
+  });
+
+  it('a torn root\'s log entry is cleared only when that root itself reads clean — another root succeeding does not clear it', async () => {
+    const stateB = path.join(base, 'geminiB');
+    await fs.mkdir(stateB);
+    makeDb([row()]).close();
+    const liveB = makeDb([row({ conversation_id: 'b1' })], stateB);
+    try {
+      const dbA = path.join(state, SUMMARIES_DB);
+      const logs: string[] = [];
+      let tornA = true;
+      const idx = new GeminiConversationIndex(
+        [{ account: 'g1', dir: state }, { account: 'g1', dir: stateB }],
+        tmp, undefined,
+        async (src, root) => (tornA && src === dbA ? null : snapshotSqlite(src, root)),
+        (m) => logs.push(m),
+      );
+      const touchA = async (k: number) => fs.utimes(dbA, new Date(), new Date(Date.now() + k * 5000));
+      await touchA(1);
+      await idx.refresh(); // A torn (logs once); B reads clean.
+      expect(logs).toHaveLength(1);
+      expect(idx.list().map((e) => e.sessionId)).toEqual(['b1']);
+      await touchA(2);
+      await idx.refresh(); // A still torn: B's earlier success must not have cleared A's suppressed log entry.
+      expect(logs).toHaveLength(1);
+      tornA = false;
+      await touchA(3);
+      await idx.refresh(); // A now reads clean: both are listed.
+      expect(idx.list().map((e) => e.sessionId).sort()).toEqual(['b1', 'c1']);
+    } finally {
+      liveB.close();
+    }
   });
 
   it('no db: empty', async () => {
