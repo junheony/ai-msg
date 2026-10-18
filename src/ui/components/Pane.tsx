@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { AUTO_MODEL_INFO, MODEL_INFO, type CodexSandbox, type Effort, type ModelChoice } from '../../shared/models';
-import { HANDOFF_PROMPT } from '../../shared/handoff';
+import { GEMINI_IMPORT_NOTE, HANDOFF_PROMPT } from '../../shared/handoff';
 import { isGeminiAccount, isGrokAccount } from '../../shared/accounts';
 import type { AccountInfo, ClientMessage } from '../../shared/protocol';
 import { LEGACY_ACCOUNT_LIST, activePin, useAccounts } from '../accounts';
@@ -477,7 +477,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   }, [pane.awaitingStart, pane.myTurns.length, pane.session?.sessionId]);
   // 다시 생성 under a reply (MessageView). Stable while the session, its models and the busy state stay: the items are
   // read when asked, so a streaming delta re-renders no message. Not where a send would be refused (read-only, account gone).
-  const blocked = !!entry?.codexArchived || !!(entry?.imported && entry.cwdMissing) || gone === 'retired' || gone === 'unknown';
+  const grokBot = entry?.source === 'grokbot' || !!s?.sessionId?.startsWith('grokbot-');
+  const blocked = grokBot || !!entry?.codexArchived || !!(entry?.imported && entry.cwdMissing) || gone === 'retired' || gone === 'unknown';
   const latest = useRef({ pane, send, accounts: names.all, defaultMode: app.defaultPermMode ?? null });
   latest.current = { pane, send, accounts: names.all, defaultMode: app.defaultPermMode ?? null };
   const sessionEngine = s?.engine ?? 'claude';
@@ -515,7 +516,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         onDelete: () => sessionActions.onDelete(entry),
         deleteBlocked: deleteBlockedReason(entry),
         ...(sessionActions.onSetCwd && (entry.engine ?? 'claude') !== 'gemini' && entry.engine !== 'grok' ? { onSetCwd: () => sessionActions.onSetCwd?.(entry) } : {}),
-        ...(sessionActions.onDuplicate ? { onDuplicate: () => sessionActions.onDuplicate?.(entry.sessionId) } : {}),
+        ...(sessionActions.onDuplicate && !grokBot ? { onDuplicate: () => sessionActions.onDuplicate?.(entry.sessionId) } : {}),
       }
     : { pinned, archived: false, onTogglePin: () => sessionActions.onTogglePin(sid, !pinned) };
   const prevId = entry?.prevSession ?? pane.handoffFrom?.sessionId ?? null;
@@ -580,8 +581,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             dispatch({ type: 'route_fit_resolve', how, paneId: pane.id });
             if (how === 'send') sendFromPane(pane, f.text, f.attachments.map((a) => ({ ...a, size: 0 })), dispatch, send, app.defaultPermMode ?? null, false, undefined, { ignoreFit: true });
           }}
-          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : null}
-          readOnly={entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : null}
+          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : grokBot ? 'Grok Bot 앱에서 이어가세요' : entry?.imported && entry.engine === 'gemini' && !entry.cwdMissing ? GEMINI_IMPORT_NOTE : null}
+          onGrokBotHandoff={grokBot ? () => dispatch({ type: 'grokbot_handoff', paneId: pane.id }) : undefined}
+          readOnly={grokBot ? 'Grok Bot 앱 대화라 읽기만 할 수 있어요' : entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : entry?.engine === 'grok' && entry.heldBy ? '터미널 grok 이 이 대화를 열고 있어 읽기만 할 수 있어요' : null}
           onInterrupt={interrupt}
           onCancelStart={() => {
             // Waiting in the server's queue (turn_queued): take it back out there too, or it would run after the 취소.

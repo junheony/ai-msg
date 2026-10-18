@@ -3,9 +3,10 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
+import path from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, isGrokAccount, type AccountNames } from '../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_GROK_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, isGrokModel, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
+import { DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isGrokModel, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type CommanderView, type StreamPos, type GeminiStatus, type GrokStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
@@ -18,6 +19,10 @@ import { sessionAllowLabel } from './engine/Engine';
 import { isGrokAutoApprovable } from './engine/GrokEngine';
 import { displayError } from './engine/redact';
 import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
+import { findGrokSessionDir, readGrokTranscriptTail } from './engine/grokHistory';
+import { elsewhereNotice } from './sessions/elsewhereNotice';
+import { GROKBOT_READONLY_NOTICE, readGrokBotTranscript } from './sessions/GrokBotImports';
+import { grokImportBlockReason } from './sessions/GrokImports';
 import { OWN_LAG_MS, scanForeign } from './sessions/foreignWrites';
 import { deckWrites } from './engine/claudeCli/ownedEntries';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
@@ -163,7 +168,9 @@ export type WsDeps = {
   /** The send clientRefs / steer ids each session accepted (survives a restart); rides `history` as `acceptedRefs`. */
   acceptedRefs?: Pick<AcceptedRefs, 'add' | 'remove' | 'has' | 'list' | 'since'>;
   /** Process scan behind the index entries' `heldBy` (the same object the SessionIndex reads): rescanned at hello, open, send and on the outside poll. */
-  holders?: Pick<ProcessHolders, 'refresh'>;
+  holders?: Pick<ProcessHolders, 'refresh'> & Partial<Pick<ProcessHolders, 'grokHeldBy' | 'grokCwdHeld'>>;
+  /** x1's GROK_HOME: deck's own Grok sessions' history is read from `sessions/*\/<id>/chat_history.jsonl` there. Absent = empty panes. */
+  grokHome?: string | null;
   /** See OUTSIDE_POLL_MS; 0 = no poll. */
   outsidePollMs?: number;
   /** See CATCHUP_KEEP_EVENTS (tests shrink it). */
@@ -720,7 +727,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (dup) { send(ws, { type: 'error', turnId: null, ...dup, ...ref }); return; }
     if (msg.handoff && msg.sessionId) {
       const st = deps.store.get(msg.sessionId);
-      if (msg.engine === 'codex' || msg.engine === 'gemini' || msg.engine === 'grok' || (st && isOtherEngineState(st)) || (!st && !deps.index.lookup(msg.sessionId) && deps.index.codexImport(msg.sessionId))) {
+      if (msg.engine === 'codex' || msg.engine === 'gemini' || msg.engine === 'grok' || (st && isOtherEngineState(st)) || (!st && !deps.index.lookup(msg.sessionId) && deps.index.importOf(msg.sessionId))) {
         send(ws, { type: 'error', turnId: null, message: '이어서 새 세션은 Claude 대화에서만 돼요', ...ref });
         return;
       }
@@ -1126,23 +1133,62 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, sessionModel: st.defaultModel, messages: [], ...runningOf(sessionId) });
         return;
       }
-      // Grok sessions: no transcript reader yet (grokTranscript, design §7) — the pane starts empty, like Gemini.
+      // Grok sessions: the CLI's own chat_history.jsonl under GROK_HOME (imports design §2.1a).
       if (st && isGrokState(st)) {
         view(ws, sessionId);
-        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(st.model) ? st.model : DEFAULT_GROK_MODEL, sessionEffort: st.effort, messages: [], ...runningOf(sessionId) });
+        const dir = deps.grokHome ? await findGrokSessionDir(deps.grokHome, st.grokSessionId ?? sessionId).catch(() => null) : null;
+        const messages = dir ? await readGrokTranscriptTail(path.join(dir, 'chat_history.jsonl')).catch(() => []) : [];
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(st.model) ? st.model : DEFAULT_GROK_MODEL, sessionEffort: st.effort, messages, ...runningOf(sessionId) });
+        const t = turns.get(busy.get(sessionId) ?? '');
+        if (t && messages.length) replay(ws, t, sessionId);
         return;
       }
       let entry = deps.index.lookup(sessionId);
       // Review (flaky ws.test.ts): a session written just after the last scan isn't in
       // the in-memory index yet. Rescan once (single-flight) and re-check before giving up.
-      if (!entry && !deps.index.codexImport(sessionId)) {
+      if (!entry && !deps.index.importOf(sessionId)) {
         await rescanIndex();
         entry = deps.index.lookup(sessionId);
       }
       // A Codex Desktop / CLI thread deck has not run yet: its rollout, read-only; the first turn resumes it.
       // Checked live: a rollout moved by Codex (archived / unarchived) or a folder that came / went since the last scan
       // triggers a rescan and an index push, so the list and composer follow without a manual refresh.
-      const imported = entry ? null : await deps.index.freshCodexImport(sessionId);
+      const imported = entry ? null : await deps.index.freshImport(sessionId);
+      const note = (message: string) => send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: imported!.cwd, message });
+      const untitled = (t: string) => (t === '(제목 없음)' ? null : t);
+      // A Grok Bot app conversation: read-only, always (no app API); continuing is the app's, or a new deck Grok session.
+      if (imported && imported.source === 'grokbot') {
+        view(ws, sessionId);
+        const messages = await readGrokBotTranscript(imported.file).catch(() => []);
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'x1', engine: 'grok', sandbox: null, messages, ...runningOf(sessionId) });
+        note(GROKBOT_READONLY_NOTICE);
+        return;
+      }
+      // A Grok CLI session deck has not run yet: its chat_history, read-only; the first turn resumes it (session/load).
+      if (imported && imported.engine === 'grok') {
+        view(ws, sessionId);
+        const messages = await readGrokTranscriptTail(imported.file).catch(() => []);
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'x1', engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL, ...(imported.grokEffort ? { sessionEffort: imported.grokEffort as never } : {}), messages, ...runningOf(sessionId) });
+        const t = turns.get(busy.get(sessionId) ?? '');
+        if (t) replay(ws, t, sessionId);
+        const age = await deps.index.importActiveAgeMs(sessionId);
+        if (age !== null || deps.holders?.grokCwdHeld?.(imported.cwd)) note(elsewhereNotice({ engine: 'grok', title: untitled(imported.title), ageMs: age ?? 0 }));
+        const blocked = await grokImportBlockReason(imported, deps.holders);
+        if (blocked) note(blocked);
+        return;
+      }
+      // An agy conversation: its messages are not readable (protobuf) — the pane starts empty; the first turn resumes it (--conversation).
+      if (imported && imported.engine === 'gemini') {
+        view(ws, sessionId);
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'g1', engine: 'gemini', sandbox: defaultGeminiSandbox(deps.runner.permissionModeOf(sessionId) === 'bypassPermissions'), sessionModel: DEFAULT_GEMINI_MODEL, messages: [], ...runningOf(sessionId) });
+        const t = turns.get(busy.get(sessionId) ?? '');
+        if (t) replay(ws, t, sessionId);
+        const age = await deps.index.importActiveAgeMs(sessionId);
+        if (age !== null) note(elsewhereNotice({ engine: 'gemini', title: untitled(imported.title), ageMs: age }));
+        const blocked = await importBlockReason(imported);
+        if (blocked) note(blocked);
+        return;
+      }
       if (imported) {
         view(ws, sessionId);
         const messages = await (deps.readCodexImportHistory ?? readCodexTranscriptTail)(imported.file).catch(() => []);
@@ -1364,13 +1410,16 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const id = msg.sessionId;
           const st = deps.store.get(id);
           const entry = deps.index.lookup(id);
-          const imported = st || entry ? null : deps.index.codexImport(id);
+          const imported = st || entry ? null : deps.index.importOf(id);
+          if (imported?.source === 'grokbot') { send(ws, { type: 'error', turnId: null, sessionId: id, message: 'Grok Bot 대화는 복제할 수 없어요 — deck Grok 새 세션으로 이어가기를 쓰세요' }); break; }
           const cwd = st?.cwd ?? entry?.cwd ?? imported?.cwd;
           if (!cwd) { send(ws, { type: 'error', turnId: null, sessionId: id, message: `복제할 수 없는 세션입니다: ${id}` }); break; }
           const old = deps.meta?.title?.(id) ?? entry?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === id)?.title ?? imported?.title ?? id.slice(0, 8);
           const title = `${old} (복사)`.slice(0, 200);
           if (st && isGrokState(st)) send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'grok', model: isGrokModel(st.model) ? st.model : DEFAULT_GROK_MODEL, title, permissionMode: deps.runner.permissionModeOf(id) });
           else if (st && isOtherEngineState(st)) send(ws, { type: 'session_duplicate', from: id, cwd, engine: st.engine, model: st.defaultModel, title, sandbox: st.sandbox });
+          else if (imported?.engine === 'grok') send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'grok', model: isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL, title, permissionMode: deps.runner.permissionModeOf(id) });
+          else if (imported?.engine === 'gemini') send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'gemini', model: DEFAULT_GEMINI_MODEL, title, sandbox: defaultGeminiSandbox(deps.runner.permissionModeOf(id) === 'bypassPermissions') });
           else if (imported) send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'codex', model: DEFAULT_CODEX_MODEL, title, sandbox: deps.runner.importSandboxOf(id) ?? DEFAULT_SANDBOX });
           else send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'claude', model: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, title, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(id) });
           break;

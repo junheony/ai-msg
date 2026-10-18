@@ -42,6 +42,19 @@ export type SessionEntry = {
    * its own history in memory, so messages sent from both sides fork the conversation. Absent = nobody (or unknown).
    */
   heldBy?: SessionHolder;
+  /** An imported Grok CLI session from a non-interactive (`headless`) run: shown with the 자동 실행 tag, like `codexExec`. */
+  autoRun?: boolean;
+  /** An imported Grok CLI session's last model / effort (`summary.json`): the defaults when deck continues it. */
+  grokModel?: string;
+  grokEffort?: string;
+  /** Where an imported entry comes from when `engine` alone does not say: `grokbot` = the Grok Bot app (engine 'grok', read-only). */
+  source?: 'grokbot';
+  /** View only: deck can never send in this conversation (Grok Bot). */
+  readOnly?: boolean;
+  /** Grok Bot roster facts (source 'grokbot'). */
+  grokBot?: { description?: string; awaitingUserResponse: boolean; unreadCount: number; isGroup: boolean };
+  /** A short preview of the last / first message (Gemini `preview`, Grok Bot roster `lastEntry.text`). */
+  preview?: string;
 };
 
 /** A recent Claude Desktop (Code tab) session; opened like any other session by `sessionId`. */

@@ -53,6 +53,9 @@ export type GrokUsage = {
   billing?: GrokBilling | null;
 };
 
+/** Grok Bot app weekly usage, read from its local cache (`weekly-usage.cache`); `readAtMs` = when the app last synced it. */
+export type GrokBotUsage = { percentUsed: number; nextResetMs: number | null; planLabel: string | null; readAtMs: number };
+
 /**
  * One `_x.ai/billing` answer (grok 1.0.62), read at the end of a Grok turn or by the idle poller. `usedPct`: the
  * answer's `config.creditUsagePercent`, read as the percent of the period's included credit already used (0–100; 1.0
@@ -98,6 +101,8 @@ export type UsageSnapshot = {
   geminiSeats?: Partial<Record<GeminiAccount, GeminiUsage>>;
   /** Grok seats (usage header design §4/§7-4); absent/missing key = no `grok` binary or no Grok turn yet on that seat. */
   grokSeats?: Partial<Record<GrokAccount, GrokUsage>>;
+  /** The Grok Bot app's own weekly usage (its local cache, macOS); absent = no app / no fresh cache. Shown as a secondary line on the Grok card. */
+  grokBot?: GrokBotUsage;
   /** 'none' = this install has never had an answer from usage-deck: unknown usage alone does not change the model or engine. Absent = 'deck'. */ usageSource?: 'deck' | 'none';
   /**
    * Where the Claude account numbers come from (`DECK_USAGE_SOURCE`). 'cli' = only the `rate_limit_event` of deck's own

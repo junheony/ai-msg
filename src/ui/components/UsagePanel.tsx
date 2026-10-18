@@ -3,7 +3,7 @@ import { GEMINI_ACCOUNTS, GROK_ACCOUNTS, type GeminiAccount, type GrokAccount, t
 import type { GrokStatus } from '../../shared/protocol';
 import { useAccounts } from '../accounts';
 import { ClaudeMark, GeminiMark, GrokMark, OpenAIMark } from './EngineMark';
-import { emptyAccountUsage, grokBillingWindow, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, grokBillingWindow, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export function countdown(resetsAt: string | null, now: number): string {
   if (!resetsAt) return '';
@@ -216,7 +216,15 @@ function grokPeriodName(type: string | null | undefined): string {
  * subscription's usage (`_x.ai/billing`) the card is a bar like GPT / Gemini; a cooldown or login problem still wins the
  * main row. Without it, the status sentence. Today's deck tally is the secondary line / popover either way.
  */
-function grokSeatData(seat: Seat, snap: GrokUsage, now: number): SeatData {
+/** The Grok Bot app's own weekly plan reading (macOS, read from the app's cache): a secondary popover line. */
+export function grokBotLine(b: GrokBotUsage, now: number): string {
+  const pct = Math.round(b.percentUsed);
+  const reset = b.nextResetMs !== null ? ` · 리셋 ${resetStamp(new Date(b.nextResetMs).toISOString())}` : '';
+  const stale = now - b.readAtMs > 24 * 3600_000 ? ` (앱 동기화 ${Math.floor((now - b.readAtMs) / 3600_000)}시간 전)` : '';
+  return `${b.planLabel ?? '플랜'} ${pct}% 사용${reset}${stale}`;
+}
+
+function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsage | null): SeatData {
   const g = grokNow(snap, now);
   const tally = `입력 ${g.today.inputTokens.toLocaleString('en-US')} · 출력 ${g.today.outputTokens.toLocaleString('en-US')}`;
   const tier = g.billing?.tier ?? null;
@@ -224,6 +232,7 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number): SeatData {
     <>
       {tier && <div className="usage-pop-row" data-testid={`${seat}-tier`}><span>구독</span><b>{tier}</b></div>}
       <div className="usage-pop-row" data-testid={`${seat}-today`}><span>deck 오늘</span><b>{`${g.today.turns}턴 · ${tally}`}</b></div>
+      {bot && <div className="usage-pop-row" data-testid={`${seat}-grokbot`}><span>Grok Bot</span><b>{grokBotLine(bot, now)}</b></div>}
     </>
   );
   const week = grokBillingWindow(g.billing, now);
@@ -523,7 +532,7 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
         ...(g.fetchedAt ? { observed: `확인 · ${resetStamp(g.fetchedAt)}` } : {}),
       };
     }),
-    ...showGrok.map((a) => grokSeatData(a, grokOf(a) ?? { status: 'unknown', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } }, now)),
+    ...showGrok.map((a) => grokSeatData(a, grokOf(a) ?? { status: 'unknown', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } }, now, usage?.grokBot)),
   ];
 
   const cards = seats.length;

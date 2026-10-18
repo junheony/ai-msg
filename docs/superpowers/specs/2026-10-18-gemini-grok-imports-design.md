@@ -2,6 +2,8 @@
 
 deck 밖(터미널의 `grok`, `agy`)에서 한 대화를 사이드바에 올리고, 메시지를 보내면 deck 에서 이어가는 기능. GPT(Codex) 가져오기(`src/server/sessions/CodexImports.ts`, `SessionIndex.ts`, `ws.ts` 의 `open_session` 분기, `TurnRunner.ts:1384-1402` 의 합성 state)가 이미 있으므로 **그 모양을 그대로 따른다**: 읽기 전용 인덱스 → `SessionEntry{imported: true}` → 첫 `send` 가 TurnRunner 에서 합성 state 로 이어가기(resume) → 그 뒤는 deck 소유 세션.
 
+개정 2판(구현 직전 사용자 확정): Grok Bot 대화 방향(`send-message`=봇, `message`=사용자), Grok Bot 은 `EngineKind` 를 늘리지 않고 `engine:'grok'`+`source:'grokbot'`, Grok Bot id 로는 보내기 금지(TurnRunner 명시 오류), id 에 `:` 금지, 실측 schemaVersion, Grok 본문 리더 규칙, Grok 동시 쓰기는 id 일치만 거절·cwd 일치는 경고.
+
 개정 1판에서 바뀐 결정: 이어가기 분기 위치(TurnRunner), Gemini DB 는 `immutable` 대신 **임시 폴더 복사 후 일반 열기**, Grok 동시 쓰기는 **ps 스캔(heldBy)** 으로 막기, 임시 cwd 는 "임시이면서 폴더가 없는 것"만 숨김, Grok 본문 읽기 전용 보기를 1차로.
 
 ## 0. 목표 / 비목표
@@ -71,7 +73,7 @@ export interface ImportIndex {
 - `grokImportBlockReason(e, holders)` — `holders.heldBy(id)` 가 있으면 `GROK_HELD_NOTICE`(`터미널에서 grok 이 이 대화를 열고 있어 이어서 보낼 수 없음 — 그쪽 grok 을 끝낸 뒤 다시 보내세요`), 아니면 `cwdMissing` 이면 `CWD_MISSING_NOTICE` 재사용. (보관 개념 없음.)
 
 ### 2.1a `src/server/engine/grokHistory.ts` (1차)
-- `readGrokTranscriptTail(file, maxBytes = 16 MiB, opts): Promise<TranscriptMessage[]>` — `codexRollout.readCodexTranscriptTail` 과 같은 모양. user 줄은 `<user_query>…</user_query>` 안만 남기고 주입 컨텍스트(`<user_info>`, `<system-reminder>`) 줄은 버린다; assistant 는 `content` + `tool_calls` → `toolCalls`; `tool` 줄은 직전 toolCall 의 결과(`maxToolResultChars` 자름); `system` 줄은 버린다. `model` 은 `summary.json` 의 `current_model_id`.
+- `readGrokTranscriptTail(file, maxBytes = 16 MiB, opts): Promise<TranscriptMessage[]>` — `codexRollout.readCodexTranscriptTail` 과 같은 모양. user 본문 규칙(개정 2판): `<user_query>` 가 있으면 그 안만 남긴다; 없으면 **그대로 두고** `<system-reminder>`·`<user_info>` 로 시작하는 항목만 버린다(ACP 경로로 보낸 프롬프트는 태그 없이 저장된다); assistant 는 `content` + `tool_calls` → `toolCalls`; `tool` 줄은 직전 toolCall 의 결과(`maxToolResultChars` 자름); `system` 줄은 버린다. `model` 은 `summary.json` 의 `current_model_id`.
 - `readGrokFirstPrompt(file, maxBytes = 2 MiB): Promise<string | null>` — 제목 폴백용.
 - 가져온 세션뿐 아니라 **deck 소유 Grok 세션의 `open_session` 도** 이 리더로 기록을 채운다(지금은 `messages: []`). 파일 위치는 `GrokEngine.sessionUpdatesFile` 과 같은 규칙(`GROK_HOME/sessions/*/<id>/`, realpath 봉인)으로 찾는다 → `findGrokSessionDir(grokHome, id)` 로 뽑아 둘이 공유.
 
@@ -98,27 +100,28 @@ export interface ImportIndex {
 - `/Applications/Grok Bot.app`(Electron, bundle id `com.anysphere.sand`, 0.71.2). 에이전트는 클라우드 박스(`/home/box/sand-data/agents/<id>/store.db`)에서 돌고, 이 맥은 호스트로 붙어 파일·셸을 빌려준다. 로그인은 Google OAuth. **deck 은 Grok Bot 클라우드 API 를 부르지 않고 앱의 토큰도 재사용하지 않는다** → deck 에서 보내기는 비목표.
 - 로컬 캐시: `~/Library/Application Support/Grok Bot/sand-client-persistence/<base32(키)>.blob`, 내용은 JSON `{ schemaVersion, value }`. 파일명을 base32 디코드하면 키:
   - `sand.client.slice.account.<계정>.roster.last-roster` — `value.rows[]`: `id, name, description, title, avatarShape, avatarColor, createdAt, updatedAt, lastActivityAt, hasUnread, unreadCount, awaitingUserResponse, isHiddenFromSidebar, isGroup, harness, origin …`
-  - `…transcript.replicas.<agentId>` — `value.entries[]`: `kind: 'send-message' | 'message'`, `id`, `message{ type: 'text' | 'widget' | 'ask…', content | widget | ask }`, `timestampMs`, `requestId`, `seq`; 바깥 `persistedAt`.
-  - `…weekly-usage.cache` — `value.reading.usage{ percentUsed, nextResetMs, grokPlanLabel('Grok Bot Plan'), onDemand }`, `readAtMs`.
+  - `…transcript.replicas.<agentId>` — `value.entries[]`(개정 2판 실측): `kind: 'send-message'` = **봇(assistant) 차례**, `message.type: 'text' | 'widget' | 'local-tool-permission' | 'attachment'`; `kind: 'message'` = **사용자 차례**(`role: 'user'`, `content` 문자열); `kind: 'voice-call'` = 음성 통화(한 줄 `[음성 통화]`). 위젯의 `respondedValue`(사용자 선택)·`widgetSkipped` 는 합성 사용자 줄로. 모르는 kind·type 은 건너뜀. 공통 `id`, `timestampMs`, `seq`; 바깥 `persistedAt`.
+  - `…weekly-usage.cache` — `value{ kind, reading{ usage{ percentUsed, nextResetMs, grokPlanLabel, onDemand }, readAtMs }, expiresAtMs }`. `value.kind === 'present'` 일 때만 읽는다.
+  - 실측 `schemaVersion`: roster **4**, transcript **1**, usage **2**. 다른 값이면 건너뜀.
   - 앱이 동기화할 때 갱신(mtime).
-- **열지 않는 것**: `sand-secrets.json`, `box-secrets-push-state.v1.json`, `Cookies`, `Local Storage`. 모듈은 `sand-client-persistence/` 한 폴더만 `readdir` 하고 `.blob` 만 연다.
+- **열지 않는 것**: `sand-secrets.json`, `box-secrets-push-state.v1.json`, `Cookies*`, `Local Storage/**`. 모듈은 `sand-client-persistence/` 한 폴더만 `readdir` 하고, **허용 목록**으로 base32 디코드한 키 이름이 roster(`.roster.last-roster`)·`transcript.replicas.<id>`·`weekly-usage.cache` 인 `.blob` 만 연다.
 
 #### 모듈 `src/server/sessions/GrokBotImports.ts`
 - `decodeBlobKey(fileName): string | null` — base32(RFC 4648, 패딩 유무 허용) 디코드, UTF-8 이 아니면 null.
 - `readBlob(file): Promise<{ schemaVersion: number; value: unknown } | null>` — JSON 파싱; `schemaVersion` 이 **알고 있는 값**(상수 `KNOWN_SCHEMA = { roster: [..], transcript: [..], usage: [..] }`, 실측값으로 채움)이 아니면 null + 로그 1줄(키별 한 번).
-- `class GrokBotIndex implements ImportIndex` — 생성자 `(dir: string | null)`. `dir` 이 null 이거나 없으면 **조용히 빈 목록**(Linux·앱 미설치: 오류·로그 없음). 스캔: 폴더 `readdir` → 키 디코드 → roster 파일들만 스탬프 비교 후 읽기. 행 → `SessionEntry{ sessionId: 'grokbot:' + id, account: 'x1', engine: 'grokbot', cwd: <home>, projectDir: dir, file: <transcript blob 경로 또는 roster 경로>, title: name || title || '(제목 없음)', lastModified: lastActivityAt ?? updatedAt, imported: true, readOnly: true, grokBot: { description, awaitingUserResponse, unreadCount, isGroup, account } }`. 제외: `isHiddenFromSidebar`. `cwd` 는 폴더 개념이 없어 home 으로 두고 사이드바 그룹은 "Grok Bot" 가상 프로젝트(§11).
-- `readGrokBotTranscript(file): Promise<TranscriptMessage[]>` — `entries` 를 `seq` 순으로: `send-message` → user, `message` → assistant. `message.type === 'text'` 는 `content` 본문; `widget`/`ask…` 는 한 줄 요약 `[선택지: A · B · C]` / `[위젯: <type>]`(선택지 레이블은 `ask.options[].label` 류를 최대 5개, 없으면 타입만). `timestampMs` → `ts`.
-- `readGrokBotWeeklyUsage(dir): Promise<{ percentUsed, nextResetMs, planLabel, readAtMs } | null>` — 사용량 카드용.
+- `class GrokBotIndex implements ImportIndex` — 생성자 `(dir: string | null)`. `dir` 이 null 이거나 없으면 **조용히 빈 목록**(Linux·앱 미설치: 오류·로그 없음). 스캔: 폴더 `readdir` → 키 디코드 → roster 파일들만 스탬프 비교 후 읽기. 행 → `SessionEntry{ sessionId: 'grokbot-' + id, account: 'x1', engine: 'grok', source: 'grokbot', cwd: <home>, projectDir: dir, file: <transcript blob 경로 또는 roster 경로>, title: name || title || '(제목 없음)', preview: lastEntry.text, lastModified: lastActivityAt ?? updatedAt, imported: true, readOnly: true, grokBot: { description, awaitingUserResponse: awaitingUserResponse ?? false, unreadCount, isGroup } }`. id 에는 `:` 를 쓰지 않는다(`PinStore.isPinnableId`) — `-` 구분자. 제외: `isHiddenFromSidebar`. `cwd` 는 폴더 개념이 없어 home 으로 두고 사이드바도 home 프로젝트 아래에 묶인다(가상 프로젝트 없음).
+- `readGrokBotTranscript(file): Promise<TranscriptMessage[]>` — `entries` 를 `seq` 순으로: `message`(사용자) → user, `send-message`(봇) → assistant. `text` 는 `content` 본문; `widget` 은 `[선택지: A · B · C]`(옵션 레이블 최대 5개) + `respondedValue` 가 있으면 합성 user 줄, `widgetSkipped` 면 `[건너뜀]` user 줄; `local-tool-permission` 은 `[권한 요청: <action> <target>]`; `attachment` 는 `[첨부: <file_name>]`; `voice-call` 은 `[음성 통화]`. `timestampMs` → `ts`.
+- `readGrokBotWeeklyUsage(dir): Promise<{ percentUsed, nextResetMs, planLabel, readAtMs } | null>` — 사용량 카드용. `value.kind === 'present'` 이고 `expiresAtMs` 가 지나지 않았을 때만.
 
 #### 이어가기 — 없음, 두 가지 안내
 - 열면 `turn_notice`: `Grok Bot 대화는 읽기만 할 수 있어요 — 이어가려면 Grok Bot 앱에서 열어 주세요`. 작성기 `readOnly`.
 - 보조: 작성기 자리에 `[deck Grok 새 세션으로 이어가기]` 버튼. GPT 잠김 인계(`src/shared/handoff.ts` `codexHandoffExcerpt`/`codexHandoffMessage`)와 같은 방식 — 기록에서 `CODEX_HANDOFF_EXCERPT_MAX` 안의 발췌를 만들어 새 Grok 세션(x1, 사용자가 폴더 선택) 첫 메시지에 프리필한다. `grokBotHandoffMessage(name, excerpt, request)` 는 `codexHandoffMessage` 와 문구만 다르다. 서버 변경 없음(기존 `send` 로 새 세션).
 
 #### 프로토콜·UI
-- `EngineKind` 에 `'grokbot'` 추가(표시 전용 — `send.engine` 으로는 거절: `Grok Bot 대화는 deck 에서 보낼 수 없어요`). `SessionEntry.grokBot?: { description?: string; awaitingUserResponse: boolean; unreadCount: number; isGroup: boolean }`, `readOnly?: true`(선택 필드).
-- `open_session` → `history{ engine: 'grokbot', account: 'x1', cwd, messages: readGrokBotTranscript(...) }` + 위 `turn_notice`. `duplicate_session`·`delete_session`·`handoff` 는 거절(문구 엔진별).
+- `EngineKind` 는 **늘리지 않는다**(개정 2판). Grok Bot 항목은 `engine: 'grok'` + `SessionEntry.source?: 'grokbot'` + `readOnly?: true`. 라우팅·설정 Record 는 건드리지 않는다. `SessionEntry.grokBot?: { description?: string; awaitingUserResponse: boolean; unreadCount: number; isGroup: boolean }`, `preview?: string`(선택 필드). Grok Bot id 로 `send` 하면 TurnRunner 의 가져오기 공통 선행 검사가 `Grok Bot 대화는 Grok Bot 앱에서 이어가세요` 오류로 끝낸다 — 새 Claude/Grok 세션으로 새지 않는다.
+- `open_session` → `history{ engine: 'grok', account: 'x1', cwd, messages: readGrokBotTranscript(...) }` + 위 `turn_notice`. `duplicate_session`·`delete_session`·`handoff` 는 거절(문구 엔진별).
 - 사이드바: "Grok Bot" 가상 프로젝트 아래 봇 이름, 엔진 배지 `Grok Bot`, `awaitingUserResponse` → `답장 대기` 꼬리표(강조), `unreadCount > 0` → `안 읽음 n`, `isGroup` → `그룹`. 툴팁 `Grok Bot 앱의 대화 — 읽기만, 이어가기는 앱에서`.
-- 사용량: `UsageSnapshot.grokSeats.x1` 에 `grokBot?: { percentUsed, nextResetMs, planLabel, readAtMs }` 선택 필드. Grok 카드 팝오버 보조 줄 `Grok Bot 플랜 n% · 리셋 <상대시각>`; 캐시가 24시간 넘게 오래됐으면 `(앱 동기화 <n>시간 전)` 덧붙임. 없으면 줄 없음.
+- 사용량: 최상위 `UsageSnapshot.grokBot?: { percentUsed, nextResetMs, planLabel, readAtMs }` 선택 필드(x1 좌석 사용량이 없어도 실리도록 `grokSeats.x1` 밖에 둠). Grok 카드 팝오버 보조 줄 `Grok Bot 플랜 n% · 리셋 <상대시각>`; 캐시가 24시간 넘게 오래됐으면 `(앱 동기화 <n>시간 전)` 덧붙임. 없으면 줄 없음.
 
 #### 폴링·실패
 - `SessionIndex.refresh()` 때 roster 블롭 stat(파일 2~3개). transcript 는 열 때만 읽는다(캐시 없음, 크기 작음).
@@ -134,7 +137,7 @@ export interface ImportIndex {
 - `send` 에 가져온 id — ws.ts 는 그대로 통과시키고 **TurnRunner 가 합성 state 를 만든다**(§3.1). `handoff`(이어서 새 세션) 거절 조건(`ws.ts:723`)에 `index.importOf(id)` 포함.
 
 ### 3.1 TurnRunner 합성 state (Codex 분기 :1389-1394 와 대칭)
-`const imported = state ? null : await deps.index.freshImport(p.sessionId)` 뒤, `imported.engine` 으로 분기. 공통 선행 검사: `importBlockReason(imported, deps.holders)` 가 문구를 주면 `error` 로 끝(폴더 없음, Grok 보유 중). 통과하면:
+`const imported = state ? null : await deps.index.freshImport(p.sessionId)` 뒤, `imported.engine` 으로 분기. 공통 선행 검사: `imported.source === 'grokbot'` 이면 `Grok Bot 대화는 Grok Bot 앱에서 이어가세요` `error` 로 끝(새 세션으로 새지 않음, 테스트로 고정). 이어서 `importBlockReason(imported, deps.holders)` 가 문구를 주면 `error` 로 끝(폴더 없음, Grok 보유 중). `holders` 는 TurnRunner deps 에 명시 주입한다. 통과하면:
 ```ts
 // grok
 state = {
@@ -169,7 +172,7 @@ state = {
 
 (b) 의 동시 쓰기 방지 — **ps 스캔으로 보유 판정(heldBy), 보유 중이면 거절.** 세션 폴더의 `*.lock` 은 파일별 0 byte 라 프로세스 보유 신호가 아니다(닫힘). 대신 `ProcessHolders.ts` 의 `claude` 스캔(`ps -axww -o pid=,ppid=,command=`)을 확장한다:
 - `isGrokCommand(command)` — 실행 파일 basename 이 `grok`(인터프리터 뒤, `node …/grok` 포함). deck 자식은 제외: `ppid` 가 deck 의 pid 이거나 조상 사슬에 deck 이 있는 행, 그리고 deck 이 띄운 턴의 pid 집합(`GrokEngine` 이 `holders.ownPid(pid)` 로 등록).
-- 매칭: 인자에 세션 id(`--resume <id>`/`-r <id>` 등 어떤 위치든 `GROK_SESSION_ID_RE` 통과 토큰이 가져오기 id 와 같음) → 그 세션 `heldBy: 'other'`. id 가 없는 대화형 `grok` 은 **같은 cwd**(`lsof` 는 쓰지 않고 `ps -o cwd` 가 없으므로 macOS 는 `lsof -p` 대신 `/proc` 도 없음 → `ps -axww -o pid=,ppid=,command=` 에 더해 `lsof -a -d cwd -p <pids> -Fn` 한 번) 인 모든 Grok 가져오기/소유 세션에 `heldBy: 'other'` 를 건다(보수적: 그 폴더의 어느 세션을 열었는지 모르므로 전부).
+- 매칭(개정 2판): 인자에 세션 id(어떤 위치든 토큰이 가져오기 id 와 같음) → 그 세션 `heldBy: 'other'`, **보내기 거절**. deck 자식은 기존 `underDeck` 조상 검사와 `agent --no-leader stdio` 인자로 제외. id 가 없는 대화형 `grok` 은 같은 cwd(`lsof -a -d cwd -p <pids> -Fn` 한 번, 실패하면 생략)일 때 **거절하지 않고** `elsewhereNotice` 수준 경고만 낸다.
 - 결과: `SessionIndex.decorate` 가 Grok 항목에 `heldBy` 를 싣고, 사이드바는 Claude 의 `heldBy` 표시를 재사용. `open_session` 은 `GROK_HELD_NOTICE` 를 보내고 Pane 작성기를 `readOnly` 로; TurnRunner 는 `importBlockReason` 에서 같은 문구로 `error`. 스캔 실패는 이전 답 유지(기존 ProcessHolders 규칙).
 - `activeAgeMs`(2분 mtime) 는 **보조 신호**: ps 에 안 잡히는데 방금 쓰였으면(원격 셸, 스캔 지연) `elsewhereNotice` 로 안내만 하고 막지 않는다(Codex 와 동일).
 
@@ -209,7 +212,8 @@ Gemini 제외: `nesting_depth > 0` 또는 `parent_conversation_id !== ''`(서브
 | 복사 중 원본이 바뀜 / 복사본 열기·쿼리 실패(찢어진 파일) | 그 회차는 이전 목록 유지, 다음 refresh 재시도, 임시 폴더 삭제 |
 | 임시 폴더 생성 실패(디스크·권한) | 위와 같음(이전 목록 유지) |
 | `chat_history.jsonl` 반쯤 쓰인 마지막 줄 | 그 줄만 버림(Codex 꼬리 리더와 같음) |
-| 터미널 `grok` 이 세션/같은 cwd 를 보유 | `heldBy` 표시 + 열 때 `GROK_HELD_NOTICE`, 보내기는 `error` 로 거절; 끝나면 다음 스캔에서 풀림 |
+| 터미널 `grok` 이 세션 id 로 보유 | `heldBy` 표시 + 열 때 `GROK_HELD_NOTICE`, 보내기는 `error` 로 거절; 끝나면 다음 스캔에서 풀림 |
+| 터미널 `grok` 이 같은 cwd 에만 있음 | 경고 안내만, 막지 않음 |
 | `session/load` 실패(Grok) | 기존 턴 오류 경로(`errorKind` 그대로), 항목은 가져오기 상태로 남음 |
 | agy `--conversation` 실패 | 기존 `agy 종료 코드 …` 결과, 동일 |
 | cwd 없음 | 열 때 `CWD_MISSING_NOTICE`, 작성기 비활성(Pane 의 `readOnly`) |

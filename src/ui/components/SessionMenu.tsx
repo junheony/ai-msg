@@ -5,7 +5,10 @@ import type { SessionEntry } from '../../shared/session-types';
  * Why deck cannot delete this session (null = it can): the trash only moves Claude transcripts. GPT / Gemini /
  * Codex-app sessions live in those tools' own folders, which deck never writes.
  */
-export function deleteBlockedReason(s: Pick<SessionEntry, 'imported' | 'engine' | 'account'>): string | null {
+export function deleteBlockedReason(s: Pick<SessionEntry, 'imported' | 'engine' | 'account'> & { source?: SessionEntry['source'] }): string | null {
+  if (s.source === 'grokbot') return 'Grok Bot 앱 기록은 deck에서 지울 수 없어요';
+  if (s.imported && s.engine === 'grok') return 'Grok CLI 기록은 deck에서 지울 수 없어요';
+  if (s.imported && s.engine === 'gemini') return 'agy 기록은 deck에서 지울 수 없어요';
   if (s.imported) return 'Codex 앱 기록은 deck에서 지울 수 없어요';
   if (s.engine === 'codex' || s.account === 'gpt') return 'GPT 대화 기록은 Codex 폴더에 있어 deck에서 지울 수 없어요';
   if (s.engine === 'gemini') return 'Gemini 대화 기록은 deck에서 지울 수 없어요';

@@ -39,8 +39,18 @@ const MAC_TMP = /^(?:\/private)?\/var\/folders\/[^/]+\/[^/]+\/T\/(.*)$/;
 
 /** A thread deck's own e2e tests started (cwd in a temp dir whose top folder is `deck-e2e…`): not the user's, never listed. */
 export function isDeckTestCwd(cwd: string): boolean {
-  const rest = MAC_TMP.exec(cwd)?.[1] ?? TMP_ROOTS.map((r) => (cwd.startsWith(`${r}/`) ? cwd.slice(r.length + 1) : null)).find((x) => x !== null);
+  const rest = tempRest(cwd);
   return rest != null && rest.split('/')[0]!.startsWith('deck-e2e');
+}
+
+/** The part of `cwd` below a temp root (macOS `/var/folders/*\/*\/T`, `/tmp`, `os.tmpdir()`), or null when it is not under one. */
+function tempRest(cwd: string): string | null {
+  return MAC_TMP.exec(cwd)?.[1] ?? TMP_ROOTS.map((r) => (cwd.startsWith(`${r}/`) ? cwd.slice(r.length + 1) : null)).find((x) => x !== null) ?? null;
+}
+
+/** Whether `cwd` is inside a temp dir (scripts', spikes' and tests' scratch folders). */
+export function isTempCwd(cwd: string): boolean {
+  return tempRest(cwd) !== null;
 }
 
 /** Codex Desktop wraps attachments as `# Files mentioned by the user: … ## My request[ for Codex]:` then the prompt. */

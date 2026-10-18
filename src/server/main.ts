@@ -40,6 +40,9 @@ import { pruneTranscriptSnapshots, setTranscriptCacheDir } from './sessions/tran
 import { SettingsStore } from './settings';
 import { ProcessHolders } from './sessions/ProcessHolders';
 import { SessionIndex } from './sessions/SessionIndex';
+import { GeminiConversationIndex } from './sessions/GeminiImports';
+import { GrokBotIndex } from './sessions/GrokBotImports';
+import { GrokSessionIndex } from './sessions/GrokImports';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
@@ -80,7 +83,13 @@ async function main(): Promise<void> {
   await meta.load();
   // Sessions another `claude` process (Claude Desktop, a terminal) holds open: read-only `ps`, never deck's own CLI children.
   const holders = new ProcessHolders();
-  const index = new SessionIndex({ holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home });
+  // Conversations made outside deck (imports design): Grok CLI / agy only when deck can continue them; Grok Bot read-only (macOS).
+  await fs.rm(cfg.importTmpDir, { recursive: true, force: true }).catch(() => undefined);
+  const grokImports = cfg.grokBin ? new GrokSessionIndex(cfg.grokHome) : null;
+  const geminiImports = cfg.geminiBin ? new GeminiConversationIndex([{ account: 'g1', dir: cfg.geminiStateDir }], cfg.importTmpDir) : null;
+  const grokBotImports = new GrokBotIndex(cfg.grokBotDir, cfg.home);
+  grokBotImports.onUsage = (u) => usage.applyGrokBot(u);
+  const index = new SessionIndex({ grokImports, geminiImports, grokBotImports, holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home });
   const store = new SessionStateStore(cfg.stateFile);
   const pins = new PinStore(cfg.pinsFile);
   const settings = new SettingsStore(cfg.settingsFile);
@@ -150,6 +159,7 @@ async function main(): Promise<void> {
   const claude = new ClaudeEngine({ bin: cfg.claudeBin, accounts, bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) });
   const runner = new TurnRunner({
     engine: claude,
+    holders,
     codex,
     gemini,
     geminiUsage,
@@ -240,7 +250,7 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
+  const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
   notifyIndex = () => ws.broadcastIndex();
   submitRetry = (r) => ws.submitRetry(r);
   serverSend = (r) => ws.submitServerSend(r);

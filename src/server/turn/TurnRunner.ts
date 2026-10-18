@@ -26,6 +26,8 @@ import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
 import { CODEX_ARCHIVED_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
 import { elsewhereNotice } from '../sessions/elsewhereNotice';
+import { GROKBOT_ID_PREFIX, GROKBOT_SEND_REFUSED } from '../sessions/GrokBotImports';
+import { GROK_HELD_NOTICE, grokImportBlockReason } from '../sessions/GrokImports';
 import { OWN_LAG_MS, scanForeign } from '../sessions/foreignWrites';
 import { deckWrites } from '../engine/claudeCli/ownedEntries';
 import { backupDivergedAndMove } from '../sessions/SessionFork';
@@ -119,6 +121,8 @@ export type TurnRunnerDeps = {
   grokUsage?: { noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: { inputTokens: number; outputTokens: number }; cooldownUntilMs: number | null; /** The turn's `_x.ai/billing` read, when it had one. */ billing?: GrokBilling }): void } | null;
   /** Null/absent = no `grok` binary. main binds runGrokTurn to the binary and x1's GROK_HOME; tests inject a fake. */
   grok?: { run: (req: GrokTurnRequest) => AsyncIterable<EngineEvent> } | null;
+  /** Processes outside deck holding a Grok session (by id: refused) or running in its folder (a warning); absent = no check. */
+  holders?: { grokHeldBy?(sessionId: string): unknown; grokCwdHeld?(cwd: string): boolean } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
   attachments: AttachmentStore | null;
   codexSessionsRoot: string;
@@ -1381,8 +1385,36 @@ export class TurnRunner {
       // A deck Codex thread Codex has since archived (its rollout moved to archived_sessions): view only, like an archived import.
       if (state && isCodexState(state) && (await deps.index.freshCodexImport(p.sessionId))?.codexArchived) { sink.emit({ type: 'error', turnId: p.turnId, message: CODEX_ARCHIVED_NOTICE }); return; }
       // Checked live: a thread archived / unarchived in Codex or a folder that came back since the last scan is rescanned first.
-      const imported = state ? null : await deps.index.freshCodexImport(p.sessionId);
-      if (imported) {
+      // A Grok Bot conversation is never sent from deck (no app API): an explicit refusal, never a new session.
+      if (!state && p.sessionId.startsWith(GROKBOT_ID_PREFIX)) { sink.emit({ type: 'error', turnId: p.turnId, message: GROKBOT_SEND_REFUSED }); return; }
+      const imported = state ? null : await deps.index.freshImport(p.sessionId);
+      if (imported && imported.source === 'grokbot') { sink.emit({ type: 'error', turnId: p.turnId, message: GROKBOT_SEND_REFUSED }); return; }
+      if (imported && imported.engine === 'grok') {
+        // A Grok CLI session (design §3.1): held by a terminal grok (by id) or folder gone → refused; else resumed with session/load.
+        const blocked = await grokImportBlockReason(imported, deps.holders);
+        if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
+        const effort = (p.effort ?? imported.grokEffort ?? DEFAULT_EFFORT.grok) as Effort;
+        state = {
+          engine: 'grok', account: 'x1', sessionId: imported.sessionId, grokSessionId: imported.sessionId,
+          cwd: imported.cwd, canonicalCwd: await fs.realpath(imported.cwd).catch(() => path.resolve(imported.cwd)),
+          model: isGrokModel(p.model) ? p.model : isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL,
+          effort, permissionMode: p.permissionMode ?? (this.defaultMode() === 'plan' ? 'default' : this.defaultMode()),
+          lastTurnAtMs: null, justCompacted: false, createdAtMs: this.now(), title: imported.title,
+        };
+        const age = await deps.index.importActiveAgeMs(imported.sessionId, this.now());
+        if (age !== null || deps.holders?.grokCwdHeld?.(imported.cwd)) notice = elsewhereNotice({ engine: 'grok', title: imported.title === '(제목 없음)' ? null : imported.title, ageMs: age ?? 0 });
+      } else if (imported && imported.engine === 'gemini') {
+        // An agy conversation: resumed with --conversation <id> (its past messages are not replayed in deck).
+        const blocked = await importBlockReason(imported);
+        if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
+        state = {
+          engine: 'gemini', account: 'g1', sessionId: imported.sessionId, cwd: imported.cwd,
+          defaultModel: isGeminiModel(p.model) ? p.model : DEFAULT_GEMINI_MODEL, sandbox: p.sandbox ?? defaultGeminiSandbox(this.defaultMode() === 'bypassPermissions'),
+          lastTurnAtMs: null, justCompacted: false, createdAtMs: this.now(), title: imported.title,
+        };
+        const age = await deps.index.importActiveAgeMs(imported.sessionId, this.now());
+        if (age !== null) notice = elsewhereNotice({ engine: 'gemini', title: imported.title === '(제목 없음)' ? null : imported.title, ageMs: age });
+      } else if (imported) {
         // Folder gone (codex cannot spawn there) or archived in Codex (resume by id is not assured): view only.
         const blocked = await importBlockReason(imported);
         if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
@@ -1404,14 +1436,16 @@ export class TurnRunner {
     // 총사령탑: the gate lives in the Claude engine's hooks only — an automatic turn never reaches another engine.
     if (p.commanderHop !== undefined && state && (isOtherEngineState(state))) { sink.emit({ type: 'error', turnId: p.turnId, message: COMMANDER_ENGINE_REFUSED }); return; }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
+    // A terminal grok resumed this very session (its id in the arguments): both writing would fork it (imports design §4.1).
+    if (state && isGrokState(state) && deps.holders?.grokHeldBy?.(state.sessionId)) { sink.emit({ type: 'error', turnId: p.turnId, message: GROK_HELD_NOTICE }); return; }
     // §10-4: a Gemini / Grok session checks every turn whether its engine can do it (Claude / GPT can do anything).
     if (state && (isGeminiState(state) || isGrokState(state)) && !p.ignoreFit) {
       const engine = isGeminiState(state) ? 'gemini' : 'grok';
       const fit = turnFits(engine, classifyTask(p.text, { images: attachments.filter((a) => a.isImage).length }), { cwdInsideHome: await insideHome(state.cwd) });
       if (!fit.ok) { sink.emit({ type: 'route_fit', turnId: p.turnId, sessionId: state.sessionId, engine, need: fit.need }); return; }
     }
-    if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments);
-    if (state && isGrokState(state)) return this.runGrok(p, state, sink, `Grok 세션 · ${GROK_LABEL[state.account]}`, attachments);
+    if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments, notice);
+    if (state && isGrokState(state)) return this.runGrok(p, state, sink, `Grok 세션 · ${GROK_LABEL[state.account]}`, attachments, notice);
     // 자동 분배 (chooseRoute): engine 자동, or an engine other than Claude with model 자동. Claude / no engine keeps chooseEngine below.
     // review #3: a pinned account forces Claude — engine 자동 never crosses vendors when an account is pinned.
     if (!state && !p.accountPin && (p.engine === 'auto' || (p.model === 'auto' && (p.engine === 'codex' || p.engine === 'gemini' || p.engine === 'grok')))) {
@@ -1553,7 +1587,7 @@ export class TurnRunner {
   }
 
   /** Explicit Gemini: a new session takes the first logged-in, non-cooled account (g1, then g2) and stays on it. */
-  private async runGemini(p: TurnParams, state: GeminiSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
+  private async runGemini(p: TurnParams, state: GeminiSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[], notice: string | null = null): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const model: GeminiModel = isGeminiModel(p.model) ? p.model : (state?.defaultModel ?? DEFAULT_GEMINI_MODEL);
@@ -1578,6 +1612,7 @@ export class TurnRunner {
     const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
     if (sink.signal.aborted) { fail(account, abortedText(sink.signal)); return; }
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini' });
+    if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     let result: EngineResult | null = null;
     // A picked effort Gemini does not have (xhigh) becomes the closest lower one (high).
     const effort = p.effort ? clampEffort(model, p.effort) : DEFAULT_EFFORT.gemini;
@@ -1609,7 +1644,7 @@ export class TurnRunner {
    * Explicit Grok (design §4–§8): one seat (x1), no routing, no retry. Approval cards, 자동 승인, steer and the audit log
    * go through the same paths as a Claude turn; the engine classifies its own errors (errorKind) and refuses images.
    */
-  private async runGrok(p: TurnParams, state: GrokSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
+  private async runGrok(p: TurnParams, state: GrokSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[], notice: string | null = null): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const account: GrokAccount = state?.account ?? 'x1';
@@ -1640,6 +1675,7 @@ export class TurnRunner {
       return deps.store.set(next);
     };
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'grok' });
+    if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     const audit = (toolName: string, input: unknown, decision: ToolAuditEntry['decision'], source: ToolAuditEntry['source']) =>
       appendAudit(deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId, toolName, decision, source, inputSha256: hashInput(input) })
         .catch((err: unknown) => console.error('deck: audit log write failed', err instanceof Error ? err.message : err));

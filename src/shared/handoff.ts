@@ -53,14 +53,14 @@ export const CODEX_HANDOFF_EXCERPT_MAX = 12000;
  * The earlier conversation for a new GPT session: user and assistant text only (no tool calls, thinking or notes), oldest
  * first, as `**사용자:**` / `**GPT:**` paragraphs. Pass the items before the failed turn's request.
  */
-export function codexHandoffExcerpt(items: readonly { kind: string; text?: string }[]): string {
+export function codexHandoffExcerpt(items: readonly { kind: string; text?: string }[], assistantLabel = 'GPT'): string {
   const paras = items.flatMap((it) => {
     if ((it.kind !== 'user' && it.kind !== 'assistant') || !it.text?.trim()) return [];
     const t = it.text.trim();
     // Never cut a surrogate pair in half (codex would get U+FFFD).
     const n = CODEX_HANDOFF_MESSAGE_MAX - (/[\uD800-\uDBFF]/.test(t[CODEX_HANDOFF_MESSAGE_MAX - 1] ?? '') ? 1 : 0);
     const cut = t.length > CODEX_HANDOFF_MESSAGE_MAX ? `${t.slice(0, n)}…(생략)` : t;
-    return [`**${it.kind === 'user' ? '사용자' : 'GPT'}:** ${cut}`];
+    return [`**${it.kind === 'user' ? '사용자' : assistantLabel}:** ${cut}`];
   });
   let start = paras.length;
   let total = 0;
@@ -83,3 +83,16 @@ export function codexHandoffMessage(oldTitle: string, oldSessionId: string, exce
     request,
   ].join('\n\n');
 }
+
+/** The first message of a deck Grok session continuing a Grok Bot app conversation (prefilled, sent only when the user does). */
+export function grokBotHandoffMessage(oldTitle: string, excerpt: string): string {
+  return [
+    `Grok Bot 앱 대화(${oldTitle})를 deck Grok 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
+    excerpt.trim() || '(발췌할 이전 대화가 없습니다)',
+    '이어서 할 요청:',
+    '',
+  ].join('\n\n');
+}
+
+/** Shown under the composer of an imported agy (Gemini) conversation: its past messages are not replayed in deck. */
+export const GEMINI_IMPORT_NOTE = '이전 메시지는 deck 에 보이지 않지만 agy 가 기억하고 이어갑니다';

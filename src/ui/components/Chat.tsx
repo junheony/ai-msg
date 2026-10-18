@@ -129,6 +129,8 @@ export type ChatProps = {
   onHandoff?: () => void;
   /** deck 에서 새 GPT 세션으로 이어가기: offered under a GPT turn the thread lock refused (another app holds the thread). */
   onCodexHandoff?: (turnId: string) => void;
+  /** A read-only Grok Bot app conversation: opens a deck Grok session prefilled with an excerpt (nothing is sent). */
+  onGrokBotHandoff?: () => void;
   /** The handoff-note turn is running. */
   handoffWriting?: boolean;
   /** Text put into the composer once (the new session's first message after a handoff); not sent. Never over a draft. */
@@ -628,6 +630,7 @@ export function Chat(p: ChatProps) {
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
         {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} />}
         {p.composerNote && <div className="pane-notice notice composer-note" role="status" data-testid="composer-note"><span className="pane-notice-text">{p.composerNote}</span></div>}
+        {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>deck Grok 새 세션으로 이어가기</button>}
         <div className={`composer ${drag && !p.readOnly ? 'dragover' : ''}`}>
           {suggest.popup}
           <textarea
