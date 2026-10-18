@@ -28,6 +28,15 @@ describe('findGrokProjectConfig (S9 결과 전까지 넓게 막음)', () => {
     expect(await find(at('w'))).toBe(at('w', '.grok'));
   });
 
+  it('a .cursor/ (Cursor hooks, MCP, rules Grok reads through external compat) blocks too, in cwd or a parent; GROK_HOME trust does not cover it', async () => {
+    await mk('w', 'sub');
+    await mk('w', '.cursor');
+    expect(await find(at('w', 'sub'))).toBe(at('w', '.cursor'));
+    await mk('v');
+    await fs.writeFile(at('v', '.cursor'), '');
+    expect(await find(at('v'), at('v', '.cursor'))).toBe(at('v', '.cursor'));
+  });
+
   it('every parent up to the folder directly under home is checked, past a git root', async () => {
     await mk('top', 'repo', '.git');
     await mk('top', 'repo', 'a', 'b');

@@ -99,6 +99,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * Server-wide settings (persisted, broadcast to every device as `settings`). `defaultPermissionMode` = the mode new
    * sessions start in; `autoApprove` is the legacy switch (true = bypassPermissions, false = default).
    */
+  /** Settings: unlock the Grok engine after a tripwire (§14.9-3). */
+  z.object({ type: z.literal('grok_unlock') }),
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
@@ -162,7 +164,7 @@ export function accountInfos(names: Pick<AccountNames, 'all' | 'label' | 'isHome
 /** gemini-cli present, and which accounts have an OAuth file (existence only; the UI shows "로그인 필요" otherwise). */
 export type GeminiStatus = { available: boolean; loggedIn: Record<GeminiAccount, boolean> };
 /** A `grok` binary was found (DECK_GROK_BIN → PATH → ~/.grok/bin/grok) and what `grok --version` printed. Login is not checked (design §5). */
-export type GrokStatus = { bin: boolean; version?: string };
+export type GrokStatus = { bin: boolean; version?: string; /** §14.9-3: why the Grok engine is locked (a tripwire fired); null/absent = not locked. */ locked?: string | null };
 
 export type TurnBadge = { account: Seat; model: AnyModel; reason: string; usage: TurnUsage; modelNote: string | null; /** The account was chosen because the session is pinned to it. */ pinned?: boolean };
 
@@ -226,6 +228,7 @@ export type SessionFacts = { /** 'commander' servers: the session's commander, n
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
+  | { type: 'grok_status'; grok: GrokStatus }
   | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   /** `features`: the server's list again when a setting changed it (총사령탑 켜기·끄기 → 'commander'); absent = unchanged. */
   | { type: 'settings'; settings: DeckSettings; features?: string[] }

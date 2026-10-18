@@ -137,7 +137,9 @@ export type WsDeps = {
   /** Read on every hello, so a login done while deck runs shows up on the next connect. Absent = no Gemini. */
   geminiStatus?: () => GeminiStatus;
   /** A `grok` binary and its version (found once at start). Absent or `bin: false` = no Grok: 'grok' is not in hello.features. */
-  grokStatus?: GrokStatus;
+  grokStatus?: GrokStatus | (() => GrokStatus);
+  /** Settings' 잠금 해제 for a tripped Grok engine (§14.9-3); main broadcasts the new grok_status. */
+  grokUnlock?: () => void;
   readCodexHistory?: typeof readCodexTranscript;
   /** History of an imported (Codex Desktop / CLI) thread: the rollout's tail only. */
   readCodexImportHistory?: typeof readCodexTranscriptTail;
@@ -1042,7 +1044,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** `open_session`: the session's history (and, mid-turn, what its running turn has shown so far) to one socket, which views it from now on. */
   /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
   /** hello.features: 'commander' only while the settings turn it on; 'grok' only with a grok binary. */
-  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || deps.grokStatus?.bin === true));
+  const grokStatusNow = (): GrokStatus | undefined => (typeof deps.grokStatus === 'function' ? deps.grokStatus() : deps.grokStatus);
+  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true));
   const runningOf = (sid: string) => {
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;
@@ -1179,7 +1182,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.grokStatus ? { grok: deps.grokStatus } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.grokStatus ? { grok: grokStatusNow() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
     // hello's `activity` is the session list only: whether the server is draining, and since when it runs, come here.
     send(ws, activityMsg());
     for (const m of broker.pending()) send(ws, m);
@@ -1376,6 +1379,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (msg.sessionId === null && msg.cwd === undefined) { routeAsk.delete(ws); break; }
           routeAsk.set(ws, { sessionId: msg.sessionId, ...(msg.model ? { model: msg.model } : {}) });
           sendRoutePreview(ws);
+          break;
+        case 'grok_unlock':
+          deps.grokUnlock?.();
           break;
         case 'set_settings': {
           const store = deps.settings;

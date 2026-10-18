@@ -38,12 +38,13 @@ describe('reducer', () => {
     expect(s.panes[0]?.model).toBe('fable');
   });
 
-  it('engineOf / modelFor know Grok; set_engine grok picks Grok 4.6; the 자동 engine never keeps a Grok model', () => {
+  it('engineOf / modelFor know Grok; set_engine grok picks Grok 4.7; the 자동 engine never keeps a Grok model', () => {
     expect(engineOf('grok-4.5')).toBe('grok');
-    expect(modelFor('grok', 'opus')).toBe('grok-4.6');
+    expect(modelFor('grok', 'opus')).toBe('grok-4.7');
+    expect(modelFor('grok', 'grok-4.6')).toBe('grok-4.6');
     expect(modelFor('grok', 'grok-4.5')).toBe('grok-4.5');
     let s = reducer(initialState, { type: 'set_engine', engine: 'grok' });
-    expect(s.panes[0]).toMatchObject({ engine: 'grok', model: 'grok-4.6' });
+    expect(s.panes[0]).toMatchObject({ engine: 'grok', model: 'grok-4.7' });
     s = reducer(s, { type: 'set_engine', engine: 'auto' });
     expect(s.panes[0]?.model).toBe('fable');
   });
@@ -52,7 +53,7 @@ describe('reducer', () => {
     const grokPane = reducer(initialState, { type: 'set_engine', engine: 'grok' });
     setFeatures(['grok']);
     let s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false }, grok: { bin: true } }], grokPane);
-    expect(s.panes[0]).toMatchObject({ engine: 'grok', model: 'grok-4.6' });
+    expect(s.panes[0]).toMatchObject({ engine: 'grok', model: 'grok-4.7' });
     expect(s.grok).toEqual({ bin: true });
     setFeatures([]);
     s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false }, grok: { bin: false } }], grokPane);

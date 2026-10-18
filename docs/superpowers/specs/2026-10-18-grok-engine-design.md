@@ -425,7 +425,7 @@ stopReason:
 
 ### 14.7 그대로 둘 것
 - 모델 목록은 `GROK_MODELS`(기본 `grok-4.7`, `grok-4.7-build-fast`·`grok-4.6`·`grok-4.5`)로 이미 반영했다.
-- 프로젝트 `.grok/` 는 신뢰 전 무시된다(S9). deck 은 `GROK_FOLDER_TRUST` 를 넘기지 않으므로 §5 의 fail-closed 막기는 **유지**한다(신뢰 상태를 deck 이 알 수 없음).
+- 프로젝트 `.grok/` 는 신뢰 전 무시된다(S9). deck 은 `GROK_FOLDER_TRUST` 를 넘기지 않으므로 §5 의 fail-closed 막기는 **유지**한다(신뢰 상태를 deck 이 알 수 없음). 구현: cwd(realpath)부터 HOME 바로 아래 폴더까지(HOME 밖이면 파일시스템 루트까지), git 루트와 상관없이 위로 올라가며 `.grok`·`.cursor` 를 종류 불문(파일·깨진 심링크 포함) 찾는다. 좌석의 `GROK_HOME` 자체인 `.grok` 만 예외다. 하위 폴더는 보지 않는다.
 - 호환 끄기 값 `false` 는 맞다(S6). 유지한다.
 
 ### 14.8 테스트 추가
@@ -443,13 +443,18 @@ stopReason:
 
 1. **그림자 HOME 은 턴마다 새로 만든다**(14.1-1 대체). `<deck 설정 폴더>/homes/grok/<턴 id>/` 를 0700 으로 만들고 허용 목록 심링크만 건다. 부모 경로까지 lstat·소유자·0700 을 확인한다. 턴이 끝나고 그룹 정리가 끝나면 지운다. 서버 시작 때 남은 턴 폴더를 지운다. 정리 규칙(지우기·재링크)은 없앤다. 링크 목록은 `.gitconfig`·`.config/git`·`.ssh` 만 두고 `.gnupg`·`.npmrc` 는 뺀다(필요해지면 추가). `SSH_AUTH_SOCK` 은 허용한다.
 2. **inspect 점검은 매 spawn 마다** 같은 env·cwd·그림자 HOME 으로 돌린다(14.1-2 의 캐시 삭제). 출처 0개·기본 모드 default·auto 꺼짐을 확인하지 못하면 fail-closed.
+   - 더해서 거부: `hooks`·`mcpServers`·`plugins` 가 비어 있지 않거나 배열이 아님(없음 포함), `permissions.managedSettingsActive` 가 `false` 가 아님, `configSources.layers` 가 비었음, `externalCompat.remoteSettingsLoaded` 가 `false` 가 아님. `config.toml` 의 인라인 테이블(`ui = { permission_mode = "auto" }`)은 안까지 읽고, 읽지 못하면 거부.
+   - **외부 호환(`externalCompat.cells`)**: Claude 셀은 deck env(`GROK_CLAUDE_*_ENABLED=false`)로 꺼지므로 Claude hooks·mcps 가 켜져 있으면 env 가 안 먹은 것 — 거부. Cursor 셀을 끄는 env·플래그는 확인된 것이 없고 기본 켜짐(`source: "default"`, 픽스처 clean)이다. 이것은 **먹일 것이 없을 때만** 허용한다: 그림자 HOME 에 `~/.cursor` 가 없고(금지 목록), 프로젝트 가드가 `.cursor/` 를 막고, inspect 의 `hooks`·`mcpServers` 가 비어 있음. Cursor hooks·mcps 가 다른 출처(config·env·remote)로 켜졌거나, 다른 vendor 의 hooks·mcps 가 켜졌거나, 읽을 수 없는 셀이면 거부. rules 셀은 기존 규칙 판정(출처·규칙 수 0)으로 본다.
 3. **tripwire(신규).** Grok 세션 모드는 언제나 default(계획 모드 제외)이므로, 같은 toolCallId 의 승인 요청 없이 `in_progress`·terminal 이 된 tool 가운데 kind 가 `edit`·`delete`·`move`·`execute` 이면서 Grok 읽기 목록(S13)에 들지 않는 것은 관문이 샌 증거다. 감지하면 즉시 `session/cancel` → 턴 종료(오류 "Grok 이 승인 없이 쓰기를 실행해 멈춤") → 이 서버 프로세스에서 Grok 엔진을 잠근다(재시작 또는 설정 화면에서 해제). `current_mode_update` 가 deck 이 기대한 모드와 다를 때도 같다(모델이 스스로 plan 으로 들어가는 경우 포함). tripwire 는 **모든 sessionId**(하위 에이전트 포함)에 적용한다.
-4. **편집 자동 거부 목록(신규).** 대상이 다음에 걸리면 항상 카드: `.git/` 아래 전부, `.gitmodules`, `.envrc`, `.env*`, `.claude/`, `.grok/`, `.mcp.json`, `.vscode/`, `.idea/`, `.husky/`, `.githooks/`, `node_modules/.bin/`. 비교는 대소문자·NFC 정규화 후 한다. 경로는 요청의 locations 와 rawInput(patch 본문의 모든 파일, 이동의 양쪽)을 모두 모아 판정하고, 하나라도 해석 못 하면 카드. 새 파일은 존재하는 가장 가까운 조상을 realpath 한다. 경계 비교는 경로 구분자 기준. cwd 가 HOME·`/`·HOME 의 조상이면 편집 자동을 끈다. nlink>1 인 기존 파일은 카드.
+   - deck 이 `allow_once` 로 답한 toolCallId 집합을 따로 둔다. 승인 요청은 있었지만 허용되지 않은(거부·취소·턴 밖 reject·아직 미응답) id 가 `in_progress`·`completed` 가 되면 kind 와 상관없이 울린다.
+   - 읽기 셸 판정: 따옴표·`\`·`$` 가 단어 안에 섞이면(따옴표로 통째로 감싼 단어 하나는 제외) 읽기 전용이 아니다. 실행·출력 플래그(`find -exec` 등, `fd -x/-X/--exec`, `rg --pre`, `ag --pager`, `tree -o`, `sort -o/--output/--compress-program`, `git grep -O/--open-files-in-pager`, `uniq IN OUT`, `file -C`)도 아니다.
+   - 울리면 그룹 정리는 graceful 대기 없이 바로 SIGTERM 부터 한다.
+4. **편집 자동 거부 목록(신규).** 대상이 다음에 걸리면 항상 카드: `.git/` 아래 전부, `.gitmodules`, `.envrc`, `.env*`, `.claude/`, `.grok/`, `.cursor/`, `.mcp.json`, `.vscode/`, `.idea/`, `.husky/`, `.githooks/`, `node_modules/.bin/`. 비교는 대소문자·NFC 정규화 후 한다. 경로는 요청의 locations 와 rawInput(patch 본문의 모든 파일, 이동의 양쪽)을 모두 모아 판정하고, 하나라도 해석 못 하면 카드. 새 파일은 존재하는 가장 가까운 조상을 realpath 한다. 경계 비교는 경로 구분자 기준. cwd 가 HOME·`/`·HOME 의 조상이면 편집 자동을 끈다. nlink>1 인 기존 파일은 카드. `~` 로 시작, `$` 포함, `scheme:` 형태(`file:`, 드라이브 문자 포함)인 경로와, rawInput 이 읽는 깊이보다 깊게 중첩된 요청도 카드.
 5. **턴 밖·모르는 곳의 요청.** 활성 deck 턴이 아니거나(종료 중·interject-fallback·PromptResponse 뒤), sessionId 가 이 턴의 부모·알려진 자식이 아니면 승인 요청은 카드 없이 reject_once(없으면 cancelled)로 답한다. `fs/*`·`terminal/*` 는 광고하지 않고 -32601(기존).
 6. **취소와 대기 중 승인.** deck 이 취소하면 열린 승인 요청에 모두 `{outcome:"cancelled"}` 로 답한다(ACP 규약, "allow_once/reject_once 만" 원칙의 유일한 예외). 카드 클릭·자동 승인과 취소는 기존 `answered`·`cancelled` 플래그로 원자 처리하고, 응답 직전에 최신 deck 모드와 턴 상태를 다시 본다. 이미 보낸 승인은 소급하지 않는다.
 7. **턴 끝 분류**(14.3 대체). deck 취소가 언제나 이긴다(ABORTED). 그 밖에 `PermissionRejected`·`PermissionCancelled` 는 성공도 사용자 중단도 아닌 **"멈춤: 승인 거부"/"멈춤: 승인 취소"** 상태로 끝낸다(기존 실패 경로에 사유 문구, 출력 보존). category 를 못 받으면 "멈춤: 원인 미확인". category 는 PromptResponse 전후 어느 쪽에 와도 턴 종료 처리 전까지 모은다(PromptResponse 뒤 1s 대기).
 8. **steer 표시.** `queued` 는 "접수됨"으로 보인다. "반영됨"은 쓰지 않는다. 턴이 끝날 때까지 반영 근거가 없으면 그대로 둔다. 자동 재전송은 하지 않는다.
-9. **자식 프로세스 회수**(14.5 보완). 턴 동안 2s 마다 `ps -A -o pid=,ppid=,pgid=` 로 grok 자손의 pid·pgid 를 모아 둔다. 모든 종료 경로(정상·취소·크래시)에서 그룹 정리 뒤 모은 pgid 마다 SIGKILL 을 보내고, 모은 pid 가 남았는지 확인해 로그한다.
+9. **자식 프로세스 회수**(14.5 보완). 턴 동안 2s 마다 `ps -A -o pid=,ppid=,pgid=` 로 grok 자손의 pid·pgid 를 모아 둔다. 모든 종료 경로(정상·취소·크래시)에서 그룹 정리 뒤 모은 pgid 마다 SIGKILL 을 보내고, 모은 pid 가 남았는지 확인해 로그한다. kill 직전에 프로세스 표를 새로 읽어, 그 pgid 에 우리가 본 자손 pid 가 아직 있을 때만 보낸다(표를 못 읽으면 그룹 kill 생략·로그). 서버 시작 때의 남은 그림자 HOME 정리는 끝난 뒤에야 턴을 받는다(await).
 10. **외부 수정 감지**(14.6 보완). 턴이 끝날 때 세션 `updates.jsonl` 의 크기·mtime 을 저장하고, 다음 턴 시작 때 다르면 notice "이 Grok 세션이 deck 밖에서 수정됨 — 대화가 갈라졌을 수 있음".
 11. **계획 모드 재노출 조건**(14.2 보완). S14 에서 응답 형식과 함께 "계획 종료 뒤 `current_mode_update` 가 default 인지"를 확인한다. 계획 모드 중 오는 쓰기 승인 요청은 언제나 카드. 둘 다 확정되기 전에는 숨긴다.
 

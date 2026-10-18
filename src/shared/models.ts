@@ -31,7 +31,7 @@ export const CODEX_CLI_MODEL: Record<CodexModel, string> = { 'gpt-6-sol': 'gpt-6
 /**
  * Gemini (explicit engine only, never chosen by 자동), run through the Antigravity CLI `agy` (gemini-cli lost individual
  * accounts on 2026-06-18). The deck ids stay 'gemini-pro' / 'gemini-flash' (persisted in sessions); `agy --model` gets
- * the slugs below (agy 1.3.5 binary). Effort goes in its own `--effort` flag (docs/gemini-spike.md).
+ * the slugs below (agy 1.4.2, `agy models`). Effort goes in its own `--effort` flag (docs/gemini-spike.md).
  */
 export type GeminiModel = 'gemini-pro' | 'gemini-flash';
 export const GEMINI_MODELS: readonly GeminiModel[] = ['gemini-pro', 'gemini-flash'];
@@ -43,16 +43,16 @@ export const GEMINI_CLI_ALIAS: Record<GeminiModel, string> = { 'gemini-pro': 'ge
  * Grok (explicit engine only, never chosen by 자동), run through the Grok Build CLI over ACP (`grok agent stdio`). The deck
  * ids are Grok's own modelIds (initialize `_meta.modelState`, docs/grok-spike.md); the model is always set per turn.
  */
-export const GROK_MODELS = ['grok-4.6', 'grok-4.5'] as const;
+export const GROK_MODELS = ['grok-4.7', 'grok-4.7-build-fast', 'grok-4.6', 'grok-4.5'] as const;
 /** Derived from GROK_MODELS (isGrokModel, the protocol enum and GROK_CLI_ALIAS follow it too). */
 export type GrokModel = (typeof GROK_MODELS)[number];
-export const DEFAULT_GROK_MODEL: GrokModel = 'grok-4.6';
+export const DEFAULT_GROK_MODEL: GrokModel = 'grok-4.7';
 /** The modelId Grok gets for each deck id (the same names). */
 export const GROK_CLI_ALIAS = Object.fromEntries(GROK_MODELS.map((m) => [m, m])) as Record<GrokModel, string>;
 
 export type AnyModel = ClaudeModel | CodexModel | GeminiModel | GrokModel;
 
-export const MODEL_LABEL: Record<AnyModel, string> = { sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable', 'gpt-6-sol': 'GPT Sol', 'gpt-6-astra': 'GPT Astra', 'gemini-pro': 'Gemini 4 Argon', 'gemini-flash': 'Gemini Flash', 'grok-4.6': 'Grok 4.6', 'grok-4.5': 'Grok 4.5' };
+export const MODEL_LABEL: Record<AnyModel, string> = { sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable', 'gpt-6-sol': 'GPT Sol', 'gpt-6-astra': 'GPT Astra', 'gemini-pro': 'Gemini 4 Argon', 'gemini-flash': 'Gemini Flash', 'grok-4.7': 'Grok 4.7', 'grok-4.7-build-fast': 'Grok 4.7 Fast', 'grok-4.6': 'Grok 4.6', 'grok-4.5': 'Grok 4.5' };
 
 /**
  * A turn's model for display: deck's aliases and the Codex CLI's slugs by MODEL_LABEL, a Claude model id as its family
@@ -81,7 +81,9 @@ export const MODEL_INFO: Record<AnyModel, { name: string; description: string }>
   'gpt-6-astra': { name: 'GPT-6-Astra', description: '가장 까다로운 작업용 최상위 모델' },
   'gemini-pro': { name: 'Gemini 4 Argon', description: 'agy(Antigravity CLI) 의 gemini-4-argon · 가장 뛰어난 Gemini' },
   'gemini-flash': { name: 'Gemini Flash', description: 'agy(Antigravity CLI) 의 gemini-3.8-flash · 빠르고 가벼운 작업용' },
-  'grok-4.6': { name: 'Grok 4.6', description: 'Grok Build CLI 의 기본 모델 · 컨텍스트 500k' },
+  'grok-4.7': { name: 'Grok 4.7', description: 'Grok Build CLI 의 기본 모델 · 최신 · 컨텍스트 256k' },
+  'grok-4.7-build-fast': { name: 'Grok 4.7 Fast', description: '빠른 변형 · 2배 가격' },
+  'grok-4.6': { name: 'Grok 4.6', description: 'Grok Build CLI 의 이전 모델' },
   'grok-4.5': { name: 'Grok 4.5', description: 'Grok Build CLI 의 이전 모델 · effort 엑스트라 없음' },
 };
 
@@ -94,8 +96,8 @@ export const MODEL_INFO: Record<AnyModel, { name: string; description: string }>
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh'];
 export const EFFORT_LABEL: Record<Effort, string> = { low: '낮음', medium: '중간', high: '높음', xhigh: '엑스트라' };
-/** Per model: every Claude/GPT model reports all four (supportedEffortLevels / supported_reasoning_levels); agy takes `--effort` low…max. */
-export const MODEL_EFFORTS: Record<AnyModel, readonly Effort[]> = { opus: EFFORTS, sonnet: EFFORTS, fable: EFFORTS, 'gpt-6-sol': EFFORTS, 'gpt-6-astra': EFFORTS, 'gemini-pro': EFFORTS, 'gemini-flash': EFFORTS, 'grok-4.6': EFFORTS, 'grok-4.5': ['low', 'medium', 'high'] };
+/** Per model: every Claude/GPT model reports all four (supportedEffortLevels / supported_reasoning_levels); agy's Gemini models take low/medium/high only (`--effort xhigh` fails at once). */
+export const MODEL_EFFORTS: Record<AnyModel, readonly Effort[]> = { opus: EFFORTS, sonnet: EFFORTS, fable: EFFORTS, 'gpt-6-sol': EFFORTS, 'gpt-6-astra': EFFORTS, 'gemini-pro': ['low', 'medium', 'high'], 'gemini-flash': ['low', 'medium', 'high'], 'grok-4.7': EFFORTS, 'grok-4.7-build-fast': EFFORTS, 'grok-4.6': EFFORTS, 'grok-4.5': ['low', 'medium', 'high'] };
 /** gemini: what a Gemini turn sends when nothing was picked (agy `--effort`). grok: Grok's own default (reasoning_effort high). */
 export const DEFAULT_EFFORT: Record<EngineKind, Effort> = { claude: 'high', codex: 'medium', gemini: 'medium', grok: 'high' };
 
@@ -158,12 +160,12 @@ export const DEFAULT_CONTEXT_WINDOW = 200_000;
 /**
  * Context window for a deck id or wire model id (claude-opus-5-5, opus[1m]…), for when the SDK did not report one
  * (a reopened session). claude-api skill (2026-09-25): Opus 5.5, Sonnet 5.5, Fable 5.1 = 1M; Haiku 4.5 and
- * pre-4.6 Opus/Sonnet = 200k. Grok = 500k (totalContextTokens, docs/grok-spike.md). Anything else (GPT, Gemini, unknown) = 200k.
+ * pre-4.6 Opus/Sonnet = 200k. Grok = 256k (totalContextTokens, docs/grok-spike.md S3). Anything else (GPT, Gemini, unknown) = 200k.
  */
 export function contextWindowOf(model: string | null | undefined): number {
   if (!model) return DEFAULT_CONTEXT_WINDOW;
   if (/\[1m\]/i.test(model)) return 1_000_000;
-  if (/^grok-/i.test(model)) return 500_000;
+  if (/^grok-/i.test(model)) return 256_000;
   if (/haiku|claude-3|(opus|sonnet)-4-[0-5](?!\d)/i.test(model)) return DEFAULT_CONTEXT_WINDOW;
   if (/opus|sonnet|fable|mythos/i.test(model)) return 1_000_000;
   return DEFAULT_CONTEXT_WINDOW;

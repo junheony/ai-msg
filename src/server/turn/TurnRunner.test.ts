@@ -1155,11 +1155,11 @@ describe('TurnRunner: Grok sessions (explicit only)', () => {
     c = await ctx(new StubEngine(async () => []), { grok: g.dep });
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: c.base, sessionId: null, text: 'hello grok\nmore', engine: 'grok' }, c.sink);
     const real = await fs.realpath(c.base);
-    expect(g.calls[0]).toMatchObject({ account: 'x1', cwd: real, resumeSessionId: null, model: 'grok-4.6', effort: 'high', permissionMode: 'default', prompt: 'hello grok\nmore' });
+    expect(g.calls[0]).toMatchObject({ account: 'x1', cwd: real, resumeSessionId: null, model: 'grok-4.7', effort: 'high', permissionMode: 'default', prompt: 'hello grok\nmore' });
     expect(stored[0]).toMatchObject({ engine: 'grok', grokSessionId: XSID });
-    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'x1', engine: 'grok', model: 'grok-4.6', reason: 'Grok 지정' });
-    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: XSID, badge: { account: 'x1', model: 'grok-4.6' } });
-    expect(c.deps.store.get(XSID)).toMatchObject({ engine: 'grok', account: 'x1', model: 'grok-4.6', effort: 'high', permissionMode: 'default', canonicalCwd: real, title: 'hello grok', lastTurnAtMs: NOW });
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'x1', engine: 'grok', model: 'grok-4.7', reason: 'Grok 지정' });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: XSID, badge: { account: 'x1', model: 'grok-4.7' } });
+    expect(c.deps.store.get(XSID)).toMatchObject({ engine: 'grok', account: 'x1', model: 'grok-4.7', effort: 'high', permissionMode: 'default', canonicalCwd: real, title: 'hello grok', lastTurnAtMs: NOW });
     expect(c.deps.store.codexEntries()).toEqual([expect.objectContaining({ sessionId: XSID, account: 'x1', engine: 'grok', title: 'hello grok' })]);
   });
 
@@ -1169,7 +1169,8 @@ describe('TurnRunner: Grok sessions (explicit only)', () => {
     await c.deps.store.set({ engine: 'grok', account: 'x1', sessionId: XSID, grokSessionId: XSID, cwd: '/w2', canonicalCwd: '/real/w2', lastTurnAtMs: 1, justCompacted: false, model: 'grok-4.5', effort: 'medium', permissionMode: 'acceptEdits', createdAtMs: 1, title: 't' });
     const runner = new TurnRunner(c.deps);
     await runner.run({ turnId: 't1', cwd: '/elsewhere', sessionId: XSID, text: 'x' }, c.sink);
-    expect(g.calls[0]).toMatchObject({ account: 'x1', cwd: '/real/w2', resumeSessionId: XSID, model: 'grok-4.5', effort: 'medium', permissionMode: 'acceptEdits' });
+    expect(g.calls[0]).toMatchObject({ account: 'x1', cwd: '/real/w2', resumeSessionId: XSID, model: 'grok-4.5', effort: 'medium', permissionMode: 'default' });
+    expect(g.calls[0]?.editAuto?.()).toBe(true);
     expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ reason: 'Grok 세션 · X1' });
     await runner.run({ turnId: 't2', cwd: '/w2', sessionId: XSID, text: 'x', model: 'grok-4.6', effort: 'xhigh' }, c.sink);
     expect(g.calls[1]).toMatchObject({ model: 'grok-4.6', effort: 'xhigh' });
@@ -1194,17 +1195,24 @@ describe('TurnRunner: Grok sessions (explicit only)', () => {
     expect(g.calls[1]).toMatchObject({ model: 'grok-4.5', effort: 'high' });
   });
 
-  it('a mode change during a Grok turn is kept and said on the turn (Grok switches from the next turn)', async () => {
+  it('a mode change during a Grok turn applies at once (live editAuto / autoApprove), no notice; plan is refused', async () => {
     let runner!: TurnRunner;
-    const g = fakeGrok(async () => {
+    const seen: Array<[boolean, boolean]> = [];
+    const g = fakeGrok(async (req) => {
+      seen.push([req.editAuto!(), req.autoApprove!()]);
       expect(await runner.setPermissionMode(XSID, 'acceptEdits')).toBe(true);
+      seen.push([req.editAuto!(), req.autoApprove!()]);
+      expect(await runner.setPermissionMode(XSID, 'bypassPermissions')).toBe(true);
+      seen.push([req.editAuto!(), req.autoApprove!()]);
+      expect(await runner.setPermissionMode(XSID, 'plan')).toBe(false);
       return grokOk(XSID);
     });
     const c = await ctx(new StubEngine(async () => []), { grok: g.dep });
     runner = new TurnRunner(c.deps);
     await runner.run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
-    expect(c.msgs.filter((m) => m.type === 'turn_notice')).toEqual([expect.objectContaining({ turnId: 't1', sessionId: XSID, message: GROK_MODE_NEXT_TURN_NOTICE })]);
-    expect(c.deps.store.get(XSID)).toMatchObject({ permissionMode: 'acceptEdits' });
+    expect(seen).toEqual([[false, false], [true, false], [false, true]]);
+    expect(c.msgs.filter((m) => m.type === 'turn_notice' && m.message === GROK_MODE_NEXT_TURN_NOTICE)).toEqual([]);
+    expect(c.deps.store.get(XSID)).toMatchObject({ permissionMode: 'bypassPermissions' });
   });
 
   it('approvals go to the same permission cards and the audit log (no input); 모두 자동 승인 = Grok default + autoApprove', async () => {

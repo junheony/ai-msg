@@ -161,8 +161,8 @@ export const abortedText = (signal: AbortSignal): string => (signal.reason === S
 /** Told to the model once, with the first prompt of a brand-new session (systemNote; never shown in the pane). */
 export const DECK_INTRO_NOTE = '[deck] 사용자는 deck 웹 UI(대개 폰·다른 기기의 브라우저)로 이 대화를 봅니다. 파일이나 URL 을 open/xdg-open/code 로 띄우지 마세요 — 서버에서만 열리고 사용자에게는 보이지 않습니다. 보여줄 파일은 경로를 인라인 코드로 적으면 사용자가 클릭해 사이드 패널에서 봅니다(세션 폴더 안의 파일만; 밖의 파일은 핵심 내용을 답장에 옮기세요).';
 
-/** A Grok session's mode changed mid-turn: its ACP session mode is set when a turn starts. */
-export const GROK_MODE_NEXT_TURN_NOTICE = 'Grok 은 다음 턴부터 새 권한 모드를 씁니다';
+/** A Grok turn's mode moved into or out of plan mid-turn (other modes apply to the next request at once). */
+export const GROK_MODE_NEXT_TURN_NOTICE = 'Grok 은 다음 턴부터 계획 모드 변경을 씁니다';
 /** Start of the turn_notice said when the drain deadline cuts a process's background work (highlights.ts keys on it). */
 export const SHUTDOWN_CUT_NOTICE = '서버가 다시 시작되어 백그라운드 작업';
 
@@ -827,7 +827,9 @@ export class TurnRunner {
         await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL, mode });
       }
     } else if (isGrokState(st)) {
-      // Grok: used from the next permission request (자동 승인) and the next turn's session mode.
+      // Grok: deck answers the permission requests, reading the mode per request — a change applies at once (§14.1-3).
+      // Plan mode is not offered for Grok (§14.2).
+      if (mode === 'plan') return false;
       await store.set({ ...st, permissionMode: mode });
     } else if (isOtherEngineState(st)) {
       return false;
@@ -836,8 +838,10 @@ export class TurnRunner {
     }
     for (const [turnId, m] of this.modes) {
       if (m.sessionId() !== sessionId || m.ref.mode === mode) continue;
+      const prev = m.ref.mode;
       m.ref.mode = mode;
-      if (m.notice) { m.notice(GROK_MODE_NEXT_TURN_NOTICE); continue; }
+      // Grok: modes apply to the next request at once; only entering or leaving plan would wait for the next turn.
+      if (m.notice) { if (mode === 'plan' || prev === 'plan') m.notice(GROK_MODE_NEXT_TURN_NOTICE); continue; }
       await this.inputs.get(turnId)?.setPermissionMode?.(sdkPermMode(mode)).catch((err: unknown) => console.error('deck: setPermissionMode failed', err instanceof Error ? err.message : err));
     }
     return true;
@@ -1529,7 +1533,9 @@ export class TurnRunner {
     // A stored model id that is no longer listed (the model list changed) falls back to the default; its effort is clamped.
     const model: GrokModel = isGrokModel(p.model) ? p.model : state && isGrokModel(state.model) ? state.model : DEFAULT_GROK_MODEL;
     const effort: Effort = effortFor(model, p.effort) ?? (state && effortFor(model, state.effort)) ?? effortFor(model, DEFAULT_EFFORT.grok) ?? MODEL_EFFORTS[model].at(-1)!;
-    const modeRef: ModeRef = { mode: state?.permissionMode ?? p.permissionMode ?? this.defaultMode() };
+    // A server-wide default of plan does not apply to Grok (no plan mode yet, §14.2); an explicit plan is refused by the engine.
+    const fallbackMode = this.defaultMode();
+    const modeRef: ModeRef = { mode: state?.permissionMode ?? p.permissionMode ?? (fallbackMode === 'plan' ? 'default' : fallbackMode) };
     let sessionId: string | null = state?.sessionId ?? null;
     const scope = () => ({ turnId: p.turnId, sessionId, cwd });
     if ((this.grokCooldownUntil[account] ?? 0) > this.now()) reason = `${reason} (한도 쿨다운 중)`;
@@ -1560,10 +1566,11 @@ export class TurnRunner {
     try {
       const events = deps.grok.run({
         account, cwd: canonicalCwd, resumeSessionId: state?.sessionId ?? null, model: GROK_CLI_ALIAS[model], effort,
-        // 모두 자동 승인 = Grok's default mode with deck answering the allowed kinds (GrokEngine AUTO_APPROVE_KINDS).
-        permissionMode: modeRef.mode === 'bypassPermissions' ? 'default' : modeRef.mode,
+        // Grok's session mode is always default; deck answers the requests per the live mode (§14.1-3). Plan is refused.
+        permissionMode: modeRef.mode === 'plan' ? 'plan' : 'default',
         prompt: p.text, attachments, signal: sink.signal,
         autoApprove: () => modeRef.mode === 'bypassPermissions',
+        editAuto: () => modeRef.mode === 'acceptEdits',
         onPermission: async (pr) => {
           const decision = await sink.askPermission({ turnId: p.turnId, sessionId, cwd, ...pr });
           await audit(pr.toolName, pr.input, decision, 'user');

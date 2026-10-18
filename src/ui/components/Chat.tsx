@@ -20,7 +20,7 @@ import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
 import { HANDOFF_COMMAND, HANDOFF_PROMPT } from '../../shared/handoff';
-import { PERM_MODES, PERM_MODE_LABEL, nextPermMode, permModeHint, type PermMode } from '../../shared/permission';
+import { PERM_MODES, PERM_MODE_LABEL, nextPermMode, permModeHint, permModesFor, type PermMode } from '../../shared/permission';
 import type { CommandItem } from '../autocomplete';
 import { MessageActionsContext, MessageView, RegenerateContext, type MessageActions, type Regenerate } from './MessageView';
 import { FIND_EVENT, FindBar } from './FindBar';
@@ -433,7 +433,7 @@ export function Chat(p: ChatProps) {
     if (ime) return;
     if (e.key === 'Tab' && e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && p.onPermMode && permSupported) {
       e.preventDefault();
-      p.onPermMode(nextPermMode(permMode));
+      p.onPermMode(nextPermMode(permMode, effectiveEngine));
       return;
     }
     if (e.key === 'Escape') {
@@ -670,7 +670,8 @@ export function Chat(p: ChatProps) {
                   )}
                   {p.onPermMode && (
                     <Pick className={`perm perm-${permSupported ? permMode : 'default'}`} label={<><span className="perm-full">{PERM_MODE_LABEL[permSupported ? permMode : 'default']}</span><span className="perm-short">{PERM_MODE_SHORT[permSupported ? permMode : 'default']}</span></>} value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${permModeHint(permMode, effectiveEngine)} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
-                      {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
+                      {/* Grok has no plan mode yet (§14.2): hidden unless the session already has it. */}
+                      {PERM_MODES.filter((m) => m === permMode || permModesFor(effectiveEngine).includes(m)).map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
                     </Pick>
                   )}
                 </div>

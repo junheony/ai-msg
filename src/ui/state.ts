@@ -1006,6 +1006,8 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       });
       return applySettings({ ...state, connected: true, disconnectedSince: null, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, grok: msg.grok ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
     }
+    case 'grok_status':
+      return { ...state, grok: msg.grok };
     case 'settings': {
       // 총사령탑 turned off: what was cached of it goes (turned on again, no old chip or epoch shows).
       const off = msg.features && !msg.features.includes('commander') && (Object.keys(state.commanders).length || Object.keys(state.commanderRefusals).length);

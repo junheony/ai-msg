@@ -104,12 +104,12 @@ describe('ModelPicker', () => {
     }
   });
 
-  it('Grok: Grok 4.6 / 4.5 with descriptions; Grok 4.5 offers no 엑스트라', () => {
+  it('Grok: Grok 4.7 / 4.7 Fast / 4.6 / 4.5 with descriptions; Grok 4.5 offers no 엑스트라', () => {
     setup({ models: GROK_MODELS, model: 'grok-4.5', effort: 'high' });
     fireEvent.click(screen.getByTestId('model-picker'));
     const menu = within(screen.getByTestId('model-menu'));
     const models = within(menu.getByRole('group', { name: 'Grok' })).getAllByRole('menuitemradio');
-    expect(models.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['Grok 4.6', 'Grok 4.5']);
+    expect(models.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['Grok 4.7', 'Grok 4.7 Fast', 'Grok 4.6', 'Grok 4.5']);
     expect(models.every((b) => (b.querySelector('.mp-desc')?.textContent ?? '').length > 0)).toBe(true);
     const effort = within(menu.getByRole('group', { name: '추론 수준' }));
     expect(effort.getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual(['낮음', '중간', '높음']);
