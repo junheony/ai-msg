@@ -94,3 +94,8 @@ HTTP 는 새 경로·쿼리만 더하고 기존 응답 모양은 바꾸지 않�
 - 요청에 오류가 오면 1초 뒤 다시 묻고, 실패할 때마다 두 배로 늘려 30초까지 간다. 답을 받거나 재연결·화면 복귀 때 1초로 돌아간다. 같은 오류는 한 번만 보여 준다. `code: 'not_found'`(없는 세션)는 다시 묻지 않는다.
 - 답이 아예 없으면 같은 소켓에 다시 보내지 않는다. 30초 동안 답이 없으면 그 소켓을 버리고 새로 연결한다(새 `hello` 에서 다시 묻는다).
 - `history.acceptedRefs` 에 이 패널이 보내고 기다리던 `clientRef` 가 있으면, 그 `turn_started` 는 이미 지나간 것이다(순번이 건너뛰어 적용되지 않았을 수 있다). 패널은 기다림을 풀고 실행 중인 턴을 자기 것으로 삼는다.
+
+## 잠긴 GPT 스레드 (`turn_result.errorCode`)
+
+- `turn_result.errorCode?: 'thread_locked'` — GPT 턴이 "already has an active writer"(ChatGPT 데스크톱 앱이 같은 스레드를 열어 둠)로 실패했을 때만 붙는다. 옛 클라이언트는 무시한다. 기능 이름이 아니다: UI 는 이 값이 있거나, 옛 서버 대비로 `errorText` 가 `THREAD_LOCKED_MESSAGE`(`src/shared/handoff.ts`)로 시작하면 잠김으로 본다(`isThreadLocked`).
+- 잠김으로 실패한 턴 아래에 [deck 에서 새 GPT 세션으로 이어가기]가 뜬다. 서버 왕복 없이 클라이언트가 같은 폴더·모델·샌드박스의 새 GPT 세션을 열고, 이전 대화 발췌(메시지당 2,000자, 전체 12,000자 — 오래된 것부터 버림)와 실패한 요청을 입력창에 채운다(`codexHandoffMessage`). 첫 전송의 `send.handoffFrom` 으로 두 세션이 이어진다.

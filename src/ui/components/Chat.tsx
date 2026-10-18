@@ -19,7 +19,7 @@ import { AccountPicker } from './AccountPicker';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
-import { HANDOFF_COMMAND, HANDOFF_PROMPT } from '../../shared/handoff';
+import { HANDOFF_COMMAND, HANDOFF_PROMPT, isThreadLocked } from '../../shared/handoff';
 import { PERM_MODES, PERM_MODE_LABEL, nextPermMode, permModeHint, permModesFor, type PermMode } from '../../shared/permission';
 import type { CommandItem } from '../autocomplete';
 import { MessageActionsContext, MessageView, RegenerateContext, type MessageActions, type Regenerate } from './MessageView';
@@ -127,6 +127,8 @@ export type ChatProps = {
   versions?: (n: number) => { index: number; count: number; go: (i: number) => void } | null;
   /** 새 세션으로 이어가기 (absent = not offered: new / GPT / Gemini session, or a turn running). Also `/handoff`. */
   onHandoff?: () => void;
+  /** deck 에서 새 GPT 세션으로 이어가기: offered under a GPT turn the thread lock refused (another app holds the thread). */
+  onCodexHandoff?: (turnId: string) => void;
   /** The handoff-note turn is running. */
   handoffWriting?: boolean;
   /** Text put into the composer once (the new session's first message after a handoff); not sent. Never over a draft. */
@@ -302,6 +304,7 @@ export function Chat(p: ChatProps) {
   // Never a handoff-note request: re-sending it would run the note prompt as a plain turn (tools allowed, no switch).
   const retryable = lastPrompt !== HANDOFF_PROMPT ? lastPrompt : null;
   const retryPrompt = !p.busy && !p.readOnly && last?.kind === 'assistant' && last.error !== null && !last.streaming ? retryable : null;
+  const lockedTurn = !p.busy && !p.readOnly && p.sessionEngine === 'codex' && last?.kind === 'assistant' && last.error !== null && !last.streaming && isThreadLocked(last.errorCode, last.error) ? last.turnId : null;
 
   // D3 / PF11: a new session follows the picker (the engine recorded at open time is ignored while it is new);
   // once the session exists its engine is fixed.
@@ -599,6 +602,7 @@ export function Chat(p: ChatProps) {
           </MessageActionsContext.Provider>
         </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
+        {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>deck 에서 새 GPT 세션으로 이어가기</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
         {p.nextSession && <button type="button" className="session-link next" data-testid="handoff-next" onClick={p.nextSession.open} title={p.nextSession.title}>→ 새 세션으로 이어감 · {p.nextSession.title}</button>}

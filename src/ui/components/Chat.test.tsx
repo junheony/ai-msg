@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Chat, messageKeys, modelChoices } from './Chat';
 import { GROK_MODELS } from '../../shared/models';
+import { THREAD_LOCKED_MESSAGE } from '../../shared/handoff';
 import { GROK_BYPASS_HINT, PERM_MODE_HINT } from '../../shared/permission';
 import type { ChatProps } from './Chat';
 import type { ChatItem } from '../state';
@@ -76,6 +77,32 @@ describe('Chat', () => {
     fireEvent.click(screen.getByText('재시도'));
     expect(onSend).toHaveBeenCalledWith('do the thing');
     expect(screen.getAllByText('재시도')).toHaveLength(1);
+  });
+
+  it('a GPT turn refused by the thread lock offers deck 에서 새 GPT 세션으로 이어가기 next to 재시도 (errorCode, or an older server\'s text)', () => {
+    const label = 'deck 에서 새 GPT 세션으로 이어가기';
+    const onCodexHandoff = vi.fn();
+    const lockedItem: ChatItem = { ...failed, turnId: 'tl', error: THREAD_LOCKED_MESSAGE, errorCode: 'thread_locked' };
+    renderChat([{ kind: 'user', text: 'go' }, lockedItem], false, vi.fn(), { sessionEngine: 'codex', model: 'gpt-6-sol', onCodexHandoff });
+    expect(screen.getByText('재시도')).toBeTruthy();
+    fireEvent.click(screen.getByText(label));
+    expect(onCodexHandoff).toHaveBeenCalledWith('tl');
+    cleanup();
+    // an older server: no errorCode, the message text only
+    renderChat([{ kind: 'user', text: 'go' }, { ...failed, turnId: 'tl', error: THREAD_LOCKED_MESSAGE }], false, vi.fn(), { sessionEngine: 'codex', model: 'gpt-6-sol', onCodexHandoff });
+    expect(screen.getByText(label)).toBeTruthy();
+    cleanup();
+    // another failure of a GPT turn: none
+    renderChat([{ kind: 'user', text: 'go' }, failed], false, vi.fn(), { sessionEngine: 'codex', model: 'gpt-6-sol', onCodexHandoff });
+    expect(screen.queryByText(label)).toBeNull();
+    cleanup();
+    // a Claude session (even with that text): none
+    renderChat([{ kind: 'user', text: 'go' }, lockedItem], false, vi.fn(), { sessionEngine: 'claude', onCodexHandoff });
+    expect(screen.queryByText(label)).toBeNull();
+    cleanup();
+    // busy: none
+    renderChat([{ kind: 'user', text: 'go' }, lockedItem], true, vi.fn(), { sessionEngine: 'codex', model: 'gpt-6-sol', onCodexHandoff });
+    expect(screen.queryByText(label)).toBeNull();
   });
 
   it('no 재시도 while busy or when the last turn succeeded', () => {

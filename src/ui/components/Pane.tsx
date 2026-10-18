@@ -564,6 +564,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           editNote={editNote}
           versions={versions}
           onHandoff={canHandoff ? () => startHandoff(pane, dispatch, send) : undefined}
+          onCodexHandoff={(turnId) => dispatch({ type: 'codex_handoff', paneId: pane.id, turnId })}
           handoffWriting={pane.handoff !== null}
           prefill={pane.prefill}
           draftKey={`new:${pane.id}`}

@@ -319,7 +319,7 @@ export type ServerMessage =
    * `turnId` names the turn the work belongs to (interrupt it to stop the work).
    */
   | ({ type: 'turn_background'; tasks: string[]; /** Per task: id (for stop_task), type, age. */ detail?: BgTaskInfo[]; /** stop_task works for this turn. */ canStop?: boolean } & TurnScope)
-  | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null; /** The model alias the engine ran this turn on (absent: unknown / an older server). */ model?: string; /** An automatic (총사령탑) turn: no completion push of its own. */ auto?: 'commander' } & TurnScope)
+  | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null; /** The model alias the engine ran this turn on (absent: unknown / an older server). */ model?: string; /** An automatic (총사령탑) turn: no completion push of its own. */ auto?: 'commander'; /** Why it failed, when the client can act on it: 'thread_locked' = another app (ChatGPT desktop) holds this GPT thread. Older clients ignore it. */ errorCode?: 'thread_locked' } & TurnScope)
   /**
    * A steer reached the model, at this point of the transcript (mid-turn after a tool round, or as the start of its own
    * turn right after `turnId`'s result). Every device viewing the session shows `prompt` as the user's message here.

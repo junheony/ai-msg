@@ -1549,7 +1549,7 @@ export class TurnRunner {
       }
     }
     if (!res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit') this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit;
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr), ...(!res.ok && !sink.signal.aborted && res.errorKind === 'thread_locked' ? { errorCode: 'thread_locked' as const } : {}) });
   }
 
   /** Explicit Gemini: a new session takes the first logged-in, non-cooled account (g1, then g2) and stays on it. */

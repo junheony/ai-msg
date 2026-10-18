@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { codexEnv } from '../../shared/accounts';
+import { THREAD_LOCKED_MESSAGE } from '../../shared/handoff';
 import { CODEX_CLI_MODEL, type CodexModel, type CodexSandbox, type Effort } from '../../shared/models';
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import type { EngineEvent, EngineResult } from './Engine';
@@ -80,9 +81,6 @@ function usageOf(u: unknown): TurnUsage {
  * Retrying does not help; deck never touches another app's process.
  */
 const THREAD_LOCKED_RE = /already has an active writer/;
-export const THREAD_LOCKED_MESSAGE =
-  '이 GPT 스레드를 다른 프로그램이 쓰고 있어 deck 에서 이어갈 수 없습니다 — 보통 ChatGPT 데스크톱 앱(Codex)이 이 스레드를 열어 두고 있을 때입니다(/goal 자동 진행 포함). ' +
-  '데스크톱 앱에서 이어가거나, 데스크톱 앱을 종료(⌘Q)한 뒤 재시도하세요.';
 
 /** SIGTERM → SIGKILL grace for a codex child deck stops (abort, or the consumer stopped iterating). */
 const KILL_GRACE_MS = 5000;

@@ -16,6 +16,7 @@ import { readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
 import { COOLDOWN_MS } from '../engine/limitDetect';
 import { hashInput } from '../audit';
 import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
+import { THREAD_LOCKED_MESSAGE } from '../../shared/handoff';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
@@ -812,6 +813,21 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ model: 'gpt-6-sol' });
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, badge: { account: 'gpt', model: 'gpt-6-sol' } });
     expect(c.deps.store.get('tid-2')).toMatchObject({ defaultModel: 'gpt-6-astra' });
+  });
+
+  it('a thread the desktop app holds: turn_result carries errorCode thread_locked; any other failure carries none', async () => {
+    const fail = (tid: string, errorKind: string | null, errorText: string): EngineEvent[] => [
+      { kind: 'result', sessionId: tid, ok: false, text: '', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText, stderr: null, errorKind, terminalReason: null },
+    ];
+    for (const [kind, text, code] of [['thread_locked', THREAD_LOCKED_MESSAGE, 'thread_locked'], [null, 'boom', undefined]] as const) {
+      const codex = fakeCodex((req) => fail(req.resumeThreadId ?? 'x', kind, text));
+      const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
+      await c.deps.store.set({ engine: 'codex', sessionId: 'tid-2', cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gpt-6-astra', sandbox: 'read-only', rolloutFile: null, createdAtMs: 1 });
+      await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w2', sessionId: 'tid-2', text: 'again' }, c.sink);
+      const res = c.msgs.find((m) => m.type === 'turn_result');
+      expect(res).toMatchObject({ ok: false, errorText: expect.stringContaining(text) });
+      expect(res && 'errorCode' in res ? res.errorCode : undefined).toBe(code);
+    }
   });
 
   it('a per-turn effort reaches the codex engine', async () => {
