@@ -5,10 +5,12 @@ import path from 'node:path';
 import type { Account } from '../../shared/accounts';
 import type { Effort } from '../../shared/models';
 import { ZERO_USAGE, type PermissionDecision, type TurnUsage } from '../../shared/turn-types';
+import type { GrokBilling } from '../../shared/usage-types';
 import { promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
 import { AcpAbortError, AcpClosedError, AcpConnection, AcpRpcError, AcpTimeoutError } from './acp/AcpConnection';
 import type { ChildLike, SpawnFn } from './CodexEngine';
 import type { EngineEvent, EngineResult, FollowUp, LiveInput, PermissionRequest } from './Engine';
+import { GROK_BILLING_METHOD, parseGrokBilling } from './grokBilling';
 import { editAutoAllowed } from './grokEditPaths';
 import { grokEnv } from './grokEnv';
 import { checkGrokInspect, grokInspectRefusal } from './grokInspect';
@@ -117,12 +119,14 @@ export type GrokTimeouts = {
   fallbackMs: number;
   /** Process table sampling for the descendant sweep (§14.9-9). */
   sampleMs: number;
+  /** `_x.ai/billing` after the prompt (and the idle poller's): short — the subscription usage is extra, never the turn. */
+  billingMs: number;
 };
 
 export const GROK_TIMEOUTS: GrokTimeouts = {
   lockMs: 30_000, initializeMs: 15_000, sessionMs: 30_000, settingMs: 10_000,
   cancelMs: 5_000, closeMs: 10_000, termMs: 3_000, killMs: 2_000, steerMs: 10_000,
-  categoryMs: 1_000, fallbackMs: 500, sampleMs: 2_000,
+  categoryMs: 1_000, fallbackMs: 500, sampleMs: 2_000, billingMs: 5_000,
 };
 
 /** §14.9-3: once tripped, no Grok turn starts in this server process until unlocked (settings) or restarted. */
@@ -429,6 +433,8 @@ class GrokTurn {
   private realHome = '';
   private text = '';
   private usage: TurnUsage = ZERO_USAGE;
+  /** `_x.ai/billing` read after the prompt answered; rides the result for the usage card (absent when it failed). */
+  private billing: GrokBilling | null = null;
   /** The result, pushed only after the group has ended (so an end-of-turn notice still comes before it). */
   private final: EngineResult | null = null;
   /** Lock releases: the start key, plus (home, id) once a new session has its id. */
@@ -531,7 +537,7 @@ class GrokTurn {
       const r = this.tripped !== null
         ? this.result(false, this.tripped, { errorKind: 'grok_tripwire', text: this.text })
         : this.final;
-      if (r) this.q.push(r);
+      if (r) this.q.push(this.billing ? { ...r, grokBilling: this.billing } : r);
     }
   }
 
@@ -585,6 +591,7 @@ class GrokTurn {
       } catch (e) {
         this.finish(await this.errorResult(e));
       } finally {
+        await this.readBilling();
         await this.endGroup();
       }
     } finally {
@@ -597,6 +604,18 @@ class GrokTurn {
       }
       for (const release of this.releases.splice(0).reverse()) release();
     }
+  }
+
+  /**
+   * The subscription's usage on the connection the turn already has: after the prompt answered, before stdin closes. One
+   * short request; any failure (Method not found on an older grok, a time-out, a closed connection) is ignored.
+   */
+  private async readBilling(): Promise<void> {
+    const conn = this.conn;
+    if (!conn || conn.isClosed || this.exited || !this.promptResponded || this.cancelled || this.tripped !== null) return;
+    try {
+      this.billing = parseGrokBilling(await conn.request(GROK_BILLING_METHOD, {}, this.t.billingMs), Date.now());
+    } catch { /* billing is extra: the turn's result does not depend on it */ }
   }
 
   /** §14.9-2: `grok inspect --json` with the turn's env, cwd and shadow HOME; anything but a clean answer refuses. */

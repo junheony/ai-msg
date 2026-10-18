@@ -1,5 +1,5 @@
 import type { Account, AccountNames, GeminiAccount } from '../../shared/accounts';
-import { parseIsoUtc, type GeminiBucket, type UsageSnapshot } from '../../shared/usage-types';
+import { grokBillingWindow, parseIsoUtc, type GeminiBucket, type UsageSnapshot } from '../../shared/usage-types';
 import type { EngineLimits, GeminiGroup, GeminiSeatLimits } from './AutoRoute';
 
 /**
@@ -48,6 +48,12 @@ function remainingByGroup(buckets: readonly GeminiBucket[]): Record<GeminiGroup,
   return out;
 }
 
+/** The Grok seat's subscription used % for the current period; null when never read or its period has ended. */
+function grokPeriodUsedPct(usage: UsageSnapshot, nowMs: number): number | null {
+  const w = grokBillingWindow(usage.grokSeats?.x1?.billing, nowMs);
+  return w && !w.estimated ? w.usedPct : null;
+}
+
 export function buildEngineLimits(i: EngineLimitsInput): EngineLimits {
   const gpt = i.usage.gpt;
   const gptDown = !gpt || gpt.status === 'down';
@@ -73,6 +79,6 @@ export function buildEngineLimits(i: EngineLimitsInput): EngineLimits {
       observedAtMs: gemDown ? null : ms(gem.fetchedAt),
       seats: [seat('g1', true, rem), seat('g2', i.gemini.loggedIn.g2, { pro: null, flash: null })],
     },
-    grok: { installed: i.grok.installed, cooldownUntilMs: i.grok.cooldownUntilMs, lastError: i.grok.lastError },
+    grok: { installed: i.grok.installed, cooldownUntilMs: i.grok.cooldownUntilMs, lastError: i.grok.lastError, periodUsedPct: grokPeriodUsedPct(i.usage, i.nowMs) },
   };
 }
