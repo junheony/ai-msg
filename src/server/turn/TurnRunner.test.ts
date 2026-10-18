@@ -13,6 +13,7 @@ import type { GrokTurnRequest } from '../engine/GrokEngine';
 import type { EngineEvent } from '../engine/Engine';
 import { chooseAutoModel } from '../routing/AutoModel';
 import { readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
+import { COOLDOWN_MS } from '../engine/limitDetect';
 import { hashInput } from '../audit';
 import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
 import { SessionIndex } from '../sessions/SessionIndex';
@@ -1268,6 +1269,44 @@ describe('TurnRunner: Grok sessions (explicit only)', () => {
     await runner.run({ turnId: 't2', cwd: '/w', sessionId: XSID, text: 'x' }, c.sink);
     expect(c.msgs.filter((m) => m.type === 'turn_started').at(-1)).toMatchObject({ reason: 'Grok 세션 · X1 (한도 쿨다운 중)' });
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, errorText: expect.stringContaining('grok login') });
+  });
+
+  it('grokUsage.noteTurn gets the turn outcome: rate_limit → cooldown time, a later success → null, a stopped turn → its kind', async () => {
+    type Note = Parameters<NonNullable<TurnRunnerDeps['grokUsage']>['noteTurn']>;
+    const notes: Note[] = [];
+    let fail: EngineEvent[] | null = grokFail(XSID, 'Grok 한도 — 잠시 뒤', 'rate_limit');
+    const ac = new AbortController();
+    let abortNext = false;
+    const g = fakeGrok(() => {
+      if (abortNext) { ac.abort(); return grokFail(XSID, 'stopped', null as unknown as string); }
+      return fail ?? grokOk(XSID);
+    });
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep, grokUsage: { noteTurn: (...a: Note) => { notes.push(a); } } });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    expect(notes[0]).toEqual(['x1', { ok: false, errorKind: 'rate_limit', usage: ZERO, cooldownUntilMs: NOW + COOLDOWN_MS.limit }]);
+    fail = null;
+    await runner.run({ turnId: 't2', cwd: '/w', sessionId: XSID, text: 'x' }, c.sink);
+    expect(notes[1]).toEqual(['x1', { ok: true, errorKind: null, usage: expect.objectContaining({ inputTokens: 10, outputTokens: 5 }), cooldownUntilMs: null }]);
+    abortNext = true;
+    await runner.run({ turnId: 't3', cwd: '/w', sessionId: XSID, text: 'x' }, { ...c.sink, signal: ac.signal });
+    expect(notes[2]).toMatchObject(['x1', { ok: false, errorKind: null }]);
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false });
+  });
+
+  it('a throwing grokUsage.noteTurn is logged and the turn_result still goes out', async () => {
+    const g = fakeGrok(() => grokOk(XSID));
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep, grokUsage: { noteTurn: () => { throw new Error('disk full'); } } });
+    const logged: unknown[][] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { logged.push(a); };
+    try {
+      await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    } finally {
+      console.error = orig;
+    }
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok' });
+    expect(logged.some((a) => String(a[0]).startsWith('deck: ') && a.includes('disk full'))).toBe(true);
   });
 
   it('자동 never opens on Grok without its consent (default settings); a Grok session refuses a cwd change', async () => {

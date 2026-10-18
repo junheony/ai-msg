@@ -60,13 +60,16 @@ export class GrokUsageTracker {
         if (!isGrokAccount(k) || !v || typeof v !== 'object') continue;
         const o = v as Record<string, unknown>;
         const today = (o.today && typeof o.today === 'object' ? o.today : {}) as Record<string, unknown>;
-        const day = typeof today.day === 'string' && today.day ? today.day : this.dayOf(this.now());
+        // No day (an older file): which day the numbers belong to is unknown, so today starts at 0 rather than carrying them over.
+        const hasDay = typeof today.day === 'string' && today.day !== '';
         this.data.set(k, {
           lastTurnAtMs: typeof o.lastTurnAtMs === 'number' ? o.lastTurnAtMs : null,
           lastError: typeof o.lastError === 'string' && LAST_ERRORS.has(o.lastError) ? (o.lastError as StoredAccount['lastError']) : null,
           cooldownUntilMs: typeof o.cooldownUntilMs === 'number' ? o.cooldownUntilMs : null,
           down: o.down === true,
-          today: { inputTokens: num(today.inputTokens), outputTokens: num(today.outputTokens), turns: num(today.turns), day },
+          today: hasDay
+            ? { inputTokens: num(today.inputTokens), outputTokens: num(today.outputTokens), turns: num(today.turns), day: today.day as string }
+            : { inputTokens: 0, outputTokens: 0, turns: 0, day: this.dayOf(this.now()) },
         });
       }
     } catch (err) {

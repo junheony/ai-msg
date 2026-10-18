@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UsagePanel, agoText, bucketLabel, countdown, creditsText, fullestWindow, geminiHint, observedText, resetStamp, shortCountdown } from './UsagePanel';
-import type { UsageSnapshot } from '../../shared/usage-types';
+import { localDay, type GrokUsage, type UsageSnapshot } from '../../shared/usage-types';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const usage: UsageSnapshot = {
@@ -182,6 +182,13 @@ describe('UsagePanel header layout (styles.css)', () => {
     expect(two).toMatch(/\.topbar \{[^}]*flex-wrap: wrap/);
     expect(two).toMatch(/\.usage-card \{[^}]*flex: 1 1 0/);
     expect(usage).toMatch(/container: usage-card \/ inline-size/);
+  });
+  it('many cards wrap to two rows only in the two-row (< 1100px) layout; the wide one-row bar never wraps (fixed height)', () => {
+    const at = usage.indexOf('@media (max-width: 1099.98px)');
+    const wide = usage.slice(0, at);
+    const two = usage.slice(at, usage.indexOf('\n}\n', at));
+    expect(wide).not.toMatch(/\.usage-panel\[data-wrap\][^{]*\{[^}]*flex-wrap: wrap/);
+    expect(two).toMatch(/\.usage-panel\[data-wrap\] \.usage-card \{[^}]*var\(--usage-cols-wrap\)/);
   });
   it('every @media block in styles.css is closed (an unclosed one swallowed the rules after it)', () => {
     let depth = 0;
@@ -431,5 +438,79 @@ describe('UsagePanel · cli usage mode (observed times)', () => {
     expect(document.body.textContent).not.toContain('CLI 미제공');
     fireEvent.click(screen.getByTestId('account-a'));
     expect(screen.queryByTestId('a-observed')).toBeNull();
+  });
+});
+
+describe('UsagePanel · Grok seat (card, chip, cooldown expiry, midnight)', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const today = localDay(new Date(NOW));
+  const yesterday = localDay(new Date(NOW - 86_400_000));
+  const grokUsage = (g: Partial<GrokUsage>): UsageSnapshot => ({
+    ...usage,
+    grokSeats: { x1: { status: 'ok', lastTurnAt: new Date(NOW - 10 * 60_000).toISOString(), lastError: null, cooldownUntil: null, today: { inputTokens: 1200, outputTokens: 34, turns: 3, day: today }, ...g } },
+  });
+  const phone = () => vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(max-width: 599.98px)', addEventListener() {}, removeEventListener() {} }));
+
+  it('no Grok card without grok.bin; with it, the status sentence and today\'s deck tally', () => {
+    const { unmount } = render(<UsagePanel usage={grokUsage({})} current={null} now={NOW} />);
+    expect(screen.queryByTestId('account-x1')).toBeNull();
+    unmount();
+    render(<UsagePanel usage={grokUsage({})} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-main').textContent).toBe('사용 가능 · 마지막 턴 10분 전');
+    expect(screen.getByTestId('x1-secondary').textContent).toBe('오늘 3턴 · 입력 1,200 · 출력 34 · deck 기준');
+    expect(screen.getByTestId('account-x1').querySelector('svg.usage-mark.grok')).not.toBeNull();
+  });
+
+  it('a live cooldown says "한도 — HH:MM 이후" and the chip ●대기', () => {
+    const until = new Date(NOW + 30 * 60_000).toISOString();
+    const { unmount } = render(<UsagePanel usage={grokUsage({ status: 'cooldown', cooldownUntil: until })} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-main').textContent).toBe(`한도 — ${resetStamp(until)} 이후`);
+    expect(screen.getByTestId('account-x1').className).toContain('cooldown');
+    unmount();
+    phone();
+    render(<UsagePanel usage={grokUsage({ status: 'cooldown', cooldownUntil: until })} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('chip-x1').textContent).toContain('●대기');
+  });
+
+  it('a cooldown whose time has passed is no longer shown (card and chip), even while the snapshot still says cooldown', () => {
+    const passed = grokUsage({ status: 'cooldown', cooldownUntil: new Date(NOW - 60_000).toISOString() });
+    const { unmount } = render(<UsagePanel usage={passed} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-main').textContent).toBe('사용 가능 · 마지막 턴 10분 전');
+    expect(screen.getByTestId('account-x1').className).not.toContain('cooldown');
+    expect(screen.queryByTestId('x1-dot')).toBeNull();
+    unmount();
+    phone();
+    render(<UsagePanel usage={passed} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('chip-x1').textContent).not.toContain('대기');
+    expect(screen.getByTestId('chip-x1').textContent).toContain('○가능');
+  });
+
+  it('after local midnight, yesterday\'s tally reads 0 until the next turn', () => {
+    render(<UsagePanel usage={grokUsage({ today: { inputTokens: 1200, outputTokens: 34, turns: 3, day: yesterday } })} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-secondary').textContent).toBe('오늘 0턴 · 입력 0 · 출력 0 · deck 기준');
+  });
+});
+
+describe('UsagePanel · phone chip popover', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const phone = () => vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(max-width: 599.98px)', addEventListener() {}, removeEventListener() {} }));
+
+  it('Esc closes the open chip popover', () => {
+    phone();
+    render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    fireEvent.click(screen.getByTestId('chip-a'));
+    expect(screen.getByRole('tooltip')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('the chip popover has the "토큰 사용량 기록 보기" link, which closes it and opens the history', () => {
+    phone();
+    const onOpenHistory = vi.fn();
+    render(<UsagePanel usage={usage} current={null} now={NOW} onOpenHistory={onOpenHistory} />);
+    fireEvent.click(screen.getByTestId('chip-a'));
+    fireEvent.click(screen.getByRole('button', { name: '토큰 사용량 기록 보기 ›' }));
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });

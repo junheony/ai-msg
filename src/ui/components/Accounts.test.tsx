@@ -275,7 +275,9 @@ describe('account palette (styles.css)', () => {
 
   it('dense (letters-only) and wrap are the unified, measurement-based rules — no per-count compact-card generation left', () => {
     expect(css).toMatch(/\.usage-panel\[data-dense\] \.usage-mark \{ display: none; \}/);
-    expect(css).toMatch(/\.usage-panel\[data-wrap\] \{ flex-wrap: wrap; \}/);
+    // wrap is two-row-layout only (the one-row bar has a fixed height): no unscoped flex-wrap on the panel.
+    expect(css).not.toMatch(/\.usage-panel\[data-wrap\] \{ flex-wrap: wrap; \}/);
+    expect(css).toMatch(/\.usage-panel\[data-wrap\] \.usage-card \{[^}]*--usage-cols-wrap/);
     expect(part).not.toMatch(/@media \(max-width: 1100px\) \{\s*\.usage-card \{/);
     expect(css).not.toMatch(/\.usage-sum\b/);
   });

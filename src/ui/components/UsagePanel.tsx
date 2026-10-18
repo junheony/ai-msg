@@ -3,7 +3,7 @@ import { GEMINI_ACCOUNTS, GROK_ACCOUNTS, type GeminiAccount, type GrokAccount, t
 import type { GrokStatus } from '../../shared/protocol';
 import { useAccounts } from '../accounts';
 import { ClaudeMark, GeminiMark, GrokMark, OpenAIMark } from './EngineMark';
-import { emptyAccountUsage, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export function countdown(resetsAt: string | null, now: number): string {
   if (!resetsAt) return '';
@@ -184,6 +184,18 @@ function geminiRows(g: GeminiUsage): SeatRow[] {
   return g.buckets.map((b, i) => ({ key: `b${i}`, name: bucketLabel(b.name), w: { usedPct: b.usedPct, resetsAt: b.resetsAt } as UsageWindow, mainEligible: true }));
 }
 
+/**
+ * The snapshot is only pushed when a Grok turn ends, so it can be hours old: a cooldown whose time has passed and a
+ * `today` from an earlier local day are re-judged here against the clock (same day rule as GrokUsageTracker).
+ */
+function grokNow(g: GrokUsage, now: number): GrokUsage {
+  const until = g.cooldownUntil ? parseIsoUtc(g.cooldownUntil) : NaN;
+  const status = g.status === 'cooldown' && !(until > now) ? (g.lastTurnAt ? 'ok' : 'unknown') : g.status;
+  const day = localDay(new Date(now));
+  const today = g.today.day === day ? g.today : { inputTokens: 0, outputTokens: 0, turns: 0, day };
+  return status === g.status && today === g.today ? g : { ...g, status, today };
+}
+
 /** Grok's status sentence (design §3/§7-4): no quota API, so the main row is always text, never a bar. */
 function grokMainText(g: GrokUsage, now: number): string {
   if (g.status === 'down') return '로그인 필요';
@@ -193,7 +205,8 @@ function grokMainText(g: GrokUsage, now: number): string {
 }
 
 /** This install's Grok seats as `SeatData`; shown only while `GrokStatus.bin` is true (checked by the caller). */
-function grokSeatData(seat: Seat, g: GrokUsage, now: number): SeatData {
+function grokSeatData(seat: Seat, snap: GrokUsage, now: number): SeatData {
+  const g = grokNow(snap, now);
   const today = `오늘 ${g.today.turns}턴 · 입력 ${g.today.inputTokens.toLocaleString('en-US')} · 출력 ${g.today.outputTokens.toLocaleString('en-US')} · deck 기준`;
   return {
     seat, engine: 'grok', mark: <GrokMark className="usage-mark grok" />, rows: [], status: g.status,
@@ -428,6 +441,16 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
     return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); };
   }, [pop?.pinned]);
 
+  // Esc closes an open popover wherever focus is (the phone chip's popover is not inside the focused button). Pane's
+  // ESC_OWNERS sees the open tooltip and leaves this press alone; once it is gone, the next Esc stops the turn again.
+  const popOpen = pop !== null;
+  useEffect(() => {
+    if (!popOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPop(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [popOpen]);
+
   const ids = usage ? [...active.map((a) => a.id), 'gpt', ...showGemini, ...showGrok].join(' ') : '';
   const cramped = useCramped(panelRef, ids);
 
@@ -488,6 +511,11 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
               {d.rows.map((r) => <PopRow key={r.key} seat={d.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} />)}
               {d.credits && <div className="usage-pop-row"><span>크레딧</span><b>{d.credits}</b></div>}
               {d.extraPopover}
+              {onOpenHistory && (
+                <div className="usage-pop-row link">
+                  <button type="button" onClick={(e) => { e.stopPropagation(); setPop(null); onOpenHistory(); }}>토큰 사용량 기록 보기 ›</button>
+                </div>
+              )}
             </div>
           );
         })()}

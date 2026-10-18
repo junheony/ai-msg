@@ -78,18 +78,30 @@ describe('GrokUsageTracker.noteTurn', () => {
 });
 
 describe('GrokUsageTracker day rollover (local midnight)', () => {
-  it('resets today on the next turn once the local day has changed', () => {
-    const t = new GrokUsageTracker({ file, now: () => DAY1 });
+  it('resets today on the next turn once the local day has changed (same instance, clock moved)', () => {
+    let now = DAY1;
+    const t = new GrokUsageTracker({ file, now: () => now });
     t.noteTurn('x1', { ok: true, errorKind: null, usage: USAGE, cooldownUntilMs: null });
-    const nextDay = DAY1 + 24 * 3_600_000;
+    t.noteTurn('x1', { ok: true, errorKind: null, usage: USAGE, cooldownUntilMs: null });
+    expect(t.snapshotOf('x1', now).today.turns).toBe(2);
+    now = DAY1 + 24 * 3_600_000;
+    // Before any new turn, a read on the next local day already sees 0.
+    expect(t.snapshotOf('x1', now).today.turns).toBe(0);
     t.noteTurn('x1', { ok: true, errorKind: null, usage: { inputTokens: 5, outputTokens: 1 }, cooldownUntilMs: null });
-    // same instance: `now` is fixed to DAY1, so this second call is still the same day (sanity: turns accumulate).
-    expect(t.snapshotOf('x1', DAY1).today.turns).toBe(2);
+    const s = t.snapshotOf('x1', now);
+    expect(s.today).toEqual({ inputTokens: 5, outputTokens: 1, turns: 1, day: s.today.day });
+    expect(s.today.day).not.toBe(t.snapshotOf('x1', DAY1).today.day);
     // A fresh tracker whose clock has moved to the next local day sees the rollover on read, before any new turn.
-    const t2 = new GrokUsageTracker({ file, now: () => nextDay });
-    const s = t2.snapshotOf('x1', nextDay);
-    expect(s.today.turns).toBe(0);
-    expect(s.today.inputTokens).toBe(0);
+    const t2 = new GrokUsageTracker({ file, now: () => now + 24 * 3_600_000 });
+    expect(t2.snapshotOf('x1').today.turns).toBe(0);
+  });
+
+  it('an old-format file without today.day starts today at 0 (yesterday\'s numbers are not carried into today)', () => {
+    fs.writeFileSync(file, JSON.stringify({ version: 1, accounts: { x1: { lastTurnAtMs: DAY1 - 86_400_000, lastError: null, cooldownUntilMs: null, down: false, today: { inputTokens: 900, outputTokens: 90, turns: 9 } } } }));
+    const t = new GrokUsageTracker({ file, now: () => DAY1 });
+    expect(t.snapshotOf('x1', DAY1).today).toMatchObject({ inputTokens: 0, outputTokens: 0, turns: 0 });
+    t.noteTurn('x1', { ok: true, errorKind: null, usage: USAGE, cooldownUntilMs: null });
+    expect(t.snapshotOf('x1', DAY1).today).toMatchObject({ inputTokens: 100, outputTokens: 20, turns: 1 });
   });
 
   it('resets today at write time too, when a new turn happens the next local day', () => {
@@ -115,7 +127,7 @@ describe('GrokUsageTracker persistence', () => {
     expect(t2.snapshotOf('x1', DAY1).today).toMatchObject({ inputTokens: 100, outputTokens: 20, turns: 1 });
   });
 
-  it('two trackers writing to the same file in turn do not corrupt it (in-process serialization via sync fs calls)', () => {
+  it('a second tracker created after the first one wrote reads its numbers and adds to them (sequential use, not concurrent writers)', () => {
     const t1 = new GrokUsageTracker({ file, now: () => DAY1 });
     t1.noteTurn('x1', { ok: true, errorKind: null, usage: USAGE, cooldownUntilMs: null });
     const t2 = new GrokUsageTracker({ file, now: () => DAY1 });

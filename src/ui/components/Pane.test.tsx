@@ -264,6 +264,18 @@ describe('Pane: Esc stops the running turn from anywhere in the pane', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('a closed usage popover still in the DOM (aria-hidden="true") does not take the Esc: the turn stops', () => {
+    const send = mount();
+    const pop = document.createElement('div');
+    pop.setAttribute('role', 'tooltip');
+    pop.setAttribute('aria-hidden', 'true');
+    pop.style.display = 'none';
+    document.body.append(pop);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    pop.remove();
+    expect(send).toHaveBeenCalledWith({ type: 'interrupt', turnId: 't1' });
+  });
+
   it('focus outside the pane (top bar, sidebar) keeps Esc away from the turn', () => {
     const send = mount();
     const btn = document.createElement('button');

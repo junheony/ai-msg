@@ -1695,7 +1695,13 @@ export class TurnRunner {
     if (!res.ok && res.errorKind === 'rate_limit') this.grokCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
     if (res.ok) this.grokLastError = null;
     else if (!sink.signal.aborted) this.grokLastError = res.errorKind === 'authentication_failed' ? 'auth' : 'other';
-    this.deps.grokUsage?.noteTurn(account, { ok: res.ok, errorKind: res.errorKind, usage: res.usage, cooldownUntilMs: this.grokCooldownUntil[account] ?? null });
+    // The map itself is kept on success (same as the Codex/Gemini cooldowns, which only expire); the card is told a
+    // successful turn means no cooldown, so it does not keep showing "한도" after Grok answered.
+    try {
+      this.deps.grokUsage?.noteTurn(account, { ok: res.ok, errorKind: res.errorKind, usage: res.usage, cooldownUntilMs: res.ok ? null : (this.grokCooldownUntil[account] ?? null) });
+    } catch (err) {
+      console.error('deck: recording Grok usage failed', err instanceof Error ? err.message : err);
+    }
     sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
   }
 

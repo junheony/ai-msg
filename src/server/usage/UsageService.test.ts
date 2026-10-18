@@ -264,6 +264,20 @@ describe('UsageService', () => {
     expect(down.snapshot().gemini).toEqual(g);
     expect(seen).toEqual([g, g]);
   });
+
+  it('applyGrok keeps grokSeats and geminiSeats, and both survive the next usage-deck poll', async () => {
+    const s = svc(async () => ({ ok: true, json: async () => LIVE }));
+    const g = { status: 'ok' as const, fetchedAt: '2026-09-30T12:29:00Z', loggedIn: true, buckets: [], error: null };
+    const x = { status: 'ok' as const, lastTurnAt: '2026-09-30T12:29:30.000Z', lastError: null, cooldownUntil: null, today: { inputTokens: 5, outputTokens: 2, turns: 1, day: '2026-09-30' } };
+    s.applyGemini(g);
+    s.applyGrok('x1', x);
+    expect(s.snapshot().geminiSeats).toEqual({ g1: g });
+    expect(s.snapshot().grokSeats).toEqual({ x1: x });
+    await s.pollOnce();
+    expect(s.snapshot().geminiSeats).toEqual({ g1: g });
+    expect(s.snapshot().grokSeats).toEqual({ x1: x });
+    expect(usageOf(s.snapshot(), 'a').status).toBe('ok');
+  });
 });
 
 describe('GPT usage (D5)', () => {

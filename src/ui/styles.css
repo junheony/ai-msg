@@ -611,8 +611,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-panel[data-dense] .usage-card { min-width: 72px; max-width: 140px; gap: 5px; padding: 5px 7px; }
 .usage-panel[data-dense] .usage-mark { display: none; }
 .usage-panel[data-dense] .usage-secondary { display: none; }
-/* 6–7 seats: the row may wrap to two lines rather than keep shrinking past readable. */
-.usage-panel[data-wrap] { flex-wrap: wrap; }
+/* 7+ seats (data-wrap): two rows only in the two-row top bar below (< 1100px). The one-row bar has a fixed height, so
+   there the cards never wrap — they only go dense. */
 /* Top bar status chips (작업 현황, 재시작 대기, 재시작됨): small muted pills like the stale tag. */
 .top-chip { flex-shrink: 0; padding: 2px 8px; border: 0; border-radius: 9px; font: inherit; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
 button.top-chip { cursor: pointer; }
@@ -655,6 +655,10 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .usage-stale { order: 2; }
   .usage-caption { order: 10; flex: 0 0 auto; }
   .usage-card { order: 10; flex: 1 1 0; max-width: none; }
+  /* 7+ seats: the card line folds into two rows of --usage-cols-wrap columns (the cards are top bar items here, the panel
+     being display: contents). The basis leaves room for the 6px gaps and the 남음 caption (~32px) that shares the first
+     row, so exactly --usage-cols-wrap cards fit each row and an even count never spills into a third. */
+  .usage-panel[data-wrap] .usage-card { flex: 1 1 calc((100% - 32px) / var(--usage-cols-wrap) - 6px); max-width: calc(100% / var(--usage-cols-wrap)); margin-top: 4px; }
   .usage-loading { order: 10; flex: 1 0 100%; padding: 4px 0 6px; }
   /* The top row is shared with the logo and actions: chips take their short form and may shrink (ellipsis). */
   .topbar-end { min-width: 0; flex-shrink: 1; }
