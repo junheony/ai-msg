@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { GEMINI_LABEL, GROK_LABEL, LEGACY_ACCOUNTS, isGeminiAccount, isGrokAccount, type Account, type Seat } from '../shared/accounts';
+import { GEMINI_LABEL, LEGACY_ACCOUNTS, isGeminiAccount, isGrokAccount, type Account, type Seat } from '../shared/accounts';
 import { accountInfos, type AccountInfo } from '../shared/protocol';
 
 /** The account list of a server that sends none (before `hello.accounts`): a/b/c, a is home. */
@@ -39,8 +39,9 @@ export function sameAccountList(a: readonly AccountInfo[], b: readonly AccountIn
 /** A seat's label: GPT, a Gemini account's, a configured Claude account's — and the id itself for one that is not configured. */
 export function seatLabel(list: readonly AccountInfo[], seat: Seat): string {
   if (seat === 'gpt') return 'GPT';
-  if (isGeminiAccount(seat)) return GEMINI_LABEL[seat];
-  if (isGrokAccount(seat)) return GROK_LABEL[seat];
+  // Spelled out on screen ("G1"/"X1" did not say which vendor); the short ids stay in server reason lines.
+  if (isGeminiAccount(seat)) return seat === 'g1' ? 'Gemini' : `Gemini ${GEMINI_LABEL[seat].slice(1)}`;
+  if (isGrokAccount(seat)) return 'Grok';
   return list.find((a) => a.id === seat)?.label ?? String(seat);
 }
 

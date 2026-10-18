@@ -70,7 +70,9 @@ describe('labels and looks', () => {
     expect(names.label('zz-gone')).toBe('zz-gone');
     expect(names.label('c')).toBe('c');
     expect(names.label('gpt')).toBe('GPT');
-    expect(names.label('g1')).toBe('G1');
+    expect(names.label('g1')).toBe('Gemini');
+    expect(names.label('g2')).toBe('Gemini 2');
+    expect(names.label('x1')).toBe('Grok');
     for (const id of ['constructor', 'toString', '__proto__', 'x']) expect(seatLabel(FIVE, id)).toBe(id);
     expect(names.look('a')).toEqual({ slot: 0, kind: 'active' });
     expect(names.look('old')).toEqual({ slot: 2, kind: 'retired' });

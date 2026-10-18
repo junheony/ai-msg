@@ -214,9 +214,15 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number): SeatData {
   };
 }
 
+/** Remaining % as shown: whole numbers (Gemini buckets report "98.5"); a sliver above 0 still reads 1, not 소진. */
+function shownPct(w: UsageWindow | null): number | null {
+  const r = remainingPct(w);
+  return r === null ? null : r > 0 && r < 1 ? 1 : Math.floor(r);
+}
+
 /** One row rendered inside the popover: label · bar (or spent pill) · remaining %. */
 function PopRow({ seat, name, k, w, now, empty }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string }) {
-  const rem = remainingPct(w);
+  const rem = shownPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
   const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '');
   if (rem === 0) {
@@ -243,7 +249,7 @@ function pickMain(rows: SeatRow[]): { row: SeatRow; rem: number } | null {
   let best: { row: SeatRow; rem: number } | null = null;
   for (const row of rows) {
     if (row.mainEligible === false) continue;
-    const rem = remainingPct(row.w);
+    const rem = shownPct(row.w);
     if (rem !== null && (!best || rem < best.rem)) best = { row, rem };
   }
   return best;
@@ -254,7 +260,7 @@ function secondaryText(rows: SeatRow[], mainKey: string | null, credits?: string
   const parts: string[] = [];
   for (const row of rows) {
     if (row.key === mainKey) continue;
-    const rem = remainingPct(row.w);
+    const rem = shownPct(row.w);
     parts.push(rem === null ? `${row.name} ${row.empty ?? '불명'}` : rem === 0 ? `${row.name} 소진` : `${row.name} ${rem}%`);
   }
   if (credits) parts.push(`크레딧 ${credits}`);
