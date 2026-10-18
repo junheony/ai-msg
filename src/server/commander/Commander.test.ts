@@ -55,7 +55,8 @@ async function setup(opts: { busy?: boolean; mode?: PermMode; enabled?: boolean;
       return Promise.resolve({ verdict: v, failed: false, usage: env.usage, account: 'a' });
     },
     send: (r) => { sends.push(r); if (env.sendOk) env.busy = true; return env.sendOk; },
-    isBusy: () => env.busy,
+    // As ws: a booked retry counts as busy.
+    isBusy: (id) => env.busy || !!store.get(id)?.pendingRetry,
     permissionModeOf: () => env.mode,
     push: (p) => pushes.push(p),
     record: (m) => records.push(m),
@@ -457,6 +458,8 @@ describe('Commander', () => {
       t.c.set(SID, { goal: 'g', done: 'd' });
       await t.c.settled();
       expect(t.store.get(SID)).not.toHaveProperty('pendingRetry');
+      // Dropped before the busy check: the first instruction goes now, not never.
+      expect(t.sends).toHaveLength(1);
     });
   });
 
@@ -496,6 +499,52 @@ describe('Commander', () => {
       t.c.restore(t.store.list());
       expect(t.state()).toEqual(st);
       expect(t.pushes).toHaveLength(0);
+    });
+  });
+
+  describe('turned off in the settings', () => {
+    it('disableAll() stops an active commander (new epoch, broadcast, reason); turning it back on sends nothing', async () => {
+      const t = await setup({ busy: true });
+      t.c.set(SID, { goal: 'g', done: 'd' });
+      await t.c.settled();
+      const e = t.state().epoch;
+      t.env.enabled = false;
+      t.broadcasts.length = 0;
+      t.c.disableAll();
+      await t.c.settled();
+      expect(t.state()).toMatchObject({ status: 'stopped', epoch: e + 1, note: '설정에서 꺼짐' });
+      expect(t.broadcasts).toContainEqual(expect.objectContaining({ type: 'commander', sessionId: SID, note: '설정에서 꺼짐' }));
+      expect(t.c.isActive(SID)).toBe(false);
+      t.env.enabled = true;
+      await t.idle();
+      expect(t.sends).toHaveLength(0);
+    });
+
+    it('disableAll() leaves done / stopped commanders as they are', async () => {
+      const t = await setup();
+      t.c.set(SID, { goal: 'g', done: 'd' });
+      await t.c.settled();
+      t.c.stop(SID, t.state().epoch);
+      const st = t.state();
+      t.broadcasts.length = 0;
+      t.c.disableAll();
+      expect(t.state()).toEqual(st);
+      expect(t.broadcasts).toHaveLength(0);
+    });
+
+    it('stop still works while the feature is off; set / resume refusals point at the settings toggle', async () => {
+      const t = await setup({ busy: true });
+      t.c.set(SID, { goal: 'g', done: 'd' });
+      await t.c.settled();
+      t.env.enabled = false;
+      expect(t.c.stop(SID, t.state().epoch)).toEqual({ ok: true });
+      expect(t.state().status).toBe('stopped');
+      const set = t.c.set(SID, { goal: 'g', done: 'd' });
+      expect(set).toMatchObject({ ok: false, code: 'commander_disabled' });
+      expect(!set.ok && set.message).toContain('설정에서 총사령탑을 켜');
+      expect(!set.ok && set.message).not.toContain('commanderEnabled');
+      const res = t.c.resume(SID, t.state().epoch);
+      expect(!res.ok && res.message).toContain('설정에서 총사령탑을 켜');
     });
   });
 

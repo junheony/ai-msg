@@ -15,6 +15,7 @@ import { SessionIndex } from './sessions/SessionIndex';
 import { SessionStateStore, type ClaudeSessionState } from './turn/SessionState';
 import { TurnRunner, type TurnParams, type TurnSink } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
+import { SettingsStore } from './settings';
 import { attachWebSocket, type WsCommander, type WsHandle } from './ws';
 import type { SegmentDigest } from './commander/types';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
@@ -40,12 +41,16 @@ const cmd = {
   active: false,
   status: 'running' as string,
   setCalls: [] as unknown[],
+  stopCalls: [] as unknown[],
+  disableAllCalls: 0,
+  onDisableAll: null as null | (() => void),
   refuse: null as null | { code: 'commander_active'; message: string },
 };
 const commander: WsCommander = {
   enabled: () => cmd.enabled,
   set: (sid, a) => { cmd.setCalls.push({ sid, ...a }); return cmd.refuse ? { ok: false, ...cmd.refuse } : { ok: true }; },
-  stop: () => ({ ok: true }),
+  stop: (sid, epoch) => { cmd.stopCalls.push({ sid, epoch }); return { ok: true }; },
+  disableAll: () => { cmd.disableAllCalls++; cmd.onDisableAll?.(); },
   pause: () => ({ ok: true }),
   resume: () => ({ ok: true }),
   view: () => ({ state: { status: cmd.status as 'running', hop: 1, maxTurns: 20, epoch: 1, goal: 'g', done: 'd', budget: { maxAutoTurns: 20, autoTurnsUsed: 1, maxTokens: 1, tokensUsed: 0, maxWallClockMs: 1, maxInternalRetries: 5, internalRetriesUsed: 0 } } }),
@@ -72,7 +77,7 @@ beforeAll(async () => {
   wsApi = attachWebSocket([server], {
     accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [base],
     notify: (m) => { notified.push(m); watch.observe(m); }, onUserSend: (sid) => { userSends.push(sid); watch.userSent(sid); },
-    commander, retryDue: (sid) => watch.retryDue(sid),
+    commander, retryDue: (sid) => watch.retryDue(sid), settings: new SettingsStore(path.join(base, 'settings.json')),
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
@@ -80,7 +85,7 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${port}`;
   close = async () => { watch.stop(); wsApi.close(); await new Promise<void>((r) => server.close(() => r())); };
 });
-afterEach(() => { vi.restoreAllMocks(); cmd.enabled = true; cmd.active = false; cmd.status = 'running'; cmd.refuse = null; });
+afterEach(() => { vi.restoreAllMocks(); cmd.onDisableAll = null; cmd.enabled = true; cmd.active = false; cmd.status = 'running'; cmd.refuse = null; });
 afterAll(async () => { await close(); await fs.rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); await bridge.close(); });
 
 const state = (sessionId: string, over: Partial<ClaudeSessionState> = {}): ClaudeSessionState => ({ sessionId, cwd: base, account: 'a', projectDir: base, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', ...over });
@@ -211,6 +216,20 @@ describe('ws: the person acting during a commander', () => {
     ws.close();
   });
 
+  it('■중단 of the person\'s own turn is not (an armed commander still starts at idle)', async () => {
+    const S = 'cfcfcfcf-cfcf-4fcf-8fcf-cfcfcfcfcfcf';
+    await store.set(state(S));
+    const h = heldRun();
+    const { ws } = await connect();
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: '사람' }));
+    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    const before = userSends.filter((s) => s === S).length;
+    ws.send(JSON.stringify({ type: 'interrupt', turnId: h.calls[0]!.turnId }));
+    await vi.waitFor(() => expect(idles.some((i) => i.sid === S)).toBe(true));
+    expect(userSends.filter((s) => s === S)).toHaveLength(before);
+    ws.close();
+  });
+
   it('a steer into the running turn is reported as the user sending (commander pause)', async () => {
     const S = 'c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5';
     await store.set(state(S));
@@ -263,12 +282,37 @@ describe('ws: commander messages', () => {
     ws.send(JSON.stringify({ type: 'commander_set', sessionId: S, goal: 'g', done: 'd' }));
     await vi.waitFor(() => expect(inbox.some((m) => m.type === 'error' && m.code === 'commander_active')).toBe(true));
     cmd.enabled = false;
-    ws.send(JSON.stringify({ type: 'commander_stop', sessionId: S, epoch: 1 }));
+    ws.send(JSON.stringify({ type: 'commander_set', sessionId: S, goal: 'g', done: 'd' }));
     await vi.waitFor(() => expect(inbox.some((m) => m.type === 'error' && m.code === 'commander_disabled')).toBe(true));
+    const off = inbox.find((m) => m.type === 'error' && m.code === 'commander_disabled') as { message: string };
+    expect(off.message).toContain('설정에서 총사령탑을 켜');
+    expect(off.message).not.toContain('commanderEnabled');
+    // ■ 정지 is still heard while off (a commander left from before is never stuck).
+    ws.send(JSON.stringify({ type: 'commander_stop', sessionId: S, epoch: 4 }));
+    await vi.waitFor(() => expect(cmd.stopCalls).toContainEqual({ sid: S, epoch: 4 }));
+    expect(inbox.filter((m) => m.type === 'error' && m.code === 'commander_disabled')).toHaveLength(1);
     const late = await connect();
     expect(late.inbox.find((m) => m.type === 'hello') ?? (await vi.waitFor(() => late.inbox.find((m) => m.type === 'hello')!))).toMatchObject({ features: expect.not.arrayContaining(['commander']) });
     ws.close();
     late.ws.close();
+  });
+});
+
+describe('ws: turning 총사령탑 off in the settings', () => {
+  it('stops every active commander before the settings broadcast; turning it on does not', async () => {
+    const { ws, inbox } = await connect();
+    await vi.waitFor(() => expect(inbox.some((m) => m.type === 'hello')).toBe(true));
+    let settingsSeenAtDisable = -1;
+    cmd.onDisableAll = () => { settingsSeenAtDisable = inbox.filter((m) => m.type === 'settings').length; };
+    const before = cmd.disableAllCalls;
+    ws.send(JSON.stringify({ type: 'set_settings', commanderEnabled: true }));
+    await vi.waitFor(() => expect(inbox.filter((m) => m.type === 'settings')).toHaveLength(1));
+    expect(cmd.disableAllCalls).toBe(before);
+    ws.send(JSON.stringify({ type: 'set_settings', commanderEnabled: false }));
+    await vi.waitFor(() => expect(inbox.filter((m) => m.type === 'settings')).toHaveLength(2));
+    expect(cmd.disableAllCalls).toBe(before + 1);
+    expect(settingsSeenAtDisable).toBe(1);
+    ws.close();
   });
 });
 

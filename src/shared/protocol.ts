@@ -99,7 +99,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * Server-wide settings (persisted, broadcast to every device as `settings`). `defaultPermissionMode` = the mode new
    * sessions start in; `autoApprove` is the legacy switch (true = bypassPermissions, false = default).
    */
-  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional() }),
+  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
    * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),
@@ -139,7 +139,7 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
    * user pins another. Turned on only after the user agrees to the own-accounts-only notice. Absent from older servers.
    */
   sameVendorRotation?: boolean;
-  /** 총사령탑 (settings file only, no screen): off by default; the turn cap a goal gets without one and its token budget. Absent from older servers. */
+  /** 총사령탑: off by default (설정 화면 토글 or the settings file); the turn cap a goal gets without one and its token budget (file only). Absent from older servers. */
   commanderEnabled?: boolean;
   commanderMaxTurns?: number;
   commanderTokenCap?: number };
@@ -191,7 +191,7 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - sessionOps: `set_cwd` (작업 폴더 바꾸기) and `duplicate_session` (복제) are answered; `send.title` is applied.
  * - serverUpdate: GET /api/server-update and POST /api/restart answer (서버 업데이트 대기 · 지금 재시작; `{force:true}` while draining exits now).
  * - commander: `commander_set|stop|pause|resume` are answered and `commander` is broadcast (총사령탑). Advertised only while
- *   the settings file turns it on (`commanderEnabled`).
+ *   the settings turn it on (`commanderEnabled`); a `settings` broadcast that changes it carries the new list.
  */
 export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander'] as const;
 export type Feature = (typeof FEATURES)[number];
@@ -224,7 +224,8 @@ export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
   | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
-  | { type: 'settings'; settings: DeckSettings }
+  /** `features`: the server's list again when a setting changed it (총사령탑 켜기·끄기 → 'commander'); absent = unchanged. */
+  | { type: 'settings'; settings: DeckSettings; features?: string[] }
   | ({ type: 'commander'; sessionId: string } & CommanderView)
   /** A Claude session's permission mode changed (picker, Shift+Tab, or an approved plan). */
   | { type: 'permission_mode'; sessionId: string; mode: PermMode }

@@ -2216,3 +2216,28 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
 /* Sidebar: open-session markers — the split number (◱: a floating card) of a session already open in a pane */
 .open-mark { flex-shrink: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
 .sidebar li.active .open-mark { color: var(--fg-strong); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--line-strong)); }
+
+/* 총사령탑 (CommanderChip / CommanderSheet): header chip + ■ 정지 · 재개, the last verdict under it; the sheet is a bottom sheet on a phone. */
+.commander-wrap { position: relative; display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex-shrink: 1; }
+.chip.commander { cursor: pointer; min-width: 0; flex-shrink: 1; }
+.chip.commander-live { color: var(--accent); background: var(--accent-soft); box-shadow: none; }
+.chip.commander-human { color: var(--warn); }
+.chip.commander-done { color: var(--ok); }
+.chip.commander-btn { flex-shrink: 0; cursor: pointer; color: var(--fg); }
+.chip.commander-btn:hover, .chip.commander:hover { background: var(--selected); }
+.commander-refusal { font-size: calc(12px * var(--font-scale, 1)); color: var(--danger); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.commander-detail { position: absolute; left: 0; top: calc(100% + 6px); z-index: 41; width: min(380px, 80vw); padding: 10px 12px; border-radius: 10px; background: var(--panel); color: var(--fg); border: 1px solid var(--line-strong); box-shadow: var(--shadow); font-size: calc(13px * var(--font-scale, 1)); white-space: normal; }
+.commander-detail dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+.commander-detail dt { color: var(--muted); } .commander-detail dd { margin: 0; overflow-wrap: anywhere; }
+.commander-form { padding: 16px 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+.commander-form p { margin: 0; }
+.commander-field { display: flex; flex-direction: column; gap: 4px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
+.commander-field textarea, .commander-field input { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; resize: vertical; }
+.commander-field.turns input { width: 6em; }
+.commander-error { color: var(--danger); font-size: calc(13px * var(--font-scale, 1)); }
+@media (max-width: 720px) {
+  .sheet-backdrop:has(> .commander-sheet) { align-items: flex-end; }
+  .sheet.commander-sheet { max-height: 92%; border-radius: 14px 14px 0 0; }
+  .chip.commander-btn { height: 30px; padding: 0 10px; }
+  .commander-detail { position: fixed; left: 8px; right: 8px; top: auto; width: auto; }
+}

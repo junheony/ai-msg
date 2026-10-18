@@ -25,7 +25,7 @@ function Seg<T extends string>({ label, value, options, onPick }: { label: strin
   );
 }
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, claudeAccounts = 0, onOpenUsage, onOpenHighlights, onClose }: {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, claudeAccounts = 0, onOpenUsage, onOpenHighlights, onClose }: {
   build: string | null;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
@@ -36,6 +36,9 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   /** 같은 벤더 계정 자동 순환 (server setting; null = not known yet / an older server). Turning it on asks for consent first. */
   sameVendorRotation?: boolean | null;
   onSameVendorRotation?: (on: boolean) => void;
+  /** 총사령탑 (server setting; null = not known yet / a server without it). */
+  commanderEnabled?: boolean | null;
+  onCommanderEnabled?: (on: boolean) => void;
   /** Active Claude accounts: with one, there is nothing to rotate between and the switch is disabled. */
   claudeAccounts?: number;
   onOpenUsage: () => void;
@@ -76,6 +79,12 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           </label>
         ) : <p className="muted">서버 연결 후 표시됩니다.</p>}
         <p className="muted">세션별 모드는 입력창의 권한 선택(Shift+Tab)으로 바꿉니다.</p>
+        {onCommanderEnabled && commanderEnabled !== null && (
+          <>
+            <Seg<'off' | 'on'> label="총사령탑" value={commanderEnabled ? 'on' : 'off'} onPick={(v) => { if ((v === 'on') !== commanderEnabled) onCommanderEnabled(v === 'on'); }} options={[['off', '끄기'], ['on', '켜기']]} />
+            <p className="muted">켜면 Claude 세션의 ⋯ 메뉴에서 목표와 완료 조건을 걸 수 있습니다. 세션이 쉴 때마다 판정해 다음 지시를 자동으로 보내고, 권한 카드·되돌리기 어려운 일은 사람에게 넘깁니다.</p>
+          </>
+        )}
       </section>
       <section aria-label="알림">
         <h3>알림</h3>

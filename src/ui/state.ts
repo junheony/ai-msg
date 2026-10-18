@@ -1,6 +1,6 @@
 import type { Account, Seat } from '../shared/accounts';
 import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type DeckSettings, type SessionFacts, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
+import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSettings, type RefusalCode, type SessionFacts, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -344,6 +344,14 @@ export type AppState = {
   restartedAt: number | null;
   /** The server's latest answer to route_preview: where the next turn of that session would go. */
   routePreview: RoutePreview | null;
+  /** 총사령탑 켜짐 (server setting); null = not known yet, or a server without it. */
+  commanderEnabled: boolean | null;
+  /** The settings' 총사령탑 turn cap (the 걸기 sheet starts there); null = not known yet. */
+  commanderMaxTurns: number | null;
+  /** 총사령탑 per session, exactly as the server last said (`commander`, SessionFacts.commander) — never stored on the device. */
+  commanders: Record<string, CommanderView>;
+  /** The server's last refusal of a commander_* ask (or of a mode change because one is active), per session, until the user acts again. */
+  commanderRefusals: Record<string, RefusalCode>;
 };
 
 export type RoutePreview = Omit<Extract<ServerMessage, { type: 'route_preview' }>, 'type'>;
@@ -379,7 +387,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null };
+export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -435,6 +443,8 @@ export type Action =
   | { type: 'clear_route_preview' }
   /** `message` omitted = all of the pane's bars. */
   | { type: 'dismiss_notice'; paneId?: string; message?: string }
+  /** 총사령탑: the refusal shown in the sheet / chip goes (the user acts again, or it timed out). */
+  | { type: 'commander_refusal_clear'; sessionId: string }
   | { type: 'set_pins'; pins: string[] }
   | { type: 'show_error'; message: string }
   | { type: 'queue_add'; text: string; paneId?: string; /** Also sent as a steer under this id (전달 대기 until the server answers). */ steerId?: string }
@@ -960,10 +970,20 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
   if (settings.defaultPermissionMode !== state.defaultPermMode) state = { ...state, defaultPermMode: settings.defaultPermissionMode };
   if ((settings.routingPolicy ?? 'balance') !== state.routingPolicy) state = { ...state, routingPolicy: settings.routingPolicy ?? 'balance' };
   if ((settings.sameVendorRotation ?? null) !== state.sameVendorRotation) state = { ...state, sameVendorRotation: settings.sameVendorRotation ?? null };
+  if ((settings.commanderEnabled ?? null) !== state.commanderEnabled) state = { ...state, commanderEnabled: settings.commanderEnabled ?? null };
+  if ((settings.commanderMaxTurns ?? null) !== state.commanderMaxTurns) state = { ...state, commanderMaxTurns: settings.commanderMaxTurns ?? null };
   if (settings.autoApprove === state.autoApprove) return state;
   const from = defaultGeminiSandbox(state.autoApprove ?? false);
   const to = defaultGeminiSandbox(settings.autoApprove);
   return { ...state, autoApprove: settings.autoApprove, panes: state.panes.map((p) => (p.engine === 'gemini' && p.sandbox === from ? { ...p, sandbox: to } : p)) };
+}
+
+/** SessionFacts.commander: the session's commander on (re)open — absent (feature off, an older server) or null = none. */
+function withCommander(state: AppState, sessionId: string, view: CommanderView | null | undefined): AppState {
+  if (view) return { ...state, commanders: { ...state.commanders, [sessionId]: view } };
+  if (!(sessionId in state.commanders)) return state;
+  const { [sessionId]: _gone, ...rest } = state.commanders;
+  return { ...state, commanders: rest };
 }
 
 function onServer(state: AppState, msg: ServerMessage): AppState {
@@ -981,9 +1001,16 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       });
       return applySettings({ ...state, connected: true, disconnectedSince: null, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
     }
-    case 'settings': return applySettings(state, msg.settings);
-    // 총사령탑: shown from stage 6 (CommanderChip); nothing kept yet.
-    case 'commander': return state;
+    case 'settings': {
+      // 총사령탑 turned off: what was cached of it goes (turned on again, no old chip or epoch shows).
+      const off = msg.features && !msg.features.includes('commander') && (Object.keys(state.commanders).length || Object.keys(state.commanderRefusals).length);
+      return applySettings(off ? { ...state, commanders: {}, commanderRefusals: {} } : state, msg.settings);
+    }
+    // 총사령탑: the chip shows the server's view as it is (CommanderChip).
+    case 'commander': {
+      const { type: _t, sessionId, ...view } = msg;
+      return { ...state, commanders: { ...state.commanders, [sessionId]: view } };
+    }
     // A mode the user picked before the id arrived wins: it is on its way to the server.
     case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && !p.session.permissionModePending ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
     case 'account_pin': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, accountPin: msg.pin } } : p)) };
@@ -1004,6 +1031,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       // waiting for its reply counts). A history no pane views — its pane was closed or switched while the reply
       // was in flight — is dropped, never adopted by a blank pane (T9 prerequisite b).
       if (!state.panes.some((p) => p.session?.sessionId === msg.sessionId)) return state;
+      state = withCommander(state, msg.sessionId, msg.commander);
       const doubt = inDoubt(msg, Date.now());
       const doubted = state.panes.filter((p) => p.session?.sessionId === msg.sessionId).flatMap((p) => p.queue.filter(doubt).map((q) => q.text || '첨부만'));
       return { ...state, ...(doubted.length ? { error: `이미 들어갔을 수 있어 멈춰 둔 메시지: ${doubted.join(' / ')}` } : {}), panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...paneOnServer(p, msg, false, state.accounts), loading: false } : p)) };
@@ -1074,6 +1102,10 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       // already_accepted: nothing failed (a resent copy was refused) — no error bar.
       if (msg.code === 'already_accepted') return { ...state, panes: mapPanes(state, msg) };
       const sid = msg.sessionId;
+      // 총사령탑 refusals: said in the sheet / on the chip (CommanderChip REFUSAL_TEXT), not in the pane's bar — while one of
+      // them can show it. With the feature off here, or a mode change refused with no commander view, no chip is drawn: the
+      // pane's notice says it instead.
+      if (sid && msg.code?.startsWith('commander_') && has('commander') && (sid in state.commanders || msg.code !== 'commander_active')) return { ...state, commanderRefusals: { ...state.commanderRefusals, [sid]: msg.code } };
       if (sid && state.panes.some((p) => p.session?.sessionId === sid)) {
         return { ...state, panes: mapPanes(state, msg).map((p) => (p.session?.sessionId === sid ? { ...withNotice(p, { sessionId: sid, message: msg.message, level: 'error' }), loading: false } : p)) };
       }
@@ -1348,6 +1380,11 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'dismiss_error': return { ...state, error: null };
     case 'dismiss_restart': return { ...state, restartedAt: null };
     case 'clear_route_preview': return state.routePreview ? { ...state, routePreview: null } : state;
+    case 'commander_refusal_clear': {
+      if (!(action.sessionId in state.commanderRefusals)) return state;
+      const { [action.sessionId]: _gone, ...rest } = state.commanderRefusals;
+      return { ...state, commanderRefusals: rest };
+    }
     case 'dismiss_notice': return updatePane(state, action.paneId, (p) => (p.notices?.length ? { ...p, notices: action.message === undefined ? [] : p.notices.filter((n) => n.message !== action.message) } : p));
     case 'set_pins': return { ...state, pins: action.pins };
     case 'show_error': return { ...state, error: action.message };

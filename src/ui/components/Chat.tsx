@@ -50,6 +50,8 @@ export type ChatProps = {
   sessionId?: string | null;
   /** Right-aligned header buttons (갈라짐, Desktop에서 열기, the pane's close button), before the ⋯ menu. */
   headActions?: ReactNode;
+  /** Extra header chips from the pane (총사령탑), after the session's own. */
+  headChips?: ReactNode;
   /** Extra ⋯ menu items from the pane (파일 열기 / 파일 패널 닫기). */
   headMenu?: { label: string; run: () => void }[];
   model: ModelChoice;
@@ -532,6 +534,7 @@ export function Chat(p: ChatProps) {
             : <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? DEFAULT_SANDBOX]}</span>)}
           {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${PERM_MODE_HINT[permMode]}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}
           {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
+          {p.headChips}
         </div>
         <div className="chat-head-end">
           {p.headActions}

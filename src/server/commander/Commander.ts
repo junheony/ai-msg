@@ -24,6 +24,8 @@ export const WATCHDOG_MS = 30_000;
 export const DEFAULT_WALL_CLOCK_MS = 12 * 3600_000;
 export const DEFAULT_MAX_INTERNAL_RETRIES = 5;
 export const RESTART_NOTE = '재시작으로 끊김 · 재개';
+export const DISABLED_MESSAGE = '총사령탑이 꺼져 있습니다 — 설정에서 총사령탑을 켜 주세요';
+export const DISABLED_NOTE = '설정에서 꺼짐';
 const PUSH_BODY_MAX = 140;
 
 export type CommanderSendRequest = { kind: 'commander'; sessionId: string; cwd: string; text: string; hop: number; sendKey: string; commanderNote: string };
@@ -87,7 +89,7 @@ export class Commander {
     return c ? viewOf(c) : null;
   }
 
-  /** 기능 게이트(설정 파일 commanderEnabled). */
+  /** 기능 게이트(설정 화면 총사령탑 토글). */
   enabled(): boolean {
     return this.deps.enabled();
   }
@@ -106,7 +108,7 @@ export class Commander {
   // ── 사용자 조작 ─────────────────────────────────────────────
 
   set(sessionId: string, a: { goal: string; done: string; maxTurns?: number }): CommanderResult {
-    if (!this.deps.enabled()) return { ok: false, code: 'commander_disabled', message: '총사령탑이 꺼져 있습니다(설정 파일 commanderEnabled)' };
+    if (!this.deps.enabled()) return { ok: false, code: 'commander_disabled', message: DISABLED_MESSAGE };
     const st = this.deps.store.get(sessionId);
     if (!st) return { ok: false, code: 'commander_engine', message: '총사령탑은 deck 에서 턴을 돌린 Claude 세션에만 걸 수 있습니다' };
     if (isCodexState(st) || isGeminiState(st)) return { ok: false, code: 'commander_engine', message: '총사령탑은 Claude 세션에서만 쓸 수 있습니다' };
@@ -138,6 +140,18 @@ export class Commander {
     return { ok: true };
   }
 
+  /** 설정에서 끔: 활성 사령탑을 모두 정지(epoch 증가·방송). 다시 켜도 옛 armed 가 저절로 나가지 않는다. 진행 중 턴은 끊지 않는다. */
+  disableAll(): void {
+    for (const st of this.deps.store.list()) {
+      const c = st.commander;
+      if (!c || !ACTIVE_STATUSES.includes(c.status)) continue;
+      const next: CommanderState = { ...c, status: 'stopped', epoch: c.epoch + 1, note: DISABLED_NOTE };
+      delete next.pausedBy;
+      void this.save(st.sessionId, next);
+      this.dropRetry(st.sessionId);
+    }
+  }
+
   pause(sessionId: string, epoch: number): CommanderResult {
     const c = this.get(sessionId);
     const bad = this.checkEpoch(c, epoch);
@@ -149,7 +163,7 @@ export class Commander {
   }
 
   resume(sessionId: string, epoch: number): CommanderResult {
-    if (!this.deps.enabled()) return { ok: false, code: 'commander_disabled', message: '총사령탑이 꺼져 있습니다(설정 파일 commanderEnabled)' };
+    if (!this.deps.enabled()) return { ok: false, code: 'commander_disabled', message: DISABLED_MESSAGE };
     const c = this.get(sessionId);
     const bad = this.checkEpoch(c, epoch);
     if (bad || !c) return bad ?? notFound();

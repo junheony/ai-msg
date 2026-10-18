@@ -17,7 +17,7 @@ function normalize(mode: PermMode, routingPolicy: RoutingPolicy, sameVendorRotat
   return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode, routingPolicy, sameVendorRotation, ...commander };
 }
 
-/** 총사령탑 settings come from the file only (no screen, not in set_settings): out-of-range values fall back to the defaults. */
+/** 총사령탑 settings from the file (`commanderEnabled` also through set_settings): out-of-range values fall back to the defaults. */
 function commanderFrom(r: Record<string, unknown>): CommanderSettings {
   const int = (v: unknown, min: number, max: number, dflt: number) => (typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max ? v : dflt);
   return {
@@ -57,7 +57,7 @@ export class SettingsStore {
 
   async set(patch: Partial<DeckSettings>): Promise<Required<DeckSettings>> {
     const mode = patch.defaultPermissionMode ?? (patch.autoApprove !== undefined ? permModeFromAutoApprove(patch.autoApprove) : this.current.defaultPermissionMode);
-    const next = normalize(mode, patch.routingPolicy ?? this.current.routingPolicy, patch.sameVendorRotation ?? this.current.sameVendorRotation, { commanderEnabled: this.current.commanderEnabled, commanderMaxTurns: this.current.commanderMaxTurns, commanderTokenCap: this.current.commanderTokenCap });
+    const next = normalize(mode, patch.routingPolicy ?? this.current.routingPolicy, patch.sameVendorRotation ?? this.current.sameVendorRotation, { commanderEnabled: patch.commanderEnabled ?? this.current.commanderEnabled, commanderMaxTurns: this.current.commanderMaxTurns, commanderTokenCap: this.current.commanderTokenCap });
     this.current = next;
     this.writing = this.writing.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });

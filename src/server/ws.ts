@@ -30,7 +30,7 @@ import { isCodexState, isGeminiState, type ClaudeSessionState, type SessionState
 import { abortedText, SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 import { SegmentCollector } from './commander/digest';
-import type { CommanderResult, CommanderSendRequest } from './commander/Commander';
+import { DISABLED_MESSAGE, type CommanderResult, type CommanderSendRequest } from './commander/Commander';
 import type { SegmentDigest } from './commander/types';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
@@ -184,6 +184,8 @@ export type WsCommander = {
   enabled(): boolean;
   set(sessionId: string, a: { goal: string; done: string; maxTurns?: number }): CommanderResult;
   stop(sessionId: string, epoch: number): CommanderResult;
+  /** 설정에서 끔: every active commander is stopped. */
+  disableAll(): void;
   pause(sessionId: string, epoch: number): CommanderResult;
   resume(sessionId: string, epoch: number): CommanderResult;
   view(sessionId: string): CommanderView | null;
@@ -1036,6 +1038,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
 
   /** `open_session`: the session's history (and, mid-turn, what its running turn has shown so far) to one socket, which views it from now on. */
   /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
+  /** hello.features: 'commander' only while the settings turn it on. */
+  const featureList = () => FEATURES.filter((f) => f !== 'commander' || deps.commander?.enabled() === true);
   const runningOf = (sid: string) => {
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;
@@ -1165,7 +1169,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: FEATURES.filter((f) => f !== 'commander' || deps.commander?.enabled() === true), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
     // hello's `activity` is the session list only: whether the server is draining, and since when it runs, come here.
     send(ws, activityMsg());
     for (const m of broker.pending()) send(ws, m);
@@ -1235,9 +1239,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'interrupt': {
           // A continuation's or follow-up's id stops the process it runs in (and its background work).
           const base = baseOf(msg.turnId);
-          // A person stopping a turn is a person acting (총사령탑: pause — the stopped auto turn is not judged into the next one).
+          // A person stopping an auto turn is a person acting (총사령탑: pause — it is not judged into the next one).
+          // Stopping their own turn is not: an armed commander then starts at idle as it would have.
           const sid = turns.get(base)?.sessionId;
-          if (sid) userSent(sid);
+          if (sid && COMMANDER_TURN_RE.test(base)) userSent(sid);
           turns.get(base)?.ac.abort();
           for (const id of new Set([msg.turnId, base])) { broker.cancelTurn(id); questions.cancelTurn(id); }
           break;
@@ -1360,8 +1365,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
           // The default only applies to new sessions (and ones with no stored mode) from their next turn: waiting cards stay.
-          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}) })
-            .then((settings) => broadcast({ type: 'settings', settings }))
+          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}) })
+            // 총사령탑 켜기·끄기 changes what the server advertises: every device gets the list again.
+            .then((settings) => {
+              // Off: no commander is left running unseen (devices drop the chip with the feature) or armed for a later on.
+              if (msg.commanderEnabled === false) deps.commander?.disableAll();
+              broadcast({ type: 'settings', settings, ...(msg.commanderEnabled !== undefined ? { features: featureList() } : {}) });
+            })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `설정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
         }
@@ -1370,7 +1380,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'commander_pause':
         case 'commander_resume': {
           const c = deps.commander;
-          if (!c?.enabled()) { send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, code: 'commander_disabled', message: '총사령탑이 꺼져 있습니다(설정 파일 commanderEnabled)' }); break; }
+          // ■ 정지 is heard while off too: a commander from before is never stuck.
+          if (!c || (!c.enabled() && msg.type !== 'commander_stop')) { send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, code: 'commander_disabled', message: DISABLED_MESSAGE }); break; }
           const res = msg.type === 'commander_set' ? c.set(msg.sessionId, { goal: msg.goal, done: msg.done, ...(msg.maxTurns !== undefined ? { maxTurns: msg.maxTurns } : {}) })
             : msg.type === 'commander_stop' ? c.stop(msg.sessionId, msg.epoch)
               : msg.type === 'commander_pause' ? c.pause(msg.sessionId, msg.epoch)

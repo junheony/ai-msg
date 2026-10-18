@@ -666,7 +666,8 @@ describe('ws', () => {
     expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8')).routingPolicy).toBe('drain');
     const pf = collect(b.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 }));
-    expect((await pf).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 } });
+    // A commanderEnabled patch (총사령탑 토글) sends the feature list again: no 'commander' while it is off.
+    expect((await pf).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 }, features: expect.not.arrayContaining(['commander']) });
     expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8')).sameVendorRotation).toBe(true);
     a.ws.close(); b.ws.close();
   });

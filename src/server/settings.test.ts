@@ -100,4 +100,16 @@ describe('SettingsStore', () => {
     await again.load();
     expect(again.get().sameVendorRotation).toBe(false);
   });
+
+  it('commanderEnabled: the settings screen toggle changes it; other changes keep it and the file-only limits', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-set-'));
+    const file = path.join(dir, 'settings.json');
+    await fs.writeFile(file, JSON.stringify({ commanderMaxTurns: 30 }));
+    const s = new SettingsStore(file);
+    await s.load();
+    expect((await s.set({ commanderEnabled: true })).commanderEnabled).toBe(true);
+    expect(await s.set({ routingPolicy: 'drain' })).toMatchObject({ commanderEnabled: true, commanderMaxTurns: 30 });
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toMatchObject({ commanderEnabled: true, commanderMaxTurns: 30 });
+    expect((await s.set({ commanderEnabled: false })).commanderEnabled).toBe(false);
+  });
 });
