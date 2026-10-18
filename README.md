@@ -28,7 +28,7 @@ The name: a quarterdeck is where the captain commands the ship. Internal identif
 - **Steer and queue** — a message sent while a turn runs is injected at the next tool boundary, or queued for after the turn.
 - **Reconnect catch-up** — turns keep running on the server when a browser disconnects; a reconnecting device receives only the events it missed.
 - **Push notifications** — Web Push from the installed PWA (needs HTTPS, see [Remote access](#remote-access)).
-- **Codex and Gemini engines** — optional; a session is bound to one engine when it is created.
+- **Codex, Gemini and Grok engines** — optional; a session is bound to one engine when it is created.
 
 ## Requirements
 
@@ -37,7 +37,7 @@ The name: a quarterdeck is where the captain commands the ship. Internal identif
 | Node.js | 24 or newer (`engines` in `package.json`) |
 | Claude Code | Logged in with `claude` on this machine. One account is enough. |
 | OS | macOS is the development and supported platform. |
-| Optional | Codex CLI 0.159 or newer (`codex login`), Gemini CLI, Tailscale |
+| Optional | Codex CLI 0.159 or newer (`codex login`), Gemini CLI, Grok CLI (`grok login`), Tailscale |
 
 **Linux:** the server, the Claude and Codex engines and Tailscale binding are not macOS-specific, and the unit tests run on Linux in CI as an informational job. Not available on Linux: the launchd service scripts (`scripts/install-launchd.sh`), Claude Desktop session records (the default path is macOS's `~/Library/Application Support/Claude`), and the Gemini write sandbox (macOS seatbelt). Linux is not regularly used by the author.
 
@@ -113,7 +113,7 @@ To use other ids or directories, name accounts, set the home account or retire o
 | Field | Default | Meaning |
 |---|---|---|
 | `version` | required | Must be `1`. |
-| `id` | required | Permanent key, `^[a-z0-9][a-z0-9_-]{0,15}$`. Stored with sessions. Not allowed: `gpt`, `g1`, `g2`, `codex`, `all`, `auto`, `none`, `null`, `undefined`, `constructor`. |
+| `id` | required | Permanent key, `^[a-z0-9][a-z0-9_-]{0,15}$`. Stored with sessions. Not allowed: `gpt`, `g1`, `g2`, `x1`, `x2`, `grok`, `codex`, `all`, `auto`, `none`, `null`, `undefined`, `constructor`. |
 | `label` | `id` in upper case | Name shown in the UI (1 to 40 characters). |
 | `configDir` | `~/.claude` for `a`, else `~/.claude-<id>` | The profile directory: absolute, or starting with `~/`. |
 | `card` | `claude:main`, `claude:second`, `claude:third` for `a`, `b`, `c`; else `claude:<id>` | Card id in the optional usage dashboard (see [Usage data](#usage-data)). |
@@ -121,6 +121,8 @@ To use other ids or directories, name accounts, set the home account or retire o
 | `home` (top level) | `a` if it is active, else the first active account | The one profile Claude Desktop reads and writes. Sessions run on other accounts are mirrored back to it. Must be an active account. |
 
 At least one account must be active. Unknown fields are ignored.
+
+**Upgrading:** `x1`, `x2` and `grok` are now reserved for Grok. If your `accounts.json` uses one of these ids, the server refuses to start — rename that account to another id.
 
 **If the file is there but wrong** (unreadable, not JSON, wrong shape, duplicate id, directory or card, unknown `home`, relative `configDir`), the server does not start. It prints the file path and the reason. It does not fall back to discovery, because that would silently run with a different set of accounts than the file says. Only a missing file means discovery.
 
@@ -154,14 +156,18 @@ Cautions:
 
 Each turn's badge shows the account, the model and the reason for the choice.
 
-## Codex and Gemini (optional)
+## Codex, Gemini and Grok (optional)
 
 | Engine | How it runs | Notes |
 |---|---|---|
 | Codex | `codex exec --json` as a child process | Needs codex-cli 0.159 or newer. No approval cards: turns run with `approval_policy=never` inside a sandbox. The sandbox is workspace-write with network access on by default (whatever the Claude permission default), or read-only if you pick it. You can change it on an existing session from its sandbox chip; it applies from the next turn. `danger-full-access` is never used. |
 | Gemini | `gemini -o stream-json` as a child process | Explicit choice only; never selected automatically. Up to two accounts (`g1`, `g2`), each with its own `GEMINI_CLI_HOME` at `<configDir>/gemini/<id>`. Reopened sessions do not show earlier messages. |
 
-Without the binary, the engine is hidden in the UI. quarterdeck never logs in for you: use `codex login`, and see [docs/gemini-spike.md](docs/gemini-spike.md) (Korean) for the Gemini login steps and limits.
+| Grok | `grok` (Grok Build CLI) over ACP as a child process | Explicit choice only; never selected automatically. One seat (`x1`) using `~/.grok`. Models Grok 4.6 (default) and Grok 4.5. Approval cards, 모두 자동 승인, messages sent mid-turn and the audit log work as in Claude sessions. No usage card (Grok's quota is not readable). Image attachments are refused. Reopened sessions do not show earlier messages. |
+
+Without the binary, the engine is hidden in the UI (Grok is shown dimmed). quarterdeck never logs in for you: use `codex login`, and see [docs/gemini-spike.md](docs/gemini-spike.md) (Korean) for the Gemini login steps and limits. Grok: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, then run `grok login` once in a terminal, then restart quarterdeck.
+
+**Grok and project `.grok/` folders.** The Grok CLI reads a project's own `.grok/` settings, which can change its permissions or run commands. Do not start Grok sessions in folders that contain a `.grok/` directory you did not create; quarterdeck refuses such folders where it can detect them.
 
 ## Configuration
 
@@ -185,6 +191,7 @@ All settings are environment variables. None is required.
 | `DECK_CODEX_BIN` | search `PATH`, `~/.local/bin`, `~/.nvm` | Path to `codex`. An explicit path skips the version check. |
 | `CODEX_HOME` | `~/.codex` | Where Codex session rollouts are read from. |
 | `DECK_GEMINI_BIN` | search `PATH`, `~/.local/bin` | Path to `gemini`. |
+| `DECK_GROK_BIN` | search `PATH`, `~/.grok/bin` | Path to `grok`. Grok always uses `~/.grok` as its home (a `GROK_HOME` in the shell is ignored). |
 | `DECK_DESKTOP_SESSIONS_DIR` | `~/Library/Application Support/Claude/claude-code-sessions` | Claude Desktop session records (read-only). |
 | `DECK_VAPID_SUBJECT` | derived | `https:` or `mailto:` subject for Web Push. |
 | `DECK_UI_DIR` | `dist/ui` | Built UI directory. |
@@ -286,7 +293,7 @@ npm run build
 
 ```
 src/server/          HTTP + WebSocket server (Node, TypeScript)
-  engine/            ClaudeEngine (Agent SDK), CodexEngine, GeminiEngine
+  engine/            ClaudeEngine (Agent SDK), CodexEngine, GeminiEngine, GrokEngine
   routing/           account, engine and model selection; cooldowns
   turn/              TurnRunner: one turn from routing to result, retries
   sessions/          session index, cross-profile moves, forks, trash, search
@@ -305,7 +312,7 @@ docs/                architecture and protocol notes
 
 ## Disclaimer
 
-quarterdeck is an unofficial personal project. It is not affiliated with, endorsed by or supported by Anthropic, OpenAI or Google. "Claude", "Codex" and "Gemini" are trademarks of their respective owners.
+quarterdeck is an unofficial personal project. It is not affiliated with, endorsed by or supported by Anthropic, OpenAI, Google or xAI. "Claude", "Codex", "Gemini" and "Grok" are trademarks of their respective owners.
 
 It is a local front end for CLIs that you have installed and logged in to yourself, on your own device. It does not use API keys and does not share accounts between people. Whether your use, including the use of more than one account, complies with each service's terms is your responsibility.
 

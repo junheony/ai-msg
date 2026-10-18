@@ -1,12 +1,13 @@
 import { loadDraft, saveDraft } from '../autoReload';
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
+import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, GROK_MODELS, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
-import type { GeminiStatus } from '../../shared/protocol';
+import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import type { PermissionDecision, QuestionAnswers, TurnPhase } from '../../shared/turn-types';
 import type { AgentInfo, ChatItem, PaneBackground, PendingPermission, PendingQuestion, QueueItem, UploadedAttachment } from '../state';
 import { latestContext } from '../context';
+import { has } from '../features';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
@@ -19,7 +20,7 @@ import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
 import { HANDOFF_COMMAND, HANDOFF_PROMPT } from '../../shared/handoff';
-import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, nextPermMode, type PermMode } from '../../shared/permission';
+import { PERM_MODES, PERM_MODE_LABEL, nextPermMode, permModeHint, type PermMode } from '../../shared/permission';
 import type { CommandItem } from '../autocomplete';
 import { MessageActionsContext, MessageView, RegenerateContext, type MessageActions, type Regenerate } from './MessageView';
 import { FIND_EVENT, FindBar } from './FindBar';
@@ -67,6 +68,8 @@ export type ChatProps = {
   codexAvailable: boolean;
   /** null = no gemini-cli: no Gemini option. Not logged in: the option is shown disabled with 로그인 필요. */
   gemini?: GeminiStatus | null;
+  /** hello.grok; null = an older server that knows no Grok: no Grok option. Known but no CLI: shown disabled (설치 필요). */
+  grok?: GrokStatus | null;
   attachments: UploadedAttachment[];
   uploadFn?: UploadFn;
   onSend: (text: string) => void;
@@ -148,9 +151,9 @@ export type ChatProps = {
 
 const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
 
-/** The model picker's choices for an engine (자동 offered for Claude and the engine 자동; Gemini only when picked). */
+/** The model picker's choices for an engine (자동 offered for Claude and the engine 자동; Gemini / Grok only when picked). */
 export function modelChoices(engine: EngineChoice): readonly ModelChoice[] {
-  return engine === 'gemini' ? GEMINI_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
+  return engine === 'gemini' ? GEMINI_MODELS : engine === 'grok' ? GROK_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
 }
 
 /** Enter inserts a newline on touch screens (send with the button), as on Desktop's mobile apps. */
@@ -304,12 +307,14 @@ export function Chat(p: ChatProps) {
   // Gemini is explicit only: its models appear only when the Gemini engine is picked (never under 자동).
   const models = modelChoices(effectiveEngine);
   const geminiReady = !!p.gemini && (p.gemini.loggedIn.g1 || p.gemini.loggedIn.g2);
-  const engineSelect = p.isNew && (p.codexAvailable || !!p.gemini?.available);
+  const grokReady = has('grok');
+  const grokShown = grokReady || !!p.grok;
+  const engineSelect = p.isNew && (p.codexAvailable || !!p.gemini?.available || grokReady);
   const sandboxLabel = effectiveEngine === 'gemini' ? GEMINI_SANDBOX_LABEL : SANDBOX_LABEL;
   const hasDraft = (text.trim().length > 0 || p.attachments.length > 0) && uploading === 0;
   const queueing = p.busy && !!p.onQueue;
-  /** A running Claude turn takes a message at its next tool boundary (Codex / Gemini: after the turn). */
-  const steering = queueing && !!p.activeTurnId && p.sessionEngine === 'claude';
+  /** A running Claude / Grok turn takes a message mid-turn (Codex / Gemini: after the turn). */
+  const steering = queueing && !!p.activeTurnId && (p.sessionEngine === 'claude' || p.sessionEngine === 'grok');
   const canSend = hasDraft && !p.readOnly && (!p.busy || queueing);
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
   const agents = p.agents ?? NO_AGENTS;
@@ -348,8 +353,8 @@ export function Chat(p: ChatProps) {
       ...(retryWith ? { retryWith: (m: ModelChoice) => { retryWith(m); scroll.attach(); } } : {}),
     };
   }, [paneRegen, scroll.attach]);
-  // GPT/Gemini have no per-call approvals: their sandbox decides, so the mode picker is shown disabled.
-  const permSupported = effectiveEngine === 'claude' || effectiveEngine === 'auto';
+  // GPT/Gemini have no per-call approvals: their sandbox decides, so the mode picker is shown disabled. Grok has approval cards.
+  const permSupported = effectiveEngine === 'claude' || effectiveEngine === 'auto' || effectiveEngine === 'grok';
   const permMode: PermMode = p.permMode ?? 'default';
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
@@ -385,7 +390,7 @@ export function Chat(p: ChatProps) {
   const showAccount = !!p.onAccountPin && (effectiveEngine === 'claude' || (!!p.isNew && effectiveEngine === 'auto'));
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [p.sessionId]);
-  const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : 'Claude' }, () => setMoreOpen(false));
+  const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : p.sessionEngine === 'grok' ? 'Grok' : 'Claude' }, () => setMoreOpen(false));
   const shareActions = p.isNew ? [] : share.actions;
   /** 이름 바꾸기 / 고정 / 보관 — the same in the title menu and the ⋯ menu; 삭제 comes last in both. */
   const sessionItems = (close: () => void) => tm && (
@@ -532,7 +537,7 @@ export function Chat(p: ChatProps) {
               </Pick>
             )
             : <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? DEFAULT_SANDBOX]}</span>)}
-          {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${PERM_MODE_HINT[permMode]}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}
+          {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${permModeHint(permMode, effectiveEngine)}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}
           {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
           {p.headChips}
         </div>
@@ -643,14 +648,15 @@ export function Chat(p: ChatProps) {
             <AttachMenu onFiles={(f) => void addFiles(f)} />
             <div className="composer-actions">
               {engineSelect && (
-                <Pick label={p.engine === 'codex' ? 'GPT' : p.engine === 'gemini' ? 'Gemini' : p.engine === 'auto' ? '자동' : 'Claude'} value={p.engine} onChange={(e) => p.onEngine(e.target.value as EngineChoice)} title="이 세션의 엔진 (세션 생성 후 변경 불가)" aria-label="엔진" data-testid="engine-select">
+                <Pick label={p.engine === 'codex' ? 'GPT' : p.engine === 'gemini' ? 'Gemini' : p.engine === 'grok' ? 'Grok' : p.engine === 'auto' ? '자동' : 'Claude'} value={p.engine} onChange={(e) => p.onEngine(e.target.value as EngineChoice)} title="이 세션의 엔진 (세션 생성 후 변경 불가)" aria-label="엔진" data-testid="engine-select">
                   <option value="claude">Claude</option>
                   {p.codexAvailable && <option value="codex">GPT</option>}
                   {p.gemini?.available && <option value="gemini" disabled={!geminiReady} title={geminiReady ? undefined : 'docs/gemini-spike.md 의 로그인 명령을 먼저 실행하세요'}>{geminiReady ? 'Gemini' : 'Gemini · 로그인 필요'}</option>}
+                  {grokShown && <option value="grok" disabled={!grokReady} title={grokReady ? undefined : 'grok CLI 가 없습니다 — README 의 설치 명령 후 grok login'}>{grokReady ? 'Grok' : 'Grok · 설치 필요'}</option>}
                   {p.codexAvailable && <option value="auto">자동</option>}
                 </Pick>
               )}
-              {engineSelect && effectiveEngine !== 'claude' && (
+              {engineSelect && effectiveEngine !== 'claude' && effectiveEngine !== 'grok' && (
                 <Pick className="sandbox" label={sandboxLabel[p.sandbox]} value={p.sandbox} onChange={(e) => p.onSandbox(e.target.value as CodexSandbox)} title={effectiveEngine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 카드 없음 · 세션을 만든 뒤에도 바꿀 수 있음)'} aria-label="샌드박스" data-testid="sandbox-select">
                   {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{sandboxLabel[s]}</option>)}
                 </Pick>
@@ -663,7 +669,7 @@ export function Chat(p: ChatProps) {
                     <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
                   )}
                   {p.onPermMode && (
-                    <Pick className={`perm perm-${permSupported ? permMode : 'default'}`} label={<><span className="perm-full">{PERM_MODE_LABEL[permSupported ? permMode : 'default']}</span><span className="perm-short">{PERM_MODE_SHORT[permSupported ? permMode : 'default']}</span></>} value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${PERM_MODE_HINT[permMode]} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
+                    <Pick className={`perm perm-${permSupported ? permMode : 'default'}`} label={<><span className="perm-full">{PERM_MODE_LABEL[permSupported ? permMode : 'default']}</span><span className="perm-short">{PERM_MODE_SHORT[permSupported ? permMode : 'default']}</span></>} value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${permModeHint(permMode, effectiveEngine)} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
                       {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
                     </Pick>
                   )}

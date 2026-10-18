@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePopoverPlacement } from './usePopoverPlacement';
-import { isGeminiAccount, type Account, type Seat } from '../../shared/accounts';
+import { isGeminiAccount, isGrokAccount, type Account, type Seat } from '../../shared/accounts';
 import { useAccounts } from '../accounts';
 import { usageOf } from '../../shared/usage-types';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
@@ -52,7 +52,7 @@ export function AccountPicker({ pin, current, usage, onPin }: {
   }, [open]);
 
   const names = useAccounts();
-  const cur = current !== null && current !== 'gpt' && !isGeminiAccount(current) ? names.label(current) : null;
+  const cur = current !== null && current !== 'gpt' && !isGeminiAccount(current) && !isGrokAccount(current) ? names.label(current) : null;
   // An account that left the configuration shows its id, grey; a retired one its label, dimmed.
   // The seat the button names: the pin, else the account the session runs on.
   const shown = pin ?? (cur !== null ? current : null);

@@ -1,6 +1,6 @@
 import type { Account, Seat } from '../shared/accounts';
-import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSettings, type RefusalCode, type SessionFacts, type GeminiStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
+import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
+import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSettings, type RefusalCode, type SessionFacts, type GeminiStatus, type GrokStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -311,6 +311,8 @@ export type AppState = {
   codexAvailable: boolean;
   /** gemini-cli status from hello; null = not installed (or an older server). */
   gemini: GeminiStatus | null;
+  /** grok CLI status from hello; null = an older server that knows no Grok (no Grok option at all). */
+  grok: GrokStatus | null;
   /** F2: pinned session ids, pin order (server-side pins.json). */
   pins: string[];
   /** Recent Claude Desktop sessions (server-side, newest first). */
@@ -387,7 +389,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: DEFAULT_MODEL, modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'claude', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
+export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, grok: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -507,13 +509,14 @@ function lastClaudeModel(messages: TranscriptMessage[]): ModelChoice | null {
 
 /** Which engine a model runs on (자동 picks among Claude models). */
 export function engineOf(model: ModelChoice): EngineKind {
-  return isCodexModel(model) ? 'codex' : isGeminiModel(model) ? 'gemini' : 'claude';
+  return isCodexModel(model) ? 'codex' : isGeminiModel(model) ? 'gemini' : isGrokModel(model) ? 'grok' : 'claude';
 }
 
 /** The pane's model if it belongs to `engine`, else that engine's default. 자동 stays 자동 on Claude (the session keeps its model). */
 export function modelFor(engine: EngineKind, model: ModelChoice): ModelChoice {
   if (engine === 'codex') return isCodexModel(model) ? model : DEFAULT_CODEX_MODEL;
   if (engine === 'gemini') return isGeminiModel(model) ? model : DEFAULT_GEMINI_MODEL;
+  if (engine === 'grok') return isGrokModel(model) ? model : DEFAULT_GROK_MODEL;
   return isClaudeModel(model) || model === 'auto' ? model : DEFAULT_MODEL;
 }
 
@@ -995,11 +998,13 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       // A new session waiting with a pin this server cannot run on (its list changed, or the pin was restored from an older
       // one): back to 자동, said once. An existing session's pin is the server's.
       const panes = mapPanes(state, msg).map((p) => {
+        // A pane's new-session engine 'grok' (restored, or picked on another server) this server cannot run: back to Claude.
+        if (p.engine === 'grok' && !has('grok')) p = { ...p, engine: 'claude', model: modelFor('claude', p.model) };
         const pin = p.session?.sessionId === null ? p.session.accountPin : null;
         if (!pin || activePin(accounts, pin)) return p;
         return withNotice({ ...p, session: { ...p.session!, accountPin: null } }, { sessionId: null, message: `고정해 둔 계정(${seatLabel(accounts, pin)})을 지금 쓸 수 없어 자동으로 바꿨습니다`, level: 'notice' });
       });
-      return applySettings({ ...state, connected: true, disconnectedSince: null, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
+      return applySettings({ ...state, connected: true, disconnectedSince: null, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, grok: msg.grok ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
     }
     case 'settings': {
       // 총사령탑 turned off: what was cached of it goes (turned on again, no old chip or epoch shows).
@@ -1224,7 +1229,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'set_effort': return updatePane(state, action.paneId, (p) => ({ ...p, efforts: { ...p.efforts, [action.engine]: action.effort } }));
     case 'set_auto_effort': return updatePane(state, action.paneId, (p) => ({ ...p, autoEffort: action.effort }));
     case 'set_engine': return updatePane(state, action.paneId, (p) => ({
-      ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model),
+      ...p, engine: action.engine, model: action.engine === 'auto' ? (isGeminiModel(p.model) || isGrokModel(p.model) ? DEFAULT_MODEL : p.model) : modelFor(action.engine, p.model),
       // Gemini keeps its own default (plan unless 자동 승인); leaving Gemini goes back to the GPT default.
       ...(action.engine === 'gemini' && p.engine !== 'gemini' ? { sandbox: defaultGeminiSandbox(state.autoApprove ?? false) } : action.engine !== 'gemini' && p.engine === 'gemini' ? { sandbox: DEFAULT_SANDBOX } : {}),
     }));

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { HANDOFF_PROMPT, handoffFirstMessage } from '../shared/handoff';
+import { DEFAULT_MODEL } from '../shared/models';
 import { nextPermMode } from '../shared/permission';
+import { setFeatures } from './features';
 import { ACCEPTED_REFS_TTL_MS, type ServerMessage } from '../shared/protocol';
 import { PANE_LIMIT, answersFor, engineOf, fromTranscript, modelFor, initialState, newPane, nextQueued, openPanes, nextUserN, paneMode, reducer, restoreSentFiles, sessionsToClose, type AppState, type ChatItem, type PendingQuestion } from './state';
 
@@ -34,6 +36,30 @@ describe('reducer', () => {
     let s = reducer(initialState, { type: 'set_model', model: 'gemini-flash' });
     s = reducer(s, { type: 'set_engine', engine: 'auto' });
     expect(s.panes[0]?.model).toBe('fable');
+  });
+
+  it('engineOf / modelFor know Grok; set_engine grok picks Grok 4.6; the 자동 engine never keeps a Grok model', () => {
+    expect(engineOf('grok-4.5')).toBe('grok');
+    expect(modelFor('grok', 'opus')).toBe('grok-4.6');
+    expect(modelFor('grok', 'grok-4.5')).toBe('grok-4.5');
+    let s = reducer(initialState, { type: 'set_engine', engine: 'grok' });
+    expect(s.panes[0]).toMatchObject({ engine: 'grok', model: 'grok-4.6' });
+    s = reducer(s, { type: 'set_engine', engine: 'auto' });
+    expect(s.panes[0]?.model).toBe('fable');
+  });
+
+  it('a pane engine grok the server cannot run (no grok feature) goes back to Claude on hello; hello.grok is kept', () => {
+    const grokPane = reducer(initialState, { type: 'set_engine', engine: 'grok' });
+    setFeatures(['grok']);
+    let s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false }, grok: { bin: true } }], grokPane);
+    expect(s.panes[0]).toMatchObject({ engine: 'grok', model: 'grok-4.6' });
+    expect(s.grok).toEqual({ bin: true });
+    setFeatures([]);
+    s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false }, grok: { bin: false } }], grokPane);
+    expect(s.panes[0]).toMatchObject({ engine: 'claude', model: DEFAULT_MODEL });
+    s = play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false } }], grokPane);
+    expect(s.panes[0]?.engine).toBe('claude');
+    expect(s.grok).toBeNull();
   });
 
   it('pins come from hello/index and set_pins; an index without pins keeps them (F2)', () => {

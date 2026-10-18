@@ -23,7 +23,7 @@ import { UsagePanel } from './components/UsagePanel';
 import { UsageView } from './components/UsageView';
 import { Highlights } from './components/Highlights';
 import { HighlightsBadge, ServerChip, ServerUpdateChip, WorkStatus, type WorkRow } from './components/WorkStatus';
-import { isGeminiAccount } from '../shared/accounts';
+import { isGeminiAccount, isGrokAccount } from '../shared/accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
 import { paneColumns, paneSize, resizePair } from './paneResize';
@@ -96,7 +96,7 @@ function writeLocal(key: string, value: string): void {
 function routePreviewAsk(pane: AppState['panes'][number]): { key: string; sessionId: string | null; cwd: string; model?: ClaudeModel | 'auto' } | null {
   const s = pane.session;
   if (!s) return null;
-  const claude = s.sessionId === null ? pane.engine === 'claude' && !s.accountPin : s.engine ? s.engine === 'claude' : s.account !== 'gpt' && !(s.account && isGeminiAccount(s.account));
+  const claude = s.sessionId === null ? pane.engine === 'claude' && !s.accountPin : s.engine ? s.engine === 'claude' : s.account !== 'gpt' && !(s.account && (isGeminiAccount(s.account) || isGrokAccount(s.account)));
   if (!claude) return null;
   const picked = s.sessionId === null || pane.modelPicked;
   const model = picked && (pane.model === 'auto' || isClaudeModel(pane.model)) ? pane.model : undefined;

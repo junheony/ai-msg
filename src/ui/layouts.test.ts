@@ -3,7 +3,7 @@ import { deleteLayout, LAYOUTS_KEY, layoutPanes, listLayouts, MAX_LAYOUTS, readL
 import { parsePane, type PersistedPane } from './persist';
 
 const memStore = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); }, m }; };
-const pane = (extra: Partial<PersistedPane> = {}): PersistedPane => ({ session: null, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write', ...extra });
+const pane = (extra: Partial<PersistedPane> = {}): PersistedPane => ({ session: null, model: 'auto', efforts: { claude: 'high', codex: 'medium', gemini: 'medium', grok: 'high' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write', ...extra });
 const rect = { x: 10, y: 20, w: 400, h: 300 };
 
 describe('layouts (카드 배치)', () => {

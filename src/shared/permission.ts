@@ -20,6 +20,14 @@ export const PERM_MODE_HINT: Record<PermMode, string> = {
   bypassPermissions: '모든 도구 호출을 묻지 않고 허용합니다(감사 로그에 기록). 설정의 거부 규칙은 그대로 적용됩니다',
 };
 
+/** 모두 자동 승인 on a Grok session (GrokEngine isGrokAutoApprovable): only the listed kinds, once each. */
+export const GROK_BYPASS_HINT = '허용된 종류(편집·실행·읽기·가져오기·검색)만 한 번씩 자동 승인, 계획 종료·권한 넓히기는 카드로 묻기';
+
+/** The hint for a mode on a session of `engine` (Grok's 모두 자동 승인 is narrower than Claude's). */
+export function permModeHint(m: PermMode, engine: string): string {
+  return engine === 'grok' && m === 'bypassPermissions' ? GROK_BYPASS_HINT : PERM_MODE_HINT[m];
+}
+
 export function isPermMode(x: unknown): x is PermMode {
   return typeof x === 'string' && (PERM_MODES as readonly string[]).includes(x);
 }

@@ -4,9 +4,9 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
-import { isGeminiAccount, type AccountNames } from '../shared/accounts';
-import { DEFAULT_CODEX_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
-import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type CommanderView, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
+import { isGeminiAccount, isGrokAccount, type AccountNames } from '../shared/accounts';
+import { DEFAULT_CODEX_MODEL, DEFAULT_GROK_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, isGrokModel, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
+import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type CommanderView, type StreamPos, type GeminiStatus, type GrokStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
@@ -15,6 +15,7 @@ import { DirError, resolveUnderRoots } from './dirs';
 import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
 import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
+import { isGrokAutoApprovable } from './engine/GrokEngine';
 import { displayError } from './engine/redact';
 import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
 import { OWN_LAG_MS, scanForeign } from './sessions/foreignWrites';
@@ -26,7 +27,7 @@ import { TCC_DENIAL_NOTICE, isTccDenial } from './tccDenial';
 import type { ProcessHolders } from './sessions/ProcessHolders';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readBranchPoint, readTranscript, type BranchPoint } from './sessions/transcript';
-import { isCodexState, isGeminiState, type ClaudeSessionState, type SessionStateStore } from './turn/SessionState';
+import { isCodexState, isGeminiState, isGrokState, isOtherEngineState, type ClaudeSessionState, type SessionStateStore } from './turn/SessionState';
 import { abortedText, SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 import { SegmentCollector } from './commander/digest';
@@ -135,6 +136,8 @@ export type WsDeps = {
   accounts: AccountNames;
   /** Read on every hello, so a login done while deck runs shows up on the next connect. Absent = no Gemini. */
   geminiStatus?: () => GeminiStatus;
+  /** A `grok` binary and its version (found once at start). Absent or `bin: false` = no Grok: 'grok' is not in hello.features. */
+  grokStatus?: GrokStatus;
   readCodexHistory?: typeof readCodexTranscript;
   /** History of an imported (Codex Desktop / CLI) thread: the rollout's tail only. */
   readCodexImportHistory?: typeof readCodexTranscriptTail;
@@ -450,7 +453,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     for (const [id, sockets] of stale) {
       const st = deps.store.get(id);
       const entry = deps.index.lookup(id);
-      if (!entry || busy.has(id) || (st && (isCodexState(st) || isGeminiState(st)))) continue;
+      if (!entry || busy.has(id) || (st && (isOtherEngineState(st)))) continue;
       // What is in the files now is in the history read next: the poll goes on from these sizes, so this write is not found again.
       const clean = new Map<string, number>();
       for (const file of files.get(id) ?? []) { const s = await fs.stat(file).catch(() => null); if (s) clean.set(file, s.size); }
@@ -529,9 +532,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    */
   const resolveBranch = async (from: string, n: number, expect: string | undefined): Promise<BranchPoint | null> => {
     const st = deps.store.get(from);
-    if (st && (isCodexState(st) || isGeminiState(st))) return null;
+    if (st && (isOtherEngineState(st))) return null;
     const entry = deps.index.lookup(from);
-    if (!st && (!entry || entry.account === 'gpt' || isGeminiAccount(entry.account))) return null;
+    if (!st && (!entry || entry.account === 'gpt' || isGeminiAccount(entry.account) || isGrokAccount(entry.account))) return null;
     const best = st ? await deps.index.bestCopy(from, st.projectDir, st.account).catch(() => null) : null;
     const files = [best?.file ?? (st ? `${st.projectDir}/${from}.jsonl` : entry!.file), ...(entry ? [entry.file] : [])];
     for (const f of new Set(files)) {
@@ -715,7 +718,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (dup) { send(ws, { type: 'error', turnId: null, ...dup, ...ref }); return; }
     if (msg.handoff && msg.sessionId) {
       const st = deps.store.get(msg.sessionId);
-      if (msg.engine === 'codex' || msg.engine === 'gemini' || (st && (isCodexState(st) || isGeminiState(st))) || (!st && !deps.index.lookup(msg.sessionId) && deps.index.codexImport(msg.sessionId))) {
+      if (msg.engine === 'codex' || msg.engine === 'gemini' || msg.engine === 'grok' || (st && isOtherEngineState(st)) || (!st && !deps.index.lookup(msg.sessionId) && deps.index.codexImport(msg.sessionId))) {
         send(ws, { type: 'error', turnId: null, message: '이어서 새 세션은 Claude 대화에서만 돼요', ...ref });
         return;
       }
@@ -932,7 +935,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           else if (!model || model === 'auto') {
             // The first message: a fresh session, on the original's model (a fork inherits it in the runner).
             const st = deps.store.get(b.from);
-            if (st && !isCodexState(st) && !isGeminiState(st)) model = st.defaultModel;
+            if (st && !isOtherEngineState(st)) model = st.defaultModel;
           }
         }
         await deps.runner.run({
@@ -968,7 +971,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         // An existing session: its row's time (and place in 최근) follows the turn — a stat of its transcript copies, not a
         // rescan. Codex / Gemini rows are dated by the state store, which the turn has just written.
         const st = deps.store.get(msg.sessionId);
-        if ((await deps.index.touch([msg.sessionId])) || (st && (isCodexState(st) || isGeminiState(st)))) broadcast(indexMsg());
+        if ((await deps.index.touch([msg.sessionId])) || (st && (isOtherEngineState(st)))) broadcast(indexMsg());
       }
     })().catch((err: unknown) => console.error('deck: post-turn index refresh failed', errMsg(err)));
   };
@@ -1011,7 +1014,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (r.kind === 'commander') {
       const st = deps.store.get(sessionId);
       if (!deps.commander?.enabled() || draining || isBusy(sessionId) || sentKeys.get(sessionId) === r.sendKey) return false;
-      if (!st || isCodexState(st) || isGeminiState(st)) return false;
+      if (!st || isOtherEngineState(st)) return false;
       sentKeys.set(sessionId, r.sendKey);
       segments.set(sessionId, new SegmentCollector(st.cwd));
       startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, undefined, r.hop, r.commanderNote);
@@ -1038,8 +1041,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
 
   /** `open_session`: the session's history (and, mid-turn, what its running turn has shown so far) to one socket, which views it from now on. */
   /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
-  /** hello.features: 'commander' only while the settings turn it on. */
-  const featureList = () => FEATURES.filter((f) => f !== 'commander' || deps.commander?.enabled() === true);
+  /** hello.features: 'commander' only while the settings turn it on; 'grok' only with a grok binary. */
+  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || deps.grokStatus?.bin === true));
   const runningOf = (sid: string) => {
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;
@@ -1095,7 +1098,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
     if (!seen.has(sessionId)) seen.set(sessionId, { at: Date.now(), clean: new Map() });
     const st = deps.store.get(sessionId);
-    const claude = st && !isCodexState(st) && !isGeminiState(st) ? { accountPin: st.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st.defaultModel } : {};
+    const claude = st && !isOtherEngineState(st) ? { accountPin: st.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st.defaultModel }
+      : st && isGrokState(st) ? { permissionMode: deps.runner.permissionModeOf(sessionId) } : {};
     const sandbox = !sandboxAware.has(ws) ? null : st ? (isCodexState(st) ? st.sandbox : null) : deps.runner.importSandboxOf(sessionId);
     send(ws, { type: 'catchup', sessionId, ...claude, ...(sandbox ? { sandbox } : {}), ...runningOf(sessionId) });
     for (const e of tail) ws.send(e.data);
@@ -1115,6 +1119,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (st && isGeminiState(st)) {
         view(ws, sessionId);
         send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, messages: [], ...runningOf(sessionId) });
+        return;
+      }
+      // Grok sessions: no transcript reader yet (grokTranscript, design §7) — the pane starts empty, like Gemini.
+      if (st && isGrokState(st)) {
+        view(ws, sessionId);
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), messages: [], ...runningOf(sessionId) });
         return;
       }
       let entry = deps.index.lookup(sessionId);
@@ -1169,7 +1179,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.grokStatus ? { grok: deps.grokStatus } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
     // hello's `activity` is the session list only: whether the server is draining, and since when it runs, come here.
     send(ws, activityMsg());
     for (const m of broker.pending()) send(ws, m);
@@ -1273,7 +1283,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: badPin });
             // The sender showed the pin already: back to what is stored.
             const st = deps.store.get(msg.sessionId);
-            send(ws, { type: 'account_pin', sessionId: msg.sessionId, pin: (st && !isCodexState(st) && !isGeminiState(st) ? st.accountPin : undefined) ?? null });
+            send(ws, { type: 'account_pin', sessionId: msg.sessionId, pin: (st && !isOtherEngineState(st) ? st.accountPin : undefined) ?? null });
             break;
           }
           void deps.runner.setAccountPin(msg.sessionId, msg.pin)
@@ -1296,7 +1306,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               if (!ok) { send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `권한 모드를 바꿀 수 없는 세션입니다: ${msg.sessionId}` }); return; }
               broadcast({ type: 'permission_mode', sessionId: msg.sessionId, mode: msg.mode });
               // 모두 자동 승인 also lets through this session's cards already waiting (a plan still needs its own choice).
-              if (msg.mode === 'bypassPermissions') for (const m of broker.pending()) if (m.sessionId === msg.sessionId && m.toolName !== 'ExitPlanMode') broker.resolve(m.requestId, 'once');
+              // Grok: only the kinds its engine would auto-approve; plan exit, widening and other kinds stay cards.
+              if (msg.mode === 'bypassPermissions') {
+                const st = deps.store.get(msg.sessionId);
+                const ok = st && isGrokState(st) ? isGrokAutoApprovable : (toolName: string) => toolName !== 'ExitPlanMode';
+                for (const m of broker.pending()) if (m.sessionId === msg.sessionId && ok(m.toolName)) broker.resolve(m.requestId, 'once');
+              }
             })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `권한 모드를 저장하지 못했습니다: ${errMsg(err)}` }));
           break;
@@ -1349,7 +1364,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (!cwd) { send(ws, { type: 'error', turnId: null, sessionId: id, message: `복제할 수 없는 세션입니다: ${id}` }); break; }
           const old = deps.meta?.title?.(id) ?? entry?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === id)?.title ?? imported?.title ?? id.slice(0, 8);
           const title = `${old} (복사)`.slice(0, 200);
-          if (st && (isCodexState(st) || isGeminiState(st))) send(ws, { type: 'session_duplicate', from: id, cwd, engine: st.engine, model: st.defaultModel, title, sandbox: st.sandbox });
+          if (st && isGrokState(st)) send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'grok', model: isGrokModel(st.model) ? st.model : DEFAULT_GROK_MODEL, title, permissionMode: deps.runner.permissionModeOf(id) });
+          else if (st && isOtherEngineState(st)) send(ws, { type: 'session_duplicate', from: id, cwd, engine: st.engine, model: st.defaultModel, title, sandbox: st.sandbox });
           else if (imported) send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'codex', model: DEFAULT_CODEX_MODEL, title, sandbox: deps.runner.importSandboxOf(id) ?? DEFAULT_SANDBOX });
           else send(ws, { type: 'session_duplicate', from: id, cwd, engine: 'claude', model: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, title, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(id) });
           break;

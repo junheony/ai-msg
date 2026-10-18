@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { GEMINI_LABEL, LEGACY_ACCOUNTS, isGeminiAccount, type Account, type Seat } from '../shared/accounts';
+import { GEMINI_LABEL, GROK_LABEL, LEGACY_ACCOUNTS, isGeminiAccount, isGrokAccount, type Account, type Seat } from '../shared/accounts';
 import { accountInfos, type AccountInfo } from '../shared/protocol';
 
 /** The account list of a server that sends none (before `hello.accounts`): a/b/c, a is home. */
@@ -40,6 +40,7 @@ export function sameAccountList(a: readonly AccountInfo[], b: readonly AccountIn
 export function seatLabel(list: readonly AccountInfo[], seat: Seat): string {
   if (seat === 'gpt') return 'GPT';
   if (isGeminiAccount(seat)) return GEMINI_LABEL[seat];
+  if (isGrokAccount(seat)) return GROK_LABEL[seat];
   return list.find((a) => a.id === seat)?.label ?? String(seat);
 }
 
@@ -58,7 +59,7 @@ export type UiAccounts = {
   label(seat: Seat): string;
   /** Palette slot (`--acct-<n>`) by position in `all`; null for an id that is not configured, GPT and Gemini. */
   slot(seat: Seat): number | null;
-  /** How a seat's tile is drawn: its palette slot, 'retired' (label, dimmed), 'unknown' (the id, grey) or 'other' (GPT, Gemini). */
+  /** How a seat's tile is drawn: its palette slot, 'retired' (label, dimmed), 'unknown' (the id, grey) or 'other' (GPT, Gemini, Grok). */
   look(seat: Seat): { slot: number | null; kind: 'active' | 'retired' | 'unknown' | 'other' };
   /** The look in words, for titles and aria labels: '뺀 계정', '설정에 없는 계정', or null. */
   state(seat: Seat): string | null;
@@ -72,7 +73,7 @@ export function uiAccounts(list: readonly AccountInfo[]): UiAccounts {
     return i === undefined ? null : i % ACCOUNT_PALETTE_SIZE;
   };
   const look: UiAccounts['look'] = (seat) => {
-    if (seat === 'gpt' || isGeminiAccount(seat)) return { slot: null, kind: 'other' };
+    if (seat === 'gpt' || isGeminiAccount(seat) || isGrokAccount(seat)) return { slot: null, kind: 'other' };
     const a = get(seat);
     return { slot: slot(seat), kind: !a ? 'unknown' : a.retired ? 'retired' : 'active' };
   };

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { NewChat } from './NewChat';
 import type { ProjectEntry } from '../../shared/session-types';
 import { loadDraft, saveDraft } from '../drafts';
+import { setFeatures } from '../features';
 
 const projects = [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] as unknown as ProjectEntry[];
 
@@ -160,6 +161,29 @@ describe('NewChat', () => {
     cleanup();
     render(<NewChat projects={projects} onStart={vi.fn()} gemini={{ available: true, loggedIn: { g1: false, g2: false } }} />);
     expect((screen.getByRole('option', { name: 'Gemini · 로그인 필요' }) as HTMLOptionElement).disabled).toBe(true);
+  });
+
+  it('Grok: offered when the server has the grok feature (no sandbox picker), dimmed with 설치 필요 otherwise; Grok cards carry the mark', () => {
+    const onStart = vi.fn();
+    setFeatures(['grok']);
+    render(<NewChat projects={projects} onStart={onStart} />);
+    fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'grok' } });
+    expect(screen.queryByTestId('sandbox-select')).toBeNull();
+    fireEvent.change(screen.getByLabelText('첫 메시지'), { target: { value: '봐줘' } });
+    fireEvent.click(screen.getByLabelText(/^보내기/));
+    expect(onStart).toHaveBeenCalledWith('/w', 'w', '봐줘', [], { engine: 'grok', sandbox: expect.any(String) });
+    cleanup();
+    setFeatures([]);
+    render(<NewChat projects={projects} onStart={vi.fn()} codexAvailable grok={{ bin: false }} />);
+    expect((screen.getByRole('option', { name: 'Grok · 설치 필요' }) as HTMLOptionElement).disabled).toBe(true);
+    cleanup();
+    // An older server (no hello.grok): no Grok option at all.
+    render(<NewChat projects={projects} onStart={vi.fn()} codexAvailable />);
+    expect(screen.queryByRole('option', { name: /Grok/ })).toBeNull();
+    cleanup();
+    const sessions = [{ sessionId: 'x', account: 'x1', engine: 'grok', cwd: '/w', projectDir: '', file: '', title: 'grok one', lastModified: 1, sizeBytes: 1 }];
+    render(<NewChat projects={[{ cwd: '/w', name: 'w', pinned: true, sessions }] as unknown as ProjectEntry[]} onStart={vi.fn()} onOpenSession={vi.fn()} now={10} />);
+    expect(screen.getByText('grok one').querySelector('.engine-mark')?.getAttribute('title')).toBe('Grok');
   });
 
   it('Ctrl+Enter starts in a new split (text and draft leave this screen); Enter on the 프로젝트 picker starts here', () => {

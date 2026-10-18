@@ -1,14 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { GEMINI_ACCOUNTS, GEMINI_LABEL, isGeminiAccount, type Account, type AccountNames, type GeminiAccount, type ProjectsRoots } from '../../shared/accounts';
-import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type ModelChoice } from '../../shared/models';
+import { GEMINI_ACCOUNTS, GEMINI_LABEL, GROK_LABEL, isGeminiAccount, isGrokAccount, type Account, type AccountNames, type GeminiAccount, type GrokAccount, type ProjectsRoots } from '../../shared/accounts';
+import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, GROK_CLI_ALIAS, IMPORTED_DEFAULT_MODEL, MODEL_EFFORTS, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type GeminiModel, type GrokModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
-import { appendAudit, hashInput, recordAudit } from '../audit';
+import { appendAudit, hashInput, recordAudit, type ToolAuditEntry } from '../audit';
 import type { CodexEngine } from '../engine/CodexEngine';
 import type { GeminiEngine } from '../engine/GeminiEngine';
+import type { GrokTurnRequest } from '../engine/GrokEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetAtMs, limitResetHint } from '../engine/limitDetect';
@@ -30,7 +31,7 @@ import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
 import { usageOf } from '../../shared/usage-types';
-import { isCodexState, isGeminiState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type SessionState, type SessionStateStore } from './SessionState';
+import { isCodexState, isGeminiState, isGrokState, isOtherEngineState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type GrokSessionState, type SessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
   emit(msg: ServerMessage): void;
@@ -86,7 +87,7 @@ export type TurnParams = {
   commanderNote?: string;
 };
 
-/** A commanderHop turn on a Codex/Gemini session (총사령탑 v1 = Claude only): refused, never run ungated. */
+/** A commanderHop turn on a Codex/Gemini/Grok session (총사령탑 v1 = Claude only): refused, never run ungated. */
 export const COMMANDER_ENGINE_REFUSED = '총사령탑 자동 턴은 Claude 세션에서만 실행됩니다';
 
 /** The background wait limit (ClaudeEngine bgMaxMs) cutting work → at most this many continuations deck sends by itself in a row (continueAfterCap). */
@@ -104,6 +105,8 @@ export type TurnRunnerDeps = {
   gemini?: { engine: Pick<GeminiEngine, 'runTurn'>; loggedIn: (account: GeminiAccount) => boolean } | null;
   /** Re-reads the Gemini quota shortly after a Gemini turn (GeminiUsagePoller.bump); absent = none. */
   geminiUsage?: { bump(): void } | null;
+  /** Null/absent = no `grok` binary. main binds runGrokTurn to the binary and x1's GROK_HOME; tests inject a fake. */
+  grok?: { run: (req: GrokTurnRequest) => AsyncIterable<EngineEvent> } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
   attachments: AttachmentStore | null;
   codexSessionsRoot: string;
@@ -158,6 +161,8 @@ export const abortedText = (signal: AbortSignal): string => (signal.reason === S
 /** Told to the model once, with the first prompt of a brand-new session (systemNote; never shown in the pane). */
 export const DECK_INTRO_NOTE = '[deck] 사용자는 deck 웹 UI(대개 폰·다른 기기의 브라우저)로 이 대화를 봅니다. 파일이나 URL 을 open/xdg-open/code 로 띄우지 마세요 — 서버에서만 열리고 사용자에게는 보이지 않습니다. 보여줄 파일은 경로를 인라인 코드로 적으면 사용자가 클릭해 사이드 패널에서 봅니다(세션 폴더 안의 파일만; 밖의 파일은 핵심 내용을 답장에 옮기세요).';
 
+/** A Grok session's mode changed mid-turn: its ACP session mode is set when a turn starts. */
+export const GROK_MODE_NEXT_TURN_NOTICE = 'Grok 은 다음 턴부터 새 권한 모드를 씁니다';
 /** Start of the turn_notice said when the drain deadline cuts a process's background work (highlights.ts keys on it). */
 export const SHUTDOWN_CUT_NOTICE = '서버가 다시 시작되어 백그라운드 작업';
 
@@ -278,13 +283,16 @@ export class TurnRunner {
    */
   private readonly steering = new Map<string, { pending: Map<string, TurnPrompt>; ids: Set<string> }>();
   /** The live mode of each running Claude turn and the session it is for, by its first turn id. */
-  private readonly modes = new Map<string, { ref: ModeRef; sessionId: () => string | null }>();
+  /** notice: a running Grok turn, whose process cannot switch mode mid-turn, says so on the turn instead. */
+  private readonly modes = new Map<string, { ref: ModeRef; sessionId: () => string | null; notice?: (message: string) => void }>();
   /** A pin set for a new or forked session during its first turn (no stored state yet), by turn id: stored with it. */
   private readonly bornPins = new Map<string, Account | null>();
   /** setSandbox on a Codex Desktop / CLI thread deck has not run yet (no stored state): its first turn uses and stores it. */
   private readonly importSandboxes = new Map<string, CodexSandbox>();
   /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
   private geminiCooldownUntil: Partial<Record<GeminiAccount, number>> = {};
+  /** In-memory, per Grok account, after a quota failure (design §8). Shown in the badge reason; never switches engines. */
+  private grokCooldownUntil: Partial<Record<GrokAccount, number>> = {};
   /** Home write-backs in flight, by session id (serialized per session; the next turn waits for it). */
   private readonly mirrors = new Map<string, Promise<void>>();
   /** Notices already shown, `${sessionId}\0${message}` — a lasting divergence is told once, not every turn. */
@@ -360,7 +368,7 @@ export class TurnRunner {
   async foreignWrites(sessionId: string): Promise<boolean> {
     const entry = this.live.get(sessionId);
     const st = this.deps.store.get(sessionId);
-    if (!entry || !st || isCodexState(st) || isGeminiState(st)) return false;
+    if (!entry || !st || isOtherEngineState(st)) return false;
     try {
       const copies = await findCopies(this.deps.projectsRoots, sessionId, st.projectDir, st.account);
       for (const c of copies) {
@@ -448,7 +456,7 @@ export class TurnRunner {
   private async forkPair(sessionId: string): Promise<{ st: ClaudeSessionState; home: Account; deckFile: string; homeDir: string; homeFile: string } | null> {
     const home = this.deps.homeAccount;
     const st = this.deps.store.get(sessionId);
-    if (!home || !st || isCodexState(st) || isGeminiState(st) || st.account === home) return null;
+    if (!home || !st || isOtherEngineState(st) || st.account === home) return null;
     const homeDir = path.join(this.rootOf(home), path.basename(st.projectDir));
     return { st, home, deckFile: path.join(st.projectDir, `${sessionId}.jsonl`), homeDir, homeFile: path.join(homeDir, `${sessionId}.jsonl`) };
   }
@@ -471,7 +479,7 @@ export class TurnRunner {
    */
   async openInDesktop(sessionId: string): Promise<{ ok: true; busy: boolean } | { ok: false; reason: 'unsupported' | 'diverged' | 'failed'; error?: string }> {
     const st = this.deps.store.get(sessionId);
-    if (st && (isCodexState(st) || isGeminiState(st))) return { ok: false, reason: 'unsupported' };
+    if (st && (isOtherEngineState(st))) return { ok: false, reason: 'unsupported' };
     const busy = this.active.has(sessionId) || this.live.has(sessionId);
     const home = this.deps.homeAccount;
     if (!st || !home || st.account === home) return { ok: true, busy };
@@ -527,9 +535,9 @@ export class TurnRunner {
   async trashSession(sessionId: string): Promise<{ ok: true; trashId: string } | { ok: false; error: string }> {
     return this.serialize(sessionId, async () => {
       const st = this.deps.store.get(sessionId);
-      if (st && (isCodexState(st) || isGeminiState(st))) return { ok: false as const, error: 'Claude 대화만 삭제할 수 있습니다' };
+      if (st && (isOtherEngineState(st))) return { ok: false as const, error: 'Claude 대화만 삭제할 수 있습니다' };
       const e = this.deps.index.lookup(sessionId);
-      if (!st && (!e || e.account === 'gpt' || isGeminiAccount(e.account) || e.imported)) return { ok: false as const, error: 'Claude 대화만 삭제할 수 있습니다' };
+      if (!st && (!e || e.account === 'gpt' || isGeminiAccount(e.account) || isGrokAccount(e.account) || e.imported)) return { ok: false as const, error: 'Claude 대화만 삭제할 수 있습니다' };
       if (this.active.has(sessionId) || this.live.has(sessionId)) return { ok: false as const, error: '실행 중인 대화는 삭제할 수 없습니다 — 끝난 뒤 다시 시도하세요' };
       const base: ClaudeSessionState = st ?? { sessionId, cwd: e!.cwd, account: e!.account as Account, projectDir: e!.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
       if ((await this.openElsewhere(base)) !== null) return { ok: false as const, error: '다른 곳(Desktop/CLI)에서 열려 있는 것 같아 삭제하지 않았습니다' };
@@ -555,7 +563,7 @@ export class TurnRunner {
 
   private async mirrorHome(sessionId: string, home: Account, sink: TurnSink, turnId: string): Promise<void> {
     const st = this.deps.store.get(sessionId);
-    if (!st || isCodexState(st) || isGeminiState(st) || st.account === home) return;
+    if (!st || isOtherEngineState(st) || st.account === home) return;
     // Only the same-named dir is refreshed: a stale copy under an older dir spelling must not block it (nor is it touched).
     const r = await this.move({ sessionId, sourceProjectDir: st.projectDir, targetProjectsRoot: this.rootOf(home), ignoreOtherDirs: true });
     if (r.ok) {
@@ -709,7 +717,7 @@ export class TurnRunner {
       const born = this.bornTurnOf(sessionId);
       if (born) { this.bornPins.set(born, pin); return true; }
       const e = index.lookup(sessionId);
-      if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return false;
+      if (!e || e.account === 'gpt' || isGeminiAccount(e.account) || isGrokAccount(e.account)) return false;
       await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL, ...(pin ? { accountPin: pin } : {}) });
       return true;
     }
@@ -737,7 +745,7 @@ export class TurnRunner {
   /**
    * 작업 폴더 바꾸기: the session's next turns run in `cwd` (already resolved and checked by the caller). A Claude session's
    * transcript (every profile's copy, with its `<id>/` dir) moves to the new folder's project dir — `claude --resume` only
-   * looks there. Refused while a turn or held-open process runs it; Gemini sessions and unrun Codex imports cannot move.
+   * looks there. Refused while a turn or held-open process runs it; Gemini / Grok sessions and unrun Codex imports cannot move.
    */
   async setCwd(sessionId: string, cwd: string): Promise<{ ok: true; engine: 'claude' | 'codex' } | { ok: false; error: string }> {
     const { store, index } = this.deps;
@@ -745,6 +753,7 @@ export class TurnRunner {
     return this.serialize(sessionId, async () => {
       const st = store.get(sessionId);
       if (st && isGeminiState(st)) return { ok: false as const, error: 'Gemini 세션은 작업 폴더를 바꿀 수 없어요.' };
+      if (st && isGrokState(st)) return { ok: false as const, error: 'Grok 세션은 작업 폴더를 바꿀 수 없어요.' };
       if (st && isCodexState(st)) {
         if (st.cwd !== cwd) await store.set({ ...st, cwd });
         return { ok: true as const, engine: 'codex' as const };
@@ -753,7 +762,7 @@ export class TurnRunner {
       if (st) base = st;
       else {
         const e = index.lookup(sessionId);
-        if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return { ok: false as const, error: '작업 폴더를 바꿀 수 없는 세션이에요.' };
+        if (!e || e.account === 'gpt' || isGeminiAccount(e.account) || isGrokAccount(e.account)) return { ok: false as const, error: '작업 폴더를 바꿀 수 없는 세션이에요.' };
         base = { sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
       }
       const slug = projectSlug(cwd);
@@ -799,7 +808,7 @@ export class TurnRunner {
   permissionModeOf(sessionId: string): PermMode {
     for (const m of this.modes.values()) if (m.sessionId() === sessionId) return m.ref.mode;
     const st = this.deps.store.get(sessionId);
-    return (st && !isCodexState(st) && !isGeminiState(st) ? st.mode : undefined) ?? this.defaultMode();
+    return (st && isGrokState(st) ? st.permissionMode : st && !isOtherEngineState(st) ? st.mode : undefined) ?? this.defaultMode();
   }
 
   /**
@@ -814,10 +823,13 @@ export class TurnRunner {
       // session when the attempt ends.
       if (!this.bornTurnOf(sessionId)) {
         const e = index.lookup(sessionId);
-        if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return false;
+        if (!e || e.account === 'gpt' || isGeminiAccount(e.account) || isGrokAccount(e.account)) return false;
         await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL, mode });
       }
-    } else if (isCodexState(st) || isGeminiState(st)) {
+    } else if (isGrokState(st)) {
+      // Grok: used from the next permission request (자동 승인) and the next turn's session mode.
+      await store.set({ ...st, permissionMode: mode });
+    } else if (isOtherEngineState(st)) {
       return false;
     } else {
       await store.set({ ...st, mode });
@@ -825,6 +837,7 @@ export class TurnRunner {
     for (const [turnId, m] of this.modes) {
       if (m.sessionId() !== sessionId || m.ref.mode === mode) continue;
       m.ref.mode = mode;
+      if (m.notice) { m.notice(GROK_MODE_NEXT_TURN_NOTICE); continue; }
       await this.inputs.get(turnId)?.setPermissionMode?.(sdkPermMode(mode)).catch((err: unknown) => console.error('deck: setPermissionMode failed', err instanceof Error ? err.message : err));
     }
     return true;
@@ -835,7 +848,7 @@ export class TurnRunner {
     ref.mode = mode;
     if (!sessionId) return;
     const st = this.deps.store.get(sessionId);
-    if (st && !isCodexState(st) && !isGeminiState(st) && st.mode !== mode) {
+    if (st && !isOtherEngineState(st) && st.mode !== mode) {
       await this.deps.store.set({ ...st, mode }).catch((err: unknown) => console.error('deck: saving the permission mode failed', err instanceof Error ? err.message : err));
     }
     this.deps.onPermissionMode?.(sessionId, mode);
@@ -1157,7 +1170,7 @@ export class TurnRunner {
     };
     const saveState = async (ok: boolean) => {
       const st = this.deps.store.get(sessionId);
-      if (!st || isCodexState(st) || isGeminiState(st)) return;
+      if (!st || isOtherEngineState(st)) return;
       await this.deps.store.set({
         ...st,
         ...(ok ? { lastTurnAtMs: this.now() } : {}),
@@ -1258,7 +1271,7 @@ export class TurnRunner {
       if (tasks.length) sink.emit({ type: 'turn_background', ...scope(), tasks: [], detail: [] });
       if (shutdown()) {
         const st = this.deps.store.get(sessionId);
-        if (st && !isCodexState(st) && !isGeminiState(st)) {
+        if (st && !isOtherEngineState(st)) {
           await this.deps.store.set({ ...st, interrupted: { atMs: this.now(), tasks: [...live] } }).catch((err: unknown) => console.error('deck: 끊긴 작업 기록 실패', err instanceof Error ? err.message : err));
         }
       }
@@ -1277,7 +1290,7 @@ export class TurnRunner {
   private async continueAfterCap(need: Capped, c: { p: TurnParams; sink: TurnSink; cwd: string; sessionId: string }): Promise<void> {
     const { p, sink, cwd, sessionId } = c;
     const st = this.deps.store.get(sessionId);
-    if (!st || isCodexState(st) || isGeminiState(st)) return;
+    if (!st || isOtherEngineState(st)) return;
     const hop = (p.bgCapHop ?? 0) + 1;
     const n = need.tasks.length;
     const cause = `백그라운드 작업 ${need.minutes}분 한도`;
@@ -1332,8 +1345,8 @@ export class TurnRunner {
       // 메시지 편집 갈래: a Claude session only (Codex / Gemini cannot resume at an entry).
       const st = deps.store.get(p.fork.from);
       const e = st ? null : deps.index.lookup(p.fork.from);
-      const parent: SessionState | null = st ?? (e && !(e.account === 'gpt' || isGeminiAccount(e.account)) ? { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL } : null);
-      if (!parent || isCodexState(parent) || isGeminiState(parent)) { sink.emit({ type: 'error', turnId: p.turnId, message: `편집할 Claude 세션을 찾을 수 없습니다: ${p.fork.from}` }); return; }
+      const parent: SessionState | null = st ?? (e && !(e.account === 'gpt' || isGeminiAccount(e.account) || isGrokAccount(e.account)) ? { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL } : null);
+      if (!parent || isOtherEngineState(parent)) { sink.emit({ type: 'error', turnId: p.turnId, message: `편집할 Claude 세션을 찾을 수 없습니다: ${p.fork.from}` }); return; }
       return this.runClaude(p, parent, sink, '메시지 편집', attachments);
     }
     if (p.sessionId) {
@@ -1357,16 +1370,18 @@ export class TurnRunner {
       } else if (!state) {
         const e = deps.index.lookup(p.sessionId);
         // Codex sessions always have a state entry (D4); a 'gpt' index entry without one is a bug, not a resumable session.
-        if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
+        if (!e || e.account === 'gpt' || isGeminiAccount(e.account) || isGrokAccount(e.account)) { sink.emit({ type: 'error', turnId: p.turnId, message: `세션을 찾을 수 없습니다: ${p.sessionId}` }); return; }
         state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
       }
     }
     // 총사령탑: the gate lives in the Claude engine's hooks only — an automatic turn never reaches another engine.
-    if (p.commanderHop !== undefined && state && (isCodexState(state) || isGeminiState(state))) { sink.emit({ type: 'error', turnId: p.turnId, message: COMMANDER_ENGINE_REFUSED }); return; }
+    if (p.commanderHop !== undefined && state && (isOtherEngineState(state))) { sink.emit({ type: 'error', turnId: p.turnId, message: COMMANDER_ENGINE_REFUSED }); return; }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
     if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments);
-    // Gemini is explicit only: chooseEngine (자동) never sees it.
+    if (state && isGrokState(state)) return this.runGrok(p, state, sink, `Grok 세션 · ${GROK_LABEL[state.account]}`, attachments);
+    // Gemini and Grok are explicit only: chooseEngine (자동) never sees them.
     if (!state && p.engine === 'gemini') return this.runGemini(p, null, sink, 'Gemini 지정', attachments);
+    if (!state && p.engine === 'grok') return this.runGrok(p, null, sink, 'Grok 지정', attachments);
     if (!state) {
       // 같은 벤더 계정 자동 순환 off: the new session can only run on one Claude account, so GPT (벤더 간 인계) and 자동
       // 모델 weigh that account alone.
@@ -1503,6 +1518,94 @@ export class TurnRunner {
     deps.geminiUsage?.bump();
   }
 
+  /**
+   * Explicit Grok (design §4–§8): one seat (x1), no routing, no retry. Approval cards, 자동 승인, steer and the audit log
+   * go through the same paths as a Claude turn; the engine classifies its own errors (errorKind) and refuses images.
+   */
+  private async runGrok(p: TurnParams, state: GrokSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
+    const { deps } = this;
+    const cwd = state?.cwd ?? p.cwd;
+    const account: GrokAccount = state?.account ?? 'x1';
+    // A stored model id that is no longer listed (the model list changed) falls back to the default; its effort is clamped.
+    const model: GrokModel = isGrokModel(p.model) ? p.model : state && isGrokModel(state.model) ? state.model : DEFAULT_GROK_MODEL;
+    const effort: Effort = effortFor(model, p.effort) ?? (state && effortFor(model, state.effort)) ?? effortFor(model, DEFAULT_EFFORT.grok) ?? MODEL_EFFORTS[model].at(-1)!;
+    const modeRef: ModeRef = { mode: state?.permissionMode ?? p.permissionMode ?? this.defaultMode() };
+    let sessionId: string | null = state?.sessionId ?? null;
+    const scope = () => ({ turnId: p.turnId, sessionId, cwd });
+    if ((this.grokCooldownUntil[account] ?? 0) > this.now()) reason = `${reason} (한도 쿨다운 중)`;
+    const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
+    const fail = (errorText: string) => sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText });
+    if (!deps.grok) { fail('grok CLI 를 찾을 수 없습니다'); return; }
+    if (sink.signal.aborted) { fail(abortedText(sink.signal)); return; }
+    const createdAtMs = state?.createdAtMs ?? this.now();
+    const canonicalCwd = state?.canonicalCwd ?? (await fs.realpath(cwd).catch(() => path.resolve(cwd)));
+    const record = (id: string, ok: boolean | null) => {
+      const cur = deps.store.get(id);
+      const next: GrokSessionState = {
+        engine: 'grok', account, sessionId: id, grokSessionId: id, cwd, canonicalCwd,
+        lastTurnAtMs: ok ? this.now() : (state?.lastTurnAtMs ?? null), justCompacted: false,
+        // The picker values of this turn become the session's defaults; a mode changed mid-turn (setPermissionMode) is kept.
+        model, effort, permissionMode: cur && isGrokState(cur) ? cur.permissionMode : modeRef.mode,
+        createdAtMs, title: state?.title ?? titleOf(p.text),
+      };
+      return deps.store.set(next);
+    };
+    sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'grok' });
+    const audit = (toolName: string, input: unknown, decision: ToolAuditEntry['decision'], source: ToolAuditEntry['source']) =>
+      appendAudit(deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId, toolName, decision, source, inputSha256: hashInput(input) })
+        .catch((err: unknown) => console.error('deck: audit log write failed', err instanceof Error ? err.message : err));
+    this.steering.set(p.turnId, { pending: new Map(), ids: new Set() });
+    this.modes.set(p.turnId, { ref: modeRef, sessionId: () => sessionId, notice: (message) => sink.emit({ type: 'turn_notice', ...scope(), message }) });
+    let result: EngineResult | null = null;
+    try {
+      const events = deps.grok.run({
+        account, cwd: canonicalCwd, resumeSessionId: state?.sessionId ?? null, model: GROK_CLI_ALIAS[model], effort,
+        // 모두 자동 승인 = Grok's default mode with deck answering the allowed kinds (GrokEngine AUTO_APPROVE_KINDS).
+        permissionMode: modeRef.mode === 'bypassPermissions' ? 'default' : modeRef.mode,
+        prompt: p.text, attachments, signal: sink.signal,
+        autoApprove: () => modeRef.mode === 'bypassPermissions',
+        onPermission: async (pr) => {
+          const decision = await sink.askPermission({ turnId: p.turnId, sessionId, cwd, ...pr });
+          await audit(pr.toolName, pr.input, decision, 'user');
+          return decision;
+        },
+        onAutoApproved: async (pr) => { await audit(pr.toolName, pr.input, 'auto', 'auto'); },
+        onToolAudit: async (t) => { await audit(t.toolName, t.input, t.decision, t.source); },
+        onLive: (l) => { this.inputs.set(p.turnId, l); },
+        // Recorded before the prompt goes out, so a crash mid-turn can still be resumed.
+        onSessionId: async (id) => {
+          if (id !== sessionId) sink.sessionKnown?.(id);
+          sessionId = id;
+          if (!state) await record(id, null).catch((err: unknown) => console.error('deck: recording the new Grok session failed', err instanceof Error ? err.message : err));
+        },
+      });
+      for await (const ev of events) {
+        switch (ev.kind) {
+          case 'init': if (ev.sessionId !== sessionId) sink.sessionKnown?.(ev.sessionId); sessionId = ev.sessionId; break;
+          case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+          case 'thinking': if (ev.text) sink.emit({ type: 'thinking', ...scope(), text: redactSecrets(ev.text) }); break;
+          case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+          case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
+          case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          case 'steer_delivered': this.steerDelivered(p.turnId, ev.id, sink, scope()); break;
+          case 'result': result = ev; break;
+          // rate_limit: carries no window for Grok (quota is not readable) — the result's errorKind sets the cooldown below.
+          default: break;
+        }
+      }
+    } finally {
+      this.inputs.delete(p.turnId);
+      this.modes.delete(p.turnId);
+      this.rejectSteers(p.turnId, sink, scope(), '세션 프로세스가 끝나 턴이 끝난 뒤 보냅니다');
+      this.steering.delete(p.turnId);
+    }
+    const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
+    // Only an id Grok reported is stored, never a rejected resume id echoed back.
+    if (sessionId) await record(sessionId, res.ok).catch((err: unknown) => console.error('deck: saving the Grok session failed', err instanceof Error ? err.message : err));
+    if (!res.ok && res.errorKind === 'rate_limit') this.grokCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
+  }
+
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
     const id = state?.sessionId;
     if (id) this.active.set(id, (this.active.get(id) ?? 0) + 1);
@@ -1591,11 +1694,11 @@ export class TurnRunner {
     let state: ClaudeSessionState | null = null;
     if (sessionId) {
       const st = deps.store.get(sessionId);
-      if (st && (isCodexState(st) || isGeminiState(st))) return null;
+      if (st && (isOtherEngineState(st))) return null;
       if (st) state = st;
       else {
         const e = deps.index.lookup(sessionId);
-        if (!e || e.account === 'gpt' || isGeminiAccount(e.account)) return null;
+        if (!e || e.account === 'gpt' || isGeminiAccount(e.account) || isGrokAccount(e.account)) return null;
         state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
       }
       if (!this.accounts.list().includes(state.account)) return null;
@@ -1764,7 +1867,7 @@ export class TurnRunner {
         }
         if (cut && res.ok) {
           const st = deps.store.get(sessionId);
-          if (st && !isCodexState(st) && !isGeminiState(st)) { const { interrupted: _told, ...kept } = st; await deps.store.set(kept); }
+          if (st && !isOtherEngineState(st)) { const { interrupted: _told, ...kept } = st; await deps.store.set(kept); }
           const { interrupted: _was, ...rest } = state;
           state = rest;
         }
@@ -1796,7 +1899,7 @@ export class TurnRunner {
         else await this.failoverAfterBackground(need, { p, sink, cwd, sessionId, account, model, routerBase });
         // The continuation may have moved the session: the caller's write-back and bookkeeping read where it is now.
         const now = deps.store.get(sessionId);
-        return now && !isCodexState(now) && !isGeminiState(now) ? now : done();
+        return now && !isOtherEngineState(now) ? now : done();
       }
       await a.rest.return?.();
       // The retry sends only the turn's own prompt: a steer still waiting in the closed process goes back to its device.
@@ -1861,7 +1964,7 @@ export class TurnRunner {
     const now = this.now();
     const reset = limitResetAtMs(errorText, now);
     // 같은 벤더 계정 자동 순환 off: the retry runs on the session's own account, so only its cooldown counts.
-    const cooled = Object.values(readAllCooldownsMs(this.deps.cooldownDir, now, this.rotation() || isCodexState(st) || isGeminiState(st) ? this.accounts.list() : [st.account])).filter((v): v is number => v !== undefined);
+    const cooled = Object.values(readAllCooldownsMs(this.deps.cooldownDir, now, this.rotation() || isOtherEngineState(st) ? this.accounts.list() : [st.account])).filter((v): v is number => v !== undefined);
     const atMs = reset !== null ? reset + 60_000 : cooled.length ? Math.min(...cooled) + 60_000 : now + 30 * 60_000;
     // The retry of an automatic turn runs gated too (보안 #3): the hop rides the booking to ws's send path.
     await this.deps.store.set({ ...st, pendingRetry: { text, atMs, hops, ...(commanderHop ? { commanderHop } : {}) } });
@@ -1909,7 +2012,7 @@ export class TurnRunner {
       sink.emit({ type: 'turn_retry', turnId: need.seg.turnId, sessionId, cwd, fromAccount: account, toAccount: cand.account, reason: `${why}${hint ? ` · ${hint}` : ''} → ${cand.reason}`, attempt: 1 });
       sink.emit({ type: 'turn_notice', turnId: need.seg.turnId, sessionId, cwd, message: `${this.label(account)} 계정 ${why}${hint ? ` (${hint})` : ''} — ${this.label(cand.account)} 계정으로 이어서 진행합니다` });
       const st = deps.store.get(sessionId);
-      if (st && !isCodexState(st) && !isGeminiState(st)) {
+      if (st && !isOtherEngineState(st)) {
         // The closed process wrote the transcript: deck's own write, not Desktop / a CLI (openElsewhere).
         this.deckWroteAt.set(path.resolve(st.projectDir, `${sessionId}.jsonl`), this.now());
         // What the process was doing is told to the model on the next turn: always for a background continuation (it

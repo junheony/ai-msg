@@ -10,7 +10,7 @@ export const ACCOUNT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,15}$/;
  * Never a Claude account: ids that already mean another seat or usage source (`Seat`, `UsageSource`), the words the
  * UI and the wire use for "no account" (`auto`, `none`, a stringified null), and an Object.prototype member (ids key plain objects).
  */
-export const RESERVED_ACCOUNT_IDS: readonly string[] = ['gpt', 'g1', 'g2', 'codex', 'all', 'auto', 'none', 'null', 'undefined', 'constructor'];
+export const RESERVED_ACCOUNT_IDS: readonly string[] = ['gpt', 'g1', 'g2', 'x1', 'x2', 'grok', 'codex', 'all', 'auto', 'none', 'null', 'undefined', 'constructor'];
 
 /** One entry of `<configDir>/accounts.json`. */
 export type AccountSpec = {
@@ -207,11 +207,23 @@ export function isGeminiAccount(x: unknown): x is GeminiAccount {
   return x === 'g1' || x === 'g2';
 }
 
-/** Who ran a turn: a Claude account, the single ChatGPT Pro account, or a Gemini account. */
-export type Seat = Account | 'gpt' | GeminiAccount;
-/** Seats with a usage card (Gemini quota is not readable locally). */
+/**
+ * Grok seats (never chosen by 자동). One for now: x1 runs with GROK_HOME = the real path of `~/.grok`, given by deck
+ * (design §5); a second account (`~/.grok-x2`) is v2 — `x2` is only reserved.
+ */
+export type GrokAccount = 'x1';
+export const GROK_ACCOUNTS: readonly GrokAccount[] = ['x1'];
+
+export function isGrokAccount(x: unknown): x is GrokAccount {
+  return x === 'x1';
+}
+
+/** Who ran a turn: a Claude account, the single ChatGPT Pro account, a Gemini account or a Grok account. */
+export type Seat = Account | 'gpt' | GeminiAccount | GrokAccount;
+/** Seats with a usage card (Gemini and Grok quota are not readable locally). */
 export type UsageSeat = Account | 'gpt';
 export const GEMINI_LABEL: Record<GeminiAccount, string> = { g1: 'G1', g2: 'G2' };
+export const GROK_LABEL: Record<GrokAccount, string> = { x1: 'X1' };
 
 const OPENAI_VARS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL'] as const;
 

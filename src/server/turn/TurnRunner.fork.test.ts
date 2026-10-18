@@ -239,4 +239,12 @@ describe('TurnRunner · 총사령탑 자동 턴', () => {
     expect(eng.calls).toHaveLength(0);
     expect(c.msgs.filter((m) => m.type === 'error' && m.message === COMMANDER_ENGINE_REFUSED)).toHaveLength(1);
   });
+  it('is refused for a Grok session too (the Grok engine is never called)', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const c = await setup(eng);
+    await c.store.set({ engine: 'grok', account: 'x1', sessionId: 'grok-1', grokSessionId: 'grok-1', cwd: '/w/one', canonicalCwd: '/w/one', lastTurnAtMs: null, justCompacted: false, model: 'grok-4.6', effort: 'high', permissionMode: 'default', createdAtMs: NOW, title: 't' });
+    await c.runner.run({ turnId: 't3:cmd1', cwd: '/w/one', sessionId: 'grok-1', text: 'x', commanderHop: 1 }, c.sink);
+    expect(eng.calls).toHaveLength(0);
+    expect(c.msgs.filter((m) => m.type === 'error' && m.message === COMMANDER_ENGINE_REFUSED)).toHaveLength(1);
+  });
 });

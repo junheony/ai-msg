@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type EngineChoice } from '../../shared/models';
-import type { GeminiStatus } from '../../shared/protocol';
+import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
 import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
+import { has } from '../features';
 import { touchEnterIsNewline } from './Chat';
 import { PinIcon } from './icons';
 import { useAutoGrow } from '../useAutoGrow';
@@ -53,7 +54,7 @@ function Pick({ className, label, children, ...rest }: { className?: string; lab
  * its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, modelPicker, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, onEngine, onSandbox }: {
+export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, modelPicker, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox }: {
   projects: ProjectEntry[];
   /** Pinned session ids in pin order (AppState.pins): shown above 최근 대화 and left out of it. */
   pins?: string[];
@@ -76,6 +77,8 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   /** The engine picker appears only when another engine than Claude is available (same rule as Chat). */
   codexAvailable?: boolean;
   gemini?: GeminiStatus | null;
+  /** hello.grok; null = an older server that knows no Grok: no Grok option. Known but no CLI: shown disabled (설치 필요). */
+  grok?: GrokStatus | null;
   /** Mirrors a pick to the pane (so its model picker lists the picked engine's models). */
   onEngine?: (engine: EngineChoice) => void;
   onSandbox?: (sandbox: CodexSandbox) => void;
@@ -141,7 +144,11 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   };
   const edit = (v: string) => { setText(v); saveDraft(draftKey, v); };
   const geminiReady = !!gemini && (gemini.loggedIn.g1 || gemini.loggedIn.g2);
-  const engineSelect = codexAvailable || !!gemini?.available;
+  // Grok: offered once the server found the grok CLI (feature 'grok'); a server that knows Grok without the CLI shows it
+  // dimmed when the picker is up; an older server (no hello.grok) not at all.
+  const grokReady = has('grok');
+  const grokShown = grokReady || !!grok;
+  const engineSelect = codexAvailable || !!gemini?.available || grokReady;
   const sandboxLabel = engine === 'gemini' ? GEMINI_SANDBOX_LABEL : SANDBOX_LABEL;
   const remove = (id: string) => setAttachments((all) => {
     const url = all.find((a) => a.id === id)?.previewUrl;
@@ -188,15 +195,16 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
               </label>
               <span className="newchat-actions">
                 {engineSelect && (
-                  <Pick label={engine === 'codex' ? 'GPT' : engine === 'gemini' ? 'Gemini' : engine === 'auto' ? '자동' : 'Claude'} value={engine}
+                  <Pick label={engine === 'codex' ? 'GPT' : engine === 'gemini' ? 'Gemini' : engine === 'grok' ? 'Grok' : engine === 'auto' ? '자동' : 'Claude'} value={engine}
                     onChange={(e) => { const v = e.target.value as EngineChoice; setEngine(v); onEngine?.(v); }} title="이 세션의 엔진 (세션 생성 후 변경 불가)" aria-label="엔진" data-testid="engine-select">
                     <option value="claude">Claude</option>
                     {codexAvailable && <option value="codex">GPT</option>}
                     {gemini?.available && <option value="gemini" disabled={!geminiReady} title={geminiReady ? undefined : 'docs/gemini-spike.md 의 로그인 명령을 먼저 실행하세요'}>{geminiReady ? 'Gemini' : 'Gemini · 로그인 필요'}</option>}
+                    {grokShown && <option value="grok" disabled={!grokReady} title={grokReady ? undefined : 'grok CLI 가 없습니다 — README 의 설치 명령 후 grok login'}>{grokReady ? 'Grok' : 'Grok · 설치 필요'}</option>}
                     {codexAvailable && <option value="auto">자동</option>}
                   </Pick>
                 )}
-                {engineSelect && engine !== 'claude' && (
+                {engineSelect && engine !== 'claude' && engine !== 'grok' && (
                   <Pick className="sandbox" label={sandboxLabel[sandbox]} value={sandbox} onChange={(e) => { const v = e.target.value as CodexSandbox; setSandbox(v); onSandbox?.(v); }}
                     title={engine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 카드 없음 · 세션을 만든 뒤에도 바꿀 수 있음)'} aria-label="샌드박스" data-testid="sandbox-select">
                     {CODEX_SANDBOXES.map((x) => <option key={x} value={x}>{sandboxLabel[x]}</option>)}

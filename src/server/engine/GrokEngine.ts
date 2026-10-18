@@ -129,6 +129,13 @@ export function grokSetModeParams(sessionId: string, modeId: string): Rec {
 
 /** §4.2: permission kinds 자동 승인 may answer before S1·S10 pin the real request shapes; anything else gets a card. */
 export const AUTO_APPROVE_KINDS: ReadonlySet<string> = new Set(['edit', 'execute', 'read', 'fetch', 'search']);
+/**
+ * 모두 자동 승인 may answer a `grok:<kind>` card itself only for these kinds (the engine's own check and ws's bulk approval
+ * when a session switches to bypassPermissions). Plan exit, mode/permission widening and unknown kinds stay cards.
+ */
+export function isGrokAutoApprovable(toolName: string): boolean {
+  return toolName.startsWith('grok:') && AUTO_APPROVE_KINDS.has(toolName.slice('grok:'.length));
+}
 
 /**
  * `--no-leader`: a config.toml leader mode would otherwise share one backend between processes (observed grok 1.0.62);
@@ -833,7 +840,7 @@ class GrokTurn {
     this.openPerms.add(close);
     try {
       // 자동 승인: allow_once only, only for known kinds, never plan exit / mode widening (those kinds are not listed).
-      if (allowOnce && AUTO_APPROVE_KINDS.has(kind) && this.req.autoApprove?.()) {
+      if (allowOnce && isGrokAutoApprovable(pr.toolName) && this.req.autoApprove?.()) {
         await Promise.race([this.req.onAutoApproved?.(pr).catch(() => {}), closed]);
         return this.cancelled || this.promptDone ? CANCELLED : selected(allowOnce);
       }

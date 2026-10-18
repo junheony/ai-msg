@@ -1,4 +1,4 @@
-import { isGeminiAccount, type Seat } from '../../shared/accounts';
+import { isGeminiAccount, isGrokAccount, type Seat } from '../../shared/accounts';
 import type { EngineKind } from '../../shared/models';
 
 /** OpenAI blossom, drawn in currentColor (CSP: inline only, no external assets). */
@@ -35,23 +35,35 @@ export function GeminiMark({ className }: { className: string }) {
   );
 }
 
+/** Grok's slashed mark (a stroke through a ring), drawn in currentColor. Same 24-unit box as the others. */
+export function GrokMark({ className }: { className: string }) {
+  return (
+    <svg className={`grok-mark ${className}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+        <path d="M17.5 6.2A8 8 0 1 0 19.6 15" />
+        <line x1="5" y1="20" x2="20.5" y2="3.5" />
+      </g>
+    </svg>
+  );
+}
+
 /** Which engine a session runs on: its own field, else what its seat implies. */
 export function engineOf(s: { engine?: EngineKind | null; account?: Seat }): EngineKind {
-  return s.engine ?? (s.account === 'gpt' ? 'codex' : isGeminiAccount(s.account) ? 'gemini' : 'claude');
+  return s.engine ?? (s.account === 'gpt' ? 'codex' : isGeminiAccount(s.account) ? 'gemini' : isGrokAccount(s.account) ? 'grok' : 'claude');
 }
 
 /**
- * The engine mark before a session's title (the usage cards' marks): the Claude star, the OpenAI blossom for Codex.
- * No text content (both are SVG), so the title's text and truncation stay as they were. Gemini (or anything
+ * The engine mark before a session's title (the usage cards' marks): the Claude star, the OpenAI blossom for Codex, the
+ * Grok mark. No text content (all SVG), so the title's text and truncation stay as they were. Gemini (or anything
  * else) has no mark. `decorative`: dense lists whose row already says what it is — hidden from assistive tech, tooltip kept.
  */
 export function EngineMark({ engine, decorative = false }: { engine: EngineKind; decorative?: boolean }) {
-  if (engine !== 'codex' && engine !== 'claude') return null;
-  const label = engine === 'codex' ? 'Codex (GPT)' : 'Claude';
+  if (engine !== 'codex' && engine !== 'claude' && engine !== 'grok') return null;
+  const label = engine === 'codex' ? 'Codex (GPT)' : engine === 'grok' ? 'Grok' : 'Claude';
   const a11y = decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label };
   return (
     <span className={`engine-mark ${engine}`} title={label} {...a11y}>
-      {engine === 'codex' ? <OpenAIMark className="engine-mark-svg" /> : <ClaudeMark className="engine-mark-svg" />}
+      {engine === 'codex' ? <OpenAIMark className="engine-mark-svg" /> : engine === 'grok' ? <GrokMark className="engine-mark-svg" /> : <ClaudeMark className="engine-mark-svg" />}
     </span>
   );
 }

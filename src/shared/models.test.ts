@@ -40,3 +40,24 @@ describe('modelLabelOf (턴별 모델)', () => {
     expect(modelLabelOf('some-model')).toBe('some-model');
   });
 });
+
+describe('Grok models', () => {
+  it('two models, 4.6 by default; the CLI ids are the same names; 4.5 has no xhigh; 500k context; Grok accounts are x1 only', async () => {
+    const m = await import('./models');
+    const a = await import('./accounts');
+    expect(m.GROK_MODELS).toEqual(['grok-4.6', 'grok-4.5']);
+    expect(m.DEFAULT_GROK_MODEL).toBe('grok-4.6');
+    expect(m.GROK_CLI_ALIAS).toEqual({ 'grok-4.6': 'grok-4.6', 'grok-4.5': 'grok-4.5' });
+    expect(m.MODEL_LABEL['grok-4.6']).toBe('Grok 4.6');
+    expect(m.MODEL_LABEL['grok-4.5']).toBe('Grok 4.5');
+    expect(m.MODEL_EFFORTS['grok-4.5']).toEqual(['low', 'medium', 'high']);
+    expect(m.DEFAULT_EFFORT.grok).toBe('high');
+    expect(m.isGrokModel('grok-4.6')).toBe(true);
+    expect(m.isGrokModel('grok')).toBe(false);
+    expect(m.contextWindowOf('grok-4.5')).toBe(500_000);
+    expect(a.GROK_ACCOUNTS).toEqual(['x1']);
+    expect(a.isGrokAccount('x1')).toBe(true);
+    expect(a.isGrokAccount('x2')).toBe(false);
+    expect(a.GROK_LABEL.x1).toBe('X1');
+  });
+});

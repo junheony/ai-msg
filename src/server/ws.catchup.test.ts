@@ -150,7 +150,7 @@ const consecutive = (ns: number[]) => ns.every((n, i) => i === 0 || n === ns[i -
 describe('features', () => {
   it('hello lists what this server can do', async () => {
     const c = await client();
-    expect(c.got[0]).toMatchObject({ type: 'hello', features: FEATURES.filter((f) => f !== 'commander') });
+    expect(c.got[0]).toMatchObject({ type: 'hello', features: FEATURES.filter((f) => f !== 'commander' && f !== 'grok') });
     expect(FEATURES).toContain('catchup');
     c.close();
   });
@@ -270,6 +270,22 @@ describe('catch-up (open_session.after)', () => {
     // Behind the stream with nothing kept: the history.
     a.send({ type: 'open_session', sessionId: sid, after: { epoch: done.pos!.epoch, seq: done.pos!.seq - 1 } });
     await a.next('history');
+    a.close();
+  });
+
+  it('a Grok session\'s catchup carries its permission mode', async () => {
+    const sid = 'grok-catchup-0001';
+    const cwd = path.join(work, 'grok');
+    await fs.mkdir(cwd, { recursive: true });
+    await store.set({ engine: 'grok', account: 'x1', sessionId: sid, grokSessionId: sid, cwd, canonicalCwd: cwd, lastTurnAtMs: 1, justCompacted: false, model: 'grok-4.6', effort: 'high', permissionMode: 'acceptEdits', createdAtMs: 1 });
+    const a = await client(scripted);
+    a.send({ type: 'send', sessionId: sid, cwd, text: 'one' });
+    const done = await a.next('turn_result');
+    await new Promise((r) => setTimeout(r, 50));
+    a.send({ type: 'open_session', sessionId: sid, after: { epoch: done.pos!.epoch, seq: done.pos!.seq } });
+    const head = await a.next('catchup');
+    expect(head).toMatchObject({ sessionId: sid, permissionMode: 'acceptEdits' });
+    expect(head).not.toHaveProperty('accountPin');
     a.close();
   });
 

@@ -8,7 +8,7 @@ import { AcpRpcError } from './acp/AcpConnection';
 import { agentLog, fakeAgent } from './acp/fakeAcpAgent.synthetic';
 import type { SpawnFn } from './CodexEngine';
 import type { EngineEvent, EngineResult, LiveInput, PermissionRequest } from './Engine';
-import { GROK_AGENT_ARGS, GROK_TEXT, classifyGrokError, runGrokTurn, type GrokDeps, type GrokTurnRequest } from './GrokEngine';
+import { GROK_AGENT_ARGS, GROK_TEXT, classifyGrokError, isGrokAutoApprovable, runGrokTurn, type GrokDeps, type GrokTurnRequest } from './GrokEngine';
 import { GrokLock, grokLockKey } from './grokLock';
 
 // Every agent here is the SYNTHETIC fake from fakeAcpAgent.synthetic.ts (ACP v1 spec shapes); S1 recordings replace it.
@@ -264,6 +264,13 @@ const PERM_BODY = (options: string, toolCall = `{ toolCallId: 't1', title: 'Writ
   });`;
 const ALL_OPTS = `[{ optionId: 'ok1', name: 'Allow', kind: 'allow_once' }, { optionId: 'okA', name: 'Always', kind: 'allow_always' }, { optionId: 'no1', name: 'Reject', kind: 'reject_once' }]`;
 const outcomeOf = (log: Array<Record<string, unknown>>) => log.find((m) => m.outcome)?.outcome;
+
+describe('isGrokAutoApprovable', () => {
+  it('only the listed kinds of a grok card; plan exit, mode switches, unknown kinds and other engines\' tools never', () => {
+    for (const k of ['edit', 'execute', 'read', 'fetch', 'search']) expect(isGrokAutoApprovable(`grok:${k}`)).toBe(true);
+    for (const t of ['grok:switch_mode', 'grok:exit_plan_mode', 'grok:other', 'grok:', 'edit', 'ExitPlanMode', 'Bash']) expect(isGrokAutoApprovable(t)).toBe(false);
+  });
+});
 
 describe('runGrokTurn: permissions', () => {
   it("'once' → the allow_once option id; the card gets name, input, toolUseId, title, signal", async () => {

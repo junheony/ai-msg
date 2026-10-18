@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePopoverPlacement } from './usePopoverPlacement';
-import { AUTO_MODEL_INFO, EFFORTS, EFFORT_LABEL, MODEL_EFFORTS, MODEL_INFO, isCodexModel, isGeminiModel, type Effort, type ModelChoice } from '../../shared/models';
+import { AUTO_MODEL_INFO, EFFORTS, EFFORT_LABEL, MODEL_EFFORTS, MODEL_INFO, isCodexModel, isGeminiModel, isGrokModel, type Effort, type ModelChoice } from '../../shared/models';
 
 const MARGIN = 8;
 
@@ -40,10 +40,11 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: {
     return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  const claude = models.filter((m) => !isCodexModel(m) && !isGeminiModel(m));
+  const claude = models.filter((m) => !isCodexModel(m) && !isGeminiModel(m) && !isGrokModel(m));
   const gpt = models.filter((m) => isCodexModel(m));
   const gemini = models.filter((m) => isGeminiModel(m));
-  const groups = [{ title: 'Claude', items: claude }, { title: 'GPT', items: gpt }, { title: 'Gemini', items: gemini }].filter((g) => g.items.length);
+  const grok = models.filter((m) => isGrokModel(m));
+  const groups = [{ title: 'Claude', items: claude }, { title: 'GPT', items: gpt }, { title: 'Gemini', items: gemini }, { title: 'Grok', items: grok }].filter((g) => g.items.length);
   const effortShown = effort !== null && efforts.includes(effort);
   const label = effortShown ? `${infoOf(model).name} · ${EFFORT_LABEL[effort]}` : infoOf(model).name;
 

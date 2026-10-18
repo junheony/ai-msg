@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, type Account, type AccountNames, type GeminiAccount, type Seat } from './accounts';
-import type { AnyModel, ClaudeModel, CodexSandbox, EngineKind } from './models';
+import { GROK_MODELS, type AnyModel, type ClaudeModel, type CodexSandbox, type EngineKind } from './models';
 import { PERM_MODES, type PermMode } from './permission';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from './session-types';
 import type { BgTaskInfo, PermissionDecision, Question, QuestionAnswers, TaskUpdate, TaskUsage, TurnPhase, TurnUsage } from './turn-types';
@@ -23,11 +23,11 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }),
     text: z.string().min(1).max(200_000),
     /** 'auto' = 자동: new Claude sessions get a model from the first prompt; later turns keep the session's model. */
-    model: z.enum(['sonnet', 'opus', 'fable', 'gpt-6-sol', 'gpt-6-astra', 'gemini-pro', 'gemini-flash', 'auto']).optional(),
+    model: z.enum(['sonnet', 'opus', 'fable', 'gpt-6-sol', 'gpt-6-astra', 'gemini-pro', 'gemini-flash', ...GROK_MODELS, 'auto']).optional(),
     /** Reasoning effort for this turn (allowlist = shared/models EFFORTS); absent = the engine's own default. */
     effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
-    /** New sessions only (D3): which engine opens the session. Ignored on resume — the stored engine wins. 'gemini' is explicit only. */
-    engine: z.enum(['claude', 'codex', 'gemini', 'auto']).optional(),
+    /** New sessions only (D3): which engine opens the session. Ignored on resume — the stored engine wins. 'gemini' / 'grok' are explicit only. */
+    engine: z.enum(['claude', 'codex', 'gemini', 'grok', 'auto']).optional(),
     /** New Codex / Gemini sessions only (D2). */
     sandbox: z.enum(['read-only', 'workspace-write']).optional(),
     /** New Claude sessions only: 이 세션은 B 써 (null/absent = 자동). Existing sessions use set_account_pin. */
@@ -161,6 +161,8 @@ export function accountInfos(names: Pick<AccountNames, 'all' | 'label' | 'isHome
 
 /** gemini-cli present, and which accounts have an OAuth file (existence only; the UI shows "로그인 필요" otherwise). */
 export type GeminiStatus = { available: boolean; loggedIn: Record<GeminiAccount, boolean> };
+/** A `grok` binary was found (DECK_GROK_BIN → PATH → ~/.grok/bin/grok) and what `grok --version` printed. Login is not checked (design §5). */
+export type GrokStatus = { bin: boolean; version?: string };
 
 export type TurnBadge = { account: Seat; model: AnyModel; reason: string; usage: TurnUsage; modelNote: string | null; /** The account was chosen because the session is pinned to it. */ pinned?: boolean };
 
@@ -190,10 +192,11 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - highlights: GET /api/highlights answers (세션 하이라이트, events.jsonl).
  * - sessionOps: `set_cwd` (작업 폴더 바꾸기) and `duplicate_session` (복제) are answered; `send.title` is applied.
  * - serverUpdate: GET /api/server-update and POST /api/restart answer (서버 업데이트 대기 · 지금 재시작; `{force:true}` while draining exits now).
+ * - grok: a `grok` binary was found — `send.engine: 'grok'` can open a Grok session. Advertised only then (`hello.grok.bin`).
  * - commander: `commander_set|stop|pause|resume` are answered and `commander` is broadcast (총사령탑). Advertised only while
  *   the settings turn it on (`commanderEnabled`); a `settings` broadcast that changes it carries the new list.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**
@@ -223,7 +226,7 @@ export type SessionFacts = { /** 'commander' servers: the session's commander, n
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   /** `features`: the server's list again when a setting changed it (총사령탑 켜기·끄기 → 'commander'); absent = unchanged. */
   | { type: 'settings'; settings: DeckSettings; features?: string[] }
   | ({ type: 'commander'; sessionId: string } & CommanderView)
