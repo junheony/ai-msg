@@ -65,6 +65,7 @@
 - Claude 사용량 카드는 별도 로컬 서비스(usage-deck)가 `api.anthropic.com/api/oauth/usage` 를 구독 OAuth 토큰으로 직접 호출 → **가장 민감**.
 - Codex(`codex exec --json`)·Gemini(`agy -p --output-format stream-json`)는 공식 CLI 서브프로세스 → 문제 없음.
 - Grok(2026-10-18 추가): 공식 Grok Build CLI 를 `grok agent --no-leader stdio`(ACP)로 띄운다. 로그인은 사용자가 `grok login` 으로 직접 하고, deck 은 `~/.grok/auth.json` 을 읽지 않는다. 같은 구조라 정책상 Codex·Gemini 와 같은 자리로 보지만, xAI 약관의 서드파티 래핑 조항은 미확인(§11).
+  - **권한 보장 수준(실측 2026-10-18):** Grok CLI 는 사용자 HOME 의 `~/.claude/settings*.json` 권한 규칙을 끌 수 없이 읽고, ACP 모드 설정을 확인할 방법이 없다. 그래서 deck 은 Grok 을 턴별 그림자 HOME 으로 돌리고, 권한 모드는 deck 이 승인 요청에 답하는 방식으로만 구현한다. 약속은 "Grok 이 묻는 동작은 모두 deck 모드대로, 묻지 않는 범위는 Grok 의 읽기 목록뿐, 그 밖의 무승인 쓰기는 감지 즉시 정지"까지다. OS 샌드박스(Seatbelt·bubblewrap)는 v1.1. 제품 문서·온보딩에 이 한계를 그대로 적는다.
 
 ### 설계 규칙 (출시 전 필수)
 1. **Claude 는 사용자가 설치한 공식 `claude` 바이너리만** 띄운다(`-p --output-format stream-json --input-format stream-json --include-partial-messages --permission-prompts host` 등). SDK 패키지·번들 바이너리 제거. 로그인은 사용자가 터미널에서 `claude` 로 직접 한다. deck 은 `CLAUDE_CONFIG_DIR` 로 프로필을 고를 뿐 토큰 파일을 읽지 않는다.
@@ -80,6 +81,7 @@
 |---|---|---|
 | 세션·패널·카드·배치 프리셋 | ✓ | ✓ |
 | 벤더 | Claude·Codex·Gemini·Grok 각 **1계정** | **계정 무제한**(벤더당 N) + 통합 사용량 대시보드 |
+| 같은 벤더 다계정 방식 | — | Claude `CLAUDE_CONFIG_DIR`, Codex `CODEX_HOME`, Grok `GROK_HOME`, Gemini(agy)는 자격이 macOS 키체인에 있어 **좌석별 그림자 HOME**(키체인 접근 차단 → 파일 저장소)으로 분리. 그림자 HOME 엔 `.gitconfig`·`.ssh` 만 링크하고 `Library` 는 절대 링크하지 않는다 |
 | 벤더 간 인계(한도 시) | 수동(안내만) | **자동**(요약 컨텍스트 전달) |
 | 병목 알림(권한·질문·실패 재알림), 리셋 시각 자동 재시도 | ✗ | ✓ |
 | 원격 접속 | 같은 네트워크(LAN)·사용자 자체 Tailscale | **릴레이 + 웹 푸시**, 기기 3대 |
@@ -173,3 +175,5 @@ Team(공유 계정 풀·관리자)은 Pro 지표 확인 뒤. 라이선스 우회
 - Happy 의 Gemini 지원 여부.
 - xAI(Grok) 약관: 구독 로그인한 공식 CLI 를 다른 제품이 서브프로세스로 띄우는 것이 허용되는지, 같은 벤더 다계정(`~/.grok-x2`) 조항. 서면 확인 대상에 xAI 추가.
 - Grok 구독 사용량을 공식으로 읽는 경로(`grok usage` 는 세션별 토큰·비용만). 없으면 Grok 카드는 로그인 상태·턴 토큰·관측된 한도 오류만 보인다.
+- agy 그림자 HOME 다계정이 키체인의 1번 계정 항목을 덮어쓰지 않는지(실측 예정, 두 HOME 의 `/usage` 비교). Google 약관의 같은 사람 다계정 조항.
+- 벤더 간 분배 순서(한도 시 Claude → GPT → Gemini → Grok, 이미지 → Gemini, 배경 요약 → Gemini Flash, 교차 검증 → 다른 벤더)는 사용자 확인 대기. 확정되면 §2 의 "벤더 간 인계"와 Pro 기능 목록에 넣는다.
