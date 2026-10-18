@@ -264,7 +264,7 @@ describe('persist (ux-state)', () => {
     expect(ui.collapsed).toEqual(['/ok']);
     expect(ui.drawer).toBe(false);
     const d = newPane('');
-    expect(ui.panes[0]).toEqual({ session: { sessionId: 's1', cwd: '/w', title: 's1', engine: null }, model: d.model, efforts: { claude: 'high', codex: 'low', gemini: 'medium' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write' });
+    expect(ui.panes[0]).toEqual({ session: { sessionId: 's1', cwd: '/w', title: 's1', engine: null }, model: d.model, efforts: { claude: 'high', codex: 'low', gemini: 'medium', grok: 'high' }, autoEffort: null, engine: 'claude', sandbox: 'workspace-write' });
     expect(ui.panes[1]).toMatchObject({ session: null, model: 'sonnet' });
     expect(ui.panes[2]!.session).toBeNull();
     expect(ui.panes[3]).toEqual({ session: null, model: d.model, efforts: d.efforts, autoEffort: null, engine: d.engine, sandbox: d.sandbox });

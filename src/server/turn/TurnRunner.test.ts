@@ -9,6 +9,7 @@ import { StubEngine, failResult, okResult } from '../engine/StubEngine';
 import type { CodexEngine, CodexTurnRequest } from '../engine/CodexEngine';
 import type { GeminiTurnRequest } from '../engine/GeminiEngine';
 import type { GeminiAccount } from '../../shared/accounts';
+import type { GrokTurnRequest } from '../engine/GrokEngine';
 import type { EngineEvent } from '../engine/Engine';
 import { readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
 import { hashInput } from '../audit';
@@ -16,8 +17,9 @@ import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
-import { SessionStateStore, type ClaudeSessionState } from './SessionState';
-import { SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { SessionStateStore, type ClaudeSessionState, type GrokSessionState } from './SessionState';
+import { DEFAULT_EFFORT, DEFAULT_GROK_MODEL, GROK_CLI_ALIAS, type Effort, type GrokModel } from '../../shared/models';
+import { GROK_MODE_NEXT_TURN_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -1126,6 +1128,155 @@ describe('TurnRunner: Gemini sessions (explicit only)', () => {
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: '보안 취약점 검토해줘', engine: 'auto', model: 'auto' }, c.sink);
     expect(g.calls).toHaveLength(0);
     expect(eng.calls).toHaveLength(1);
+  });
+});
+
+const XSID = 'grok-sess-0001';
+
+function fakeGrok(events: (req: GrokTurnRequest) => EngineEvent[] | Promise<EngineEvent[]>) {
+  const calls: GrokTurnRequest[] = [];
+  return { calls, dep: { async *run(req: GrokTurnRequest) { calls.push(req); await req.onSessionId?.(req.resumeSessionId ?? XSID); for (const e of await events(req)) yield e; } } };
+}
+
+const grokOk = (sid: string, text = 'ok'): EngineEvent[] => [
+  { kind: 'init', sessionId: sid, model: 'grok-4.6' },
+  { kind: 'delta', text },
+  { kind: 'result', sessionId: sid, ok: true, text, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' },
+];
+const grokFail = (sid: string, errorText: string, errorKind: string): EngineEvent[] => [
+  { kind: 'result', sessionId: sid, ok: false, text: '', usage: ZERO, errorText, stderr: null, errorKind, terminalReason: null } as EngineEvent,
+];
+
+describe('TurnRunner: Grok sessions (explicit only)', () => {
+  it('engine grok: seat x1, default model and effort, stores a grok state (before the prompt) and a sidebar entry', async () => {
+    const stored: unknown[] = [];
+    let c!: Ctx;
+    const g = fakeGrok(() => { stored.push(c.deps.store.get(XSID)); return grokOk(XSID); });
+    c = await ctx(new StubEngine(async () => []), { grok: g.dep });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: c.base, sessionId: null, text: 'hello grok\nmore', engine: 'grok' }, c.sink);
+    const real = await fs.realpath(c.base);
+    expect(g.calls[0]).toMatchObject({ account: 'x1', cwd: real, resumeSessionId: null, model: 'grok-4.7', effort: 'high', permissionMode: 'default', prompt: 'hello grok\nmore' });
+    expect(stored[0]).toMatchObject({ engine: 'grok', grokSessionId: XSID });
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ account: 'x1', engine: 'grok', model: 'grok-4.7', reason: 'Grok 지정' });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, text: 'ok', sessionId: XSID, badge: { account: 'x1', model: 'grok-4.7' } });
+    expect(c.deps.store.get(XSID)).toMatchObject({ engine: 'grok', account: 'x1', model: 'grok-4.7', effort: 'high', permissionMode: 'default', canonicalCwd: real, title: 'hello grok', lastTurnAtMs: NOW });
+    expect(c.deps.store.codexEntries()).toEqual([expect.objectContaining({ sessionId: XSID, account: 'x1', engine: 'grok', title: 'hello grok' })]);
+  });
+
+  it('resume keeps the stored session, model and effort; an explicit pick (grok-4.5 · low) wins; no grok CLI → refused', async () => {
+    const g = fakeGrok((req) => grokOk(req.resumeSessionId ?? XSID));
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep });
+    await c.deps.store.set({ engine: 'grok', account: 'x1', sessionId: XSID, grokSessionId: XSID, cwd: '/w2', canonicalCwd: '/real/w2', lastTurnAtMs: 1, justCompacted: false, model: 'grok-4.5', effort: 'medium', permissionMode: 'acceptEdits', createdAtMs: 1, title: 't' });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/elsewhere', sessionId: XSID, text: 'x' }, c.sink);
+    expect(g.calls[0]).toMatchObject({ account: 'x1', cwd: '/real/w2', resumeSessionId: XSID, model: 'grok-4.5', effort: 'medium', permissionMode: 'default' });
+    expect(g.calls[0]?.editAuto?.()).toBe(true);
+    expect(c.msgs.find((m) => m.type === 'turn_started')).toMatchObject({ reason: 'Grok 세션 · X1' });
+    await runner.run({ turnId: 't2', cwd: '/w2', sessionId: XSID, text: 'x', model: 'grok-4.6', effort: 'xhigh' }, c.sink);
+    expect(g.calls[1]).toMatchObject({ model: 'grok-4.6', effort: 'xhigh' });
+    expect(c.deps.store.get(XSID)).toMatchObject({ model: 'grok-4.6', effort: 'xhigh' });
+    const none = await ctx(new StubEngine(async () => []), { grok: null });
+    await new TurnRunner(none.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, none.sink);
+    expect(none.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, errorText: 'grok CLI 를 찾을 수 없습니다' });
+  });
+
+  it('resume of a session whose stored model id is no longer listed: default model, effort clamped to its list, stored normalized', async () => {
+    const g = fakeGrok((req) => grokOk(req.resumeSessionId ?? XSID));
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep });
+    await c.deps.store.set({ engine: 'grok', account: 'x1', sessionId: XSID, grokSessionId: XSID, cwd: '/w2', canonicalCwd: '/real/w2', lastTurnAtMs: 1, justCompacted: false, model: 'grok-4.1-retired' as unknown as GrokModel, effort: 'bogus' as unknown as Effort, permissionMode: 'default', createdAtMs: 1, title: 't' });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w2', sessionId: XSID, text: 'x' }, c.sink);
+    expect(g.calls[0]).toMatchObject({ model: GROK_CLI_ALIAS[DEFAULT_GROK_MODEL], effort: DEFAULT_EFFORT.grok });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: true, badge: { model: DEFAULT_GROK_MODEL } });
+    expect(c.deps.store.get(XSID)).toMatchObject({ model: DEFAULT_GROK_MODEL, effort: DEFAULT_EFFORT.grok });
+    // A stored effort the stored (still listed) model does not offer is clamped too: grok-4.5 has no xhigh.
+    const listed: GrokSessionState = { ...(c.deps.store.get(XSID) as GrokSessionState), model: 'grok-4.5', effort: 'xhigh' };
+    await c.deps.store.set(listed);
+    await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w2', sessionId: XSID, text: 'x' }, c.sink);
+    expect(g.calls[1]).toMatchObject({ model: 'grok-4.5', effort: 'high' });
+  });
+
+  it('a mode change during a Grok turn applies at once (live editAuto / autoApprove), no notice; plan is refused', async () => {
+    let runner!: TurnRunner;
+    const seen: Array<[boolean, boolean]> = [];
+    const g = fakeGrok(async (req) => {
+      seen.push([req.editAuto!(), req.autoApprove!()]);
+      expect(await runner.setPermissionMode(XSID, 'acceptEdits')).toBe(true);
+      seen.push([req.editAuto!(), req.autoApprove!()]);
+      expect(await runner.setPermissionMode(XSID, 'bypassPermissions')).toBe(true);
+      seen.push([req.editAuto!(), req.autoApprove!()]);
+      expect(await runner.setPermissionMode(XSID, 'plan')).toBe(false);
+      return grokOk(XSID);
+    });
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep });
+    runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    expect(seen).toEqual([[false, false], [true, false], [false, true]]);
+    expect(c.msgs.filter((m) => m.type === 'turn_notice' && m.message === GROK_MODE_NEXT_TURN_NOTICE)).toEqual([]);
+    expect(c.deps.store.get(XSID)).toMatchObject({ permissionMode: 'bypassPermissions' });
+  });
+
+  it('approvals go to the same permission cards and the audit log (no input); 모두 자동 승인 = Grok default + autoApprove', async () => {
+    const g = fakeGrok(async (req) => {
+      await req.onPermission({ toolName: 'grok:edit', input: { path: 'a.txt', secret: 'TOKEN=abc' }, toolUseId: 'tu1' });
+      await req.onAutoApproved?.({ toolName: 'grok:read', input: { path: 'b' }, toolUseId: 'tu2' });
+      await req.onToolAudit?.({ toolName: 'grok:execute', input: { cmd: 'ls' }, toolUseId: 'tu3', decision: 'deny', source: 'rule' });
+      return grokOk(XSID);
+    });
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep, defaultPermissionMode: () => 'bypassPermissions' });
+    const asked: unknown[] = [];
+    c.sink.askPermission = async (r) => { asked.push(r); return 'deny'; };
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    expect(asked).toEqual([expect.objectContaining({ turnId: 't1', toolName: 'grok:edit', toolUseId: 'tu1' })]);
+    expect(g.calls[0]?.permissionMode).toBe('default');
+    expect(g.calls[0]?.autoApprove?.()).toBe(true);
+    const lines = (await fs.readFile(c.deps.auditFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines).toEqual([
+      expect.objectContaining({ toolName: 'grok:edit', decision: 'deny', source: 'user' }),
+      expect.objectContaining({ toolName: 'grok:read', decision: 'auto', source: 'auto' }),
+      expect.objectContaining({ toolName: 'grok:execute', decision: 'deny', source: 'rule' }),
+    ]);
+    expect(JSON.stringify(lines)).not.toContain('TOKEN=abc');
+    expect(c.deps.store.get(XSID)).toMatchObject({ permissionMode: 'bypassPermissions' });
+  });
+
+  it('steer reaches the running Grok turn and is confirmed by steer_delivered', async () => {
+    let runner!: TurnRunner;
+    const steered: string[] = [];
+    const g = fakeGrok(async (req) => {
+      req.onLive?.({ send: async () => true, steer: async (f, id) => { steered.push(`${id}:${f.text}`); return true; } });
+      expect(await runner.steer('t1', { steerId: 's1', text: '이것도', prompt: { text: '이것도', attachments: [] } })).toBe(true);
+      return [{ kind: 'steer_delivered', id: 's1' } as EngineEvent, ...grokOk(XSID)];
+    });
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep });
+    runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    expect(steered).toEqual(['s1:이것도']);
+    expect(c.msgs.find((m) => m.type === 'steer_delivered')).toMatchObject({ steerId: 's1', sessionId: XSID });
+  });
+
+  it('rate_limit → x1 cooldown (later turns say so); login and other errors show the engine text', async () => {
+    let fail: EngineEvent[] | null = grokFail(XSID, 'Grok 한도 — 잠시 뒤', 'rate_limit');
+    const g = fakeGrok(() => fail ?? grokOk(XSID));
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, errorText: expect.stringContaining('Grok 한도') });
+    fail = grokFail(XSID, 'Grok 로그인 필요 — 터미널에서 grok login', 'authentication_failed');
+    await runner.run({ turnId: 't2', cwd: '/w', sessionId: XSID, text: 'x' }, c.sink);
+    expect(c.msgs.filter((m) => m.type === 'turn_started').at(-1)).toMatchObject({ reason: 'Grok 세션 · X1 (한도 쿨다운 중)' });
+    expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false, errorText: expect.stringContaining('grok login') });
+  });
+
+  it('자동 never opens on Grok; a Grok session refuses a cwd change', async () => {
+    const g = fakeGrok(() => grokOk(XSID));
+    const eng = new StubEngine(() => ok('c1'));
+    const c = await ctx(eng, { grok: g.dep });
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'auto', model: 'auto' }, c.sink);
+    expect(g.calls).toHaveLength(0);
+    expect(eng.calls).toHaveLength(1);
+    await c.deps.store.set({ engine: 'grok', account: 'x1', sessionId: XSID, grokSessionId: XSID, cwd: '/w2', canonicalCwd: '/w2', lastTurnAtMs: 1, justCompacted: false, model: 'grok-4.6', effort: 'high', permissionMode: 'default', createdAtMs: 1 });
+    expect(await runner.setCwd(XSID, '/w3')).toMatchObject({ ok: false });
   });
 });
 

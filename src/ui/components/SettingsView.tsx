@@ -25,7 +25,7 @@ function Seg<T extends string>({ label, value, options, onPick }: { label: strin
   );
 }
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, claudeAccounts = 0, onOpenUsage, onOpenHighlights, onClose }: {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, claudeAccounts = 0, grokLocked = null, onGrokUnlock, onOpenUsage, onOpenHighlights, onClose }: {
   build: string | null;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
@@ -41,6 +41,9 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   onCommanderEnabled?: (on: boolean) => void;
   /** Active Claude accounts: with one, there is nothing to rotate between and the switch is disabled. */
   claudeAccounts?: number;
+  /** Why the Grok engine is locked (a tripwire fired, §14.9-3); null = not locked. */
+  grokLocked?: string | null;
+  onGrokUnlock?: () => void;
   onOpenUsage: () => void;
   onOpenHighlights?: () => void;
   onClose: () => void;
@@ -79,6 +82,12 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           </label>
         ) : <p className="muted">서버 연결 후 표시됩니다.</p>}
         <p className="muted">세션별 모드는 입력창의 권한 선택(Shift+Tab)으로 바꿉니다.</p>
+        {grokLocked && (
+          <div className="settings-row grok-locked" role="alert">
+            <span>Grok 엔진 잠김 — {grokLocked}</span>
+            {onGrokUnlock && <button type="button" className="btn" onClick={onGrokUnlock}>잠금 해제</button>}
+          </div>
+        )}
         {onCommanderEnabled && commanderEnabled !== null && (
           <>
             <Seg<'off' | 'on'> label="총사령탑" value={commanderEnabled ? 'on' : 'off'} onPick={(v) => { if ((v === 'on') !== commanderEnabled) onCommanderEnabled(v === 'on'); }} options={[['off', '끄기'], ['on', '켜기']]} />

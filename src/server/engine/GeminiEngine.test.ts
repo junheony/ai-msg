@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { geminiEnv } from '../../shared/accounts';
 import type { EngineEvent, EngineResult } from './Engine';
-import { GeminiEngine, GeminiEventMapper, GeminiLogin, geminiArgs, resolveGeminiBin, type GeminiTurnRequest } from './GeminiEngine';
+import { GeminiEngine, GeminiEventMapper, GeminiLogin, deniedActionsInStderr, geminiArgs, geminiDeniedNotice, resolveGeminiBin, type GeminiTurnRequest } from './GeminiEngine';
 
 const CID = 'conv-4f1c2b9e-1111';
 
@@ -29,10 +30,10 @@ const mapAll = (evs: unknown[], resume: string | null = null) => {
 };
 
 describe('geminiArgs', () => {
-  it('prompt as one -p= element, stream-json, slug model, effort, plan for read-only', () => {
-    expect(geminiArgs({ resumeSessionId: null, model: 'gemini-pro', effort: 'high', sandbox: 'read-only', prompt: '--model x' })).toEqual([
-      '-p=--model x', '--output-format', 'stream-json', '--model', 'gemini-4-argon', '--effort', 'high', '--mode', 'plan', '--disable-slash-commands', '--print-timeout', '0',
-    ]);
+  it('prompt as one -p= element, stream-json, slug model, effort; read-only keeps --mode plan (the measured path)', () => {
+    const a = geminiArgs({ resumeSessionId: null, model: 'gemini-pro', effort: 'high', sandbox: 'read-only', prompt: '--model x' });
+    expect(a).toEqual(['-p=--model x', '--output-format', 'stream-json', '--model', 'gemini-4-argon', '--effort', 'high', '--mode', 'plan', '--disable-slash-commands', '--print-timeout', '0']);
+    expect(a).not.toContain('accept-edits');
   });
   it('workspace-write → accept-edits + --sandbox; resume adds --conversation <id>; never skips permissions', () => {
     const a = geminiArgs({ resumeSessionId: CID, model: 'gemini-flash', effort: 'low', sandbox: 'workspace-write', prompt: 'hi' });
@@ -49,11 +50,11 @@ describe('GeminiEventMapper', () => {
     expect(ev.filter((e) => e.kind === 'delta').map((e) => (e as { text: string }).text)).toEqual(['Hel', 'lo']);
     expect(ev.filter((e) => e.kind === 'tool_call')).toEqual([
       { kind: 'tool_call', toolUseId: 't1', name: 'read_file', input: { path: 'a.txt' } },
-      { kind: 'tool_call', toolUseId: 'step-5', name: 'run_command', input: { cmd: 'ls' } },
+      { kind: 'tool_call', toolUseId: 'n5', name: 'run_command', input: { cmd: 'ls' } },
     ]);
     expect(ev.filter((e) => e.kind === 'tool_result')).toEqual([
       { kind: 'tool_result', toolUseId: 't1', content: 'x', isError: false },
-      { kind: 'tool_result', toolUseId: 'step-5', content: 'denied', isError: true },
+      { kind: 'tool_result', toolUseId: 'n5', content: 'denied', isError: true },
     ]);
     expect(ev.filter((e) => e.kind === 'init')).toHaveLength(1);
     expect(ev.at(-1)).toMatchObject({ kind: 'result', ok: true, sessionId: CID, text: 'Hello', errorText: null, usage: { inputTokens: 100, outputTokens: 30, cacheReadTokens: 40, cacheCreationTokens: 0 } });
@@ -67,7 +68,73 @@ describe('GeminiEventMapper', () => {
     expect(ev).toEqual([{ kind: 'init', sessionId: 'c2', model: 'gemini-4-argon' }, expect.objectContaining({ kind: 'result', ok: true, text: 'done', sessionId: 'c2' })]);
   });
   it('ignores junk and unknown events', () => {
+    expect(mapAll([{ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'user_input' } }])).toEqual([]);
     expect(mapAll([null, 'x', { type: 'init' }, { event: 'init', init: {} }, { event: 'step_update', step_update: { text_delta: '' } }, { event: 'later_event' }])).toEqual([]);
+  });
+});
+
+/** Real agy 1.4.2 output (docs/gemini-spike.md "실측"). */
+const FIX = path.join(__dirname, 'fixtures', 'agy-1.4.2');
+const fixture = (name: string): unknown[] => readFileSync(path.join(FIX, `${name}.jsonl`), 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l) as unknown);
+const fixtureStderr = (name: string) => readFileSync(path.join(FIX, `${name}.stderr.txt`), 'utf8');
+const ofKind = <K extends EngineEvent['kind']>(ev: EngineEvent[], kind: K) => ev.filter((e): e is Extract<EngineEvent, { kind: K }> => e.kind === kind);
+
+describe('GeminiEventMapper on agy 1.4.2 fixtures', () => {
+  it('01: the top-level conversation_id is the init, sent before any text; the text is the whole response', () => {
+    const lines = fixture('01-plan-simple');
+    const ev = mapAll(lines);
+    const cid = (lines[0] as { conversation_id: string }).conversation_id;
+    expect(ev[0]).toEqual({ kind: 'init', sessionId: cid, model: 'gemini-4-argon' });
+    expect(ofKind(ev, 'init')).toHaveLength(1);
+    const res = ev.at(-1) as EngineResult;
+    expect(res).toMatchObject({ kind: 'result', ok: true, sessionId: cid });
+    expect(ofKind(ev, 'delta').map((d) => d.text).join('')).toBe((lines.at(-1) as { result: { response: string } }).result.response);
+    expect(ofKind(ev, 'notice')).toEqual([]);
+  });
+
+  it('03: one call per tool step (paired by step_index); write_to_file DONE without output still gets its result; usage = steps = result', () => {
+    const ev = mapAll(fixture('03-accept-edits-write'));
+    expect(ofKind(ev, 'tool_call')).toEqual([{ kind: 'tool_call', toolUseId: 'step-2', name: 'write_to_file', input: { TargetFile: '<HOME>/work/hello.txt' } }]);
+    expect(ofKind(ev, 'tool_result')).toEqual([{ kind: 'tool_result', toolUseId: 'step-2', content: '', isError: false }]);
+    expect(ev.at(-1)).toMatchObject({ ok: true, usage: { inputTokens: 14879, outputTokens: 195, cacheReadTokens: 10512 } });
+  });
+
+  it('04: read then denied write — each tool once with a result; empty SUCCESS + denied_actions → a notice naming the action kind only', () => {
+    const ev = mapAll(fixture('04-plan-write-denied'));
+    expect(ofKind(ev, 'tool_call').map((c) => [c.toolUseId, c.name])).toEqual([['step-2', 'view_file'], ['step-4', 'write_to_file']]);
+    expect(ofKind(ev, 'tool_result')).toEqual([
+      { kind: 'tool_result', toolUseId: 'step-2', content: '2 lines, 5 bytes', isError: false },
+      { kind: 'tool_result', toolUseId: 'step-4', content: '', isError: false },
+    ]);
+    const notices = ofKind(ev, 'notice');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.message).toMatch(/^Gemini가 거부함: 파일 쓰기/);
+    expect(notices[0]!.message).not.toMatch(/HOME|\/|WriteToFile|plan\.txt/);
+    expect(ev.at(-1)).toMatchObject({ kind: 'result', ok: true, text: '' });
+  });
+
+  it('06: a continuation counts only this turn\'s steps (result.usage is the conversation total); a denied shell step is an error result', () => {
+    const lines = fixture('06-resume-shell-denied');
+    const ev = mapAll(lines, (lines[0] as { conversation_id: string }).conversation_id);
+    expect((lines.at(-1) as { result: { usage: { input_tokens: number } } }).result.usage.input_tokens).toBe(28129);
+    expect(ev.at(-1)).toMatchObject({ ok: true, usage: { inputTokens: 13250, outputTokens: 166, cacheReadTokens: 0 } });
+    expect(ofKind(ev, 'tool_call')).toEqual([{ kind: 'tool_call', toolUseId: 'step-7', name: 'run_command', input: { CommandLine: 'ls -1' } }]);
+    expect(ofKind(ev, 'tool_result')).toEqual([expect.objectContaining({ toolUseId: 'step-7', isError: true, content: expect.stringContaining('permission check failed') })]);
+    expect(ofKind(ev, 'notice').map((n) => n.message)).toEqual([expect.stringMatching(/^Gemini가 거부함: 셸 명령 실행/)]);
+  });
+
+  it('02 / 05 / 07: denial outside a trusted folder; argument errors are a lone failed result', () => {
+    expect(ofKind(mapAll(fixture('02-accept-edits-untrusted-denied')), 'notice')).toHaveLength(1);
+    expect(mapAll(fixture('05-error-effort-xhigh'))).toEqual([expect.objectContaining({ kind: 'result', ok: false, errorText: expect.stringContaining('no "xhigh" effort') })]);
+    expect(mapAll(fixture('07-error-invalid-model'))).toEqual([expect.objectContaining({ kind: 'result', ok: false, errorText: expect.stringContaining('invalid model selection') })]);
+  });
+
+  it('denial helpers: stderr permission names, labels deduped, unknown kinds generic, nothing → null', () => {
+    expect(deniedActionsInStderr(fixtureStderr('04-plan-write-denied'))).toEqual(['write_file']);
+    expect(deniedActionsInStderr(fixtureStderr('06-resume-shell-denied'))).toEqual(['command']);
+    expect(deniedActionsInStderr(fixtureStderr('01-plan-simple'))).toEqual([]);
+    expect(geminiDeniedNotice(['write_file', 'write_file', 'command', '/etc/passwd'])).toMatch(/^Gemini가 거부함: 파일 쓰기, 셸 명령 실행, 도구 실행 — /);
+    expect(geminiDeniedNotice([])).toBeNull();
   });
 });
 
@@ -153,6 +220,20 @@ describe('GeminiEngine / GeminiLogin with a fake agy binary', () => {
     expect((await log()).argv.slice(-7)).toEqual(['accept-edits', '--sandbox', '--disable-slash-commands', '--print-timeout', '0', '--conversation', CID]);
   });
 
+  it('a soft-denial seen only on stderr (no denied_actions) still becomes a notice before the result', async () => {
+    const lines = fixture('02-accept-edits-untrusted-denied').map((l) => {
+      const r = l as { event: string; result?: Record<string, unknown> };
+      if (r.event !== 'result') return l;
+      const { denied_actions: _drop, ...rest } = r.result!;
+      return { ...r, result: rest };
+    });
+    await script({ lines, stderr: fixtureStderr('02-accept-edits-untrusted-denied') });
+    const ev = await collect(engine().runTurn(req({ sandbox: 'workspace-write' })));
+    expect(ev.slice(-2)).toEqual([{ kind: 'notice', message: expect.stringMatching(/^Gemini가 거부함: 파일 쓰기/) }, expect.objectContaining({ kind: 'result', ok: true })]);
+    await script({ lines: fixture('04-plan-write-denied'), stderr: fixtureStderr('04-plan-write-denied') });
+    expect(ofKind(await collect(engine().runTurn(req())), 'notice')).toHaveLength(1);
+  });
+
   it('a flag-shaped resume id never reaches the binary', async () => {
     await fs.rm(path.join(dir, 'log.json'), { force: true });
     const ev = await collect(engine().runTurn(req({ resumeSessionId: '--dangerously-skip-permissions' })));
@@ -228,5 +309,18 @@ describe('GeminiEngine / GeminiLogin with a fake agy binary', () => {
       await login.refresh(); // joins the background probe
       expect(await count()).toBe(2);
     });
+  });
+});
+
+describe('review fixes: usage on a resumed turn', () => {
+  const resultOnly = { event: 'result', result: { conversation_id: CID, status: 'SUCCESS', response: 'ok', usage: { input_tokens: 28000, output_tokens: 100 } } };
+  it('a fresh turn without step usage falls back to result.usage', () => {
+    const r = mapAll([resultOnly]).find((e): e is EngineResult => e.kind === 'result')!;
+    expect(r.usage.inputTokens).toBe(28000);
+  });
+  it('a resumed turn without step usage reports zero, not the conversation total', () => {
+    const r = mapAll([resultOnly], CID).find((e): e is EngineResult => e.kind === 'result')!;
+    expect(r.usage.inputTokens).toBe(0);
+    expect(r.usage.outputTokens).toBe(0);
   });
 });

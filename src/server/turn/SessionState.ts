@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { Account, GeminiAccount } from '../../shared/accounts';
-import type { ClaudeModel, CodexModel, CodexSandbox, GeminiModel } from '../../shared/models';
+import type { Account, GeminiAccount, GrokAccount } from '../../shared/accounts';
+import type { ClaudeModel, CodexModel, CodexSandbox, Effort, GeminiModel, GrokModel } from '../../shared/models';
 import type { PermMode } from '../../shared/permission';
 import type { SessionEntry } from '../../shared/session-types';
 import { isCommanderState, type CommanderState } from '../commander/types';
@@ -91,7 +91,26 @@ export type GeminiSessionState = SessionBase & {
   createdAtMs: number;
 };
 
-export type SessionState = ClaudeSessionState | CodexSessionState | GeminiSessionState;
+/**
+ * A Grok session deck created (design §5–§7). sessionId = Grok's ACP session id (`session/new`). Pinned to its account
+ * and canonical cwd: session/load needs both unchanged. `permissionMode` is deck's mode (bypassPermissions = 자동 승인 of
+ * the allowed kinds; Grok itself runs in default then).
+ */
+export type GrokSessionState = SessionBase & {
+  engine: 'grok';
+  account: GrokAccount;
+  /** Picker default for the next turn. */
+  model: GrokModel;
+  effort: Effort;
+  permissionMode: PermMode;
+  /** Same as sessionId; kept by name so the record reads on its own. */
+  grokSessionId: string;
+  /** realpath of the session's cwd when it was created. */
+  canonicalCwd: string;
+  createdAtMs: number;
+};
+
+export type SessionState = ClaudeSessionState | CodexSessionState | GeminiSessionState | GrokSessionState;
 
 export function isCodexState(s: SessionState): s is CodexSessionState {
   return s.engine === 'codex';
@@ -99,6 +118,15 @@ export function isCodexState(s: SessionState): s is CodexSessionState {
 
 export function isGeminiState(s: SessionState): s is GeminiSessionState {
   return s.engine === 'gemini';
+}
+
+export function isGrokState(s: SessionState): s is GrokSessionState {
+  return s.engine === 'grok';
+}
+
+/** Codex, Gemini or Grok: a session that is not Claude's (no account pin, no jsonl, no moves). */
+export function isOtherEngineState(s: SessionState): s is CodexSessionState | GeminiSessionState | GrokSessionState {
+  return s.engine === 'codex' || s.engine === 'gemini' || s.engine === 'grok';
 }
 
 let tmpCounter = 0;
@@ -149,13 +177,20 @@ export class SessionStateStore {
     return [...this.map.values()];
   }
 
-  /** D4: Codex and Gemini sessions for the sidebar (Claude ones come from SessionIndex's profile scan). */
+  /** D4: Codex, Gemini and Grok sessions for the sidebar (Claude ones come from SessionIndex's profile scan). */
   codexEntries(): SessionEntry[] {
     const out: SessionEntry[] = [];
     for (const s of this.map.values()) {
       if (isGeminiState(s)) {
         out.push({
           sessionId: s.sessionId, account: s.account, engine: 'gemini', sandbox: s.sandbox, cwd: s.cwd, projectDir: '', file: '',
+          title: s.title ?? '(제목 없음)', lastModified: s.lastTurnAtMs ?? s.createdAtMs, sizeBytes: 0,
+        });
+        continue;
+      }
+      if (isGrokState(s)) {
+        out.push({
+          sessionId: s.sessionId, account: s.account, engine: 'grok', cwd: s.cwd, projectDir: '', file: '',
           title: s.title ?? '(제목 없음)', lastModified: s.lastTurnAtMs ?? s.createdAtMs, sizeBytes: 0,
         });
         continue;
@@ -177,9 +212,9 @@ export class SessionStateStore {
    */
   set(s: SessionState): Promise<void> {
     const prev = this.map.get(s.sessionId);
-    if (prev && !isCodexState(s) && !isGeminiState(s)) {
+    if (prev && !isOtherEngineState(s)) {
       const { accountPin: _drop, ...rest } = s;
-      const pin = !isCodexState(prev) && !isGeminiState(prev) ? prev.accountPin : undefined;
+      const pin = !isOtherEngineState(prev) ? prev.accountPin : undefined;
       s = pin ? { ...rest, accountPin: pin } : rest;
     }
     if ('commander' in s || prev?.commander) {
@@ -205,7 +240,7 @@ export class SessionStateStore {
   /** Pins a Claude session to an account (null = 자동). False when there is no Claude state for `id`. */
   setAccountPin(id: string, pin: Account | null): Promise<boolean> {
     const prev = this.map.get(id);
-    if (!prev || isCodexState(prev) || isGeminiState(prev)) return Promise.resolve(false);
+    if (!prev || isOtherEngineState(prev)) return Promise.resolve(false);
     const { accountPin: _drop, ...rest } = prev;
     return this.save(pin ? { ...rest, accountPin: pin } : rest).then(() => true);
   }

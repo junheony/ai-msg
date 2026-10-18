@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { CLAUDE_MODELS, CODEX_MODELS } from '../../shared/models';
+import { CLAUDE_MODELS, CODEX_MODELS, GROK_MODELS } from '../../shared/models';
 import { ModelPicker } from './ModelPicker';
 
 function setup(extra: Partial<Parameters<typeof ModelPicker>[0]> = {}) {
@@ -102,5 +102,16 @@ describe('ModelPicker', () => {
       if (width) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', width);
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: w });
     }
+  });
+
+  it('Grok: Grok 4.7 / 4.7 Fast / 4.6 / 4.5 with descriptions; Grok 4.5 offers no 엑스트라', () => {
+    setup({ models: GROK_MODELS, model: 'grok-4.5', effort: 'high' });
+    fireEvent.click(screen.getByTestId('model-picker'));
+    const menu = within(screen.getByTestId('model-menu'));
+    const models = within(menu.getByRole('group', { name: 'Grok' })).getAllByRole('menuitemradio');
+    expect(models.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['Grok 4.7', 'Grok 4.7 Fast', 'Grok 4.6', 'Grok 4.5']);
+    expect(models.every((b) => (b.querySelector('.mp-desc')?.textContent ?? '').length > 0)).toBe(true);
+    const effort = within(menu.getByRole('group', { name: '추론 수준' }));
+    expect(effort.getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual(['낮음', '중간', '높음']);
   });
 });

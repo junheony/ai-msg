@@ -36,6 +36,10 @@ export type DeckConfig = {
   codexBin: string | null;
   /** null = Gemini disabled (no `agy` Antigravity CLI found). agy keeps its own keychain login; deck never logs in. */
   geminiBin: string | null;
+  /** null = Grok disabled (no `grok` Grok Build CLI found). Grok keeps its own login under GROK_HOME; deck never logs in. */
+  grokBin: string | null;
+  /** Seat x1's GROK_HOME: the real path of `<home>/.grok` (the shell's GROK_HOME is never used, design §5). */
+  grokHome: string;
   /** `$CODEX_HOME/sessions` (rollout files; read-only for deck). */
   codexSessionsRoot: string;
   /** `$CODEX_HOME/archived_sessions` (threads archived in Codex; read-only for deck, listed under 보관됨). */
@@ -153,6 +157,34 @@ export function repoRootDefault(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 }
 
+function isExecutable(p: string): boolean {
+  try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch { return false; }
+}
+
+function realOr(p: string): string {
+  try { return fs.realpathSync(p); } catch { return p; }
+}
+
+/**
+ * `DECK_GROK_BIN` (as-is when absolute and executable) → each `PATH` entry → `~/.grok/bin/grok` (the installer's dir).
+ * Null = Grok disabled. A refused `DECK_GROK_BIN` says why in one `log` line (its path only).
+ */
+export function resolveGrokBin(env: NodeJS.ProcessEnv, home: string, existsFn: (p: string) => boolean = isExecutable, log: (line: string) => void = () => {}): string | null {
+  const bin = env.DECK_GROK_BIN;
+  if (bin) {
+    if (!path.isAbsolute(bin)) { log(`deck: DECK_GROK_BIN=${JSON.stringify(bin)} 는 절대경로가 아니라 무시합니다 — Grok 꺼짐`); return null; }
+    if (!existsFn(bin)) { log(`deck: DECK_GROK_BIN=${JSON.stringify(bin)} 는 실행할 수 있는 파일이 아니라 무시합니다 — Grok 꺼짐`); return null; }
+    return bin;
+  }
+  for (const dir of (env.PATH ?? '').split(':')) {
+    if (!dir) continue;
+    const p = path.join(dir, 'grok');
+    if (existsFn(p)) return p;
+  }
+  const installed = path.join(home, '.grok', 'bin', 'grok');
+  return existsFn(installed) ? installed : null;
+}
+
 /** Throws `AccountsFileError` when `<configDir>/accounts.json` is there and cannot be used. `log`: startup notes (skipped profile dirs, an unknown protected account). */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), repoRoot: string = repoRootDefault(), log: (line: string) => void = (l) => console.error(l)): DeckConfig {
   const configDir = env.DECK_CONFIG_DIR || path.join(home, '.config', 'deck');
@@ -185,6 +217,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     claudeBin: resolveClaudeBin(env, home),
     codexBin: resolveCodexBin(env, home),
     geminiBin: resolveGeminiBin(env, home),
+    grokBin: resolveGrokBin(env, home, isExecutable, log),
+    grokHome: realOr(path.join(home, '.grok')),
     codexSessionsRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),
     codexArchivedRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'archived_sessions'),
     attachmentsDir: path.join(configDir, 'attachments'),

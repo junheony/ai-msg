@@ -72,9 +72,9 @@ describe('buildRegistry', () => {
     const r = buildRegistry({ version: 1, home: 'work', accounts: [
       { id: 'work', label: '회사', configDir: '~/profiles/work/', card: 'claude:team' },
       { id: 'a' },
-      { id: 'x1', configDir: '/abs/x1' },
+      { id: 'y1', configDir: '/abs/y1' },
     ] }, { homeDir: H });
-    expect(r.list()).toEqual(['work', 'a', 'x1']);
+    expect(r.list()).toEqual(['work', 'a', 'y1']);
     expect(r.home).toBe('work');
     expect(r.isHome('work')).toBe(true);
     expect(r.isHome('a')).toBe(false);
@@ -84,9 +84,9 @@ describe('buildRegistry', () => {
     expect(r.cardId('work')).toBe('claude:team');
     expect(r.profileDir('a')).toBe(`${H}/.claude`);
     expect(r.cardId('a')).toBe('claude:main');
-    expect(r.profileDir('x1')).toBe('/abs/x1');
-    expect(r.cardId('x1')).toBe('claude:x1');
-    expect(r.label('x1')).toBe('X1');
+    expect(r.profileDir('y1')).toBe('/abs/y1');
+    expect(r.cardId('y1')).toBe('claude:y1');
+    expect(r.label('y1')).toBe('Y1');
     // CLAUDE_CONFIG_DIR stays unset only for the default profile dir (keychain service name without a hash suffix).
     expect('CLAUDE_CONFIG_DIR' in r.env('a', { CLAUDE_CONFIG_DIR: '/e' })).toBe(false);
     expect(r.env('work', {}).CLAUDE_CONFIG_DIR).toBe(`${H}/profiles/work`);
@@ -145,6 +145,7 @@ describe('buildRegistry', () => {
     expect(bad([{ id: 'Bad' }])).toThrow(/Bad/);
     expect(bad([{ id: 'gpt' }])).toThrow(/gpt/);
     expect(bad([{ id: 'codex' }])).toThrow(/codex/);
+    for (const id of ['x1', 'x2', 'grok']) expect(bad([{ id }])).toThrow(new RegExp(id));
     for (const id of ['auto', 'null', 'undefined', 'none']) expect(bad([{ id }])).toThrow(new RegExp(id));
     expect(bad([{ id: 'a' }], 'z')).toThrow(/home.*z/);
     expect(bad([{ id: 'a' }, { id: 'b', retired: true }], 'b')).toThrow(/home.*b/);

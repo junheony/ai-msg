@@ -7,15 +7,17 @@ import type { GeminiLogin } from '../engine/GeminiEngine';
 import type { UsageService } from './UsageService';
 
 /**
- * agy's print-mode `/usage` command (printmode.usageReport in the 1.3.5 binary): with `--output-format json` the
- * quota summary comes out as JSON (groups → buckets; `used_percentage` / `remaining_percentage`, `reset_time`).
- * `--disable-slash-commands` must NOT be passed here — it would turn `/usage` into a prompt.
+ * agy's print-mode `/usage` command: with `--output-format json` (agy 1.4.2, fixtures/agy-1.4.2/usage.json) the quota
+ * summary is `command.data.groups[] → buckets[]`, each `{ id, name, window: 'weekly' | '5h', remaining_fraction: 0–1,
+ * reset_time }`, plus the same as tab-separated text in `response`. Bucket names repeat across groups, so a bucket is
+ * named "<group> · <window>". `--disable-slash-commands` must NOT be passed here — it would turn `/usage` into a prompt.
  */
 export const GEMINI_USAGE_ARGS = ['-p=/usage', '--output-format', 'json'] as const;
 
 const STDOUT_MAX = 1_048_576;
 const NAME_KEYS = ['display_name', 'displayName', 'name', 'label', 'title', 'model_name', 'modelName', 'model', 'bucket_name', 'bucketName', 'bucket', 'key', 'id'];
 const USED_KEYS = ['used_percentage', 'usedPercentage', 'used_percent', 'usedPercent', 'used_pct', 'usage_percentage'];
+const REMAINING_FRACTION_KEYS = ['remaining_fraction', 'remainingFraction'];
 const REMAINING_KEYS = ['remaining_percentage', 'remainingPercentage', 'remaining_percent', 'remainingPercent', 'remaining_pct'];
 const RESET_AT_KEYS = ['reset_time', 'resetTime', 'resets_at', 'resetsAt', 'reset_at', 'resetAt', 'reset', 'reset_time_local', 'resetTimeLocal'];
 const RESET_IN_KEYS = ['reset_in_seconds', 'resetInSeconds', 'seconds_until_reset', 'secondsUntilReset', 'reset_in', 'resetIn', 'resets_in', 'resetsIn'];
@@ -25,6 +27,18 @@ const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.i
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : null);
 const first = (o: Obj, keys: readonly string[]): unknown => { for (const k of keys) if (o[k] !== undefined && o[k] !== null) return o[k]; return undefined; };
 const clampPct = (n: number) => Math.max(0, Math.min(100, Math.round(n * 10) / 10));
+
+/** The `Claude and GPT models` group: agy's own Claude/GPT seats, which deck never uses → not shown. */
+const THIRD_PARTY_GROUP_RE = /\b(claude|gpt)\b/i;
+/** "Gemini Models" → "Gemini", "Gemini 4 Argon" → "Argon". */
+const groupLabel = (g: string) => g.trim().replace(/\s+models?$/i, '').replace(/^gemini\s+\d+(?:\.\d+)?\s+/i, '').trim() || g.trim();
+/** agy windows (`weekly`, `5h`) or, in the text report, the bucket name ("Weekly Limit Remaining", "Five Hour Limit Remaining"). */
+function windowLabel(w: string): string {
+  if (/week/i.test(w)) return '주간';
+  if (/^5\s*h$|five\s*hour/i.test(w)) return '5h';
+  if (/day|daily/i.test(w)) return '일간';
+  return w.trim();
+}
 
 /** "2h 10m", "in 45m", "1d 3h", "90s" → ms; null when it is not a duration. */
 export function parseDuration(s: string): number | null {
@@ -49,8 +63,10 @@ export function toResetIso(v: unknown, nowMs: number): string | null {
 function bucketOf(o: Obj, inheritedName: string | null, nowMs: number): GeminiBucket | null {
   let usedPct: number | null = null;
   const used = num(first(o, USED_KEYS));
+  const fraction = num(first(o, REMAINING_FRACTION_KEYS));
   const remaining = num(first(o, REMAINING_KEYS));
   if (used !== null) usedPct = used;
+  else if (fraction !== null) usedPct = (1 - fraction) * 100;
   else if (remaining !== null) usedPct = 100 - remaining;
   else {
     // `used`/`remaining` + `limit` counts (tokens, requests): a percentage of the limit.
@@ -60,7 +76,10 @@ function bucketOf(o: Obj, inheritedName: string | null, nowMs: number): GeminiBu
   }
   if (usedPct === null) return null;
   const own = first(o, NAME_KEYS);
-  const name = typeof own === 'string' && own.trim() ? own.trim() : inheritedName ?? '한도';
+  const ownName = typeof own === 'string' && own.trim() ? own.trim() : null;
+  // A bucket with a window inside a group: names repeat across groups, so "<group> · <window>".
+  const win = typeof o.window === 'string' && o.window.trim() ? o.window : null;
+  const name = win && inheritedName ? `${groupLabel(inheritedName)} · ${windowLabel(win)}` : ownName ?? inheritedName ?? '한도';
   let resetsAt = toResetIso(first(o, RESET_AT_KEYS), nowMs);
   if (!resetsAt) {
     const sec = num(first(o, RESET_IN_KEYS));
@@ -76,17 +95,30 @@ function walk(node: unknown, inheritedName: string | null, nowMs: number, out: G
   if (b) out.push(b);
   const own = first(node, NAME_KEYS);
   const name = typeof own === 'string' && own.trim() ? own.trim() : inheritedName;
+  if (Array.isArray(node.buckets) && name && THIRD_PARTY_GROUP_RE.test(name)) return;
   for (const [k, v] of Object.entries(node)) {
     if (k === 'usage' && isObj(v) && 'input_tokens' in v) continue; // the turn's token usage, not quota
     if (isObj(v) || Array.isArray(v)) walk(v, name, nowMs, out);
   }
 }
 
-/** The text report: "Gemini 4 Argon: 73% remaining (resets in 2h 10m)" / "Flash · 12% used · resets at 2026-10-14T09:00Z". */
+/**
+ * The text report. agy 1.4.2 (`response` of `/usage`): tab-separated `<group>\t<bucket name>\t<remaining>%\t<ISO>`.
+ * Older guesses: "Gemini 4 Argon: 73% remaining (resets in 2h 10m)" / "Flash · 12% used · resets at 2026-10-14T09:00Z".
+ */
 export function parseUsageText(text: string, nowMs: number): GeminiBucket[] {
   const out: GeminiBucket[] = [];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/\x1b\[[0-9;]*m/g, '').trim();
+    const cols = line.split('\t').map((c) => c.trim());
+    if (cols.length >= 3) {
+      const [group, bucket, pctCol, reset] = cols as [string, string, string, string | undefined];
+      const pct = pctCol.match(/^(\d{1,3}(?:\.\d+)?)\s*%$/);
+      if (!pct || !group || !bucket) continue;
+      if (THIRD_PARTY_GROUP_RE.test(group)) continue;
+      out.push({ name: `${groupLabel(group)} · ${windowLabel(bucket)}`, usedPct: clampPct(100 - Number(pct[1])), resetsAt: reset ? toResetIso(reset, nowMs) : null });
+      continue;
+    }
     const m = line.match(/^[-*•]?\s*([^:|·—–]+?)\s*[:|·—–]\s*(\d{1,3}(?:\.\d+)?)\s*%\s*(remaining|left|used|소진|남음|사용)?/i);
     if (!m) continue;
     const pct = Number(m[2]);

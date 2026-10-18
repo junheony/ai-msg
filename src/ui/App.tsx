@@ -23,7 +23,7 @@ import { UsagePanel } from './components/UsagePanel';
 import { UsageView } from './components/UsageView';
 import { Highlights } from './components/Highlights';
 import { HighlightsBadge, ServerChip, ServerUpdateChip, WorkStatus, type WorkRow } from './components/WorkStatus';
-import { isGeminiAccount } from '../shared/accounts';
+import { isGeminiAccount, isGrokAccount } from '../shared/accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
 import { paneColumns, paneSize, resizePair } from './paneResize';
@@ -96,7 +96,7 @@ function writeLocal(key: string, value: string): void {
 function routePreviewAsk(pane: AppState['panes'][number]): { key: string; sessionId: string | null; cwd: string; model?: ClaudeModel | 'auto' } | null {
   const s = pane.session;
   if (!s) return null;
-  const claude = s.sessionId === null ? pane.engine === 'claude' && !s.accountPin : s.engine ? s.engine === 'claude' : s.account !== 'gpt' && !(s.account && isGeminiAccount(s.account));
+  const claude = s.sessionId === null ? pane.engine === 'claude' && !s.accountPin : s.engine ? s.engine === 'claude' : s.account !== 'gpt' && !(s.account && (isGeminiAccount(s.account) || isGrokAccount(s.account)));
   if (!claude) return null;
   const picked = s.sessionId === null || pane.modelPicked;
   const model = picked && (pane.model === 'auto' || isClaudeModel(pane.model)) ? pane.model : undefined;
@@ -1280,7 +1280,7 @@ export function App() {
       )}
       {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
-      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)}
         onOpenSessionSplit={(s) => openSplit(s.sessionId, s.cwd, s.title)}
         onOpenSessionFloat={phone ? undefined : (s) => { const before = latest.current.panes.length; openSplit(s.sessionId, s.cwd, s.title); if (latest.current.panes.length > before) floatPane(latest.current.activePaneId); }}

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { Chat, messageKeys } from './Chat';
+import { Chat, messageKeys, modelChoices } from './Chat';
+import { GROK_MODELS } from '../../shared/models';
+import { GROK_BYPASS_HINT, PERM_MODE_HINT } from '../../shared/permission';
 import type { ChatProps } from './Chat';
 import type { ChatItem } from '../state';
 
@@ -19,6 +21,25 @@ const chatProps = (items: ChatItem[]): ChatProps => ({ items, pending: [], quest
 
 describe('Chat', () => {
   afterEach(cleanup);
+
+  it('a Grok session: Grok models only, the permission picker works (approval cards), no sandbox picker', () => {
+    expect(modelChoices('grok')).toEqual(GROK_MODELS);
+    const onPermMode = vi.fn();
+    renderChat([], false, vi.fn(), { sessionEngine: 'grok', model: 'grok-4.6', onPermMode, permMode: 'default' });
+    const perm = screen.getByTestId('perm-select') as HTMLSelectElement;
+    expect(perm.disabled).toBe(false);
+    fireEvent.change(perm, { target: { value: 'acceptEdits' } });
+    expect(onPermMode).toHaveBeenCalledWith('acceptEdits');
+    expect(screen.queryByTestId('sandbox-select')).toBeNull();
+    // 모두 자동 승인 explains Grok's narrower rule.
+    cleanup();
+    renderChat([], false, vi.fn(), { sessionEngine: 'grok', model: 'grok-4.6', onPermMode, permMode: 'bypassPermissions' });
+    expect(screen.getByTestId('perm-select').getAttribute('title')).toContain(GROK_BYPASS_HINT);
+    expect(screen.getByTestId('perm-badge').getAttribute('title')).toContain(GROK_BYPASS_HINT);
+    cleanup();
+    renderChat([], false, vi.fn(), { sessionEngine: 'claude', onPermMode, permMode: 'bypassPermissions' });
+    expect(screen.getByTestId('perm-select').getAttribute('title')).toContain(PERM_MODE_HINT.bypassPermissions);
+  });
 
   it('pane header: engine mark (role=img) only once the engine is known — no Claude flash on an opening Codex thread', () => {
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: null });
@@ -104,11 +125,15 @@ describe('Chat', () => {
 
   it('Gemini: option only with agy; disabled with 로그인 필요 until agy is logged in; Gemini models with effort', () => {
     const out = { available: true, loggedIn: { g1: false, g2: false } };
-    renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false, gemini: out });
+    renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false, gemini: out, grok: { bin: false } });
     const opt = () => within(screen.getByTestId('engine-select')).getByRole('option', { name: /Gemini/ }) as HTMLOptionElement;
     expect(opt().disabled).toBe(true);
     expect(opt().textContent).toBe('Gemini · 로그인 필요');
     // Without Codex there is no GPT or 자동 engine.
+    expect(within(screen.getByTestId('engine-select')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude', 'Gemini · 로그인 필요', 'Grok · 설치 필요']);
+    cleanup();
+    // An older server (no hello.grok): no Grok option at all.
+    renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false, gemini: out });
     expect(within(screen.getByTestId('engine-select')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude', 'Gemini · 로그인 필요']);
     cleanup();
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, gemini: { available: false, loggedIn: { g1: false, g2: false } } });
@@ -119,7 +144,7 @@ describe('Chat', () => {
     expect(opt().textContent).toBe('Gemini');
     expect(within(screen.getByTestId('sandbox-select')).getAllByRole('option').map((o) => o.textContent)).toEqual(['읽기 전용', '파일 편집 허용(셸 거부)']);
     fireEvent.click(screen.getByTestId('model-picker'));
-    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent)).toEqual(['Gemini 4 Argon', 'Gemini Flash', '낮음', '중간', '높음', '엑스트라']);
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent)).toEqual(['Gemini 4 Argon', 'Gemini Flash', '낮음', '중간', '높음']); // agy: no xhigh for Gemini
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'gemini', sessionSandbox: 'read-only', model: 'gemini-pro' });
     expect(screen.getByText('Gemini · 읽기 전용')).toBeTruthy();

@@ -8,7 +8,7 @@ import type { CommanderView, RefusalCode, ServerMessage } from '../../shared/pro
 import type { PermMode } from '../../shared/permission';
 import { hashInput, type AuditEntry } from '../audit';
 import type { PushPayload } from '../push/PushNotifier';
-import { isCodexState, isGeminiState, type SessionState } from '../turn/SessionState';
+import { isOtherEngineState, type SessionState } from '../turn/SessionState';
 import { ABORTED } from '../turn/TurnRunner';
 import { doneEvidenceOk } from './digest';
 import type { JudgeInput, JudgeResult } from './Judge';
@@ -111,7 +111,7 @@ export class Commander {
     if (!this.deps.enabled()) return { ok: false, code: 'commander_disabled', message: DISABLED_MESSAGE };
     const st = this.deps.store.get(sessionId);
     if (!st) return { ok: false, code: 'commander_engine', message: '총사령탑은 deck 에서 턴을 돌린 Claude 세션에만 걸 수 있습니다' };
-    if (isCodexState(st) || isGeminiState(st)) return { ok: false, code: 'commander_engine', message: '총사령탑은 Claude 세션에서만 쓸 수 있습니다' };
+    if (isOtherEngineState(st)) return { ok: false, code: 'commander_engine', message: '총사령탑은 Claude 세션에서만 쓸 수 있습니다' };
     const prev = st.commander;
     if (prev && ACTIVE_STATUSES.includes(prev.status)) return { ok: false, code: 'commander_active', message: '이미 총사령탑이 걸려 있습니다 — 먼저 정지하세요' };
     if (this.deps.permissionModeOf(sessionId) === 'bypassPermissions') return { ok: false, code: 'commander_bypass', message: '모두 자동 승인 세션에는 총사령탑을 걸 수 없습니다' };

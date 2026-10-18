@@ -7,6 +7,7 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import { HANDOFF_PROMPT } from '../shared/handoff';
 import type { ServerMessage } from '../shared/protocol';
+import type { PermissionDecision } from '../shared/turn-types';
 import { AttachmentStore } from './attachments/AttachmentStore';
 import { cookieValueFor } from './auth';
 import { StubEngine, okResult } from './engine/StubEngine';
@@ -29,6 +30,7 @@ let origin = '';
 let wsUrl = '';
 let stub: StubEngine;
 let wsApi: ReturnType<typeof attachWebSocket>;
+let wsDeps: Parameters<typeof attachWebSocket>[1];
 let pins: PinStore;
 let settings: SettingsStore;
 let base: string;
@@ -110,7 +112,8 @@ beforeAll(async () => {
   settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2, meta, acceptedRefs: new AcceptedRefs(null) });
+  wsDeps = { accounts: testRegistry(), token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2, meta, acceptedRefs: new AcceptedRefs(null) };
+  wsApi = attachWebSocket([server], wsDeps);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   origin = `http://127.0.0.1:${port}`;
@@ -735,6 +738,64 @@ describe('ws', () => {
     ws.send(JSON.stringify({ type: 'open_session', sessionId: GID }));
     expect((await p).at(-1)).toMatchObject({ sessionId: GID, cwd: '/w/g', account: 'g2', engine: 'gemini', sandbox: 'read-only', messages: [] });
     ws.close();
+  });
+
+  it('open_session on a Grok session: engine, seat x1, permission mode, empty history; no grokStatus → no grok feature', async () => {
+    const XID = 'grok-0000-1111';
+    await store.set({ engine: 'grok', account: 'x1', sessionId: XID, grokSessionId: XID, cwd: '/w/x', canonicalCwd: '/w/x', lastTurnAtMs: 1, justCompacted: false, model: 'grok-4.5', effort: 'high', permissionMode: 'acceptEdits', createdAtMs: 1 });
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    const [hello] = await collect(ws, (m) => m.type === 'hello');
+    expect(hello).not.toHaveProperty('grok');
+    expect((hello as Extract<ServerMessage, { type: 'hello' }>).features).not.toContain('grok');
+    const p = collect(ws, (m) => m.type === 'history');
+    ws.send(JSON.stringify({ type: 'open_session', sessionId: XID }));
+    expect((await p).at(-1)).toMatchObject({ sessionId: XID, cwd: '/w/x', account: 'x1', engine: 'grok', permissionMode: 'acceptEdits', messages: [] });
+    ws.close();
+  });
+
+  it('모두 자동 승인 on a Grok session answers only the cards its engine would auto-approve (plan exit stays)', async () => {
+    const XID = 'grok-0000-2222';
+    await store.set({ engine: 'grok', account: 'x1', sessionId: XID, grokSessionId: XID, cwd: work, canonicalCwd: work, lastTurnAtMs: 1, justCompacted: false, model: 'grok-4.6', effort: 'high', permissionMode: 'default', createdAtMs: 1 });
+    const answers: Record<string, PermissionDecision> = {};
+    const run = vi.spyOn(wsDeps.runner, 'run').mockImplementationOnce(async (p, sink) => {
+      const ask = (toolName: string, toolUseId: string) => sink.askPermission({ turnId: p.turnId, sessionId: XID, cwd: work, toolName, input: {}, toolUseId }).then((d) => { answers[toolName] = d; });
+      await Promise.all([ask('grok:switch_mode', 'u1'), ask('grok:edit', 'u2')]);
+      sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId: XID, cwd: work, ok: true, text: 'done', badge: { account: 'x1', model: 'grok-4.6', reason: 'r', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, modelNote: null }, errorText: null });
+    });
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(ws, (m) => m.type === 'hello');
+    const cards = collect(ws, (m) => m.type === 'permission_request' && m.toolName === 'grok:edit');
+    ws.send(JSON.stringify({ type: 'send', sessionId: XID, cwd: work, text: 'grok cards' }));
+    const reqs = (await cards).filter((m): m is Extract<ServerMessage, { type: 'permission_request' }> => m.type === 'permission_request');
+    expect(reqs.map((m) => m.toolName).sort()).toEqual(['grok:edit', 'grok:switch_mode']);
+    const resolved = collect(ws, (m) => m.type === 'permission_mode');
+    ws.send(JSON.stringify({ type: 'set_permission_mode', sessionId: XID, mode: 'bypassPermissions' }));
+    await resolved;
+    await vi.waitFor(() => expect(answers['grok:edit']).toBe('once'));
+    expect(answers['grok:switch_mode']).toBeUndefined();
+    const plan = reqs.find((m) => m.toolName === 'grok:switch_mode')!;
+    const end = collect(ws, (m) => m.type === 'turn_result');
+    ws.send(JSON.stringify({ type: 'permission_response', requestId: plan.requestId, decision: 'deny' }));
+    await end;
+    expect(answers['grok:switch_mode']).toBe('deny');
+    run.mockRestore();
+    ws.close();
+  });
+
+  it('hello names the grok CLI and the grok feature only when the binary was found', async () => {
+    for (const [grokStatus, feature] of [[{ bin: true, version: 'grok 0.9.1' }, true], [{ bin: false }, false]] as const) {
+      const srv = http.createServer();
+      const api = attachWebSocket([srv], { ...wsDeps, grokStatus });
+      await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+      const { port } = srv.address() as { port: number };
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { Origin: `http://127.0.0.1:${port}`, Cookie: COOKIE } });
+      const hello = await new Promise<Extract<ServerMessage, { type: 'hello' }>>((resolve) => ws.on('message', (d) => { const m = JSON.parse(String(d)) as ServerMessage; if (m.type === 'hello') resolve(m); }));
+      expect(hello.grok).toEqual(grokStatus);
+      expect(hello.features?.includes('grok')).toBe(feature);
+      ws.close();
+      api.close();
+      srv.close();
+    }
   });
 
   // Regression: a session written after the server's initial index scan (e.g. by Claude

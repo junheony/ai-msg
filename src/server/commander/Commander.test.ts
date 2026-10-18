@@ -84,6 +84,8 @@ describe('Commander', () => {
       expect(none.c.set(SID, { goal: 'g', done: 'd' })).toMatchObject({ ok: false, code: 'commander_engine' });
       const codex = await setup({ state: { sessionId: SID, cwd: '/w', engine: 'codex', defaultModel: 'gpt-5.5', sandbox: 'workspace-write', rolloutFile: null, createdAtMs: 0, lastTurnAtMs: null, justCompacted: false } as unknown as SessionState });
       expect(codex.c.set(SID, { goal: 'g', done: 'd' })).toMatchObject({ ok: false, code: 'commander_engine' });
+      const grok = await setup({ state: { sessionId: SID, cwd: '/w', engine: 'grok', account: 'x1', model: 'grok-4.6', effort: 'high', permissionMode: 'default', grokSessionId: SID, canonicalCwd: '/w', createdAtMs: 0, lastTurnAtMs: null, justCompacted: false } as SessionState });
+      expect(grok.c.set(SID, { goal: 'g', done: 'd' })).toMatchObject({ ok: false, code: 'commander_engine' });
       const bypass = await setup({ mode: 'bypassPermissions' });
       expect(bypass.c.set(SID, { goal: 'g', done: 'd' })).toMatchObject({ ok: false, code: 'commander_bypass' });
       const t = await setup();

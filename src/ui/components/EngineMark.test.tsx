@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
-import { ClaudeMark, EngineMark } from './EngineMark';
+import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
 
 afterEach(cleanup);
 
@@ -16,5 +16,16 @@ describe('ClaudeMark', () => {
       expect(m.querySelector('g')?.getAttribute('stroke')).toBe('#D97757');
     }
     expect(container.textContent).toBe('');
+  });
+});
+
+describe('Grok mark', () => {
+  it('a Grok session gets its own SVG mark (no text); the x1 seat implies Grok', () => {
+    const { container } = render(<EngineMark engine="grok" />);
+    expect(container.querySelector('.engine-mark.grok svg.grok-mark')).not.toBeNull();
+    expect(container.querySelector('.engine-mark.grok')?.getAttribute('aria-label')).toBe('Grok');
+    expect(container.textContent).toBe('');
+    expect(engineOf({ account: 'x1' })).toBe('grok');
+    expect(engineOf({ engine: 'grok', account: 'a' })).toBe('grok');
   });
 });

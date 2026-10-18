@@ -1,21 +1,42 @@
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import { GEMINI_USAGE_ARGS, GeminiUsagePoller, parseDuration, parseGeminiUsage, parseUsageText, toResetIso } from './GeminiUsagePoller';
 import type { ChildLike, SpawnFn } from '../engine/CodexEngine';
 
 const NOW = Date.parse('2026-10-14T08:00:00Z');
+/** The real `agy -p=/usage --output-format json` stdout (agy 1.4.2). */
+const USAGE_JSON = readFileSync(path.join(__dirname, '..', 'engine', 'fixtures', 'agy-1.4.2', 'usage.json'), 'utf8');
 
 describe('parseGeminiUsage', () => {
-  it('reads groups → buckets with remaining_percentage and reset_time (the documented json shape)', () => {
-    const out = JSON.stringify({ conversation_id: '', status: 'SUCCESS', response: '', usage: { input_tokens: 0, output_tokens: 0 }, quota: { groups: [
-      { name: 'Gemini 4 Argon', buckets: [{ name: 'gemini-4-argon', remaining_percentage: 73, reset_time: '2026-10-14T10:10:00Z' }] },
-      { name: 'Gemini Flash', buckets: [{ name: 'gemini-3.8-flash', remaining_percentage: 100, reset_time: '' }] },
-    ] } });
-    expect(parseGeminiUsage(out, NOW)).toEqual([
-      { name: 'gemini-4-argon', usedPct: 27, resetsAt: '2026-10-14T10:10:00.000Z' },
-      { name: 'gemini-3.8-flash', usedPct: 0, resetsAt: null },
+  it('reads the real agy 1.4.2 /usage json: remaining_fraction → used %, "<group> · <window>" names, the Claude/GPT group hidden', () => {
+    expect(parseGeminiUsage(USAGE_JSON, NOW)).toEqual([
+      { name: 'Gemini · 주간', usedPct: 0, resetsAt: '2026-10-25T08:28:03.000Z' },
+      { name: 'Gemini · 5h', usedPct: 0, resetsAt: '2026-10-18T13:28:03.000Z' },
+      { name: 'Argon · 주간', usedPct: 2, resetsAt: '2026-10-25T08:25:03.000Z' },
     ]);
+    // Same group/window names in two groups no longer collapse: a lower fraction shows as its own used %.
+    const two = JSON.stringify({ command: { data: { groups: [
+      { name: 'Gemini Models', buckets: [{ name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 0.25, reset_time: '2026-10-25T08:28:03Z' }] },
+      { name: 'Gemini 4 Argon', buckets: [{ name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 0.6 }] },
+    ] } } });
+    expect(parseGeminiUsage(two, NOW)).toEqual([
+      { name: 'Gemini · 주간', usedPct: 75, resetsAt: '2026-10-25T08:28:03.000Z' },
+      { name: 'Argon · 주간', usedPct: 40, resetsAt: null },
+    ]);
+  });
+
+  it('the tab-separated text report in `response` (remaining %), when the json has no buckets', () => {
+    const response = (JSON.parse(USAGE_JSON) as { response: string }).response;
+    expect(parseUsageText(response, NOW)).toEqual([
+      { name: 'Gemini · 주간', usedPct: 0, resetsAt: '2026-10-25T08:28:03.000Z' },
+      { name: 'Gemini · 5h', usedPct: 0, resetsAt: '2026-10-18T13:28:03.000Z' },
+      { name: 'Argon · 주간', usedPct: 2, resetsAt: '2026-10-25T08:25:03.000Z' },
+    ]);
+    expect(parseGeminiUsage(JSON.stringify({ status: 'SUCCESS', response: 'Gemini Models\tFive Hour Limit Remaining\t64%\t2026-10-14T09:00:00Z\n' }), NOW))
+      .toEqual([{ name: 'Gemini · 5h', usedPct: 36, resetsAt: '2026-10-14T09:00:00.000Z' }]);
   });
 
   it('reads used_percentage with epoch-second resets, a bucket named by its group, and ignores the turn token usage', () => {

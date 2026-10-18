@@ -90,7 +90,7 @@ describe('account ids on the wire', () => {
   });
 
   it('the other seats and reserved names are not account ids', () => {
-    for (const id of ['gpt', 'g1', 'g2', 'codex', 'all', 'constructor']) expect(pin(id)).toBe(false);
+    for (const id of ['gpt', 'g1', 'g2', 'x1', 'x2', 'grok', 'codex', 'all', 'constructor']) expect(pin(id)).toBe(false);
   });
 
   it('FEATURES names accounts; accountInfos lists every configured account in order with label, home and retired', () => {

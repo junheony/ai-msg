@@ -294,7 +294,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {/* Archived in Codex: only the Codex app can unarchive it. */}
             {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
-            {onSetCwd && (target.engine ?? 'claude') !== 'gemini' && <button type="button" role="menuitem" onClick={() => { setMenu(null); onSetCwd(target); }}>작업 폴더 바꾸기</button>}
+            {onSetCwd && (target.engine ?? 'claude') !== 'gemini' && target.engine !== 'grok' && <button type="button" role="menuitem" onClick={() => { setMenu(null); onSetCwd(target); }}>작업 폴더 바꾸기</button>}
             {onDuplicate && <button type="button" role="menuitem" onClick={() => { setMenu(null); onDuplicate(target.sessionId); }}>복제</button>}
             {/* GPT / Gemini / Codex-app sessions: shown disabled with the reason, so it is clear why they stay. */}
             {onDelete && (deleteBlockedReason(target)

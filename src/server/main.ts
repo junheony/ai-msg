@@ -14,6 +14,11 @@ import { CodexEngine } from './engine/CodexEngine';
 import { SlashCommandCache } from './engine/slashCommands';
 import { FileLister } from './files';
 import { GeminiEngine, GeminiLogin } from './engine/GeminiEngine';
+import { grokEngineLock, runGrokTurn } from './engine/GrokEngine';
+import { runGrokInspect } from './engine/grokInspect';
+import { sweepShadowHomes } from './engine/shadowHome';
+import { grokEnv } from './engine/grokEnv';
+import { execFile } from 'node:child_process';
 import { createRequestHandler, type ServerUpdateDeps } from './http';
 import { ServerUpdateWatch, supervisionCheck } from './serverUpdate';
 import { installCrashHandlers } from './crash';
@@ -43,10 +48,10 @@ import { attachWebSocket, type ServerSend } from './ws';
 import { recordAudit } from './audit';
 import { Commander } from './commander/Commander';
 import { judge } from './commander/Judge';
-import { isCodexState, isGeminiState } from './turn/SessionState';
+import { isOtherEngineState } from './turn/SessionState';
 import { GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
 import type { PermMode } from '../shared/permission';
-import type { ServerMessage } from '../shared/protocol';
+import type { GrokStatus, ServerMessage } from '../shared/protocol';
 
 async function main(): Promise<void> {
   // When this process started: code edited later is what a restart would bring in.
@@ -107,6 +112,27 @@ async function main(): Promise<void> {
     geminiLogin?.ensureFresh();
     return { available: gemini !== null, loggedIn: Object.fromEntries(GEMINI_ACCOUNTS.map((a) => [a, geminiLogin?.get(a) ?? false])) as Record<GeminiAccount, boolean> };
   };
+  // Grok (Grok Build CLI over ACP): explicit engine only. Login is not checked up front (design §5): a logged-out turn ends
+  // with "Grok 로그인 필요". x1's GROK_HOME is the real path of ~/.grok, never the shell's GROK_HOME.
+  const grokBin = cfg.grokBin;
+  // Each turn gets a fresh shadow HOME under here (§14.9-1); folders a crashed server left behind go at start — awaited,
+  // so the sweep is over before any Grok turn can make its folder.
+  const grokHomesDir = path.join(cfg.configDir, 'homes', 'grok');
+  if (grokBin) await sweepShadowHomes(grokHomesDir).catch((err: unknown) => console.error('deck: sweeping Grok shadow homes failed', err instanceof Error ? err.message : err));
+  const grok = grokBin ? {
+    run: (req: Parameters<typeof runGrokTurn>[0]) => runGrokTurn(req, {
+      bin: grokBin, grokHome: cfg.grokHome, homesDir: grokHomesDir, realHome: cfg.home,
+      inspect: (env, cwd) => runGrokInspect(grokBin, env, cwd),
+    }),
+  } : null;
+  const grokStatusBase: GrokStatus = { bin: grok !== null };
+  const grokStatus = (): GrokStatus => ({ ...grokStatusBase, locked: grokEngineLock.reason });
+  if (grokBin) {
+    execFile(grokBin, ['--version'], { timeout: 5_000, env: grokEnv(process.env, cfg.grokHome) }, (err, stdout) => {
+      const v = String(stdout ?? '').trim().split('\n')[0];
+      if (!err && v) grokStatusBase.version = v.slice(0, 120);
+    });
+  }
 
   // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) or by a fork reach it through this.
   let notifyIndex = () => {};
@@ -117,6 +143,7 @@ async function main(): Promise<void> {
     codex,
     gemini,
     geminiUsage,
+    grok,
     attachments,
     codexSessionsRoot: cfg.codexSessionsRoot,
     usage,
@@ -173,7 +200,7 @@ async function main(): Promise<void> {
     store,
     judge: async (input, sessionId) => {
       const st = store.get(sessionId);
-      if (!st || isCodexState(st) || isGeminiState(st) || !cfg.claudeBin.ok) {
+      if (!st || isOtherEngineState(st) || !cfg.claudeBin.ok) {
         return { verdict: { verdict: 'human', reason: '판정기를 실행할 수 없습니다', confidence: 'low' }, failed: true, usage: null, account: null };
       }
       // 고정 계정이 있거나 같은 계열 회전이 꺼져 있으면 세션 계정, 아니면 sonnet 라우팅이 고를 계정(§3).
@@ -201,7 +228,7 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
+  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
   notifyIndex = () => ws.broadcastIndex();
   submitRetry = (r) => ws.submitRetry(r);
   serverSend = (r) => ws.submitServerSend(r);
@@ -212,9 +239,11 @@ async function main(): Promise<void> {
   watch.rearm(store.list());
   index.onChange = () => notifyIndex();
   notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });
+  // §14.9-3: a tripped (or unlocked) Grok engine is shown in settings at once.
+  const stopGrokLockWatch = grokEngineLock.onChange(() => ws.broadcast({ type: 'grok_status', grok: grokStatus() }));
   await Promise.all(bound.map(({ address, server }) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(cfg.port, address, resolve); })));
 
-  console.log(`deck: 세션 ${index.sessions().length}개 · 계정 ${accounts.all().map((a) => `${a}${accounts.isRetired(a) ? '(retired)' : ''}${accounts.isHome(a) ? '(home)' : ''}`).join(' ')} · 보호 계정 ${cfg.protectedAccount ?? '없음'} · 사용량 ${cfg.usageMode === 'cli' ? 'cli(턴 관측)' : `usage-deck ${cfg.deckUrl}`} · claude ${claudeLabel(cfg.claudeBin)} · codex ${cfg.codexBin ?? '없음'} · agy ${cfg.geminiBin ?? '없음'}`);
+  console.log(`deck: 세션 ${index.sessions().length}개 · 계정 ${accounts.all().map((a) => `${a}${accounts.isRetired(a) ? '(retired)' : ''}${accounts.isHome(a) ? '(home)' : ''}`).join(' ')} · 보호 계정 ${cfg.protectedAccount ?? '없음'} · 사용량 ${cfg.usageMode === 'cli' ? 'cli(턴 관측)' : `usage-deck ${cfg.deckUrl}`} · claude ${claudeLabel(cfg.claudeBin)} · codex ${cfg.codexBin ?? '없음'} · agy ${cfg.geminiBin ?? '없음'} · grok ${cfg.grokBin ?? '없음'}`);
   if (cfg.cwdRoots.length > 1) console.log(`deck: 새 세션 추가 허용 경로(DECK_EXTRA_CWD_ROOTS): ${cfg.cwdRoots.slice(1).join(', ')}`);
   for (const a of addresses) console.log(`deck: http://${a}:${cfg.port}`);
   if (dnsName) console.log(`deck: https://${dnsName}/ (tailscale serve 로 띄웠을 때 — 폰 앱·알림용)`);
@@ -224,7 +253,7 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
+    stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
     // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
     void flushThenExit(() => Promise.all([events.flush(), claude.close()]).then(() => {}), () => process.exit(0));
   };

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadConfig, readDeckSeen, readDeckUrl, readProtect, usageModeOf } from './config';
+import { loadConfig, readDeckSeen, readDeckUrl, readProtect, resolveGrokBin, usageModeOf } from './config';
 import { testRegistry } from '../shared/accounts.testkit';
 
 describe('config', () => {
@@ -187,5 +187,33 @@ describe('config', () => {
   it('DECK_EXTRA_CWD_ROOTS only counts with DECK_LOOPBACK_ONLY=1, and never / (review fix 2)', () => {
     expect(loadConfig({ PATH: '/nonexistent', DECK_EXTRA_CWD_ROOTS: '/tmp/x' }, '/h', '/repo').cwdRoots).toEqual(['/h']);
     expect(loadConfig({ PATH: '/nonexistent', DECK_LOOPBACK_ONLY: '1', DECK_EXTRA_CWD_ROOTS: '/, //, /./, /tmp/x, rel' }, '/h', '/repo').cwdRoots).toEqual(['/h', '/tmp/x']);
+  });
+
+  it('grok bin: DECK_GROK_BIN (only if executable) → PATH → <home>/.grok/bin/grok; grokHome is <home>/.grok resolved, never GROK_HOME', () => {
+    const t = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-grok-'));
+    const exe = (p: string) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, '#!/bin/sh\n'); fs.chmodSync(p, 0o755); return p; };
+    const home = path.join(t, 'home');
+    const installed = exe(path.join(home, '.grok', 'bin', 'grok'));
+    const onPath = exe(path.join(t, 'bin', 'grok'));
+    const custom = exe(path.join(t, 'custom', 'grok-dev'));
+    fs.writeFileSync(path.join(t, 'plain'), 'x');
+    expect(resolveGrokBin({ DECK_GROK_BIN: custom, PATH: path.join(t, 'bin') }, home)).toBe(custom);
+    expect(resolveGrokBin({ DECK_GROK_BIN: path.join(t, 'plain'), PATH: path.join(t, 'bin') }, home)).toBeNull();
+    // A refused DECK_GROK_BIN (relative, or not executable) says why in one line naming only the path.
+    const lines: string[] = [];
+    expect(resolveGrokBin({ DECK_GROK_BIN: 'bin/grok', PATH: path.join(t, 'bin'), SECRET_TOKEN: 'abc' }, home, () => true, (l) => lines.push(l))).toBeNull();
+    expect(resolveGrokBin({ DECK_GROK_BIN: path.join(t, 'plain'), PATH: path.join(t, 'bin') }, home, undefined, (l) => lines.push(l))).toBeNull();
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('"bin/grok"');
+    expect(lines[0]).toContain('절대경로');
+    expect(lines[1]).toContain(JSON.stringify(path.join(t, 'plain')));
+    expect(lines.join('\n')).not.toMatch(/abc|SECRET_TOKEN|PATH/);
+    expect(resolveGrokBin({ PATH: `${path.join(t, 'none')}:${path.join(t, 'bin')}` }, home)).toBe(onPath);
+    expect(resolveGrokBin({ PATH: path.join(t, 'none') }, home)).toBe(installed);
+    expect(resolveGrokBin({}, path.join(t, 'nohome'))).toBeNull();
+    const cfg = loadConfig({ DECK_CONFIG_DIR: path.join(t, 'cfg'), PATH: path.join(t, 'none'), GROK_HOME: '/elsewhere' }, home, '/repo');
+    expect(cfg.grokBin).toBe(installed);
+    expect(cfg.grokHome).toBe(fs.realpathSync(path.join(home, '.grok')));
+    fs.rmSync(t, { recursive: true, force: true });
   });
 });
