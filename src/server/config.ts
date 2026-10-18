@@ -40,6 +40,12 @@ export type DeckConfig = {
   grokBin: string | null;
   /** Seat x1's GROK_HOME: the real path of `<home>/.grok` (the shell's GROK_HOME is never used, design §5). */
   grokHome: string;
+  /** agy's state dir (g1): `<home>/.gemini/antigravity-cli` — conversation_summaries.db is copied from here, never opened in place. */
+  geminiStateDir: string;
+  /** Where the Gemini summaries db copies are read (imports design §1.2); swept at start. */
+  importTmpDir: string;
+  /** The Grok Bot app's local cache folder (macOS); null elsewhere. Read-only, allowlisted blobs only. */
+  grokBotDir: string | null;
   /** `$CODEX_HOME/sessions` (rollout files; read-only for deck). */
   codexSessionsRoot: string;
   /** `$CODEX_HOME/archived_sessions` (threads archived in Codex; read-only for deck, listed under 보관됨). */
@@ -219,6 +225,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     geminiBin: resolveGeminiBin(env, home),
     grokBin: resolveGrokBin(env, home, isExecutable, log),
     grokHome: realOr(path.join(home, '.grok')),
+    geminiStateDir: path.join(home, '.gemini', 'antigravity-cli'),
+    importTmpDir: path.join(configDir, 'tmp', 'gemini-import'),
+    grokBotDir: process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'Grok Bot', 'sand-client-persistence') : null,
     codexSessionsRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),
     codexArchivedRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'archived_sessions'),
     attachmentsDir: path.join(configDir, 'attachments'),

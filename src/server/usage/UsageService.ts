@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { type Account, type AccountNames, type GrokAccount, type UsageSeat } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokUsage, type UsageMode, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageMode, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits; /** Claude, `cli` mode only: a Fable/Opus value the CLI told (see stream.ts fableSpentOf). */ fable?: UsageWindow };
@@ -328,6 +328,7 @@ export class UsageService {
     if (next.gemini === undefined && this.snap.gemini !== undefined) next = { ...next, gemini: this.snap.gemini };
     if (next.geminiSeats === undefined && this.snap.geminiSeats !== undefined) next = { ...next, geminiSeats: this.snap.geminiSeats };
     if (next.grokSeats === undefined && this.snap.grokSeats !== undefined) next = { ...next, grokSeats: this.snap.grokSeats };
+    if (!('grokBot' in next) && this.snap.grokBot !== undefined) next = { ...next, grokBot: this.snap.grokBot };
     this.snap = this.withSource(next);
     for (const cb of this.listeners) cb(this.snap);
   }
@@ -340,6 +341,13 @@ export class UsageService {
   /** GrokUsageTracker: a Grok turn just ended on `account` (usage header design §4/§7-4). */
   applyGrok(account: GrokAccount, u: GrokUsage): void {
     this.publish({ ...this.snap, generatedAt: this.now().toISOString(), grokSeats: { ...this.snap.grokSeats, [account]: u } });
+  }
+
+  /** GrokBotIndex: the Grok Bot app's cached weekly usage after a scan (null = none / expired: the line goes away). */
+  applyGrokBot(u: GrokBotUsage | null): void {
+    const cur = this.snap.grokBot;
+    if (u === null ? cur === undefined : cur && JSON.stringify(cur) === JSON.stringify(u)) return;
+    this.publish({ ...this.snap, generatedAt: this.now().toISOString(), grokBot: u ?? undefined });
   }
 
   private seatOf(s: UsageSnapshot, seat: UsageSeat): AccountUsage {

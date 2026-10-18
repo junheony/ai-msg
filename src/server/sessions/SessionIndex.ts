@@ -6,6 +6,7 @@ import type { BranchLink } from '../../shared/branches';
 import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry, SessionHolder } from '../../shared/session-types';
 import { findCopies, resolveCopies, type PrefixFn, type SessionCopy } from './copies';
 import { CodexRolloutIndex } from './CodexImports';
+import type { ImportIndex } from './ImportIndex';
 import { recentDesktopSessions } from './DesktopSessions';
 import { ancestorInfo, type FileState } from './SessionMover';
 import { pathKey } from './slug';
@@ -245,15 +246,22 @@ export class SessionIndex {
    * `codexArchivedRoot`: `~/.codex/archived_sessions` — threads archived in Codex, listed under 보관됨.
    * `home`: Claude Desktop's profile — between truly diverged copies with equal timestamps, deck's copy wins.
    * `holders`: which Claude sessions a process outside deck holds open (`heldBy`); re-read on every (re)group.
+   * `grokHeldBy` does the same for Grok sessions (a terminal `grok` with the id in its arguments).
+   * `grokImports` / `geminiImports` / `grokBotImports`: conversations made outside deck (Grok CLI, agy, Grok Bot app), listed like Codex threads.
    */
-  constructor(private readonly opts: { roots: ProjectsRoots; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; codexArchivedRoot?: string; meta?: SessionMetaView; home?: Account | null; holders?: { heldBy(sessionId: string): SessionHolder | null } }) {
+  constructor(private readonly opts: { roots: ProjectsRoots; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; codexArchivedRoot?: string; meta?: SessionMetaView; home?: Account | null; holders?: { heldBy(sessionId: string): SessionHolder | null; grokHeldBy?(sessionId: string): SessionHolder | null }; grokImports?: ImportIndex | null; geminiImports?: ImportIndex | null; grokBotImports?: ImportIndex | null }) {
     this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot, undefined, opts.codexArchivedRoot ?? null) : null;
+    this.others = [opts.grokImports, opts.geminiImports, opts.grokBotImports].filter((x): x is ImportIndex => !!x);
   }
+
+  /** The Grok / Gemini / Grok Bot import lists (Codex is `codex`). */
+  private readonly others: ImportIndex[];
 
   /** A deck rename wins over the transcript's title; archived entries (deck's or Codex's) carry the flag; a Claude session held open outside deck carries `heldBy`. Unchanged entries are returned as is. */
   private decorate<T extends { sessionId: string; title: string; cwd?: string; engine?: string; archived?: boolean; codexArchived?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink; heldBy?: SessionHolder }>(e: T): T {
     const meta = this.opts.meta;
-    const held = (e.engine ?? 'claude') === 'claude' ? (this.opts.holders?.heldBy(e.sessionId) ?? null) : null;
+    const engine = e.engine ?? 'claude';
+    const held = engine === 'claude' ? (this.opts.holders?.heldBy(e.sessionId) ?? null) : engine === 'grok' ? (this.opts.holders?.grokHeldBy?.(e.sessionId) ?? null) : null;
     const title = meta?.title(e.sessionId) ?? null;
     const archived = (meta?.isArchived(e.sessionId) ?? false) || !!e.codexArchived;
     const prev = meta?.prev?.(e.sessionId) ?? null;
@@ -345,10 +353,11 @@ export class SessionIndex {
     this.pinned = await readPinned(this.opts.pinnedFile);
     if (this.opts.recentFile) this.recentFolders = await readRecent(this.opts.recentFile);
     this.grouped = this.group(all);
-    if (this.codex) {
-      const codexDone = this.codex.refresh().catch(() => undefined);
-      if (opts.codexInBackground) void codexDone.then(() => this.onChange?.());
-      else await codexDone;
+    const lists = [this.codex, ...this.others].filter((x) => !!x);
+    if (lists.length) {
+      const done = Promise.all(lists.map((x) => x!.refresh().catch(() => undefined)));
+      if (opts.codexInBackground) void done.then(() => this.onChange?.());
+      else await done;
     }
     this.desktopList = this.opts.desktopRoot ? (await recentDesktopSessions(this.opts.desktopRoot, (id) => this.lookup(id)).catch(() => [])).map((d) => this.decorate(d)) : [];
   }
@@ -401,6 +410,40 @@ export class SessionIndex {
     return this.codex?.lookup(threadId) ?? null;
   }
 
+  /** Any conversation made outside deck (Codex, Grok CLI, agy, Grok Bot) as of the last refresh; null if unknown. */
+  importOf(id: string): SessionEntry | null {
+    return this.codexImport(id) ?? this.others.map((x) => x.lookup(id)).find((e) => !!e) ?? null;
+  }
+
+  /** The import list an id belongs to (not Codex). */
+  private ownerOf(id: string): ImportIndex | null {
+    return this.others.find((x) => !!x.lookup(id)) ?? null;
+  }
+
+  /** `importOf` as it is now: a stale entry (file gone, folder came / went) rescans its list once and fires `onChange`. */
+  async freshImport(id: string): Promise<SessionEntry | null> {
+    if (this.codex?.lookup(id)) return this.freshCodexImport(id);
+    const owner = this.ownerOf(id);
+    const e = owner?.lookup(id) ?? null;
+    if (!owner || !e) return e;
+    if (e.source === 'grokbot') return e;
+    const [fileOk, dirOk] = await Promise.all([fs.stat(e.file).then((st) => st.isFile(), () => false), fs.stat(e.cwd).then((st) => st.isDirectory(), () => false)]);
+    if (fileOk && dirOk === !e.cwdMissing) return e;
+    await owner.refresh().catch(() => undefined);
+    this.onChange?.();
+    return owner.lookup(id);
+  }
+
+  /** Why an imported conversation cannot be continued while its own app runs it (agy RUNNING), else null. */
+  async importHeldReason(id: string, nowMs = Date.now()): Promise<string | null> {
+    return (await this.ownerOf(id)?.heldReason?.(id, nowMs)) ?? null;
+  }
+
+  /** How long ago an imported conversation was written outside deck (within 2 min), else null. */
+  async importActiveAgeMs(id: string, nowMs = Date.now()): Promise<number | null> {
+    return (await this.ownerOf(id)?.activeAgeMs(id, nowMs)) ?? null;
+  }
+
   /**
    * The Codex thread as it is now: when the cached entry is stale — its rollout moved (archived / unarchived
    * in Codex) or its folder came / went — the Codex list is rescanned once and `onChange` fires (index push).
@@ -437,14 +480,16 @@ export class SessionIndex {
    * imported Codex threads a fresh grouping. A thread deck already runs (in `extra`) is not listed twice;
    * if Codex has since archived it (its newest rollout is in archived_sessions), deck's entry is archived too.
    * `all`: headless sessions deck does not know are included (search, file lookup) — the sidebar leaves them out.
+   * `own`: ids of sessions deck started that are not stored yet (a new session's first turn still running): an import
+   * list that already sees them (agy's db) does not list them as made outside deck.
    */
-  projects(extra: SessionEntry[] = [], opts: { all?: boolean } = {}): ProjectEntry[] {
+  projects(extra: SessionEntry[] = [], opts: { all?: boolean; own?: Iterable<string> } = {}): ProjectEntry[] {
     extra = this.codexOwned(extra);
     const all = this.codex?.list() ?? [];
     const archivedInCodex = new Set(all.filter((e) => e.codexArchived).map((e) => e.sessionId));
-    const own = new Set(extra.map((e) => e.sessionId));
+    const own = new Set([...extra.map((e) => e.sessionId), ...(opts.own ?? [])]);
     const mine = archivedInCodex.size ? extra.map((e) => (archivedInCodex.has(e.sessionId) ? { ...e, archived: true, codexArchived: true } : e)) : extra;
-    const imports = all.filter((e) => !own.has(e.sessionId));
+    const imports = [...all, ...this.others.flatMap((x) => x.list())].filter((e) => !own.has(e.sessionId));
     if (opts.all) return this.group([...this.entries, ...mine, ...imports], true);
     return extra.length || imports.length ? this.group([...this.entries, ...mine, ...imports]) : this.grouped;
   }

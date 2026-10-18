@@ -1,5 +1,5 @@
 import type { Account, AccountNames, GeminiAccount } from '../../shared/accounts';
-import { parseIsoUtc, type GeminiBucket, type UsageSnapshot } from '../../shared/usage-types';
+import { grokBillingWindow, parseIsoUtc, type GeminiBucket, type UsageSnapshot } from '../../shared/usage-types';
 import type { EngineLimits, GeminiGroup, GeminiSeatLimits } from './AutoRoute';
 
 /**
@@ -48,6 +48,22 @@ function remainingByGroup(buckets: readonly GeminiBucket[]): Record<GeminiGroup,
   return out;
 }
 
+/**
+ * The Grok seat's subscription used % (and its period's reset time) for the current period; null when never read, its
+ * period has ended, or — review item 3 — the window's end is unknown and the cached reading is over 24h old (stale
+ * enough that it should not keep blocking Grok routing).
+ */
+function grokPeriodUsage(usage: UsageSnapshot, nowMs: number): { periodUsedPct: number | null; periodResetsAtMs: number | null } {
+  const billing = usage.grokSeats?.x1?.billing;
+  if (billing && !billing.windowEnd) {
+    const fetched = ms(billing.fetchedAt);
+    if (fetched !== null && nowMs - fetched > 24 * 3600_000) return { periodUsedPct: null, periodResetsAtMs: null };
+  }
+  const w = grokBillingWindow(billing, nowMs);
+  if (!w || w.estimated) return { periodUsedPct: null, periodResetsAtMs: null };
+  return { periodUsedPct: w.usedPct, periodResetsAtMs: ms(w.resetsAt) };
+}
+
 export function buildEngineLimits(i: EngineLimitsInput): EngineLimits {
   const gpt = i.usage.gpt;
   const gptDown = !gpt || gpt.status === 'down';
@@ -73,6 +89,6 @@ export function buildEngineLimits(i: EngineLimitsInput): EngineLimits {
       observedAtMs: gemDown ? null : ms(gem.fetchedAt),
       seats: [seat('g1', true, rem), seat('g2', i.gemini.loggedIn.g2, { pro: null, flash: null })],
     },
-    grok: { installed: i.grok.installed, cooldownUntilMs: i.grok.cooldownUntilMs, lastError: i.grok.lastError },
+    grok: { installed: i.grok.installed, cooldownUntilMs: i.grok.cooldownUntilMs, lastError: i.grok.lastError, ...grokPeriodUsage(i.usage, i.nowMs) },
   };
 }

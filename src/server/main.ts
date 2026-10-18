@@ -16,6 +16,8 @@ import { FileLister } from './files';
 import { GeminiEngine, GeminiLogin } from './engine/GeminiEngine';
 import { grokEngineLock, runGrokTurn } from './engine/GrokEngine';
 import { runGrokInspect } from './engine/grokInspect';
+import { probeGrokBilling } from './engine/grokBilling';
+import { grokLock } from './engine/grokLock';
 import { sweepShadowHomes } from './engine/shadowHome';
 import { grokEnv } from './engine/grokEnv';
 import { execFile } from 'node:child_process';
@@ -38,11 +40,15 @@ import { pruneTranscriptSnapshots, setTranscriptCacheDir } from './sessions/tran
 import { SettingsStore } from './settings';
 import { ProcessHolders } from './sessions/ProcessHolders';
 import { SessionIndex } from './sessions/SessionIndex';
+import { GeminiConversationIndex } from './sessions/GeminiImports';
+import { GrokBotIndex } from './sessions/GrokBotImports';
+import { GrokSessionIndex } from './sessions/GrokImports';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { GeminiUsagePoller } from './usage/GeminiUsagePoller';
 import { GrokUsageTracker } from './usage/GrokUsageTracker';
+import { GrokBillingPoller } from './usage/GrokBillingPoller';
 import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket, type ServerSend } from './ws';
@@ -77,7 +83,13 @@ async function main(): Promise<void> {
   await meta.load();
   // Sessions another `claude` process (Claude Desktop, a terminal) holds open: read-only `ps`, never deck's own CLI children.
   const holders = new ProcessHolders();
-  const index = new SessionIndex({ holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home });
+  // Conversations made outside deck (imports design): Grok CLI / agy only when deck can continue them; Grok Bot read-only (macOS).
+  await fs.rm(cfg.importTmpDir, { recursive: true, force: true }).catch(() => undefined);
+  const grokImports = cfg.grokBin ? new GrokSessionIndex(cfg.grokHome) : null;
+  const geminiImports = cfg.geminiBin ? new GeminiConversationIndex([{ account: 'g1', dir: cfg.geminiStateDir }], cfg.importTmpDir) : null;
+  const grokBotImports = new GrokBotIndex(cfg.grokBotDir, cfg.home);
+  grokBotImports.onUsage = (u) => usage.applyGrokBot(u);
+  const index = new SessionIndex({ grokImports, geminiImports, grokBotImports, holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home });
   const store = new SessionStateStore(cfg.stateFile);
   const pins = new PinStore(cfg.pinsFile);
   const settings = new SettingsStore(cfg.settingsFile);
@@ -120,14 +132,18 @@ async function main(): Promise<void> {
   // so the sweep is over before any Grok turn can make its folder.
   const grokHomesDir = path.join(cfg.configDir, 'homes', 'grok');
   if (grokBin) await sweepShadowHomes(grokHomesDir).catch((err: unknown) => console.error('deck: sweeping Grok shadow homes failed', err instanceof Error ? err.message : err));
-  const grok = grokBin ? {
-    run: (req: Parameters<typeof runGrokTurn>[0]) => runGrokTurn(req, {
-      bin: grokBin, grokHome: cfg.grokHome, homesDir: grokHomesDir, realHome: cfg.home,
-      inspect: (env, cwd) => runGrokInspect(grokBin, env, cwd),
-    }),
+  const grokDeps = grokBin ? {
+    bin: grokBin, grokHome: cfg.grokHome, homesDir: grokHomesDir, realHome: cfg.home,
+    inspect: (env: Record<string, string>, cwd: string) => runGrokInspect(grokBin, env, cwd),
   } : null;
-  // Grok usage card (usage header design §4/§7-4): no quota API, only tallied from deck's own Grok turns.
+  const grok = grokDeps ? { run: (req: Parameters<typeof runGrokTurn>[0]) => runGrokTurn(req, grokDeps) } : null;
+  // Grok usage card (usage header design §4/§7-4): deck's own Grok turns, plus the subscription's usage (`_x.ai/billing`)
+  // read at the end of each turn and, while idle, by the poller (same deps — shadow HOME, env, grok inspect — as a turn).
   const grokUsage = grokBin ? new GrokUsageTracker({ file: path.join(cfg.configDir, 'grok-usage.json'), usage, log: (line) => console.error(line) }) : null;
+  const grokBilling = grokDeps && grokUsage
+    ? new GrokBillingPoller({ probe: (signal) => probeGrokBilling(grokDeps, undefined, signal), tracker: grokUsage, busy: () => grokLock.size > 0, log: (line) => console.error(line) })
+    : null;
+  grokBilling?.start();
   const grokStatusBase: GrokStatus = { bin: grok !== null };
   const grokStatus = (): GrokStatus => ({ ...grokStatusBase, locked: grokEngineLock.reason });
   if (grokBin) {
@@ -143,6 +159,7 @@ async function main(): Promise<void> {
   const claude = new ClaudeEngine({ bin: cfg.claudeBin, accounts, bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) });
   const runner = new TurnRunner({
     engine: claude,
+    holders,
     codex,
     gemini,
     geminiUsage,
@@ -233,7 +250,7 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
+  const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
   notifyIndex = () => ws.broadcastIndex();
   submitRetry = (r) => ws.submitRetry(r);
   serverSend = (r) => ws.submitServerSend(r);
@@ -259,8 +276,9 @@ async function main(): Promise<void> {
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
     stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
+    // grokBilling.stop() aborts an in-progress billing probe; awaited below so shutdown does not race it (review item 5).
     // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
-    void flushThenExit(() => Promise.all([events.flush(), claude.close()]).then(() => {}), () => process.exit(0));
+    void flushThenExit(() => Promise.all([events.flush(), claude.close(), grokBilling?.stop() ?? Promise.resolve()]).then(() => {}), () => process.exit(0));
   };
   restartCtl = installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });
 }

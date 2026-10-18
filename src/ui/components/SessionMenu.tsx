@@ -1,11 +1,17 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import type { SessionEntry } from '../../shared/session-types';
 
+/** A Grok Bot app conversation: `source`, or (an index written before `source` existed) its `grokbot-` id. */
+export const isGrokBotEntry = (s: { source?: SessionEntry['source']; sessionId?: string }): boolean => s.source === 'grokbot' || !!s.sessionId?.startsWith('grokbot-');
+
 /**
  * Why deck cannot delete this session (null = it can): the trash only moves Claude transcripts. GPT / Gemini /
  * Codex-app sessions live in those tools' own folders, which deck never writes.
  */
-export function deleteBlockedReason(s: Pick<SessionEntry, 'imported' | 'engine' | 'account'>): string | null {
+export function deleteBlockedReason(s: Pick<SessionEntry, 'imported' | 'engine' | 'account'> & { source?: SessionEntry['source']; sessionId?: string }): string | null {
+  if (isGrokBotEntry(s)) return 'Grok Bot 앱 기록은 deck에서 지울 수 없어요';
+  if (s.imported && s.engine === 'grok') return 'Grok CLI 기록은 deck에서 지울 수 없어요';
+  if (s.imported && s.engine === 'gemini') return 'agy 기록은 deck에서 지울 수 없어요';
   if (s.imported) return 'Codex 앱 기록은 deck에서 지울 수 없어요';
   if (s.engine === 'codex' || s.account === 'gpt') return 'GPT 대화 기록은 Codex 폴더에 있어 deck에서 지울 수 없어요';
   if (s.engine === 'gemini') return 'Gemini 대화 기록은 deck에서 지울 수 없어요';

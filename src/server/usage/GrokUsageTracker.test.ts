@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { localDay } from '../../shared/usage-types';
 import { GrokUsageTracker } from './GrokUsageTracker';
 
 let dir: string;
@@ -168,5 +169,54 @@ describe('GrokUsageTracker persistence', () => {
     t.noteTurn('x1', { ok: true, errorKind: null, usage: USAGE, cooldownUntilMs: null });
     expect(applied).toHaveLength(1);
     expect(applied[0]![0]).toBe('x1');
+  });
+});
+
+describe('GrokUsageTracker billing (`_x.ai/billing` readings)', () => {
+  const B = {
+    usedPct: 1, windowStart: '2026-10-18T07:54:33.561Z', windowEnd: '2026-10-25T07:54:33.561Z', tier: 'SuperGrok Heavy',
+    fetchedAt: '2026-10-18T10:00:00.000Z', periodType: 'USAGE_PERIOD_TYPE_WEEKLY',
+  };
+
+  it('a turn\'s billing is stored, shown in the snapshot and read back by a fresh tracker', () => {
+    const t = new GrokUsageTracker({ file, now: () => DAY1 });
+    t.noteTurn('x1', { ok: true, errorKind: null, usage: USAGE, cooldownUntilMs: null, billing: B });
+    expect(t.snapshotOf('x1', DAY1).billing).toEqual(B);
+    expect(fs.readdirSync(dir).filter((f) => f.includes('.tmp'))).toEqual([]);
+    const t2 = new GrokUsageTracker({ file, now: () => DAY1 });
+    expect(t2.snapshotOf('x1', DAY1).billing).toEqual(B);
+    expect(t2.billingOf('x1')).toEqual(B);
+  });
+
+  it('a turn without billing keeps the last reading', () => {
+    const t = new GrokUsageTracker({ file, now: () => DAY1 });
+    t.noteTurn('x1', { ok: true, errorKind: null, usage: USAGE, cooldownUntilMs: null, billing: B });
+    t.noteTurn('x1', { ok: true, errorKind: null, usage: USAGE, cooldownUntilMs: null });
+    expect(t.snapshotOf('x1', DAY1).billing).toEqual(B);
+  });
+
+  it('noteBilling (the idle poller) stores a reading with no turn: today stays 0, applyGrok is called', () => {
+    const applied: string[] = [];
+    const t = new GrokUsageTracker({ file, now: () => DAY1, usage: { applyGrok: (a) => applied.push(a) } });
+    t.noteBilling('x1', B);
+    const s = t.snapshotOf('x1', DAY1);
+    expect(s.billing).toEqual(B);
+    expect(s.today.turns).toBe(0);
+    expect(s.lastTurnAt).toBeNull();
+    expect(applied).toEqual(['x1']);
+    expect(new GrokUsageTracker({ file, now: () => DAY1 }).billingOf('x1')).toEqual(B);
+  });
+
+  it('an old file without billing reads fine; a corrupt billing entry is dropped, the rest kept', () => {
+    const acct = { lastTurnAtMs: DAY1, lastError: null, cooldownUntilMs: null, down: false, today: { inputTokens: 5, outputTokens: 1, turns: 1, day: localDay(new Date(DAY1)) } };
+    fs.writeFileSync(file, JSON.stringify({ version: 1, accounts: { x1: acct } }));
+    const old = new GrokUsageTracker({ file, now: () => DAY1 }).snapshotOf('x1', DAY1);
+    expect(old.billing).toBeUndefined();
+    expect(old.today.turns).toBe(1);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, accounts: { x1: { ...acct, billing: { usedPct: 'lots', fetchedAt: 'never' } } } }));
+    const bad = new GrokUsageTracker({ file, now: () => DAY1 });
+    expect(bad.snapshotOf('x1', DAY1).billing).toBeUndefined();
+    expect(bad.snapshotOf('x1', DAY1).today.turns).toBe(1);
+    expect(fs.readdirSync(dir).filter((f) => f.includes('.bad-'))).toEqual([]);
   });
 });

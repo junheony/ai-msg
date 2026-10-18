@@ -4,7 +4,7 @@ import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSe
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
-import { HANDOFF_PROMPT, handoffFirstMessage, handoffTitle } from '../shared/handoff';
+import { HANDOFF_PROMPT, codexHandoffExcerpt, codexHandoffMessage, grokBotHandoffMessage, handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
@@ -19,7 +19,7 @@ export type ChatItem =
   | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number }
   /** A hook's message to the model (e.g. a Stop hook made it keep going): a muted row, collapsed. Never counted as a user message. */
   | { kind: 'system'; source: string; label: string; text: string }
-  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null; /** This client sent an interrupt for this turn (중단, 지금 전송): its error is the stop, not a failure. */ interrupted?: true; /** The model that answered (the server's per-turn model, or the transcript's); absent = unknown. */ model?: string };
+  | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null; /** This client sent an interrupt for this turn (중단, 지금 전송): its error is the stop, not a failure. */ interrupted?: true; /** The model that answered (the server's per-turn model, or the transcript's); absent = unknown. */ model?: string; /** The failed turn's turn_result.errorCode (e.g. 'thread_locked': deck 에서 새 GPT 세션으로 이어가기 is offered). */ errorCode?: 'thread_locked' };
 
 /** A subagent's own tool call, shown in its Agent card (nested subagents' calls are flattened into the top card). */
 export type AgentCall = { toolUseId: string; name: string; input: unknown; done: boolean; isError: boolean };
@@ -249,7 +249,7 @@ export type PaneState = {
   /** 새 세션으로 이어가기, step 1: the handoff-note turn this pane sent (`ref` = its clientRef, `turnId` once started). */
   handoff: { ref: string; turnId: string | null; sessionId: string; title: string; cwd: string } | null;
   /** Step 2: the session this (new) pane session continues — rides its first send as `handoffFrom`, and the 이전 세션 link. */
-  handoffFrom: { sessionId: string; title: string } | null;
+  handoffFrom: { sessionId: string; title: string; /** Grok Bot handoff only: the old entry's own (home) cwd, rejected again by `set_new_cwd` even if the projects list no longer tags it `source: 'grokbot'`. */ grokBotHome?: string } | null;
   /** Composer text to put in once (the new session's first message, sent only when the user presses Enter). */
   prefill: string | null;
   /** Notes / errors about the session no turn owns (e.g. written outside deck just now): dismissible bars in this pane (newest 3), dropped when the pane shows another session. */
@@ -419,6 +419,11 @@ export type Action =
    * anew); 'dismiss' takes it back into the queue, paused, so it is not lost.
    */
   | { type: 'route_fit_resolve'; how: 'send' | 'dismiss'; paneId?: string }
+  /** deck 에서 새 GPT 세션으로 이어가기: GPT turn `turnId` failed (thread held by another app) — the pane opens a new GPT session, the excerpt prefilled. No server round trip. */
+  | { type: 'codex_handoff'; turnId: string; paneId?: string }
+  | { type: 'grokbot_handoff'; paneId?: string }
+  /** 작업 폴더 바꾸기 before the first send of a new (not yet created) session — the Grok Bot handoff's folder. Refuses '' and the Grok Bot conversations' home folder. */
+  | { type: 'set_new_cwd'; cwd: string; paneId?: string }
   | { type: 'set_model'; model: ModelChoice; paneId?: string; /** false: put back without marking it picked (갈래 거절 되돌리기) */ picked?: boolean }
   | { type: 'set_effort'; engine: EngineKind; effort: Effort; paneId?: string }
   | { type: 'set_auto_effort'; effort: Effort | null; paneId?: string }
@@ -893,7 +898,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const prev = latestContext(pane.items);
       const ctx: ContextInfo | null = b?.usage.context ? { usage: b.usage.context, window: b.usage.contextWindow ?? contextWindowOf(b.model), at: Date.now(), model: b.model, account: b.account } : null;
       const cacheNote = b ? coldWriteNote(b.usage, prev, { account: b.account, model: b.model, reason: b.reason, startedAt: pane.runStartedAt ?? Date.now() }) : null;
-      const next = updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패'), ...((msg.model ?? msg.badge?.model) ? { model: msg.model ?? msg.badge?.model } : {}), ...(ctx ? { ctx } : {}), ...(cacheNote ? { cacheNote } : {}) }));
+      const next = updateTurn(pane, msg.turnId, ({ errorCode: _was, ...it }) => ({ ...it, ...(!msg.ok && msg.errorCode === 'thread_locked' ? { errorCode: msg.errorCode } : {}), streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패'), ...((msg.model ?? msg.badge?.model) ? { model: msg.model ?? msg.badge?.model } : {}), ...(ctx ? { ctx } : {}), ...(cacheNote ? { cacheNote } : {}) }));
       // Only a turn this pane started may re-point the pane's session (id / account).
       const session = mine && next.session ? { ...next.session, sessionId: msg.sessionId || next.session.sessionId, account: msg.badge?.account ?? next.session.account } : next.session;
       // ux-state: a failed (or stopped) turn of this pane pauses its queue instead of firing the next message into it.
@@ -969,6 +974,100 @@ function afterHandoffNote(pane: PaneState, ok: boolean, accounts: readonly Accou
     notices: [],
     handoffFrom: { sessionId: h.sessionId, title: h.title },
     prefill: handoffFirstMessage(h.title, h.sessionId, note),
+  };
+}
+
+/**
+ * deck 에서 새 GPT 세션으로 이어가기: the pane's GPT session failed turn `turnId` (its thread is held by another app, e.g.
+ * the ChatGPT desktop app). The pane opens a new GPT session in the same folder (same model and sandbox), titled
+ * "<old title> (이어서)", with an excerpt of the conversation and the failed request in the composer — sent only when the
+ * user does. Same resets as afterHandoffNote; no account pin (Claude only). Not a failed turn of this session: unchanged.
+ */
+function codexHandoff(pane: PaneState, turnId: string): PaneState {
+  const s = pane.session;
+  const idx = pane.items.findLastIndex((it) => it.kind === 'assistant' && it.turnId === turnId);
+  const item = pane.items[idx];
+  if (!s?.sessionId || s.engine !== 'codex' || item?.kind !== 'assistant' || item.error === null || item.streaming) return pane;
+  const at = pane.items.findLastIndex((it, i) => i < idx && it.kind === 'user');
+  const request = at >= 0 ? (pane.items[at] as Extract<ChatItem, { kind: 'user' }>).text : '';
+  // Earlier tries of the same request (재시도 → locked again) are not conversation: drop them, the request rides below.
+  let end = Math.max(at, 0);
+  for (;;) {
+    const pu = pane.items.findLastIndex((it, i) => i < end && it.kind === 'user');
+    const u = pane.items[pu];
+    if (u?.kind !== 'user' || u.text !== request) break;
+    if (!pane.items.slice(pu + 1, end).every((it) => it.kind !== 'user' && (it.kind !== 'assistant' || (it.error !== null && !it.text.trim())))) break;
+    end = pu;
+  }
+  const excerpt = codexHandoffExcerpt(pane.items.slice(0, end));
+  const model = isCodexModel(pane.model) ? pane.model : isCodexModel(item.model) ? item.model : DEFAULT_CODEX_MODEL;
+  const sandbox = s.sandbox ?? pane.sandbox;
+  return {
+    ...pane,
+    session: { sessionId: null, cwd: s.cwd, account: null, title: handoffTitle(s.title), engine: 'codex', sandbox },
+    engine: 'codex', model, sandbox,
+    items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [],
+    // Messages queued meanwhile stay, paused: they were meant for the old session (held ones are parked with it).
+    queue: pane.queue.filter((q) => !isHeld(q)), queuePaused: pane.queuePaused || pane.queue.some((q) => !isHeld(q)),
+    ...ACTIVITY_RESET,
+    handoff: null,
+    notices: [],
+    handoffFrom: { sessionId: s.sessionId, title: s.title },
+    prefill: codexHandoffMessage(s.title, s.sessionId, excerpt, request),
+  };
+}
+
+/** A Grok Bot roster entry: tagged `source: 'grokbot'`, or (an older entry the server never tagged) its id still carries the `grokbot-` prefix. */
+function isGrokBotEntry(e: { source?: 'grokbot'; sessionId: string }): boolean {
+  return e.source === 'grokbot' || e.sessionId.startsWith('grokbot-');
+}
+
+/** The Grok Bot conversations' folder (the home folder: the app has no project) — never a new session's cwd. */
+function grokBotHome(projects: ProjectEntry[], fallback?: string): string | undefined {
+  for (const pr of projects) for (const e of pr.sessions) if (isGrokBotEntry(e)) return e.cwd;
+  return fallback;
+}
+
+/** The Grok Bot handoff's default folder: the most recently used project that is not `home`, has a real (non-Grok Bot) session and still exists; '' when there is none. */
+export function grokBotHandoffCwd(projects: ProjectEntry[], home: string): string {
+  let best = '';
+  let at = -Infinity;
+  for (const pr of projects) {
+    if (!pr.cwd || pr.cwd === home) continue;
+    for (const e of pr.sessions) {
+      if (isGrokBotEntry(e) || e.cwdMissing || e.lastModified <= at) continue;
+      best = pr.cwd;
+      at = e.lastModified;
+    }
+  }
+  return best;
+}
+
+/**
+ * deck Grok 새 세션으로 이어가기: the pane shows a read-only Grok Bot app conversation. It opens a new deck Grok session,
+ * titled "<old title> (이어서)", with an excerpt of the conversation in the composer — sent only when the user does. The
+ * folder is never the Grok Bot conversation's own (the home folder): the most recent other project, shown and changeable
+ * (set_new_cwd) before the send; '' when there is none (the pane asks for one). Same resets as codexHandoff. Not a Grok
+ * Bot conversation: unchanged.
+ */
+function grokBotHandoff(pane: PaneState, projects: ProjectEntry[]): PaneState {
+  const s = pane.session;
+  if (!s?.sessionId?.startsWith('grokbot-')) return pane;
+  const model = isGrokModel(pane.model) ? pane.model : DEFAULT_GROK_MODEL;
+  const home = grokBotHome(projects, s.cwd)!;
+  return {
+    ...pane,
+    session: { sessionId: null, cwd: grokBotHandoffCwd(projects, home), account: null, title: handoffTitle(s.title), engine: 'grok', sandbox: null },
+    engine: 'grok', model,
+    items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [],
+    queue: pane.queue.filter((q) => !isHeld(q)), queuePaused: pane.queuePaused || pane.queue.some((q) => !isHeld(q)),
+    ...ACTIVITY_RESET,
+    handoff: null,
+    notices: [],
+    // The old entry's own cwd, kept alongside the live projects lookup: `set_new_cwd` rejects it even once the projects
+    // list is reloaded without a `source: 'grokbot'` tag (an older roster entry carries only the `grokbot-` id prefix).
+    handoffFrom: { sessionId: s.sessionId, title: s.title, grokBotHome: home },
+    prefill: grokBotHandoffMessage(s.title, codexHandoffExcerpt(pane.items, 'Grok')),
   };
 }
 
@@ -1270,6 +1369,25 @@ export function reducer(state: AppState, action: Action): AppState {
         ...(action.handoff && action.clientRef && p.session?.sessionId ? { handoff: { ref: action.clientRef, turnId: null, sessionId: p.session.sessionId, title: p.session.title, cwd: p.session.cwd } } : {}),
       };
     });
+    case 'codex_handoff': {
+      const p = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
+      const next = p ? codexHandoff(p, action.turnId) : p;
+      if (!p || !next || next === p) return state;
+      return { ...state, parked: parkHeld(state.parked, p.session!.sessionId!, p.session!.cwd, p.queue).parked, panes: state.panes.map((x) => (x.id === p.id ? next : x)) };
+    }
+    case 'grokbot_handoff': {
+      const p = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
+      const next = p ? grokBotHandoff(p, state.projects) : p;
+      if (!p || !next || next === p) return state;
+      return { ...state, panes: state.panes.map((x) => (x.id === p.id ? next : x)) };
+    }
+    case 'set_new_cwd': {
+      const cwd = action.cwd.trim();
+      if (!cwd) return state;
+      const target = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
+      if (cwd === grokBotHome(state.projects) || cwd === target?.handoffFrom?.grokBotHome) return state;
+      return updatePane(state, action.paneId, (p) => (p.session && p.session.sessionId === null ? { ...p, session: { ...p.session, cwd } } : p));
+    }
     case 'route_fit_resolve': return updatePane(state, action.paneId, (p) => {
       const f = p.routeFit;
       if (!f) return p;

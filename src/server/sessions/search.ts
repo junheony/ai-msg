@@ -3,6 +3,8 @@ import type { Seat } from '../../shared/accounts';
 import type { EngineKind } from '../../shared/models';
 import type { SessionEntry, TranscriptMessage } from '../../shared/session-types';
 import { readCodexTranscript } from '../engine/codexRollout';
+import { readGrokTranscriptTail } from '../engine/grokHistory';
+import { readGrokBotTranscript } from './GrokBotImports';
 import { readTranscript } from './transcript';
 
 export type SearchHit = {
@@ -25,7 +27,7 @@ export const MIN_QUERY_CHARS = 2;
 export const MAX_QUERY_CHARS = 200;
 
 type Doc = { role: 'user' | 'assistant'; text: string };
-type Cached = { mtimeMs: number; size: number; docs: Doc[] };
+type Cached = { mtimeMs: number; size: number; docs: Doc[]; /** A Grok CLI history past the tail cap: older messages were never read. */ tailTruncated: boolean };
 
 export type SearchOptions = {
   /** Sessions to search (already de-duplicated; titles as the sidebar shows them). */
@@ -36,7 +38,12 @@ export type SearchOptions = {
   maxCharsPerSession?: number;
   readClaude?: (file: string) => Promise<TranscriptMessage[]>;
   readCodex?: (file: string) => Promise<TranscriptMessage[]>;
+  readGrok?: (file: string) => Promise<TranscriptMessage[]>;
+  readGrokBot?: (file: string) => Promise<TranscriptMessage[]>;
 };
+
+/** A Grok `chat_history.jsonl` is read from its end, at most this much (a long CLI session can grow past the file cap). */
+const GROK_TAIL_BYTES = 16 * 1024 * 1024;
 
 const SNIPPET_BEFORE = 60;
 const SNIPPET_AFTER = 120;
@@ -57,16 +64,27 @@ export class TranscriptSearch {
     this.maxChars = opts.maxCharsPerSession ?? 2_000_000;
   }
 
-  private async docs(s: SessionEntry): Promise<Doc[] | 'too-large' | null> {
-    if (!s.file) return null;
+  /** The reader for the session's own format: Claude / Codex / Grok CLI / Grok Bot; null = not searched (agy's db is never opened in place). */
+  private reader(s: SessionEntry): ((file: string) => Promise<TranscriptMessage[]>) | null {
+    if (s.source === 'grokbot') return this.opts.readGrokBot ?? readGrokBotTranscript;
+    switch (s.engine ?? 'claude') {
+      case 'codex': return this.opts.readCodex ?? ((f) => readCodexTranscript(f));
+      case 'grok': return this.opts.readGrok ?? ((f) => readGrokTranscriptTail(f, GROK_TAIL_BYTES, { maxMessages: Number.POSITIVE_INFINITY, maxToolResultChars: 0 }));
+      case 'gemini': return null;
+      default: return this.opts.readClaude ?? ((f) => readTranscript(f, { maxMessages: Number.POSITIVE_INFINITY, maxToolResultChars: 0 }));
+    }
+  }
+
+  private async docs(s: SessionEntry): Promise<{ docs: Doc[]; tailTruncated: boolean } | 'too-large' | null> {
+    const read = this.reader(s);
+    if (!s.file || !read) return null;
     let st: import('node:fs').Stats;
     try { st = await fs.stat(s.file); } catch { return null; }
-    if (st.size > this.maxFileBytes) return 'too-large';
+    // A Grok CLI history is read from its end only: no file is too large for it, but past the tail cap the older half is never read.
+    if (st.size > this.maxFileBytes && s.engine !== 'grok') return 'too-large';
+    const tailTruncated = s.engine === 'grok' && st.size > GROK_TAIL_BYTES;
     const hit = this.cache.get(s.file);
-    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.docs;
-    const read = s.engine === 'codex'
-      ? (this.opts.readCodex ?? ((f) => readCodexTranscript(f)))
-      : (this.opts.readClaude ?? ((f) => readTranscript(f, { maxMessages: Number.POSITIVE_INFINITY, maxToolResultChars: 0 })));
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return { docs: hit.docs, tailTruncated: hit.tailTruncated };
     let messages: TranscriptMessage[];
     try { messages = await read(s.file); } catch { return null; }
     const docs: Doc[] = [];
@@ -79,8 +97,8 @@ export class TranscriptSearch {
       }
     }
     docs.reverse();
-    this.cache.set(s.file, { mtimeMs: st.mtimeMs, size: st.size, docs });
-    return docs;
+    this.cache.set(s.file, { mtimeMs: st.mtimeMs, size: st.size, docs, tailTruncated });
+    return { docs, tailTruncated };
   }
 
   async search(query: string, limit = 50): Promise<SearchResult> {
@@ -94,9 +112,11 @@ export class TranscriptSearch {
     let scanned = 0;
     let truncated = false;
     for (const s of sessions) {
-      const docs = await this.docs(s);
-      if (docs === 'too-large') { truncated = true; continue; }
-      if (!docs) continue;
+      const result = await this.docs(s);
+      if (result === 'too-large') { truncated = true; continue; }
+      if (!result) continue;
+      if (result.tailTruncated) truncated = true;
+      const docs = result.docs;
       scanned++;
       let found = 0;
       // Newest messages first: the hit most likely wanted is the latest mention.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HANDOFF_PROMPT, handoffFirstMessage } from '../shared/handoff';
+import { HANDOFF_PROMPT, THREAD_LOCKED_MESSAGE, codexHandoffExcerpt, codexHandoffMessage, handoffFirstMessage } from '../shared/handoff';
 import { DEFAULT_MODEL } from '../shared/models';
 import { nextPermMode } from '../shared/permission';
 import { setFeatures } from './features';
@@ -1897,5 +1897,62 @@ describe('자동 분배: review counterexamples', () => {
     s = reducer(s, { type: 'sent', text: '이 화면 봐줘', clientRef: 'r1', attachments: [{ id: 'a1', name: 'x.png', isImage: true }] });
     s = play([{ type: 'route_fit', turnId: 't1', sessionId: 'X1', engine: 'grok', need: '이미지 입력', clientRef: 'r1' }], s);
     expect(pane(s)).toMatchObject({ awaitingStart: false, routeFit: { engine: 'grok', need: '이미지 입력', text: '이 화면 봐줘', attachments: [{ id: 'a1', name: 'x.png', isImage: true }] } });
+  });
+});
+
+describe('reducer: deck 에서 새 GPT 세션으로 이어가기 (codex_handoff)', () => {
+  const TID = '019a0000-0000-7000-8000-000000000001';
+  const gptBadge = { account: 'gpt' as const, model: 'gpt-6-astra' as const, reason: 'GPT 세션', usage: { inputTokens: 1, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 }, modelNote: null };
+  const started = (turnId: string, clientRef: string): ServerMessage => ({ type: 'turn_started', turnId, sessionId: TID, cwd: '/w', account: 'gpt', model: 'gpt-6-astra', reason: 'GPT 세션', attempt: 0, engine: 'codex', clientRef });
+  const locked = (errorCode: boolean): AppState => {
+    let s = reducer(initialState, { type: 'open', sessionId: TID, cwd: '/w', title: 'GPT 작업' });
+    s = play([{ type: 'history', sessionId: TID, cwd: '/w', account: 'gpt', engine: 'codex', sessionModel: 'gpt-6-astra', sandbox: 'read-only', runningTurnId: null, messages: [
+      { kind: 'user', text: '이전 질문', ts: null },
+      { kind: 'assistant', text: '이전 답', model: 'gpt-6-astra', toolCalls: [{ id: 'tu', name: 'shell', input: { command: 'ls -la' } }], ts: null },
+      { kind: 'tool_result', toolUseId: 'tu', content: 'file-listing', isError: false, ts: null },
+    ] }], s);
+    s = reducer(s, { type: 'sent', text: '이 함수 고쳐줘', clientRef: 'c1' });
+    return play([started('t1', 'c1'), { type: 'turn_result', turnId: 't1', sessionId: TID, cwd: '/w', ok: false, text: '', badge: gptBadge, errorText: THREAD_LOCKED_MESSAGE, ...(errorCode ? { errorCode: 'thread_locked' as const } : {}) }], s);
+  };
+
+  it('the failed turn keeps its errorCode on the item', () => {
+    expect(pane(locked(true)).items.at(-1)).toMatchObject({ kind: 'assistant', turnId: 't1', error: THREAD_LOCKED_MESSAGE, errorCode: 'thread_locked' });
+    expect(pane(locked(false)).items.at(-1)).not.toHaveProperty('errorCode');
+  });
+
+  it('opens a new GPT session in the same folder, model and sandbox, with the excerpt and the failed request prefilled', () => {
+    const before = locked(true);
+    const s = reducer(before, { type: 'codex_handoff', paneId: pane(before).id, turnId: 't1' });
+    const p = pane(s);
+    expect(p.session).toMatchObject({ sessionId: null, cwd: '/w', title: 'GPT 작업 (이어서)', engine: 'codex', sandbox: 'read-only' });
+    expect(p.session).not.toHaveProperty('accountPin');
+    expect(p.engine).toBe('codex');
+    expect(p.model).toBe('gpt-6-astra');
+    expect(p.sandbox).toBe('read-only');
+    expect(p.items).toEqual([]);
+    expect(p.activeTurnId).toBeNull();
+    expect(p.handoffFrom).toEqual({ sessionId: TID, title: 'GPT 작업' });
+    const excerpt = codexHandoffExcerpt([{ kind: 'user', text: '이전 질문' }, { kind: 'assistant', text: '이전 답' }]);
+    expect(p.prefill).toBe(codexHandoffMessage('GPT 작업', TID, excerpt, '이 함수 고쳐줘'));
+    expect(p.prefill).not.toContain('file-listing');
+    expect(p.prefill).not.toContain('ls -la');
+    // the old session is left as it was (nothing sent, nothing parked)
+    expect(s.parked).toEqual(before.parked);
+    expect(pane(before).session?.sessionId).toBe(TID);
+  });
+
+  it('earlier locked tries of the same request (재시도) stay out of the excerpt; an unknown errorCode is not kept', () => {
+    let s = locked(true);
+    s = reducer(s, { type: 'sent', text: '이 함수 고쳐줘', clientRef: 'c2' });
+    s = play([started('t2', 'c2'), { type: 'turn_result', turnId: 't2', sessionId: TID, cwd: '/w', ok: false, text: '', badge: gptBadge, errorText: 'x', errorCode: 'future_code' as never }], s);
+    expect(pane(s).items.at(-1)).not.toHaveProperty('errorCode');
+    const p = pane(reducer(s, { type: 'codex_handoff', paneId: pane(s).id, turnId: 't2' }));
+    const excerpt = codexHandoffExcerpt([{ kind: 'user', text: '이전 질문' }, { kind: 'assistant', text: '이전 답' }]);
+    expect(p.prefill).toBe(codexHandoffMessage('GPT 작업', TID, excerpt, '이 함수 고쳐줘'));
+  });
+
+  it('a turn that is not a failed one of this pane: nothing happens', () => {
+    const before = locked(true);
+    expect(reducer(before, { type: 'codex_handoff', paneId: pane(before).id, turnId: 'nope' })).toBe(before);
   });
 });

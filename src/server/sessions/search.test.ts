@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -77,5 +77,56 @@ describe('TranscriptSearch', () => {
     const entry: SessionEntry = { sessionId: 'thr', account: 'gpt', engine: 'codex', cwd: '/w', projectDir: dir, file, title: 'gpt', lastModified: 1, sizeBytes: 1 };
     const s = new TranscriptSearch({ sessions: () => [entry], readCodex: async () => [{ kind: 'assistant', text: 'codex answer here', model: null, toolCalls: [], ts: null }] });
     expect((await s.search('answer')).hits[0]).toMatchObject({ sessionId: 'thr', engine: 'codex', account: 'gpt' });
+  });
+});
+
+describe('TranscriptSearch: conversations made outside deck', () => {
+  const grokLine = (o: unknown) => `${JSON.stringify(o)}\n`;
+  const entry = (over: Partial<SessionEntry>): SessionEntry => ({ sessionId: 'x', account: 'x1', engine: 'grok', cwd: '/w/p', projectDir: '/w', file: '', title: 't', lastModified: 1, sizeBytes: 0, imported: true, ...over });
+
+  it('each kind is read in its own format: Grok CLI history, Grok Bot transcript; an agy db is never opened', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-search-'));
+    const grokFile = path.join(dir, 'chat_history.jsonl');
+    await fs.writeFile(grokFile, grokLine({ type: 'user', content: [{ type: 'text', text: '<user_query>grok needle 질문</user_query>' }] }) + grokLine({ type: 'assistant', content: '답' }));
+    const botFile = path.join(dir, 'bot.blob');
+    await fs.writeFile(botFile, '{}');
+    const geminiDb = path.join(dir, 'conversation_summaries.db');
+    await fs.writeFile(geminiDb, user('needle in a db that must stay closed'));
+    const readClaude = vi.fn(async () => []);
+    const readGrokBot = vi.fn(async () => [{ kind: 'assistant' as const, text: 'bot needle 답', model: null, toolCalls: [], ts: null }]);
+    const s = new TranscriptSearch({
+      readClaude, readGrokBot,
+      sessions: () => [
+        entry({ sessionId: 'g-1', file: grokFile, lastModified: 3 }),
+        entry({ sessionId: 'grokbot-a', source: 'grokbot', readOnly: true, file: botFile, lastModified: 2 }),
+        entry({ sessionId: 'conv-1', engine: 'gemini', account: 'g1', file: geminiDb, lastModified: 1 }),
+      ],
+    });
+    const r = await s.search('needle');
+    expect(r.hits.map((h) => [h.sessionId, h.role])).toEqual([['g-1', 'user'], ['grokbot-a', 'assistant']]);
+    expect(r.scanned).toBe(2);
+    expect(readGrokBot).toHaveBeenCalledWith(botFile);
+    expect(readClaude).not.toHaveBeenCalled();
+  });
+
+  it('a Grok CLI history over the file cap is still searched, from its end', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-search-'));
+    const file = path.join(dir, 'chat_history.jsonl');
+    await fs.writeFile(file, grokLine({ type: 'assistant', content: 'x'.repeat(2000) }) + grokLine({ type: 'user', content: 'late needle' }));
+    const s = new TranscriptSearch({ sessions: () => [entry({ sessionId: 'g-big', file })], maxFileBytes: 100 });
+    const r = await s.search('needle');
+    expect(r.truncated).toBe(false);
+    expect(r.hits.map((h) => h.sessionId)).toEqual(['g-big']);
+  });
+
+  it('a Grok CLI history over the tail-read cap (GROK_TAIL_BYTES) is still searched, from its end, but reported truncated', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-search-'));
+    const file = path.join(dir, 'chat_history.jsonl');
+    const pad = grokLine({ type: 'assistant', content: 'x'.repeat(16 * 1024 * 1024) });
+    await fs.writeFile(file, pad + grokLine({ type: 'user', content: 'late needle' }));
+    const s = new TranscriptSearch({ sessions: () => [entry({ sessionId: 'g-huge', file })] });
+    const r = await s.search('needle');
+    expect(r.truncated).toBe(true);
+    expect(r.hits.map((h) => h.sessionId)).toEqual(['g-huge']);
   });
 });

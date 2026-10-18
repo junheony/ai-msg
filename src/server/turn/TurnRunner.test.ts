@@ -10,12 +10,13 @@ import type { CodexEngine, CodexTurnRequest } from '../engine/CodexEngine';
 import type { GeminiTurnRequest } from '../engine/GeminiEngine';
 import type { GeminiAccount } from '../../shared/accounts';
 import type { GrokTurnRequest } from '../engine/GrokEngine';
-import type { EngineEvent } from '../engine/Engine';
+import type { EngineEvent, EngineResult } from '../engine/Engine';
 import { chooseAutoModel } from '../routing/AutoModel';
 import { readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
 import { COOLDOWN_MS } from '../engine/limitDetect';
 import { hashInput } from '../audit';
 import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
+import { THREAD_LOCKED_MESSAGE } from '../../shared/handoff';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
@@ -814,6 +815,21 @@ describe('TurnRunner: Codex sessions (D2–D5)', () => {
     expect(c.deps.store.get('tid-2')).toMatchObject({ defaultModel: 'gpt-6-astra' });
   });
 
+  it('a thread the desktop app holds: turn_result carries errorCode thread_locked; any other failure carries none', async () => {
+    const fail = (tid: string, errorKind: string | null, errorText: string): EngineEvent[] => [
+      { kind: 'result', sessionId: tid, ok: false, text: '', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText, stderr: null, errorKind, terminalReason: null },
+    ];
+    for (const [kind, text, code] of [['thread_locked', THREAD_LOCKED_MESSAGE, 'thread_locked'], [null, 'boom', undefined]] as const) {
+      const codex = fakeCodex((req) => fail(req.resumeThreadId ?? 'x', kind, text));
+      const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
+      await c.deps.store.set({ engine: 'codex', sessionId: 'tid-2', cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gpt-6-astra', sandbox: 'read-only', rolloutFile: null, createdAtMs: 1 });
+      await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w2', sessionId: 'tid-2', text: 'again' }, c.sink);
+      const res = c.msgs.find((m) => m.type === 'turn_result');
+      expect(res).toMatchObject({ ok: false, errorText: expect.stringContaining(text) });
+      expect(res && 'errorCode' in res ? res.errorCode : undefined).toBe(code);
+    }
+  });
+
   it('a per-turn effort reaches the codex engine', async () => {
     const codex = fakeCodex((req) => codexOk(req.resumeThreadId ?? 'x'));
     const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => null });
@@ -1292,6 +1308,17 @@ describe('TurnRunner: Grok sessions (explicit only)', () => {
     await runner.run({ turnId: 't3', cwd: '/w', sessionId: XSID, text: 'x' }, { ...c.sink, signal: ac.signal });
     expect(notes[2]).toMatchObject(['x1', { ok: false, errorKind: null }]);
     expect(c.msgs.at(-1)).toMatchObject({ type: 'turn_result', ok: false });
+  });
+
+  it('a Grok result\'s grokBilling (the turn\'s `_x.ai/billing` read) goes on to grokUsage.noteTurn', async () => {
+    type Note = Parameters<NonNullable<TurnRunnerDeps['grokUsage']>['noteTurn']>;
+    const notes: Note[] = [];
+    const billing = { usedPct: 1, windowStart: '2026-10-18T07:54:33.561Z', windowEnd: '2026-10-25T07:54:33.561Z', tier: 'SuperGrok Heavy', fetchedAt: '2026-10-18T08:00:00.000Z' };
+    const ok = grokOk(XSID);
+    const g = fakeGrok(() => [...ok.slice(0, -1), { ...(ok.at(-1) as EngineResult), grokBilling: billing }]);
+    const c = await ctx(new StubEngine(async () => []), { grok: g.dep, grokUsage: { noteTurn: (...a: Note) => { notes.push(a); } } });
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'grok' }, c.sink);
+    expect(notes[0]).toEqual(['x1', expect.objectContaining({ ok: true, billing })]);
   });
 
   it('a throwing grokUsage.noteTurn is logged and the turn_result still goes out', async () => {

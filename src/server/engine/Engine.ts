@@ -3,7 +3,7 @@ import type { Account } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
 import type { ClaudeModel, Effort } from '../../shared/models';
 import type { PermissionDecision, Question, QuestionAnswers, TaskUpdate, TaskUsage, TurnPhase, TurnUsage } from '../../shared/turn-types';
-import type { UsageWindow } from '../../shared/usage-types';
+import type { GrokBilling, UsageWindow } from '../../shared/usage-types';
 
 export type RateLimitSignal = {
   status: 'allowed' | 'allowed_warning' | 'rejected';
@@ -26,6 +26,8 @@ export type EngineResult = {
   /** SDKAssistantMessageError value when the SDK reported one (e.g. 'rate_limit', 'authentication_failed'). */
   errorKind: string | null;
   terminalReason: string | null;
+  /** Grok only: the subscription's usage read at the end of the turn (`_x.ai/billing`); absent when not read. */
+  grokBilling?: GrokBilling;
 };
 
 /** A live background task with its server-clock start (the wire form carries an age instead, `BgTaskInfo`). */

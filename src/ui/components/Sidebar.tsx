@@ -7,7 +7,7 @@ import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
 import { EngineMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
-import { BlockedDeleteItem, MenuList, deleteBlockedReason } from './SessionMenu';
+import { BlockedDeleteItem, MenuList, deleteBlockedReason, isGrokBotEntry } from './SessionMenu';
 import { openInNewTab } from './ShareMenu';
 import { isMacPlatform, isPlainMod, pinKeyLabel } from '../shortcuts';
 import { hasOpenModal } from '../autoReload';
@@ -271,7 +271,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           {!edit && openMark(members)}
           {/* meta + actions: one trailing group (a hover overlay with a mouse, line 2 + end column on touch / narrow) */}
           <span className="row-end">
-          <span className="session-meta" {...(s.imported ? { title: s.codexArchived ? 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다' : s.cwdMissing ? '폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다' : s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다' } : {})}>{[project, s.codexExec ? '자동 실행' : null, s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, status(members) ?? ago(s.lastModified, now)].filter(Boolean).join(' · ')}</span>
+          <span className="session-meta" {...(s.imported ? { title: importTitle(s) } : {})}>{[project, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, status(members) ?? ago(s.lastModified, now)].filter(Boolean).join(' · ')}</span>
           {canEdit && !edit && (
             <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
               onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
@@ -295,7 +295,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {/* Archived in Codex: only the Codex app can unarchive it. */}
             {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
             {onSetCwd && (target.engine ?? 'claude') !== 'gemini' && target.engine !== 'grok' && <button type="button" role="menuitem" onClick={() => { setMenu(null); onSetCwd(target); }}>작업 폴더 바꾸기</button>}
-            {onDuplicate && <button type="button" role="menuitem" onClick={() => { setMenu(null); onDuplicate(target.sessionId); }}>복제</button>}
+            {onDuplicate && !isGrokBotEntry(target) && <button type="button" role="menuitem" onClick={() => { setMenu(null); onDuplicate(target.sessionId); }}>복제</button>}
             {/* GPT / Gemini / Codex-app sessions: shown disabled with the reason, so it is clear why they stay. */}
             {onDelete && (deleteBlockedReason(target)
               ? <BlockedDeleteItem reason={deleteBlockedReason(target)!} />
@@ -481,6 +481,24 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       )}
     </aside>
   );
+}
+
+/** Tooltip of an imported row's meta: where it came from and whether a message continues it in deck. */
+export function importTitle(s: SessionEntry): string {
+  const preview = s.preview ? `\n\n${s.preview}` : '';
+  if (s.source === 'grokbot') return `Grok Bot 앱 대화 — 읽기만 할 수 있습니다 (Grok Bot 앱에서 이어가세요)${preview}`;
+  if (s.cwdMissing) return `폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다${preview}`;
+  if (s.engine === 'grok') return `${s.autoRun ? 'grok 헤드리스로 자동 실행된' : '터미널 Grok CLI 에서 만든'} 대화 — 메시지를 보내면 deck 에서 이어갑니다${preview}`;
+  if (s.engine === 'gemini') return `agy 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다 (이전 메시지는 deck 에 보이지 않음)${preview}`;
+  if (s.codexArchived) return 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다';
+  return s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다';
+}
+
+/** Grok Bot row tags: the app name, reply-awaited / unread / group markers, read-only. */
+export function grokBotTags(s: SessionEntry): string[] {
+  if (s.source !== 'grokbot') return [];
+  const b = s.grokBot;
+  return ['Grok Bot', ...(b?.awaitingUserResponse ? ['답장 대기'] : []), ...(b?.unreadCount ? [`안 읽음 ${b.unreadCount}`] : []), ...(b?.isGroup ? ['그룹'] : []), '읽기 전용'];
 }
 
 function PlusIcon() {

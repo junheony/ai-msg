@@ -26,6 +26,8 @@ import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
 import { CODEX_ARCHIVED_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from '../sessions/CodexImports';
 import { elsewhereNotice } from '../sessions/elsewhereNotice';
+import { GROKBOT_ID_PREFIX, GROKBOT_SEND_REFUSED } from '../sessions/GrokBotImports';
+import { GROK_HELD_NOTICE, grokImportBlockReason } from '../sessions/GrokImports';
 import { OWN_LAG_MS, scanForeign } from '../sessions/foreignWrites';
 import { deckWrites } from '../engine/claudeCli/ownedEntries';
 import { backupDivergedAndMove } from '../sessions/SessionFork';
@@ -33,7 +35,7 @@ import { isAncestor, moveSession } from '../sessions/SessionMover';
 import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
-import { usageOf } from '../../shared/usage-types';
+import { usageOf, type GrokBilling } from '../../shared/usage-types';
 import { isCodexState, isGeminiState, isGrokState, isOtherEngineState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type GrokSessionState, type SessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
@@ -107,6 +109,9 @@ export const MAX_BG_CAP_HOPS = 2;
 export const MAX_RETRY_HOPS = 2;
 export const AUTO_RETRY_NOTICE = '한도가 풀려 자동으로 다시 시도합니다';
 
+/** The pre-send `holders.refresh({ force: true })` waits at most this long: a hung `ps`/`lsof` never stalls a send — the last known answer stands. */
+export const FORCE_HOLDERS_SCAN_TIMEOUT_MS = 1000;
+
 export type TurnRunnerDeps = {
   engine: Engine;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
@@ -116,9 +121,14 @@ export type TurnRunnerDeps = {
   /** Re-reads the Gemini quota shortly after a Gemini turn (GeminiUsagePoller.bump); absent = none. */
   geminiUsage?: { bump(): void } | null;
   /** Notes every ended Grok turn's tokens/error for the usage header's Grok card (GrokUsageTracker.noteTurn); absent = no Grok usage card. */
-  grokUsage?: { noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: { inputTokens: number; outputTokens: number }; cooldownUntilMs: number | null }): void } | null;
+  grokUsage?: { noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: { inputTokens: number; outputTokens: number }; cooldownUntilMs: number | null; /** The turn's `_x.ai/billing` read, when it had one. */ billing?: GrokBilling }): void } | null;
   /** Null/absent = no `grok` binary. main binds runGrokTurn to the binary and x1's GROK_HOME; tests inject a fake. */
   grok?: { run: (req: GrokTurnRequest) => AsyncIterable<EngineEvent> } | null;
+  /**
+   * Processes outside deck holding a Grok session (by id: refused) or running in its folder (a warning); absent = no check.
+   * `refresh({ force: true })` rescans before a send to a Grok session decides on it (a failed scan keeps the last answer).
+   */
+  holders?: { grokHeldBy?(sessionId: string): unknown; grokCwdHeld?(cwd: string): boolean | Promise<boolean>; refresh?(opts?: { force?: boolean }): Promise<boolean> } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
   attachments: AttachmentStore | null;
   codexSessionsRoot: string;
@@ -1368,6 +1378,17 @@ export class TurnRunner {
     }
     let state: SessionState | null = null;
     let notice: string | null = null;
+    // Set once the fresh-import branch below has already run the agy-RUNNING check for this send (no second rescan before runGemini).
+    let geminiHoldChecked = false;
+    // Who holds a Grok session is decided on a scan made now, not on the poll's cached one (once per send).
+    let holdersFresh = false;
+    const freshHolders = async () => {
+      if (holdersFresh) return;
+      holdersFresh = true;
+      const refreshed = deps.holders?.refresh?.({ force: true }).catch(() => false);
+      if (!refreshed) return;
+      await Promise.race([refreshed, new Promise((resolve) => setTimeout(resolve, FORCE_HOLDERS_SCAN_TIMEOUT_MS))]);
+    };
     if (p.fork && !p.sessionId) {
       // 메시지 편집 갈래: a Claude session only (Codex / Gemini cannot resume at an entry).
       const st = deps.store.get(p.fork.from);
@@ -1381,8 +1402,39 @@ export class TurnRunner {
       // A deck Codex thread Codex has since archived (its rollout moved to archived_sessions): view only, like an archived import.
       if (state && isCodexState(state) && (await deps.index.freshCodexImport(p.sessionId))?.codexArchived) { sink.emit({ type: 'error', turnId: p.turnId, message: CODEX_ARCHIVED_NOTICE }); return; }
       // Checked live: a thread archived / unarchived in Codex or a folder that came back since the last scan is rescanned first.
-      const imported = state ? null : await deps.index.freshCodexImport(p.sessionId);
-      if (imported) {
+      // A Grok Bot conversation is never sent from deck (no app API): an explicit refusal, never a new session.
+      if (!state && p.sessionId.startsWith(GROKBOT_ID_PREFIX)) { sink.emit({ type: 'error', turnId: p.turnId, message: GROKBOT_SEND_REFUSED }); return; }
+      const imported = state ? null : await deps.index.freshImport(p.sessionId);
+      if (imported && imported.source === 'grokbot') { sink.emit({ type: 'error', turnId: p.turnId, message: GROKBOT_SEND_REFUSED }); return; }
+      if (imported && imported.engine === 'grok') {
+        // A Grok CLI session (design §3.1): held by a terminal grok (by id) or folder gone → refused; else resumed with session/load.
+        await freshHolders();
+        const blocked = await grokImportBlockReason(imported, deps.holders);
+        if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
+        const effort: Effort = p.effort ?? imported.grokEffort ?? DEFAULT_EFFORT.grok;
+        state = {
+          engine: 'grok', account: 'x1', sessionId: imported.sessionId, grokSessionId: imported.sessionId,
+          cwd: imported.cwd, canonicalCwd: await fs.realpath(imported.cwd).catch(() => path.resolve(imported.cwd)),
+          model: isGrokModel(p.model) ? p.model : isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL,
+          effort, permissionMode: p.permissionMode ?? (this.defaultMode() === 'plan' ? 'default' : this.defaultMode()),
+          lastTurnAtMs: null, justCompacted: false, createdAtMs: this.now(), title: imported.title,
+        };
+        const age = await deps.index.importActiveAgeMs(imported.sessionId, this.now());
+        if (age !== null || (await deps.holders?.grokCwdHeld?.(imported.cwd))) notice = elsewhereNotice({ engine: 'grok', title: imported.title === '(제목 없음)' ? null : imported.title, ageMs: age ?? 0 });
+      } else if (imported && imported.engine === 'gemini') {
+        // An agy conversation: resumed with --conversation <id> (its past messages are not replayed in deck). One agy is
+        // running right now (RUNNING, written within LIVE_ROLLOUT_MS): refused like a held Grok session.
+        geminiHoldChecked = true;
+        const blocked = (await deps.index.importHeldReason(imported.sessionId, this.now())) ?? (await importBlockReason(imported));
+        if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
+        state = {
+          engine: 'gemini', account: isGeminiAccount(imported.account) ? imported.account : 'g1', sessionId: imported.sessionId, cwd: imported.cwd,
+          defaultModel: isGeminiModel(p.model) ? p.model : DEFAULT_GEMINI_MODEL, sandbox: p.sandbox ?? defaultGeminiSandbox(this.defaultMode() === 'bypassPermissions'),
+          lastTurnAtMs: null, justCompacted: false, createdAtMs: this.now(), title: imported.title,
+        };
+        const age = await deps.index.importActiveAgeMs(imported.sessionId, this.now());
+        if (age !== null) notice = elsewhereNotice({ engine: 'gemini', title: imported.title === '(제목 없음)' ? null : imported.title, ageMs: age });
+      } else if (imported) {
         // Folder gone (codex cannot spawn there) or archived in Codex (resume by id is not assured): view only.
         const blocked = await importBlockReason(imported);
         if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
@@ -1404,14 +1456,23 @@ export class TurnRunner {
     // 총사령탑: the gate lives in the Claude engine's hooks only — an automatic turn never reaches another engine.
     if (p.commanderHop !== undefined && state && (isOtherEngineState(state))) { sink.emit({ type: 'error', turnId: p.turnId, message: COMMANDER_ENGINE_REFUSED }); return; }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
+    // A terminal grok resumed this very session (its id in the arguments): both writing would fork it (imports design §4.1).
+    if (state && isGrokState(state)) await freshHolders();
+    if (state && isGrokState(state) && deps.holders?.grokHeldBy?.(state.sessionId)) { sink.emit({ type: 'error', turnId: p.turnId, message: GROK_HELD_NOTICE }); return; }
+    // A deck-owned Gemini session agy also runs (RUNNING, written within LIVE_ROLLOUT_MS) right now: refused like a held
+    // Grok session, same as a fresh import's first send above (not re-checked when that branch already did, just above).
+    if (state && isGeminiState(state) && !geminiHoldChecked) {
+      const blocked = await deps.index.importHeldReason(state.sessionId, this.now());
+      if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
+    }
     // §10-4: a Gemini / Grok session checks every turn whether its engine can do it (Claude / GPT can do anything).
     if (state && (isGeminiState(state) || isGrokState(state)) && !p.ignoreFit) {
       const engine = isGeminiState(state) ? 'gemini' : 'grok';
       const fit = turnFits(engine, classifyTask(p.text, { images: attachments.filter((a) => a.isImage).length }), { cwdInsideHome: await insideHome(state.cwd) });
       if (!fit.ok) { sink.emit({ type: 'route_fit', turnId: p.turnId, sessionId: state.sessionId, engine, need: fit.need }); return; }
     }
-    if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments);
-    if (state && isGrokState(state)) return this.runGrok(p, state, sink, `Grok 세션 · ${GROK_LABEL[state.account]}`, attachments);
+    if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments, notice);
+    if (state && isGrokState(state)) return this.runGrok(p, state, sink, `Grok 세션 · ${GROK_LABEL[state.account]}`, attachments, notice);
     // 자동 분배 (chooseRoute): engine 자동, or an engine other than Claude with model 자동. Claude / no engine keeps chooseEngine below.
     // review #3: a pinned account forces Claude — engine 자동 never crosses vendors when an account is pinned.
     if (!state && !p.accountPin && (p.engine === 'auto' || (p.model === 'auto' && (p.engine === 'codex' || p.engine === 'gemini' || p.engine === 'grok')))) {
@@ -1549,11 +1610,11 @@ export class TurnRunner {
       }
     }
     if (!res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit') this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit;
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr), ...(!res.ok && !sink.signal.aborted && res.errorKind === 'thread_locked' ? { errorCode: 'thread_locked' as const } : {}) });
   }
 
   /** Explicit Gemini: a new session takes the first logged-in, non-cooled account (g1, then g2) and stays on it. */
-  private async runGemini(p: TurnParams, state: GeminiSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
+  private async runGemini(p: TurnParams, state: GeminiSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[], notice: string | null = null): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const model: GeminiModel = isGeminiModel(p.model) ? p.model : (state?.defaultModel ?? DEFAULT_GEMINI_MODEL);
@@ -1578,6 +1639,7 @@ export class TurnRunner {
     const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
     if (sink.signal.aborted) { fail(account, abortedText(sink.signal)); return; }
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini' });
+    if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     let result: EngineResult | null = null;
     // A picked effort Gemini does not have (xhigh) becomes the closest lower one (high).
     const effort = p.effort ? clampEffort(model, p.effort) : DEFAULT_EFFORT.gemini;
@@ -1609,7 +1671,7 @@ export class TurnRunner {
    * Explicit Grok (design §4–§8): one seat (x1), no routing, no retry. Approval cards, 자동 승인, steer and the audit log
    * go through the same paths as a Claude turn; the engine classifies its own errors (errorKind) and refuses images.
    */
-  private async runGrok(p: TurnParams, state: GrokSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[]): Promise<void> {
+  private async runGrok(p: TurnParams, state: GrokSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[], notice: string | null = null): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;
     const account: GrokAccount = state?.account ?? 'x1';
@@ -1640,6 +1702,7 @@ export class TurnRunner {
       return deps.store.set(next);
     };
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'grok' });
+    if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     const audit = (toolName: string, input: unknown, decision: ToolAuditEntry['decision'], source: ToolAuditEntry['source']) =>
       appendAudit(deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId, toolName, decision, source, inputSha256: hashInput(input) })
         .catch((err: unknown) => console.error('deck: audit log write failed', err instanceof Error ? err.message : err));
@@ -1698,7 +1761,7 @@ export class TurnRunner {
     // The map itself is kept on success (same as the Codex/Gemini cooldowns, which only expire); the card is told a
     // successful turn means no cooldown, so it does not keep showing "한도" after Grok answered.
     try {
-      this.deps.grokUsage?.noteTurn(account, { ok: res.ok, errorKind: res.errorKind, usage: res.usage, cooldownUntilMs: res.ok ? null : (this.grokCooldownUntil[account] ?? null) });
+      this.deps.grokUsage?.noteTurn(account, { ok: res.ok, errorKind: res.errorKind, usage: res.usage, cooldownUntilMs: res.ok ? null : (this.grokCooldownUntil[account] ?? null), ...(res.grokBilling ? { billing: res.grokBilling } : {}) });
     } catch (err) {
       console.error('deck: recording Grok usage failed', err instanceof Error ? err.message : err);
     }
