@@ -71,7 +71,8 @@
 | `src/server/engine/claudeCli/version.ts:61-65`, `CodexEngine.ts:364`, `GeminiEngine.ts:240`, `config.ts:172`(`resolveGrokBin`: `DECK_GROK_BIN` → PATH → `~/.grok/bin/grok`) | 바이너리 탐색: `DECK_*_BIN` → PATH → 홈 아래 설치 위치 | 유지. 감지·doctor 는 `loadConfig` 가 고른 경로를 그대로 씀(Task 4). 서비스 설치 때 해석된 절대 경로를 서비스 기록에 적음(Task 7) |
 | `src/ui/components/Login.tsx:16` | "`~/.config/deck/token` 의 내용을 입력하세요" | Task 6: `login-url` 안내 + `#token=` 자동 로그인 |
 | `src/server/bind.ts:18`; `files.ts:254-259`; `tccDenial.ts` | Tailscale.app 경로, Finder 열기, TCC 안내 — macOS 전용 | 유지 — 다른 OS 에선 없음/501 로 이미 처리됨 |
-| `src/server/sessions/ProcessHolders.ts:72` | `ps -axww -o pid=,ppid=,command=` | 유지, Task 8 Linux 확인 항목(procps 경고 여부) |
+| `src/server/sessions/ProcessHolders.ts:72` | `ps -axww -o pid=,ppid=,command=`, grok 이 떠 있을 때만 `lsof`(터미널 grok 의 작업 폴더) | 유지, Task 8 Linux 확인 항목(procps 경고 여부, `lsof` 가 없는 배포판에서 경고 없이 꺼지는지) |
+| `src/server/config.ts` `grokBotDir`·`geminiStateDir`·`importTmpDir`; `GeminiImports.ts` | 다른 앱 대화 가져오기(2026-10-18): Grok Bot 캐시는 macOS 경로만(다른 OS 는 null), agy 대화는 `node:sqlite` 로 임시 복사본을 `<configDir>/tmp/gemini-import` 에서 읽음 | 유지 — 설정 폴더 해석(Task 1)을 따라감. pack 스모크(Task 3)에서 `node:sqlite` 가 실험 기능 경고 없이 로드되는지(Node `>=24`) 확인 |
 | `src/server/config.ts:221` | Claude Desktop 세션 경로 `~/Library/Application Support/…` | 유지 — 없으면 빈 목록 |
 | `scripts/launchd/run.sh:17` | `exec node --import tsx src/server/main.ts` | 유지(경로 고정이 Task 2 제약의 이유) |
 | `scripts/relaunch.sh:14-16`, `:86-88` | `~/.config/deck`, `env -i … PATH=…/opt/homebrew/bin… LANG=ko_KR.UTF-8 SHELL=/bin/zsh`, `relaunch.pid` | 이 맥 전용으로 유지, 패키지 제외. 관리자 없는 시작은 `relaunch.pid` 루프가 살아 있으면 거부(Task 2) |
@@ -729,7 +730,7 @@ it('package mode: a newer package.json on disk means restartNeeded', async () =>
 
 - npm 조직·패키지 이름 확보(D1) — **Task 8 전에**. 정해지면 `package.json` 의 `name`(+스코프면 `publishConfig.access: "public"`)과 README 자리표시를 Task 8 이 바꾼다.
 - 도메인·회사명 → `homepage`·`author`(macOS 서비스 라벨은 D8 로 고정돼 영향 없음).
-- Paddle 가입·KYC, Anthropic·OpenAI·xAI 서면 확인(스펙 §3 규칙 6, §5.4).
+- Paddle 가입·KYC, Anthropic·OpenAI·xAI 서면 확인(스펙 §3 규칙 7, §5.4).
 - 이 맥을 패키지 설치로 옮길지와 그 시점(D6) — 서버 재시작이 따르므로 사용자 지시가 있을 때만.
 - Linux·다른 맥 실기 확인(Task 8 Step 3·4)과, macOS 서비스를 쓸 때 node 에 전체 디스크 접근 권한 부여.
 - 실제 `npm publish`(이 계획은 pack 까지만).
