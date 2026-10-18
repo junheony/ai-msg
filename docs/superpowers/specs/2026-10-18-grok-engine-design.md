@@ -1,212 +1,364 @@
 # Grok 엔진 설계 (2026-10-18)
 
-> 상태: 초안. 독립 검토를 받은 뒤 구현한다. 실측이 필요한 항목은 §10 스파이크에 모았다. 사용자가 설치하고 `grok login` 을 한 뒤에 확인한다.
-> 근거 소스: xai-org/grok-build 공개 저장소의 문서(`crates/codegen/xai-grok-pager/docs/user-guide/`)와 코드. 아래 줄 번호는 조사 시점 기준이다.
+> 상태: **개정 1판.** 교차 검토(Claude·Astra)는 둘 다 REVISE 였고, 지적은 전부 반영했다(§13).
+> 실측이 필요한 항목은 §10 스파이크에 모았다. 사용자가 설치하고 `grok login` 을 한 뒤, 구현에 앞서 먼저 돌린다.
+> 근거 소스: xai-org/grok-build 공개 저장소의 문서(`crates/codegen/xai-grok-pager/docs/user-guide/`)와 코드. 줄 번호는 조사 시점 기준이다.
 
 ## 0. 목표와 범위
 
 deck 에서 Claude·GPT·Gemini 세션처럼 **Grok 세션**을 열고 대화한다. 엔진은 xAI 의 Grok Build CLI(`grok`)다.
 
-v1 에서 할 것:
-- 새 세션, 이어 하기, 모델 고르기, effort 고르기.
-- 스트리밍 텍스트, 생각 표시, 도구 호출 카드, **승인 카드**.
-- ■중단, 진행 중 steer(끼어들기), 이력 다시 그리기, 한도 감지와 로그인 필요 안내.
+v1 에서 하는 것:
+- 새 세션, 이어 하기, 모델, effort.
+- 스트리밍 텍스트, 생각, 도구 카드, **승인 카드**.
+- ■중단, steer, 이력 다시 그리기.
+- 한도·로그인 필요 안내.
 
-v1 에서 하지 않을 것:
-- 자동 라우팅에 Grok 을 넣는 일. Gemini 처럼 사용자가 명시적으로 고를 때만 쓴다.
-- 총사령탑. Grok 세션은 거부한다(§8).
-- 사용량 카드. 읽는 방법이 확인되면 v2 에서 한다.
-- 세션 분기(메시지 편집 갈래), 백그라운드 작업 이어 받기.
+v1 에서 하지 않는 것:
+- 자동 라우팅에 넣기. Gemini 처럼 명시적으로 고를 때만 쓴다.
+- 총사령탑(§8).
+- 사용량 카드.
+- 세션 분기, 백그라운드 이어 받기.
 
 ## 1. 방식 선택
 
 | 방식 | 장점 | 단점 |
 |---|---|---|
-| **A. ACP `grok agent stdio`** (추천) | JSON-RPC 로 승인 요청(`session/request_permission`)이 온다 → deck 승인 카드. `session/cancel`, `x.ai/interject`(steer), 모델·effort 를 요청으로 바꾼다(`session/set_config_option`). 프롬프트가 argv 를 거치지 않는다. 표준 ACP 라 다른 ACP 에이전트에도 쓸 수 있다 | JSON-RPC 클라이언트를 직접 써야 한다. 매 턴 `session/load` 비용(§10 측정) |
-| B. 헤드리스 `grok -p --output-format streaming-json` | Gemini 엔진과 거의 같은 모양이다. 구현이 가장 짧다 | 승인이 필요한 도구는 **자동 거부**되고 모델에 보고된다(`22-permissions-and-safety.md:100`). 승인 카드가 없다. steer 가 없다. 취소는 프로세스를 죽이는 것뿐이다 |
+| **A. ACP `grok agent stdio`** (채택) | 승인 요청(`session/request_permission`)이 와서 deck 승인 카드로 띄울 수 있다. `session/cancel`, `x.ai/interject`(steer), 설정을 요청으로 바꾸기가 된다. 프롬프트가 argv 를 거치지 않는다 | JSON-RPC 클라이언트를 직접 써야 한다. 매 턴 `session/load` 비용(S4) |
+| B. 헤드리스 `grok -p --output-format streaming-json` | Gemini 엔진과 같은 모양이라 가장 짧다 | 승인이 필요한 도구는 자동 거부된다(`22-permissions-and-safety.md:100`). 승인 카드가 없고 steer 도 없다 |
 
-**A 를 고른다.** deck 의 핵심은 폰에서 승인하고 끼어드는 것이고, B 로는 둘 다 안 된다. B 는 A 의 스파이크가 막힐 때만 대안으로 쓴다(§10 결정 지점).
+**A 로 간다.** B 로 바꾸면 deck 의 핵심 기능인 승인과 steer 를 포기하게 된다. 그래서 B 는 **기능 범위를 사용자와 다시 합의해야 하는 별도 결정**이다. 스파이크 실패로 저절로 넘어가지 않는다(§10 결정 지점).
 
-## 2. 프로세스 수명: 턴마다 한 프로세스
+## 2. 프로세스 수명
 
-Gemini·Codex 엔진과 같이 **deck 턴 하나 = `grok agent stdio` 프로세스 하나**로 한다.
+Gemini·Codex 엔진과 같이 **deck 턴 하나 = `grok agent stdio` 프로세스 하나**로 한다. 단계마다 시간 한도가 있다.
 
-1. spawn `grok agent stdio`. cwd 는 세션 cwd. env 는 §5.
-2. `initialize`: clientCapabilities 의 `fs`·`terminal` 은 **광고하지 않는다**. 그러면 에이전트가 파일과 셸을 자기 쪽에서 직접 다룬다(Claude·Codex 엔진과 같은 신뢰 모델).
-3. 세션 정하기:
-   - 새 세션이면 `session/new { cwd, mcpServers: [] }`.
-   - 이어 하기면 `session/load { sessionId, cwd, mcpServers: [], _meta: { noReplay: true } }`(`main.rs:3366`, `mvp_agent/mod.rs:403`). 재생된 업데이트가 와도 `_meta["x.ai/replayed"]` 가 붙은 것은 버린다.
-4. `session/set_config_option` 을 보낸다. `model`, 그리고 고른 경우 `reasoning_effort`(minimal/low/medium/high/xhigh)와 권한 모드(§4).
-5. `session/prompt`. 그동안 오는 `session/update` 를 EngineEvent 로 바꾼다(§3). 에이전트가 보내는 요청 `session/request_permission` 에 답한다(§4).
-6. PromptResponse 가 오면 결과를 낸다. 그다음 stdin 을 닫고, 2s 안에 안 끝나면 SIGTERM, 다시 2s 뒤 SIGKILL.
+1. **잠금:**
+   - 열쇠는 `(GROK_HOME 실경로, sessionId)` 다. 새 세션이면 `(GROK_HOME, 새 세션 임시 키)` 를 쓴다.
+   - 이전 턴의 프로세스 **그룹**이 완전히 끝나야 잠금이 풀린다.
+   - 잠금을 기다리는 동안 턴은 "준비 중" 상태다. 30s 를 넘기면 "이전 Grok 프로세스가 아직 끝나지 않음" 오류로 끝낸다.
+2. **spawn:**
+   - `grok agent stdio` 를 `detached: true` 로 띄워 새 프로세스 그룹을 만든다.
+   - cwd 는 세션의 정규 cwd(realpath, 세션 상태에 저장)다. env 는 §5.
+3. **`initialize`** (15s):
+   - clientCapabilities 의 `fs`·`terminal` 은 **광고하지 않는다**. 에이전트가 자기 쪽에서 파일과 셸을 다룬다(Claude·Codex 와 같은 신뢰 모델).
+   - 응답의 `promptCapabilities` 를 기억한다. §7 첨부 처리에 쓴다.
+4. **세션 정하기** (30s):
+   - 새 세션: `session/new { cwd, mcpServers: [] }`. 받은 sessionId 는 **프롬프트를 보내기 전에** 세션 상태에 저장한다. 이렇게 해야 도중에 죽어도 이어 하기를 할 수 있다.
+   - 이어 하기: `session/load { sessionId, cwd, mcpServers: [], _meta: { noReplay: true } }`(`main.rs:3366`, `mvp_agent/mod.rs:403`).
+     - load 가 실패하면(세션 없음, cwd 불일치, 잠금) **턴을 오류로 끝낸다**.
+     - `session/new` 로 몰래 넘어가지 않는다. 프롬프트를 자동으로 다시 보내지도 않는다.
+5. **설정** (각 10s):
+   - **권한 모드를 먼저 정한다**(§4). 그다음 모델(고른 경우만, §6)과 effort.
+   - 응답, 또는 `current_mode_update`·`config_option_update` 알림으로 **실제 값을 확인한다**.
+   - 권한 모드가 요청한 값과 다르거나 확인할 수 없으면, **프롬프트를 보내지 않고 턴을 실패시킨다**(fail-closed).
+6. **`session/prompt`** (시간 한도 없음):
+   - 그동안 `session/update` 를 변환한다(§3). 에이전트의 요청은 §4 규칙으로 답한다.
+7. **종료:**
+   - PromptResponse 가 오면 결과를 확정한다. 그 뒤에 오는 update 는 버린다.
+   - stdin 을 닫고 기본 10s 를 기다린다(세션 기록 flush 시간, S4 에서 잰 값으로 조정).
+   - 그래도 남아 있으면 프로세스 **그룹**에 SIGTERM, 3s 뒤 그룹에 SIGKILL.
+   - 그룹이 모두 끝난 것을 확인한 뒤에 잠금을 푼다.
 
-왜 상주 프로세스가 아닌가: TurnRunner·재시작 대기·중단 처리가 전부 "턴 = 프로세스"를 전제로 한다. 상주 프로세스는 별도 관리 레지스트리가 필요하다. 매 턴 load 비용이 크면(§10 S4: 2s 넘음) v2 에서 다시 본다.
+상주 프로세스로 가지 않는 이유: TurnRunner·재시작 대기·중단이 모두 "턴 = 프로세스"를 전제로 한다. 매 턴 load 가 2s 를 넘으면 v2 에서 다시 본다.
 
 ### 2.1 코드 구조
-- `src/server/engine/acp/AcpConnection.ts`(새 파일): 줄 단위 JSON-RPC 2.0 클라이언트.
-  - 요청 id 짝짓기, 알림 받기, 에이전트가 보내는 요청을 처리기에 넘기기.
-  - 한 줄 상한은 `STDERR_MAX` 와 같은 식으로 8MB. 넘으면 연결 오류로 본다.
-  - 프로세스가 끝나면 대기 중인 요청을 모두 reject 한다.
-  - Grok 을 모른다. 다른 ACP 에이전트를 붙일 때 재사용한다.
-- `src/server/engine/GrokEngine.ts`(새 파일): 수명(§2), 이벤트 변환(`GrokEventMapper`, §3), 승인(§4), steer·취소.
-- `GrokTurnRequest` 는 Gemini 처럼 따로 둔다. 필드는 `account, cwd, resumeSessionId, model, effort, permissionMode, autoApprove, prompt, signal, onPermission, onLive, onAutoApproved, onToolAudit`.
+- **`src/server/engine/acp/AcpConnection.ts`**(새 파일): 줄 단위 JSON-RPC 2.0 클라이언트. Grok 을 모른다.
+  - **받기와 처리를 분리한다.** 받는 루프는 줄을 파싱해서 넘기기만 하고 기다리지 않는다. 에이전트 요청 처리기는 비동기로 돌기 때문에, 승인 카드를 기다리는 동안에도 다른 메시지를 계속 받는다.
+  - 요청 id 짝짓기와 요청별 시간 한도를 둔다. 알림 보내기(`notify`, 응답 없음)도 있다.
+  - stdin 쓰기는 `drain` 을 기다린다(backpressure).
+  - JSON 이 아닌 줄은 건너뛰고 개수만 센다. 한 줄 상한은 8MB 이고, 넘으면 연결 오류다.
+  - 프로세스가 끝나면 대기 중인 요청을 모두 reject 하고, 처리 중인 에이전트 요청은 응답을 보내지 않는다.
+- **`src/server/engine/GrokEngine.ts`**(새 파일): §2 수명, `GrokEventMapper`(§3), 승인(§4), steer·취소(§7).
+- **`src/server/engine/grokTranscript.ts`**(새 파일): 이력 읽기(§7).
+- **`src/server/engine/grokLock.ts`**(새 파일): §2-1 잠금. 서버 프로세스 안의 Map 이고, 터미널 grok 과의 경합은 S11 에서 확인한다.
+- `GrokTurnRequest` 는 Gemini 처럼 따로 둔다. 필드는 다음과 같다:
+  - `account, cwd, resumeSessionId, model, effort, permissionMode, prompt, attachments, signal`
+  - `autoApprove, onPermission, onAutoApproved, onToolAudit, onLive, onSessionId`
 
-## 3. 이벤트 변환 (`session/update` → EngineEvent)
+## 3. 이벤트 변환
 
 | ACP | EngineEvent |
 |---|---|
-| (session/new·load 성공) | `init { sessionId, model }` |
+| session/new·load 성공 + 실제 모델 확인 | `init { sessionId, model }` |
 | `agent_message_chunk` (text) | `delta` |
 | `agent_thought_chunk` | `thinking` |
-| `tool_call` | `tool_call { toolUseId: toolCallId, name: title·kind 에서 만든 이름, input: rawInput }` |
-| `tool_call_update` status `completed`/`failed` | `tool_result { content: content 의 텍스트(32KB 로 자름), isError: failed }` |
-| `tool_call_update` 그 밖의 상태 | 무시(진행 표시는 `progress` 로) |
-| `plan` | v1 은 무시. 필요하면 v2 에서 task 표시 |
-| `_meta["x.ai/replayed"]` 있음 | 버림 |
-| 알 수 없는 kind | 버림. 처음 한 번만 서버 로그에 kind 이름을 남긴다(내용은 남기지 않음) |
-| PromptResponse | `result`. 사용량은 `_meta.usage` → `TurnUsage`. stopReason 처리는 아래 |
+| `tool_call` | toolCallId 별 상태를 만든다. 처음 볼 때 `tool_call { toolUseId, name, input }` |
+| `tool_call_update` | 상태에 **병합**한다(부분 변경, ACP 규칙). **처음으로** terminal(`completed`/`failed`)이 되면 `tool_result` 를 한 번 낸다. 결과 본문은 지금까지 병합한 content 의 텍스트이고, 32KB 로 자른다 |
+| `plan` | v1 은 무시 |
+| `current_mode_update`·`config_option_update` | §2-5 확인에 쓴다. 턴 도중 권한 모드가 바뀌면 notice 를 내고, deck 이 고른 모드가 아니면 **턴을 취소한다** |
+| `_meta["x.ai/replayed"]` 가 있음 | 버림 |
+| 알 수 없는 kind | 버림. kind 이름만 kind 마다 서버 로그에 한 번 남긴다 |
+| PromptResponse | `result`. 사용량은 `_meta.usage` 이고, 턴별인지 누적인지는 S1 에서 확인한다. 확인 전에는 표시하지 않는다 |
 
-stopReason 처리:
+도구 상태를 다루는 규칙:
+- `name` 은 `kind`(read/edit/execute 등)와 `title` 로 만든다. Claude 도구 이름처럼 보이게 만들지 않는다. 형식은 `grok:<kind>` 다.
+- `rawInput` 이 객체가 아니면 `{ value: rawInput }` 으로 감싼다.
+- 턴이 끝날 때 terminal 이 아닌 도구에는 `tool_result { isError: true, content: '(결과 없음)' }` 을 한 번 낸다.
+
+stopReason:
 - `end_turn`: 성공.
-- `cancelled`: 중단으로 처리. deck 의 ABORTED 경로를 탄다.
-- `max_tokens`·`max_turn_requests`: 성공하되 notice 를 붙인다("출력 한도에서 멈춤" / "도구 반복 한도에서 멈춤").
-- `refusal`: 실패. 문구는 "Grok 이 거절함".
+- `cancelled`: 중단(ABORTED 경로).
+- `max_tokens`: 성공 + notice "출력 한도에서 멈춤".
+- `max_turn_requests`: 성공 + notice "모델 요청 횟수 한도에서 멈춤".
+- `refusal`: 실패, 문구 "Grok 이 거절함". 그때까지의 출력과 변경은 그대로 보존한다(되돌리지 않는다).
 
-하위 에이전트: 와이어 모양이 확인되지 않았다(§10 S5). v1 은 부모 `tool_call` 만 보여 준다. 자식 업데이트가 별도 표시로 오면 그 kind 는 버린다.
+하위 에이전트: 와이어 모양은 S5 에서 확인한다. v1 은 부모 `tool_call` 만 보인다. 그 밖의 자식 업데이트는 버린다. 단 **승인 요청은 버리지 않는다**(§4).
 
 ## 4. 권한
 
-deck 의 세션 권한 모드를 Grok 모드에 대응시킨다.
-
+### 4.1 모드
 | deck | Grok |
 |---|---|
 | 기본(매번 묻기) | `default` |
-| 편집 자동(acceptEdits) | `acceptEdits` |
-| 계획(plan) | `plan` |
-| 모두 자동 승인 | `default` 로 두고, 승인 요청마다 deck 이 `AllowOnce` 로 답한다(감사 `onAutoApproved`) |
+| 편집 자동 | `acceptEdits` |
+| 계획 | `plan` |
+| 모두 자동 승인 | `default`. 승인 요청마다 deck 이 고른다(§4.2) |
 
-`bypassPermissions`·`dontAsk`·`auto`·`--always-approve` 는 **절대 쓰지 않는다**. 이유는 둘이다. deck 의 "모두 자동 승인"도 끌 수 있는 per-call 승인이다. 그리고 Grok `auto` 는 분류기에 맡기는 모드라 deck 이 감사할 수 없다.
+- 모드를 바꾸는 방법은 S10 에서 확정한다. ACP 표준 `session/set_mode` 와 `set_config_option` 중 하나다.
+- §2-5 의 확인을 통과하지 못하면 턴을 시작하지 않는다. `~/.grok/config.toml` 의 기본 모드가 `bypassPermissions`·`auto` 여도 deck 세션은 deck 이 고른 모드로만 돈다.
+- `bypassPermissions`·`dontAsk`·`auto`·`--always-approve` 는 **쓰지 않는다**.
+- "매번 묻기"여도 승인 없이 실행되는 도구가 있다(읽기 계열 등). 모드별로 그 범위를 S13 에서 기록하고, `docs/grok-spike.md` 와 모드 선택지 설명에 적는다.
 
-`session/request_permission` 처리:
-- `onPermission({ toolName, input: rawInput, toolUseId: toolCallId, title, signal })` 로 넘긴다. 이 세션 동안 허용(`suggestions`)은 v1 에서 내지 않으므로 카드에는 "한 번 허용 / 거부"만 뜬다.
-- 답을 고르는 규칙:
-  - 'once' → 옵션 중 kind 가 `allow_once` 인 것.
-  - 'deny' → `reject_once`.
-  - 해당 kind 가 없으면 cancelled 로 답한다. 넓은 옵션(AllowAlways* 등)은 **고르지 않는다**.
-- 턴이 중단되면(signal) 대기 중인 승인 요청은 모두 `{ outcome: "cancelled" }` 로 답하고 카드를 닫는다.
-- `onToolAudit`: 승인 요청 없이 실행된 도구 호출을 기록한다. 대상은 `tool_call` 이 왔지만 request_permission 이 없었던 것이고, `source: 'cli'` 로 한 번씩 남긴다.
+### 4.2 `session/request_permission`
+- **카드:**
+  - `onPermission({ toolName, input, toolUseId, title, signal })` 로 넘긴다.
+  - toolCallId 를 모르는 요청(하위 에이전트 등)도 카드로 띄운다. 이때 이름은 `grok:<kind>` 이고, 제목에 "하위 에이전트"를 붙인다.
+  - v1 은 `suggestions` 를 넘기지 않는다. 그래서 카드에는 "한 번 허용 / 거부"만 뜬다.
+- **응답 형식:** `result.outcome` 은 `{ outcome: 'selected', optionId }` 이거나 `{ outcome: 'cancelled' }` 다. optionId 는 요청에 실제로 온 값을 쓴다.
+- **고르는 규칙:**
+  - 'once' → kind `allow_once` 인 옵션.
+  - 'deny' → kind `reject_once` 인 옵션.
+  - 해당 kind 가 없으면 cancelled 로 답한다. `allow_always`·AllowAlways* 같은 넓은 옵션은 **절대 고르지 않는다**.
+- **모두 자동 승인:**
+  - 일반 도구는 `allow_once` 를 자동으로 고르고 `onAutoApproved` 로 감사한다.
+  - **자동 승인하지 않는 것:** 계획 종료(plan 을 벗어나는 요청), 모드나 권한을 넓히는 요청, `allow_once` 가 없는 요청. 이것들은 카드로 띄운다.
+  - 무엇이 이에 해당하는지는 S1·S10 에서 실제 요청 모양으로 확정한다. 확정하기 전에는 kind 가 `edit`·`execute`·`read`·`fetch`·`search` 가 아닌 요청은 모두 카드로 간다.
+- **한 번만, 그리고 취소 우선:**
+  - 요청마다 `answered` 플래그를 둔다. 응답은 한 번만 보낸다.
+  - 턴이 중단되면 먼저 `cancelled = true` 로 고정한다.
+  - **모든 응답 직전에** 이 플래그를 다시 본다. 중단된 뒤에 늦게 온 카드 답이나 자동 승인은 cancelled 로 바꿔 보낸다.
+  - 중단 뒤에 새로 오는 승인 요청은 바로 cancelled 로 답한다. 열려 있던 카드는 모두 닫는다.
+- **감사(`onToolAudit`):**
+  - 승인 요청 없이 실행된 도구를 기록한다.
+  - 판정은 `tool_call` 시점이 아니라, 도구가 `in_progress` 나 terminal 이 될 때까지 그 toolCallId 의 승인 요청이 없었을 때 한다. 그때 `source: 'cli'` 로 한 번 남긴다.
+  - 감사는 사후 기록일 뿐 관문이 아니다. 관문은 §4.1 의 모드와 §5 의 설정 격리다.
 
 ## 5. 계정·환경·격리
 
-- **좌석:** `x1` 하나로 시작한다. `RESERVED_ACCOUNT_IDS` 에 `x1`·`x2`·`grok` 을 추가하고, 자동 라우팅 후보에서는 뺀다.
-  - x1 은 기본 `~/.grok` 을 쓴다. 사용자가 터미널에서 `grok login` 을 한 그 상태다.
-  - 두 번째 계정이 생기면 `GROK_HOME=~/.grok-x2` 로 나눈다(v2).
-- **deck 은 로그인하지 않고, `auth.json` 을 읽지 않는다.** 로그인 여부는 턴이 실패할 때의 인증 오류로만 안다. 그때 문구는 "Grok 로그인 필요 — 터미널에서 grok login".
-  - 전용 확인 명령(`auth status` 류)은 없다. ACP `initialize` 의 `authMethods` 는 항상 빈 배열이다(`leader_bridge.rs:354`).
-  - 후보는 `grok models` 의 성공 여부다(`main.rs:2274`). §10 S2 에서 로그아웃 상태의 결과를 보고 쓸지 정한다. 쓰게 되면 그 결과를 `GrokStatus` 로 hello 에 싣고, 60s 캐시한다.
-- **env:** `grokEnv(base)`.
-  - `GROK_DISABLE_AUTOUPDATER=1` 을 넣는다. 자동 업데이트가 턴 도중에 바이너리를 바꾸지 않게 하기 위해서다.
-  - `XAI_API_KEY` 는 물려주지 않는다. 구독 로그인만 쓰고, 키가 섞여 과금되는 일을 막는다.
-  - Claude·Codex 전용 env(`CLAUDE_CONFIG_DIR`, `ANTHROPIC_*`, `CODEX_HOME` 등)도 뺀다.
-- **Claude 호환 끄기(필수):** Grok 은 기본으로 `~/.claude/settings.json` 의 훅, `~/.claude.json` 의 MCP, Claude 에이전트·규칙·스킬을 읽는다.
-  - 그대로 두면 사용자의 Claude 전역 훅(OMC 등)이 Grok 턴에서 돌고, Claude 용 MCP 서버가 뜬다.
-  - env 로 끈다. 우선순위는 env > `config.toml` > 기본값(켜짐)이다(`26-config-reference.md:120-124`, `05-configuration.md:411-417`). 사용자 파일은 고치지 않는다.
-  - 끄는 env 는 `GROK_CLAUDE_HOOKS_ENABLED`, `GROK_CLAUDE_MCPS_ENABLED`, `GROK_CLAUDE_AGENTS_ENABLED`, `GROK_CLAUDE_RULES_ENABLED`, `GROK_CLAUDE_SKILLS_ENABLED`. 모두 `grokEnv` 에서 거짓 값으로 둔다.
-  - 확인할 것(§10 S6): 받는 거짓 값의 철자(`false`/`0`), 프로젝트 `.mcp.json` 도 꺼지는지.
-  - Grok 자체 설정(`~/.grok/hooks`, `<cwd>/.grok/`)은 사용자가 Grok 에 직접 건 것이므로 그대로 둔다.
-- **binary:** `config.ts` 에서 `DECK_GROK_BIN` → PATH 의 `grok` → `~/.grok/bin/grok` 순으로 찾는다. 없으면 엔진이 꺼진 것으로 보고, 새 대화 창의 Grok 선택지를 흐리게 한다.
+- **좌석:**
+  - `x1` 하나로 시작한다. `RESERVED_ACCOUNT_IDS` 에 `x1`·`x2`·`grok` 을 넣고, 자동 라우팅 후보에서는 뺀다.
+  - x1 의 `GROK_HOME` 은 deck 이 명시적으로 준다. 기본값은 `~/.grok` 의 실경로다. 셸에서 물려받은 `GROK_HOME` 은 쓰지 않는다.
+  - 두 번째 계정은 v2 에서 `~/.grok-x2` 로 둔다.
+- **deck 은 로그인하지 않고 `auth.json` 을 읽지 않는다.**
+  - 전용 확인 명령이 없고, `initialize` 의 `authMethods` 는 항상 `[]` 다(`leader_bridge.rs:354`). 그래서 턴이 인증 오류로 끝날 때 "Grok 로그인 필요 — 터미널에서 grok login" 을 보인다. 재시도는 하지 않는다.
+  - `grok models` 의 성공 여부(`main.rs:2274`)를 미리 확인하는 데 쓸지는 S2 에서 정한다. 쓰게 되면 `GrokStatus` 를 hello 에 싣고 60s 캐시한다.
+- **env 는 허용 목록 방식이다(`grokEnv`).**
+  - 물려주는 것: `PATH HOME USER LOGNAME SHELL LANG LC_* TERM TMPDIR TZ`.
+  - deck 이 넣는 것:
+    - `GROK_HOME`: 좌석별 값.
+    - `GROK_DISABLE_AUTOUPDATER=1`.
+    - `GROK_CLAUDE_HOOKS_ENABLED`, `GROK_CLAUDE_MCPS_ENABLED`, `GROK_CLAUDE_AGENTS_ENABLED`, `GROK_CLAUDE_RULES_ENABLED`, `GROK_CLAUDE_SKILLS_ENABLED`: 모두 거짓 값(`26-config-reference.md:120-124`, env > config.toml > 기본 켜짐).
+  - 그 밖은 모두 뺀다. `XAI_*`, 다른 `GROK_*`, 다른 제공자 키(`OPENAI_*`·`ANTHROPIC_*`·`GEMINI_*` 등), 프록시 env, `CLAUDE_*`·`CODEX_*` 가 여기 해당한다.
+  - 거짓 값의 철자는 S6 에서 확정하고 테스트로 고정한다. 철자가 틀리면 소리 없이 켜진 채로 남기 때문이다.
+- **구독 전용:**
+  - `XAI_API_KEY` 를 빼는 것만으로는 충분하지 않다. `config.toml` 의 custom provider·endpoint 설정이 다른 인증을 쓸 수 있다.
+  - S2 에서 확인한다. 턴 결과의 실제 모델과 제공자가 xAI 기본 제공자가 아니면 notice 를 낸다.
+- **전역 Grok 설정(`$GROK_HOME`):** 사용자가 Grok 에 직접 건 것으로 보고 그대로 쓴다. 단 권한 모드는 §4.1 에서 deck 이 덮어쓰고 확인한다.
+- **프로젝트 설정(`<cwd>/.grok/`, 그리고 Grok 이 읽는 상위 폴더):** 저장소 작성자가 넣을 수 있다. 시작할 때 실행되는 훅, allow 규칙, 모드, MCP 가 승인 카드보다 먼저 적용될 수 있다.
+  - S9 에서 확인할 것: 끄는 env·플래그가 있는지, ACP 에 폴더 신뢰 절차가 있는지.
+  - **끄는 방법이 있으면** `grokEnv` 에 넣어 항상 끈다.
+  - **없으면 fail-closed 로 막는다.** 잠금을 잡은 뒤 spawn 직전에 cwd 부터 Grok 이 읽는 범위(S9 에서 확정, 확정 전에는 git 루트까지)에서 `.grok/` 를 찾는다. 있으면 턴을 시작하지 않고 "이 폴더에 Grok 프로젝트 설정(.grok/)이 있어 시작하지 않음"을 보인다.
+  - 폴더 신뢰 목록은 v2 에서 한다.
+- **binary:** `DECK_GROK_BIN` → PATH 의 `grok` → `~/.grok/bin/grok` 순으로 찾는다. 없으면 Grok 선택지를 흐리게 한다. 버전(`grok --version`)은 hello 와 스파이크 문서에 남긴다.
 
 ## 6. 모델·effort
 
-- deck id: `grok` 하나로 시작한다. CLI 에는 **모델을 보내지 않고** Grok 기본 모델을 쓴다(문서상 새 세션 기본 `grok-4.5`, `11-custom-models.md:9`).
-  - `grok models` 로 구독에서 쓸 수 있는 목록을 확인하면(§10 S3) id 를 늘린다(예: `grok-4.6` → `GROK_CLI_ALIAS`).
-  - deck id 는 세션 기록에 저장되므로 CLI 이름이 바뀌어도 deck id 는 그대로 둔다.
-- effort: deck `EFFORTS`(low/medium/high/max)에서 Grok 값으로. low→low, medium→medium, high→high, max→xhigh.
-- `DEFAULT_EFFORT.grok = 'medium'`. 모델이 `reasoning_effort` 를 받지 않으면(set_config_option 오류) notice 를 한 번 내고 계속한다.
+- deck 모델 id 는 `grok`(Grok 기본 모델, 문서상 `grok-4.5`, `11-custom-models.md:9`) 하나로 시작한다.
+  - `grok` 이면 model 설정을 **보내지 않는다**.
+  - 실제 모델 이름은 session/new·load 응답이나 `config_option_update` 에서 읽어 `init.model` 과 turn_result `model` 에 싣는다.
+- S3 에서 `grok models` 로 구독 목록을 확인하면 id 를 늘린다(예: `grok-4.6`).
+  - 그 모델을 고른 경우에만 `set_config_option model` 을 보낸다.
+  - 응답의 값이 요청한 값과 다르면 notice 를 낸다. 실패시키지는 않는다(권한 모드와 다른 점).
+- effort: low→low, medium→medium, high→high, max→xhigh. `DEFAULT_EFFORT.grok = 'medium'`.
+  - 모델이 effort 를 받지 않으면 notice 를 한 번 내고 계속한다.
+- 컨텍스트 창 크기는 확인될 때까지 "모름"으로 둔다. 압축 경고 등 창 크기 기반 표시는 끈다.
 
-## 7. steer·중단·이력
+## 7. 첨부·steer·중단·이력
 
+- **첨부:**
+  - 이미지는 `promptCapabilities.image` 가 참일 때만 image content block 으로 보낸다. 거짓이면 턴을 시작하지 않고 "Grok 은 이미지 첨부를 받지 않음"을 보인다.
+  - 그 밖의 파일은 Claude 엔진처럼 `첨부 파일:` 경로 줄로 보낸다.
 - **steer:** 턴이 시작되면 `onLive({ send: async () => false, steer })` 를 넘긴다.
-  - `steer(f, id)` 는 `x.ai/interject { sessionId, text, interjectionId: id }` 를 보낸다(`content` 는 생략, `app/effects/mod.rs:5712-5731`). 성공 응답이 오면 `steer_delivered { id }` 를 낸다.
-  - 첨부 파일이 있는 steer 는 false 를 돌려준다. 그러면 deck 이 일반 대기 메시지로 처리한다.
-- **중단:** signal 이 오면 `session/cancel` 을 보낸다.
-  - 5s 안에 PromptResponse(cancelled)가 오면 정상 중단이다.
-  - 안 오면 §2 의 종료 순서를 따른다.
-- **이력:** `$GROK_HOME/sessions/<urlencoded cwd>/<id>/updates.jsonl` 을 읽는 `grokTranscript.ts`(새 파일)를 둔다.
-  - 사용자 프롬프트, 응답 텍스트, 도구 호출을 `TranscriptMessage[]` 로 만든다.
-  - 읽기 전용으로, 크기 상한은 64MB 다. 경로는 deck 이 계산한 디렉터리 밖이면 거부한다(realpath).
-  - 형식이 다르거나 파일이 없으면 빈 이력을 낸다. Gemini 와 같은 동작이고, 패널에는 "이력 없음(Grok)"이 뜬다.
-  - cwd 가 255바이트를 넘어 slug+hash 로 바뀐 경우는 `.cwd` 파일을 대조한다.
+  - `steer(f, id)` 가 false 를 돌려주는 경우: PromptResponse 를 받은 뒤, 중단된 뒤, 첨부가 있을 때. 그러면 deck 이 일반 대기 메시지로 처리한다.
+  - 보내는 요청은 `x.ai/interject { sessionId, text, interjectionId: id }` 이고 `content` 는 생략한다(`app/effects/mod.rs:5712-5731`).
+  - **delivered 근거는 S7 에서 정한다.**
+    - 에이전트가 소비할 때 echo(`user_message_chunk` 등에 interjectionId)를 주면 그때 `steer_delivered` 를 낸다.
+    - 응답(ACK)만 있으면 ACK 시점에 낸다. 이 경우 S7 에서 "ACK 뒤 턴이 끝나 사라지는" 경우가 있는지 확인한다.
+    - 사라지는 경우가 있으면, PromptResponse 때까지 echo 가 없던 steer 를 deck 이 대기 메시지로 되돌린다.
+  - 같은 id 는 다시 보내지 않는다.
+- **중단:**
+  - signal 이 오면 §4.2 대로 취소 상태부터 고정한다.
+  - `session/cancel` 은 **알림**으로 보낸다(응답 없음, ACP 규칙). PromptResponse(cancelled)를 기다리는 한도는 5s 다.
+  - 시간을 넘기면 §2-7 의 그룹 종료로 간다.
+  - 시작 단계(잠금 대기·initialize·load·설정)에서 중단되면 그 단계 요청을 버리고 바로 그룹 종료로 간다.
+- **이력: `updates.jsonl` 을 직접 읽는다** (`grokTranscript.ts`).
+  - load 재생은 프로세스를 띄워야 하고, 진행 중인 턴과 잠금 경합이 생긴다.
+  - **경로:**
+    - 세션 상태에 Grok 이 처음 알려 준 세션 디렉터리를 저장하지 않는다.
+    - 대신 `$GROK_HOME/sessions/*/<sessionId>/updates.jsonl` 후보를 찾는다. sessionId 는 §12 정규식을 통과한 것만 쓴다.
+    - realpath 가 `$GROK_HOME/sessions` 실경로 아래인 것만 받는다. symlink 로 밖을 가리키면 거부한다.
+    - 후보가 여럿이면, 그룹 디렉터리 이름이 세션 정규 cwd 의 URL 인코딩과 같은 것을 고른다. 255바이트를 넘는 경우는 slug+hash 규칙을 S1 에서 확인해 구현한다. `.cwd` 파일 내용은 경로 권한의 근거로 쓰지 않는다.
+  - **읽기:**
+    - 열린 파일 핸들로 크기를 확인하고 64MB 상한을 둔다.
+    - 마지막 줄이 개행으로 끝나지 않으면(쓰는 중) 무시한다.
+    - 형식 버전은 grok 버전과 함께 S1 픽스처로 고정한다.
+  - **결과를 셋으로 구분한다.**
+    - 없음 → 빈 이력.
+    - 손상(깨진 줄이 10% 넘음) → 빈 이력 + 서버 로그 한 번.
+    - 모르는 형식 → 빈 이력 + 서버 로그 한 번 + 패널에 "이력 형식을 모름(Grok 버전 확인 필요)".
 
 ## 8. 한도·오류·총사령탑
 
-- **한도:**
-  - 오류 type 이 `rate_limit`/`rate_limited` 이거나 메시지가 429·503·529 면 `rate_limit` 이벤트를 낸다.
-  - TurnRunner 는 Gemini 처럼 x1 을 쿨다운에 넣고 "Grok 한도 — <리셋 시각 또는 잠시 뒤>"를 표시한다. 다른 엔진으로 자동 전환하지는 않는다.
-- **인증 오류:** §5 문구. 재시도하지 않는다.
-- **프로세스 비정상 종료:** stderr 끝 4KB 를 `redact` 를 거쳐 오류 문구에 붙인다.
-- **총사령탑:** Grok 세션은 `commander_engine` 으로 거부한다(지금 Claude 가 아니면 거부하는 규칙 그대로).
-  - 이유: 총사령탑의 자동 턴 게이트는 PreToolUse 훅에 기대는데, Grok 훅은 시간 초과나 오류 때 **허용**한다(`10-hooks.md:166`, `22-permissions-and-safety.md:430` "Hooks fail open").
-  - 다음 버전에서 Grok 을 지원하려면 훅이 아니라 §4 의 request_permission 경로로 게이트를 걸어야 한다.
+- **분류는 구조화된 오류를 우선한다.** JSON-RPC error 의 code·data, 그리고 문서의 오류 type(`rate_limit`/`rate_limited`, `authentication_failed`)으로 나눈다. 도구 출력 본문의 숫자는 보지 않는다.
+  - **할당량 한도:** `rate_limit` 이면서 429 이거나 할당량 문구가 있으면 `rate_limit` 이벤트를 낸다. 좌석 x1 은 쿨다운에 들어가고 "Grok 한도 — <리셋 시각 또는 잠시 뒤>"를 표시한다. 다른 엔진으로 자동 전환하지 않는다.
+  - **일시 장애(503·529 과부하):** notice "Grok 서버 혼잡 — 잠시 뒤 다시"만 낸다. 쿨다운도 자동 재시도도 하지 않는다.
+  - **인증:** §5 문구. 재시도하지 않는다.
+  - **프로세스 비정상 종료:** stderr 끝 4KB 를 `redact` 를 거쳐 붙인다.
+- 실패한 턴의 부분 출력과 파일 변경은 보존한다. 자동 재시도는 하지 않는다.
+- **총사령탑:** Grok 세션은 `commander_engine` 으로 거부한다(지금 규칙 그대로).
+  - 이유: 자동 턴 게이트가 PreToolUse 훅에 기대는데, Grok 훅은 fail-open 이다(`10-hooks.md:166`, `22-permissions-and-safety.md:430`).
+  - 다음 버전에서 쓰려면 §4.2 경로로 게이트를 건다. 그 전에 S13 에서 승인 없이 실행되는 범위를 확정해야 한다.
 
-## 9. 손댈 곳 (Gemini 체크리스트 기준)
+## 9. 손댈 곳
 
 - `shared/models.ts`:
-  - `GrokModel`, `GROK_MODELS`, `DEFAULT_GROK_MODEL`, `GROK_CLI_ALIAS` 를 추가한다.
-  - `MODEL_LABEL`·설명·`MODEL_EFFORTS`·`DEFAULT_EFFORT` 에 grok 을 넣는다.
-  - `EngineKind` 에 `'grok'`, `isGrokModel` 을 추가한다.
-  - 컨텍스트 창은 기본 200k 로 둔다(확인되면 수정).
-- `shared/accounts.ts`: `GrokAccount = 'x1'`, `isGrokAccount`, `GROK_LABEL`, `grokEnv`. `Seat` 에 추가하고, 예약 id 를 추가한다.
+  - `GrokModel`(`'grok'`), `GROK_MODELS`, `DEFAULT_GROK_MODEL`, `GROK_CLI_ALIAS`(빈 매핑으로 시작).
+  - `MODEL_LABEL`·설명·`MODEL_EFFORTS`·`DEFAULT_EFFORT`.
+  - `EngineKind` 에 `'grok'`, 그리고 `isGrokModel`.
+- `shared/accounts.ts`: `GrokAccount = 'x1'`, `isGrokAccount`, `GROK_LABEL`, `grokEnv`(허용 목록), `Seat`, 예약 id.
 - `shared/protocol.ts`:
   - send 의 `engine` enum 에 `'grok'`.
-  - `hello.grok`(binary 유무, §10 S2 결과에 따라 로그인 상태).
-  - `features` 에 `'grok'`.
-- `SessionState.ts`: `GrokSessionState`, `isGrokState`. 저장 필드는 `engine:'grok'`, `model`, `effort`, `permissionMode`, `grokSessionId`.
-- `TurnRunner.ts`: grok 분기, 한도 정규식, 쿨다운.
-- `ws.ts`: 새 세션·이어 하기·history·승인 응답·steer 분기. history 는 `grokTranscript`.
-- `config.ts`·`main.ts`: binary 찾기와 엔진 연결.
-- `Commander.ts`: 변경 없음. 거부 테스트만 추가한다.
+  - `hello.grok { bin: boolean; version?: string; loggedIn?: boolean | null }`.
+  - `features` 에 `'grok'`. binary 가 있을 때만 넣는다.
+- `SessionState.ts`: `GrokSessionState`, `isGrokState`.
+  - 저장 필드: `engine:'grok'`, `model`, `effort`, `permissionMode`, `grokSessionId`, `canonicalCwd`.
+- `TurnRunner.ts`: grok 분기, §8 분류, 쿨다운.
+- `ws.ts`: 새 세션·이어 하기·history·승인 응답·steer 분기.
+- `config.ts`·`main.ts`: binary 를 찾고 엔진을 연결한다.
+- `Commander.ts`: 변경 없음. grok 거부 테스트만 추가한다.
 - UI:
-  - `EngineMark`(Grok 표시), `ModelPicker`, `NewChat`(Grok 선택), `AccountPicker`(x1).
-  - `UsagePanel`: Grok 카드는 없다. 자리 표시는 "사용량 모름".
+  - `EngineMark`, `ModelPicker`, `NewChat`, `AccountPicker`(x1).
+  - `UsagePanel`: "사용량 모름".
+  - 모드 설명에 S13 결과를 넣는다.
   - `ui/state.ts`.
-- 문서: `docs/grok-spike.md`(새 파일, 실측 기록), `docs/protocol.md`, `README.md`(설치: `curl -fsSL https://x.ai/cli/install.sh | bash` → `grok login`).
+- 문서:
+  - `docs/grok-spike.md`(새 파일).
+  - `docs/protocol.md`.
+  - `README.md`: 설치(`curl -fsSL https://x.ai/cli/install.sh | bash` → `grok login`)와 보안 메모(프로젝트 `.grok/` 정책).
 
-## 10. 스파이크 (사용자 설치·로그인 뒤, 구현 전에 먼저)
+## 10. 스파이크 (설치·로그인 뒤, 구현 전에 먼저)
 
-`docs/grok-spike.md` 에 결과를 남긴다. 각 항목은 deck 이 아닌 임시 디렉터리에서 실행한다. 자격 파일은 열지 않는다.
+진행 방식:
+- `docs/grok-spike.md` 에 grok 버전과 함께 기록한다. 원문 로그는 테스트 픽스처로 저장하되, 자격 정보와 개인 경로는 지운다.
+- 모두 임시 디렉터리에서 하고, 자격 파일은 열지 않는다.
+- 로그아웃 상태 실험은 빈 임시 `GROK_HOME` 으로 한다. 실제 로그인 상태는 건드리지 않는다.
 
-- **S1. ACP 왕복:** initialize → session/new → session/prompt("pwd 출력해") → update 순서, 승인 요청 모양, PromptResponse 의 `_meta.usage`. 원문 로그를 테스트 픽스처로 저장한다. 픽스처에서 자격·개인 경로는 지운다.
-- **S2. 로그인 확인:** 빈 임시 `GROK_HOME` 으로 로그아웃 상태를 흉내 낸다(실제 로그인은 건드리지 않는다). 그 상태에서 session/new 의 오류(`auth_required` 의 JSON-RPC code·message)와 `grok models` 의 종료 코드를 본다.
-- **S3. 모델 목록:** session/new 응답의 configOptions, `grok models` 같은 명령.
-- **S4. load 비용:** 대화 20턴 세션의 `session/load`(noReplay) 시간. 2s 를 넘으면 §2 를 다시 본다.
-- **S5. 하위 에이전트:** Agent 도구를 쓰게 하는 프롬프트로 자식 업데이트의 와이어 모양을 본다.
-- **S6. Claude 호환 끄기:** `GROK_CLAUDE_*_ENABLED` 를 거짓으로 준 채, 임시 cwd 에 `.mcp.json` 과 표식 훅을 두고 Grok 이 읽지 않는지 확인한다. 거짓 값 철자도 확인한다.
-- **S7. steer·cancel:** 긴 작업 도중 interject 와 cancel 을 보내고 응답과 stopReason 을 본다.
-- **S8. 한도 오류 모양:** 일부러 일으키지 않는다. 문서와 소스에서 문자열을 확인하고, 실제 관측은 생기면 기록한다.
+항목:
+- **S1. ACP 왕복:**
+  - 승인 없이 끝나는 질문 하나로 initialize → new → prompt → update 순서를 본다. `_meta.usage` 가 턴별인지 누적인지도 본다.
+  - **승인이 필요한 무해한 동작**(임시 디렉터리에 파일 쓰기, default 모드)으로 허용·거부·취소를 각각 본다. 요청의 options(optionId·kind) 모양을 기록한다.
+  - 세션 디렉터리 이름 규칙(URL 인코딩, 255바이트 초과 시 slug+hash)을 확인한다.
+- **S2. 로그인·제공자:**
+  - 빈 `GROK_HOME` 에서 session/new 의 오류(`auth_required` 의 code·message)와 `grok models` 종료 코드를 본다.
+  - 응답에서 실제 제공자와 모델을 읽을 수 있는지 본다.
+- **S3. 모델 목록:** `grok models` 출력, session/new 응답의 configOptions.
+- **S4. 비용·종료:**
+  - 20턴 세션의 `session/load`(noReplay) 시간.
+  - stdin 을 닫은 뒤 스스로 끝나기까지의 시간. 끝나기 전에 죽였을 때 `updates.jsonl` 의 꼬리가 어떤지.
+- **S5. 하위 에이전트:** 자식 업데이트와 자식의 승인 요청이 와이어에 어떻게 보이는지.
+- **S6. Claude 호환 끄기:**
+  - 거짓 값 철자(`false`/`0`)를 확인한다.
+  - 임시 cwd 에 `.mcp.json` 과 표식 훅을 두고, `~/.claude/settings.json` 훅이 돌지 않는지 본다. 표식 훅은 임시 파일에 한 줄 쓰는 것이다.
+- **S7. steer·cancel:**
+  - interject 의 ACK 의미와 소비 시점, echo 가 있는지, 같은 interjectionId 를 두 번 보내면 어떻게 되는지.
+  - 턴이 끝나기 직전에 보낸 steer 가 어떻게 되는지.
+  - cancel 뒤의 stopReason 과 늦게 오는 승인 요청.
+- **S8. 한도 오류 모양:** 일부러 일으키지 않는다. 소스의 문자열만 기록하고, 실제 관측은 생기면 추가한다.
+- **S9. 프로젝트 `.grok/`:**
+  - 임시 저장소에 표식 훅(SessionStart·PreToolUse), allow 규칙, 모드 설정을 둔다. ACP 모드에서 적용되는지, 신뢰를 묻는지, 끄는 env·플래그가 있는지 본다.
+  - Grok 이 어느 상위 폴더까지 읽는지도 본다.
+- **S10. 모드 설정:**
+  - 모드를 바꾸는 메서드와 응답 모양을 본다.
+  - 임시 `GROK_HOME` 의 config.toml 기본 모드를 bypass 로 두고, deck 의 모드 설정이 이기는지 본다.
+  - 계획 종료 요청의 모양을 본다.
+- **S11. 동시성:** 같은 세션을 두 프로세스가 load 할 때 잠금과 오류. 터미널 grok 이 같은 세션을 열고 있을 때.
+- **S12. 정리:** cancel 과 그룹 kill 뒤 자식 프로세스(bash, MCP, 하위 에이전트)가 남는지.
+- **S13. 승인 없이 실행되는 범위:** default·acceptEdits·plan 각각에서 승인 요청 없이 실행되는 도구.
+- **실패 주입:**
+  - 각 단계에서 강제 종료한다(initialize·load·prompt 중, 기록 중).
+  - 승인 직후 바로 취소한다.
+  - 개행 없이 큰 stdout 을 보낸다(가짜 에이전트로).
 
-**결정 지점:** S1 에서 승인 요청이 오지 않는 경우(예: 구독 모드에서 ACP 가 막힘)에는 §1 의 B 로 바꾸고 이 문서를 고친다. 이때 B 는 모드 plan/acceptEdits 만 쓰고, 승인 카드는 없다.
+**결정 지점:**
+- S1 에서 승인 요청 흐름이 안 되면, 원인을 구분해 기록한다(모드, 구독 제한, 프로토콜 차이). 그리고 **사용자에게 기능 범위를 다시 물은 뒤** B 를 검토한다.
+- S9 에서 프로젝트 설정을 끄는 방법이 없으면 §5 의 fail-closed 막기를 그대로 구현한다.
+- S10 에서 모드 확인이 불가능하면 v1 을 멈추고 다시 설계한다.
 
 ## 11. 테스트
 
-- `AcpConnection.test.ts`:
-  - 가짜 에이전트(node 스크립트, 임시 디렉터리)로 요청과 응답의 짝짓기를 본다.
-  - 에이전트 요청 처리, 줄 상한 초과, 프로세스 종료 때 대기 요청 reject 를 본다.
-- `GrokEngine.test.ts`:
-  - S1 픽스처를 재생하는 가짜 에이전트로 이벤트 변환을 본다.
-  - 승인 'once'·'deny'·중단, 넓은 옵션만 있을 때 cancelled 로 답하는지 본다.
-  - 재생된 업데이트를 버리는지, stopReason 별 결과, 인증·한도 오류를 본다.
-  - steer → interject → steer_delivered 와 중단 → session/cancel → 종료 순서를 본다.
-- `grokTranscript.test.ts`: 픽스처 `updates.jsonl`, 경로 밖 거부, 크기 상한, 깨진 줄.
-- 기존 테스트 확장:
-  - `ws` 의 grok 세션 생성·이어 하기·history·승인 응답.
-  - `Commander` 의 grok 거부.
-  - UI 의 Grok 선택과 표시.
+- **`AcpConnection.test.ts`** (가짜 에이전트 node 스크립트, 임시 디렉터리):
+  - 짝짓기, 알림, 요청별 시간 한도, backpressure.
+  - 승인 처리기가 기다리는 동안 다른 메시지를 계속 받는지.
+  - JSON 아닌 줄을 건너뛰는지, 8MB 를 넘으면 연결 오류인지, 종료 때 정리되는지.
+- **`GrokEngine.test.ts`** (S1 픽스처를 재생하는 가짜 에이전트):
+  - 변환: 도구 상태 병합, 결과를 한 번만 내는지, 끝까지 terminal 이 안 된 도구, 재생분 버리기.
+  - stopReason 별 결과.
+  - 권한 모드 확인 실패 시 프롬프트를 보내지 않는지, 턴 도중 모드가 바뀌면 취소하는지.
+  - 승인:
+    - once·deny·넓은 옵션만 있음·모르는 toolCallId.
+    - 자동 승인이 예외(계획 종료 등)를 카드로 보내는지.
+    - 취소 뒤 늦은 답·늦은 요청이 cancelled 로 가는지, 응답을 한 번만 보내는지.
+  - load 실패가 오류로 끝나는지(new 로 넘어가지 않는지). 새 세션 id 가 프롬프트 전에 저장되는지.
+  - steer 의 각 경로와 PromptResponse 뒤 false. 중단 → cancel 알림 → 그룹 종료 순서.
+  - 시작 단계 중단. 잠금 직렬화. 그룹 kill 뒤 가짜 자식 프로세스가 남지 않는지.
+  - §8 분류(429 한도·503 혼잡·인증·도구 출력의 숫자 무시).
+  - 첨부 이미지 capability.
+- **`grokEnv` 테스트:** 허용 목록 밖의 env 가 빠지는지, 셸 `GROK_HOME`·`XAI_*` 를 무시하는지, 호환 끄기 값.
+- **프로젝트 `.grok/` 막기 테스트:** cwd·상위·git 루트 경계.
+- **`grokTranscript.test.ts`:** 픽스처, 후보 선택, symlink 거부, 64MB 상한, 쓰는 중인 마지막 줄, 없음·손상·모르는 형식 구분.
+- **기존 테스트 확장:** ws 의 grok 생성·이어 하기·history·승인·steer, Commander 의 grok 거부, UI.
 - 실제 `grok` 이나 실제 `~/.grok` 을 쓰는 테스트는 없다. 위생 테스트는 그대로 통과해야 한다.
 
 ## 12. 보안 메모
 
-- 프롬프트는 JSON-RPC 본문으로만 간다. argv 에 들어가지 않는다.
-- 이어 하기 sessionId 는 `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$` 로 검사한다. history 경로를 만들 때도 같은 검사를 거친다.
-- 에이전트가 보내는 요청 가운데 deck 이 처리하는 것은 `session/request_permission` 뿐이다. 다른 메서드(`fs/*`, `terminal/*` 등)에는 "method not found" 로 답한다. capability 를 광고하지 않았으므로 오지 않아야 정상이다.
-- bypass 계열 모드와 넓은 허용 옵션을 쓰지 않는다(§4).
+- 프롬프트는 JSON-RPC 본문으로만 간다. argv 에는 들어가지 않는다.
+- sessionId 는 `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$` 를 통과해야 쓴다. load 할 때와 이력 경로를 만들 때 모두 검사한다.
+- 에이전트 요청 가운데 처리하는 것은 `session/request_permission` 뿐이다. 나머지(`fs/*`, `terminal/*` 등)는 "method not found" 로 답한다.
+- bypass 계열 모드와 넓은 허용 옵션은 쓰지 않는다. 권한 모드를 확인할 수 없으면 시작하지 않는다.
+- env 는 허용 목록 방식이다. 프로젝트 `.grok/` 는 끄거나 막는다.
+
+## 13. 검토 반영 기록 (개정 1판)
+
+| 지적 (출처) | 반영 |
+|---|---|
+| 같은 세션 동시 실행·저장 경계 (둘 다) | §2-1 잠금, §2-7 그룹 종료 후 해제, §2-4 id 선저장, S11 |
+| 권한 모드 미확인 (둘 다) | §2-5 fail-closed, §3 모드 변경 감시, S10 |
+| 프로젝트 `.grok/` (둘 다) | §5 끄기 또는 fail-closed 막기, S9 |
+| 프로세스 트리 정리 (둘 다) | §2-2 detached 그룹, §2-7 그룹 kill, S12 |
+| 취소·승인 경합 (Astra) | §4.2 취소 우선 고정·응답 직전 재검사·응답은 한 번만, §7 cancel 은 알림 |
+| RPC 교착 (Astra) | §2.1 받기와 처리 분리, 시간 한도, backpressure |
+| S1 전환 조건 (Astra) | §10 승인이 필요한 동작으로 검증, B 는 사용자 재합의 |
+| env 블랙리스트 (Claude) | §5 허용 목록 |
+| 감사 시점 (Claude) | §4.2 in_progress·terminal 시점에 판정 |
+| 하위 에이전트 승인·계획 종료 (Claude) | §4.2 모르는 id 도 카드, 자동 승인 예외 |
+| steer 경합 (둘 다) | §7 delivered 근거를 S7 로, PromptResponse 뒤 false, 되돌리기 |
+| load 실패 (둘 다) | §2-4 오류로 끝냄, new 로 넘어가지 않음 |
+| 503 과잉 해석 (둘 다) | §8 혼잡 notice, 쿨다운 없음 |
+| JSON 아닌 줄 (Claude) | §2.1 건너뛰고 개수만 셈 |
+| 이력 방식·경로 (둘 다) | §7 직접 파싱, realpath 경계, `.cwd` 불신, 쓰는 중인 줄, 결과 셋 구분 |
+| 종료가 빠름 (Claude) | §2-7 10s, S4 에서 조정 |
+| 도구 업데이트 병합 (Astra) | §3 상태 병합, 처음 terminal 에서 한 번, rawInput 정규화 |
+| 모델·첨부·사용량 (Astra) | §6 실제 모델 확인, §7 첨부 capability, §3 usage 의미 확인 전 미표시 |
+| 구독 전용 보장 (Astra) | §5 custom provider 확인 notice, S2 |
+| 실패 주입 (Astra) | §10 실패 주입 목록 |
