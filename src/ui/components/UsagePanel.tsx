@@ -1,21 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
-import type { Seat } from '../../shared/accounts';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { GEMINI_ACCOUNTS, GROK_ACCOUNTS, type GeminiAccount, type GrokAccount, type Seat } from '../../shared/accounts';
+import type { GrokStatus } from '../../shared/protocol';
 import { useAccounts } from '../accounts';
-import { useIsPhone } from '../useIsPhone';
-import { ClaudeMark, GeminiMark, OpenAIMark } from './EngineMark';
-import { isGeminiAccount } from '../../shared/accounts';
-import { emptyAccountUsage, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
-
-type WindowKey = 'fiveHour' | 'weekly' | 'fable';
-const WINDOWS: { key: WindowKey; name: string }[] = [
-  { key: 'fiveHour', name: '5h' },
-  { key: 'weekly', name: '주간' },
-  { key: 'fable', name: 'Fable' },
-];
-const GPT_WINDOWS: { key: WindowKey; name: string }[] = [
-  { key: 'weekly', name: '주간' },
-  { key: 'fiveHour', name: '5h' },
-];
+import { ClaudeMark, GeminiMark, GrokMark, OpenAIMark } from './EngineMark';
+import { emptyAccountUsage, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export function countdown(resetsAt: string | null, now: number): string {
   if (!resetsAt) return '';
@@ -27,7 +15,7 @@ export function countdown(resetsAt: string | null, now: number): string {
 }
 
 /**
- * The always-on short form after the % of a card's fullest window ("19% · 5일"): "47분", "3시간", "1일 5시간" (under 48
+ * The always-on short form after the % of a card's main row ("19% · 5일"): "47분", "3시간", "1일 5시간" (under 48
  * hours the hours still count), "2일", "리셋됨"; '' without a (readable) reset time. The title has the full wording.
  */
 export function shortCountdown(resetsAt: string | null, now: number): string {
@@ -41,6 +29,8 @@ export function shortCountdown(resetsAt: string | null, now: number): string {
   if (h >= 1) return `${h}시간`;
   return `${Math.max(1, Math.floor(ms / 60_000))}분`;
 }
+
+type WindowKey = 'fiveHour' | 'weekly' | 'fable';
 
 /** The window whose short countdown a card shows: the highest usedPct, ties 5h > 주간 > Fable; null when no window has a value. */
 export function fullestWindow(u: AccountUsage, keys: WindowKey[]): WindowKey | null {
@@ -127,8 +117,92 @@ function useClock(fixed: number | undefined, periodMs = 30_000): number {
 
 type Pop = { seat: Seat; x: number; y: number; pinned: boolean };
 
-/** One window row: label · rounded bar · remaining %; a spent window collapses into a muted "소진 · reset" pill. */
-function WindowRow({ seat, name, k, w, now, short, empty }: { seat: Seat; name: string; /** Row id for the test id: a window key, or a Gemini bucket's. */ k: string; w: UsageWindow | null; now: number; /** Show the short countdown after the % (the card's fullest window). */ short?: boolean; /** Said instead of '—' when there is no value. */ empty?: string }) {
+/** One window row in the popover (and, for the main/secondary rows, the source of a seat's numbers). */
+export type SeatRow = { key: string; name: string; w: UsageWindow | null; empty?: string; mainEligible?: boolean };
+
+/** The main row's content: a bar + % + short countdown, or (no number at all) a same-height reason line. */
+type MainRow = { kind: 'window'; row: SeatRow; rem: number } | { kind: 'text'; text: string };
+
+/** What an adapter (claudeRows/gptRows/geminiRows/grokRows) builds for one seat; SeatCard only renders this. */
+type SeatData = {
+  seat: Seat;
+  engine: 'claude' | 'gpt' | 'gemini' | 'grok';
+  mark: ReactNode;
+  /** Popover rows (and the pool the main/secondary rows are picked from); `mainEligible: false` (Fable) never becomes the main row. */
+  rows: SeatRow[];
+  /** 'kept' is cli-mode only (see UsagePanel); never produced by an adapter. */
+  status: 'ok' | 'stale' | 'kept' | 'down' | 'unknown' | 'cooldown';
+  dim?: boolean;
+  hint?: string;
+  observed?: string;
+  credits?: string | null;
+  /** No usable window at all (Grok, a logged-out/broken Gemini seat): this replaces the main row, same height. */
+  reasonLine?: string;
+  /** Replaces the generated "other windows" summary (Grok's token tally); '' hides the secondary row. */
+  secondaryOverride?: string;
+  /** Appended to the popover below the rows (Grok's "오늘 · deck 기준" block). */
+  extraPopover?: ReactNode;
+};
+
+const WINDOW_NAME: Record<WindowKey, string> = { fiveHour: '5h', weekly: '주간', fable: 'Fable' };
+
+/** Claude A/B/C: main = fullest of 5h/weekly (Fable excluded — "Fable 은 Fable 만 막는다"); Fable only in the secondary row/popover. */
+function claudeRows(u: AccountUsage, cli: boolean): SeatRow[] {
+  return [
+    { key: 'fiveHour', name: WINDOW_NAME.fiveHour, w: u.fiveHour, mainEligible: true },
+    { key: 'weekly', name: WINDOW_NAME.weekly, w: u.weekly, mainEligible: true },
+    { key: 'fable', name: WINDOW_NAME.fable, w: u.fable, mainEligible: false, ...(cli && !u.fable ? { empty: CLI_NO_FABLE } : {}) },
+  ];
+}
+
+/** GPT: main = fullest of 5h/weekly; credits shown alongside, never as a row of their own. */
+function gptRows(u: AccountUsage): SeatRow[] {
+  return [
+    { key: 'weekly', name: WINDOW_NAME.weekly, w: u.weekly, mainEligible: true },
+    { key: 'fiveHour', name: WINDOW_NAME.fiveHour, w: u.fiveHour, mainEligible: true },
+  ];
+}
+
+/** Short bucket names: "Gemini 4 Argon" → "4 Argon", "gemini-3.8-flash" → "3.8 Flash"; anything else as is. */
+export function bucketLabel(name: string): string {
+  // "<group> · <window>" (agy 1.4.2: "Gemini · 5h", "Argon · 주간") is already a display name: as is.
+  if (name.includes(' · ')) return name;
+  const s = name.replace(/^gemini[-_ ]?/i, '').replace(/[-_]+/g, ' ').trim();
+  if (!s) return name;
+  return s.replace(/\b([a-z])/g, (c) => c.toUpperCase());
+}
+
+/** Gemini 로그인 필요 / a read failure, as the card's hint; '' when the numbers are fresh. */
+export function geminiHint(g: GeminiUsage): string {
+  if (!g.loggedIn) return 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인하면 사용량이 보입니다';
+  if (g.status === 'ok') return '';
+  return g.error ? `Gemini 사용량 ${g.status === 'stale' ? '오래된 값' : '불명'} — ${g.error}` : 'Gemini 사용량 불명';
+}
+
+/** Gemini g1/g2: one row per quota bucket agy reports (already only the Gemini-model groups, see GeminiUsagePoller). */
+function geminiRows(g: GeminiUsage): SeatRow[] {
+  return g.buckets.map((b, i) => ({ key: `b${i}`, name: bucketLabel(b.name), w: { usedPct: b.usedPct, resetsAt: b.resetsAt } as UsageWindow, mainEligible: true }));
+}
+
+/** Grok's status sentence (design §3/§7-4): no quota API, so the main row is always text, never a bar. */
+function grokMainText(g: GrokUsage, now: number): string {
+  if (g.status === 'down') return '로그인 필요';
+  if (g.status === 'cooldown') return `한도 — ${g.cooldownUntil ? resetStamp(g.cooldownUntil) : '알 수 없음'} 이후`;
+  if (g.status === 'unknown' || !g.lastTurnAt) return '아직 사용 없음';
+  return `사용 가능 · 마지막 턴 ${agoText(g.lastTurnAt, now)}`;
+}
+
+/** This install's Grok seats as `SeatData`; shown only while `GrokStatus.bin` is true (checked by the caller). */
+function grokSeatData(seat: Seat, g: GrokUsage, now: number): SeatData {
+  const today = `오늘 ${g.today.turns}턴 · 입력 ${g.today.inputTokens.toLocaleString('en-US')} · 출력 ${g.today.outputTokens.toLocaleString('en-US')} · deck 기준`;
+  return {
+    seat, engine: 'grok', mark: <GrokMark className="usage-mark grok" />, rows: [], status: g.status,
+    reasonLine: grokMainText(g, now), secondaryOverride: today,
+  };
+}
+
+/** One row rendered inside the popover: label · bar (or spent pill) · remaining %. */
+function PopRow({ seat, name, k, w, now, empty }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string }) {
   const rem = remainingPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
   const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '');
@@ -146,50 +220,65 @@ function WindowRow({ seat, name, k, w, now, short, empty }: { seat: Seat; name: 
       <span className="usage-label">{name}</span>
       <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
       <span className="usage-value">{rem === null ? (empty ? <span className="usage-na">{empty}</span> : '—') : <>{rem}<small>%</small></>}</span>
-      {/* Right after the % on the same baseline ("19% · 5일", the dot is CSS): the row says which window resets. */}
-      {short && w?.resetsAt && <small className="usage-cd" data-testid={`${seat}-${k}-cd`} title={`${name} · ${reset}`}>{shortCountdown(w.resetsAt, now)}</small>}
       {reset && <span className="usage-reset">{reset}</span>}
     </div>
   );
 }
 
-/** One seat as a small card: mark + letter, then aligned rows; reset times on hover (title) and in a tap popover. */
-function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHistory, next, observed, cli }: {
-  seat: Seat; u: AccountUsage; windows: { key: WindowKey; name: string }[]; current: boolean; now: number;
-  pop: Pop | null; onPop: (p: Pop | null) => void; hint?: string; onOpenHistory?: () => void;
-  /** `cli` usage mode: when these numbers were observed (observedText), on the card's title and in the popover. */
-  observed?: string;
-  /** `cli` usage mode (a Claude card): a stale card within `trustUntil` is not dimmed; Fable with no value says CLI_NO_FABLE. */
-  cli?: boolean;
-  /** The active session's next turn would run here (route_preview). */
+/** The lowest-remaining (= fullest) of the main-eligible rows; null when none has a value. */
+function pickMain(rows: SeatRow[]): { row: SeatRow; rem: number } | null {
+  let best: { row: SeatRow; rem: number } | null = null;
+  for (const row of rows) {
+    if (row.mainEligible === false) continue;
+    const rem = remainingPct(row.w);
+    if (rem !== null && (!best || rem < best.rem)) best = { row, rem };
+  }
+  return best;
+}
+
+/** "주간 41% · Fable 63%": every row but the main one, joined; credits appended for GPT. '' when there is nothing else to say. */
+function secondaryText(rows: SeatRow[], mainKey: string | null, credits?: string | null): string {
+  const parts: string[] = [];
+  for (const row of rows) {
+    if (row.key === mainKey) continue;
+    const rem = remainingPct(row.w);
+    parts.push(rem === null ? `${row.name} ${row.empty ?? '불명'}` : rem === 0 ? `${row.name} 소진` : `${row.name} ${rem}%`);
+  }
+  if (credits) parts.push(`크레딧 ${credits}`);
+  return parts.join(' · ');
+}
+
+/** One status dot — hidden entirely while 'ok' (the current ring alone is enough news there). */
+function StatusDot({ seat, status }: { seat: Seat; status: string }) {
+  if (status === 'ok') return null;
+  const label: Record<string, string> = { stale: '오래됨', unknown: '불명', down: '불명', cooldown: '쿨다운', kept: '추정(유지)' };
+  return <span data-testid={`${seat}-dot`} className={`usage-dot ${status}`} title={label[status] ?? status} aria-hidden="true" />;
+}
+
+/** One seat as the common card: head (mark/letter/status dot) → main row → secondary line → click popover. */
+function SeatCard({ data, current, now, pop, onPop, onOpenHistory, next }: {
+  data: SeatData; current: boolean; now: number; pop: Pop | null; onPop: (p: Pop | null) => void; onOpenHistory?: () => void;
   next?: RouteNext | null;
 }) {
+  const { seat, rows, status, dim, hint, observed, credits, reasonLine, secondaryOverride, extraPopover, mark, engine } = data;
   const label = useAccounts().label(seat);
   const at = (el: HTMLElement, pinned: boolean): Pop => {
     const r = el.getBoundingClientRect();
     return { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6, pinned };
   };
   const open = pop?.seat === seat;
-  const credits = seat === 'gpt' ? creditsText(u.credits) : null;
-  // `cli`: old numbers are a lower bound until the window resets (routing keeps the account): dimmed only after that.
-  const kept = !!cli && u.status === 'stale' && trusted(u, now);
-  const dim = !!cli && u.status === 'stale' && !kept;
-  const emptyOf = (key: WindowKey) => (cli && key === 'fable' ? CLI_NO_FABLE : undefined);
-  // Compact layouts (phone, tablet) show one number per seat: the least left of 5h / 주간, the windows that gate every model.
-  // Fable only gates Fable (a spent Fable must not read "소진" for the whole seat); its bar still shows.
-  const fullest = fullestWindow(u, windows.map((w) => w.key));
-  let worst: { name: string; w: UsageWindow; rem: number } | null = null;
-  for (const { key, name } of windows) {
-    if (key === 'fable') continue;
-    const w = u[key];
-    const rem = remainingPct(w);
-    if (w && rem !== null && (!worst || rem < worst.rem)) worst = { name, w, rem };
-  }
+  const main = pickMain(rows);
+  const mainReset = main ? countdown(main.row.w!.resetsAt, now) : '';
+  const mainShort = main ? shortCountdown(main.row.w!.resetsAt, now) : '';
+  const secondary = secondaryOverride !== undefined ? secondaryOverride : secondaryText(rows, main?.row.key ?? null, credits);
+  // Claude's cli-mode "observed" time belongs in the title (so routing trust is visible without a click); Gemini's
+  // "확인 ·" observed stamp is popover-only (the title stays empty for a healthy seat).
+  const title = [hint, engine === 'claude' ? observed : '', dim ? UNTRUSTED : ''].filter(Boolean).join(' · ');
   return (
     <div
       data-testid={`account-${seat}`}
-      className={`usage-card ${seat === 'gpt' ? 'gpt' : 'claude'} ${current ? 'current' : ''} ${kept ? 'kept' : u.status} ${open ? 'open' : ''}`}
-      title={[hint, observed, dim ? UNTRUSTED : ''].filter(Boolean).join(' · ')}
+      className={`usage-card ${engine} ${current ? 'current' : ''} ${status} ${open ? 'open' : ''}`}
+      title={title}
       role="button"
       tabIndex={0}
       aria-expanded={open}
@@ -203,135 +292,39 @@ function SeatCard({ seat, u, windows, current, now, pop, onPop, hint, onOpenHist
       }}
     >
       <div className="usage-id">
-        {seat === 'gpt' ? <OpenAIMark className="usage-mark gpt" /> : <ClaudeMark className="usage-mark claude" />}
+        {mark}
         <span className="usage-letter" title={label}>{label}</span>
+        <StatusDot seat={seat} status={status} />
       </div>
-      <span className={`usage-sum ${worst ? levelClass(worst.w) : 'none'}`} aria-hidden="true" title={worst ? `가장 적게 남은 한도 · ${worst.name} ${worst.rem}%` : '잔여량 알 수 없음'}>
-        {!worst ? '—' : worst.rem === 0 ? '소진' : <>{worst.rem}<small>%</small></>}
-      </span>
-      <div className="usage-rows">
-        {windows.map(({ key, name }) => <WindowRow key={key} seat={seat} name={name} k={key} w={u[key]} now={now} short={key === fullest} {...(emptyOf(key) ? { empty: emptyOf(key) } : {})} />)}
-        {credits && (
-          <div data-testid="gpt-credits" className="usage-row credits" title="ChatGPT 크레딧 잔액 — 주간 한도가 끝난 뒤 쓰는 유료 크레딧">
-            <span className="usage-label">크레딧</span>
-            <span className="usage-credits">{credits}</span>
+      <div className="usage-body">
+        {reasonLine !== undefined ? (
+          <div className="usage-main usage-main-text" data-testid={`${seat}-main`}>{reasonLine}</div>
+        ) : (
+          <div className={`usage-main ${main ? levelClass(main.row.w) : 'none'}`} data-testid={`${seat}-main`} title={main ? `${main.row.name} · ${main.rem}% 남음${mainReset ? ` · ${mainReset}` : ''}` : '잔여량 알 수 없음'}>
+            <span className="usage-bar" aria-hidden="true"><i style={{ width: `${main?.rem ?? 0}%` }} /></span>
+            <span className="usage-value">{!main ? '—' : main.rem === 0 ? '소진' : <>{main.rem}<small>%</small></>}{main?.row.w?.estimated ? <small className="usage-est">~</small> : null}</span>
+            {mainShort && <small className="usage-cd" title={`${main!.row.name} · ${mainReset}`}>{mainShort}</small>}
+          </div>
+        )}
+        <div className="usage-secondary" data-testid={`${seat}-secondary`}>{secondary || ' '}</div>
+      </div>
+      {next && <span className="usage-next" data-testid={`next-${seat}`} title={`다음 턴은 이 계정으로 갑니다: ${next.reason}`}>{next.asOpus ? '→ 다음 턴 · Opus' : '→ 다음 턴'}</span>}
+      {/* Always in the DOM (hidden via display:none, not unmounted) so a row's testid is queryable even closed —
+          @testing-library's getByRole excludes display:none from the a11y tree, so "no tooltip while closed" still holds. */}
+      <div className="usage-pop" role="tooltip" aria-hidden={!open} style={open ? { left: pop!.x, top: pop!.y } : { display: 'none' }}>
+        <div className="usage-pop-title">{label} 계정{current ? ' · 현재' : ''}</div>
+        <div className="usage-pop-row hint">{LEGEND}</div>
+        {hint && <div className="usage-pop-row hint">{hint}</div>}
+        {observed && <div className="usage-pop-row" data-testid={`${seat}-observed`}><span>관측</span><b>{observed}</b></div>}
+        {rows.map((r) => <PopRow key={r.key} seat={seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} />)}
+        {credits && <div className="usage-pop-row" data-testid={`${seat}-credits`}><span>크레딧</span><b>{credits}</b></div>}
+        {extraPopover}
+        {onOpenHistory && open && pop!.pinned && (
+          <div className="usage-pop-row link">
+            <button type="button" onClick={(e) => { e.stopPropagation(); onPop(null); onOpenHistory(); }}>토큰 사용량 기록 보기 ›</button>
           </div>
         )}
       </div>
-      {/* Next-turn routing preview: the account (and model) the next message of the active pane will go to. A label laid on
-          the card's bottom edge (positioned, so the letter and rows sit exactly where they do on every other card). */}
-      {next && <span className="usage-next" data-testid={`next-${seat}`} title={`다음 턴은 이 계정으로 갑니다: ${next.reason}`}>{next.asOpus ? '→ 다음 턴 · Opus' : '→ 다음 턴'}</span>}
-      {open && (
-        <div className="usage-pop" role="tooltip" style={{ left: pop.x, top: pop.y }}>
-          <div className="usage-pop-title">{label} 계정{current ? ' · 현재' : ''}</div>
-          <div className="usage-pop-row hint">{LEGEND}</div>
-          {hint && <div className="usage-pop-row hint">{hint}</div>}
-          {observed && <div className="usage-pop-row" data-testid={`${seat}-observed`}><span>관측</span><b>{observed}</b></div>}
-          {windows.map(({ key, name }) => {
-            const w = u[key];
-            const rem = remainingPct(w);
-            return (
-              <div key={key} className="usage-pop-row" {...(w?.estimated ? { title: ESTIMATED } : {})}>
-                <span>{name} {rem === null ? (emptyOf(key) ?? '—') : rem === 0 ? '한도 소진' : `${rem}% 남음`}{w?.estimated ? ' (추정)' : ''}</span>
-                <b>{w?.resetsAt ? (rem === 0 ? `${resetStamp(w.resetsAt)} 리셋` : countdown(w.resetsAt, now)) : '리셋 시각 없음'}</b>
-              </div>
-            );
-          })}
-          {credits && <div className="usage-pop-row"><span>크레딧</span><b>{credits}</b></div>}
-          {onOpenHistory && pop.pinned && (
-            <div className="usage-pop-row link">
-              <button type="button" onClick={(e) => { e.stopPropagation(); onPop(null); onOpenHistory(); }}>토큰 사용량 기록 보기 ›</button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Gemini 로그인 필요 / a read failure, as the card's hint; '' when the numbers are fresh. */
-export function geminiHint(g: GeminiUsage): string {
-  if (!g.loggedIn) return 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인하면 사용량이 보입니다';
-  if (g.status === 'ok') return '';
-  return g.error ? `Gemini 사용량 ${g.status === 'stale' ? '오래된 값' : '불명'} — ${g.error}` : 'Gemini 사용량 불명';
-}
-
-/** Short bucket names: "Gemini 4 Argon" → "4 Argon", "gemini-3.8-flash" → "3.8 Flash"; anything else as is. */
-export function bucketLabel(name: string): string {
-  // "<group> · <window>" (agy 1.4.2: "Gemini · 5h", "Argon · 주간") is already a display name: as is.
-  if (name.includes(' · ')) return name;
-  const s = name.replace(/^gemini[-_ ]?/i, '').replace(/[-_]+/g, ' ').trim();
-  if (!s) return name;
-  return s.replace(/\b([a-z])/g, (c) => c.toUpperCase());
-}
-
-/**
- * The Gemini seat as a card: the spark + "Gemini", one row per quota bucket agy reports (models or model families), the
- * lowest remaining % as the summary. No bucket (not logged in, no answer yet, unreadable) shows "—" and the hint.
- */
-function GeminiCard({ g, current, now, pop, onPop, onOpenHistory }: { g: GeminiUsage; current: boolean; now: number; pop: Pop | null; onPop: (p: Pop | null) => void; onOpenHistory?: () => void }) {
-  const seat: Seat = 'g1';
-  const at = (el: HTMLElement, pinned: boolean): Pop => {
-    const r = el.getBoundingClientRect();
-    return { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6, pinned };
-  };
-  const open = pop?.seat === seat;
-  const hint = geminiHint(g);
-  const rows = g.buckets.map((b, i) => ({ key: `b${i}`, name: bucketLabel(b.name), w: { usedPct: b.usedPct, resetsAt: b.resetsAt } as UsageWindow }));
-  let worst: { name: string; w: UsageWindow; rem: number } | null = null;
-  for (const r of rows) { const rem = remainingPct(r.w); if (rem !== null && (!worst || rem < worst.rem)) worst = { name: r.name, w: r.w, rem }; }
-  const fullest = worst?.name ?? null;
-  return (
-    <div
-      data-testid="account-gemini"
-      className={`usage-card gemini ${current ? 'current' : ''} ${g.status} ${open ? 'open' : ''}`}
-      title={hint}
-      role="button"
-      tabIndex={0}
-      aria-expanded={open}
-      aria-label={`Gemini 잔여량${current ? ' (현재)' : ''}`}
-      onMouseEnter={(e) => { if (!pop?.pinned) onPop(at(e.currentTarget, false)); }}
-      onMouseLeave={() => { if (!pop?.pinned) onPop(null); }}
-      onClick={(e) => { e.stopPropagation(); onPop(open && pop?.pinned ? null : at(e.currentTarget, true)); }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onPop(null);
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPop(open ? null : at(e.currentTarget, true)); }
-      }}
-    >
-      <div className="usage-id">
-        <GeminiMark className="usage-mark gemini" />
-        <span className="usage-letter" title="Gemini (Antigravity)">Gemini</span>
-      </div>
-      <span className={`usage-sum ${worst ? levelClass(worst.w) : 'none'}`} aria-hidden="true" title={worst ? `가장 적게 남은 한도 · ${worst.name} ${worst.rem}%` : (hint || '잔여량 알 수 없음')}>
-        {!worst ? '—' : worst.rem === 0 ? '소진' : <>{worst.rem}<small>%</small></>}
-      </span>
-      <div className="usage-rows">
-        {rows.length
-          ? rows.map((r) => <WindowRow key={r.key} seat={seat} name={r.name} k={r.key} w={r.w} now={now} short={r.name === fullest} />)
-          : <div data-testid="g1-none" className="usage-row none" title={hint || '잔여량 알 수 없음'}><span className="usage-label">{g.loggedIn ? '한도' : '로그인'}</span><span className="usage-bar" aria-hidden="true"><i style={{ width: 0 }} /></span><span className="usage-value">—</span></div>}
-      </div>
-      {open && (
-        <div className="usage-pop" role="tooltip" style={{ left: pop.x, top: pop.y }}>
-          <div className="usage-pop-title">Gemini{current ? ' · 현재' : ''}</div>
-          <div className="usage-pop-row hint">{LEGEND}</div>
-          {hint && <div className="usage-pop-row hint">{hint}</div>}
-          {rows.map((r) => {
-            const rem = remainingPct(r.w);
-            return (
-              <div key={r.key} className="usage-pop-row">
-                <span>{r.name} {rem === null ? '—' : rem === 0 ? '한도 소진' : `${rem}% 남음`}</span>
-                <b>{r.w.resetsAt ? (rem === 0 ? `${resetStamp(r.w.resetsAt)} 리셋` : countdown(r.w.resetsAt, now)) : '리셋 시각 없음'}</b>
-              </div>
-            );
-          })}
-          {g.fetchedAt && <div className="usage-pop-row"><span>확인</span><b>{resetStamp(g.fetchedAt)}</b></div>}
-          {onOpenHistory && pop.pinned && (
-            <div className="usage-pop-row link">
-              <button type="button" onClick={(e) => { e.stopPropagation(); onPop(null); onOpenHistory(); }}>토큰 사용량 기록 보기 ›</button>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -339,11 +332,27 @@ function GeminiCard({ g, current, now, pop, onPop, onOpenHistory }: { g: GeminiU
 /** Where the active session's next turn would go (route_preview), as the card tag shows it. */
 export type RouteNext = { account: Seat; reason: string; asOpus?: boolean };
 
-/** Below this the compact layouts (styles.css, max-width: 1100px) apply; the measured switch below is for the full cards only. */
-const COMPACT_QUERY = '(max-width: 1100px)';
+/** Below this the compact layouts (styles.css) apply full-width stacked cards; the measured switch below is for the full cards only. */
+const COMPACT_QUERY = '(max-width: 1099.98px)';
+
+/** Below this the whole row becomes a one-line vendor chip strip (design §7-10). */
+const CHIP_QUERY = '(max-width: 599.98px)';
+
+function usePhoneChips(): boolean {
+  const read = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(CHIP_QUERY).matches : false);
+  const [v, setV] = useState(read);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(CHIP_QUERY);
+    const on = () => setV(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return v;
+}
 
 /**
- * True while the full cards do not fit the width they get (their rows overflow the card even with the bars dropped): the
+ * True while the full cards do not fit the width they get (their rows overflow the card even with the bar dropped): the
  * top bar's other items do not shrink, so the room for the cards depends on more than the window width. Measured on the
  * cards (the panel itself is display: contents in the two-row layouts): while the full cards show, after every render
  * (new numbers, a countdown growing, the 30 s clock) and on every card resize; the width the full cards needed is kept,
@@ -374,13 +383,43 @@ function useCramped(panel: RefObject<HTMLDivElement | null>, ids: string): boole
   return cramped;
 }
 
-export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next = null }: { usage: UsageSnapshot | null; current: Seat | null; now?: number; onOpenHistory?: () => void; next?: RouteNext | null }) {
+/** One vendor chip in the <600px row: letter + main %, or (Grok) a status dot + short word. Tap opens the usual popover. */
+function Chip({ data, current, pop, onPop }: { data: SeatData; current: boolean; pop: Pop | null; onPop: (p: Pop | null) => void }) {
+  const { seat, rows, status, reasonLine } = data;
+  const label = useAccounts().label(seat);
+  const main = pickMain(rows);
+  const open = pop?.seat === seat;
+  const text = reasonLine !== undefined ? (status === 'down' ? '●' : status === 'cooldown' ? '●' : '○') : (!main ? '—' : main.rem === 0 ? '소진' : `${main.rem}`);
+  return (
+    <button
+      type="button"
+      data-testid={`chip-${seat}`}
+      className={`usage-chip ${status} ${current ? 'current' : ''} ${open ? 'open' : ''}`}
+      onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onPop(open ? null : { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6, pinned: true }); }}
+    >
+      <span className="usage-chip-letter">{label}</span>
+      <span className="usage-chip-num">{text}{reasonLine === undefined && main ? '%' : reasonLine !== undefined ? (status === 'ok' ? '가능' : status === 'down' ? '불가' : status === 'cooldown' ? '대기' : '') : ''}</span>
+    </button>
+  );
+}
+
+export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next = null, grok = null }: {
+  usage: UsageSnapshot | null; current: Seat | null; now?: number; onOpenHistory?: () => void; next?: RouteNext | null;
+  /** hello's own Grok status: the Grok card (and chip) is shown only while `grok.bin` is true (design §7-4). */
+  grok?: GrokStatus | null;
+}) {
   const now = useClock(fixedNow);
-  const { active } = useAccounts();
-  const phone = useIsPhone();
+  const { active, label } = useAccounts();
+  const phoneChips = usePhoneChips();
   const [pop, setPop] = useState<Pop | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const cramped = useCramped(panelRef, usage ? [...active.map((a) => a.id), 'gpt', ...(usage.gemini ? ['gemini'] : [])].join(' ') : '');
+  const cli = usage?.usageMode === 'cli';
+
+  const geminiOf = (a: GeminiAccount): GeminiUsage | undefined => usage?.geminiSeats?.[a] ?? (a === 'g1' ? usage?.gemini : undefined);
+  const grokOf = (a: GrokAccount): GrokUsage | undefined => usage?.grokSeats?.[a];
+  const showGemini = GEMINI_ACCOUNTS.filter((a) => geminiOf(a) !== undefined);
+  const showGrok = grok?.bin ? GROK_ACCOUNTS : [];
+
   useEffect(() => {
     if (!pop?.pinned) return;
     const close = () => setPop(null);
@@ -388,31 +427,87 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
     window.addEventListener('scroll', close, true);
     return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); };
   }, [pop?.pinned]);
-  // Before the first snapshot the panel already takes the shape it will have (accounts + GPT; a Gemini card may still
-  // come), so the top bar does not jump between one and two rows when the numbers arrive.
+
+  const ids = usage ? [...active.map((a) => a.id), 'gpt', ...showGemini, ...showGrok].join(' ') : '';
+  const cramped = useCramped(panelRef, ids);
+
+  // Before the first snapshot the panel already takes the shape it will have, so the top bar does not jump when numbers arrive.
   if (!usage) return <div className="usage-panel" data-cards={active.length + 1}><span className="usage-loading">잔여량 불러오는 중…</span></div>;
+
   const gpt = usage.gpt ?? emptyAccountUsage();
-  // One card per active account, one for GPT, one for Gemini when it is set up: the grid's column count. Up to five cards
-  // keep the rows of numbers (five go to two rows below 1600px, see styles.css); past five there is no room for them at any
-  // width: the compact card (label over the lowest remaining %). A phone has that room for four cards only. From seven
-  // cards a phone shows two rows. Fewer cards take the compact card too while the full ones do not fit (useCramped).
-  const gemini = usage.gemini ?? null;
-  const cards = active.length + 1 + (gemini ? 1 : 0);
-  const dense = cards > 5 || (phone && cards > 4) || cramped;
-  const cli = usage.usageMode === 'cli';
+
+  const seats: SeatData[] = [
+    ...active.map(({ id: a }): SeatData => {
+      const u = usageOf(usage, a);
+      const kept = cli && u.status === 'stale' && trusted(u, now);
+      const dim = cli && u.status === 'stale' && !kept;
+      return {
+        seat: a, engine: 'claude', mark: <ClaudeMark className="usage-mark claude" />, rows: claudeRows(u, cli),
+        status: (kept ? 'kept' : u.status) as SeatData['status'], dim,
+        ...(cli ? { observed: observedText(u, now) } : {}),
+      };
+    }),
+    {
+      seat: 'gpt', engine: 'gpt', mark: <OpenAIMark className="usage-mark gpt" />, rows: gptRows(gpt), status: gpt.status as SeatData['status'],
+      credits: creditsText(gpt.credits),
+      ...(gpt.status === 'down' ? { hint: cli ? 'GPT 잔여량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다' : 'GPT 잔여량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {}),
+    },
+    ...showGemini.map((a): SeatData => {
+      const g = geminiOf(a)!;
+      const hint = geminiHint(g);
+      const rows = geminiRows(g);
+      return {
+        seat: a, engine: 'gemini', mark: <GeminiMark className="usage-mark gemini" />, rows, status: g.status as SeatData['status'],
+        hint, ...(rows.length === 0 ? { reasonLine: hint || '잔여량 알 수 없음', secondaryOverride: '' } : {}),
+        ...(g.fetchedAt ? { observed: `확인 · ${resetStamp(g.fetchedAt)}` } : {}),
+      };
+    }),
+    ...showGrok.map((a) => grokSeatData(a, grokOf(a) ?? { status: 'unknown', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } }, now)),
+  ];
+
+  const cards = seats.length;
+  // Measured width drives cramped mode; a hard floor past 5 cards keeps the dense (letters-only) look even when
+  // no ResizeObserver has fired yet (e.g. in jsdom tests with no layout), matching the pre-existing count-based
+  // "any number of accounts" expectations alongside the new measurement-based ones.
+  const dense = cramped || cards > 5;
+  const isCurrentSeat = (seat: Seat) => current === seat;
+
+  if (phoneChips) {
+    return (
+      <div className="usage-panel usage-chips" data-cards={cards}>
+        {seats.map((d) => <Chip key={d.seat} data={d} current={isCurrentSeat(d.seat)} pop={pop} onPop={setPop} />)}
+        {pop && (() => {
+          const d = seats.find((s) => s.seat === pop.seat);
+          if (!d) return null;
+          return (
+            <div className="usage-pop" role="tooltip" style={{ left: pop.x, top: pop.y }}>
+              <div className="usage-pop-title">{label(d.seat)} 계정{isCurrentSeat(d.seat) ? ' · 현재' : ''}</div>
+              <div className="usage-pop-row hint">{LEGEND}</div>
+              {d.hint && <div className="usage-pop-row hint">{d.hint}</div>}
+              {d.observed && <div className="usage-pop-row"><span>관측</span><b>{d.observed}</b></div>}
+              {d.rows.map((r) => <PopRow key={r.key} seat={d.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} />)}
+              {d.credits && <div className="usage-pop-row"><span>크레딧</span><b>{d.credits}</b></div>}
+              {d.extraPopover}
+            </div>
+          );
+        })()}
+      </div>
+    );
+  }
+
   return (
-    <div ref={panelRef} className="usage-panel" data-cards={cards} {...(dense ? { 'data-dense': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})} style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}>
+    <div
+      ref={panelRef} className="usage-panel" data-cards={cards} {...(dense ? { 'data-dense': '' } : {})} {...(cards > 4 ? { 'data-many': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})}
+      style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}
+    >
       {/* Said once for the whole row, not on every card: the numbers are what is left, and what amber / red mean. */}
       <span className="usage-caption" title={`${LEGEND} · 카드를 누르면 리셋 시각`}>남음</span>
-      {/* The 다음 턴 label only where the route leaves the current account or its model (staying put needs no news). */}
-      {active.map(({ id: a }) => (
-        <SeatCard key={a} seat={a} u={usageOf(usage, a)} windows={WINDOWS} current={a === current} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} next={next?.account === a && (a !== current || next.asOpus) ? next : null} {...(cli ? { observed: observedText(usageOf(usage, a), now), cli } : {})} />
+      {seats.map((d) => (
+        <SeatCard
+          key={d.seat} data={d} current={isCurrentSeat(d.seat)} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory}
+          next={next?.account === d.seat && (d.seat !== current || next.asOpus) ? next : null}
+        />
       ))}
-      <SeatCard
-        seat="gpt" u={gpt} windows={GPT_WINDOWS} current={current === 'gpt'} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory}
-        {...(gpt.status === 'down' ? { hint: cli ? 'GPT 잔여량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다' : 'GPT 잔여량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {})}
-      />
-      {gemini && <GeminiCard g={gemini} current={isGeminiAccount(current)} now={now} pop={pop} onPop={setPop} onOpenHistory={onOpenHistory} />}
       {/* `cli` never asks usage-deck: deckReachable is always false there and says nothing. */}
       {!cli && !usage.deckReachable && <span className="usage-stale" title="usage-deck 에 닿지 않아 마지막 값을 보여 줍니다">오래된 값</span>}
     </div>

@@ -67,3 +67,7 @@
 9. **상태:** 상태점은 정상·오래됨·불명·쿨다운에 cli 모드 'kept'(추정이지만 라우팅 후보)를 더한다. 창별 `estimated` 는 % 옆 "~" 로 유지. 벤더 클래스가 글자 크기도 바꾸는 기존 규칙은 공통 규칙으로 흡수한다.
 10. **폰(<600px):** 카드 대신 벤더별 칩 한 줄 — `Claude A72 B40 C90 │ GPT 55 │ G1 80 G2 — │ X1 ●가능`. 탭하면 같은 팝오버. Grok 칩은 % 대신 상태점 + 짧은 말(가능/14:20). 상단 "남음" 캡션은 Grok 에 맞지 않으므로 각 칩·카드 문구로 대신한다.
 11. **테스트 추가:** 구버전 서버(`geminiSeats` 없음) → `gemini` 로 대체, 폴링 뒤 grok·geminiSeats 유지, 자정 읽기 리셋, 동시 쓰기·손상 파일, 쿨다운 출처 일치, Fable 제외, g2 현재 강조, Grok·Gemini "다음" 표시, 7장 × 390px 칩 줄, 기존 testid 이전.
+
+## 구현 상태 (2026-10-18)
+
+위 설계대로 구현 완료: `UsagePanel.tsx` 를 공통 `SeatCard`(머리·주 행·보조 행·팝오버)로 정리하고 `GeminiCard` 를 없앴다, `GrokUsageTracker`(서버)·`geminiSeats`/`grokSeats`(`usage-types.ts`)를 더했다, dense/wrap 은 `useCramped`(ResizeObserver 측정) 기반으로 바꾸되 측정 전(jsdom 등) 대비 `cards > 5` 플로어를 함께 둔 하이브리드로 정했다, `.usage-card` CSS 를 한 벌로 합치면서 옛 그리드 기반 규칙 두 세대를 지웠다(죽은 CSS 가 실제로 캐스케이드 동점에서 이기고 있던 생산 버그였다). 부수적으로 발견한 버그 하나도 고쳤다: `SeatCard` 팝오버를 (닫혀도 testid 로 조회되게) DOM 에 항상 두도록 바꾸면서, `Pane.tsx` 의 `ESC_OWNERS`(`[role="tooltip"]`)가 숨은 팝오버도 "열림"으로 오판해 턴 중단 Esc 를 영영 삼키는 회귀가 생겼다 — `:not([aria-hidden="true"])` 로 좁혀 고쳤다. `docs/protocol.md` 에 `geminiSeats`/`grokSeats`/`GrokUsage` 를 "기능 이름이 아닌 선택 필드" 절로 추가했다. 검증: `tsc --noEmit` 클린, `src/server src/shared`(131 files/2114 tests) 및 `src/ui`+hygiene(99 files/1146 tests) 전부 통과, `vite build` 성공.

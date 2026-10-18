@@ -251,7 +251,9 @@ describe('account palette (styles.css)', () => {
     expect(tile).toMatch(/min-width: 20px/);
     expect(tile).toMatch(/padding: 0 4px/);
     expect(tile).not.toMatch(/[^-]width: 20px/);
-    expect(css).toMatch(/\.usage-panel \{[^}]*grid-template-columns: auto repeat\(var\(--usage-cards, 4\), minmax\(0,/);
+    // The unified card row is a flex strip now (min 120px, up to 220px per card), not a fixed-column CSS grid.
+    expect(css).toMatch(/\.usage-panel \{[^}]*display: flex;[^}]*\}/);
+    expect(css).toMatch(/\.usage-card \{[^}]*min-width: 120px;[^}]*\}/);
   });
 
   it('a long label is cut at 12 characters in the badge and in the picker (the whole of it is in the title)', () => {
@@ -271,10 +273,11 @@ describe('account palette (styles.css)', () => {
     expect(rules.some((r) => /dashed/.test(r))).toBe(true);
   });
 
-  it('the compact card keeps its mark-then-number columns for up to four cards (as before); only five and more put the label first', () => {
-    expect(css).toMatch(/@media \(max-width: 1100px\) \{\s*\.usage-card \{ display: grid; grid-template-columns: auto minmax\(0, 1fr\);/);
+  it('dense (letters-only) and wrap are the unified, measurement-based rules — no per-count compact-card generation left', () => {
+    expect(css).toMatch(/\.usage-panel\[data-dense\] \.usage-mark \{ display: none; \}/);
+    expect(css).toMatch(/\.usage-panel\[data-wrap\] \{ flex-wrap: wrap; \}/);
     expect(part).not.toMatch(/@media \(max-width: 1100px\) \{\s*\.usage-card \{/);
-    expect(css).toMatch(/@media \(max-width: 720px\) \{[^@]*\.usage-panel\[data-wrap\] \.usage-card \{ flex: 1 1 calc\(100% \/ var\(--usage-cols-wrap\) - 5px\);/);
+    expect(css).not.toMatch(/\.usage-sum\b/);
   });
 });
 

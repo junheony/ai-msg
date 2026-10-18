@@ -1258,7 +1258,7 @@ export function App() {
           <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="4.75" /><path d="m10.5 10.5 3.25 3.25" /></svg>
           {!phone && <><span>검색</span><kbd>{mod}K</kbd></>}
         </button>
-        <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} next={!phone ? preview : null} />
+        <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} next={!phone ? preview : null} grok={state.grok ?? null} />
         <div className="topbar-end">
           {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onNewChat={() => newChat()} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={openWorkRow} />}
           {!phone && has('highlights') && <HighlightsBadge ready={state.ready} running={state.activity.filter((a) => a.running).length} onOpen={() => setHighlightsOpen(true)} />}

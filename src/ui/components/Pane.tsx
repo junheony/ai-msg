@@ -54,8 +54,12 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
 
 /** The side panel's open / close slide (styles.css side-in / side-out run a little shorter). */
 const SIDE_SLIDE_MS = 200;
-/** Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the hidden sidebar's peek, the folder picker. */
-const ESC_OWNERS = '[role="tooltip"], .sidebar-wrap.drawer.open, .sidebar-wrap.peek, .folder-picker';
+/**
+ * Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the hidden sidebar's peek, the folder
+ * picker. The usage popover stays in the DOM while closed (hidden via aria-hidden/display:none, not unmounted —
+ * see SeatCard), so a hidden tooltip must not count as "owning" the Esc.
+ */
+const ESC_OWNERS = '[role="tooltip"]:not([aria-hidden="true"]), .sidebar-wrap.drawer.open, .sidebar-wrap.peek, .folder-picker';
 
 /**
  * The socket's send: `false` = not connected, nothing went out (createSocket). Anything else counts as sent, so a caller

@@ -42,6 +42,7 @@ import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { GeminiUsagePoller } from './usage/GeminiUsagePoller';
+import { GrokUsageTracker } from './usage/GrokUsageTracker';
 import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket, type ServerSend } from './ws';
@@ -125,6 +126,8 @@ async function main(): Promise<void> {
       inspect: (env, cwd) => runGrokInspect(grokBin, env, cwd),
     }),
   } : null;
+  // Grok usage card (usage header design §4/§7-4): no quota API, only tallied from deck's own Grok turns.
+  const grokUsage = grokBin ? new GrokUsageTracker({ file: path.join(cfg.configDir, 'grok-usage.json'), usage, log: (line) => console.error(line) }) : null;
   const grokStatusBase: GrokStatus = { bin: grok !== null };
   const grokStatus = (): GrokStatus => ({ ...grokStatusBase, locked: grokEngineLock.reason });
   if (grokBin) {
@@ -144,6 +147,7 @@ async function main(): Promise<void> {
     gemini,
     geminiUsage,
     grok,
+    grokUsage,
     attachments,
     codexSessionsRoot: cfg.codexSessionsRoot,
     usage,
