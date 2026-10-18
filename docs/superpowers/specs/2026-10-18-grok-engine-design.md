@@ -38,7 +38,7 @@ Gemini·Codex 엔진과 같이 **deck 턴 하나 = `grok agent stdio` 프로세�
    - 이전 턴의 프로세스 **그룹**이 완전히 끝나야 잠금이 풀린다.
    - 잠금을 기다리는 동안 턴은 "준비 중" 상태다. 30s 를 넘기면 "이전 Grok 프로세스가 아직 끝나지 않음" 오류로 끝낸다.
 2. **spawn:**
-   - `grok agent stdio` 를 `detached: true` 로 띄워 새 프로세스 그룹을 만든다.
+   - `grok agent --no-leader stdio` 를 `detached: true` 로 띄워 새 프로세스 그룹을 만든다.
    - cwd 는 세션의 정규 cwd(realpath, 세션 상태에 저장)다. env 는 §5.
 3. **`initialize`** (15s):
    - clientCapabilities 의 `fs`·`terminal` 은 **광고하지 않는다**. 에이전트가 자기 쪽에서 파일과 셸을 다룬다(Claude·Codex 와 같은 신뢰 모델).
@@ -151,8 +151,8 @@ stopReason:
   - x1 의 `GROK_HOME` 은 deck 이 명시적으로 준다. 기본값은 `~/.grok` 의 실경로다. 셸에서 물려받은 `GROK_HOME` 은 쓰지 않는다.
   - 두 번째 계정은 v2 에서 `~/.grok-x2` 로 둔다.
 - **deck 은 로그인하지 않고 `auth.json` 을 읽지 않는다.**
-  - 전용 확인 명령이 없고, `initialize` 의 `authMethods` 는 항상 `[]` 다(`leader_bridge.rs:354`). 그래서 턴이 인증 오류로 끝날 때 "Grok 로그인 필요 — 터미널에서 grok login" 을 보인다. 재시도는 하지 않는다.
-  - `grok models` 의 성공 여부(`main.rs:2274`)를 미리 확인하는 데 쓸지는 S2 에서 정한다. 쓰게 되면 `GrokStatus` 를 hello 에 싣고 60s 캐시한다.
+  - 전용 확인 명령은 없다. 로그아웃 상태에서 `session/new` 는 `{ code: -32000, message: "Authentication required" }` 로 끝난다(실측). 그때 "Grok 로그인 필요 — 터미널에서 grok login" 을 보이고, 재시도는 하지 않는다.
+  - 미리 확인은 v1 에서 하지 않는다. `grok models` 는 로그아웃 상태에서도 종료 코드 0 이고 문구로만 구분되기 때문이다(실측).
 - **env 는 허용 목록 방식이다(`grokEnv`).**
   - 물려주는 것: `PATH HOME USER LOGNAME SHELL LANG LC_* TERM TMPDIR TZ`.
   - deck 이 넣는 것:
@@ -174,20 +174,19 @@ stopReason:
 
 ## 6. 모델·effort
 
-- deck 모델 id 는 `grok`(Grok 기본 모델, 문서상 `grok-4.5`, `11-custom-models.md:9`) 하나로 시작한다.
-  - `grok` 이면 model 설정을 **보내지 않는다**.
-  - 실제 모델 이름은 session/new·load 응답이나 `config_option_update` 에서 읽어 `init.model` 과 turn_result `model` 에 싣는다.
-- S3 에서 `grok models` 로 구독 목록을 확인하면 id 를 늘린다(예: `grok-4.6`).
-  - 그 모델을 고른 경우에만 `set_config_option model` 을 보낸다.
+- deck 모델 id 는 `grok-4.6`(기본)과 `grok-4.5` 다. 실측 목록은 `initialize` 응답 `_meta.modelState` 에서 얻었다(`docs/grok-spike.md`).
+  - Grok 기본 모델이 deck 기본과 같아도 model 설정은 항상 보낸다(`session/set_config_option` configId `model`). 실제 값은 응답이나 `config_option_update` 로 확인해서 `init.model` 과 turn_result `model` 에 싣는다.
   - 응답의 값이 요청한 값과 다르면 notice 를 낸다. 실패시키지는 않는다(권한 모드와 다른 점).
-- effort: low→low, medium→medium, high→high, max→xhigh. `DEFAULT_EFFORT.grok = 'medium'`.
-  - 모델이 effort 를 받지 않으면 notice 를 한 번 내고 계속한다.
-- 컨텍스트 창 크기는 확인될 때까지 "모름"으로 둔다. 압축 경고 등 창 크기 기반 표시는 끈다.
+  - 구독에 따라 목록이 다를 수 있다. 로그인 뒤 `modelState.availableModels` 에 없는 deck 모델은 고를 수 없게 표시한다.
+- effort(configId `reasoning_effort`): low→low, medium→medium, high→high, max→xhigh.
+  - `MODEL_EFFORTS['grok-4.5']` 는 low·medium·high 셋뿐이다(xhigh 없음).
+  - `DEFAULT_EFFORT.grok = 'high'`. Grok 의 기본값과 같다.
+- 컨텍스트 창은 500k 다(`totalContextTokens`).
 
 ## 7. 첨부·steer·중단·이력
 
 - **첨부:**
-  - 이미지는 `promptCapabilities.image` 가 참일 때만 image content block 으로 보낸다. 거짓이면 턴을 시작하지 않고 "Grok 은 이미지 첨부를 받지 않음"을 보인다.
+  - 이미지는 `promptCapabilities.image` 가 참일 때만(1.0.62 실측은 거짓) image content block 으로 보낸다. 거짓이면 턴을 시작하지 않고 "Grok 은 이미지 첨부를 받지 않음"을 보인다.
   - 그 밖의 파일은 Claude 엔진처럼 `첨부 파일:` 경로 줄로 보낸다.
 - **steer:** 턴이 시작되면 `onLive({ send: async () => false, steer })` 를 넘긴다.
   - `steer(f, id)` 가 false 를 돌려주는 경우: PromptResponse 를 받은 뒤, 중단된 뒤, 첨부가 있을 때. 그러면 deck 이 일반 대기 메시지로 처리한다.
