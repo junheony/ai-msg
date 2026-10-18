@@ -1180,7 +1180,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // An agy conversation: its messages are not readable (protobuf) — the pane starts empty; the first turn resumes it (--conversation).
       if (imported && imported.engine === 'gemini') {
         view(ws, sessionId);
-        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'g1', engine: 'gemini', sandbox: defaultGeminiSandbox(deps.runner.permissionModeOf(sessionId) === 'bypassPermissions'), sessionModel: DEFAULT_GEMINI_MODEL, messages: [], ...runningOf(sessionId) });
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: isGeminiAccount(imported.account) ? imported.account : 'g1', engine: 'gemini', sandbox: defaultGeminiSandbox(deps.runner.permissionModeOf(sessionId) === 'bypassPermissions'), sessionModel: DEFAULT_GEMINI_MODEL, messages: [], ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t) replay(ws, t, sessionId);
         const age = await deps.index.importActiveAgeMs(sessionId);

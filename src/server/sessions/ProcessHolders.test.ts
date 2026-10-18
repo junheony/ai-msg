@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ProcessHolders, parseHolders } from './ProcessHolders';
+import { ProcessHolders, isGrokCli, parseGrokHolders, parseHolders, parseLsofCwds } from './ProcessHolders';
 
 const A = 'aa000000-0000-4000-8000-000000000001';
 const B = 'bb000000-0000-4000-8000-000000000002';
@@ -118,5 +118,59 @@ describe('ProcessHolders', () => {
     await expect(h.refresh()).resolves.toBe(false);
     expect(h.heldBy(C)).toBe('other');
     expect(calls).toBe(3);
+  });
+});
+
+describe('Grok holders', () => {
+  const G = 'gg000000-0000-4000-8000-000000000007';
+  it('isGrokCli: the executable is grok (also behind node / bun), not a path argument or a shell line', () => {
+    expect(isGrokCli('grok --resume x')).toBe(true);
+    expect(isGrokCli('/opt/bin/grok agent --no-leader stdio')).toBe(true);
+    expect(isGrokCli('node /opt/lib/grok -s x')).toBe(true);
+    expect(isGrokCli('/Applications/My Apps/grok resume x')).toBe(true);
+    expect(isGrokCli('vim /notes/grok')).toBe(false);
+    expect(isGrokCli("zsh -c 'grok x'")).toBe(false);
+    expect(isGrokCli('grokker x')).toBe(false);
+  });
+
+  it('collects argv tokens of terminal groks; skips deck children (under deck, or agent --no-leader stdio)', () => {
+    const text = [
+      `100 1 grok --resume ${G}`,
+      `101 1 grok --session=other-id`,
+      `${DECK} 1 node deck`,
+      `200 ${DECK} grok --resume deck-child-under`,
+      `300 1 /opt/bin/grok agent --no-leader stdio --resume stray-deck-child`,
+      `400 1 vim ${G}-notes`,
+    ].join('\n');
+    const g = parseGrokHolders(text, { pid: DECK });
+    expect(g.pids).toEqual([100, 101]);
+    expect(g.tokens.has(G)).toBe(true);
+    expect(g.tokens.has('other-id')).toBe(true);
+    expect(g.tokens.has('deck-child-under')).toBe(false);
+    expect(g.tokens.has('stray-deck-child')).toBe(false);
+  });
+
+  it('parseLsofCwds reads n/ lines', () => {
+    expect([...parseLsofCwds('p100\nfcwd\nn/work/a\np101\nfcwd\nn/work/b\n')]).toEqual(['/work/a', '/work/b']);
+  });
+
+  it('grokHeldBy by exact id; grokCwdHeld from lsof, which runs only when a grok runs', async () => {
+    let lsofCalls: number[][] = [];
+    let ps = `100 1 grok --resume ${G}`;
+    let now = 0;
+    const h = new ProcessHolders({ pid: DECK, ttlMs: 1, now: () => now, ps: async () => ps, lsof: async (pids) => { lsofCalls.push(pids); return 'p100\nn/work/a\n'; } });
+    expect(await h.refresh()).toBe(true);
+    expect(h.grokHeldBy(G)).toBe('other');
+    expect(h.grokHeldBy(G.slice(0, 10))).toBeNull();
+    expect(h.grokCwdHeld('/work/a')).toBe(true);
+    expect(h.grokCwdHeld('/work/b')).toBe(false);
+    expect(lsofCalls).toEqual([[100]]);
+    ps = '1 0 launchd';
+    lsofCalls = [];
+    now = 10;
+    expect(await h.refresh()).toBe(true);
+    expect(h.grokHeldBy(G)).toBeNull();
+    expect(h.grokCwdHeld('/work/a')).toBe(false);
+    expect(lsofCalls).toEqual([]);
   });
 });

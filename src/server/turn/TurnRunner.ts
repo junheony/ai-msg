@@ -1408,7 +1408,7 @@ export class TurnRunner {
         const blocked = await importBlockReason(imported);
         if (blocked) { sink.emit({ type: 'error', turnId: p.turnId, message: blocked }); return; }
         state = {
-          engine: 'gemini', account: 'g1', sessionId: imported.sessionId, cwd: imported.cwd,
+          engine: 'gemini', account: isGeminiAccount(imported.account) ? imported.account : 'g1', sessionId: imported.sessionId, cwd: imported.cwd,
           defaultModel: isGeminiModel(p.model) ? p.model : DEFAULT_GEMINI_MODEL, sandbox: p.sandbox ?? defaultGeminiSandbox(this.defaultMode() === 'bypassPermissions'),
           lastTurnAtMs: null, justCompacted: false, createdAtMs: this.now(), title: imported.title,
         };
