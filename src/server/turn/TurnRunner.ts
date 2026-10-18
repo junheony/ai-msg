@@ -33,7 +33,7 @@ import { isAncestor, moveSession } from '../sessions/SessionMover';
 import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
-import { usageOf } from '../../shared/usage-types';
+import { usageOf, type GrokBilling } from '../../shared/usage-types';
 import { isCodexState, isGeminiState, isGrokState, isOtherEngineState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type GrokSessionState, type SessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
@@ -116,7 +116,7 @@ export type TurnRunnerDeps = {
   /** Re-reads the Gemini quota shortly after a Gemini turn (GeminiUsagePoller.bump); absent = none. */
   geminiUsage?: { bump(): void } | null;
   /** Notes every ended Grok turn's tokens/error for the usage header's Grok card (GrokUsageTracker.noteTurn); absent = no Grok usage card. */
-  grokUsage?: { noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: { inputTokens: number; outputTokens: number }; cooldownUntilMs: number | null }): void } | null;
+  grokUsage?: { noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: { inputTokens: number; outputTokens: number }; cooldownUntilMs: number | null; /** The turn's `_x.ai/billing` read, when it had one. */ billing?: GrokBilling }): void } | null;
   /** Null/absent = no `grok` binary. main binds runGrokTurn to the binary and x1's GROK_HOME; tests inject a fake. */
   grok?: { run: (req: GrokTurnRequest) => AsyncIterable<EngineEvent> } | null;
   /** Null = no attachment store; any attachment id then fails the turn as missing. */
@@ -1698,7 +1698,7 @@ export class TurnRunner {
     // The map itself is kept on success (same as the Codex/Gemini cooldowns, which only expire); the card is told a
     // successful turn means no cooldown, so it does not keep showing "한도" after Grok answered.
     try {
-      this.deps.grokUsage?.noteTurn(account, { ok: res.ok, errorKind: res.errorKind, usage: res.usage, cooldownUntilMs: res.ok ? null : (this.grokCooldownUntil[account] ?? null) });
+      this.deps.grokUsage?.noteTurn(account, { ok: res.ok, errorKind: res.errorKind, usage: res.usage, cooldownUntilMs: res.ok ? null : (this.grokCooldownUntil[account] ?? null), ...(res.grokBilling ? { billing: res.grokBilling } : {}) });
     } catch (err) {
       console.error('deck: recording Grok usage failed', err instanceof Error ? err.message : err);
     }

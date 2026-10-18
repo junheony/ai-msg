@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { GROK_ACCOUNTS, isGrokAccount, type GrokAccount } from '../../shared/accounts';
-import { emptyGrokUsage, localDay, type GrokUsage } from '../../shared/usage-types';
+import { emptyGrokUsage, localDay, type GrokBilling, type GrokUsage } from '../../shared/usage-types';
 import type { TurnUsage } from '../../shared/turn-types';
 
 type StoredAccount = {
@@ -12,6 +12,8 @@ type StoredAccount = {
   /** Set on an auth error, cleared only by a successful turn (persists through other failures in between — design §7-5). */
   down: boolean;
   today: { inputTokens: number; outputTokens: number; turns: number; day: string };
+  /** The last `_x.ai/billing` read (end of a turn, or the idle poller); absent in files from before it existed. */
+  billing?: GrokBilling | null;
 };
 
 function num(v: unknown): number {
@@ -20,10 +22,29 @@ function num(v: unknown): number {
 
 const LAST_ERRORS = new Set(['auth', 'limit', 'busy']);
 
+const BILLING_NUMS = ['monthlyLimit', 'onDemandCap', 'onDemandUsed', 'includedUsed', 'totalUsed'] as const;
+const isoOrNull = (x: unknown): string | null => (typeof x === 'string' && x && !Number.isNaN(Date.parse(x)) ? x : null);
+
+/** A stored billing snapshot, or null when it is missing or not one this version can read (the rest of the file still counts). */
+function readBilling(x: unknown): GrokBilling | null {
+  if (!x || typeof x !== 'object') return null;
+  const o = x as Record<string, unknown>;
+  const fetchedAt = isoOrNull(o.fetchedAt);
+  if (typeof o.usedPct !== 'number' || !Number.isFinite(o.usedPct) || !fetchedAt) return null;
+  const b: GrokBilling = {
+    usedPct: Math.max(0, Math.min(100, o.usedPct)), windowStart: isoOrNull(o.windowStart), windowEnd: isoOrNull(o.windowEnd),
+    tier: typeof o.tier === 'string' ? o.tier : null, fetchedAt,
+  };
+  if (typeof o.periodType === 'string') b.periodType = o.periodType;
+  for (const k of BILLING_NUMS) if (typeof o[k] === 'number' && Number.isFinite(o[k])) b[k] = o[k] as number;
+  return b;
+}
+
 /**
- * The Grok seat's usage card, from deck's own Grok turns only (design §4/§7-4/§7-5): TurnRunner.runGrok calls
- * `noteTurn` at the one place every Grok turn ends (success, stop, error, cancel), after it has set its own
- * `grokCooldownUntil`. No `grok usage` CLI and no `~/.grok` file is ever read.
+ * The Grok seat's usage card (design §4/§7-4/§7-5): deck's own Grok turns — TurnRunner.runGrok calls `noteTurn` at the
+ * one place every Grok turn ends (success, stop, error, cancel), after it has set its own `grokCooldownUntil` — plus the
+ * subscription's usage from Grok ACP `_x.ai/billing` (carried by a turn's result, or `noteBilling` from the idle
+ * poller). No `grok usage` CLI and no `~/.grok` file is ever read.
  */
 export class GrokUsageTracker {
   private readonly data = new Map<GrokAccount, StoredAccount>();
@@ -70,6 +91,7 @@ export class GrokUsageTracker {
           today: hasDay
             ? { inputTokens: num(today.inputTokens), outputTokens: num(today.outputTokens), turns: num(today.turns), day: today.day as string }
             : { inputTokens: 0, outputTokens: 0, turns: 0, day: this.dayOf(this.now()) },
+          billing: readBilling(o.billing),
         });
       }
     } catch (err) {
@@ -107,7 +129,7 @@ export class GrokUsageTracker {
    * not in cooldown) — the only source, this tracker never derives its own. Tokens: input + output only (no cache /
    * reasoning split for Grok); counted for every ended turn, `ok` or not.
    */
-  noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: Pick<TurnUsage, 'inputTokens' | 'outputTokens'>; cooldownUntilMs: number | null }): void {
+  noteTurn(account: GrokAccount, result: { ok: boolean; errorKind: string | null; usage: Pick<TurnUsage, 'inputTokens' | 'outputTokens'>; cooldownUntilMs: number | null; billing?: GrokBilling | null }): void {
     const nowMs = this.now();
     const day = this.dayOf(nowMs);
     const cur = this.data.get(account);
@@ -126,10 +148,26 @@ export class GrokUsageTracker {
         turns: today.turns + 1,
         day,
       },
+      billing: result.billing ?? cur?.billing ?? null,
     };
     this.data.set(account, next);
     this.write();
     this.usage?.applyGrok(account, this.snapshotOf(account, nowMs));
+  }
+
+  /** The idle poller read the subscription's usage (no turn): kept, written, pushed. Turn fields are left as they are. */
+  noteBilling(account: GrokAccount, billing: GrokBilling): void {
+    const cur = this.data.get(account);
+    this.data.set(account, cur
+      ? { ...cur, billing }
+      : { lastTurnAtMs: null, lastError: null, cooldownUntilMs: null, down: false, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: this.dayOf(this.now()) }, billing });
+    this.write();
+    this.usage?.applyGrok(account, this.snapshotOf(account));
+  }
+
+  /** The last billing read kept for `account` (the poller times its next read from its `fetchedAt` / `windowEnd`). */
+  billingOf(account: GrokAccount): GrokBilling | null {
+    return this.data.get(account)?.billing ?? null;
   }
 
   /** One account's current card; the day is compared again here (a read with no new turn still sees the midnight reset). */
@@ -145,6 +183,7 @@ export class GrokUsageTracker {
       lastError: cur.lastError,
       cooldownUntil: cur.cooldownUntilMs !== null ? new Date(cur.cooldownUntilMs).toISOString() : null,
       today,
+      ...(cur.billing ? { billing: cur.billing } : {}),
     };
   }
 

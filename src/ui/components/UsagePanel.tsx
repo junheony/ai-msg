@@ -3,7 +3,7 @@ import { GEMINI_ACCOUNTS, GROK_ACCOUNTS, type GeminiAccount, type GrokAccount, t
 import type { GrokStatus } from '../../shared/protocol';
 import { useAccounts } from '../accounts';
 import { ClaudeMark, GeminiMark, GrokMark, OpenAIMark } from './EngineMark';
-import { emptyAccountUsage, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, grokBillingWindow, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export function countdown(resetsAt: string | null, now: number): string {
   if (!resetsAt) return '';
@@ -196,7 +196,7 @@ function grokNow(g: GrokUsage, now: number): GrokUsage {
   return status === g.status && today === g.today ? g : { ...g, status, today };
 }
 
-/** Grok's status sentence (design §3/§7-4): no quota API, so the main row is always text, never a bar. */
+/** Grok's status sentence (design §3/§7-4): the main row when there is no subscription usage (or a cooldown / login problem). */
 function grokMainText(g: GrokUsage, now: number): string {
   if (g.status === 'down') return '로그인 필요';
   if (g.status === 'cooldown') return `한도 — ${g.cooldownUntil ? resetStamp(g.cooldownUntil) : '알 수 없음'} 이후`;
@@ -204,13 +204,45 @@ function grokMainText(g: GrokUsage, now: number): string {
   return `사용 가능 · 마지막 턴 ${agoText(g.lastTurnAt, now)}`;
 }
 
-/** This install's Grok seats as `SeatData`; shown only while `GrokStatus.bin` is true (checked by the caller). */
+/** The billing period's row name: "주간" for SuperGrok's weekly period, "월간" for a monthly one, else "구독". */
+function grokPeriodName(type: string | null | undefined): string {
+  if (type && /WEEK/i.test(type)) return WINDOW_NAME.weekly;
+  if (type && /MONTH/i.test(type)) return '월간';
+  return '구독';
+}
+
+/**
+ * This install's Grok seats as `SeatData`; shown only while `GrokStatus.bin` is true (checked by the caller). With the
+ * subscription's usage (`_x.ai/billing`) the card is a bar like GPT / Gemini; a cooldown or login problem still wins the
+ * main row. Without it, the status sentence. Today's deck tally is the secondary line / popover either way.
+ */
 function grokSeatData(seat: Seat, snap: GrokUsage, now: number): SeatData {
   const g = grokNow(snap, now);
-  const today = `오늘 ${g.today.turns}턴 · 입력 ${g.today.inputTokens.toLocaleString('en-US')} · 출력 ${g.today.outputTokens.toLocaleString('en-US')} · deck 기준`;
+  const tally = `입력 ${g.today.inputTokens.toLocaleString('en-US')} · 출력 ${g.today.outputTokens.toLocaleString('en-US')}`;
+  const tier = g.billing?.tier ?? null;
+  const extraPopover = (
+    <>
+      {tier && <div className="usage-pop-row" data-testid={`${seat}-tier`}><span>구독</span><b>{tier}</b></div>}
+      <div className="usage-pop-row" data-testid={`${seat}-today`}><span>deck 오늘</span><b>{`${g.today.turns}턴 · ${tally}`}</b></div>
+    </>
+  );
+  const week = grokBillingWindow(g.billing, now);
+  const mark = <GrokMark className="usage-mark grok" />;
+  if (!week || !g.billing) {
+    return {
+      seat, engine: 'grok', mark, rows: [], status: g.status,
+      reasonLine: grokMainText(g, now), secondaryOverride: `오늘 ${g.today.turns}턴 · ${tally} · deck 기준`, extraPopover,
+    };
+  }
+  const blocked = g.status === 'down' || g.status === 'cooldown';
   return {
-    seat, engine: 'grok', mark: <GrokMark className="usage-mark grok" />, rows: [], status: g.status,
-    reasonLine: grokMainText(g, now), secondaryOverride: today,
+    seat, engine: 'grok', mark, rows: [{ key: 'week', name: grokPeriodName(g.billing.periodType), w: week, mainEligible: true }],
+    // The subscription answered: no turn yet is not "unknown" any more.
+    status: g.status === 'unknown' ? 'ok' : g.status,
+    ...(blocked ? { reasonLine: grokMainText(g, now) } : {}),
+    secondaryOverride: [tier, `deck 오늘 ${g.today.turns}턴`].filter(Boolean).join(' · '),
+    observed: `확인 · ${resetStamp(g.billing.fetchedAt)}`,
+    extraPopover,
   };
 }
 

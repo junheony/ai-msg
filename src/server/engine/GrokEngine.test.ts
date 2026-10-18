@@ -44,7 +44,7 @@ afterEach(async () => { await fs.rm(tmp, { recursive: true, force: true }); });
 
 const FAST = {
   lockMs: 2000, initializeMs: 2000, sessionMs: 2000, settingMs: 2000, cancelMs: 400, closeMs: 2000, termMs: 500, killMs: 1000,
-  steerMs: 1000, categoryMs: 150, fallbackMs: 300, sampleMs: 2000,
+  steerMs: 1000, categoryMs: 150, fallbackMs: 300, sampleMs: 2000, billingMs: 300,
 };
 const SID = '01a14e16-8100-7cb3-b038-2b02138059a5';
 const CHILD = '01a14e16-aaaa-7cb3-b038-2b02138059a5';
@@ -108,7 +108,8 @@ describe('runGrokTurn: lifecycle and mapping', () => {
     const { result, events } = await turn('', { deps: { spawnFn }, req: { permissionMode: 'acceptEdits', effort: 'medium' } });
     const log = agentLog(agent.logFile);
     expect(args).toEqual([...GROK_AGENT_ARGS]);
-    expect(methods(log)).toEqual(['initialize', 'session/new', 'session/set_config_option', 'session/prompt']);
+    // `_x.ai/billing` after the prompt (the fake has no handler: Method not found, ignored).
+    expect(methods(log)).toEqual(['initialize', 'session/new', 'session/set_config_option', 'session/prompt', '_x.ai/billing']);
     expect(log[0]).toMatchObject({ params: { protocolVersion: 1, clientCapabilities: {} } });
     expect(log[1]).toMatchObject({ params: { cwd, mcpServers: [], _meta: { yoloMode: false, autoMode: false } } });
     expect(log[2]).toMatchObject({ params: { sessionId: SID, configId: 'reasoning_effort', value: 'medium' } });
@@ -116,6 +117,33 @@ describe('runGrokTurn: lifecycle and mapping', () => {
     expect(events[0]).toEqual({ kind: 'init', sessionId: SID, model: 'grok-4.7' });
     // PromptResponse _meta.usage: inputTokens includes the cached reads.
     expect(result).toMatchObject({ ok: true, sessionId: SID, terminalReason: 'completed', usage: { inputTokens: 400, outputTokens: 50, cacheReadTokens: 600, cacheCreationTokens: 0 } });
+  });
+
+  it('after the prompt, `_x.ai/billing` on the same connection rides the result (grokBilling)', async () => {
+    const { result, log } = await turn(String.raw`
+      on('_x.ai/billing', (p, id) => respond(id, { config: { creditUsagePercent: 1.0, currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: '2026-10-18T07:54:33.561+00:00', end: '2026-10-25T07:54:33.561+00:00' }, prepaidBalance: { val: 0 }, isUnifiedBillingUser: true }, subscription_tier: 'SuperGrok Heavy' }));`);
+    expect(methods(log).slice(-2)).toEqual(['session/prompt', '_x.ai/billing']);
+    expect(paramsOf(log, '_x.ai/billing')).toEqual([{}]);
+    expect(result).toMatchObject({ ok: true, text: '', grokBilling: { usedPct: 1, windowStart: '2026-10-18T07:54:33.561+00:00', windowEnd: '2026-10-25T07:54:33.561+00:00', tier: 'SuperGrok Heavy', periodType: 'USAGE_PERIOD_TYPE_WEEKLY' } });
+  });
+
+  it('billing Method not found, a billing error or a billing that never answers: the turn result is unchanged, no grokBilling', async () => {
+    const missing = await turn('');
+    expect(missing.result).toMatchObject({ ok: true, terminalReason: 'completed' });
+    expect(missing.result.grokBilling).toBeUndefined();
+    const failed = await turn(String.raw`on('_x.ai/billing', (p, id) => fail(id, -32603, 'boom'));`);
+    expect(failed.result).toMatchObject({ ok: true });
+    expect(failed.result.grokBilling).toBeUndefined();
+    const t0 = Date.now();
+    const silent = await turn(String.raw`on('_x.ai/billing', () => {});`);
+    expect(silent.result).toMatchObject({ ok: true });
+    expect(silent.result.grokBilling).toBeUndefined();
+    expect(Date.now() - t0).toBeLessThan(FAST.closeMs + 1500);
+  });
+
+  it('no billing request for a turn that never got a PromptResponse (refused before the prompt)', async () => {
+    const { log } = await turn(String.raw`on('session/new', (p, id) => fail(id, -32000, 'Authentication required'));`);
+    expect(methods(log)).not.toContain('_x.ai/billing');
   });
 
   it('a picked model goes by the model option; the same effort as the current one sends nothing', async () => {

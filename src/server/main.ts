@@ -16,6 +16,8 @@ import { FileLister } from './files';
 import { GeminiEngine, GeminiLogin } from './engine/GeminiEngine';
 import { grokEngineLock, runGrokTurn } from './engine/GrokEngine';
 import { runGrokInspect } from './engine/grokInspect';
+import { probeGrokBilling } from './engine/grokBilling';
+import { grokLock } from './engine/grokLock';
 import { sweepShadowHomes } from './engine/shadowHome';
 import { grokEnv } from './engine/grokEnv';
 import { execFile } from 'node:child_process';
@@ -43,6 +45,7 @@ import { TurnRunner } from './turn/TurnRunner';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { GeminiUsagePoller } from './usage/GeminiUsagePoller';
 import { GrokUsageTracker } from './usage/GrokUsageTracker';
+import { GrokBillingPoller } from './usage/GrokBillingPoller';
 import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket, type ServerSend } from './ws';
@@ -120,14 +123,18 @@ async function main(): Promise<void> {
   // so the sweep is over before any Grok turn can make its folder.
   const grokHomesDir = path.join(cfg.configDir, 'homes', 'grok');
   if (grokBin) await sweepShadowHomes(grokHomesDir).catch((err: unknown) => console.error('deck: sweeping Grok shadow homes failed', err instanceof Error ? err.message : err));
-  const grok = grokBin ? {
-    run: (req: Parameters<typeof runGrokTurn>[0]) => runGrokTurn(req, {
-      bin: grokBin, grokHome: cfg.grokHome, homesDir: grokHomesDir, realHome: cfg.home,
-      inspect: (env, cwd) => runGrokInspect(grokBin, env, cwd),
-    }),
+  const grokDeps = grokBin ? {
+    bin: grokBin, grokHome: cfg.grokHome, homesDir: grokHomesDir, realHome: cfg.home,
+    inspect: (env: Record<string, string>, cwd: string) => runGrokInspect(grokBin, env, cwd),
   } : null;
-  // Grok usage card (usage header design §4/§7-4): no quota API, only tallied from deck's own Grok turns.
+  const grok = grokDeps ? { run: (req: Parameters<typeof runGrokTurn>[0]) => runGrokTurn(req, grokDeps) } : null;
+  // Grok usage card (usage header design §4/§7-4): deck's own Grok turns, plus the subscription's usage (`_x.ai/billing`)
+  // read at the end of each turn and, while idle, by the poller (same deps — shadow HOME, env, grok inspect — as a turn).
   const grokUsage = grokBin ? new GrokUsageTracker({ file: path.join(cfg.configDir, 'grok-usage.json'), usage, log: (line) => console.error(line) }) : null;
+  const grokBilling = grokDeps && grokUsage
+    ? new GrokBillingPoller({ probe: () => probeGrokBilling(grokDeps), tracker: grokUsage, busy: () => grokLock.size > 0, log: (line) => console.error(line) })
+    : null;
+  grokBilling?.start();
   const grokStatusBase: GrokStatus = { bin: grok !== null };
   const grokStatus = (): GrokStatus => ({ ...grokStatusBase, locked: grokEngineLock.reason });
   if (grokBin) {
@@ -258,7 +265,7 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
+    stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); grokBilling?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
     // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
     void flushThenExit(() => Promise.all([events.flush(), claude.close()]).then(() => {}), () => process.exit(0));
   };

@@ -34,7 +34,21 @@ describe('buildEngineLimits', () => {
     expect(l.gemini.seats[0]!.remainingPct).toEqual({ pro: null, flash: null });
     expect(engineState('codex', 'gpt-6-sol', l, NOW).state).toBe('unknown');
     expect(engineState('gemini', 'gemini-pro', l, NOW).state).toBe('unknown');
-    expect(l.grok).toEqual({ installed: true, cooldownUntilMs: null, lastError: null });
+    expect(l.grok).toEqual({ installed: true, cooldownUntilMs: null, lastError: null, periodUsedPct: null });
+  });
+
+  it('Grok: the subscription used % from grokSeats.x1.billing; 85 %+ blocks until the period ends', () => {
+    const billing = (usedPct: number, endMs: number) => ({ usedPct, windowStart: iso(endMs - 7 * 86_400_000), windowEnd: iso(endMs), tier: 'SuperGrok Heavy', fetchedAt: iso(NOW - 60_000) });
+    const seat = (usedPct: number, endMs: number) => ({ x1: { status: 'ok' as const, lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '2026-10-18' }, billing: billing(usedPct, endMs) } });
+    const low = buildEngineLimits(input({ grokSeats: seat(1, NOW + 86_400_000) }));
+    expect(low.grok.periodUsedPct).toBe(1);
+    expect(engineState('grok', 'grok-4.7', low, NOW)).toMatchObject({ state: 'ok', why: 'Grok 구독 1% 사용' });
+    const high = buildEngineLimits(input({ grokSeats: seat(90, NOW + 86_400_000) }));
+    expect(engineState('grok', 'grok-4.7', high, NOW)).toMatchObject({ state: 'blocked', why: 'Grok 구독 90% 사용' });
+    // The period ended since the reading: a new period, not judged on the old number.
+    const ended = buildEngineLimits(input({ grokSeats: seat(90, NOW - 1) }));
+    expect(ended.grok.periodUsedPct).toBeNull();
+    expect(engineState('grok', 'grok-4.7', ended, NOW).state).toBe('ok');
   });
 
   it('GPT weekly, reset and observation time come from the snapshot; down = unknown', () => {

@@ -49,7 +49,41 @@ export type GrokUsage = {
   lastError: 'auth' | 'limit' | 'busy' | null;
   cooldownUntil: string | null;
   today: { inputTokens: number; outputTokens: number; turns: number; day: string };
+  /** The subscription's own usage (Grok ACP `_x.ai/billing`); absent = never read (an older server, or no answer yet). */
+  billing?: GrokBilling | null;
 };
+
+/**
+ * One `_x.ai/billing` answer (grok 1.0.62), read at the end of a Grok turn or by the idle poller. `usedPct`: the
+ * answer's `config.creditUsagePercent`, read as the percent of the period's included credit already used (0–100; 1.0
+ * = 1 % used, 99 % left — the field name and SuperGrok's weekly window point that way). `windowStart`/`windowEnd`: the
+ * current usage period (`currentPeriod`, else `billingPeriodStart/End`), ISO. `tier`: `subscription_tier`. The other
+ * numbers are passed on only when the answer has them (seen in the binary, not in an answer yet).
+ */
+export type GrokBilling = {
+  usedPct: number;
+  windowStart: string | null;
+  windowEnd: string | null;
+  tier: string | null;
+  fetchedAt: string;
+  periodType?: string | null;
+  monthlyLimit?: number | null;
+  onDemandCap?: number | null;
+  onDemandUsed?: number | null;
+  includedUsed?: number | null;
+  totalUsed?: number | null;
+};
+
+/**
+ * The billing period as a usage window (the cards and routing read every engine as one). A period whose end has passed
+ * is a new one deck has not read yet: 0 % assumed (`estimated`), as the `cli` mode does for Claude.
+ */
+export function grokBillingWindow(b: GrokBilling | null | undefined, nowMs: number): UsageWindow | null {
+  if (!b || typeof b.usedPct !== 'number' || !Number.isFinite(b.usedPct)) return null;
+  const end = b.windowEnd ? parseIsoUtc(b.windowEnd) : Number.NaN;
+  if (!Number.isNaN(end) && end <= nowMs) return { usedPct: 0, resetsAt: null, estimated: true };
+  return { usedPct: Math.max(0, Math.min(100, b.usedPct)), resetsAt: b.windowEnd };
+}
 
 export type UsageSnapshot = {
   generatedAt: string;

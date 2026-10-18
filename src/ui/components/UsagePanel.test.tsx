@@ -489,6 +489,74 @@ describe('UsagePanel · Grok seat (card, chip, cooldown expiry, midnight)', () =
     render(<UsagePanel usage={grokUsage({ today: { inputTokens: 1200, outputTokens: 34, turns: 3, day: yesterday } })} current={null} now={NOW} grok={{ bin: true }} />);
     expect(screen.getByTestId('x1-secondary').textContent).toBe('오늘 0턴 · 입력 0 · 출력 0 · deck 기준');
   });
+
+  const billing = (usedPct: number, endMs = NOW + 6 * 86_400_000 + 2 * 3_600_000) => ({
+    usedPct, windowStart: new Date(endMs - 7 * 86_400_000).toISOString(), windowEnd: new Date(endMs).toISOString(),
+    tier: 'SuperGrok Heavy', fetchedAt: new Date(NOW - 5 * 60_000).toISOString(), periodType: 'USAGE_PERIOD_TYPE_WEEKLY',
+  });
+
+  it('with the subscription usage: one bar line "▬ 99% · 6일", tier + deck turns below, popover with the same %, tier and today', () => {
+    render(<UsagePanel usage={grokUsage({ billing: billing(1) })} current={null} now={NOW} grok={{ bin: true }} />);
+    const main = screen.getByTestId('x1-main');
+    expect(main.querySelector('.usage-bar > i')!.getAttribute('style')).toContain('width: 99%');
+    expect(main.querySelector('.usage-value')!.textContent).toBe('99%');
+    expect(main.querySelector('.usage-cd')!.textContent).toBe('6일');
+    expect(main.className).not.toContain('usage-main-text');
+    expect(screen.getByTestId('account-x1').querySelectorAll('.usage-main')).toHaveLength(1);
+    expect(screen.getByTestId('x1-secondary').textContent).toBe('SuperGrok Heavy · deck 오늘 3턴');
+    expect(screen.getByTestId('x1-week').textContent).toContain('주간');
+    expect(screen.getByTestId('x1-week').textContent).toContain('99%');
+    expect(screen.getByTestId('x1-tier').textContent).toBe('구독SuperGrok Heavy');
+    expect(screen.getByTestId('x1-today').textContent).toBe('deck 오늘3턴 · 입력 1,200 · 출력 34');
+    expect(screen.getByTestId('x1-observed').textContent).toContain('확인');
+  });
+
+  it('with the subscription usage the phone chip shows the same remaining %', () => {
+    phone();
+    render(<UsagePanel usage={grokUsage({ billing: billing(1) })} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('chip-x1').textContent).toContain('99%');
+    fireEvent.click(screen.getByTestId('chip-x1'));
+    const pop = screen.getByRole('tooltip');
+    expect(pop.textContent).toContain('99%');
+    expect(pop.textContent).toContain('SuperGrok Heavy');
+    expect(pop.textContent).toContain('deck 오늘');
+  });
+
+  it('a live cooldown wins over the bar (card and chip)', () => {
+    const until = new Date(NOW + 30 * 60_000).toISOString();
+    const u = grokUsage({ status: 'cooldown', cooldownUntil: until, billing: billing(40) });
+    const { unmount } = render(<UsagePanel usage={u} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('x1-main').textContent).toBe(`한도 — ${resetStamp(until)} 이후`);
+    expect(screen.getByTestId('x1-main').querySelector('.usage-bar')).toBeNull();
+    expect(screen.getByTestId('account-x1').className).toContain('cooldown');
+    unmount();
+    phone();
+    render(<UsagePanel usage={u} current={null} now={NOW} grok={{ bin: true }} />);
+    expect(screen.getByTestId('chip-x1').textContent).toContain('●대기');
+  });
+
+  it('a period that ended since the reading reads as a fresh period (estimated, not the old number)', () => {
+    render(<UsagePanel usage={grokUsage({ billing: billing(90, NOW - 60_000) })} current={null} now={NOW} grok={{ bin: true }} />);
+    const main = screen.getByTestId('x1-main');
+    expect(main.querySelector('.usage-value')!.textContent).toBe('100%~');
+  });
+
+  it('without the subscription usage and no turn yet: one small grey line "아직 사용 없음", no bar', () => {
+    render(<UsagePanel usage={grokUsage({ status: 'unknown', lastTurnAt: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: today } })} current={null} now={NOW} grok={{ bin: true }} />);
+    const card = screen.getByTestId('account-x1');
+    expect(card.querySelectorAll('.usage-main')).toHaveLength(1);
+    expect(screen.getByTestId('x1-main').textContent).toBe('아직 사용 없음');
+    expect(screen.getByTestId('x1-main').className).toContain('usage-main-text');
+    expect(card.querySelector('.usage-bar')).toBeNull();
+  });
+
+  it('styles: the status dot sits in the corner (not a row under the letter); the reason text is one small muted line', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.usage-dot \{[^}]*position: absolute;/);
+    expect(css).toMatch(/\.usage-main-text \{[^}]*white-space: nowrap;[^}]*\}/);
+    expect(css).toMatch(/\.usage-main-text \{[^}]*text-overflow: ellipsis;[^}]*\}/);
+    expect(css).toMatch(/\.usage-main-text \{[^}]*color: var\(--muted\)[^}]*\}/);
+  });
 });
 
 describe('UsagePanel · phone chip popover', () => {
