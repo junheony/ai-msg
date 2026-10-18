@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { spawn as nodeSpawn } from 'node:child_process';
+import { execFile, spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
@@ -10,7 +10,7 @@ import { AcpAbortError, AcpClosedError, AcpConnection, AcpRpcError, AcpTimeoutEr
 import type { ChildLike, SpawnFn } from './CodexEngine';
 import type { EngineEvent, EngineResult, FollowUp, LiveInput, PermissionRequest } from './Engine';
 import { grokEnv } from './grokEnv';
-import { GrokLock, GrokLockAbortError, GrokLockTimeoutError, grokLock, grokLockKey } from './grokLock';
+import { GrokLock, GrokLockTimeoutError, grokLock, grokLockKey } from './grokLock';
 import { GROK_PROJECT_BLOCKED_TEXT, findGrokProjectConfig } from './grokProjectGuard';
 import { redactSecrets } from './redact';
 
@@ -47,6 +47,7 @@ export const GROK_TEXT = {
   subagent: '하위 에이전트',
   effortUnsupported: '이 Grok 모델은 effort 설정을 받지 않음',
   aborted: '중단됨',
+  leftoverProcesses: 'Grok 이 띄운 프로세스 일부가 남아 있음',
 } as const;
 
 export type GrokTurnRequest = {
@@ -104,7 +105,11 @@ export type GrokDeps = {
   lock?: GrokLock;
   timeouts?: Partial<GrokTimeouts>;
   log?: (msg: string) => void;
+  /** Process table for the end-of-turn sweep (tests); default runs `ps` once, null = skip. */
+  listProcesses?: () => Promise<GrokProcEntry[] | null>;
 };
+
+export type GrokProcEntry = { pid: number; ppid: number; pgid: number };
 
 /** §8: stderr kept for an abnormal exit. */
 export const GROK_STDERR_MAX = 4096;
@@ -155,12 +160,14 @@ export function classifyGrokError(err: unknown): GrokErrorClass {
   const types = [data.type, data.kind, data.errorType, inner.type].filter((x): x is string => typeof x === 'string').map((s) => s.toLowerCase());
   const statuses = [data.status, data.statusCode, data.httpStatus, inner.status, inner.statusCode].map((x) => Number(x)).filter((n) => Number.isFinite(n));
   const text = [err.message, data.message, inner.message].filter((x): x is string => typeof x === 'string').join('\n');
-  if (err.code === ACP_AUTH_REQUIRED || types.some((t) => t === 'authentication_failed' || t === 'auth_required' || t === 'unauthenticated')) return 'auth';
+  // Structured type/status first: -32000 is also a generic JSON-RPC server error code and may carry a rate limit.
+  if (types.some((t) => t === 'authentication_failed' || t === 'auth_required' || t === 'unauthenticated')) return 'auth';
   if (types.some((t) => t === 'rate_limit' || t === 'rate_limited')) return statuses.includes(429) || QUOTA_RE.test(text) ? 'rate_limit' : 'overloaded';
   if (statuses.includes(503) || statuses.includes(529) || types.includes('overloaded')) return 'overloaded';
   if (statuses.includes(429)) return 'rate_limit';
   // No structured type: the error message only (still never tool output).
   if (types.length === 0 && statuses.length === 0) {
+    if (err.code === ACP_AUTH_REQUIRED && /authentication required/i.test(err.message)) return 'auth';
     if (AUTH_MSG_RE.test(text)) return 'auth';
     if (RATE_MSG_RE.test(text) && QUOTA_RE.test(text)) return 'rate_limit';
   }
@@ -265,6 +272,25 @@ function groupAlive(pid: number): boolean {
   try { process.kill(-pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+/** One `ps` run; null when it fails (the sweep is then skipped). */
+function listProcesses(): Promise<GrokProcEntry[] | null> {
+  return new Promise((resolve) => {
+    execFile('ps', ['-A', '-o', 'pid=,ppid=,pgid='], { timeout: 2000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+      if (err) { resolve(null); return; }
+      const out: GrokProcEntry[] = [];
+      for (const line of String(stdout).split('\n')) {
+        const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number);
+        if (Number.isInteger(pid) && Number.isInteger(ppid) && Number.isInteger(pgid)) out.push({ pid: pid!, ppid: ppid!, pgid: pgid! });
+      }
+      resolve(out);
+    });
+  });
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms).unref?.(); });
 
 class GrokTurn {
@@ -282,6 +308,10 @@ class GrokTurn {
   private sessionId: string | null;
   private text = '';
   private resultSent = false;
+  /** The result, pushed only after the group has ended (so an end-of-turn notice still comes before it). */
+  private final: EngineResult | null = null;
+  /** Lock releases: the start key, plus (home, id) once a new session has its id. */
+  private readonly releases: Array<() => void> = [];
   private cancelled = false;
   private cancelReason: 'abort' | 'mode' = 'abort';
   private promptInFlight = false;
@@ -297,8 +327,8 @@ class GrokTurn {
   private readonly permissionAsked = new Set<string>();
   private readonly openPerms = new Set<() => void>();
   private readonly loggedKinds = new Set<string>();
-  private readonly steerSent = new Set<string>();
-  private readonly steerDelivered = new Set<string>();
+  /** One request per steer id; a repeated call gets the first call's outcome. */
+  private readonly steers = new Map<string, Promise<boolean>>();
 
   constructor(private readonly req: GrokTurnRequest, private readonly deps: GrokDeps, private readonly q: EventQueue) {
     this.t = { ...GROK_TIMEOUTS, ...deps.timeouts };
@@ -318,7 +348,7 @@ class GrokTurn {
   private finish(r: EngineResult): void {
     if (this.resultSent) return;
     this.resultSent = true;
-    this.q.push(r);
+    this.final = r;
   }
 
   private aborted(): EngineResult {
@@ -341,6 +371,14 @@ class GrokTurn {
   }
 
   async run(): Promise<void> {
+    try {
+      await this.start();
+    } finally {
+      if (this.final) this.q.push(this.final);
+    }
+  }
+
+  private async start(): Promise<void> {
     const req = this.req;
     if (req.signal.aborted) { this.finish(this.aborted()); return; }
     if (req.resumeSessionId !== null && !GROK_SESSION_ID_RE.test(req.resumeSessionId)) {
@@ -349,9 +387,8 @@ class GrokTurn {
     }
     let grokHomeReal: string;
     try { grokHomeReal = await fs.realpath(this.deps.grokHome); } catch { grokHomeReal = path.resolve(this.deps.grokHome); }
-    let release: () => void;
     try {
-      release = await this.lock.acquire(grokLockKey(grokHomeReal, req.resumeSessionId, randomUUID()), { timeoutMs: this.t.lockMs, signal: this.cancelAc.signal });
+      this.releases.push(await this.lock.acquire(grokLockKey(grokHomeReal, req.resumeSessionId, randomUUID()), { timeoutMs: this.t.lockMs, signal: this.cancelAc.signal }));
     } catch (e) {
       if (e instanceof GrokLockTimeoutError) this.finish(this.result(false, e.message, { errorKind: 'grok_locked' }));
       else this.finish(this.aborted());
@@ -376,7 +413,7 @@ class GrokTurn {
         await this.endGroup();
       }
     } finally {
-      release();
+      for (const release of this.releases.splice(0).reverse()) release();
     }
   }
 
@@ -428,6 +465,13 @@ class GrokTurn {
       const id = str(sess?.sessionId);
       if (!id || !GROK_SESSION_ID_RE.test(id)) { this.finish(this.result(false, 'Grok 이 올바른 세션 ID 를 주지 않음')); return; }
       this.sessionId = id;
+      // The start key was temporary: from here a resumed turn on this id must wait for this one (released at the end).
+      try {
+        this.releases.push(await this.lock.acquire(grokLockKey(grokHome, id, ''), { timeoutMs: this.t.lockMs, signal: this.cancelAc.signal }));
+      } catch (e) {
+        if (e instanceof GrokLockTimeoutError) { this.finish(this.result(false, e.message, { errorKind: 'grok_locked' })); return; }
+        throw new AcpAbortError('lock');
+      }
       await req.onSessionId?.(id);
     }
     const sessionId = this.sessionId!;
@@ -457,6 +501,13 @@ class GrokTurn {
     // Prompt.
     const blocks: Rec[] = [{ type: 'text', text: promptWithFiles(req.prompt, attachments) }];
     for (const img of images) blocks.push({ type: 'image', mimeType: img.mediaType, data: (await fs.readFile(img.path)).toString('base64') });
+    // Last checks with nothing awaited before the send: an abort during the reads above, and a mode changed by a
+    // model/effort answer or update after set_mode was confirmed (recorded even before settingsDone).
+    if (this.cancelled) throw new AcpAbortError('session/prompt');
+    if (this.currentMode !== this.targetMode) {
+      this.finish(this.result(false, GROK_TEXT.modeUnconfirmed, { errorKind: 'permission_mode' }));
+      return;
+    }
     this.promptInFlight = true;
     // Marked answered the moment the response line is read: updates after it are dropped (§2-7).
     const promptP = conn.request('session/prompt', { sessionId, prompt: blocks }, { onResponse: () => { this.promptAnswered = true; this.promptDone = true; } });
@@ -498,7 +549,8 @@ class GrokTurn {
   }
 
   private async errorResult(e: unknown): Promise<EngineResult> {
-    if (e instanceof AcpAbortError || (this.cancelled && !(e instanceof AcpRpcError))) return this.aborted();
+    // After a cancel, whatever the agent answers (an RPC error included) is the abort.
+    if (e instanceof AcpAbortError || this.cancelled) return this.aborted();
     if (e instanceof AcpRpcError) {
       switch (classifyGrokError(e)) {
         case 'auth':
@@ -522,33 +574,72 @@ class GrokTurn {
     return this.result(false, redactSecrets(`Grok 오류: ${(e as Error)?.message ?? String(e)}`), { stderr });
   }
 
-  /** §2-7: close stdin, give the group closeMs to end on its own, then SIGTERM, then SIGKILL — the whole group. */
+  /**
+   * Descendants of `root` that left its process group (setsid), found by following ppid in one `ps` table. Only
+   * processes whose parent chain is still intact can be found. S12 에서 확인: what Grok really leaves behind.
+   */
+  private async strays(root: number): Promise<number[]> {
+    const table = await (this.deps.listProcesses ?? listProcesses)().catch(() => null);
+    if (!table) return [];
+    const byParent = new Map<number, GrokProcEntry[]>();
+    for (const e of table) byParent.set(e.ppid, [...(byParent.get(e.ppid) ?? []), e]);
+    const out: number[] = [];
+    const seen = new Set<number>([root]);
+    const stack = [root];
+    while (stack.length) {
+      for (const e of byParent.get(stack.pop()!) ?? []) {
+        if (seen.has(e.pid) || e.pid <= 1 || e.pid === process.pid) continue;
+        seen.add(e.pid);
+        stack.push(e.pid);
+        if (e.pgid !== root) out.push(e.pid);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * §2-7: close stdin, give the group closeMs to end on its own, then SIGTERM, then SIGKILL — the whole group plus
+   * descendants that left it (S12 에서 확인). Whatever survives SIGKILL is reported, and the lock is released anyway
+   * (waiting for it forever would block the session).
+   */
   private async endGroup(): Promise<void> {
     if (this.cancelTimer) clearTimeout(this.cancelTimer);
     this.conn?.close('turn ended');
     const child = this.child;
     if (!child) return;
     const pid = child.pid;
+    const strays = new Set<number>();
+    // Collected while the agent is still alive: once it exits, its children's ppid no longer leads back to it.
+    const collect = async () => { if (pid !== undefined && !this.exited) for (const p of await this.strays(pid)) strays.add(p); };
+    await collect();
     try { child.stdin?.end(); } catch { /* already closed */ }
     if (pid === undefined) { await Promise.race([this.exitP, sleep(this.t.killMs)]); return; }
     const gone = async (ms: number): Promise<boolean> => {
       const until = Date.now() + ms;
       for (;;) {
-        if (this.exited && !groupAlive(pid)) return true;
+        if (this.exited && !groupAlive(pid) && [...strays].every((p) => !pidAlive(p))) return true;
         if (Date.now() >= until) return false;
         await sleep(25);
       }
     };
     const kill = (sig: NodeJS.Signals) => {
       try { process.kill(-pid, sig); } catch { try { child.kill(sig); } catch { /* gone */ } }
+      for (const p of strays) { try { process.kill(p, sig); } catch { /* gone */ } }
     };
     // An aborted turn whose PromptResponse never came goes straight to the group kill (§7).
     const graceful = !this.cancelled || this.promptAnswered;
-    if (graceful && (await gone(this.t.closeMs))) return;
+    if (graceful) {
+      if (await gone(this.t.closeMs)) return;
+      await collect();
+    }
     kill('SIGTERM');
     if (await gone(this.t.termMs)) return;
+    await collect();
     kill('SIGKILL');
-    if (!(await gone(this.t.killMs))) this.log(`deck: grok process group ${pid} still alive after SIGKILL`);
+    if (!(await gone(this.t.killMs))) {
+      this.log(`deck: grok process group ${pid} (or a descendant) still alive after SIGKILL; lock released anyway`);
+      this.q.push({ kind: 'notice', message: GROK_TEXT.leftoverProcesses });
+    }
   }
 
   // --- settings --------------------------------------------------------------------------------------------------
@@ -624,9 +715,12 @@ class GrokTurn {
     const u = (p.update && typeof p.update === 'object' ? p.update : null) as Rec | null;
     if (!u) return;
     // Another session's updates (a subagent's own session, S5) are dropped.
-    if (this.sessionId && typeof p.sessionId === 'string' && p.sessionId !== this.sessionId) return;
+    // Once the session is known, an update without its id is dropped too.
+    if (this.sessionId && p.sessionId !== this.sessionId) return;
     if (isReplayed(p._meta) || isReplayed(u._meta)) return;
     const kind = typeof u.sessionUpdate === 'string' ? u.sessionUpdate : '';
+    // Content belongs to the prompt: anything before it is dropped; mode/config updates are always observed.
+    if (!this.promptInFlight && (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call' || kind === 'tool_call_update')) return;
     switch (kind) {
       case 'agent_message_chunk': {
         const c = (u.content && typeof u.content === 'object' ? u.content : {}) as Rec;
@@ -710,8 +804,9 @@ class GrokTurn {
   // --- session/request_permission (§4.2) --------------------------------------------------------------------------
 
   private async onPermissionRequest(params: unknown): Promise<unknown> {
-    // Cancel first: after an abort or after the PromptResponse, every request is answered cancelled at once.
-    if (this.cancelled || this.promptDone) return CANCELLED;
+    // Cancel first: after an abort, after the PromptResponse, or before the settings are done (a folder-trust or
+    // other start-up request), every request is answered cancelled at once.
+    if (this.cancelled || this.promptDone || !this.settingsDone) return CANCELLED;
     const p = (params && typeof params === 'object' ? params : {}) as Rec;
     const tc = (p.toolCall && typeof p.toolCall === 'object' ? p.toolCall : {}) as Rec;
     const options = (Array.isArray(p.options) ? p.options : []).filter((o): o is Rec => !!o && typeof o === 'object');
@@ -740,10 +835,10 @@ class GrokTurn {
       // 자동 승인: allow_once only, only for known kinds, never plan exit / mode widening (those kinds are not listed).
       if (allowOnce && AUTO_APPROVE_KINDS.has(kind) && this.req.autoApprove?.()) {
         await Promise.race([this.req.onAutoApproved?.(pr).catch(() => {}), closed]);
-        return this.cancelled ? CANCELLED : selected(allowOnce);
+        return this.cancelled || this.promptDone ? CANCELLED : selected(allowOnce);
       }
       const decision = await Promise.race([this.req.onPermission({ ...pr, signal: cardAc.signal }).catch((): PermissionDecision => 'deny'), closed]);
-      if (decision === 'closed' || this.cancelled) return CANCELLED;
+      if (decision === 'closed' || this.cancelled || this.promptDone) return CANCELLED;
       // 'session' has no Grok equivalent in v1 (no suggestions are offered): it counts as once. allow_always never.
       if (decision === 'deny') return rejectOnce ? selected(rejectOnce) : CANCELLED;
       return allowOnce ? selected(allowOnce) : CANCELLED;
@@ -755,27 +850,31 @@ class GrokTurn {
 
   // --- steer (§7) -------------------------------------------------------------------------------------------------
 
-  private async steer(f: FollowUp, id: string): Promise<boolean> {
-    if (this.promptDone || this.cancelled || f.attachments.length > 0 || !this.conn || !this.sessionId) return false;
-    // The same id is never sent twice.
-    if (this.steerSent.has(id)) return true;
-    this.steerSent.add(id);
-    try {
-      await this.conn.request(GROK_INTERJECT_METHOD, { sessionId: this.sessionId, text: f.text, interjectionId: id }, this.t.steerMs);
-    } catch {
-      return false;
-    }
-    // S7 에서 확정: delivered at the ACK. Whether an ACKed steer can be lost when the turn ends right after is open.
-    if (!this.steerDelivered.has(id)) {
-      this.steerDelivered.add(id);
+  private steer(f: FollowUp, id: string): Promise<boolean> {
+    // The same id is never sent twice: a repeated call shares the first call's outcome (pending, true or false).
+    const first = this.steers.get(id);
+    if (first) return first;
+    const conn = this.conn;
+    const sessionId = this.sessionId;
+    if (this.promptDone || this.resultSent || this.cancelled || f.attachments.length > 0 || !conn || !sessionId) return Promise.resolve(false);
+    const p = (async () => {
+      try {
+        await conn.request(GROK_INTERJECT_METHOD, { sessionId, text: f.text, interjectionId: id }, this.t.steerMs);
+      } catch {
+        return false;
+      }
+      // S7 에서 확정: delivered at the ACK. An ACK read after the PromptResponse is too late for this turn.
+      if (this.promptDone || this.resultSent) return false;
       this.q.push({ kind: 'steer_delivered', id });
-    }
-    return true;
+      return true;
+    })();
+    this.steers.set(id, p);
+    return p;
   }
 }
 
 /**
- * One Grok turn. Exactly one `result` comes last. When the consumer stops iterating early, the turn is cancelled and
+ * One Grok turn. Exactly one `result` comes last, after the process group has ended. When the consumer stops iterating early, the turn is cancelled and
  * this does not return until the agent's process group is gone and the lock is free.
  */
 export async function* runGrokTurn(req: GrokTurnRequest, deps: GrokDeps): AsyncGenerator<EngineEvent> {

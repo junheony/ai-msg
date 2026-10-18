@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AcpAbortError, AcpClosedError, AcpConnection, AcpRpcError, AcpTimeoutError, METHOD_NOT_FOUND } from './AcpConnection';
+import { AcpAbortError, AcpClosedError, AcpConnection, AcpRpcError, AcpTimeoutError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './AcpConnection';
 
 // A tiny line-echo agent: each JSON request becomes a response or a scripted behaviour; written inline (synthetic).
 const AGENT = String.raw`
@@ -174,5 +174,34 @@ describe('AcpConnection', () => {
     callbacks.shift()!();
     await b;
     expect(lines.map((l) => JSON.parse(l).method)).toEqual(['a', 'b']);
+  });
+
+  it('a handler that throws (async or not) answers -32603 with its message; a thrown AcpRpcError keeps its code', async () => {
+    const { conn } = agent();
+    conn.onRequest('async/boom', async () => { throw new Error('kaboom'); });
+    conn.onRequest('sync/boom', () => { throw new Error('sync kaboom'); });
+    conn.onRequest('rpc/boom', async () => { throw new AcpRpcError(-32002, 'not here'); });
+    expect(await conn.request('ask', { method: 'async/boom' })).toMatchObject({ error: { code: INTERNAL_ERROR, message: 'kaboom' } });
+    expect(await conn.request('ask', { method: 'sync/boom' })).toMatchObject({ error: { code: INTERNAL_ERROR, message: 'sync kaboom' } });
+    expect(await conn.request('ask', { method: 'rpc/boom' })).toMatchObject({ error: { code: -32002, message: 'not here' } });
+  });
+
+  it('a multi-byte UTF-8 character cut across chunks arrives whole', async () => {
+    const input = new PassThrough();
+    const out = new Writable({ write(_c, _e, cb) { cb(); } });
+    const conn = new AcpConnection(input, out);
+    const got: unknown[] = [];
+    conn.onNotification((_m, p) => got.push(p));
+    const bytes = Buffer.from(JSON.stringify({ jsonrpc: '2.0', method: 'n', params: { t: '한글 🙂 é' } }) + '\n', 'utf8');
+    // Cut inside every multi-byte sequence: each byte its own chunk.
+    for (let i = 0; i < bytes.length; i++) input.write(bytes.subarray(i, i + 1));
+    await vi.waitFor(() => expect(got).toEqual([{ t: '한글 🙂 é' }]), { timeout: 1000, interval: 5 });
+    const p = conn.request('x', {});
+    const reply = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '日本' }) + '\n', 'utf8');
+    const cut = reply.indexOf(Buffer.from('日', 'utf8')) + 1;
+    input.write(reply.subarray(0, cut));
+    await new Promise((r) => setTimeout(r, 10));
+    input.write(reply.subarray(cut));
+    expect(await p).toBe('日本');
   });
 });
