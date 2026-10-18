@@ -174,13 +174,13 @@ describe('turnNeedsAttention (which finished turns are pushed)', () => {
 });
 
 describe('PushNotifier.notify · turn results', () => {
-  const setup = async () => {
+  const setup = async (o: { commanderQuiet?: (sessionId: string) => boolean } = {}) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-notifier-turn-'));
     const store = new SubscriptionStore(path.join(dir, 'subs.json'));
     await store.add({ endpoint: 'https://fcm.googleapis.com/fcm/send/live', keys: { p256dh: 'P', auth: 'A' } });
     const calls: { body: string }[] = [];
     let now = 1_000_000;
-    const n = new PushNotifier({ store, vapid: { publicKey: 'pub', privateKey: 'priv' }, subject: 's', titleOf, send: async (_s, payload) => { calls.push(JSON.parse(payload)); }, now: () => now });
+    const n = new PushNotifier({ store, vapid: { publicKey: 'pub', privateKey: 'priv' }, subject: 's', titleOf, send: async (_s, payload) => { calls.push(JSON.parse(payload)); }, now: () => now, ...(o.commanderQuiet ? { commanderQuiet: o.commanderQuiet } : {}) });
     return { n, calls, advance: (ms: number) => { now += ms; } };
   };
   const started = (turnId: string): ServerMessage => ({ type: 'turn_started', ...scope, turnId, account: 'a', model: 'opus', reason: 'r', attempt: 0 } as ServerMessage);
@@ -204,6 +204,31 @@ describe('PushNotifier.notify · turn results', () => {
     const { n, calls } = await setup();
     n.notify(result('t1:bg1', true, '할까요?'));
     n.notify(result('t1:bg2', false));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.body).toBe('실패 · boom');
+  });
+
+  it('a commander turn is never pushed by itself (the commander pushes human · done · stop)', async () => {
+    const { n, calls } = await setup();
+    n.notify(started('t1:cmd1'));
+    n.notify({ ...result('t1:cmd1', false), auto: 'commander' } as ServerMessage);
+    n.notify(started('t2'));
+    n.notify(result('t2', false));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls).toHaveLength(1);
+  });
+
+  it('a commander turn is held back only while its commander runs (quiet); paused / stopped → pushed like any turn', async () => {
+    let quiet = true;
+    const { n, calls } = await setup({ commanderQuiet: () => quiet });
+    n.notify(started('t1:cmd1'));
+    n.notify({ ...result('t1:cmd1', false), auto: 'commander' } as ServerMessage);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls).toHaveLength(0);
+    quiet = false;
+    n.notify(started('t1:cmd2'));
+    n.notify({ ...result('t1:cmd2', false), auto: 'commander' } as ServerMessage);
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]!.body).toBe('실패 · boom');
   });

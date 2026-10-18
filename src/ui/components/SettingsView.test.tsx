@@ -127,3 +127,21 @@ describe('SettingsView 코드 줄바꿈', () => {
     expect(on.getAttribute('aria-pressed')).toBe('true');
   });
 });
+
+describe('SettingsView 총사령탑', () => {
+  afterEach(cleanup);
+
+  it('hidden until the server says; shows its value and sends a change', () => {
+    const on = vi.fn();
+    const { rerender } = render(<SettingsView build={null} commanderEnabled={null} onCommanderEnabled={on} onOpenUsage={noop} onClose={noop} />);
+    expect(screen.queryByRole('group', { name: '총사령탑' })).toBeNull();
+    rerender(<SettingsView build={null} commanderEnabled={false} onCommanderEnabled={on} onOpenUsage={noop} onClose={noop} />);
+    const group = screen.getByRole('group', { name: '총사령탑' });
+    const btn = (name: string) => Array.from(group.querySelectorAll('button')).find((b) => b.textContent === name) as HTMLButtonElement;
+    expect(btn('끄기').getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn('끄기'));
+    expect(on).not.toHaveBeenCalled();
+    fireEvent.click(btn('켜기'));
+    expect(on).toHaveBeenCalledWith(true);
+  });
+});

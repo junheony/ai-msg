@@ -8,11 +8,23 @@ import { ROUTING_POLICIES, type DeckSettings, type RoutingPolicy } from '../shar
  * An existing `settings.json` always wins over these. 자동 routing spreads load (고르게 분산). 같은 벤더 계정 자동 순환 is
  * off until the user turns it on (and agrees to the own-accounts-only notice); a file without it = off.
  */
-export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false };
+export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 };
+
+type CommanderSettings = Pick<Required<DeckSettings>, 'commanderEnabled' | 'commanderMaxTurns' | 'commanderTokenCap'>;
 
 /** Both permission fields from one source: `defaultPermissionMode` wins; a lone legacy `autoApprove` maps to bypass / default. */
-function normalize(mode: PermMode, routingPolicy: RoutingPolicy, sameVendorRotation: boolean): Required<DeckSettings> {
-  return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode, routingPolicy, sameVendorRotation };
+function normalize(mode: PermMode, routingPolicy: RoutingPolicy, sameVendorRotation: boolean, commander: CommanderSettings): Required<DeckSettings> {
+  return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode, routingPolicy, sameVendorRotation, ...commander };
+}
+
+/** 총사령탑 settings from the file (`commanderEnabled` also through set_settings): out-of-range values fall back to the defaults. */
+function commanderFrom(r: Record<string, unknown>): CommanderSettings {
+  const int = (v: unknown, min: number, max: number, dflt: number) => (typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max ? v : dflt);
+  return {
+    commanderEnabled: r.commanderEnabled === true,
+    commanderMaxTurns: int(r.commanderMaxTurns, 1, 50, DEFAULT_SETTINGS.commanderMaxTurns),
+    commanderTokenCap: int(r.commanderTokenCap, 1, 1_000_000_000, DEFAULT_SETTINGS.commanderTokenCap),
+  };
 }
 
 function isRoutingPolicy(v: unknown): v is RoutingPolicy {
@@ -36,7 +48,7 @@ export class SettingsStore {
     const r = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
     // Migration: a file from before per-session modes has only autoApprove.
     const mode = isPermMode(r.defaultPermissionMode) ? r.defaultPermissionMode : typeof r.autoApprove === 'boolean' ? permModeFromAutoApprove(r.autoApprove) : DEFAULT_SETTINGS.defaultPermissionMode;
-    this.current = normalize(mode, isRoutingPolicy(r.routingPolicy) ? r.routingPolicy : DEFAULT_SETTINGS.routingPolicy, r.sameVendorRotation === true);
+    this.current = normalize(mode, isRoutingPolicy(r.routingPolicy) ? r.routingPolicy : DEFAULT_SETTINGS.routingPolicy, r.sameVendorRotation === true, commanderFrom(r));
   }
 
   get(): Required<DeckSettings> {
@@ -45,7 +57,7 @@ export class SettingsStore {
 
   async set(patch: Partial<DeckSettings>): Promise<Required<DeckSettings>> {
     const mode = patch.defaultPermissionMode ?? (patch.autoApprove !== undefined ? permModeFromAutoApprove(patch.autoApprove) : this.current.defaultPermissionMode);
-    const next = normalize(mode, patch.routingPolicy ?? this.current.routingPolicy, patch.sameVendorRotation ?? this.current.sameVendorRotation);
+    const next = normalize(mode, patch.routingPolicy ?? this.current.routingPolicy, patch.sameVendorRotation ?? this.current.sameVendorRotation, { commanderEnabled: patch.commanderEnabled ?? this.current.commanderEnabled, commanderMaxTurns: this.current.commanderMaxTurns, commanderTokenCap: this.current.commanderTokenCap });
     this.current = next;
     this.writing = this.writing.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });

@@ -110,4 +110,11 @@ describe('selectEvent', () => {
   it('keeps the push kinds for cards and tasks', () => {
     expect(selectEvent({ type: 'task_done', turnId: 't', sessionId: 's', cwd: '/c', status: 'completed', summary: 'ok' } as never, titleOf, 1)).toMatchObject({ kind: 'task' });
   });
+
+  it('a commander verdict is one highlight; a plain state broadcast is not', () => {
+    const state = { status: 'waiting_human', hop: 2, maxTurns: 20, epoch: 1, goal: 'g', done: 'd', budget: { maxAutoTurns: 20, autoTurnsUsed: 2, maxTokens: 1, tokensUsed: 0, maxWallClockMs: 1, maxInternalRetries: 5, internalRetriesUsed: 0 } } as const;
+    expect(selectEvent({ type: 'commander', sessionId: 's', state, lastVerdict: { verdict: 'human', reason: '배포 필요', atMs: 1 } }, titleOf, 1))
+      .toMatchObject({ kind: 'commander', sessionId: 's', body: '사령탑 사람 필요 · 배포 필요' });
+    expect(selectEvent({ type: 'commander', sessionId: 's', state }, titleOf, 1)).toBeNull();
+  });
 });

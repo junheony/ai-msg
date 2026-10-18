@@ -18,7 +18,12 @@ export type SegmentEvent =
   | { type: 'tool_result'; toolUseId: string; content: string; isError: boolean }
   | { type: 'sub_tool_call'; parentToolUseId: string; toolUseId: string; name: string; input: unknown }
   | { type: 'sub_tool_result'; parentToolUseId: string; toolUseId: string; isError: boolean; content?: string }
-  | { type: 'turn_result'; ok: boolean; text: string; errorText: string | null; errorKind?: string | null; failure?: FailureKind | null };
+  | { type: 'turn_result'; turnId?: string; ok: boolean; text: string; errorText: string | null; errorKind?: string | null; failure?: FailureKind | null }
+  /** 백그라운드 세그먼트가 한도로 끊겨 다른 계정으로 넘어감(같은 turnId 로 다시 돈다) — 그 턴은 bg 이어가기가 아니라 failover. */
+  | { type: 'turn_retry'; turnId: string };
+
+/** 백그라운드 이어가기 턴(`<turnId>:bg<n>`) — 내부 재시도가 아니다. */
+const BG_TURN_RE = /:bg\d+$/;
 
 export const DIGEST_LIMITS = {
   summary: 4_000,
@@ -87,6 +92,9 @@ export class SegmentCollector {
   private readonly runs: Run[] = [];
   private readonly runById = new Map<string, Run>();
   private turns = 0;
+  /** 내부 재시도로 세지 않는 bg 이어가기 turn_result 수. */
+  private bgTurns = 0;
+  private readonly retried = new Set<string>();
   private last: Extract<SegmentEvent, { type: 'turn_result' }> | null = null;
 
   constructor(private readonly cwd: string) {}
@@ -106,7 +114,11 @@ export class SegmentCollector {
         break;
       case 'turn_result':
         this.turns++;
+        if (ev.turnId && BG_TURN_RE.test(ev.turnId) && !this.retried.has(ev.turnId)) this.bgTurns++;
         this.last = ev;
+        break;
+      case 'turn_retry':
+        this.retried.add(ev.turnId);
         break;
     }
   }
@@ -156,6 +168,7 @@ export class SegmentCollector {
     return {
       digestId,
       turns: this.turns,
+      retries: Math.max(0, this.turns - 1 - this.bgTurns),
       summary: clipSummary(last?.text ?? ''),
       changedFiles: [...this.files].slice(0, DIGEST_LIMITS.files),
       changedFileCount: this.files.size,

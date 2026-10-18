@@ -6,7 +6,7 @@ import os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, type AccountNames } from '../shared/accounts';
 import { DEFAULT_CODEX_MODEL, DEFAULT_SANDBOX, IMPORTED_DEFAULT_MODEL, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
-import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type CommanderView, type StreamPos, type GeminiStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
@@ -29,6 +29,9 @@ import { readBranchPoint, readTranscript, type BranchPoint } from './sessions/tr
 import { isCodexState, isGeminiState, type ClaudeSessionState, type SessionStateStore } from './turn/SessionState';
 import { abortedText, SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
+import { SegmentCollector } from './commander/digest';
+import { DISABLED_MESSAGE, type CommanderResult, type CommanderSendRequest } from './commander/Commander';
+import type { SegmentDigest } from './commander/types';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
 
@@ -167,7 +170,38 @@ export type WsDeps = {
   activityFile?: string;
   /** When this server process started (ms); rides every `activity` message. Default: when this module loaded. */
   serverStartedAt?: number;
+  /** 총사령탑(Commander): the `commander_*` messages, SessionFacts.commander and the idle hook. Absent = no commander. */
+  commander?: WsCommander;
+  /**
+   * The session went idle with a booked retry (SessionState.pendingRetry): fire it now if its time has come — a retry
+   * refused because the session was busy then is not left for the next restart (BottleneckWatch.retryDue).
+   */
+  retryDue?: (sessionId: string) => void;
 };
+
+/** What ws needs of the Commander (main.ts wires the real one). */
+export type WsCommander = {
+  enabled(): boolean;
+  set(sessionId: string, a: { goal: string; done: string; maxTurns?: number }): CommanderResult;
+  stop(sessionId: string, epoch: number): CommanderResult;
+  /** 설정에서 끔: every active commander is stopped. */
+  disableAll(): void;
+  pause(sessionId: string, epoch: number): CommanderResult;
+  resume(sessionId: string, epoch: number): CommanderResult;
+  view(sessionId: string): CommanderView | null;
+  isActive(sessionId: string): boolean;
+  /** A permission / question card of this session was answered. */
+  cardAnswered(sessionId: string): void;
+  /** ws released the session (busy off, nothing waiting in afterRelease, no booked retry): one call per segment. */
+  onSessionIdle(sessionId: string, digest: SegmentDigest): void | Promise<void>;
+  /** The session went idle with an automatic turn's retry booked for `atMs` (the segment stays open until it runs). */
+  retryBooked?(sessionId: string, atMs: number): void;
+};
+
+/** A server-made send: an automatic retry (BottleneckWatch) or a commander instruction (Commander). */
+export type ServerSend = { kind: 'retry'; sessionId: string; cwd: string; text: string; hop: number; commanderHop?: number } | CommanderSendRequest;
+/** A commander turn's id carries its hop (`<uuid>:cmd<hop>`, its background segments `…:cmd<hop>:bg<n>`): its turn_result is marked `auto`. */
+const COMMANDER_TURN_RE = /:cmd\d+(?::|$)/;
 
 /** This process's start (ms), fixed for its life: a device that sees another value after a reconnect knows the server restarted. */
 const SERVER_STARTED_AT = Date.now();
@@ -222,6 +256,15 @@ export type WsHandle = {
    * commanderHop and the held process may be a person's ungated one.
    */
   submitRetry(r: { sessionId: string; cwd: string; text: string; hop: number; commanderHop?: number }): void;
+  /**
+   * submitRetry, generalized. `kind: 'commander'` (총사령탑 §6): only ever a new turn — refused synchronously (false) when
+   * the feature is off, the server drains, the session is busy (a running turn, sends waiting in afterRelease, a booked
+   * retry), the sendKey was sent already, or the session is not an existing Claude one; true = the turn started. A retry
+   * with `commanderHop` runs only while the session's commander is running (else the booking is dropped).
+   */
+  submitServerSend(r: ServerSend): boolean;
+  /** A turn runs (or is about to) or a retry is booked: the commander sends nothing now. */
+  isBusy(sessionId: string): boolean;
 };
 
 /** The sender of a server-made send (submitRetry): never open, so nothing is sent to it and it views nothing. */
@@ -541,6 +584,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     adopt(turn, 'sessionId' in msg ? msg.sessionId : null);
     // Per-turn model: the result says which model answered (the badge's), saved with the turn on every device.
     if (msg.type === 'turn_result' && msg.model === undefined && msg.badge?.model) msg = { ...msg, model: msg.badge.model };
+    if (msg.type === 'turn_result' && COMMANDER_TURN_RE.test(msg.turnId)) msg = { ...msg, auto: 'commander' };
     const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
     if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
     let out = msg;
@@ -650,7 +694,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         : null;
   };
 
-  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false, retryHop?: number, commanderHop?: number) => {
+  const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false, retryHop?: number, commanderHop?: number, commanderNote?: string) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
     const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
     // A socket that closed while its send waited (foreign-write check, recycle) still gets its message run; it just views nothing.
@@ -741,7 +785,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     }
     // Draining refuses only a send that needs a new process: one joining a live process (follow-up above) still goes in.
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
-    const turnId = randomUUID();
+    const turnId = commanderHop ? `${randomUUID()}:cmd${commanderHop}` : randomUUID();
     const ac = new AbortController();
     const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, ...(msg.sessionId === null && msg.title ? { title: msg.title } : {}), afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
     prompts.set(turnId, promptOf(msg));
@@ -766,6 +810,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         if (next) next.afterRelease.push(d);
         else startTurn(d.ws, d.msg, false, d.retryHop);
       }
+      const sid = turn.sessionId;
+      if (sid && !busy.has(sid)) sessionIdle(sid);
     };
     /** Sends carried over from the turn before (see release): given to the process once it is between turns — after the runner registered it as held open, hence the microtask. */
     const drainWaiting = () => queueMicrotask(() => {
@@ -810,6 +856,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           return;
         }
         record(turn, m);
+        if (m.type === 'tool_call' || m.type === 'tool_result' || m.type === 'sub_tool_call' || m.type === 'sub_tool_result' || m.type === 'turn_result' || m.type === 'turn_retry') {
+          const sid = m.sessionId ?? turn.sessionId;
+          if (sid) segments.get(sid)?.add(m);
+        }
         // A send the process did not take after all (a follow-up's write failed, or it was still queued when the process
         // ended): no longer going in, and taken back if its turn_started recorded it.
         if (m.type === 'error' && m.clientRef) {
@@ -898,6 +948,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.handoff ? { handoff: true } : {}),
           ...hop,
           ...(commanderHop ? { commanderHop } : {}),
+          ...(commanderHop && commanderNote ? { commanderNote } : {}),
         }, sink);
       } catch (err) {
         // Review I6: a rejected run still ends the turn for the UI.
@@ -922,14 +973,80 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     })().catch((err: unknown) => console.error('deck: post-turn index refresh failed', errMsg(err)));
   };
 
+  /**
+   * 총사령탑: each session's segment (from a commander send until the session goes idle, retries and background
+   * segments included) is collected for the judge; the sendKeys already started (one turn per sendKey, §6).
+   */
+  const segments = new Map<string, SegmentCollector>();
+  const sentKeys = new Map<string, string>();
+  const isBusy = (sid: string) => busy.has(sid) || !!deps.store.get(sid)?.pendingRetry;
+  const cardAnswered = (sid: string) => { try { deps.commander?.cardAnswered(sid); } catch (err) { console.error('deck: commander card hook failed', errMsg(err)); } };
+  /**
+   * The session's last process is gone and nothing waits for it. A booked retry keeps the segment open (the retry is the
+   * same segment's next sub-turn): it is fired now if due. Otherwise the segment ends here and the commander gets it.
+   */
+  const sessionIdle = (sid: string) => {
+    if (deps.store.get(sid)?.pendingRetry) {
+      try { deps.retryDue?.(sid); } catch (err) { console.error('deck: retry at idle failed', errMsg(err)); }
+      // Still booked (not due yet): an automatic turn's retry may be hours away — the commander says so once.
+      const left = deps.store.get(sid)?.pendingRetry;
+      if (left?.commanderHop && !busy.has(sid)) {
+        try { deps.commander?.retryBooked?.(sid, left.atMs); } catch (err) { console.error('deck: commander retry hook failed', errMsg(err)); }
+      }
+      return;
+    }
+    const seg = segments.get(sid);
+    segments.delete(sid);
+    if (!deps.commander) return;
+    const st = deps.store.get(sid);
+    const digest = (seg ?? new SegmentCollector(st?.cwd ?? '')).digest(randomUUID());
+    try {
+      void Promise.resolve(deps.commander.onSessionIdle(sid, digest)).catch((err: unknown) => console.error('deck: commander idle hook failed', errMsg(err)));
+    } catch (err) {
+      console.error('deck: commander idle hook failed', errMsg(err));
+    }
+  };
+  const submitServerSend = (r: ServerSend): boolean => {
+    const { sessionId, cwd, text } = r;
+    if (r.kind === 'commander') {
+      const st = deps.store.get(sessionId);
+      if (!deps.commander?.enabled() || draining || isBusy(sessionId) || sentKeys.get(sessionId) === r.sendKey) return false;
+      if (!st || isCodexState(st) || isGeminiState(st)) return false;
+      sentKeys.set(sessionId, r.sendKey);
+      segments.set(sessionId, new SegmentCollector(st.cwd));
+      startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, undefined, r.hop, r.commanderNote);
+      return busy.has(sessionId);
+    }
+    if (r.commanderHop) {
+      // The commander stopped, paused or handed over since the failure: its booked retry goes with it (보안 #3 — and a
+      // person decides what runs next).
+      if (deps.commander && deps.commander.view(sessionId)?.state.status !== 'running') {
+        const st = deps.store.get(sessionId);
+        if (st?.pendingRetry) {
+          const { pendingRetry: _drop, ...rest } = st;
+          void deps.store.set(rest as typeof st).catch((err: unknown) => console.error('deck: retry booking drop failed', errMsg(err)));
+        }
+        // The booking held the segment open (and the session busy): it ends here, so an armed commander goes on.
+        if (!busy.has(sessionId)) sessionIdle(sessionId);
+        return false;
+      }
+      if (!segments.has(sessionId)) segments.set(sessionId, new SegmentCollector(cwd));
+    }
+    startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, r.hop, r.commanderHop);
+    return busy.has(sessionId);
+  };
+
   /** `open_session`: the session's history (and, mid-turn, what its running turn has shown so far) to one socket, which views it from now on. */
   /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
+  /** hello.features: 'commander' only while the settings turn it on. */
+  const featureList = () => FEATURES.filter((f) => f !== 'commander' || deps.commander?.enabled() === true);
   const runningOf = (sid: string) => {
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;
     const since = deps.acceptedRefs?.since(sid);
     const pos = heads.get(sid);
-    return { ...(pos ? { pos } : {}), runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
+    const cmd = deps.commander?.enabled() ? { commander: deps.commander.view(sid) } : {};
+    return { ...cmd, ...(pos ? { pos } : {}), runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
   };
   type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: Awaited<ReturnType<typeof readTranscript>> };
   /** A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one read. */
@@ -1052,7 +1169,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: [...FEATURES], accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
     // hello's `activity` is the session list only: whether the server is draining, and since when it runs, come here.
     send(ws, activityMsg());
     for (const m of broker.pending()) send(ws, m);
@@ -1077,12 +1194,18 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (msg.sessionId) userSent(msg.sessionId);
           startTurn(ws, msg);
           break;
-        case 'permission_response':
+        case 'permission_response': {
+          const sid = broker.pending().find((m) => m.requestId === msg.requestId)?.sessionId ?? null;
           if (!broker.resolve(msg.requestId, msg.decision)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다', requestId: msg.requestId });
+          else if (sid) cardAnswered(sid);
           break;
-        case 'question_response':
+        }
+        case 'question_response': {
+          const sid = questions.pending().find((m) => m.requestId === msg.requestId)?.sessionId ?? null;
           if (!questions.resolve(msg.requestId, msg.answers)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 질문입니다', requestId: msg.requestId });
+          else if (sid) cardAnswered(sid);
           break;
+        }
         case 'watch_turn':
           turns.get(msg.turnId)?.watchers.add(ws);
           break;
@@ -1093,6 +1216,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const dup = turn?.sessionId ? refusal(turn.sessionId, msg.steerId) : undefined;
           if (dup) { reject(dup.message, dup.code); break; }
           if (!turn || turn.current === null) { reject('실행 중인 턴이 없어 끝난 뒤 보냅니다'); break; }
+          // A person steering is a person sending (총사령탑: pause).
+          if (turn.sessionId) userSent(turn.sessionId);
           void deps.runner.steer(turn.turnId, { steerId: msg.steerId, text: msg.text, ...(msg.attachments ? { attachments: msg.attachments } : {}), prompt: promptOf(msg) })
             .then((ok) => {
               // Recorded as accepted at steer_delivered (record()); until then it is pending.
@@ -1114,6 +1239,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'interrupt': {
           // A continuation's or follow-up's id stops the process it runs in (and its background work).
           const base = baseOf(msg.turnId);
+          // A person stopping an auto turn is a person acting (총사령탑: pause — it is not judged into the next one).
+          // Stopping their own turn is not: an armed commander then starts at idle as it would have.
+          const sid = turns.get(base)?.sessionId;
+          if (sid && COMMANDER_TURN_RE.test(base)) userSent(sid);
           turns.get(base)?.ac.abort();
           for (const id of new Set([msg.turnId, base])) { broker.cancelTurn(id); questions.cancelTurn(id); }
           break;
@@ -1156,6 +1285,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           break;
         }
         case 'set_permission_mode':
+          // 총사령탑 보안: no 모두 자동 승인 while a commander is active (its automatic turns must stay gated).
+          if (msg.mode === 'bypassPermissions' && deps.commander?.isActive(msg.sessionId)) {
+            send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, code: 'commander_active', message: '총사령탑이 걸린 세션은 모두 자동 승인으로 바꿀 수 없습니다 — 먼저 정지하세요' });
+            send(ws, { type: 'permission_mode', sessionId: msg.sessionId, mode: deps.runner.permissionModeOf(msg.sessionId) });
+            break;
+          }
           void deps.runner.setPermissionMode(msg.sessionId, msg.mode)
             .then((ok) => {
               if (!ok) { send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, message: `권한 모드를 바꿀 수 없는 세션입니다: ${msg.sessionId}` }); return; }
@@ -1230,9 +1365,33 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
           // The default only applies to new sessions (and ones with no stored mode) from their next turn: waiting cards stay.
-          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}) })
-            .then((settings) => broadcast({ type: 'settings', settings }))
+          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}) })
+            // 총사령탑 켜기·끄기 changes what the server advertises: every device gets the list again.
+            .then((settings) => {
+              // Off: no commander is left running unseen (devices drop the chip with the feature) or armed for a later on.
+              if (msg.commanderEnabled === false) deps.commander?.disableAll();
+              broadcast({ type: 'settings', settings, ...(msg.commanderEnabled !== undefined ? { features: featureList() } : {}) });
+            })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `설정을 저장하지 못했습니다: ${errMsg(err)}` }));
+          break;
+        }
+        case 'commander_set':
+        case 'commander_stop':
+        case 'commander_pause':
+        case 'commander_resume': {
+          const c = deps.commander;
+          // ■ 정지 is heard while off too: a commander from before is never stuck.
+          if (!c || (!c.enabled() && msg.type !== 'commander_stop')) { send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, code: 'commander_disabled', message: DISABLED_MESSAGE }); break; }
+          const res = msg.type === 'commander_set' ? c.set(msg.sessionId, { goal: msg.goal, done: msg.done, ...(msg.maxTurns !== undefined ? { maxTurns: msg.maxTurns } : {}) })
+            : msg.type === 'commander_stop' ? c.stop(msg.sessionId, msg.epoch)
+              : msg.type === 'commander_pause' ? c.pause(msg.sessionId, msg.epoch)
+                : c.resume(msg.sessionId, msg.epoch);
+          if (!res.ok) {
+            send(ws, { type: 'error', turnId: null, sessionId: msg.sessionId, code: res.code, message: res.message });
+            // The device's view may be the stale part: the current one goes with the refusal.
+            const v = c.view(msg.sessionId);
+            if (v) send(ws, { type: 'commander', sessionId: msg.sessionId, ...v });
+          }
           break;
         }
       }
@@ -1261,8 +1420,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       for (const t of turns.values()) endHeld(t);
     },
     submitRetry({ sessionId, cwd, text, hop, commanderHop }) {
-      startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, hop, commanderHop);
+      submitServerSend({ kind: 'retry', sessionId, cwd, text, hop, ...(commanderHop ? { commanderHop } : {}) });
     },
+    submitServerSend,
+    isBusy,
     /** Processes still up (running a prompt, or closing after `drain` ended them): the restart waits for these. */
     activeTurns: () => turns.size,
     abortAll() {

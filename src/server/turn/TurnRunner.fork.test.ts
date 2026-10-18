@@ -10,7 +10,7 @@ import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { writeCooldown } from '../routing/cooldown';
-import { DECK_INTRO_NOTE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { COMMANDER_ENGINE_REFUSED, DECK_INTRO_NOTE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -220,5 +220,23 @@ describe('TurnRunner · deck intro note', () => {
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', fork: { from: PARENT, at: 'a0' } }, c.sink);
     expect(eng.calls[0]?.forkAt).toBe('a0');
     expect(eng.calls[0]?.systemNote).toBeUndefined();
+  });
+});
+
+describe('TurnRunner · 총사령탑 자동 턴', () => {
+  it('carries the commander note into an existing Claude session', async () => {
+    const eng = new StubEngine(() => ok(PARENT));
+    const c = await setup(eng);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 3_600_000, justCompacted: false, defaultModel: 'sonnet' });
+    await c.runner.run({ turnId: 't1:cmd1', cwd: '/w/one', sessionId: PARENT, text: '목표: x', commanderHop: 1, commanderNote: '[deck] 사령탑 1/20' }, c.sink);
+    expect(eng.calls[0]?.systemNote).toBe('[deck] 사령탑 1/20');
+  });
+  it('is refused before any engine call for a non-Claude session', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const c = await setup(eng);
+    await c.store.set({ engine: 'codex', sessionId: 'thread-1', cwd: '/w/one', lastTurnAtMs: null, justCompacted: false, defaultModel: 'gpt-6-sol', sandbox: 'read-only', rolloutFile: null, createdAtMs: NOW, title: 't' });
+    await c.runner.run({ turnId: 't2:cmd1', cwd: '/w/one', sessionId: 'thread-1', text: 'x', commanderHop: 1 }, c.sink);
+    expect(eng.calls).toHaveLength(0);
+    expect(c.msgs.filter((m) => m.type === 'error' && m.message === COMMANDER_ENGINE_REFUSED)).toHaveLength(1);
   });
 });

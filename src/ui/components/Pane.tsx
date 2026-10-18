@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { AUTO_MODEL_INFO, MODEL_INFO, type CodexSandbox, type Effort, type ModelChoice } from '../../shared/models';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { isGeminiAccount } from '../../shared/accounts';
@@ -20,6 +21,8 @@ import { OpenInDesktop } from './OpenInDesktop';
 import { SidePanel } from './SidePanel';
 import { openInNewTab } from './ShareMenu';
 import { deleteBlockedReason } from './SessionMenu';
+import { CommanderChip, isCommanderActive } from './CommanderChip';
+import { CommanderSheet } from './CommanderSheet';
 import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
 import { NO_TABS, activeTab, carriesTabs, closeTab, openTab, readSideWidth, recallSideTabs, rememberSideTabs, saveSideWidth, selectTab, type SideTabs } from '../sideTabs';
 import { hasOpenPopup } from '../composerFocus';
@@ -185,7 +188,7 @@ export const TOGGLE_SIDE_EVENT = 'deck:toggle-side';
 
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'usage' | 'projects' | 'defaultPermMode' | 'pins'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
@@ -235,6 +238,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const recall = (key: string) => ({ key, tabs: recallSideTabs(key), open: !window.matchMedia?.(PHONE_QUERY).matches });
   const [sideTabs, setSideTabs] = useState(() => recall(sessionKey));
   const [closing, setClosing] = useState(false);
+  // 총사령탑 걸기 sheet; `commanderAsked` = 걸기 sent, waiting for the server's view (closes the sheet) or refusal (stays).
+  const [commanderSheet, setCommanderSheet] = useState(false);
+  const [commanderAsked, setCommanderAsked] = useState(false);
   // Opened again while sliding shut: shown at once, as a slide-in from nothing would jump.
   const [instant, setInstant] = useState(false);
   if (sideTabs.key !== sessionKey) {
@@ -376,6 +382,24 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     const detached = s.sessionId;
     fileMenu.push({ label: '새 탭으로 떼어내기', run: () => { openInNewTab(detached); onClose(); } });
   }
+  // 총사령탑 (servers with 'commander', Claude sessions with an id): 걸기… opens the sheet, or 정지 while one is on. All of it
+  // is what the server last said (the `commander` view, restored on reconnect from history/catchup) — nothing kept here.
+  const commandSid = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && has('commander') ? s.sessionId : null;
+  const commander = commandSid ? app.commanders?.[commandSid] ?? null : null;
+  const commanderRefusal = commandSid ? app.commanderRefusals?.[commandSid] ?? null : null;
+  const commanderOn = isCommanderActive(commander);
+  const clearRefusal = () => { if (commandSid && commanderRefusal) dispatch({ type: 'commander_refusal_clear', sessionId: commandSid }); };
+  const commanderStop = (epoch: number) => { if (commandSid) { clearRefusal(); send({ type: 'commander_stop', sessionId: commandSid, epoch }); } };
+  if (commandSid) {
+    fileMenu.push(commanderOn && commander
+      ? { label: '총사령탑 정지', run: () => commanderStop(commander.state.epoch) }
+      : { label: '총사령탑 걸기…', run: () => { clearRefusal(); setCommanderAsked(false); setCommanderSheet(true); } });
+  }
+  useEffect(() => {
+    if (!commanderAsked) return;
+    if (commanderRefusal) setCommanderAsked(false);
+    else if (commanderOn) { setCommanderAsked(false); setCommanderSheet(false); }
+  }, [commanderAsked, commanderRefusal, commanderOn]);
   const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
   const fold = floating && onToggleCollapse && (
     <button type="button" className="icon-btn pane-fold" aria-label={collapsed ? '카드 펼치기' : '카드 접기'} title={collapsed ? '카드 펼치기 (헤더 더블클릭도 됨)' : '카드 접기: 헤더만 남김'} onClick={onToggleCollapse}>{collapsed ? '▭' : '–'}</button>
@@ -512,6 +536,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           sessionId={s.sessionId}
           headActions={<>{desktop}{fork}{handle}{close}</>}
           headMenu={fileMenu}
+          headChips={commander && commandSid ? (
+            <CommanderChip view={commander} refusal={commanderSheet ? null : commanderRefusal} onStop={commanderStop} onClearRefusal={clearRefusal}
+              onResume={(epoch) => { clearRefusal(); send({ type: 'commander_resume', sessionId: commandSid, epoch }); }} />
+          ) : null}
           model={model}
           effort={effort}
           engine={pane.engine}
@@ -637,6 +665,18 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         </>
       )}
       </SidePanelContext.Provider>
+      {/* On document.body: a floating card's own stacking would trap the fixed sheet inside it. */}
+      {commanderSheet && commandSid && s && createPortal(
+        <CommanderSheet title={s.title} refusal={commanderRefusal} waiting={commanderAsked} defaultTurns={app.commanderMaxTurns ?? undefined}
+          onSubmit={(ask) => {
+            clearRefusal();
+            if (send({ type: 'commander_set', sessionId: commandSid, ...ask }) === false) return false;
+            setCommanderAsked(true);
+            return true;
+          }}
+          onClose={() => { clearRefusal(); setCommanderSheet(false); setCommanderAsked(false); }} />,
+        document.body,
+      )}
     </section>
   );
 }

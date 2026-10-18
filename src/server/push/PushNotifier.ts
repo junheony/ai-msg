@@ -4,7 +4,7 @@ import { AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
 import type { PushSub, SubscriptionStore } from './SubscriptionStore';
 import type { VapidKeys } from './vapid';
 
-export type PushKind = 'turn' | 'permission' | 'question' | 'task' | 'test';
+export type PushKind = 'turn' | 'permission' | 'question' | 'task' | 'test' | 'commander';
 
 /** What the service worker receives (sw.js `push` handler). */
 export type PushPayload = { kind: PushKind; title: string; body: string; sessionId: string | null; tag: string };
@@ -114,6 +114,8 @@ export class PushNotifier {
     titleOf: (sessionId: string | null, cwd: string) => string;
     send?: PushSender;
     now?: () => number;
+    /** 총사령탑이 이 세션을 실제로 돌리고 있다(Commander.quiet): 그때만 자동 턴 결과를 사령탑에 맡긴다. 없으면 늘 맡긴다. */
+    commanderQuiet?: (sessionId: string) => boolean;
   }) {
     this.send = opts.send ?? ((sub, payload, o) => webpush.sendNotification(sub, payload, {
       ...o,
@@ -140,6 +142,9 @@ export class PushNotifier {
     }
     if (msg.type === 'turn_notice' && msg.message === AUTO_RETRY_NOTICE) { this.autoRetried.add(msg.turnId); return; }
     if (msg.type === 'turn_result') {
+      // 총사령탑 자동 턴의 결과는 사령탑이 판정 뒤 사람 필요·완료·정지일 때만 따로 푸시한다(설계 §7) — 사령탑이 돌고 있을 때만.
+      // 사람이 끼어들어 멈춘(paused·stopped) 뒤 끝난 자동 턴은 여느 턴처럼 푸시한다.
+      if (msg.auto === 'commander' && (!this.opts.commanderQuiet || !msg.sessionId || this.opts.commanderQuiet(msg.sessionId))) { this.started.delete(msg.turnId); this.autoRetried.delete(msg.turnId); return; }
       const at = this.started.get(msg.turnId);
       this.started.delete(msg.turnId);
       const auto = this.autoRetried.delete(msg.turnId);

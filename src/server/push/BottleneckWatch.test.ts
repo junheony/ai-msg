@@ -14,7 +14,7 @@ const scope = { turnId: 't1', sessionId: 's1', cwd: '/w/proj' };
 const claude = (over: Partial<ClaudeSessionState> = {}): ClaudeSessionState => ({ sessionId: 's1', cwd: '/w/proj', account: 'a', projectDir: '/p', lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', ...over });
 
 /** A manual clock: timers fire when `advance` passes their time. */
-async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | null } = {}) {
+async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | null; quiet?: () => boolean } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-bottleneck-'));
   const store = new SessionStateStore(path.join(dir, 'state.json'));
   await store.load();
@@ -30,6 +30,7 @@ async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | nul
     store,
     earliestCooldownMs: () => o.cooldown ?? null,
     retry: (r) => retries.push(r),
+    ...(o.quiet ? { quiet: o.quiet } : {}),
     now: () => now,
     setTimer: (fn, ms) => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
     clearTimer: (t) => { timers.delete(t as number); },
@@ -230,5 +231,44 @@ describe('BottleneckWatch · 자동 재시도', () => {
     c.advance(0);
     expect(c.retries).toEqual([{ sessionId: 's1', cwd: '/w/proj', text: 'go', hop: 2 }]);
     expect(c.store.get('s2')).not.toHaveProperty('pendingRetry');
+  });
+});
+
+describe('BottleneckWatch · 사령탑이 맡은 세션', () => {
+  it('quiet: no failure push or reminder, but a booked retry still arms', async () => {
+    let quiet = true;
+    const c = await setup({ quiet: () => quiet });
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 5 * MIN, hops: 1, commanderHop: 2 } }));
+    c.watch.observe(failed('한도 도달 · 대안 계정 없음'));
+    expect(c.store.get('s1')).not.toHaveProperty('blocked');
+    c.advance(5 * MIN);
+    expect(c.retries).toEqual([{ sessionId: 's1', cwd: '/w/proj', text: 'go', hop: 1, commanderHop: 2 }]);
+    c.advance(120 * MIN);
+    expect(c.pushes).toEqual([]);
+    quiet = false;
+    c.watch.observe(failed('또 실패', 't2'));
+    expect(c.store.get('s1')?.blocked).toBeDefined();
+  });
+
+  it('retryDue drops a booking older than the stale limit instead of firing it (same rule as rearm)', async () => {
+    const c = await setup();
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() - 13 * 3600_000, hops: 1 } }));
+    c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(0);
+    expect(c.store.get('s1')).not.toHaveProperty('pendingRetry');
+  });
+
+  it('retryDue fires a due booking at once (its timer fired into a busy session); a future one waits', async () => {
+    const c = await setup();
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 5 * MIN, hops: 1 } }));
+    c.watch.rearm(c.store.list());
+    c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(0);
+    c.advance(5 * MIN);
+    expect(c.retries).toHaveLength(1);
+    // Refused (busy): the booking stays; at idle it is due and fires again.
+    c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(2);
+    expect(c.pending()).toBe(0);
   });
 });

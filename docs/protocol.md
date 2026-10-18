@@ -24,6 +24,7 @@
 | `highlights` | `GET /api/highlights?hours=6\|12\|24`(그 밖의 값은 24)에 `{ hours, events }` 로 답한다(세션 하이라이트, `events.jsonl` 7일치) | 작업 현황의 `하이라이트 보기 →`, ⌘K `하이라이트 보기`, 설정의 `하이라이트` 를 숨김 |
 | `fileRaw` | `GET /api/file?…&raw=1[&download=1]` 로 원본 바이트를 주고 `POST /api/reveal` 로 서버 Mac 의 Finder 를 연다(아래 "HTTP: 세션 폴더 파일") | 파일 칩·사이드 패널의 `다운로드`·`Finder 에서 보기`·`새 탭에서 크게`, 폴더 칩의 `Finder 에서 열기` 를 숨기고, 답장 안 이미지 경로는 썸네일 대신 칩으로 |
 | `serverUpdate` | `GET /api/server-update` 에 `{ changedFiles, newestAt, supervised, draining, activeTurns }`(서버가 뜬 뒤 바뀐 `src/server`·`src/shared` 의 테스트 아닌 `.ts` 수, `activeTurns` = drain 이 기다리는 턴·백그라운드 작업 프로세스 수), `POST /api/restart` 에 SIGUSR2 와 같은 drain 으로 답한다. 관리자(relaunch 루프·launchd) 아래가 아니면 — 요청마다 부모가 relaunch 루프인지 확인 — 409, 이미 drain 중이면 아무것도 안 하고 `{ ok, draining: true }`. 본문 `{"force":true}` 는 두 번째 SIGUSR2 와 같다(작업 끊고 지금 재시작): drain 중일 때만 남은 턴·백그라운드 작업을 중단하고 바로 종료해 관리자가 다시 띄우며 `{ ok, draining: true, forced: true }`, drain 중이 아니면 400 으로 거절하고 아무것도 시작하지 않는다. 쿠키·Origin 검사와 409 는 같다 | `서버 업데이트 대기` 칩·`지금 재시작` 을 숨김 |
+| `commander` | 총사령탑(아래 "총사령탑"). 설정 `commanderEnabled` 가 켜져 있을 때만 알린다 — 설정 화면 토글로 바꾸면 `settings` 방송에 새 `features` 를 실어 보낸다 | ⋯ `총사령탑 걸기…`·머리 칩·설정 토글 없음 |
 
 기능을 더할 때: `FEATURES` 에 이름을 더하고, UI 는 `has()` 로 갈라 쓰고, 이 표에 한 줄 더한다. 배포된 이름은 지우지 않는다.
 
@@ -32,6 +33,29 @@
 계정 고정(`send.accountPin`, `set_account_pin.pin`)의 id 는 모양(`ACCOUNT_ID_RE`, `src/shared/accounts.ts`)만 스키마에서 보고, 어떤 계정이 있는지는 서버가 처리할 때 설정으로 확인한다. 설정에 없는 id 와 뺀 계정(retired)은 `error` 로 거절한다. 옛 UI 가 보내는 a/b/c 는 그대로 통과한다.
 
 ws 메시지가 아닌 것: 하이라이트(`GET /api/highlights?hours=6|12|24`, 그 밖의 값은 24 → `{ hours, events }`)는 HTTP 로만 읽는다. 서버는 `highlights` 기능(위 표)으로 알리고, 그 기능이 없는 서버면 UI 는 들어가는 곳을 보이지 않는다.
+
+## 총사령탑 (`commander`)
+
+기존 Claude 세션에 목표를 걸어 두면 세션이 쉴 때마다 판정해 다음 지시를 보낸다(설계: `docs/superpowers/specs/2026-10-18-commander-design.md`). 모두 `commander` 기능이 있는 서버에서만 쓴다.
+
+- 클라이언트 → 서버 (3+1)
+  - `commander_set{sessionId, goal, done, maxTurns?}` — `goal`·`done` 은 앞뒤 공백을 뺀 1~2000자, `maxTurns` 는 정수 1~50(없으면 설정값, 기본 20).
+  - `commander_stop{sessionId, epoch}` · `commander_pause{sessionId, epoch}` · `commander_resume{sessionId, epoch}` — `epoch` 은 기기가 마지막으로 본 값. 재개는 `paused`·`waiting_human` 일 때만 듣는다. 이미 끝난(`stopped`·`done`·없음) 사령탑의 정지는 그대로 성공.
+- 서버 → 클라이언트
+  - `commander{sessionId, state, lastVerdict?, note?}` — 바뀔 때마다 그 세션을 보는 소켓에 방송. `state` 는 `status`(`idle`·`armed`·`sending`·`running`·`judging`·`waiting_human`·`paused`·`stopped`·`done`)·`hop`·`maxTurns`·`epoch`·`goal`·`done`·`budget`, `lastVerdict` 는 `{verdict: continue|human|done, reason, next?, evidence?: {testRunId}, atMs}`, `note` 는 서버의 사유 한 줄(`자동 재시도 예정(HH:MM)`, `권한 카드 응답 대기`, `턴 상한 도달(n/m)`, `재시작으로 끊김 · 재개` 등).
+  - `history.commander` / `catchup.commander`(SessionFacts) — 같은 모양, 사령탑이 없으면 `null`. 재연결한 기기는 여기서 칩을 되살린다. UI 는 기기에 아무것도 저장하지 않는다.
+  - 자동 턴의 `turn_result.auto: 'commander'` — 그 턴은 완료 푸시를 따로 보내지 않는다.
+- 거절은 `error{turnId: null, sessionId, code, message}` 뒤에 그 세션의 현재 `commander` 를 다시 보낸다. `code`(RefusalCode):
+
+| code | 뜻 | UI 문구 |
+|---|---|---|
+| `commander_bypass` | 세션이 모두 자동 승인(bypass) 모드 | 모두 자동 승인 세션에는 걸 수 없습니다 |
+| `commander_active` | 이미 걸려 있음(먼저 정지). 걸려 있는 동안 `set_permission_mode` 로 bypass 로 바꾸는 것도 이 코드로 거절 | 이미 진행 중입니다 — 먼저 정지하세요 |
+| `commander_engine` | deck 이 모르는 세션이거나 Claude 세션이 아님 | deck 에서 돌린 Claude 세션에만 걸 수 있습니다 |
+| `commander_disabled` | 설정에서 꺼져 있음(`commander_stop` 은 꺼져 있어도 듣는다) | 총사령탑이 꺼져 있습니다 — 설정에서 켜세요 |
+| `commander_stale_epoch` | 보낸 `epoch` 이 지금 것과 다름(다른 기기가 다시 걸었음 등) | 화면이 오래됐습니다 — 다시 시도 |
+
+- 켜기·끄기: `set_settings.commanderEnabled`(선택). 답인 `settings` 방송에는 그때만 `features`(새 기능 목록)가 붙는다 — UI 는 그 목록으로 `has('commander')` 를 바꾸고, 목록에서 빠지면 캐시한 칩·거절을 비운다. 끌 때 서버는 활성 사령탑을 모두 `stopped`(사유 `설정에서 꺼짐`, epoch 증가)로 바꿔 방송한 뒤 `settings` 를 보낸다. 상한들(`commanderMaxTurns`·`commanderTokenCap`)은 설정 파일에서만.
 
 ## HTTP: 세션 폴더 파일
 
