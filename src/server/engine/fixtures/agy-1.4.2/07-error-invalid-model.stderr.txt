@@ -1,0 +1,1 @@
+error: invalid model selection (--model "gemini-pro" --effort "medium"): --effort is not supported for model "gemini-pro"

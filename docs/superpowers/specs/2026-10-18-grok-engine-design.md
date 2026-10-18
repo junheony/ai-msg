@@ -361,3 +361,112 @@ stopReason:
 | 모델·첨부·사용량 (Astra) | §6 실제 모델 확인, §7 첨부 capability, §3 usage 의미 확인 전 미표시 |
 | 구독 전용 보장 (Astra) | §5 custom provider 확인 notice, S2 |
 | 실패 주입 (Astra) | §10 실패 주입 목록 |
+
+## 14. 개정 2판 — 스파이크 반영 (2026-10-18)
+
+근거: `docs/grok-spike.md` "설계 수정 필요" 1–18. §10 결정 지점 "S10 에서 모드 확인 불가 → 재설계"에 해당해 권한 구조를 바꾼다. 이 절이 앞 절과 다르면 이 절이 이긴다.
+
+### 14.1 권한 관문을 deck 쪽으로 옮긴다 (§4.1·§5 대체)
+
+**원칙:** Grok 세션 모드는 언제나 Grok `default`(모든 쓰기·셸에 승인 요청)로 둔다. deck 의 네 모드는 **deck 이 승인 요청에 어떻게 답하느냐**로만 구현한다. 그래서 `set_mode` 확인이 필요 없다(계획 모드 제외).
+
+1. **HOME 격리(필수).** 실제 HOME 을 넘기면 `~/.claude/settings*.json` 의 allow 규칙과 `defaultMode` 가 들어와 승인 요청이 아예 오지 않는다(스파이크 수정 1). 끄는 env 는 없다.
+   - grok 자식의 `HOME` 은 deck 이 만든 그림자 폴더 `<configDir>/homes/grok/` 다. `GROK_HOME` 은 지금처럼 좌석 값(기본 `~/.grok` 실경로)이라 로그인은 유지된다.
+   - 그림자 폴더에는 **허용 목록의 심링크만** 둔다: `.gitconfig`, `.config/git`, `.ssh`, `.gnupg`, `.npmrc` (실제 HOME 에 있을 때만). `.claude`·`Library`·`.codex`·`.gemini`·`.grok`·`.config/deck` 은 절대 두지 않는다.
+   - 매 spawn 전에 그림자 폴더를 점검한다: 허용 목록 밖 항목이 있으면(Grok 이 만든 캐시 폴더 제외 — 아래) 그 항목이 `.claude` 이거나 심링크면 지우고, 허용 목록 심링크의 대상이 바뀌었으면 다시 건다. 그림자 폴더가 심링크이거나 소유자가 다르면 턴을 시작하지 않는다.
+   - Grok 이 그림자 HOME 에 쓰는 파일(`.cache` 등)은 그대로 둔다. `.claude` 라는 이름만은 매번 지운다.
+   - 공용 모듈 `src/server/engine/shadowHome.ts` 로 만든다. Gemini 두 번째 계정(g2)도 같은 모듈을 쓴다(링크 목록만 다름, `Library` 는 거기서도 금지).
+   - 대가: 도구 셸의 `~` 가 그림자 폴더를 가리킨다. macOS 키체인 기반 git https 자격(osxkeychain)은 실패할 수 있다(ssh 는 `.ssh` 링크와 `SSH_AUTH_SOCK` 으로 동작). README 와 Grok 모드 설명에 적는다. `SSH_AUTH_SOCK` 을 env 허용 목록에 더한다.
+2. **설정 층 점검(fail-closed).** `GROK_HOME/config.toml` 의 `[ui] permission_mode`·`auto_mode.enabled` 등이 기본값을 auto 로 만들 수 있다.
+   - spawn 할 때와 같은 env·cwd 로 `grok inspect --json` 을 돌려(서버 프로세스 시작 뒤 첫 Grok 턴, 그리고 `config.toml` mtime 이 바뀔 때마다; 결과는 캐시) 다음을 확인한다: 권한 규칙 출처 0개, defaultMode 가 없거나 `default`, auto 모드 꺼짐.
+   - 하나라도 아니면 턴을 시작하지 않고 "Grok 설정(~/.grok/config.toml)의 권한 기본값이 자동이라 deck 승인을 보장할 수 없음 — <항목>" 을 보인다.
+   - `inspect` JSON 의 정확한 필드 이름은 구현 첫 단계에서 그림자 HOME·임시 cwd 로 한 번 실측해 픽스처로 고정한다. 필드를 찾지 못하면 fail-closed.
+   - `session/new`·`session/load` 에 `_meta: { yoloMode: false, autoMode: false }` 를 함께 보낸다(보조 수단, 관문 아님).
+3. **모드 구현:**
+   | deck | Grok 세션 모드 | 승인 요청에 deck 이 답하는 방식 |
+   |---|---|---|
+   | 기본(매번 묻기) | default | 모두 카드 |
+   | 편집 자동 | default | kind `edit` 이고 대상 경로가 모두 세션 cwd(realpath) 안이면 `allow_once` 자동, 나머지는 카드 |
+   | 모두 자동 승인 | default | `isGrokAutoApprovable` 가 참이면 `allow_once` 자동, 나머지는 카드 |
+   | 계획 | plan | 아래 14.2 |
+   - deck 모드는 deck 이 답할 때 보므로 **턴 도중 바꿔도 다음 승인 요청부터 바로 적용**된다. 개정 1판의 "턴 도중 모드 변경 → 취소"와 "다음 턴부터" 안내는 없앤다(계획 모드로 들어가거나 나오는 변경만 다음 턴부터).
+   - `acceptEdits`·`bypassPermissions`·`auto`·`dontAsk` 는 Grok 에 보내지 않는다.
+   - 모든 모드에서 승인 없이 도는 범위(읽기 도구, 읽기 셸, `mkdir`·`touch`)를 모드 설명에 적는다(S13).
+4. **감사:** `onToolAudit` 은 그대로 둔다. 다만 첫 `tool_call` 에는 kind 가 없으므로(수정 17) kind 는 뒤따르는 `tool_call_update` 에서 채우고, 도구 이름은 `_meta["x.ai/tool"].name` 을 쓴다.
+
+### 14.2 계획 모드
+- 들어가기: `session/set_mode { modeId: "plan" }` 뒤 `current_mode_update{currentModeId:"plan"}` 를 10s 안에 받아야 프롬프트를 보낸다. 못 받으면 fail-closed.
+- 나오기: Grok 은 `_x.ai/exit_plan_mode { sessionId, toolCallId, planContent }` **요청**을 보낸다(수정 9). deck 은 이것을 "계획 승인" 카드로 띄우고 절대 자동 승인하지 않는다.
+- 응답 형식(`ExitPlanModeExtResponse`, 2필드)이 확정되기 전에는 **계획 모드를 deck 선택지에서 숨긴다.** 확정 방법: 그림자 HOME·임시 cwd 에서 후보 응답을 보내 보는 추가 스파이크 S14. 확정되면 픽스처로 고정하고 선택지를 연다.
+
+### 14.3 턴 끝 분류 (§3 stopReason 보완)
+`stopReason:"cancelled"` 는 `_x.ai/session/prompt_complete.cancellationCategory` 로 나눈다(수정 4).
+- `MidTurnAbort` 또는 deck 이 취소한 경우: ABORTED(지금과 같음).
+- `PermissionRejected`: 성공으로 끝내고 notice "승인 거부로 Grok 이 멈춤". 출력은 보존.
+- `PermissionCancelled` 이면서 deck 이 취소하지 않음: 위와 같음, 문구 "승인 요청이 취소되어 멈춤".
+- category 를 못 받으면 deck 취소 여부로 판정한다.
+
+### 14.4 프로토콜 세부 (§2.1·§3·§7 보완)
+- **steer:** 메서드 `_x.ai/interject { sessionId, text, interjectionId }`. 응답은 `result.status === "queued"` 일 때만 성공. echo 알림 `_x.ai/session/interjection` 은 접수 증거일 뿐이다 — deck 은 "전달됨(다음 모델 호출 때 반영)"으로 보인다. 같은 id 는 한 번만 보낸다(Grok 은 중복 제거 안 함). PromptResponse 뒤에는 보내지 않고 false 를 돌려준다.
+- **요청하지 않은 턴:** promptId 가 `interject-fallback-` 로 시작하는 턴 알림이 deck 턴 밖에서 오면 즉시 `session/cancel` 을 보내고 로그만 남긴다.
+- **재생 표식:** `params._meta.isReplay === true` 인 update 는 버린다. load 응답 전에 온다.
+- **id:** 에이전트 요청 id 는 0 부터 온다(falsy 검사 금지). 모르는 id 의 응답(`"skills-reload"` 등)은 버린다.
+- **하위 에이전트:** `session/update` 는 `sessionId` 가 부모와 같을 때만 변환한다. 승인 요청은 부모 sessionId 로 오며 `toolCall._meta["x.ai/requestingSessionId"]` 가 부모와 다르면 카드 제목에 "하위 에이전트"를 붙인다. 자동 승인 규칙은 부모와 같다.
+- **열린 도구 닫기:** 턴이 끝날 때 terminal 상태를 받지 못한 tool 은 deck 이 닫는다(취소면 cancelled, 그 밖은 failed + "결과 없음").
+- **세션 폴더:** 이름을 계산하지 않는다. `GROK_HOME/sessions/*/<sessionId>/` 를 glob 하고 realpath 가 `GROK_HOME/sessions` 안인지 확인한다(이력 읽기).
+- **usage:** 턴 단위다. 그대로 쓴다.
+
+### 14.5 종료 순서 (§2-7 보완)
+- deck 이 중단할 때: `session/cancel` 알림 → PromptResponse 를 최대 5s 기다림 → stdin 닫기 → 그룹 SIGTERM → 3s → 그룹 SIGKILL. 그룹 kill 만으로는 도구 셸의 자식이 남는다(수정 13).
+- 정상 종료는 지금과 같다.
+
+### 14.6 동시 load (§2-1 보완)
+- 서버 안 잠금은 그대로다. 터미널의 `grok` 이 같은 세션을 동시에 열면 Grok 은 막지 않고 기록이 섞인다(수정 15). deck 이 막을 수 없으므로 README 에 "deck 이 쓰는 Grok 세션을 터미널에서 동시에 열지 말 것"을 적는다.
+
+### 14.7 그대로 둘 것
+- 모델 목록은 `GROK_MODELS`(기본 `grok-4.7`, `grok-4.7-build-fast`·`grok-4.6`·`grok-4.5`)로 이미 반영했다.
+- 프로젝트 `.grok/` 는 신뢰 전 무시된다(S9). deck 은 `GROK_FOLDER_TRUST` 를 넘기지 않으므로 §5 의 fail-closed 막기는 **유지**한다(신뢰 상태를 deck 이 알 수 없음).
+- 호환 끄기 값 `false` 는 맞다(S6). 유지한다.
+
+### 14.8 테스트 추가
+- `shadowHome.test.ts`: 허용 목록 링크만 생김, `.claude` 제거, 심링크 그림자 폴더 거부, 링크 대상 변경 재연결, 실제 HOME 에 없는 항목은 만들지 않음.
+- inspect 점검: 픽스처 3종(깨끗함·Claude 규칙 있음·auto 기본) → 앞의 것만 통과, 필드 없음 → fail-closed.
+- 편집 자동: cwd 안 edit 자동, cwd 밖·symlink 탈출·경로 없음 → 카드.
+- cancellationCategory 3종, interject queued/중복/턴 뒤, interject-fallback 취소, isReplay 버림, id 0, 모르는 응답 id, 자식 sessionId 거르기, 열린 도구 닫기, 중단 순서(cancel → 대기 → kill).
+- 스파이크 픽스처 `acp/fixtures/grok-1.0.62/` 로 합성 픽스처를 바꾼다.
+
+### 14.9 교차 검토 반영 (개정 2판 검토: Claude·Astra)
+
+**보장 수준을 정직하게 정한다.** 두 검토 모두 "OS 수준 제한 없이는 절대 보장 불가"로 일치했다(Grok 이 스스로 무승인으로 돌리는 읽기 셸·`mkdir`·`touch` 가 있기 때문). v1 의 약속은 다음으로 한정한다: **Grok 이 승인을 묻는 모든 동작은 deck 모드대로 처리되고, Grok 이 묻지 않고 돌리는 범위는 Grok 의 읽기 목록뿐이며, 그 밖의 무승인 쓰기를 감지하면 즉시 멈춘다.** 이것은 deck 의 Claude 엔진(Claude Code 의 읽기 전용 자동 허용)과 같은 신뢰 수준이다. OS 샌드박스(macOS Seatbelt `sandbox-exec`, Linux bubblewrap)는 v1.1 별도 설계로 둔다. 모드 설명과 README 에 이 한계를 적는다.
+
+앞 절을 다음과 같이 바꾼다(이 소절이 이긴다):
+
+1. **그림자 HOME 은 턴마다 새로 만든다**(14.1-1 대체). `<deck 설정 폴더>/homes/grok/<턴 id>/` 를 0700 으로 만들고 허용 목록 심링크만 건다. 부모 경로까지 lstat·소유자·0700 을 확인한다. 턴이 끝나고 그룹 정리가 끝나면 지운다. 서버 시작 때 남은 턴 폴더를 지운다. 정리 규칙(지우기·재링크)은 없앤다. 링크 목록은 `.gitconfig`·`.config/git`·`.ssh` 만 두고 `.gnupg`·`.npmrc` 는 뺀다(필요해지면 추가). `SSH_AUTH_SOCK` 은 허용한다.
+2. **inspect 점검은 매 spawn 마다** 같은 env·cwd·그림자 HOME 으로 돌린다(14.1-2 의 캐시 삭제). 출처 0개·기본 모드 default·auto 꺼짐을 확인하지 못하면 fail-closed.
+3. **tripwire(신규).** Grok 세션 모드는 언제나 default(계획 모드 제외)이므로, 같은 toolCallId 의 승인 요청 없이 `in_progress`·terminal 이 된 tool 가운데 kind 가 `edit`·`delete`·`move`·`execute` 이면서 Grok 읽기 목록(S13)에 들지 않는 것은 관문이 샌 증거다. 감지하면 즉시 `session/cancel` → 턴 종료(오류 "Grok 이 승인 없이 쓰기를 실행해 멈춤") → 이 서버 프로세스에서 Grok 엔진을 잠근다(재시작 또는 설정 화면에서 해제). `current_mode_update` 가 deck 이 기대한 모드와 다를 때도 같다(모델이 스스로 plan 으로 들어가는 경우 포함). tripwire 는 **모든 sessionId**(하위 에이전트 포함)에 적용한다.
+4. **편집 자동 거부 목록(신규).** 대상이 다음에 걸리면 항상 카드: `.git/` 아래 전부, `.gitmodules`, `.envrc`, `.env*`, `.claude/`, `.grok/`, `.mcp.json`, `.vscode/`, `.idea/`, `.husky/`, `.githooks/`, `node_modules/.bin/`. 비교는 대소문자·NFC 정규화 후 한다. 경로는 요청의 locations 와 rawInput(patch 본문의 모든 파일, 이동의 양쪽)을 모두 모아 판정하고, 하나라도 해석 못 하면 카드. 새 파일은 존재하는 가장 가까운 조상을 realpath 한다. 경계 비교는 경로 구분자 기준. cwd 가 HOME·`/`·HOME 의 조상이면 편집 자동을 끈다. nlink>1 인 기존 파일은 카드.
+5. **턴 밖·모르는 곳의 요청.** 활성 deck 턴이 아니거나(종료 중·interject-fallback·PromptResponse 뒤), sessionId 가 이 턴의 부모·알려진 자식이 아니면 승인 요청은 카드 없이 reject_once(없으면 cancelled)로 답한다. `fs/*`·`terminal/*` 는 광고하지 않고 -32601(기존).
+6. **취소와 대기 중 승인.** deck 이 취소하면 열린 승인 요청에 모두 `{outcome:"cancelled"}` 로 답한다(ACP 규약, "allow_once/reject_once 만" 원칙의 유일한 예외). 카드 클릭·자동 승인과 취소는 기존 `answered`·`cancelled` 플래그로 원자 처리하고, 응답 직전에 최신 deck 모드와 턴 상태를 다시 본다. 이미 보낸 승인은 소급하지 않는다.
+7. **턴 끝 분류**(14.3 대체). deck 취소가 언제나 이긴다(ABORTED). 그 밖에 `PermissionRejected`·`PermissionCancelled` 는 성공도 사용자 중단도 아닌 **"멈춤: 승인 거부"/"멈춤: 승인 취소"** 상태로 끝낸다(기존 실패 경로에 사유 문구, 출력 보존). category 를 못 받으면 "멈춤: 원인 미확인". category 는 PromptResponse 전후 어느 쪽에 와도 턴 종료 처리 전까지 모은다(PromptResponse 뒤 1s 대기).
+8. **steer 표시.** `queued` 는 "접수됨"으로 보인다. "반영됨"은 쓰지 않는다. 턴이 끝날 때까지 반영 근거가 없으면 그대로 둔다. 자동 재전송은 하지 않는다.
+9. **자식 프로세스 회수**(14.5 보완). 턴 동안 2s 마다 `ps -A -o pid=,ppid=,pgid=` 로 grok 자손의 pid·pgid 를 모아 둔다. 모든 종료 경로(정상·취소·크래시)에서 그룹 정리 뒤 모은 pgid 마다 SIGKILL 을 보내고, 모은 pid 가 남았는지 확인해 로그한다.
+10. **외부 수정 감지**(14.6 보완). 턴이 끝날 때 세션 `updates.jsonl` 의 크기·mtime 을 저장하고, 다음 턴 시작 때 다르면 notice "이 Grok 세션이 deck 밖에서 수정됨 — 대화가 갈라졌을 수 있음".
+11. **계획 모드 재노출 조건**(14.2 보완). S14 에서 응답 형식과 함께 "계획 종료 뒤 `current_mode_update` 가 default 인지"를 확인한다. 계획 모드 중 오는 쓰기 승인 요청은 언제나 카드. 둘 다 확정되기 전에는 숨긴다.
+
+| 지적 (출처) | 반영 |
+|---|---|
+| 편집 자동이 .git 훅·설정으로 관문을 연다 (둘 다) | 14.9-4 거부 목록 |
+| inspect 캐시 우회 (둘 다) | 14.9-2 매 spawn |
+| 관문 누수 감지 장치 없음 (Claude) / inspect 는 실행 중 관문 아님 (Astra) | 14.9-3 tripwire |
+| 읽기 셸 분류·mkdir 무승인으로 절대 보장 불가 (둘 다) | 보장 수준 한정, OS 샌드박스 v1.1 |
+| 공유 그림자 HOME 경쟁·잔존 (둘 다) | 14.9-1 턴별 새 폴더 |
+| 경로 판정 누락 (둘 다) | 14.9-4 |
+| 턴 밖 요청 (둘 다) | 14.9-5 |
+| 취소 시 대기 승인 cancelled 응답 (Astra) | 14.9-6 |
+| 거부를 성공으로 처리 (Astra) / 판정 순서 (Claude) | 14.9-7 |
+| queued ≠ 반영 (둘 다) | 14.9-8 |
+| 자식 회수 (둘 다) | 14.9-9 |
+| 동시 load (둘 다) | 14.9-10 감지 + README |
+| 계획 종료 뒤 모드 (Claude) | 14.9-11 |
+| `.gnupg`·`.npmrc` 노출 (Astra) | 14.9-1 링크 축소 |
+| 하위 에이전트 쓰기 감사 (Claude) | 14.9-3 모든 sessionId |
