@@ -34,6 +34,7 @@ const notified: ServerMessage[] = [];
 const userSends: string[] = [];
 const idles: { sid: string; digest: SegmentDigest }[] = [];
 const cards: string[] = [];
+const booked: { sid: string; atMs: number }[] = [];
 const cmd = {
   enabled: true,
   active: false,
@@ -51,6 +52,7 @@ const commander: WsCommander = {
   isActive: () => cmd.active,
   cardAnswered: (sid) => { cards.push(sid); },
   onSessionIdle: (sid, digest) => { idles.push({ sid, digest }); },
+  retryBooked: (sid, atMs) => { booked.push({ sid, atMs }); },
 };
 
 beforeAll(async () => {
@@ -170,7 +172,45 @@ describe('ws: commander sends (§6)', () => {
   });
 });
 
+describe('ws: commander retry bookings', () => {
+  it('a dropped commander retry (commander armed again) still ends the segment: the idle hook runs so armed goes on', async () => {
+    const S = 'cbcbcbcb-cbcb-4bcb-8bcb-cbcbcbcbcbcb';
+    await store.set(state(S, { pendingRetry: { text: 'x', atMs: Date.now(), hops: 1, commanderHop: 2 } }));
+    const run = vi.spyOn(runner, 'run');
+    cmd.status = 'armed';
+    expect(wsApi.submitServerSend({ kind: 'retry', sessionId: S, cwd: base, text: 'x', hop: 1, commanderHop: 2 })).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+    expect(store.get(S)).not.toHaveProperty('pendingRetry');
+    expect(idles.filter((i) => i.sid === S)).toHaveLength(1);
+  });
+
+  it('an auto turn that ends with a booked retry tells the commander the retry time (no idle hook)', async () => {
+    const S = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+    await store.set(state(S));
+    const h = heldRun({ silent: true });
+    expect(wsApi.submitServerSend(cmdSend(S, 1))).toBe(true);
+    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    const atMs = Date.now() + 3 * 3600_000;
+    await store.set({ ...store.get(S)!, pendingRetry: { text: '지시 1', atMs, hops: 1, commanderHop: 1 } });
+    h.release();
+    await vi.waitFor(() => expect(booked).toContainEqual({ sid: S, atMs }));
+    expect(idles.filter((i) => i.sid === S)).toHaveLength(0);
+  });
+});
+
 describe('ws: the person acting during a commander', () => {
+  it('■중단 of an auto turn is reported as the user sending (commander pause)', async () => {
+    const S = 'cececece-cece-4ece-8ece-cececececece';
+    await store.set(state(S));
+    const h = heldRun();
+    wsApi.submitServerSend(cmdSend(S, 1));
+    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    const { ws } = await connect();
+    ws.send(JSON.stringify({ type: 'interrupt', turnId: h.calls[0]!.turnId }));
+    await vi.waitFor(() => expect(userSends).toContain(S));
+    ws.close();
+  });
+
   it('a steer into the running turn is reported as the user sending (commander pause)', async () => {
     const S = 'c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5';
     await store.set(state(S));

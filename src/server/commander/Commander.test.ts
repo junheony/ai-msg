@@ -17,7 +17,7 @@ const claudeState = (over: Partial<SessionState> = {}): SessionState => ({ sessi
 let n = 0;
 /** A segment with progress (a changed file each time) unless a signature is given. */
 const digest = (over: Partial<SegmentDigest> = {}): SegmentDigest => ({
-  digestId: `d${++n}`, turns: 1, summary: '했습니다', changedFiles: ['a.ts'], changedFileCount: 1,
+  digestId: `d${++n}`, turns: 1, retries: 0, summary: '했습니다', changedFiles: ['a.ts'], changedFileCount: 1,
   testRuns: [], failure: { ok: true, errorText: null, kind: null }, signature: `-.${n}.t${n}`, ...over,
 });
 const cont = (next = '테스트를 고치세요', over: Partial<Verdict> = {}): Verdict => ({ verdict: 'continue', reason: '진행 중', next, risk: 'none', confidence: 'high', ...over });
@@ -367,9 +367,19 @@ describe('Commander', () => {
       const t = await setup();
       t.c.set(SID, { goal: 'g', done: 'd' });
       await t.c.settled();
-      await t.idle(digest({ turns: 7 }));
+      await t.idle(digest({ turns: 7, retries: 6 }));
       expect(t.judged).toHaveLength(0);
       expect(t.state().note).toContain('내부 재시도');
+    });
+
+    it('background continuations are not internal retries: a long :bg segment is judged', async () => {
+      const t = await setup();
+      t.c.set(SID, { goal: 'g', done: 'd' });
+      await t.c.settled();
+      t.env.verdicts.push(cont('다음'));
+      await t.idle(digest({ turns: 9, retries: 0 }));
+      expect(t.judged).toHaveLength(1);
+      expect(t.state()).toMatchObject({ status: 'running', budget: { internalRetriesUsed: 0 } });
     });
   });
 
@@ -387,6 +397,66 @@ describe('Commander', () => {
       t.env.verdicts.push(cont('다음'));
       await t.idle();
       expect(t.sends).toHaveLength(2);
+    });
+  });
+
+  describe('defects from the adversarial review', () => {
+    it('a segment the user stopped (ABORTED) goes to a person without judging', async () => {
+      const t = await setup();
+      t.c.set(SID, { goal: 'g', done: 'd' });
+      await t.c.settled();
+      t.env.verdicts.push(cont('다음'));
+      await t.idle(digest({ failure: { ok: false, errorText: '중단됨', kind: 'other' } }));
+      expect(t.judged).toHaveLength(0);
+      expect(t.sends).toHaveLength(1);
+      expect(t.state()).toMatchObject({ status: 'waiting_human' });
+    });
+
+    it('a booked retry of an auto turn: one push and a note with its time; cleared once the segment is judged', async () => {
+      let now = Date.parse('2026-10-18T01:00:00Z');
+      const t = await setup({ now: () => now });
+      t.c.set(SID, { goal: 'g', done: 'd' });
+      await t.c.settled();
+      const at = now + 3 * 3600_000;
+      const hhmm = new Date(at).toTimeString().slice(0, 5);
+      t.c.retryBooked(SID, at);
+      t.c.retryBooked(SID, at);
+      expect(t.pushes).toEqual([expect.objectContaining({ kind: 'commander', body: expect.stringContaining(`자동 재시도 예정(${hhmm})`) })]);
+      expect(t.state()).toMatchObject({ status: 'running', note: `자동 재시도 예정(${hhmm})` });
+      expect(t.broadcasts.at(-1)).toMatchObject({ note: `자동 재시도 예정(${hhmm})` });
+      // A booking already due, or a commander not running: nothing.
+      t.c.retryBooked(SID, now - 1);
+      expect(t.pushes).toHaveLength(1);
+      now = at;
+      t.env.verdicts.push(cont('다음'));
+      await t.idle();
+      expect(t.state().status).toBe('running');
+      expect(t.state().note).toBeUndefined();
+      t.c.pause(SID, t.state().epoch);
+      t.c.retryBooked(SID, now + 60_000);
+      expect(t.pushes).toHaveLength(1);
+    });
+
+    it.each(['stop', 'pause'] as const)('%s drops a booked retry of an auto turn (a person\'s booking stays)', async (op) => {
+      const t = await setup();
+      t.c.set(SID, { goal: 'g', done: 'd' });
+      await t.c.settled();
+      await t.store.set({ ...t.store.get(SID)!, pendingRetry: { text: 'x', atMs: 1, hops: 1, commanderHop: 1 } });
+      t.c[op](SID, t.state().epoch);
+      expect(t.store.get(SID)).not.toHaveProperty('pendingRetry');
+      const u = await setup();
+      u.c.set(SID, { goal: 'g', done: 'd' });
+      await u.c.settled();
+      await u.store.set({ ...u.store.get(SID)!, pendingRetry: { text: 'x', atMs: 1, hops: 1 } });
+      u.c[op](SID, u.state().epoch);
+      expect(u.store.get(SID)?.pendingRetry).toBeDefined();
+    });
+
+    it('set drops a leftover booked retry of an earlier commander before deciding to send', async () => {
+      const t = await setup({ state: claudeState({ pendingRetry: { text: 'x', atMs: 1, hops: 1, commanderHop: 3 } }) });
+      t.c.set(SID, { goal: 'g', done: 'd' });
+      await t.c.settled();
+      expect(t.store.get(SID)).not.toHaveProperty('pendingRetry');
     });
   });
 

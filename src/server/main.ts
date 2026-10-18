@@ -149,6 +149,8 @@ async function main(): Promise<void> {
     vapid: await loadOrCreateVapid(cfg.vapidFile),
     subject: cfg.vapidSubject ?? (dnsName ? `https://${dnsName}` : 'mailto:deck@localhost.localdomain'),
     titleOf,
+    // 자동 턴 결과는 사령탑이 실제로 돌 때만 사령탑에 맡긴다(paused·stopped 뒤 끝난 자동 턴은 여느 턴처럼).
+    commanderQuiet: (sessionId) => commander.quiet(sessionId),
   });
   // 하이라이트: what push would announce (plus restart cuts and server start/drain), kept 7 days in events.jsonl.
   const events = new EventLog(path.join(cfg.configDir, 'events.jsonl'), { titleOf });

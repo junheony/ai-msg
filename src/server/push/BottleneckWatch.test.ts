@@ -250,6 +250,14 @@ describe('BottleneckWatch · 사령탑이 맡은 세션', () => {
     expect(c.store.get('s1')?.blocked).toBeDefined();
   });
 
+  it('retryDue drops a booking older than the stale limit instead of firing it (same rule as rearm)', async () => {
+    const c = await setup();
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() - 13 * 3600_000, hops: 1 } }));
+    c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(0);
+    expect(c.store.get('s1')).not.toHaveProperty('pendingRetry');
+  });
+
   it('retryDue fires a due booking at once (its timer fired into a busy session); a future one waits', async () => {
     const c = await setup();
     await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 5 * MIN, hops: 1 } }));

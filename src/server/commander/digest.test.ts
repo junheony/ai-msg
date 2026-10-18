@@ -114,6 +114,24 @@ describe('SegmentCollector', () => {
     const d = new SegmentCollector(CWD).digest('d');
     expect(d).toMatchObject({ turns: 0, summary: '', changedFiles: [], testRuns: [], failure: { ok: false, errorText: null, kind: null } });
     expect(d.signature.startsWith('-.0.')).toBe(true);
+    expect(d.retries).toBe(0);
+  });
+
+  it('internal retries: cap · failover · retry sub-turns count, background continuations (`:bg<n>`) do not', () => {
+    const c = new SegmentCollector(CWD);
+    const r = (turnId: string) => c.add({ type: 'turn_result', turnId, ok: true, text: '', errorText: null });
+    r('u:cmd1');
+    r('u:cmd1:bg1');
+    r('u:cmd1:bg2');
+    expect(c.digest('d').retries).toBe(0);
+    r('u:cmd1:cap1');
+    // A background segment cut by a limit and moved to another account (turn_retry, then its turn_result) is a failover.
+    c.add({ type: 'turn_retry', turnId: 'u:cmd1:bg3' });
+    r('u:cmd1:bg3');
+    r('v:cmd1');
+    const d = c.digest('d');
+    expect(d.turns).toBe(6);
+    expect(d.retries).toBe(3);
   });
 });
 

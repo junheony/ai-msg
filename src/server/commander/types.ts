@@ -53,6 +53,8 @@ export type SegmentDigest = {
   digestId: string;
   /** 세그먼트 안 `turn_result` 수(cap·bg failover·retry 하위 턴 포함). */
   turns: number;
+  /** 그중 내부 재시도 하위 턴 수(cap·failover·retry — 첫 턴과 bg 이어가기 `:bg<n>` 제외). */
+  retries: number;
   /** 마지막 `turn_result.text` 머리+꼬리, ≤ 4,000자. */
   summary: string;
   /** cwd 기준 상대 경로, ≤ 40개. */

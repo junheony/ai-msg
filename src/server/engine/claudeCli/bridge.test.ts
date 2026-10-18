@@ -1,6 +1,6 @@
 // src/server/engine/claudeCli/bridge.test.ts
 import fs from 'node:fs';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { CLOSED_HOOK_WAIT_MS, PermissionBridge, type BridgeHandlers } from './bridge';
 import { HOOK_TIMEOUT_S } from './args';
 import { CLOSED_RELAY_DEADLINE_MS } from './hookRelay';
@@ -85,10 +85,12 @@ describe('PermissionBridge', () => {
     bridge = await PermissionBridge.open();
     const N = 20;
     let aborted = 0;
-    const regs = Array.from({ length: N }, () => bridge!.register({ ...allowAll, permission: (_c, signal) => new Promise((resolve) => signal.addEventListener('abort', () => { aborted++; resolve({ behavior: 'deny', message: 'aborted' }); }, { once: true })) }));
+    let entered = 0;
+    const regs = Array.from({ length: N }, () => bridge!.register({ ...allowAll, permission: (_c, signal) => { entered++; return new Promise((resolve) => signal.addEventListener('abort', () => { aborted++; resolve({ behavior: 'deny', message: 'aborted' }); }, { once: true })); } }));
     expect(bridge.registrations).toBe(N);
     const pending = regs.map((r) => postBridge(r.socketPath, r.token, '/v1/permission', call));
-    await new Promise((r) => setTimeout(r, 50));
+    // Every request in flight before disposing (a fixed sleep raced on a loaded machine).
+    await vi.waitFor(() => expect(entered).toBe(N), { timeout: 10_000 });
     for (const r of regs) r.dispose();
     for (const r of regs) r.dispose(); // idempotent
     await Promise.all(pending);

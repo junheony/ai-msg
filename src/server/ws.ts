@@ -192,6 +192,8 @@ export type WsCommander = {
   cardAnswered(sessionId: string): void;
   /** ws released the session (busy off, nothing waiting in afterRelease, no booked retry): one call per segment. */
   onSessionIdle(sessionId: string, digest: SegmentDigest): void | Promise<void>;
+  /** The session went idle with an automatic turn's retry booked for `atMs` (the segment stays open until it runs). */
+  retryBooked?(sessionId: string, atMs: number): void;
 };
 
 /** A server-made send: an automatic retry (BottleneckWatch) or a commander instruction (Commander). */
@@ -852,7 +854,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           return;
         }
         record(turn, m);
-        if (m.type === 'tool_call' || m.type === 'tool_result' || m.type === 'sub_tool_call' || m.type === 'sub_tool_result' || m.type === 'turn_result') {
+        if (m.type === 'tool_call' || m.type === 'tool_result' || m.type === 'sub_tool_call' || m.type === 'sub_tool_result' || m.type === 'turn_result' || m.type === 'turn_retry') {
           const sid = m.sessionId ?? turn.sessionId;
           if (sid) segments.get(sid)?.add(m);
         }
@@ -984,6 +986,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const sessionIdle = (sid: string) => {
     if (deps.store.get(sid)?.pendingRetry) {
       try { deps.retryDue?.(sid); } catch (err) { console.error('deck: retry at idle failed', errMsg(err)); }
+      // Still booked (not due yet): an automatic turn's retry may be hours away — the commander says so once.
+      const left = deps.store.get(sid)?.pendingRetry;
+      if (left?.commanderHop && !busy.has(sid)) {
+        try { deps.commander?.retryBooked?.(sid, left.atMs); } catch (err) { console.error('deck: commander retry hook failed', errMsg(err)); }
+      }
       return;
     }
     const seg = segments.get(sid);
@@ -1017,6 +1024,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const { pendingRetry: _drop, ...rest } = st;
           void deps.store.set(rest as typeof st).catch((err: unknown) => console.error('deck: retry booking drop failed', errMsg(err)));
         }
+        // The booking held the segment open (and the session busy): it ends here, so an armed commander goes on.
+        if (!busy.has(sessionId)) sessionIdle(sessionId);
         return false;
       }
       if (!segments.has(sessionId)) segments.set(sessionId, new SegmentCollector(cwd));
@@ -1226,6 +1235,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'interrupt': {
           // A continuation's or follow-up's id stops the process it runs in (and its background work).
           const base = baseOf(msg.turnId);
+          // A person stopping a turn is a person acting (총사령탑: pause — the stopped auto turn is not judged into the next one).
+          const sid = turns.get(base)?.sessionId;
+          if (sid) userSent(sid);
           turns.get(base)?.ac.abort();
           for (const id of new Set([msg.turnId, base])) { broker.cancelTurn(id); questions.cancelTurn(id); }
           break;

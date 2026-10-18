@@ -9,6 +9,7 @@ import type { PermMode } from '../../shared/permission';
 import { hashInput, type AuditEntry } from '../audit';
 import type { PushPayload } from '../push/PushNotifier';
 import { isCodexState, isGeminiState, type SessionState } from '../turn/SessionState';
+import { ABORTED } from '../turn/TurnRunner';
 import { doneEvidenceOk } from './digest';
 import type { JudgeInput, JudgeResult } from './Judge';
 import { screenInstruction } from './rules';
@@ -29,7 +30,8 @@ export type CommanderSendRequest = { kind: 'commander'; sessionId: string; cwd: 
 export type CommanderResult = { ok: true } | { ok: false; code: RefusalCode | 'not_found'; message: string };
 
 export type CommanderDeps = {
-  store: { get(id: string): SessionState | null; list(): SessionState[]; setCommander(id: string, c: CommanderState | undefined): Promise<boolean> };
+  /** `set`: 자동 턴의 재시도 예약(pendingRetry.commanderHop)을 지울 때만. */
+  store: { get(id: string): SessionState | null; list(): SessionState[]; setCommander(id: string, c: CommanderState | undefined): Promise<boolean>; set(s: SessionState): Promise<void> };
   /** 판정 한 건(절대 throw 하지 않는다) + 판정을 돌린 계정(못 골랐으면 null). */
   judge: (input: JudgeInput, sessionId: string) => Promise<JudgeResult & { account: string | null }>;
   /** ws.submitServerSend — 동기로 수락(true)·거절(false). */
@@ -53,6 +55,7 @@ export type CommanderDeps = {
 };
 
 const clip = (s: string, max: number) => { const t = s.trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t; };
+const hhmm = (ms: number) => new Date(ms).toTimeString().slice(0, 5);
 
 export class Commander {
   private readonly now: () => number;
@@ -115,6 +118,7 @@ export class Commander {
     const budget: CommanderBudget = { maxAutoTurns: maxTurns, autoTurnsUsed: 0, maxTokens: lim.tokenCap, tokensUsed: 0, maxWallClockMs: DEFAULT_WALL_CLOCK_MS, maxInternalRetries: DEFAULT_MAX_INTERNAL_RETRIES, internalRetriesUsed: 0 };
     const c: CommanderState = { goal: a.goal, done: a.done, maxTurns, hop: 0, epoch: (prev?.epoch ?? 0) + 1, status: 'armed', startedAtMs: this.now(), budget, lastVerdicts: [], processedDigestIds: [], signatures: [] };
     void this.save(sessionId, c);
+    this.dropRetry(sessionId);
     // 턴 중이면 그 턴은 사용자 턴: idle 이 된 뒤(onSessionIdle) 첫 지시부터.
     if (!this.deps.isBusy(sessionId)) void this.enqueue(sessionId, () => this.sendInstruction(sessionId, c.epoch, firstInstruction(c)));
     return { ok: true };
@@ -129,6 +133,7 @@ export class Commander {
     const next: CommanderState = { ...c, status: 'stopped', epoch: c.epoch + 1, note: '정지됨' };
     delete next.pausedBy;
     void this.save(sessionId, next);
+    this.dropRetry(sessionId);
     this.notify(sessionId, '사령탑 · 정지됨');
     return { ok: true };
   }
@@ -139,6 +144,7 @@ export class Commander {
     if (bad || !c) return bad ?? notFound();
     if (!ACTIVE_STATUSES.includes(c.status) || c.status === 'paused') return { ok: true };
     void this.save(sessionId, { ...c, status: 'paused', epoch: c.epoch + 1, pausedBy: 'user', note: '일시 정지' });
+    this.dropRetry(sessionId);
     return { ok: true };
   }
 
@@ -172,6 +178,19 @@ export class Commander {
     delete next.pausedBy;
     delete next.note;
     void this.save(sessionId, next);
+  }
+
+  /**
+   * 자동 턴이 한도로 실패해 재시도가 예약된 채 세션이 쉬었다(ws: 그 예약이 세그먼트를 열어 둬 판정은 재시도 뒤로 밀린다):
+   * 몇 시간 조용하지 않게 예약 시각을 사유(note)에 남기고 푸시 1회. 같은 예약을 다시 알리지 않는다.
+   */
+  retryBooked(sessionId: string, atMs: number): void {
+    const c = this.get(sessionId);
+    if (!c || c.status !== 'running' || atMs <= this.now()) return;
+    const note = `자동 재시도 예정(${hhmm(atMs)})`;
+    if (c.note === note) return;
+    void this.save(sessionId, { ...c, note });
+    this.notify(sessionId, `사령탑 · 한도에 걸려 ${note}`);
   }
 
   // ── 서버 이벤트 ─────────────────────────────────────────────
@@ -273,14 +292,19 @@ export class Commander {
     let c = this.get(sessionId);
     if (!c || c.epoch !== epoch || c.status !== 'running') return;
     if (c.processedDigestIds.includes(digest.digestId)) return;
-    // digestId 를 먼저 남긴 뒤 행동한다(같은 digest 두 번 판정 없음). 세그먼트 안 하위 턴(cap·failover·retry)은 내부 재시도로 센다.
+    // digestId 를 먼저 남긴 뒤 행동한다(같은 digest 두 번 판정 없음). 세그먼트 안 하위 턴(cap·failover·retry)은 내부 재시도로 센다
+    // (bg 이어가기는 정상 작업이라 세지 않는다 — digest.retries).
+    // running 의 사유는 재시도 예약 알림(retryBooked)뿐 — 세그먼트가 끝났으니 지운다.
+    const { note: _retryNote, ...rest } = c;
     c = {
-      ...c, status: 'judging',
+      ...rest, status: 'judging',
       processedDigestIds: [...c.processedDigestIds, digest.digestId].slice(-8),
       signatures: [...c.signatures, digest.signature].slice(-3),
-      budget: { ...c.budget, internalRetriesUsed: c.budget.internalRetriesUsed + Math.max(0, digest.turns - 1) },
+      budget: { ...c.budget, internalRetriesUsed: c.budget.internalRetriesUsed + digest.retries },
     };
     await this.save(sessionId, c);
+    // 사용자가 ■중단한 세그먼트(ws 는 개입으로도 알린다 — 이중 방어): 판정하지 않고 사람에게.
+    if (digest.failure.errorText === ABORTED) { this.toHuman(sessionId, c, '사용자가 자동 턴을 중단했습니다'); return; }
     if (digest.turns === 0) { this.toHuman(sessionId, c, '자동 턴이 실행되지 않았습니다'); return; }
     // 예산이 이미 넘었으면 판정 비용도 쓰지 않는다.
     const over = hardOver(c, this.now());
@@ -314,6 +338,14 @@ export class Commander {
     const why = continueBlock(judged, v, r.failed, at);
     if (why) { this.toHuman(sessionId, judged, why); return; }
     await this.sendInstruction(sessionId, epoch, v.next!);
+  }
+
+  /** 정지·일시 정지·새로 걸기: 자동 턴의 재시도 예약은 사령탑과 함께 간다(남으면 isBusy 가 armed 의 첫 지시를 막는다). */
+  private dropRetry(sessionId: string): void {
+    const st = this.deps.store.get(sessionId);
+    if (!st?.pendingRetry?.commanderHop) return;
+    const { pendingRetry: _drop, ...rest } = st;
+    void this.deps.store.set(rest as SessionState).catch((err: unknown) => console.error('deck: 총사령탑 재시도 예약 삭제 실패', err instanceof Error ? err.message : err));
   }
 
   private toHuman(sessionId: string, c: CommanderState, reason: string): void {

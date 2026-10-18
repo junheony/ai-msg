@@ -128,6 +128,8 @@ export class BottleneckWatch {
     if (!r || r.atMs > this.now()) return;
     const t = this.retries.get(sessionId);
     if (t !== undefined) this.clearTimer(t);
+    // Same rule as rearm: a booking this old (e.g. kept while background work held the process for hours) is dropped.
+    if (this.now() - r.atMs > RETRY_STALE_MS) { this.retries.delete(sessionId); this.strip(sessionId, 'pendingRetry'); return; }
     this.fireRetry(sessionId);
   }
 
