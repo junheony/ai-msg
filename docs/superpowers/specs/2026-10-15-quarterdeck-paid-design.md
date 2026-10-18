@@ -17,9 +17,9 @@
 
 ## 1. 제품 정의
 
-**한 줄(영어 랜딩용)**: *Quarterdeck — the cockpit for your local coding agents. Claude Code, Codex and Gemini in one place, from your desk or your phone, and they don't stop when you step away.*
+**한 줄(영어 랜딩용)**: *Quarterdeck — the cockpit for your local coding agents. Claude Code, Codex, Gemini and Grok in one place, from your desk or your phone, and they don't stop when you step away.*
 
-**사용자**: Claude Code·Codex CLI·Gemini CLI 중 둘 이상(또는 한 벤더의 구독 둘 이상)을 쓰며, 긴 에이전트 작업을 돌려 놓고 자리를 비우는 개인 개발자. 결제력 있음(월 $100~400 의 AI 구독).
+**사용자**: Claude Code·Codex CLI·Gemini(Antigravity) CLI·Grok Build CLI 중 둘 이상(또는 한 벤더의 구독 둘 이상)을 쓰며, 긴 에이전트 작업을 돌려 놓고 자리를 비우는 개인 개발자. 결제력 있음(월 $100~400 의 AI 구독).
 
 **핵심 약속**
 1. 한 화면에서 여러 세션(분할 패널·떠 있는 카드), 여러 벤더, 여러 계정의 상태·사용량.
@@ -64,6 +64,7 @@
 - Claude 엔진은 `@anthropic-ai/claude-agent-sdk` 0.3.285 로 구독 계정을 돌린다. SDK 는 `CLAUDE_CODE_ENTRYPOINT=sdk-ts`, `CLAUDE_AGENT_SDK_VERSION` 을 붙여 서버 쪽에서 SDK 호출로 식별 가능 → **금지 문구에 해당하는 조합**.
 - Claude 사용량 카드는 별도 로컬 서비스(usage-deck)가 `api.anthropic.com/api/oauth/usage` 를 구독 OAuth 토큰으로 직접 호출 → **가장 민감**.
 - Codex(`codex exec --json`)·Gemini(`agy -p --output-format stream-json`)는 공식 CLI 서브프로세스 → 문제 없음.
+- Grok(2026-10-18 추가): 공식 Grok Build CLI 를 `grok agent --no-leader stdio`(ACP)로 띄운다. 로그인은 사용자가 `grok login` 으로 직접 하고, deck 은 `~/.grok/auth.json` 을 읽지 않는다. 같은 구조라 정책상 Codex·Gemini 와 같은 자리로 보지만, xAI 약관의 서드파티 래핑 조항은 미확인(§11).
 
 ### 설계 규칙 (출시 전 필수)
 1. **Claude 는 사용자가 설치한 공식 `claude` 바이너리만** 띄운다(`-p --output-format stream-json --input-format stream-json --include-partial-messages --permission-prompts host` 등). SDK 패키지·번들 바이너리 제거. 로그인은 사용자가 터미널에서 `claude` 로 직접 한다. deck 은 `CLAUDE_CONFIG_DIR` 로 프로필을 고를 뿐 토큰 파일을 읽지 않는다.
@@ -71,14 +72,14 @@
 3. **같은 벤더 계정 자동 순환은 기본 꺼짐.** 설정에서 켤 때 "본인이 결제하는 본인 계정에만 쓰며, 공유·재판매·한도 회피 목적 계정 생성은 각 제공자 약관 위반" 문구에 동의. **벤더 간 인계**(Claude→Codex/Gemini)는 기본 켜짐.
 4. 마케팅 금지어: "한도 우회", "무제한", "할당량 100%". 허용: "runs Claude Code", "reuses the subscriptions you already pay for".
 5. 벤더 전환은 **체크포인트 기반 인계**로 표시(실행 중 도구 호출의 무손실 재개를 약속하지 않음 — 중복 실행 위험).
-6. **사용자가 할 일**: Anthropic 영업/법무에 이 구조(미변조 CLI, 사용자 직접 로그인, 토큰 비접촉, 선택적 다계정)로 서면 확인 요청. OpenAI 도 동일 문의.
+6. **사용자가 할 일**: Anthropic 영업/법무에 이 구조(미변조 CLI, 사용자 직접 로그인, 토큰 비접촉, 선택적 다계정)로 서면 확인 요청. OpenAI·xAI 도 동일 문의.
 
 ## 4. 티어
 
 | | Community (MIT) | Pro ($15/월) |
 |---|---|---|
 | 세션·패널·카드·배치 프리셋 | ✓ | ✓ |
-| 벤더 | Claude·Codex·Gemini 각 **1계정** | **계정 무제한**(벤더당 N) + 통합 사용량 대시보드 |
+| 벤더 | Claude·Codex·Gemini·Grok 각 **1계정** | **계정 무제한**(벤더당 N) + 통합 사용량 대시보드 |
 | 벤더 간 인계(한도 시) | 수동(안내만) | **자동**(요약 컨텍스트 전달) |
 | 병목 알림(권한·질문·실패 재알림), 리셋 시각 자동 재시도 | ✗ | ✓ |
 | 원격 접속 | 같은 네트워크(LAN)·사용자 자체 Tailscale | **릴레이 + 웹 푸시**, 기기 3대 |
@@ -96,7 +97,7 @@ Team(공유 계정 풀·관리자)은 Pro 지표 확인 뒤. 라이선스 우회
 [폰 브라우저/PWA] ──TLS──▶ [Relay: Cloudflare Durable Objects] ◀──outbound WS── [사용자 Mac: quarterdeck 로컬 서버]
                                    │                                                   │
                                    ▼                                                   ▼
-                           [Cloud API: 계정·entitlement·푸시·기기]            [claude / codex / agy CLI 서브프로세스]
+                           [Cloud API: 계정·entitlement·푸시·기기]            [claude / codex / agy / grok CLI 서브프로세스]
                                    ▲
                                    │ webhooks
                               [Paddle (MoR)]
@@ -150,7 +151,7 @@ Team(공유 계정 풀·관리자)은 Pro 지표 확인 뒤. 라이선스 우회
 - Pro 기능별 사용 빈도(병목 알림 해소 수, 자동 재시도 성공률, 벤더 간 인계 수).
 
 ## 9. 리스크
-1. **정책 집행**: Anthropic 이 CLI 래퍼까지 막으면 Claude 축이 무너짐 → 서면 확인, Codex·Gemini 축 유지, 공식 Remote Control 과의 공존 설계.
+1. **정책 집행**: Anthropic 이 CLI 래퍼까지 막으면 Claude 축이 무너짐 → 서면 확인, Codex·Gemini·Grok 축 유지, 공식 Remote Control 과의 공존 설계.
 2. **무료 대체재(Happy·공식 원격)**: 릴레이는 포함 기능일 뿐, 자동화 층으로 차별화. 사용자 10명 비교 테스트.
 3. **인계 중 중복 실행·원격 명령 보안**: 체크포인트 인계, E2EE, 푸시 무해화.
 4. **1인 운영 부담**: Workers/DO 로 서버 운영 최소화, MoR 로 세무 제거.
@@ -170,3 +171,5 @@ Team(공유 계정 풀·관리자)은 Pro 지표 확인 뒤. 라이선스 우회
 - Terragon 종료 여부(랜딩 비교표에 넣지 않음).
 - DO Hibernation 하의 실제 비용(부하 테스트).
 - Happy 의 Gemini 지원 여부.
+- xAI(Grok) 약관: 구독 로그인한 공식 CLI 를 다른 제품이 서브프로세스로 띄우는 것이 허용되는지, 같은 벤더 다계정(`~/.grok-x2`) 조항. 서면 확인 대상에 xAI 추가.
+- Grok 구독 사용량을 공식으로 읽는 경로(`grok usage` 는 세션별 토큰·비용만). 없으면 Grok 카드는 로그인 상태·턴 토큰·관측된 한도 오류만 보인다.
