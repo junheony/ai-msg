@@ -82,7 +82,12 @@ export type TurnParams = {
    * `mcp__*` ask unless allowlisted, hooks fail closed). Carried to the cap continuation and the failover turn it spawns.
    */
   commanderHop?: number;
+  /** Server-internal (총사령탑 §6): appended to this turn's systemNote ("deck 총사령탑 자동 지시 n/상한 — …"). The first turn only, not its cap / failover continuations. */
+  commanderNote?: string;
 };
+
+/** A commanderHop turn on a Codex/Gemini session (총사령탑 v1 = Claude only): refused, never run ungated. */
+export const COMMANDER_ENGINE_REFUSED = '총사령탑 자동 턴은 Claude 세션에서만 실행됩니다';
 
 /** The background wait limit (ClaudeEngine bgMaxMs) cutting work → at most this many continuations deck sends by itself in a row (continueAfterCap). */
 export const MAX_BG_CAP_HOPS = 2;
@@ -1356,6 +1361,8 @@ export class TurnRunner {
         state = { sessionId: e.sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL };
       }
     }
+    // 총사령탑: the gate lives in the Claude engine's hooks only — an automatic turn never reaches another engine.
+    if (p.commanderHop !== undefined && state && (isCodexState(state) || isGeminiState(state))) { sink.emit({ type: 'error', turnId: p.turnId, message: COMMANDER_ENGINE_REFUSED }); return; }
     if (state && isCodexState(state)) return this.runCodex(p, state, sink, 'GPT 세션', attachments, notice);
     if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments);
     // Gemini is explicit only: chooseEngine (자동) never sees it.
@@ -1685,6 +1692,7 @@ export class TurnRunner {
       }
     }
     if (!state?.sessionId && !forkAt && !p.handoff) systemNote = systemNote ? `${systemNote}\n\n${DECK_INTRO_NOTE}` : DECK_INTRO_NOTE;
+    if (p.commanderNote) systemNote = systemNote ? `${systemNote}\n\n${p.commanderNote}` : p.commanderNote;
     if (p.retryHop) early.unshift(AUTO_RETRY_NOTICE);
     const pinMark = () => (byPin ? { pinned: true } : {});
 

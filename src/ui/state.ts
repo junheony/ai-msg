@@ -982,6 +982,8 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       return applySettings({ ...state, connected: true, disconnectedSince: null, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
     }
     case 'settings': return applySettings(state, msg.settings);
+    // 총사령탑: shown from stage 6 (CommanderChip); nothing kept yet.
+    case 'commander': return state;
     // A mode the user picked before the id arrived wins: it is on its way to the server.
     case 'permission_mode': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId && !p.session.permissionModePending ? { ...p, session: { ...p.session, permissionMode: msg.mode } } : p)) };
     case 'account_pin': return { ...state, panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, session: { ...p.session, accountPin: msg.pin } } : p)) };

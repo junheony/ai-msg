@@ -1,7 +1,6 @@
 /**
  * 총사령탑(commander) 타입 — `docs/superpowers/specs/2026-10-18-commander-design.md` §4·§6.
- * 2단계까지 digest.ts·signature.ts·Judge.ts 가 들어왔고(아직 TurnRunner·ws 에 연결 안 됨),
- * 실행 차단·상태 머신(§6 의 rules.ts·Commander.ts)은 이후 단계에서 들어온다.
+ * 상태 머신은 Commander.ts, 세그먼트 누적은 digest.ts(ws 가 이벤트를 넣는다), 판정기는 Judge.ts.
  */
 
 /** §4 상태 머신의 노드. */
@@ -89,7 +88,12 @@ export type CommanderState = {
   processedDigestIds: string[];
   /** 최근 3건. */
   signatures: string[];
+  /** 멈춘 원인: 'user'(send·steer·일시 정지 탭) · 'card'(권한·질문 카드 — 답하면 자동 재개) · 'restart' · 'check'(판정·검사·예산). */
   pausedBy?: string;
+  /** 마지막 판정이 반영된 시각(ms). */
+  verdictAtMs?: number;
+  /** 칩·푸시에 쓰는 한 줄(사람 필요 이유, 재시작으로 끊김 …). */
+  note?: string;
 };
 
 function isBudget(v: unknown): v is CommanderBudget {
@@ -143,6 +147,8 @@ export function isCommanderState(v: unknown): v is CommanderState {
     (c.sendKey === undefined || typeof c.sendKey === 'string') &&
     isStringArray(c.processedDigestIds) &&
     isStringArray(c.signatures) &&
-    (c.pausedBy === undefined || typeof c.pausedBy === 'string')
+    (c.pausedBy === undefined || typeof c.pausedBy === 'string') &&
+    (c.note === undefined || typeof c.note === 'string') &&
+    (c.verdictAtMs === undefined || typeof c.verdictAtMs === 'number')
   );
 }

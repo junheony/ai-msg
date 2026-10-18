@@ -10,7 +10,8 @@ export const HIGHLIGHT_KEEP_MS = 7 * 24 * 3600_000;
 const BODY_MAX = 140;
 /** A second 'interrupted' for the same session this soon is the same restart (a turn_result and its cut notice). */
 const INTERRUPTED_DEDUPE_MS = 10_000;
-const KINDS: readonly HighlightKind[] = ['turn', 'permission', 'question', 'task', 'interrupted', 'server'];
+const VERDICT_LABEL = { continue: '계속', human: '사람 필요', done: '완료' } as const;
+const KINDS: readonly HighlightKind[] = ['turn', 'permission', 'question', 'task', 'interrupted', 'server', 'commander'];
 
 function clip(s: string, max: number): string {
   const t = s.trim();
@@ -36,8 +37,13 @@ export function selectEvent(msg: ServerMessage, titleOf: (sessionId: string | nu
   if (msg.type === 'turn_notice' && msg.message.startsWith(SHUTDOWN_CUT_NOTICE)) {
     return { at, kind: 'interrupted', sessionId: msg.sessionId, cwd: msg.cwd, title: titleOf(msg.sessionId, msg.cwd) || 'deck', body: clip(msg.message, BODY_MAX) };
   }
+  // 총사령탑 판정 한 건(Commander 가 판정마다 한 번 넘긴다 — 상태 방송은 여기로 오지 않는다).
+  if (msg.type === 'commander') {
+    if (!msg.lastVerdict) return null;
+    return { at, kind: 'commander', sessionId: msg.sessionId, cwd: '', title: titleOf(msg.sessionId, '') || 'deck', body: clip(`사령탑 ${VERDICT_LABEL[msg.lastVerdict.verdict]} · ${msg.lastVerdict.reason}`, BODY_MAX) };
+  }
   const p = selectPush(msg, titleOf);
-  if (!p || p.kind === 'test') return null;
+  if (!p || p.kind === 'test' || p.kind === 'commander') return null;
   const cwd = 'cwd' in msg && typeof msg.cwd === 'string' ? msg.cwd : '';
   if (msg.type === 'turn_result') {
     // The user's own stop: neither a result nor a failure worth remembering.

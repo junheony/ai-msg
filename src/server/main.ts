@@ -19,7 +19,7 @@ import { ServerUpdateWatch, supervisionCheck } from './serverUpdate';
 import { installCrashHandlers } from './crash';
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
 import { EventLog } from './highlights';
-import { BottleneckWatch } from './push/BottleneckWatch';
+import { BottleneckWatch, type RetryRequest } from './push/BottleneckWatch';
 import { PushNotifier } from './push/PushNotifier';
 import { readAllCooldownsMs } from './routing/cooldown';
 import { SubscriptionStore } from './push/SubscriptionStore';
@@ -39,9 +39,14 @@ import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { GeminiUsagePoller } from './usage/GeminiUsagePoller';
 import { UsageIndex } from './usage/UsageIndex';
 import { UsageService } from './usage/UsageService';
-import { attachWebSocket } from './ws';
+import { attachWebSocket, type ServerSend } from './ws';
+import { recordAudit } from './audit';
+import { Commander } from './commander/Commander';
+import { judge } from './commander/Judge';
+import { isCodexState, isGeminiState } from './turn/SessionState';
 import { GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
 import type { PermMode } from '../shared/permission';
+import type { ServerMessage } from '../shared/protocol';
 
 async function main(): Promise<void> {
   // When this process started: code edited later is what a restart would bring in.
@@ -148,13 +153,42 @@ async function main(): Promise<void> {
   // 하이라이트: what push would announce (plus restart cuts and server start/drain), kept 7 days in events.jsonl.
   const events = new EventLog(path.join(cfg.configDir, 'events.jsonl'), { titleOf });
   // 병목 알림: unanswered cards and failed turns pushed again later; 대안 계정 없음 retries fired through the socket layer's send path.
-  let submitRetry: (r: { sessionId: string; cwd: string; text: string; hop: number }) => void = () => {};
+  let submitRetry: (r: RetryRequest) => void = () => {};
   const watch = new BottleneckWatch({
     sendPush: (payload) => { void push.sendAll(payload); },
     titleOf,
     store,
     earliestCooldownMs: () => { const v = Object.values(readAllCooldownsMs(cfg.cooldownDir, Date.now(), accounts.list())).filter((x): x is number => x !== undefined); return v.length ? Math.min(...v) : null; },
     retry: (r) => submitRetry(r),
+    // 총사령탑이 맡은 세션의 실패는 사령탑이 사람 필요로 푸시한다(설계 §5 중복 푸시).
+    quiet: (sessionId) => commander.quiet(sessionId),
+  });
+  // 총사령탑: ws 가 생긴 뒤 묶이는 전송·busy·방송.
+  let serverSend: (r: ServerSend) => boolean = () => false;
+  let sessionBusy: (sessionId: string) => boolean = () => true;
+  let broadcastAll: (m: ServerMessage) => void = () => {};
+  const commander = new Commander({
+    store,
+    judge: async (input, sessionId) => {
+      const st = store.get(sessionId);
+      if (!st || isCodexState(st) || isGeminiState(st) || !cfg.claudeBin.ok) {
+        return { verdict: { verdict: 'human', reason: '판정기를 실행할 수 없습니다', confidence: 'low' }, failed: true, usage: null, account: null };
+      }
+      // 고정 계정이 있거나 같은 계열 회전이 꺼져 있으면 세션 계정, 아니면 sonnet 라우팅이 고를 계정(§3).
+      const account = st.accountPin || !settings.get().sameVendorRotation ? st.account : (runner.previewRoute(sessionId, 'sonnet')?.account ?? st.account);
+      const r = await judge(input, accounts.env(account, process.env), { bin: cfg.claudeBin.bin, configDir: cfg.configDir });
+      return { ...r, account };
+    },
+    send: (r) => serverSend(r),
+    isBusy: (sessionId) => sessionBusy(sessionId),
+    permissionModeOf: (sessionId) => runner.permissionModeOf(sessionId),
+    push: (payload) => { void push.sendAll(payload); },
+    record: (m) => events.record(m),
+    audit: (e) => { void recordAudit(cfg.auditFile, e); },
+    broadcast: (m) => broadcastAll(m),
+    enabled: () => settings.get().commanderEnabled === true,
+    limits: () => ({ maxTurns: settings.get().commanderMaxTurns ?? 20, tokenCap: settings.get().commanderTokenCap ?? 2_000_000 }),
+    titleOf,
   });
   await events.load();
   const updates = new ServerUpdateWatch({ root: cfg.repoRoot, startedAt });
@@ -165,9 +199,14 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); }, onUserSend: (sessionId) => watch.userSent(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
+  const ws = attachWebSocket(servers, { holders, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
   notifyIndex = () => ws.broadcastIndex();
   submitRetry = (r) => ws.submitRetry(r);
+  serverSend = (r) => ws.submitServerSend(r);
+  sessionBusy = (sessionId) => ws.isBusy(sessionId);
+  broadcastAll = (m) => ws.broadcast(m);
+  // 재시작 전 활성이던 사령탑은 재전송 없이 사람에게(§6) — 재시도 예약을 다시 걸기 전에.
+  commander.restore(store.list());
   watch.rearm(store.list());
   index.onChange = () => notifyIndex();
   notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });
@@ -183,7 +222,7 @@ async function main(): Promise<void> {
   // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
   const shutdown = (reason: string) => {
     console.log(`deck: 종료 (${reason})`);
-    ws.close(); watch.stop(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
+    ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
     // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
     void flushThenExit(() => Promise.all([events.flush(), claude.close()]).then(() => {}), () => process.exit(0));
   };

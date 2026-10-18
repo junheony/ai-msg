@@ -208,6 +208,17 @@ describe('PushNotifier.notify · turn results', () => {
     expect(calls[0]!.body).toBe('실패 · boom');
   });
 
+  it('a commander turn is never pushed by itself (the commander pushes human · done · stop)', async () => {
+    const { n, calls } = await setup();
+    n.notify(started('t1:cmd1'));
+    n.notify({ ...result('t1:cmd1', false), auto: 'commander' } as ServerMessage);
+    n.notify(started('t2'));
+    n.notify(result('t2', false));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls).toHaveLength(1);
+  });
+
   it('a turn deck retried by itself is always pushed, even a quiet success', async () => {
     const { n, calls } = await setup();
     n.notify(started('t1'));

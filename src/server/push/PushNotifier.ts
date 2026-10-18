@@ -4,7 +4,7 @@ import { AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
 import type { PushSub, SubscriptionStore } from './SubscriptionStore';
 import type { VapidKeys } from './vapid';
 
-export type PushKind = 'turn' | 'permission' | 'question' | 'task' | 'test';
+export type PushKind = 'turn' | 'permission' | 'question' | 'task' | 'test' | 'commander';
 
 /** What the service worker receives (sw.js `push` handler). */
 export type PushPayload = { kind: PushKind; title: string; body: string; sessionId: string | null; tag: string };
@@ -140,6 +140,8 @@ export class PushNotifier {
     }
     if (msg.type === 'turn_notice' && msg.message === AUTO_RETRY_NOTICE) { this.autoRetried.add(msg.turnId); return; }
     if (msg.type === 'turn_result') {
+      // 총사령탑 자동 턴의 결과는 사령탑이 판정 뒤 사람 필요·완료·정지일 때만 따로 푸시한다(설계 §7).
+      if (msg.auto === 'commander') { this.started.delete(msg.turnId); this.autoRetried.delete(msg.turnId); return; }
       const at = this.started.get(msg.turnId);
       this.started.delete(msg.turnId);
       const auto = this.autoRetried.delete(msg.turnId);

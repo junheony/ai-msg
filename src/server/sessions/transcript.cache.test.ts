@@ -53,7 +53,8 @@ describe('readTranscript — incremental cache matches a full read', () => {
       await same(f, { maxMessages: 3 });
       await same(f, { maxMessages: 1, maxToolResultChars: 10 });
     }
-  });
+    // ~100 full reads: slow on a loaded machine, and a timed-out run keeps writing into the next test's cache dir.
+  }, 120_000);
 
   it('merges same-id assistant chunks across the cached offset', async () => {
     const f = path.join(await tmp(), 's.jsonl');

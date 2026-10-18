@@ -1,7 +1,7 @@
 /**
  * 총사령탑 3층(실행 중 차단) — 설계 §5. 자동 턴(`commanderHop`)의 PreToolUse 훅이 Bash·`mcp__*` 호출마다 묻는다.
  * 기본은 `ask`(권한 카드), 작은 허용 목록만 `allow`. 순수 함수.
- * 1층 `screenInstruction` 은 상태 머신(4단계)과 함께 들어온다. 읽기 도구 경로 판정(`gateReadTool`)만 realpath 로 디스크를 본다.
+ * 1층 `screenInstruction`(다음 지시 본문 대조, 보조)도 여기 있다. 읽기 도구 경로 판정(`gateReadTool`)만 realpath 로 디스크를 본다.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -329,4 +329,23 @@ export function gateTool(toolName: string, input: unknown, ctx: GateContext): Ga
   if (toolName !== 'Bash') return 'ask';
   const command = input && typeof input === 'object' ? (input as { command?: unknown }).command : undefined;
   return typeof command === 'string' && isAllowedCommand(command, ctx) ? 'allow' : 'ask';
+}
+
+/**
+ * 1층 규칙(보조, §5): 판정기가 고른 다음 지시 본문을 차단 목록과 대조한다. 매치 → 사람에게(`waiting_human`).
+ * 스크립트 간접 실행·변수 치환으로 쉽게 우회되므로 강제 수단이 아니다 — 강제는 3층 `gateTool`.
+ */
+const SCREEN_RE = new RegExp(
+  [
+    '\\bdeploy', '배포', '\\brelease\\b', '\\bpublish', 'rm\\s+-[a-z]*r[a-z]*f|rm\\s+-[a-z]*f[a-z]*r', '삭제', 'drop\\s+table', '\\btruncate\\b', '\\bmigrat',
+    'git\\s+push', 'force.?push', 'reset\\s+--hard', 'git\\s+clean', '결제', '\\bpayment', 'send\\s+(?:an?\\s+)?(?:mail|email|slack)', '\\bcurl\\b', '\\bwget\\b',
+    '외부\\s*(?:전송|발송)', 'gh\\s+pr\\s+merge', '\\bkubectl\\b', '\\bterraform\\b', 'prisma\\s+db\\s+push', '\\bnpm\\s+publish',
+  ].join('|'),
+  'i',
+);
+
+/** 매치한 문구(없으면 null). */
+export function screenInstruction(next: string): string | null {
+  const m = SCREEN_RE.exec(next);
+  return m ? m[0] : null;
 }

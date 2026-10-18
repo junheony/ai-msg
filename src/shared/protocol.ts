@@ -115,6 +115,15 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   /** 복제: the sender gets `session_duplicate` (the session's settings for a new, empty session); nothing is copied yet. */
   z.object({ type: z.literal('duplicate_session'), sessionId: z.string().min(1).max(200) }),
   z.object({ type: z.literal('route_preview'), sessionId: z.string().min(1).max(200).nullable(), cwd: z.string().min(1).max(4096).optional(), model: z.enum(['sonnet', 'opus', 'fable', 'auto']).optional() }),
+  /**
+   * 'commander' servers (총사령탑): arm a goal on an existing Claude session. Refused (`error` with a RefusalCode) while
+   * one is active, on a bypass session, on a non-Claude session, or with the feature off. Answered by a `commander` broadcast.
+   */
+  z.object({ type: z.literal('commander_set'), sessionId: z.string().min(1).max(200), goal: z.string().trim().min(1).max(2000), done: z.string().trim().min(1).max(2000), maxTurns: z.number().int().min(1).max(50).optional() }),
+  /** ■ 정지 / 일시 정지 / 재개 — `epoch` is the one the device last saw; another one is refused (`commander_stale_epoch`). */
+  z.object({ type: z.literal('commander_stop'), sessionId: z.string().min(1).max(200), epoch: z.number().int().min(0) }),
+  z.object({ type: z.literal('commander_pause'), sessionId: z.string().min(1).max(200), epoch: z.number().int().min(0) }),
+  z.object({ type: z.literal('commander_resume'), sessionId: z.string().min(1).max(200), epoch: z.number().int().min(0) }),
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
@@ -129,7 +138,11 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
    * cold cache, failover). false (the default) = a session stays on its account (new ones on the home account) unless the
    * user pins another. Turned on only after the user agrees to the own-accounts-only notice. Absent from older servers.
    */
-  sameVendorRotation?: boolean };
+  sameVendorRotation?: boolean;
+  /** 총사령탑 (settings file only, no screen): off by default; the turn cap a goal gets without one and its token budget. Absent from older servers. */
+  commanderEnabled?: boolean;
+  commanderMaxTurns?: number;
+  commanderTokenCap?: number };
 
 /**
  * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;
@@ -177,8 +190,10 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - highlights: GET /api/highlights answers (세션 하이라이트, events.jsonl).
  * - sessionOps: `set_cwd` (작업 폴더 바꾸기) and `duplicate_session` (복제) are answered; `send.title` is applied.
  * - serverUpdate: GET /api/server-update and POST /api/restart answer (서버 업데이트 대기 · 지금 재시작; `{force:true}` while draining exits now).
+ * - commander: `commander_set|stop|pause|resume` are answered and `commander` is broadcast (총사령탑). Advertised only while
+ *   the settings file turns it on (`commanderEnabled`).
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**
@@ -190,14 +205,27 @@ export type StreamPos = { sid: string; epoch: string; seq: number };
 /** Review I3: every turn-scoped message says which session (null = new, not yet known) and cwd it belongs to. `pos`: once the session has an id ('catchup' servers). */
 type TurnScope = { turnId: string; sessionId: string | null; cwd: string; pos?: StreamPos };
 
+/** 총사령탑 — what a device shows of a session's commander (the `commander` broadcast and SessionFacts.commander). */
+export type CommanderStatusName = 'idle' | 'armed' | 'sending' | 'running' | 'judging' | 'waiting_human' | 'paused' | 'stopped' | 'done';
+export type CommanderView = {
+  state: {
+    status: CommanderStatusName; hop: number; maxTurns: number; epoch: number; goal: string; done: string;
+    budget: { maxAutoTurns: number; autoTurnsUsed: number; maxTokens: number; tokensUsed: number; maxWallClockMs: number; maxInternalRetries: number; internalRetriesUsed: number };
+  };
+  lastVerdict?: { verdict: 'continue' | 'human' | 'done'; reason: string; next?: string; evidence?: { testRunId: string }; atMs: number };
+  /** Why it waits / stopped (사람 필요 · 재시작으로 끊김 · 상한 도달 …), when the server set one. */
+  note?: string;
+};
+
 /** What `history` and `catchup` both say about the session besides its messages. */
-export type SessionFacts = { runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** Claude sessions: the model a send without one runs on (the session's own default; absent: an older server). */ sessionModel?: ClaudeModel; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number; /** The session's newest stream position (absent: no turn since the server started, or an older server). */ pos?: StreamPos };
+export type SessionFacts = { /** 'commander' servers: the session's commander, null when it has none. */ commander?: CommanderView | null; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** Claude sessions: the model a send without one runs on (the session's own default; absent: an older server). */ sessionModel?: ClaudeModel; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number; /** The session's newest stream position (absent: no turn since the server started, or an older server). */ pos?: StreamPos };
 
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
   | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   | { type: 'settings'; settings: DeckSettings }
+  | ({ type: 'commander'; sessionId: string } & CommanderView)
   /** A Claude session's permission mode changed (picker, Shift+Tab, or an approved plan). */
   | { type: 'permission_mode'; sessionId: string; mode: PermMode }
   /** A session's account pin changed (null = 자동). */
@@ -269,7 +297,7 @@ export type ServerMessage =
    * `turnId` names the turn the work belongs to (interrupt it to stop the work).
    */
   | ({ type: 'turn_background'; tasks: string[]; /** Per task: id (for stop_task), type, age. */ detail?: BgTaskInfo[]; /** stop_task works for this turn. */ canStop?: boolean } & TurnScope)
-  | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null; /** The model alias the engine ran this turn on (absent: unknown / an older server). */ model?: string } & TurnScope)
+  | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null; /** The model alias the engine ran this turn on (absent: unknown / an older server). */ model?: string; /** An automatic (총사령탑) turn: no completion push of its own. */ auto?: 'commander' } & TurnScope)
   /**
    * A steer reached the model, at this point of the transcript (mid-turn after a tool round, or as the start of its own
    * turn right after `turnId`'s result). Every device viewing the session shows `prompt` as the user's message here.
@@ -291,8 +319,11 @@ export type ServerMessage =
  * 'already_accepted': the session took a send / steer under this ref already — the device drops its copy.
  * 'in_flight': the session is taking this ref right now (not recorded yet; it may still fail) — the device keeps its copy, paused.
  * 'not_found': open_session named a session the server does not have — asking again will not help.
+ * 'commander_bypass' / 'commander_active' / 'commander_engine' / 'commander_disabled' / 'commander_stale_epoch' (총사령탑):
+ * the session runs in bypass mode · a commander is already active (stop it first; also: no bypass while one is) · not an
+ * existing Claude session · the feature is off · the device's epoch is not the current one (its screen is out of date).
  */
-export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found';
+export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found' | 'commander_bypass' | 'commander_active' | 'commander_engine' | 'commander_disabled' | 'commander_stale_epoch';
 
 /** How long / how many accepted refs the server keeps per session (`history.acceptedRefs`). */
 export const ACCEPTED_REFS_TTL_MS = 7 * 24 * 60 * 60 * 1000;

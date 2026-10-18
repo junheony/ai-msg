@@ -52,6 +52,8 @@ export class BottleneckWatch {
     earliestCooldownMs?: () => number | null;
     /** Starts the booked retry turn; absent = retries are not fired. */
     retry?: (r: RetryRequest) => void;
+    /** 총사령탑이 이 세션의 실패를 맡았다(사람 필요 푸시를 따로 낸다): 실패 리마인더는 내지 않고 재시도 예약만 둔다. */
+    quiet?: (sessionId: string) => boolean;
     now?: () => number;
     setTimer?: (fn: () => void, ms: number) => Timer;
     clearTimer?: (t: Timer) => void;
@@ -117,6 +119,18 @@ export class BottleneckWatch {
     }
   }
 
+  /**
+   * The session just went idle (ws): a booked retry whose time has come but whose start was refused (the session was
+   * busy then) is fired now instead of waiting for the next restart.
+   */
+  retryDue(sessionId: string): void {
+    const r = this.deps.store.get(sessionId)?.pendingRetry;
+    if (!r || r.atMs > this.now()) return;
+    const t = this.retries.get(sessionId);
+    if (t !== undefined) this.clearTimer(t);
+    this.fireRetry(sessionId);
+  }
+
   /** Every timer off (tests, shutdown). */
   stop(): void {
     for (const a of this.asks.values()) this.clearTimer(a.timer);
@@ -150,6 +164,11 @@ export class BottleneckWatch {
    */
   private turnFailed(sessionId: string, cwd: string, errorText: string, retried: boolean): void {
     this.dropTurn(sessionId, false);
+    if (this.deps.quiet?.(sessionId)) {
+      this.strip(sessionId, 'blocked');
+      if (this.deps.store.get(sessionId)?.pendingRetry) this.armRetry(sessionId);
+      return;
+    }
     const now = this.now();
     const n = retried ? Math.max(1, this.lastStage.get(sessionId) ?? 0) : 0;
     this.lastStage.delete(sessionId);
@@ -179,7 +198,7 @@ export class BottleneckWatch {
   private nudgeTurn(sessionId: string, n: number): void {
     const t = this.turns.get(sessionId);
     const st = this.deps.store.get(sessionId);
-    if (!t || !st?.blocked) { this.dropTurn(sessionId); return; }
+    if (!t || !st?.blocked || this.deps.quiet?.(sessionId)) { this.dropTurn(sessionId); return; }
     t.timer = null;
     const b = st.blocked;
     const parts = ['턴이 실패한 채 멈춰 있습니다'];

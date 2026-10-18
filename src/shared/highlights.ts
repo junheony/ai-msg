@@ -1,5 +1,5 @@
 /** One line of `<configDir>/events.jsonl` (하이라이트): what happened in a session, or to the server itself. */
-export type HighlightKind = 'turn' | 'permission' | 'question' | 'task' | 'interrupted' | 'server';
+export type HighlightKind = 'turn' | 'permission' | 'question' | 'task' | 'interrupted' | 'server' | 'commander';
 
 export type HighlightEvent = {
   /** epoch ms */
