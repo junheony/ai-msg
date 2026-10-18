@@ -882,7 +882,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         if (m.type === 'turn_result' && m.turnId === turn.current) { turn.current = null; turn.log.progress = null; if (turn.afterRelease.length) drainWaiting(); queueMicrotask(() => { if (turns.get(turnId) === turn) endHeld(turn); }); }
         if (m.type === 'turn_background') turn.bg = m.tasks.length ? { msg: m, at: Date.now() } : null;
         if (m.type === 'turn_result' || m.type === 'turn_background') queueMicrotask(broadcastActivity);
-        if (m.type === 'error' && !started && (m.turnId === null || m.turnId === turnId)) emitTurn(turn, { ...m, ...ref });
+        // route_fit (the turn was not sent: the engine cannot do it) answers the send like a refusal: the pane gets its ref back.
+        if ((m.type === 'error' || m.type === 'route_fit') && !started && (m.turnId === null || m.turnId === turnId)) emitTurn(turn, { ...m, ...ref });
         else emitTurn(turn, m);
         // A failed tool call showing macOS denied this process the folder (TCC): the turn says why, once — the rest of
         // its failures are the same denial.
@@ -951,6 +952,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.sessionId === null && msg.accountPin ? { accountPin: msg.accountPin } : {}),
           ...(msg.sessionId === null && msg.permissionMode ? { permissionMode: msg.permissionMode } : {}),
           ...(msg.handoff ? { handoff: true } : {}),
+          ...(msg.ignoreFit ? { ignoreFit: true } : {}),
           ...hop,
           ...(commanderHop ? { commanderHop } : {}),
           ...(commanderHop && commanderNote ? { commanderNote } : {}),
@@ -1115,19 +1117,19 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (st && isCodexState(st)) {
         view(ws, sessionId);
         const messages = st.rolloutFile ? await (deps.readCodexHistory ?? readCodexTranscript)(st.rolloutFile).catch(() => []) : [];
-        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, messages, ...runningOf(sessionId) });
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, sessionModel: st.defaultModel, messages, ...runningOf(sessionId) });
         return;
       }
       // Gemini sessions: no transcript reader yet (the CLI's chat files are not read) — the pane starts empty.
       if (st && isGeminiState(st)) {
         view(ws, sessionId);
-        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, messages: [], ...runningOf(sessionId) });
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'gemini', sandbox: st.sandbox, sessionModel: st.defaultModel, messages: [], ...runningOf(sessionId) });
         return;
       }
       // Grok sessions: no transcript reader yet (grokTranscript, design §7) — the pane starts empty, like Gemini.
       if (st && isGrokState(st)) {
         view(ws, sessionId);
-        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), messages: [], ...runningOf(sessionId) });
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(st.model) ? st.model : DEFAULT_GROK_MODEL, sessionEffort: st.effort, messages: [], ...runningOf(sessionId) });
         return;
       }
       let entry = deps.index.lookup(sessionId);
@@ -1387,7 +1389,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
           // The default only applies to new sessions (and ones with no stored mode) from their next turn: waiting cards stay.
-          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}) })
+          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}), ...(msg.autoEngines ? { autoEngines: msg.autoEngines } : {}), ...(msg.autoConsent ? { autoConsent: msg.autoConsent } : {}), ...(msg.grokFast !== undefined ? { grokFast: msg.grokFast } : {}) })
             // 총사령탑 켜기·끄기 changes what the server advertises: every device gets the list again.
             .then((settings) => {
               // Off: no commander is left running unseen (devices drop the chip with the feature) or armed for a later on.

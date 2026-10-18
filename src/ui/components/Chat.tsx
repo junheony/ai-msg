@@ -139,6 +139,9 @@ export type ChatProps = {
   /** Notes / errors about this session no turn owns (e.g. it was just written outside deck): dismissible bars above the transcript. */
   notices?: { message: string; level: 'notice' | 'error' }[];
   onDismissNotice?: (message: string) => void;
+  /** The server held the first message back: the engine this turn landed on can't do what it asks (route_fit). */
+  routeFit?: { engine: string; need: string } | null;
+  onRouteFit?: (how: 'send' | 'dismiss') => void;
   /** View-only session (e.g. an imported Codex thread whose folder is gone): the composer is disabled and shows this reason. */
   readOnly?: string | null;
   /** A line above the composer (the server will refuse a send here, and says why itself). */
@@ -571,6 +574,13 @@ export function Chat(p: ChatProps) {
           {p.onDismissNotice && <button type="button" className="pane-notice-close" aria-label="알림 닫기" title="닫기" onClick={() => p.onDismissNotice?.(n.message)}>×</button>}
         </div>
       ))}
+      {p.routeFit && (
+        <div className="pane-notice" role="alert" data-testid="route-fit">
+          <span className="pane-notice-text">이 작업은 {p.routeFit.need} 가 필요합니다 — {p.routeFit.engine === 'codex' ? 'GPT' : p.routeFit.engine === 'gemini' ? 'Gemini' : p.routeFit.engine === 'grok' ? 'Grok' : 'Claude'} 로는 못 할 수 있어 보내지 않았습니다</span>
+          <button type="button" className="btn" data-testid="route-fit-send" onClick={() => p.onRouteFit?.('send')}>그래도 보내기</button>
+          <button type="button" className="pane-notice-close" aria-label="알림 닫기" title="닫기 (대기열로 돌려놓기)" onClick={() => p.onRouteFit?.('dismiss')}>×</button>
+        </div>
+      )}
       <div className="chat-body" ref={bodyRef}>
         {p.prevSession && <button type="button" className="session-link prev" data-testid="handoff-prev" onClick={p.prevSession.open} title={p.prevSession.title}>← 이전 세션 · {p.prevSession.title}</button>}
         {p.loading && p.items.length === 0 && (

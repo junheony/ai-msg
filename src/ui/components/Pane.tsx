@@ -68,7 +68,7 @@ export type SendFn = (m: ClientMessage) => unknown;
  * A send that never left (socket down) becomes a held queue item at once (`send_failed`), dispatched in the same tick as
  * `sent` so React renders neither a bubble nor 시작하는 중… for it.
  */
-export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: SendFn, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string, opts: { keepAttachments?: boolean } = {}): void {
+export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: SendFn, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string, opts: { keepAttachments?: boolean; ignoreFit?: boolean } = {}): void {
   const s = pane.session;
   if (!s) return;
   const model = paneModel(pane);
@@ -83,6 +83,7 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
     ...(ids.length ? { attachments: ids } : {}),
     ...(s.sessionId === null && pane.handoffFrom ? { handoffFrom: pane.handoffFrom.sessionId } : {}),
     ...(s.sessionId === null && s.newTitle ? { title: s.newTitle } : {}),
+    ...(opts.ignoreFit ? { ignoreFit: true } : {}),
     clientRef,
   });
   if (sent === false) dispatch({ type: 'send_failed', clientRef, paneId: pane.id });
@@ -325,6 +326,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   }, [unsentNotice, pane.id]);
   const interruptRef = useRef(interrupt);
   interruptRef.current = interrupt;
+  // The route_fit card already answered: a second click before the pane re-renders without it does nothing (no double send).
+  const fitAnswered = useRef<PaneState['routeFit']>(null);
   // Esc stops the running turn from anywhere in the pane (the composer handles its own Esc). Whatever else owns the
   // Esc goes first: the capture phase only notes whether something was open (a menu / dialog / palette / popover /
   // the phone drawer, still on screen before its own handler closes it); the stop happens in the bubble phase, so a
@@ -564,6 +567,14 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           nextSession={link(entry?.nextSession ?? null)}
           notices={pane.notices?.filter((n) => n.sessionId === null || n.sessionId === s.sessionId)}
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
+          routeFit={pane.routeFit ?? null}
+          onRouteFit={(how) => {
+            const f = pane.routeFit;
+            if (!f || fitAnswered.current === f) return;
+            fitAnswered.current = f;
+            dispatch({ type: 'route_fit_resolve', how, paneId: pane.id });
+            if (how === 'send') sendFromPane(pane, f.text, f.attachments.map((a) => ({ ...a, size: 0 })), dispatch, send, app.defaultPermMode ?? null, false, undefined, { ignoreFit: true });
+          }}
           composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : null}
           readOnly={entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : null}
           onInterrupt={interrupt}

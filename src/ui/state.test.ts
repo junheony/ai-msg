@@ -35,7 +35,7 @@ describe('reducer', () => {
     expect(modelFor('claude', 'gemini-pro')).toBe('fable');
     let s = reducer(initialState, { type: 'set_model', model: 'gemini-flash' });
     s = reducer(s, { type: 'set_engine', engine: 'auto' });
-    expect(s.panes[0]?.model).toBe('fable');
+    expect(s.panes[0]?.model).toBe('auto');
   });
 
   it('engineOf / modelFor know Grok; set_engine grok picks Grok 4.7; the 자동 engine never keeps a Grok model', () => {
@@ -46,7 +46,7 @@ describe('reducer', () => {
     let s = reducer(initialState, { type: 'set_engine', engine: 'grok' });
     expect(s.panes[0]).toMatchObject({ engine: 'grok', model: 'grok-4.7' });
     s = reducer(s, { type: 'set_engine', engine: 'auto' });
-    expect(s.panes[0]?.model).toBe('fable');
+    expect(s.panes[0]?.model).toBe('auto');
   });
 
   it('a pane engine grok the server cannot run (no grok feature) goes back to Claude on hello; hello.grok is kept', () => {
@@ -80,6 +80,18 @@ describe('reducer', () => {
     const sessionEntry = { sessionId: 's1', account: 'b', cwd: '/w', projectDir: '/w', file: 'f', title: 'Reply with exactly: ok', lastModified: 0, sizeBytes: 0 } as const;
     s = play([{ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [sessionEntry] }] }], s);
     expect(pane(s).session?.title).toBe('Reply with exactly: ok');
+  });
+
+  it('a new 자동 session routed to Gemini follows the picked model; one routed to Claude keeps 자동', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: '새 세션' });
+    expect(pane(s)).toMatchObject({ engine: 'auto', model: 'auto' });
+    s = reducer(s, { type: 'sent', text: '이 함수 설명해 줘' });
+    s = play([{ type: 'turn_started', turnId: 't1', sessionId: null, cwd: '/w', account: 'g1', model: 'gemini-flash', reason: '자동 · 설명 → Gemini Flash', attempt: 0, engine: 'gemini' }], s);
+    expect(pane(s)).toMatchObject({ model: 'gemini-flash', session: { engine: 'gemini' } });
+    let c = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: '새 세션' });
+    c = reducer(c, { type: 'sent', text: 'hi' });
+    c = play([{ type: 'turn_started', turnId: 't1', sessionId: null, cwd: '/w', account: 'b', model: 'opus', reason: '자동 · 구현 → Claude Opus', attempt: 0 }], c);
+    expect(pane(c).model).toBe('auto');
   });
 
   it('streams a turn into one assistant item and finishes with a badge', () => {
@@ -1786,5 +1798,104 @@ describe('openPanes (sidebar markers)', () => {
     expect(m.get('s2')).toBe(1);
     expect(m.get('s1')).toBe(3);
     expect(openPanes([at('p0', null)]).size).toBe(0);
+  });
+});
+
+describe('자동 분배 (auto-route) UI state', () => {
+  it('a new pane starts on the 자동 engine', () => {
+    expect(newPane('x').engine).toBe('auto');
+    expect(initialState.panes[0]!.engine).toBe('auto');
+  });
+
+  it('settings carry autoEngines / autoConsent / grokFast into state.autoRoute (null until the server says)', () => {
+    expect(initialState.autoRoute).toBeNull();
+    let s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } }]);
+    expect(s.autoRoute).toBeNull();
+    s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default', autoEngines: ['claude', 'gemini'], autoConsent: ['gemini'], grokFast: true } }], s);
+    expect(s.autoRoute).toEqual({ autoEngines: ['claude', 'gemini'], autoConsent: ['gemini'], grokFast: true });
+  });
+
+  const held = () => {
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    s = reducer(s, { type: 'sent', text: '스크린샷 봐줘', paneId: 'p0', clientRef: 'r1', attachments: [{ id: 'a1', name: 'x.png', isImage: true }] });
+    return play([{ type: 'route_fit', turnId: 't1', sessionId: null, engine: 'grok', need: '이미지 입력', clientRef: 'r1' }], s);
+  };
+
+  it('route_fit ends the wait and keeps the held message for the card', () => {
+    const p = held().panes[0]!;
+    expect(p.awaitingStart).toBe(false);
+    expect(p.routeFit).toEqual({ engine: 'grok', need: '이미지 입력', text: '스크린샷 봐줘', attachments: [{ id: 'a1', name: 'x.png', isImage: true }] });
+  });
+
+  it('route_fit for another send (clientRef mismatch) leaves the pane alone', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    s = reducer(s, { type: 'sent', text: 'a', paneId: 'p0', clientRef: 'r1' });
+    s = play([{ type: 'route_fit', turnId: 't1', sessionId: null, engine: 'grok', need: '이미지 입력', clientRef: 'other' }], s);
+    expect(s.panes[0]!.routeFit ?? null).toBeNull();
+    expect(s.panes[0]!.awaitingStart).toBe(true);
+  });
+
+  it('그래도 보내기 takes the bubble back (the resend adds it again); dismiss requeues it paused', () => {
+    const sent = reducer(held(), { type: 'route_fit_resolve', how: 'send', paneId: 'p0' });
+    expect(sent.panes[0]!.routeFit).toBeNull();
+    expect(sent.panes[0]!.items.filter((i) => i.kind === 'user')).toHaveLength(0);
+    const back = reducer(held(), { type: 'route_fit_resolve', how: 'dismiss', paneId: 'p0' });
+    expect(back.panes[0]!.routeFit).toBeNull();
+    expect(back.panes[0]!.queue.map((q) => q.text)).toEqual(['스크린샷 봐줘']);
+    expect(back.panes[0]!.queuePaused).toBe(true);
+  });
+});
+
+describe('자동 분배: review counterexamples', () => {
+  it('#1 reopening a GPT / Gemini / Grok session shows the model it runs on (history sessionModel), not the engine default; Grok keeps its effort', () => {
+    const g = play([{ type: 'history', sessionId: 'G1', cwd: '/w', account: 'g1', engine: 'gemini', sandbox: 'read-only', sessionModel: 'gemini-flash', runningTurnId: null, messages: [] }], openedOn('G1'));
+    expect(pane(g).model).toBe('gemini-flash');
+    const c = play([{ type: 'history', sessionId: 'C1', cwd: '/w', account: 'gpt', engine: 'codex', sandbox: 'read-only', sessionModel: 'gpt-6-astra', runningTurnId: null, messages: [] }], openedOn('C1'));
+    expect(pane(c).model).toBe('gpt-6-astra');
+    const x = play([{ type: 'history', sessionId: 'X1', cwd: '/w', account: 'x1', engine: 'grok', sandbox: null, sessionModel: 'grok-4.5', sessionEffort: 'low', runningTurnId: null, messages: [] }], openedOn('X1'));
+    expect(pane(x).model).toBe('grok-4.5');
+    expect(pane(x).efforts.grok).toBe('low');
+  });
+
+  it('#2 a routed model does not stick: the next new session on the 자동 engine starts on 자동 again; an explicit pick stays', () => {
+    let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    s = reducer(s, { type: 'sent', text: '이 함수 설명해 줘', clientRef: 'r1' });
+    s = play([{ type: 'turn_started', turnId: 't1', sessionId: null, cwd: '/w', account: 'gpt', model: 'gpt-6-sol', reason: '자동 → GPT Sol', attempt: 0, engine: 'codex', clientRef: 'r1' }], s);
+    expect(pane(s).model).toBe('gpt-6-sol');
+    s = reducer(s, { type: 'open', sessionId: null, cwd: '/w', title: 'n2' });
+    expect(pane(s)).toMatchObject({ engine: 'auto', model: 'auto', modelPicked: false });
+    let e = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
+    e = reducer(e, { type: 'set_model', model: 'gpt-6-astra' });
+    e = reducer(e, { type: 'sent', text: 'x', clientRef: 'r1' });
+    e = play([{ type: 'turn_started', turnId: 't1', sessionId: null, cwd: '/w', account: 'gpt', model: 'gpt-6-astra', reason: 'GPT Astra 지정', attempt: 0, engine: 'codex', clientRef: 'r1' }], e);
+    e = reducer(e, { type: 'open', sessionId: null, cwd: '/w', title: 'n2' });
+    expect(pane(e).model).toBe('gpt-6-astra');
+  });
+
+  it('#4 a history (reconnect) while the route_fit card is up puts the held message back in the queue, paused', () => {
+    let s = play([{ type: 'history', sessionId: 'G1', cwd: '/w', account: 'g1', engine: 'gemini', sandbox: 'read-only', runningTurnId: null, messages: [] }], openedOn('G1'));
+    s = reducer(s, { type: 'sent', text: '테스트 돌려줘', clientRef: 'r1' });
+    s = play([{ type: 'route_fit', turnId: 't1', sessionId: 'G1', engine: 'gemini', need: '셸 실행', clientRef: 'r1' }], s);
+    expect(pane(s).routeFit).toMatchObject({ text: '테스트 돌려줘' });
+    s = play([{ type: 'history', sessionId: 'G1', cwd: '/w', account: 'g1', engine: 'gemini', sandbox: 'read-only', runningTurnId: null, messages: [] }], s);
+    expect(pane(s).routeFit ?? null).toBeNull();
+    expect(pane(s).queue.map((q) => q.text)).toEqual(['테스트 돌려줘']);
+    expect(pane(s).queuePaused).toBe(true);
+  });
+
+  it('#4 opening another session while the route_fit card is up: the held message is treated as a queued one (never silently gone)', () => {
+    let s = play([{ type: 'history', sessionId: 'G1', cwd: '/w', account: 'g1', engine: 'gemini', sandbox: 'read-only', runningTurnId: null, messages: [] }], openedOn('G1'));
+    s = reducer(s, { type: 'sent', text: '테스트 돌려줘', clientRef: 'r1' });
+    s = play([{ type: 'route_fit', turnId: 't1', sessionId: 'G1', engine: 'gemini', need: '셸 실행', clientRef: 'r1' }], s);
+    s = reducer(s, { type: 'open', sessionId: 'S2', cwd: '/w', title: 'other' });
+    expect(pane(s).routeFit ?? null).toBeNull();
+    expect(s.error).toContain('테스트 돌려줘');
+  });
+
+  it('existing Grok session + an image: route_fit shows the card and the message waits for it', () => {
+    let s = play([{ type: 'history', sessionId: 'X1', cwd: '/w', account: 'x1', engine: 'grok', sandbox: null, runningTurnId: null, messages: [] }], openedOn('X1'));
+    s = reducer(s, { type: 'sent', text: '이 화면 봐줘', clientRef: 'r1', attachments: [{ id: 'a1', name: 'x.png', isImage: true }] });
+    s = play([{ type: 'route_fit', turnId: 't1', sessionId: 'X1', engine: 'grok', need: '이미지 입력', clientRef: 'r1' }], s);
+    expect(pane(s)).toMatchObject({ awaitingStart: false, routeFit: { engine: 'grok', need: '이미지 입력', text: '이 화면 봐줘', attachments: [{ id: 'a1', name: 'x.png', isImage: true }] } });
   });
 });

@@ -126,3 +126,8 @@ Claude·Astra 두 리뷰가 같은 지적을 한 것은 그대로 받았다.
     - Grok Fast 설정.
     - 같은 입력이면 같은 결과.
     - 동의 전에는 Gemini·Grok 제외.
+
+## 구현 상태 (2026-10-18)
+
+- 연결됨: 새 세션 첫 턴의 `chooseRoute`(엔진 자동, 또는 GPT·Gemini·Grok + 모델 자동), `no_route` 오류, 능력 검사(`route_fit` 카드 · `ignoreFit` 로 그래도 보내기, 기존 Gemini·Grok 세션은 매 턴), 설정 `autoEngines`·`autoConsent`·`grokFast` 와 설정 화면의 동의 카드, 새 창 기본 엔진 자동. 한도 입력은 `engineLimits.ts`(순수 함수)가 사용량 스냅숏·쿨다운에서 만든다.
+- 아직: 벤더 간 이어가기는 Claude 세션 전용이라 `route_fit` 카드에 [새 세션으로 이어가기]가 없다(§10-8). 새 창의 모델 기본값은 그대로(Fable)라, 모델도 자동으로 둬야 엔진을 고른다. 세션 도중 한도 인계(§6)·무인 이어가기는 손대지 않았다.

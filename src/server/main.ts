@@ -155,6 +155,7 @@ async function main(): Promise<void> {
     defaultPermissionMode: () => settings.get().defaultPermissionMode,
     routingPolicy: () => settings.get().routingPolicy,
     sameVendorRotation: () => settings.get().sameVendorRotation,
+    autoRoute: () => { const c = settings.get(); return { autoEngines: c.autoEngines, autoConsent: c.autoConsent, grokFast: c.grokFast }; },
     devCommanderGate: cfg.devCommanderGate,
     routeLog: (line) => console.log(line),
     onPermissionMode: (sessionId, mode) => notifyPermissionMode(sessionId, mode),

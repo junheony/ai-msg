@@ -59,6 +59,16 @@ ws 메시지가 아닌 것: 하이라이트(`GET /api/highlights?hours=6|12|24`,
 
 - 켜기·끄기: `set_settings.commanderEnabled`(선택). 답인 `settings` 방송에는 그때만 `features`(새 기능 목록)가 붙는다 — UI 는 그 목록으로 `has('commander')` 를 바꾸고, 목록에서 빠지면 캐시한 칩·거절을 비운다. 끌 때 서버는 활성 사령탑을 모두 `stopped`(사유 `설정에서 꺼짐`, epoch 증가)로 바꿔 방송한 뒤 `settings` 를 보낸다. 상한들(`commanderMaxTurns`·`commanderTokenCap`)은 설정 파일에서만.
 
+## 자동 분배 (`engine: 'auto'`)
+
+새 세션 첫 턴에서 엔진·모델을 고른다(설계: `docs/superpowers/specs/2026-10-18-auto-route-design.md` §10). 별도 기능 플래그는 없다.
+
+- `send.engine: 'auto'`(새 세션), 또는 `send.engine` 이 `codex`·`gemini`·`grok` 이고 `model: 'auto'` 이면 서버가 첫 턴 내용·남은 한도·설정으로 정한다. `engine: 'claude'`(또는 없음) + `model: 'auto'` 는 이전처럼 Claude 모델만 고른다. 고른 결과는 `turn_started.reason`(배지, `자동 · … → <엔진> <모델>`)으로 보인다. 총사령탑 턴은 Claude 만.
+- 쓸 수 있는 엔진이 없으면 `error{turnId, sessionId: null, message: "자동 분배: 쓸 수 있는 엔진 없음 — Claude: …, GPT: …, Gemini: …, Grok: …"}`.
+- `route_fit{turnId, sessionId, engine, need, clientRef?}` — 고른(또는 지정한) 엔진이 이 턴을 못 할 때 턴을 시작하지 않고 보낸다. `need` 는 `셸 실행`·`신뢰 폴더(HOME) 밖 파일 편집`·`설명 외 작업(셸·편집 엔진)`(Gemini), `이미지 입력`(Grok). 새 세션이면 `sessionId: null`, 기존 Gemini·Grok 세션은 매 턴 같은 검사를 받고 그 세션 id 가 실린다. `turn_started` 전에 오므로 `clientRef` 가 붙는다. UI 는 "이 작업은 ○○ 가 필요합니다" 카드와 [그래도 보내기]를 띄운다. 새 세션으로 이어가기는 Claude 세션 전용이라 카드에 없다.
+- `send.ignoreFit: true` — 위 검사를 건너뛰고 그대로 보낸다([그래도 보내기]).
+- 설정(`settings` / `set_settings`, 모두 선택): `autoEngines`(자동이 고를 수 있는 엔진, 기본 4개 전부), `autoConsent`(데이터 전송에 동의한 엔진, 기본 `[]` — Gemini·Grok 은 여기 있어야 후보가 된다), `grokFast`(Grok 빠른 모델, 기본 `false`). 엔진 배열은 `claude`·`codex`·`gemini`·`grok` 중에서만, 잘못된 값은 이전 값을 유지한다.
+
 ## HTTP: 세션 폴더 파일
 
 HTTP 는 새 경로·쿼리만 더하고 기존 응답 모양은 바꾸지 않는다. 아래는 모두 로그인 쿠키가 필요하고(없으면 `401`), POST 는 같은 출처(`Origin` 또는 `Sec-Fetch-Site: same-origin`)여야 한다(아니면 `403`). 세 경로 모두 `GET /api/file` 미리보기와 같은 검사(`openSessionPath`, `src/server/files.ts`)를 거친다: `cwd` 가 허용 루트 안의 실제 폴더, 대상의 실제 경로(심볼릭 링크 해제)가 그 안, 비밀 파일 deny list, O_NOFOLLOW 로 열기, 연 파일과 검사한 파일의 inode 일치, 하드링크 거부. 에러는 언제나 `{ error: string }`(한국어 문구) JSON.

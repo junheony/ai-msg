@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, type Account, type AccountNames, type GeminiAccount, type Seat } from './accounts';
-import { GROK_MODELS, type AnyModel, type ClaudeModel, type CodexSandbox, type EngineKind } from './models';
+import { GROK_MODELS, type AnyModel, type ClaudeModel, type CodexSandbox, type Effort, type EngineKind } from './models';
 import { PERM_MODES, type PermMode } from './permission';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from './session-types';
 import type { BgTaskInfo, PermissionDecision, Question, QuestionAnswers, TaskUpdate, TaskUsage, TurnPhase, TurnUsage } from './turn-types';
@@ -12,6 +12,8 @@ export const MAX_ATTACHMENTS_PER_TURN = 8;
 /** D7: per-file upload size cap, shared by the server (413) and the UI (pre-flight check before the network call). */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const CLIENT_REF_MAX = 64;
+/** Every engine, in 자동 분배 order (settings `autoEngines` / `autoConsent`). */
+export const ENGINE_KINDS: readonly EngineKind[] = ['claude', 'codex', 'gemini', 'grok'];
 /** A Claude account id by shape only (`ACCOUNT_ID_RE`): which ids exist is the server's configuration, checked when the message is handled. */
 const AccountId = z.string().regex(ACCOUNT_ID_RE).refine((id) => !RESERVED_ACCOUNT_IDS.includes(id), { message: '예약된 이름이라 계정 id 로 쓸 수 없습니다' });
 
@@ -26,7 +28,10 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     model: z.enum(['sonnet', 'opus', 'fable', 'gpt-6-sol', 'gpt-6-astra', 'gemini-pro', 'gemini-flash', ...GROK_MODELS, 'auto']).optional(),
     /** Reasoning effort for this turn (allowlist = shared/models EFFORTS); absent = the engine's own default. */
     effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
-    /** New sessions only (D3): which engine opens the session. Ignored on resume — the stored engine wins. 'gemini' / 'grok' are explicit only. */
+    /**
+     * New sessions only (D3): which engine opens the session. Ignored on resume — the stored engine wins. 'auto' = 자동 분배
+     * (chooseRoute): Gemini / Grok only when on in settings `autoEngines` and agreed to in `autoConsent`.
+     */
     engine: z.enum(['claude', 'codex', 'gemini', 'grok', 'auto']).optional(),
     /** New Codex / Gemini sessions only (D2). */
     sandbox: z.enum(['read-only', 'workspace-write']).optional(),
@@ -48,6 +53,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     branch: z.object({ from: z.string().min(1).max(200), n: z.number().int().min(0).max(1_000_000), expect: z.string().max(200_000).optional() }).optional(),
     /** 복제 (new sessions only): deck's title for the new session, set in session meta once it has an id. */
     title: z.string().min(1).max(200).optional(),
+    /** 그래도 보내기: send even though the engine cannot do this kind of turn (skips the `route_fit` check). */
+    ignoreFit: z.boolean().optional(),
   }),
   z.object({ type: z.literal('permission_response'), requestId: z.string().min(1), decision: z.enum(['once', 'session', 'deny']) }),
   /** D8: answers keyed by the question text, values are option labels (comma-joined for multiSelect) or free text. */
@@ -101,7 +108,9 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    */
   /** Settings: unlock the Grok engine after a tripwire (§14.9-3). */
   z.object({ type: z.literal('grok_unlock') }),
-  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional() }),
+  z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional(),
+    /** 자동 분배: engines 자동 may use, engines whose external-transfer card was accepted, Grok fast model. */
+    autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
    * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),
@@ -144,7 +153,13 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
   /** 총사령탑: off by default (설정 화면 토글 or the settings file); the turn cap a goal gets without one and its token budget (file only). Absent from older servers. */
   commanderEnabled?: boolean;
   commanderMaxTurns?: number;
-  commanderTokenCap?: number };
+  commanderTokenCap?: number;
+  /** 자동 분배: engines 자동 may open a session on (default all four). Absent from older servers. */
+  autoEngines?: EngineKind[];
+  /** Engines whose "code goes to Google / xAI" card was accepted (only Gemini and Grok need one; default none). */
+  autoConsent?: EngineKind[];
+  /** 자동 uses Grok 4.7 Build Fast instead of Grok 4.7 (2× price; default off). */
+  grokFast?: boolean };
 
 /**
  * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;
@@ -223,7 +238,7 @@ export type CommanderView = {
 };
 
 /** What `history` and `catchup` both say about the session besides its messages. */
-export type SessionFacts = { /** 'commander' servers: the session's commander, null when it has none. */ commander?: CommanderView | null; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** Claude sessions: the model a send without one runs on (the session's own default; absent: an older server). */ sessionModel?: ClaudeModel; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number; /** The session's newest stream position (absent: no turn since the server started, or an older server). */ pos?: StreamPos };
+export type SessionFacts = { /** 'commander' servers: the session's commander, null when it has none. */ commander?: CommanderView | null; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** The model the session runs on (its stored default; GPT / Gemini / Grok too: the model 자동 picked stays on reopen; absent: an older server). */ sessionModel?: AnyModel; /** Grok sessions: the stored effort (a reopened pane keeps it). */ sessionEffort?: Effort; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number; /** The session's newest stream position (absent: no turn since the server started, or an older server). */ pos?: StreamPos };
 
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
@@ -319,6 +334,12 @@ export type ServerMessage =
    * sent back as the first send's `title`. No history is copied.
    */
   | { type: 'session_duplicate'; from: string; cwd: string; engine: EngineKind; model: AnyModel; title: string; accountPin?: Account | null; permissionMode?: PermMode; sandbox?: CodexSandbox }
+  /**
+   * The engine cannot take this turn (auto-route §10-4: Gemini with a shell / non-explain turn, Grok with an image): the
+   * turn was not sent. `need` = what is missing ("셸 실행"). Resend with `ignoreFit: true` to send anyway. Carries the
+   * send's `clientRef`; `sessionId` is null on a new session.
+   */
+  | { type: 'route_fit'; turnId: string; sessionId: string | null; engine: EngineKind; need: string; clientRef?: string; pos?: StreamPos }
   | { type: 'error'; turnId: string | null; message: string; pos?: StreamPos; clientRef?: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string; /** An answer to this permission / question card came too late (another device answered it first): the card goes, nothing is shown. */ requestId?: string };
 
 /**

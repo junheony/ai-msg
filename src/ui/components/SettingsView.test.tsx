@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { ROTATION_CONSENT, SettingsView } from './SettingsView';
+import { AUTO_CONSENT_TEXT, ROTATION_CONSENT, SettingsView } from './SettingsView';
 
 const noop = () => {};
 
@@ -143,5 +143,43 @@ describe('SettingsView 총사령탑', () => {
     expect(on).not.toHaveBeenCalled();
     fireEvent.click(btn('켜기'));
     expect(on).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('SettingsView 자동 분배', () => {
+  afterEach(cleanup);
+  const view = { autoEngines: ['claude', 'codex', 'gemini', 'grok'] as const, autoConsent: [] as const, grokFast: false };
+
+  it('four engine checkboxes; unchecking sends the rest; hidden until the server says', () => {
+    const on = vi.fn();
+    const { rerender } = render(<SettingsView build={null} autoRoute={null} onAutoRoute={on} onOpenUsage={noop} onClose={noop} />);
+    expect(screen.queryByTestId('auto-engine-claude')).toBeNull();
+    rerender(<SettingsView build={null} autoRoute={{ ...view, autoEngines: [...view.autoEngines], autoConsent: [] }} onAutoRoute={on} onOpenUsage={noop} onClose={noop} />);
+    for (const e of ['claude', 'codex', 'gemini', 'grok']) expect((screen.getByTestId(`auto-engine-${e}`) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByTestId('auto-engine-codex'));
+    expect(on).toHaveBeenLastCalledWith({ autoEngines: ['claude', 'gemini', 'grok'] });
+    fireEvent.click(screen.getByTestId('auto-grok-fast'));
+    expect(on).toHaveBeenLastCalledWith({ grokFast: true });
+    expect(screen.getByText('Grok 빠른 모델 쓰기(2배 가격)')).toBeTruthy();
+  });
+
+  it('Gemini / Grok show 동의 필요 until consented; the consent card adds the engine to autoConsent', () => {
+    const on = vi.fn();
+    const { rerender } = render(<SettingsView build={null} autoRoute={{ autoEngines: ['claude', 'codex'], autoConsent: [], grokFast: false }} onAutoRoute={on} onOpenUsage={noop} onClose={noop} />);
+    expect(screen.queryByTestId('auto-consent-claude')).toBeNull();
+    expect(screen.queryByTestId('auto-consent-codex')).toBeNull();
+    expect(screen.queryByText(AUTO_CONSENT_TEXT)).toBeNull();
+    fireEvent.click(screen.getByTestId('auto-consent-gemini'));
+    expect(screen.getByText(AUTO_CONSENT_TEXT)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '동의하고 Gemini 쓰기' }));
+    expect(on).toHaveBeenLastCalledWith({ autoConsent: ['gemini'], autoEngines: ['claude', 'codex', 'gemini'] });
+    expect(screen.queryByText(AUTO_CONSENT_TEXT)).toBeNull();
+    // 취소 sends nothing
+    fireEvent.click(screen.getByTestId('auto-consent-grok'));
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(on).toHaveBeenCalledTimes(1);
+    rerender(<SettingsView build={null} autoRoute={{ autoEngines: ['claude', 'codex', 'gemini'], autoConsent: ['gemini'], grokFast: false }} onAutoRoute={on} onOpenUsage={noop} onClose={noop} />);
+    expect(screen.queryByTestId('auto-consent-gemini')).toBeNull();
+    expect(screen.getByTestId('auto-consent-grok')).toBeTruthy();
   });
 });
