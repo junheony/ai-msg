@@ -26,7 +26,7 @@ describe('prefs', () => {
 
   it('round-trips through storage and tolerates junk', () => {
     const store = mem();
-    const prefs = { theme: 'dark', fontSize: 'xlarge', chatWidth: 'wide', sendKey: 'mod-enter' } as const;
+    const prefs = { theme: 'dark', fontSize: 'xlarge', chatWidth: 'wide', sendKey: 'mod-enter', conciseMode: false } as const;
     savePrefs(prefs, store);
     expect(loadPrefs(store)).toEqual(prefs);
     expect(parsePrefs('not json')).toEqual(DEFAULT_PREFS);
@@ -43,12 +43,24 @@ describe('prefs', () => {
     expect(prefsReducer(a, { type: 'reset' })).toEqual(DEFAULT_PREFS);
   });
 
-  it('applyPrefs: forced theme sets data-theme, system removes it; font scale and width are applied', () => {
+  it('conciseMode defaults on and round-trips', () => {
+    expect(DEFAULT_PREFS.conciseMode).toBe(true);
+    const store = mem();
+    savePrefs({ ...DEFAULT_PREFS, conciseMode: false }, store);
+    expect(loadPrefs(store).conciseMode).toBe(false);
+    expect(parsePrefs(JSON.stringify({ conciseMode: 'maybe' })).conciseMode).toBe(true);
+    expect(prefsReducer(DEFAULT_PREFS, { type: 'set', key: 'conciseMode', value: false }).conciseMode).toBe(false);
+  });
+
+    it('applyPrefs: forced theme sets data-theme, system removes it; font scale and width are applied', () => {
     const { root, attrs, props } = fakeRoot();
     applyPrefs({ ...DEFAULT_PREFS, theme: 'dark', fontSize: 'large', chatWidth: 'wide' }, root);
     expect(attrs.get('data-theme')).toBe('dark');
     expect(attrs.get('data-width')).toBe('wide');
+    expect(attrs.get('data-concise')).toBe('on');
     expect(props.get('--font-scale')).toBe(String(FONT_SCALE.large));
+    applyPrefs({ ...DEFAULT_PREFS, conciseMode: false }, root);
+    expect(attrs.get('data-concise')).toBe('off');
     applyPrefs({ ...DEFAULT_PREFS, theme: 'system' }, root);
     expect(attrs.has('data-theme')).toBe(false);
     expect(props.get('--font-scale')).toBe(String(FONT_SCALE.normal));
