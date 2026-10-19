@@ -581,4 +581,70 @@ describe('UsagePanel · phone chip popover', () => {
     expect(onOpenHistory).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
+
+  const spent: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, status: 'ok', weekly: { usedPct: 100, resetsAt: new Date(NOW + 27 * 3_600_000).toISOString() } } } };
+
+  it('an exhausted seat reads "소진" with no % after it (not "소진%"); a number keeps its %', () => {
+    phone();
+    render(<UsagePanel usage={spent} current={null} now={NOW} />);
+    expect(screen.getByTestId('chip-a').textContent).toBe('A소진');
+    expect(screen.getByTestId('chip-b').textContent).toBe('B18%');
+  });
+});
+
+describe('UsagePanel · layout guards', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const media = (two: boolean) => vi.stubGlobal('matchMedia', (q: string) => ({ matches: two && q === '(max-width: 1099.98px)', addEventListener() {}, removeEventListener() {} }));
+  const withRO = (body: (fire: () => void) => void) => {
+    const RO = globalThis.ResizeObserver;
+    let cb = () => {};
+    globalThis.ResizeObserver = class { constructor(f: () => void) { cb = f; } observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
+    try { body(() => act(() => cb())); } finally { globalThis.ResizeObserver = RO; }
+  };
+
+  it('the two-row bar (< 1100px) measures too: cards that overflow there go dense instead of drawing into the next card', () => withRO((fire) => {
+    media(true);
+    const { container } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    const panel = container.querySelector('.usage-panel')!;
+    for (const c of panel.querySelectorAll('.usage-card')) {
+      Object.defineProperty(c, 'clientWidth', { configurable: true, value: 110 });
+      Object.defineProperty(c, 'scrollWidth', { configurable: true, value: 150 });
+    }
+    fire();
+    expect(panel.hasAttribute('data-dense')).toBe(true);
+  }));
+
+  it('≥ 1100px: cards overflowing the one-row panel fold the bar into two rows, back once the window is 16px wider than needed', () => {
+    media(false);
+    const proto = Element.prototype;
+    const sw = Object.getOwnPropertyDescriptor(proto, 'scrollWidth')!;
+    const cw = Object.getOwnPropertyDescriptor(proto, 'clientWidth')!;
+    const wide = vi.fn(function (this: HTMLElement) { return this.classList.contains('usage-panel') ? 700 : 0; });
+    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get: wide });
+    Object.defineProperty(proto, 'clientWidth', { configurable: true, get() { return (this as HTMLElement).classList.contains('usage-panel') ? 500 : 0; } });
+    try {
+      vi.stubGlobal('innerWidth', 1200);
+      const { container } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
+      const panel = container.querySelector('.usage-panel')!;
+      expect(panel.hasAttribute('data-fold')).toBe(true); // needed a 1400px window
+      vi.stubGlobal('innerWidth', 1410);
+      act(() => { window.dispatchEvent(new Event('resize')); });
+      expect(panel.hasAttribute('data-fold')).toBe(true);
+      Object.defineProperty(proto, 'scrollWidth', { configurable: true, get() { return 0; } });
+      vi.stubGlobal('innerWidth', 1416);
+      act(() => { window.dispatchEvent(new Event('resize')); });
+      expect(panel.hasAttribute('data-fold')).toBe(false);
+    } finally {
+      Object.defineProperty(proto, 'scrollWidth', sw);
+      Object.defineProperty(proto, 'clientWidth', cw);
+    }
+  });
+
+  it('styles: dense cards put the countdown on its own clipped line; the phone chips get their own wrapping line; the fold has its two-row rules', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.usage-panel\[data-dense\] \.usage-body \{[^}]*overflow: hidden;/);
+    expect(css).toMatch(/\.usage-panel\[data-dense\] \.usage-cd \{[^}]*flex: 1 0 100%;[^}]*text-overflow: ellipsis;/);
+    expect(css).toMatch(/\.usage-chips \{[^}]*flex-wrap: wrap;[^}]*order: 10;[^}]*flex: 1 0 100%;[^}]*height: auto;/);
+    expect(css).toMatch(/\.topbar:has\(> \.usage-panel\[data-fold\]\) \{[^}]*flex-wrap: wrap;/);
+  });
 });

@@ -610,10 +610,20 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 /* "남음", once before the cards: the numbers are what is left (the title adds what amber / red mean). */
 .usage-caption { align-self: center; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; white-space: nowrap; color: var(--faint); cursor: help; }
-/* Cramped (measured — see useCramped, not a seat count): marks give way to the seat letters alone and cards may shrink further. */
-.usage-panel[data-dense] .usage-card { min-width: 72px; max-width: 140px; gap: 5px; padding: 5px 7px; }
+/* Cramped (measured — see useCramped, not a seat count): marks give way to the seat letters alone and cards may shrink
+   further — not below 112px, which still holds the widest label (Gemini) beside a 3-digit %. */
+.usage-panel[data-dense] .usage-card { min-width: 112px; max-width: 160px; gap: 5px; padding: 5px 7px; }
 .usage-panel[data-dense] .usage-mark { display: none; }
 .usage-panel[data-dense] .usage-secondary { display: none; }
+/* Dense: the short countdown takes the secondary row's place (its own line, no "· "), so bar + % keep the first line and
+   nothing is pushed past the card's edge into the next card; whatever still does not fit is clipped at the card, never
+   drawn over a neighbour. */
+.usage-panel[data-dense] .usage-body { overflow: hidden; }
+.usage-panel[data-dense] .usage-main { flex-wrap: wrap; height: auto; }
+/* Basis 0: the bar only takes what bar + % leave, so it never wraps away from the % onto a line of its own. */
+.usage-panel[data-dense] .usage-main .usage-bar { flex: 1 1 0; min-width: 0; margin-right: 5px; }
+.usage-panel[data-dense] .usage-cd { flex: 1 0 100%; min-width: 0; margin-left: 0; line-height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-panel[data-dense] .usage-cd::before { content: none; }
 /* 7+ seats (data-wrap): two rows only in the two-row top bar below (< 1100px). The one-row bar has a fixed height, so
    there the cards never wrap — they only go dense. */
 /* Top bar status chips (작업 현황, 재시작 대기, 재시작됨): small muted pills like the stale tag. */
@@ -669,9 +679,22 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .top-chip .chip-long { display: none; }
   .top-chip .chip-short { display: inline; }
 }
+/* ≥ 1100px but the cards do not fit the one-row bar (measured — useFold sets data-fold): the same two rows as above. */
+.topbar:has(> .usage-panel[data-fold]) { flex-wrap: wrap; height: auto; column-gap: 6px; row-gap: 0; padding: 0 12px 8px 14px; }
+.topbar:has(> .usage-panel[data-fold])::after { content: ""; order: 5; flex: 0 0 100%; }
+.topbar:has(> .usage-panel[data-fold]) > .brand { height: 46px; }
+.topbar:has(> .usage-panel[data-fold]) > .topbar-end { order: 3; }
+.usage-panel[data-fold] { display: contents; }
+.usage-panel[data-fold] > .usage-stale { order: 2; }
+.usage-panel[data-fold] > .usage-caption { order: 10; flex: 0 0 auto; }
+.usage-panel[data-fold] > .usage-card { order: 10; flex: 1 1 0; max-width: none; }
+.usage-panel[data-fold][data-wrap] > .usage-card { flex: 1 1 calc((100% - 32px) / var(--usage-cols-wrap) - 6px); max-width: calc(100% / var(--usage-cols-wrap)); margin-top: 4px; }
 
 /* < 600px: the cards give way entirely to a one-line vendor-chip row (UsagePanel swaps markup, not just CSS). */
-.usage-chips { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; overflow: hidden; }
+/* Its own full-width line under the top row (order after the ::after line break), only as tall as its chips — it used
+   to inherit .usage-panel's height: 100% and wrap ahead of the logo and actions, leaving a tall empty band and pushing
+   사용량 / 알림 onto a third line. Any seat count: chips that do not fit wrap to a second line (never scrolled away). */
+.usage-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; order: 10; flex: 1 0 100%; height: auto; padding-top: 1px; }
 .usage-chip {
   display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; height: 22px; padding: 0 7px; border: 0; border-radius: 9px;
   font: inherit; font-size: calc(12px * var(--font-scale, 1)); font-weight: 600; cursor: pointer;
@@ -1673,7 +1696,7 @@ button.hl-row-main:hover { background: var(--hover); }
 
 /* Tablet / unfolded inner screen: two-row top bar like < 1280px (menu · logo · status chips on top, the cards underneath —
    one line squeezed the chips to nothing and the numbers into the tags), a font-scale-aware sidebar that can be folded away (☰). */
-@media (min-width: 721px) and (max-width: 1100px) {
+@media (min-width: 721px) and (max-width: 1099.98px) {
   .topbar { column-gap: 8px; padding: 0 10px 6px 8px; }
   .sidebar-toggle { display: inline-flex; order: 0; width: 36px; height: 36px; font-size: calc(16px * var(--font-scale, 1)); color: var(--fg); }
   .topbar > .brand { order: 1; height: 44px; margin-right: 0; }
