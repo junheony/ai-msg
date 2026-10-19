@@ -346,8 +346,12 @@ function cellOf(task: Task, grok: GrokModel, claude: { model: ClaudeModel; notes
     return [...pair, ...(task.kind === 'explain' ? [{ engine: 'gemini', model: 'gemini-pro', note: '읽기 전용 분석' } as Cand] : [])];
   }
   const easy = task.difficulty === 'easy';
+  // Chat / explain / easy lookups stay on fast models (Sonnet · Flash · Sol). Only build/design·hard keep Opus/Fable/Astra.
+  // claudeAutoModel may still classify a long explain as medium→Opus; for explain we pin Claude to Sonnet so the
+  // pane feels like a concise assistant (docs: feat/concise-mode). Capability / limit filters still apply below.
   if (task.kind === 'explain') {
-    return [C, { engine: 'gemini', model: easy ? 'gemini-flash' : 'gemini-pro' }, { engine: 'codex', model: 'gpt-6-sol' }, G];
+    const Cfast: Cand = { engine: 'claude', model: 'sonnet', ...note };
+    return [Cfast, { engine: 'gemini', model: easy ? 'gemini-flash' : 'gemini-pro' }, { engine: 'codex', model: 'gpt-6-sol' }, G];
   }
   return [C, { engine: 'codex', model: 'gpt-6-sol' }, G];
 }
