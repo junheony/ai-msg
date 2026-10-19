@@ -2,6 +2,7 @@ import { modelLabelOf } from '../../shared/models';
 import type { TurnBadge as Badge } from '../../shared/protocol';
 import { useAccounts } from '../accounts';
 import { has } from '../features';
+import { usePrefs } from '../usePrefs';
 import { PinIcon } from './AccountPicker';
 
 function k(n: number): string {
@@ -42,17 +43,19 @@ export function isFailedTurn(t: { error?: string | null; interrupted?: boolean }
 export function TurnBadge({ badge, model, stopped = false, failed = false, cacheNote = null }: { badge: Badge; /** The turn's own model (turn_result / transcript); shown before the badge's. */ model?: string; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null }) {
   const u = badge.usage;
   const names = useAccounts();
+  const [prefs] = usePrefs();
+  const concise = prefs.conciseMode;
   const label = names.label(badge.account);
   const look = names.look(badge.account);
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
   return (
-    <div className={`turn-badge${stopped ? ' stopped' : ''}`}>
+    <div className={`turn-badge${stopped ? ' stopped' : ''}${concise ? ' concise' : ''}`}>
       <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={`계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`}><span className="acct-name">{label}</span></span>
       {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
       <span className="tb-model">{modelLabelOf(model ?? badge.model)}</span>
       {stopped ? (
         <span className="tb-stopped" title={tokens}>{failed ? '실패' : '중단됨'}</span>
-      ) : (
+      ) : !concise ? (
         <span className="tb-tokens">
           <span>입력 <b>{k(u.inputTokens)}</b></span>
           <span>출력 <b>{k(u.outputTokens)}</b></span>
@@ -61,9 +64,13 @@ export function TurnBadge({ badge, model, stopped = false, failed = false, cache
             ? <span className="tb-cold" title={cacheNote}>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>
             : <span>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>}
         </span>
+      ) : (
+        <span className="tb-tokens concise-tokens" title={tokens}>출력 <b>{k(u.outputTokens)}</b></span>
       )}
-      <span className="reason" title={badge.reason}>{badge.reason}</span>
-      {badge.modelNote && <span className="note">{badge.modelNote}</span>}
+      {/* Concise tucks the long route reason into the title only (still available on hover). */}
+      {!concise && <span className="reason" title={badge.reason}>{badge.reason}</span>}
+      {concise && <span className="reason concise-reason" title={badge.reason} aria-label={badge.reason}>·</span>}
+      {!concise && badge.modelNote && <span className="note">{badge.modelNote}</span>}
     </div>
   );
 }

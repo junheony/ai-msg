@@ -156,11 +156,12 @@ export const Markdown = memo(function Markdown({ text, className = 'markdown' }:
   );
 });
 
-/** Claude's thinking as a collapsed disclosure above the reply (Desktop: "N초 동안 생각함"). */
-function Thinking({ t, streaming }: { t: NonNullable<Extract<ChatItem, { kind: 'assistant' }>['thinking']>; streaming: boolean }) {
+/** Claude's thinking as a collapsed disclosure above the reply (Desktop: "N초 동안 생각함"). Concise: label only while streaming. */
+function Thinking({ t, streaming, concise = false }: { t: NonNullable<Extract<ChatItem, { kind: 'assistant' }>['thinking']>; streaming: boolean; concise?: boolean }) {
   const secs = t.ms === null ? null : Math.max(1, Math.round(t.ms / 1000));
   const label = t.ms === null && streaming ? '생각하는 중…' : secs === null ? '생각 과정' : `${secs}초 동안 생각함`;
   const body = t.text.trim();
+  if (concise && streaming) return <div className="thinking-line concise" data-testid="thinking">{label}</div>;
   if (!body && !t.redacted) return <div className="thinking-line" data-testid="thinking">{label}</div>;
   return (
     <details className="thinking" data-testid="thinking">
@@ -431,6 +432,8 @@ function UserText({ text }: { text: string }) {
 export const MessageView = memo(function MessageView({ item, cwd, last = false }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean }) {
   const actions = useContext(MessageActionsContext);
   const regen = useContext(RegenerateContext);
+  const [prefs] = usePrefs();
+  const concise = prefs.conciseMode;
   const [editing, setEditing] = useState(false);
   if (item.kind === 'user') {
     if (item.text === HANDOFF_PROMPT) return <div className="msg user handoff-req" title={HANDOFF_PROMPT}><pre>인계 메모 요청 (새 세션으로 이어가기)</pre></div>;
@@ -482,12 +485,25 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   return (
     <FileRootContext.Provider value={cwd || null}>
     <div className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}`}>
-      {item.notes.map((n, i) => <div key={i} className="note">{n}</div>)}
-      {item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
-      {item.thinking && <Thinking t={item.thinking} streaming={item.streaming} />}
-      <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} />
-      {item.text && <Markdown text={item.text} />}
-      {item.streaming && <span className="cursor">▍</span>}
+      {/* Concise: mid-turn notes stay (milestones); full-mode attempts always show. */}
+      {item.notes.map((n, i) => <div key={i} className={`note${concise ? ' concise-note' : ''}`}>{n}</div>)}
+      {(!concise || !item.streaming) && item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
+      {item.thinking && !(concise && item.streaming && !item.thinking.text && !item.thinking.redacted) && (
+        <Thinking t={item.thinking} streaming={item.streaming} concise={concise} />
+      )}
+      <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} concise={concise} />
+      {/* Concise results-only: hide streamed answer text until the turn finishes. */}
+      {item.text && !(concise && item.streaming) && <Markdown text={item.text} />}
+      {item.streaming && !(concise && item.toolCalls.length === 0 && !item.thinking) && !concise && <span className="cursor">▍</span>}
+      {concise && item.streaming && (
+        <div className="concise-progress" data-testid="concise-progress" aria-live="polite">
+          {item.toolCalls.length > 0
+            ? `계속 작업 중 · 단계 ${item.toolCalls.length}`
+            : item.thinking
+              ? '생각하는 중…'
+              : '처리 중…'}
+        </div>
+      )}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
       {(item.badge || item.model || item.toolCalls.length > 0 || hasActions) && (
         <div className="turn-foot">

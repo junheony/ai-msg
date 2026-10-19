@@ -15,7 +15,8 @@ import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePast
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
-import { AccountPicker } from './AccountPicker';
+import { AccountPicker } from './AccountPicker'
+import { useAccounts } from '../accounts';;
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
@@ -85,6 +86,8 @@ export type ChatProps = {
   /** The pending send waits in the server behind a streaming segment (turn_queued.behind): the status row says so instead of 시작하는 중…. */
   awaitingBehind?: string | null;
   progress?: { outputTokens: number; phase: TurnPhase } | null;
+  /** Concise-mode routing ack (from turn_started). */
+  turnRoute?: { model: string; engine: string; account: string; reason: string } | null;
   /** Subagent cards by Agent call id; the background pill. */
   agents?: Record<string, AgentInfo>;
   bg?: PaneBackground | null;
@@ -269,6 +272,8 @@ function Pick({ className, label, children, ...rest }: { className?: string; lab
 }
 
 export function Chat(p: ChatProps) {
+  const accountNames = useAccounts();
+
   const draftKey = p.sessionId ?? p.draftKey ?? null;
   const [text, setText] = useState(() => loadDraft(draftKey));
   // The pane switched sessions: show that session's draft, not the previous one's. Done during render so the save
@@ -625,7 +630,7 @@ export function Chat(p: ChatProps) {
         )}
         {(p.busy || p.bg) && (
           <div className="activity-bar">
-            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} queuedBehind={p.activeTurnId ? null : p.awaitingBehind ?? null} progress={p.progress ?? null} live={live} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
+            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} queuedBehind={p.activeTurnId ? null : p.awaitingBehind ?? null} progress={p.progress ?? null} live={live} routeAck={p.turnRoute ? { model: p.turnRoute.model, engine: p.turnRoute.engine, accountLabel: accountNames.label(p.turnRoute.account) } : null} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
             {p.bg && <BackgroundPill bg={p.bg} onStopTask={p.onStopTask} onStopAll={() => p.onStopBackground?.(p.bg!.turnId)} />}
           </div>
         )}
