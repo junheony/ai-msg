@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { AgentInfo, ToolCallItem } from '../state';
 import { AgentContext, BackgroundPill, StatusRow, agentStatus, clock, tokens, toolVerb } from './Activity';
+import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 import { ToolCalls } from './ToolCallView';
 
 const agentCall: ToolCallItem = { toolUseId: 'ag', name: 'Agent', input: { subagent_type: 'general-purpose', description: 'count files', prompt: 'count' }, result: null, isError: false };
@@ -31,7 +32,11 @@ describe('formatting', () => {
 });
 
 describe('StatusRow', () => {
-  afterEach(cleanup);
+  beforeEach(() => {
+    // Full-mode expectations below; concise is on by default.
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: false }));
+  });
+  afterEach(() => { cleanup(); localStorage.removeItem(PREFS_KEY); });
   it('shows the phase verb, elapsed time and live output tokens; 시작하는 중… before the turn starts', () => {
     render(<StatusRow startedAt={Date.now() - 75_000} started progress={{ outputTokens: 2400, phase: 'thinking' }} live={null} onInterrupt={() => {}} />);
     const s = screen.getByTestId('turn-status');
@@ -68,6 +73,15 @@ describe('StatusRow', () => {
     expect(screen.getByTestId('turn-status').textContent).not.toContain('기다리는 중');
   });
 });
+
+  it('concise mode: short ack naming the model instead of phase chrome', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: true }));
+    render(<StatusRow startedAt={Date.now()} started progress={null} live={null} routeAck={{ model: 'gpt-6-sol', engine: 'codex' }} onInterrupt={() => {}} />);
+    expect(screen.getByTestId('turn-status').textContent).toContain('확인 · GPT Sol로 처리 중');
+    cleanup();
+    render(<StatusRow startedAt={Date.now()} started={false} progress={null} live={null} />);
+    expect(screen.getByTestId('turn-status').textContent).toContain('확인…');
+  });
 
 describe('AgentCard', () => {
   afterEach(cleanup);

@@ -604,6 +604,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           runStartedAt={pane.runStartedAt}
           awaitingBehind={pane.awaitingBehind}
           progress={pane.progress}
+          turnRoute={pane.turnRoute ?? null}
           agents={pane.agents}
           bg={pane.bg}
           queue={pane.queue}

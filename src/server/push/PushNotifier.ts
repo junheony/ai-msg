@@ -62,8 +62,8 @@ export function selectPush(msg: ServerMessage, titleOf: (sessionId: string | nul
   }
 }
 
-/** A turn this long is worth a push even when it ends quietly. */
-export const LONG_TURN_MS = 10 * 60_000;
+/** A turn this long is worth a push even when it ends quietly (간결 모드: notify on long turns by default). */
+export const LONG_TURN_MS = 90_000;
 /** turn_started times kept this long at most (a turn whose result never came). */
 const STARTED_KEEP_MS = 24 * 3600_000;
 /** Endings that ask the user to act (not 골라냈습니다 / 선택해서 적용했습니다 / 원하시면 언제든). */

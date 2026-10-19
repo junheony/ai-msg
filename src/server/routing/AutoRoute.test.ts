@@ -283,7 +283,7 @@ describe('engineState', () => {
 describe('chooseRoute — table (§4 + §10)', () => {
   it.each<[string, string, string]>([
     ['explain · easy', P.explainEasy, 'claude/sonnet/medium'],
-    ['explain · medium', P.explainMedium, 'claude/opus/high'],
+    ['explain · medium', P.explainMedium, 'claude/sonnet/medium'],
     ['build · easy', P.buildEasy, 'claude/sonnet/medium'],
     ['build · medium', P.buildMedium, 'claude/opus/high'],
     ['design · hard', P.designHard, 'claude/fable/high'],

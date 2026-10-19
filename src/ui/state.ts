@@ -242,6 +242,8 @@ export type PaneState = {
   /** Status row: when the running turn started (client clock), its output tokens and phase. */
   runStartedAt: number | null;
   progress: { outputTokens: number; phase: TurnPhase } | null;
+  /** Concise-mode ack: engine/model/account from turn_started (cleared when the turn ends). */
+  turnRoute?: { model: string; engine: EngineKind; account: string; reason: string } | null;
   /** Subagent cards, by the Agent call's toolUseId. */
   agents: Record<string, AgentInfo>;
   /** Background tasks pill; null = none. */
@@ -400,7 +402,7 @@ function remember(recent: AppState['recent'], p: PaneState | undefined): AppStat
 export const PANE_LIMIT = 24;
 
 export function newPane(id: string): PaneState {
-  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: 'auto', modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'auto', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
+  return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: 'auto', modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'auto', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, turnRoute: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
 export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, grok: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, autoRoute: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
@@ -632,7 +634,7 @@ function withSteerBubble(items: ChatItem[], turnId: string, bubble: ChatItem): C
   return out;
 }
 
-const ACTIVITY_RESET = { runStartedAt: null, progress: null, agents: {}, bg: null, routeFit: null } as const;
+const ACTIVITY_RESET = { runStartedAt: null, progress: null, turnRoute: null, agents: {}, bg: null, routeFit: null } as const;
 
 /** The agent card a subagent call belongs to: its own Agent call, or the top card holding the nested Agent call. */
 function agentFor(agents: Record<string, AgentInfo>, parentToolUseId: string): string | null {
@@ -767,7 +769,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const runStartedAt = p.activeTurnId === msg.turnId || (p.runStartedAt !== null && p.activeTurnId === null) ? (p.runStartedAt ?? Date.now()) : Date.now();
       // The session's model as stored after this send (picked on another pane or device): a pane that picked none shows it.
       const follow = msg.sessionModel && !p.modelPicked && (msg.engine ?? 'claude') === 'claude' ? { model: msg.sessionModel } : {};
-      return { ...p, items, activeTurnId: msg.turnId, runStartedAt, progress: p.activeTurnId === msg.turnId ? p.progress : null, ...follow };
+      const turnRoute = { model: msg.model, engine: (msg.engine ?? 'claude') as EngineKind, account: msg.account, reason: msg.reason };
+      return { ...p, items, activeTurnId: msg.turnId, runStartedAt, progress: p.activeTurnId === msg.turnId ? p.progress : null, turnRoute, ...follow };
     }
     // The server holds this pane's send behind a streaming segment: said on the status row instead of 시작하는 중…
     // (matched by the send's ref only — the turn id is new to the pane until its turn_started).
@@ -904,7 +907,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       // ux-state: a failed (or stopped) turn of this pane pauses its queue instead of firing the next message into it.
       const queuePaused = next.queuePaused || ((mine || pane.activeTurnId === msg.turnId) && !msg.ok);
       const ended = pane.activeTurnId === msg.turnId;
-      const done: PaneState = { ...next, session, myTurns, queuePaused, activeTurnId: ended ? null : pane.activeTurnId, ...(ended ? { runStartedAt: null, progress: null } : {}) };
+      const done: PaneState = { ...next, session, myTurns, queuePaused, activeTurnId: ended ? null : pane.activeTurnId, ...(ended ? { runStartedAt: null, progress: null, turnRoute: null } : {}) };
       return pane.handoff?.turnId === msg.turnId ? afterHandoffNote(done, msg.ok, accounts) : done;
     }
     case 'route_fit': {
