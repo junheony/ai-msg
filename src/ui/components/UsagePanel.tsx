@@ -324,7 +324,7 @@ function SeatCard({ data, current, now, pop, onPop, onOpenHistory, next }: {
   const label = useAccounts().label(seat);
   const at = (el: HTMLElement, pinned: boolean): Pop => {
     const r = el.getBoundingClientRect();
-    return { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6, pinned };
+    return { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 250)), y: r.bottom + 6, pinned };
   };
   const open = pop?.seat === seat;
   const main = pickMain(rows);
@@ -484,7 +484,7 @@ function Chip({ data, current, pop, onPop }: { data: SeatData; current: boolean;
       type="button"
       data-testid={`chip-${seat}`}
       className={`usage-chip ${status} ${current ? 'current' : ''} ${open ? 'open' : ''}`}
-      onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onPop(open ? null : { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6, pinned: true }); }}
+      onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onPop(open ? null : { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 250)), y: r.bottom + 6, pinned: true }); }}
     >
       <span className="usage-chip-letter">{label}</span>
       <span className="usage-chip-num">{text}{reasonLine === undefined && main ? (main.rem > 0 ? '%' : '') : reasonLine !== undefined ? (status === 'ok' ? '가능' : status === 'down' ? '불가' : status === 'cooldown' ? '대기' : '') : ''}</span>

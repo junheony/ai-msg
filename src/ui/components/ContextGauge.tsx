@@ -40,6 +40,7 @@ export function ContextGauge({ info, onHandoff }: { info: ContextInfo | null; on
           <circle className="ctx-arc" cx="9" cy="9" r={R} strokeDasharray={`${(C * Math.max(pct, 2)) / 100} ${C}`} transform="rotate(-90 9 9)" />
         </svg>
         <span className="ctx-num">{fmtTokens(tokens)}</span>
+        <span className="ctx-pct">{pct}%</span>
       </button>
       {open && (
         <span className="ctx-pop" role="status">
