@@ -18,6 +18,7 @@ The name: a quarterdeck is where the captain commands the ship. Internal identif
 ## Features
 
 - **Chat shell** — streaming markdown, collapsible tool calls, diff view, thinking blocks, todo panel, image and file attachments, slash-command and file-path completion.
+- **Concise mode (간결 모드)** — on by default (Settings → 일반). Instant short ack naming the chosen engine/model, results-first pane (thinking/tool bodies collapsed; mid-turn chatter tucked away), milestone-style progress on long turns, and Web Push when a long turn finishes (unfocused tab). Toggle off for the full Claude Code–style stream. Explain/chat turns prefer fast models (Sonnet / Gemini Flash / GPT Sol); hard/build work still uses Fable / Opus / Astra.
 - **Split view** — 2 to 4 panes, each an independent session. On narrow screens: one pane and a drawer sidebar. On desktop `⌘\` hides the sidebar; resting the pointer on the window's left edge then slides it out over the panes until the pointer leaves.
 - **Session list** — reads the Claude Code transcripts already on disk, grouped by project folder. Pin, rename, archive, search, fork, delete (with undo), export to Markdown. Transcripts written only by scripted `claude -p` runs (a batch job's one-shots) stay out of the list unless deck runs or renames them; search still finds them.
 - **Claude Desktop mirroring** — a session that ran on another account's profile is copied back to the home profile, so Claude Desktop and `claude --resume` see the same conversation. Sessions currently held open by another `claude` process are marked.
