@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { AttachmentBar } from './AttachmentBar';
@@ -65,5 +67,11 @@ describe('AttachmentBar (D7)', () => {
     expect(cam.accept).toBe('image/*');
     expect(cam.getAttribute('capture')).toBe('environment');
     window.matchMedia = was;
+  });
+  it('an editable image chip puts the name in its own box, so a long name ellipsizes instead of pushing the size out', () => {
+    const { container } = render(<AttachmentBar attachments={[{ id: '1', name: 'a-very-long-screenshot-name.png', size: 2048, isImage: true }]} uploading={0} error={null} onRemove={() => {}} onReplace={async () => {}} />);
+    expect(container.querySelector('.attach-edit-label > .attach-edit-name')?.textContent).toBe('a-very-long-screenshot-name.png');
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.attach-edit-name \{[^}]*min-width: 0;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
   });
 });

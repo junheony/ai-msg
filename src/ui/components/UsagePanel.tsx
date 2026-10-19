@@ -413,20 +413,35 @@ function usePhoneChips(): boolean {
  * top bar's other items do not shrink, so the room for the cards depends on more than the window width. Measured on the
  * cards (the panel itself is display: contents in the two-row layouts, < 1100px — measured there too: a fixed 1100px
  * cutoff let 600–1099px cards overflow into their neighbours): while the full cards show, after every render
- * (new numbers, a countdown growing, the 30 s clock) and on every card resize; the width the full cards needed is kept,
- * since the compact card cannot measure it, and the switch turns back off only once the cards are 16px wider than that.
+ * (new numbers, a countdown growing, the 30 s clock) and on every card or bar resize; the width the full cards needed is
+ * kept, since the compact card cannot measure it, and the switch turns back off only once there is 16px more than that.
+ * "More" is read two ways: the cards themselves 16px wider, or — since a capped compact card (the one-row bar's 160px)
+ * never gets that wide — each card's share of the row (the panel, or the bar when the panel is display: contents)
+ * 16px past the share the full cards were missing. Too early a release only re-measures and switches back at once
+ * with a larger need, so it cannot flicker.
  */
 function useCramped(panel: RefObject<HTMLDivElement | null>, ids: string): boolean {
   const [cramped, setCramped] = useState(false);
   const on = useRef(false);
   const need = useRef(0);
+  const needShare = useRef(0);
   const check = useCallback(() => {
     const set = (v: boolean) => { if (v !== on.current) { on.current = v; setCramped(v); } };
-    const list = panel.current ? [...panel.current.querySelectorAll<HTMLElement>(':scope > .usage-card')] : [];
-    if (!list.length) return set(false);
-    if (on.current) { if (Math.min(...list.map((c) => c.clientWidth)) >= need.current + 16) set(false); return; }
+    const el = panel.current;
+    const list = el ? [...el.querySelectorAll<HTMLElement>(':scope > .usage-card')] : [];
+    if (!el || !list.length) return set(false);
+    const row = getComputedStyle(el).display === 'contents' ? el.parentElement : el;
+    const share = (row?.clientWidth ?? 0) / list.length;
+    if (on.current) {
+      if (Math.min(...list.map((c) => c.clientWidth)) >= need.current + 16 || (share > 0 && share >= needShare.current + 16)) set(false);
+      return;
+    }
     const over = list.filter((c) => c.scrollWidth > c.clientWidth + 1);
-    if (over.length) { need.current = Math.max(...over.map((c) => c.scrollWidth)); set(true); }
+    if (over.length) {
+      need.current = Math.max(...over.map((c) => c.scrollWidth));
+      needShare.current = share + Math.max(...over.map((c) => c.scrollWidth - c.clientWidth));
+      set(true);
+    }
   }, [panel]);
   // Before paint, so an overflowing full card never shows for a frame.
   useLayoutEffect(() => { if (!on.current) check(); });
@@ -435,6 +450,8 @@ function useCramped(panel: RefObject<HTMLDivElement | null>, ids: string): boole
     if (!el || !ids || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(check);
     for (const c of el.querySelectorAll(':scope > .usage-card')) ro.observe(c);
+    ro.observe(el);
+    if (el.parentElement) ro.observe(el.parentElement);
     check();
     return () => ro.disconnect();
   }, [panel, ids, check]);
@@ -449,7 +466,9 @@ const TWO_ROW_QUERY = '(max-width: 1099.98px)';
  * 6-seat row at 1280px did not fit even dense): the panel says data-fold and styles.css gives
  * the bar the same two-row layout as below 1100px. Folded, the panel is display: contents and cannot be measured, so the
  * window width it would have needed is kept and the fold lets go only once the window is 16px wider than that (or the
- * set of cards changes, which measures again).
+ * set of cards changes, which measures again). Judged only once the cards are already dense (data-dense): a row that fits
+ * dense never folds, and the kept width is the dense row's, not the full one's. Below 1100px it always lets go (the
+ * two-row layout is there anyway, and a fold left on would outlive the window that needed it).
  */
 function useFold(panel: RefObject<HTMLDivElement | null>, ids: string): boolean {
   const [fold, setFold] = useState(false);
@@ -457,9 +476,10 @@ function useFold(panel: RefObject<HTMLDivElement | null>, ids: string): boolean 
   const at = useRef(0);
   const set = useCallback((v: boolean) => { if (v !== on.current) { on.current = v; setFold(v); } }, []);
   const check = useCallback(() => {
+    if (typeof window.matchMedia === 'function' && window.matchMedia(TWO_ROW_QUERY).matches) return set(false);
     if (on.current) { if (window.innerWidth >= at.current + 16) set(false); return; }
     const el = panel.current;
-    if (!el || (typeof window.matchMedia === 'function' && window.matchMedia(TWO_ROW_QUERY).matches)) return;
+    if (!el || !el.hasAttribute('data-dense')) return;
     if (el.scrollWidth > el.clientWidth + 1) { at.current = window.innerWidth + el.scrollWidth - el.clientWidth; set(true); }
   }, [panel, set]);
   // A new set of cards measures afresh (declared first: the check below then runs on the unfolded row).
@@ -468,6 +488,15 @@ function useFold(panel: RefObject<HTMLDivElement | null>, ids: string): boolean 
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, [ids, check, set]);
+  // The panel's own size too (the bar's other items come and go without a window resize). Folded, the panel is
+  // display: contents and reports nothing, and an unfolded check only reads sizes: no loop.
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el || !ids || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [panel, ids, check]);
   useLayoutEffect(() => { if (!on.current) check(); });
   return fold;
 }

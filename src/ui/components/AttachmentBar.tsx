@@ -155,8 +155,9 @@ export function AttachmentBar({ attachments, uploading, error, onFiles, onRemove
       {onFiles && <AttachMenu onFiles={onFiles} />}
       {attachments.map((a) => {
         if (pastedTexts?.[a.id] !== undefined) return <PastedChip key={a.id} text={pastedTexts[a.id]!} onRemove={() => onRemove(a.id)} />;
-        const label = <>{a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{a.name} <span className="muted">{kb(a.size)}</span></>;
         const editable = !!onReplace && a.isImage;
+        // In the editable chip the label is a flex row: the name gets its own box, or it cannot ellipsize.
+        const label = <>{a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{editable ? <span className="attach-edit-name">{a.name}</span> : a.name} <span className="muted">{kb(a.size)}</span></>;
         return (
           <span key={a.id} className={`chip attachment ${a.previewUrl ? 'has-thumb' : ''} ${editable ? 'editable' : ''}`} title={a.name} data-attachment-id={a.id}>
             {/* Touch screens have no hover: the chip says 편집 in words, or nobody finds the editor behind it. */}

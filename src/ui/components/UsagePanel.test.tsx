@@ -293,9 +293,9 @@ describe('UsagePanel 남음 caption, colour notes and the measured compact switc
   // jsdom has no layout: card widths are set by hand, the (mocked) ResizeObserver fired by hand.
   const withRO = (body: (fire: () => void) => void) => {
     const RO = globalThis.ResizeObserver;
-    let cb = () => {};
-    globalThis.ResizeObserver = class { constructor(f: () => void) { cb = f; } observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
-    try { body(() => act(() => cb())); } finally { globalThis.ResizeObserver = RO; }
+    const cbs = new Set<() => void>();
+    globalThis.ResizeObserver = class { f: () => void; constructor(f: () => void) { this.f = f; } observe() { cbs.add(this.f); } disconnect() { cbs.delete(this.f); } unobserve() {} } as unknown as typeof ResizeObserver;
+    try { body(() => act(() => { for (const f of [...cbs]) f(); })); } finally { globalThis.ResizeObserver = RO; }
   };
   const size = (panel: Element, client: number, scroll: number) => {
     for (const c of panel.querySelectorAll('.usage-card')) {
@@ -597,9 +597,9 @@ describe('UsagePanel · layout guards', () => {
   const media = (two: boolean) => vi.stubGlobal('matchMedia', (q: string) => ({ matches: two && q === '(max-width: 1099.98px)', addEventListener() {}, removeEventListener() {} }));
   const withRO = (body: (fire: () => void) => void) => {
     const RO = globalThis.ResizeObserver;
-    let cb = () => {};
-    globalThis.ResizeObserver = class { constructor(f: () => void) { cb = f; } observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
-    try { body(() => act(() => cb())); } finally { globalThis.ResizeObserver = RO; }
+    const cbs = new Set<() => void>();
+    globalThis.ResizeObserver = class { f: () => void; constructor(f: () => void) { this.f = f; } observe() { cbs.add(this.f); } disconnect() { cbs.delete(this.f); } unobserve() {} } as unknown as typeof ResizeObserver;
+    try { body(() => act(() => { for (const f of [...cbs]) f(); })); } finally { globalThis.ResizeObserver = RO; }
   };
 
   it('the two-row bar (< 1100px) measures too: cards that overflow there go dense instead of drawing into the next card', () => withRO((fire) => {
@@ -614,37 +614,88 @@ describe('UsagePanel · layout guards', () => {
     expect(panel.hasAttribute('data-dense')).toBe(true);
   }));
 
-  it('≥ 1100px: cards overflowing the one-row panel fold the bar into two rows, back once the window is 16px wider than needed', () => {
+  it('a dense card held at 160px (the one-row cap) still lets go once each card\'s share of the row is 16px past what was missing', () => withRO((fire) => {
     media(false);
+    const { container } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    const panel = container.querySelector('.usage-panel')!;
+    const n = panel.querySelectorAll('.usage-card').length;
+    const set = (el: Element, k: string, v: number) => Object.defineProperty(el, k, { configurable: true, value: v });
+    const cards = (client: number, scroll: number) => { for (const c of panel.querySelectorAll('.usage-card')) { set(c, 'clientWidth', client); set(c, 'scrollWidth', scroll); } };
+    set(panel, 'clientWidth', 600); cards(150, 190); fire(); // full cards missing 40px each
+    expect(panel.hasAttribute('data-dense')).toBe(true);
+    cards(160, 160); // capped: never 190 + 16 wide
+    set(panel, 'clientWidth', 600 + 55 * n); fire();
+    expect(panel.hasAttribute('data-dense')).toBe(true);
+    set(panel, 'clientWidth', 600 + 56 * n); fire();
+    expect(panel.hasAttribute('data-dense')).toBe(false);
+  }));
+
+  // Prototype getters (jsdom has no layout): the panel 500px wide holding 700px, each card 110px holding 150px.
+  const layout = (body: (wide: { panel: number }) => void) => {
     const proto = Element.prototype;
     const sw = Object.getOwnPropertyDescriptor(proto, 'scrollWidth')!;
     const cw = Object.getOwnPropertyDescriptor(proto, 'clientWidth')!;
-    const wide = vi.fn(function (this: HTMLElement) { return this.classList.contains('usage-panel') ? 700 : 0; });
-    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get: wide });
-    Object.defineProperty(proto, 'clientWidth', { configurable: true, get() { return (this as HTMLElement).classList.contains('usage-panel') ? 500 : 0; } });
-    try {
-      vi.stubGlobal('innerWidth', 1200);
-      const { container } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
-      const panel = container.querySelector('.usage-panel')!;
-      expect(panel.hasAttribute('data-fold')).toBe(true); // needed a 1400px window
-      vi.stubGlobal('innerWidth', 1410);
-      act(() => { window.dispatchEvent(new Event('resize')); });
-      expect(panel.hasAttribute('data-fold')).toBe(true);
-      Object.defineProperty(proto, 'scrollWidth', { configurable: true, get() { return 0; } });
-      vi.stubGlobal('innerWidth', 1416);
-      act(() => { window.dispatchEvent(new Event('resize')); });
-      expect(panel.hasAttribute('data-fold')).toBe(false);
-    } finally {
+    const wide = { panel: 700 };
+    const of = (el: Element, panel: number, card: number) => el.classList.contains('usage-panel') ? panel : el.classList.contains('usage-card') ? card : 0;
+    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get() { return of(this as Element, wide.panel, 150); } });
+    Object.defineProperty(proto, 'clientWidth', { configurable: true, get() { return of(this as Element, 500, 110); } });
+    try { body(wide); } finally {
       Object.defineProperty(proto, 'scrollWidth', sw);
       Object.defineProperty(proto, 'clientWidth', cw);
     }
+  };
+
+  it('≥ 1100px: dense cards overflowing the one-row panel fold the bar into two rows, back once the window is 16px wider than needed', () => layout((wide) => {
+    media(false);
+    vi.stubGlobal('innerWidth', 1200);
+    const { container } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    const panel = container.querySelector('.usage-panel')!;
+    expect(panel.hasAttribute('data-dense')).toBe(true);
+    expect(panel.hasAttribute('data-fold')).toBe(true); // needed a 1400px window
+    vi.stubGlobal('innerWidth', 1410);
+    act(() => { window.dispatchEvent(new Event('resize')); });
+    expect(panel.hasAttribute('data-fold')).toBe(true);
+    wide.panel = 0;
+    vi.stubGlobal('innerWidth', 1416);
+    act(() => { window.dispatchEvent(new Event('resize')); });
+    expect(panel.hasAttribute('data-fold')).toBe(false);
+  }));
+
+  it('a row that is not dense never folds: dense gets the first try', () => {
+    media(false);
+    vi.stubGlobal('innerWidth', 1200);
+    const proto = Element.prototype;
+    const sw = Object.getOwnPropertyDescriptor(proto, 'scrollWidth')!;
+    // The panel overflows but no card does (so nothing goes dense): no fold yet.
+    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get() { return (this as Element).classList.contains('usage-panel') ? 700 : 0; } });
+    try {
+      const { container } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
+      const panel = container.querySelector('.usage-panel')!;
+      expect(panel.hasAttribute('data-dense')).toBe(false);
+      expect(panel.hasAttribute('data-fold')).toBe(false);
+    } finally { Object.defineProperty(proto, 'scrollWidth', sw); }
   });
+
+  it('a fold lets go when the window narrows below 1100px (the two-row layout takes over; no fold rule left on)', () => layout(() => {
+    media(false);
+    vi.stubGlobal('innerWidth', 1200);
+    const { container } = render(<UsagePanel usage={usage} current={null} now={NOW} />);
+    const panel = container.querySelector('.usage-panel')!;
+    expect(panel.hasAttribute('data-fold')).toBe(true);
+    media(true);
+    vi.stubGlobal('innerWidth', 900);
+    act(() => { window.dispatchEvent(new Event('resize')); });
+    expect(panel.hasAttribute('data-fold')).toBe(false);
+  }));
 
   it('styles: dense cards put the countdown on its own clipped line; the phone chips get their own wrapping line; the fold has its two-row rules', () => {
     const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
     expect(css).toMatch(/\.usage-panel\[data-dense\] \.usage-body \{[^}]*overflow: hidden;/);
     expect(css).toMatch(/\.usage-panel\[data-dense\] \.usage-cd \{[^}]*flex: 1 0 100%;[^}]*text-overflow: ellipsis;/);
     expect(css).toMatch(/\.usage-chips \{[^}]*flex-wrap: wrap;[^}]*order: 10;[^}]*flex: 1 0 100%;[^}]*height: auto;/);
-    expect(css).toMatch(/\.topbar:has\(> \.usage-panel\[data-fold\]\) \{[^}]*flex-wrap: wrap;/);
+    expect(css).toMatch(/@media \(min-width: 1100px\) \{\n  \.topbar:has\(> \.usage-panel\[data-fold\]\) \{[^}]*flex-wrap: wrap;/);
+    // The dense 160px cap only in the one-row bar, so the two-row layouts keep their own card widths.
+    expect(css).not.toMatch(/\.usage-panel\[data-dense\] \.usage-card \{[^}]*max-width/);
+    expect(css).toMatch(/@media \(min-width: 1100px\) \{ \.usage-panel\[data-dense\]:not\(\[data-fold\]\) \.usage-card \{ max-width: 160px; \} \}/);
   });
 });
