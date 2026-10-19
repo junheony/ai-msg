@@ -324,7 +324,7 @@ function SeatCard({ data, current, now, pop, onPop, onOpenHistory, next }: {
   const label = useAccounts().label(seat);
   const at = (el: HTMLElement, pinned: boolean): Pop => {
     const r = el.getBoundingClientRect();
-    return { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6, pinned };
+    return { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 250)), y: r.bottom + 6, pinned };
   };
   const open = pop?.seat === seat;
   const main = pickMain(rows);
@@ -392,9 +392,6 @@ function SeatCard({ data, current, now, pop, onPop, onOpenHistory, next }: {
 /** Where the active session's next turn would go (route_preview), as the card tag shows it. */
 export type RouteNext = { account: Seat; reason: string; asOpus?: boolean };
 
-/** Below this the compact layouts (styles.css) apply full-width stacked cards; the measured switch below is for the full cards only. */
-const COMPACT_QUERY = '(max-width: 1099.98px)';
-
 /** Below this the whole row becomes a one-line vendor chip strip (design §7-10). */
 const CHIP_QUERY = '(max-width: 599.98px)';
 
@@ -414,21 +411,37 @@ function usePhoneChips(): boolean {
 /**
  * True while the full cards do not fit the width they get (their rows overflow the card even with the bar dropped): the
  * top bar's other items do not shrink, so the room for the cards depends on more than the window width. Measured on the
- * cards (the panel itself is display: contents in the two-row layouts): while the full cards show, after every render
- * (new numbers, a countdown growing, the 30 s clock) and on every card resize; the width the full cards needed is kept,
- * since the compact card cannot measure it, and the switch turns back off only once the cards are 16px wider than that.
+ * cards (the panel itself is display: contents in the two-row layouts, < 1100px — measured there too: a fixed 1100px
+ * cutoff let 600–1099px cards overflow into their neighbours): while the full cards show, after every render
+ * (new numbers, a countdown growing, the 30 s clock) and on every card or bar resize; the width the full cards needed is
+ * kept, since the compact card cannot measure it, and the switch turns back off only once there is 16px more than that.
+ * "More" is read two ways: the cards themselves 16px wider, or — since a capped compact card (the one-row bar's 160px)
+ * never gets that wide — each card's share of the row (the panel, or the bar when the panel is display: contents)
+ * 16px past the share the full cards were missing. Too early a release only re-measures and switches back at once
+ * with a larger need, so it cannot flicker.
  */
 function useCramped(panel: RefObject<HTMLDivElement | null>, ids: string): boolean {
   const [cramped, setCramped] = useState(false);
   const on = useRef(false);
   const need = useRef(0);
+  const needShare = useRef(0);
   const check = useCallback(() => {
     const set = (v: boolean) => { if (v !== on.current) { on.current = v; setCramped(v); } };
-    const list = panel.current ? [...panel.current.querySelectorAll<HTMLElement>(':scope > .usage-card')] : [];
-    if (!list.length || (typeof window.matchMedia === 'function' && window.matchMedia(COMPACT_QUERY).matches)) return set(false);
-    if (on.current) { if (Math.min(...list.map((c) => c.clientWidth)) >= need.current + 16) set(false); return; }
+    const el = panel.current;
+    const list = el ? [...el.querySelectorAll<HTMLElement>(':scope > .usage-card')] : [];
+    if (!el || !list.length) return set(false);
+    const row = getComputedStyle(el).display === 'contents' ? el.parentElement : el;
+    const share = (row?.clientWidth ?? 0) / list.length;
+    if (on.current) {
+      if (Math.min(...list.map((c) => c.clientWidth)) >= need.current + 16 || (share > 0 && share >= needShare.current + 16)) set(false);
+      return;
+    }
     const over = list.filter((c) => c.scrollWidth > c.clientWidth + 1);
-    if (over.length) { need.current = Math.max(...over.map((c) => c.scrollWidth)); set(true); }
+    if (over.length) {
+      need.current = Math.max(...over.map((c) => c.scrollWidth));
+      needShare.current = share + Math.max(...over.map((c) => c.scrollWidth - c.clientWidth));
+      set(true);
+    }
   }, [panel]);
   // Before paint, so an overflowing full card never shows for a frame.
   useLayoutEffect(() => { if (!on.current) check(); });
@@ -437,10 +450,55 @@ function useCramped(panel: RefObject<HTMLDivElement | null>, ids: string): boole
     if (!el || !ids || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(check);
     for (const c of el.querySelectorAll(':scope > .usage-card')) ro.observe(c);
+    ro.observe(el);
+    if (el.parentElement) ro.observe(el.parentElement);
     check();
     return () => ro.disconnect();
   }, [panel, ids, check]);
   return cramped;
+}
+
+/** Below this the top bar is always two rows (styles.css); above it, `useFold` decides. */
+const TWO_ROW_QUERY = '(max-width: 1099.98px)';
+
+/**
+ * ≥ 1100px: true while the cards overflow the one-row bar's panel (they ran under the actions and each other — a
+ * 6-seat row at 1280px did not fit even dense): the panel says data-fold and styles.css gives
+ * the bar the same two-row layout as below 1100px. Folded, the panel is display: contents and cannot be measured, so the
+ * window width it would have needed is kept and the fold lets go only once the window is 16px wider than that (or the
+ * set of cards changes, which measures again). Judged only once the cards are already dense (data-dense): a row that fits
+ * dense never folds, and the kept width is the dense row's, not the full one's. Below 1100px it always lets go (the
+ * two-row layout is there anyway, and a fold left on would outlive the window that needed it).
+ */
+function useFold(panel: RefObject<HTMLDivElement | null>, ids: string): boolean {
+  const [fold, setFold] = useState(false);
+  const on = useRef(false);
+  const at = useRef(0);
+  const set = useCallback((v: boolean) => { if (v !== on.current) { on.current = v; setFold(v); } }, []);
+  const check = useCallback(() => {
+    if (typeof window.matchMedia === 'function' && window.matchMedia(TWO_ROW_QUERY).matches) return set(false);
+    if (on.current) { if (window.innerWidth >= at.current + 16) set(false); return; }
+    const el = panel.current;
+    if (!el || !el.hasAttribute('data-dense')) return;
+    if (el.scrollWidth > el.clientWidth + 1) { at.current = window.innerWidth + el.scrollWidth - el.clientWidth; set(true); }
+  }, [panel, set]);
+  // A new set of cards measures afresh (declared first: the check below then runs on the unfolded row).
+  useLayoutEffect(() => {
+    set(false);
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, [ids, check, set]);
+  // The panel's own size too (the bar's other items come and go without a window resize). Folded, the panel is
+  // display: contents and reports nothing, and an unfolded check only reads sizes: no loop.
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el || !ids || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [panel, ids, check]);
+  useLayoutEffect(() => { if (!on.current) check(); });
+  return fold;
 }
 
 /** One vendor chip in the <600px row: letter + main %, or (Grok) a status dot + short word. Tap opens the usual popover. */
@@ -455,10 +513,10 @@ function Chip({ data, current, pop, onPop }: { data: SeatData; current: boolean;
       type="button"
       data-testid={`chip-${seat}`}
       className={`usage-chip ${status} ${current ? 'current' : ''} ${open ? 'open' : ''}`}
-      onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onPop(open ? null : { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6, pinned: true }); }}
+      onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onPop(open ? null : { seat, x: Math.max(8, Math.min(r.left, window.innerWidth - 250)), y: r.bottom + 6, pinned: true }); }}
     >
       <span className="usage-chip-letter">{label}</span>
-      <span className="usage-chip-num">{text}{reasonLine === undefined && main ? '%' : reasonLine !== undefined ? (status === 'ok' ? '가능' : status === 'down' ? '불가' : status === 'cooldown' ? '대기' : '') : ''}</span>
+      <span className="usage-chip-num">{text}{reasonLine === undefined && main ? (main.rem > 0 ? '%' : '') : reasonLine !== undefined ? (status === 'ok' ? '가능' : status === 'down' ? '불가' : status === 'cooldown' ? '대기' : '') : ''}</span>
     </button>
   );
 }
@@ -500,6 +558,7 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
 
   const ids = usage ? [...active.map((a) => a.id), 'gpt', ...showGemini, ...showGrok].join(' ') : '';
   const cramped = useCramped(panelRef, ids);
+  const fold = useFold(panelRef, ids);
 
   // Before the first snapshot the panel already takes the shape it will have, so the top bar does not jump when numbers arrive.
   if (!usage) return <div className="usage-panel" data-cards={active.length + 1}><span className="usage-loading">잔여량 불러오는 중…</span></div>;
@@ -572,7 +631,7 @@ export function UsagePanel({ usage, current, now: fixedNow, onOpenHistory, next 
 
   return (
     <div
-      ref={panelRef} className="usage-panel" data-cards={cards} {...(dense ? { 'data-dense': '' } : {})} {...(cards > 4 ? { 'data-many': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})}
+      ref={panelRef} className="usage-panel" data-cards={cards} {...(dense ? { 'data-dense': '' } : {})} {...(cards > 4 ? { 'data-many': '' } : {})} {...(fold ? { 'data-fold': '' } : {})} {...(cards > 6 ? { 'data-wrap': '' } : {})}
       style={{ '--usage-cards': cards, ...(cards > 6 ? { '--usage-cols-wrap': Math.ceil(cards / 2) } : {}) } as CSSProperties}
     >
       {/* Said once for the whole row, not on every card: the numbers are what is left, and what amber / red mean. */}

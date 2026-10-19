@@ -19,7 +19,9 @@ describe('ContextGauge', () => {
     const { getByTestId, container } = render(<ContextGauge info={info(300_000)} />);
     const g = getByTestId('context-gauge');
     expect(g.getAttribute('title')).toBe('컨텍스트 312k / 1M · 캐시 적중 96%');
-    expect(g.textContent).toBe('312k');
+    expect(g.querySelector('.ctx-num')?.textContent).toBe('312k');
+    // Narrow panes hide the count but keep the % so the ring isn't mistaken for a spinner.
+    expect(g.querySelector('.ctx-pct')?.textContent).toBe('31%');
     expect(g.classList.contains('long')).toBe(true);
     expect(container.querySelector('.ctx-pop')).toBeNull();
     fireEvent.click(g);

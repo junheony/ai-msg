@@ -72,6 +72,18 @@ function Harness({ upload }: { upload: (f: File) => Promise<UploadedAttachment> 
 }
 
 describe('ImageEditor (attachment image editing)', () => {
+  it('an image chip says it can be edited in words (touch screens have no hover), files do not', () => {
+    render(<AttachmentBar attachments={[shot, notes]} uploading={0} error={null} onRemove={() => {}} onReplace={async () => {}} />);
+    const btn = screen.getByLabelText('이미지 편집: shot.png');
+    expect(btn.querySelector('.attach-edit-cue')?.textContent).toBe('편집');
+    expect(document.querySelectorAll('.attach-edit-cue')).toHaveLength(1);
+  });
+
+  it('without onReplace (read-only composer) there is no 편집 cue', () => {
+    render(<AttachmentBar attachments={[shot]} uploading={0} error={null} onRemove={() => {}} />);
+    expect(document.querySelector('.attach-edit-cue')).toBeNull();
+  });
+
   it('opens from the image chip; 취소 and Esc leave the attachment alone; focus returns to the chip', async () => {
     const onReplace = await openEditor();
     expect(screen.getByRole('dialog', { name: '이미지 편집' })).toBeTruthy();

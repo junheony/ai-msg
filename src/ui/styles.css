@@ -610,10 +610,23 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 /* "남음", once before the cards: the numbers are what is left (the title adds what amber / red mean). */
 .usage-caption { align-self: center; font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 500; white-space: nowrap; color: var(--faint); cursor: help; }
-/* Cramped (measured — see useCramped, not a seat count): marks give way to the seat letters alone and cards may shrink further. */
-.usage-panel[data-dense] .usage-card { min-width: 72px; max-width: 140px; gap: 5px; padding: 5px 7px; }
+/* Cramped (measured — see useCramped, not a seat count): marks give way to the seat letters alone and cards may shrink
+   further — not below 112px, which still holds the widest label (Gemini) beside a 3-digit %. */
+.usage-panel[data-dense] .usage-card { min-width: 112px; gap: 5px; padding: 5px 7px; }
+/* The 160px cap is for the one-row bar only: in the two-row layouts (and the fold) dense cards keep those layouts' widths
+   (tablet 260px, the 7+ seat columns, otherwise the full line), or the line stops short with its right end empty. */
+@media (min-width: 1100px) { .usage-panel[data-dense]:not([data-fold]) .usage-card { max-width: 160px; } }
 .usage-panel[data-dense] .usage-mark { display: none; }
 .usage-panel[data-dense] .usage-secondary { display: none; }
+/* Dense: the short countdown takes the secondary row's place (its own line, no "· "), so bar + % keep the first line and
+   nothing is pushed past the card's edge into the next card; whatever still does not fit is clipped at the card, never
+   drawn over a neighbour. */
+.usage-panel[data-dense] .usage-body { overflow: hidden; }
+.usage-panel[data-dense] .usage-main { flex-wrap: wrap; height: auto; }
+/* Basis 0: the bar only takes what bar + % leave, so it never wraps away from the % onto a line of its own. */
+.usage-panel[data-dense] .usage-main .usage-bar { flex: 1 1 0; min-width: 0; margin-right: 5px; }
+.usage-panel[data-dense] .usage-cd { flex: 1 0 100%; min-width: 0; margin-left: 0; line-height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-panel[data-dense] .usage-cd::before { content: none; }
 /* 7+ seats (data-wrap): two rows only in the two-row top bar below (< 1100px). The one-row bar has a fixed height, so
    there the cards never wrap — they only go dense. */
 /* Top bar status chips (작업 현황, 재시작 대기, 재시작됨): small muted pills like the stale tag. */
@@ -638,7 +651,7 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
 .usage-pop-row.work-row { box-sizing: border-box; width: calc(100% + 8px); border: 0; background: none; font: inherit; text-align: left; cursor: pointer; border-radius: 6px; padding: 0 4px; margin: 0 -4px; }
 .usage-pop-row.work-row:hover { background: var(--hover); color: var(--fg); }
 .work-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-pop { position: fixed; z-index: 40; min-width: 220px; padding: 9px 11px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: calc(13.5px * var(--font-scale, 1)); cursor: default; }
+.usage-pop { position: fixed; z-index: 40; box-sizing: border-box; min-width: 242px; max-width: calc(100vw - 16px); padding: 9px 11px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: calc(13.5px * var(--font-scale, 1)); cursor: default; }
 .usage-pop-title { margin-bottom: 4px; font-weight: 600; color: var(--fg-strong); }
 .usage-pop-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.75; color: var(--muted); }
 .usage-pop-row.hint { display: block; max-width: 260px; line-height: 1.45; margin-bottom: 4px; white-space: normal; }
@@ -669,9 +682,25 @@ button.top-chip:hover { background: var(--hover); color: var(--fg); }
   .top-chip .chip-long { display: none; }
   .top-chip .chip-short { display: inline; }
 }
+/* ≥ 1100px but the cards do not fit the one-row bar (measured — useFold sets data-fold): the same two rows as above.
+   Inside the media query, so a fold left over from a wider window never overrides the tablet / phone rules. */
+@media (min-width: 1100px) {
+  .topbar:has(> .usage-panel[data-fold]) { flex-wrap: wrap; height: auto; column-gap: 6px; row-gap: 0; padding: 0 12px 8px 14px; }
+  .topbar:has(> .usage-panel[data-fold])::after { content: ""; order: 5; flex: 0 0 100%; }
+  .topbar:has(> .usage-panel[data-fold]) > .brand { height: 46px; }
+  .topbar:has(> .usage-panel[data-fold]) > .topbar-end { order: 3; }
+  .usage-panel[data-fold] { display: contents; }
+  .usage-panel[data-fold] > .usage-stale { order: 2; }
+  .usage-panel[data-fold] > .usage-caption { order: 10; flex: 0 0 auto; }
+  .usage-panel[data-fold] > .usage-card { order: 10; flex: 1 1 0; max-width: none; }
+  .usage-panel[data-fold][data-wrap] > .usage-card { flex: 1 1 calc((100% - 32px) / var(--usage-cols-wrap) - 6px); max-width: calc(100% / var(--usage-cols-wrap)); margin-top: 4px; }
+}
 
 /* < 600px: the cards give way entirely to a one-line vendor-chip row (UsagePanel swaps markup, not just CSS). */
-.usage-chips { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; overflow: hidden; }
+/* Its own full-width line under the top row (order after the ::after line break), only as tall as its chips — it used
+   to inherit .usage-panel's height: 100% and wrap ahead of the logo and actions, leaving a tall empty band and pushing
+   사용량 / 알림 onto a third line. Any seat count: chips that do not fit wrap to a second line (never scrolled away). */
+.usage-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; order: 10; flex: 1 0 100%; height: auto; padding-top: 1px; }
 .usage-chip {
   display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; height: 22px; padding: 0 7px; border: 0; border-radius: 9px;
   font: inherit; font-size: calc(12px * var(--font-scale, 1)); font-weight: 600; cursor: pointer;
@@ -948,6 +977,19 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Attachment image editor (ImageEditor): full screen, theme colors; the crop box dims the rest with its shadow. */
 .attach-edit { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .attach-edit:hover .attach-preview { box-shadow: 0 0 0 1.5px var(--accent); }
+.attach-edit-label { display: inline-flex; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.attach-edit-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-edit-label > .muted { flex-shrink: 0; margin-left: 4px; } /* flex drops the space after the name */
+.attach-edit-cue { flex-shrink: 0; margin-left: 6px; padding: 0 6px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: calc(11.5px * var(--font-scale, 1)); line-height: 18px; }
+.chip.attachment.editable { max-width: 240px; }
+/* Fingers: a chip as tall as the other composer controls, a thumbnail big enough to recognise. */
+@media (pointer: coarse) {
+  .chip.attachment.editable { height: 34px; }
+  .chip.attachment.editable .attach-preview { width: 28px; height: 28px; border-radius: 4px; }
+  .chip.attachment.editable .attach-edit { align-self: stretch; }
+  .chip.attachment.editable .attach-edit-cue { line-height: 22px; padding: 0 8px; }
+  .chip.attachment.editable .chip-remove { align-self: stretch; min-width: 28px; }
+}
 .img-editor { position: fixed; inset: 0; z-index: 110; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); outline: none; overscroll-behavior: contain; touch-action: none;
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
 .img-editor-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
@@ -1180,6 +1222,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .ctx-gauge { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--faint); font-size: calc(12px * var(--font-scale, 1)); font-variant-numeric: tabular-nums; cursor: default; }
 .ctx-gauge:hover { background: var(--hover); color: var(--muted); }
 .ctx-gauge svg { flex-shrink: 0; }
+/* Narrow panes drop the token count; the % stays so the ring never reads as a loading spinner. */
+.ctx-pct { display: none; }
 .ctx-track, .ctx-arc { fill: none; stroke-width: 2.4; }
 .ctx-track { stroke: var(--track); }
 .ctx-arc { stroke: var(--muted); stroke-linecap: round; }
@@ -1673,7 +1717,7 @@ button.hl-row-main:hover { background: var(--hover); }
 
 /* Tablet / unfolded inner screen: two-row top bar like < 1280px (menu · logo · status chips on top, the cards underneath —
    one line squeezed the chips to nothing and the numbers into the tags), a font-scale-aware sidebar that can be folded away (☰). */
-@media (min-width: 721px) and (max-width: 1100px) {
+@media (min-width: 721px) and (max-width: 1099.98px) {
   .topbar { column-gap: 8px; padding: 0 10px 6px 8px; }
   .sidebar-toggle { display: inline-flex; order: 0; width: 36px; height: 36px; font-size: calc(16px * var(--font-scale, 1)); color: var(--fg); }
   .topbar > .brand { order: 1; height: 44px; margin-right: 0; }
@@ -1750,6 +1794,7 @@ button.hl-row-main:hover { background: var(--hover); }
   .perm-badge-full { display: none; }
   .perm-badge-short { display: inline; }
   .ctx-num { display: none; }
+  .ctx-pct { display: inline; }
   .ctx-gauge { padding: 0 5px; }
   .queue-now-label { display: none; }
   .queue-now { padding: 0; width: 26px; justify-content: center; }

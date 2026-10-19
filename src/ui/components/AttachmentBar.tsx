@@ -155,11 +155,14 @@ export function AttachmentBar({ attachments, uploading, error, onFiles, onRemove
       {onFiles && <AttachMenu onFiles={onFiles} />}
       {attachments.map((a) => {
         if (pastedTexts?.[a.id] !== undefined) return <PastedChip key={a.id} text={pastedTexts[a.id]!} onRemove={() => onRemove(a.id)} />;
-        const label = <>{a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{a.name} <span className="muted">{kb(a.size)}</span></>;
+        const editable = !!onReplace && a.isImage;
+        // In the editable chip the label is a flex row: the name gets its own box, or it cannot ellipsize.
+        const label = <>{a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{editable ? <span className="attach-edit-name">{a.name}</span> : a.name} <span className="muted">{kb(a.size)}</span></>;
         return (
-          <span key={a.id} className={`chip attachment ${a.previewUrl ? 'has-thumb' : ''}`} title={a.name} data-attachment-id={a.id}>
-            {onReplace && a.isImage
-              ? <button type="button" className="attach-edit" aria-label={`이미지 편집: ${a.name}`} title="눌러서 자르기·회전·펜 표시" onClick={() => setEditing(a)}>{label}</button>
+          <span key={a.id} className={`chip attachment ${a.previewUrl ? 'has-thumb' : ''} ${editable ? 'editable' : ''}`} title={a.name} data-attachment-id={a.id}>
+            {/* Touch screens have no hover: the chip says 편집 in words, or nobody finds the editor behind it. */}
+            {editable
+              ? <button type="button" className="attach-edit" aria-label={`이미지 편집: ${a.name}`} title="눌러서 자르기·회전·펜 표시" onClick={() => setEditing(a)}><span className="attach-edit-label">{label}</span><span className="attach-edit-cue" aria-hidden="true">편집</span></button>
               : label}
             <button type="button" className="chip-remove" aria-label="첨부 제거" onClick={() => onRemove(a.id)}>✕</button>
           </span>
