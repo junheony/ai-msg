@@ -131,3 +131,9 @@ Claude·Astra 두 리뷰가 같은 지적을 한 것은 그대로 받았다.
 
 - 연결됨: 새 세션 첫 턴의 `chooseRoute`(엔진 자동, 또는 GPT·Gemini·Grok + 모델 자동), `no_route` 오류, 능력 검사(`route_fit` 카드 · `ignoreFit` 로 그래도 보내기, 기존 Gemini·Grok 세션은 매 턴), 설정 `autoEngines`·`autoConsent`·`grokFast` 와 설정 화면의 동의 카드, 새 창 기본 엔진 자동. 한도 입력은 `engineLimits.ts`(순수 함수)가 사용량 스냅숏·쿨다운에서 만든다.
 - 아직: 벤더 간 이어가기는 Claude 세션 전용이라 `route_fit` 카드에 [새 세션으로 이어가기]가 없다(§10-8). 새 창의 모델 기본값은 그대로(Fable)라, 모델도 자동으로 둬야 엔진을 고른다. 세션 도중 한도 인계(§6)·무인 이어가기는 손대지 않았다.
+
+
+## 11. 간결 모드와 모델 할당 (2026-10-20)
+
+- **설명(explain)·쉬운 조회**는 Claude Sonnet / Gemini Flash / GPT Sol 을 선호한다(`cellOf`). 난이도가 medium 이어도 explain 이면 Claude 후보는 Sonnet 으로 고정한다. **구현(build)·설계(hard)** 만 Opus / Fable / Astra 를 쓴다.
+- **세션 도중 벤더 재분배**는 하지 않는다(§6·§10-8). 프롬프트 캐시·권한 관문이 엔진마다 달라 조용히 옮기면 컨텍스트가 깨진다. Claude **계정** 간 이동만 캐시가 식었을 때(`WARM_MS`, AccountRouter) 허용한다. 후속 턴에서 idle·캐시 cold 여도 다른 벤더로 자동 넘기지 않고, 막히면 기존처럼 사용자에게 새 세션 이어가기를 제안한다.
