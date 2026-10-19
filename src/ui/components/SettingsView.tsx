@@ -77,7 +77,8 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
         <Seg<ChatWidth> label="채팅 폭" value={prefs.chatWidth} onPick={(v) => set('chatWidth', v)} options={[['narrow', '좁게'], ['wide', '넓게']]} />
         <Seg<SendKey> label="Enter 동작" value={prefs.sendKey} onPick={(v) => set('sendKey', v)} options={[['enter', 'Enter 전송'], ['mod-enter', '⌘Enter 전송']]} />
         <Seg<'off' | 'on'> label="코드 줄바꿈" value={codeWrap ? 'on' : 'off'} onPick={(v) => setCodeWrap(v === 'on')} options={[['off', '가로 스크롤'], ['on', '줄바꿈']]} />
-        <p className="muted">이 기기에만 저장됩니다 (폰과 맥이 따로).</p>
+        <Seg<'off' | 'on'> label="간결 모드" value={prefs.conciseMode ? 'on' : 'off'} onPick={(v) => set('conciseMode', v === 'on')} options={[['on', '켜기'], ['off', '끄기']]} />
+        <p className="muted">간결 모드(기본 켜짐): 짧은 확인 뒤 결과만 보여 주고, 생각·도구 본문은 접어둡니다. 끄면 지금처럼 스트리밍·도구·경로 이유가 모두 보입니다. 이 기기에만 저장됩니다 (폰과 맥이 따로).</p>
       </section>
       <section aria-label="권한">
         <h3>권한</h3>

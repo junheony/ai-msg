@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { AUTO_CONSENT_TEXT, ROTATION_CONSENT, SettingsView } from './SettingsView';
+import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 
 const noop = () => {};
 
@@ -181,5 +182,16 @@ describe('SettingsView 자동 분배', () => {
     rerender(<SettingsView build={null} autoRoute={{ autoEngines: ['claude', 'codex', 'gemini'], autoConsent: ['gemini'], grokFast: false }} onAutoRoute={on} onOpenUsage={noop} onClose={noop} />);
     expect(screen.queryByTestId('auto-consent-gemini')).toBeNull();
     expect(screen.getByTestId('auto-consent-grok')).toBeTruthy();
+  });
+});
+
+describe('SettingsView 간결 모드', () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+  it('toggles conciseMode in prefs', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: true }));
+    render(<SettingsView build={null} onOpenUsage={() => {}} onClose={() => {}} />);
+    const group = screen.getByText('간결 모드').closest('.settings-row') as HTMLElement;
+    fireEvent.click(within(group).getByRole('button', { name: '끄기' }));
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).conciseMode).toBe(false);
   });
 });
