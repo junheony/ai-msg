@@ -971,6 +971,18 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Attachment image editor (ImageEditor): full screen, theme colors; the crop box dims the rest with its shadow. */
 .attach-edit { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .attach-edit:hover .attach-preview { box-shadow: 0 0 0 1.5px var(--accent); }
+.attach-edit-label { display: inline-flex; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.attach-edit-label > .muted { margin-left: 4px; } /* flex drops the space after the name */
+.attach-edit-cue { flex-shrink: 0; margin-left: 6px; padding: 0 6px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: calc(11.5px * var(--font-scale, 1)); line-height: 18px; }
+.chip.attachment.editable { max-width: 240px; }
+/* Fingers: a chip as tall as the other composer controls, a thumbnail big enough to recognise. */
+@media (pointer: coarse) {
+  .chip.attachment.editable { height: 34px; }
+  .chip.attachment.editable .attach-preview { width: 28px; height: 28px; border-radius: 4px; }
+  .chip.attachment.editable .attach-edit { align-self: stretch; }
+  .chip.attachment.editable .attach-edit-cue { line-height: 22px; padding: 0 8px; }
+  .chip.attachment.editable .chip-remove { align-self: stretch; min-width: 28px; }
+}
 .img-editor { position: fixed; inset: 0; z-index: 110; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); outline: none; overscroll-behavior: contain; touch-action: none;
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
 .img-editor-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
