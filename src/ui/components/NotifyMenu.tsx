@@ -54,7 +54,7 @@ export function NotifyMenu() {
                 <span className="switch-track" aria-hidden="true"><span className="switch-knob" /></span>
                 <span>알림 {on === null ? '확인 중…' : on ? '켜짐' : '꺼짐'}</span>
               </button>
-              <p className="notify-hint">턴 완료 · 질문/권한 카드 대기 · 백그라운드 작업 완료를 이 기기로 알려 줍니다. deck 창을 보고 있을 때는 띄우지 않습니다.</p>
+              <p className="notify-hint">긴 턴(약 90초 이상) 완료 · 확인이 필요한 턴 · 질문/권한 카드 대기 · 백그라운드 작업 완료를 이 기기로 알려 줍니다. deck 창을 보고 있을 때는 띄우지 않습니다.</p>
               <button type="button" className="btn ghost notify-test" disabled={busy || !on} onClick={() => run(testPush, '테스트 알림을 보냈습니다')}>테스트 알림</button>
               {isIos() && <p className="notify-hint">iPhone: 설치한 앱(홈 화면)에서 켜야 합니다 · iOS 16.4 이상.</p>}
             </>
