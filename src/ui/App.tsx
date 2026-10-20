@@ -58,6 +58,7 @@ import { useIndexRefresh, type IndexRefresh } from './indexRefresh';
 import { createCatchup, type Catchup } from './catchup';
 import { AccountsContext, uiAccounts } from './accounts';
 import { has, setFeatures } from './features';
+import { withConcise } from '../shared/concise';
 
 const VIEW_KEY = 'deck.sidebarView';
 const HIDDEN_KEY = 'deck.sidebarHidden';
@@ -673,7 +674,8 @@ export function App() {
   if (!authed) return <Login onLoggedIn={() => setAuthed(true)} />;
 
   // No socket yet counts as not connected; otherwise the socket's own answer (`false` = not connected).
-  const send = (m: ClientMessage) => (sock.current ? sock.current.send(m) : false);
+  // 간결 모드: every send carries `concise` so the server appends the results-first style note (Claude turns).
+  const send = (m: ClientMessage) => (sock.current ? sock.current.send(withConcise(m, prefs.conciseMode)) : false);
   /**
    * Pane-changing actions (open / close): the server's per-socket view set must shrink too, so every session
    * no pane views after the action gets a close_session (T9 prerequisite b; duplicate-session panes keep it).

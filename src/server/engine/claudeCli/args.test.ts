@@ -22,6 +22,14 @@ describe('claudeArgs', () => {
     expect(a).toContain('--mcp-config=/t/p/mcp.json');
     expect(a).toEqual(expect.arrayContaining(['--model', 'claude-opus-5-5', '--permission-mode', 'default']));
   });
+  it('appends the 간결 모드 system prompt as one argv element, only when given', () => {
+    expect(claudeArgs(base).some((x) => x.startsWith('--append-system-prompt'))).toBe(false);
+    const note = "줄 1\n'quote' --model x";
+    const a = claudeArgs({ ...base, appendSystemPrompt: note });
+    expect(a.filter((x) => x.startsWith('--append-system-prompt'))).toEqual([`--append-system-prompt=${note}`]);
+    expect(a.filter((x) => x === '--model')).toHaveLength(1);
+    expect(claudeArgs({ ...base, appendSystemPrompt: '  ' }).some((x) => x.startsWith('--append-system-prompt'))).toBe(false);
+  });
   it('never emits forbidden flags', () => {
     const a = claudeArgs({ ...base, resume: '11111111-2222-4333-8444-555555555555', forkSession: true, addDirs: ['/x'] });
     for (const f of ['--bare', '--strict-mcp-config', '--dangerously-skip-permissions']) expect(a).not.toContain(f);

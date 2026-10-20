@@ -2238,4 +2238,5 @@ html[data-concise='on'] .concise-progress {
 }
 html[data-concise='on'] .msg.assistant.streaming .tool-group.concise { margin-bottom: 4px; }
 html[data-concise='on'] .turn-status.concise .status-verb { color: var(--fg); }
+html[data-concise='on'] .concise-lead { color: var(--fg); margin-bottom: 2px; }
 html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font-scale, 1)); color: var(--faint); }

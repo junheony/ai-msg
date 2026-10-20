@@ -12,6 +12,7 @@ import { SessionStateStore } from './SessionState';
 import { writeCooldown } from '../routing/cooldown';
 import { COMMANDER_ENGINE_REFUSED, DECK_INTRO_NOTE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
+import { CONCISE_STYLE_PROMPT } from '../../shared/concise';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const PARENT = '22222222-2222-4222-8222-222222222222';
@@ -220,6 +221,26 @@ describe('TurnRunner · deck intro note', () => {
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'x', fork: { from: PARENT, at: 'a0' } }, c.sink);
     expect(eng.calls[0]?.forkAt).toBe('a0');
     expect(eng.calls[0]?.systemNote).toBeUndefined();
+  });
+});
+
+describe('TurnRunner · 간결 모드 style note', () => {
+  it('appends the concise style prompt to a concise turn (new and resumed), never to the pane', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const c = await setup(eng);
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: '안녕', concise: true }, c.sink);
+    expect(eng.calls[0]?.appendSystemPrompt).toBe(CONCISE_STYLE_PROMPT);
+    expect(JSON.stringify(c.msgs)).not.toContain('[deck 간결 모드]');
+  });
+  it('leaves a non-concise turn, a handoff note turn and an automatic (commander) turn alone', async () => {
+    const eng = new StubEngine(() => ok(PARENT));
+    const c = await setup(eng);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 3_600_000, justCompacted: false, defaultModel: 'sonnet' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: PARENT, text: '계속' }, c.sink);
+    await c.runner.run({ turnId: 't2', cwd: '/w/one', sessionId: PARENT, text: '인계', handoff: true, concise: true }, c.sink);
+    await c.runner.run({ turnId: 't3:cmd1', cwd: '/w/one', sessionId: PARENT, text: '목표: x', commanderHop: 1, concise: true }, c.sink);
+    expect(eng.calls).toHaveLength(3);
+    for (const call of eng.calls) expect(call.appendSystemPrompt).toBeUndefined();
   });
 });
 

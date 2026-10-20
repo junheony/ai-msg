@@ -15,8 +15,9 @@ import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePast
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
-import { AccountPicker } from './AccountPicker'
-import { useAccounts } from '../accounts';;
+import { AccountPicker } from './AccountPicker';
+import { useAccounts } from '../accounts';
+import { conciseFirstStep } from '../../shared/concise';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
@@ -238,6 +239,12 @@ const NO_AGENTS: Record<string, AgentInfo> = {};
  * plus its offset after it. A row added or dropped in one turn moves only that turn's keys, so an expanded card
  * (<details>, edit box) further down keeps its state. An item's key never changes while it streams.
  */
+/** The newest user message's text (간결 모드 ack: its first step). */
+export function lastUserText(items: ChatItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) { const it = items[i]!; if (it.kind === 'user') return it.text; }
+  return null;
+}
+
 export function messageKeys(items: ChatItem[]): string[] {
   const used = new Set<string>();
   let anchor = '^';
@@ -630,7 +637,7 @@ export function Chat(p: ChatProps) {
         )}
         {(p.busy || p.bg) && (
           <div className="activity-bar">
-            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} queuedBehind={p.activeTurnId ? null : p.awaitingBehind ?? null} progress={p.progress ?? null} live={live} routeAck={p.turnRoute ? { model: p.turnRoute.model, engine: p.turnRoute.engine, accountLabel: accountNames.label(p.turnRoute.account) } : null} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
+            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} queuedBehind={p.activeTurnId ? null : p.awaitingBehind ?? null} progress={p.progress ?? null} live={live} routeAck={p.turnRoute ? { model: p.turnRoute.model, engine: p.turnRoute.engine, accountLabel: accountNames.label(p.turnRoute.account), step: conciseFirstStep(lastUserText(p.items)) } : null} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
             {p.bg && <BackgroundPill bg={p.bg} onStopTask={p.onStopTask} onStopAll={() => p.onStopBackground?.(p.bg!.turnId)} />}
           </div>
         )}
