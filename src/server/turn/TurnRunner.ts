@@ -4,6 +4,7 @@ import path from 'node:path';
 import { GEMINI_ACCOUNTS, GEMINI_LABEL, GROK_LABEL, isGeminiAccount, isGrokAccount, type Account, type AccountNames, type GeminiAccount, type GrokAccount, type ProjectsRoots } from '../../shared/accounts';
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, GROK_CLI_ALIAS, IMPORTED_DEFAULT_MODEL, MODEL_EFFORTS, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type GeminiModel, type GrokModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
+import { CONCISE_STYLE_PROMPT } from '../../shared/concise';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -75,6 +76,8 @@ export type TurnParams = {
    * model and grants. The parent's transcript is never written.
    */
   fork?: { from: string; at: string };
+  /** 간결 모드 (send.concise): the engine gets shared/concise CONCISE_STYLE_PROMPT as an appended system prompt (Claude). */
+  concise?: boolean;
   /** Server-internal: how many times this turn already moved on to another account after a background segment hit a limit (failoverAfterBackground). */
   failoverHop?: number;
   /** Server-internal (failoverAfterBackground): a follow-up's send ref, carried on its turn_started so ws records the message as taken. */
@@ -1066,6 +1069,7 @@ export class TurnRunner {
       },
       onLive: (l) => { out.live = l; this.inputs.set(p.turnId, l); },
       ...(p.handoff ? { noTools: true } : {}),
+      ...(p.concise && !p.handoff && p.commanderHop === undefined ? { appendSystemPrompt: CONCISE_STYLE_PROMPT } : {}),
       ...(systemNote ? { systemNote } : {}),
       ...(commanderHop ? {
         commanderHop,

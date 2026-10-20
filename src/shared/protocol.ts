@@ -55,6 +55,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     title: z.string().min(1).max(200).optional(),
     /** 그래도 보내기: send even though the engine cannot do this kind of turn (skips the `route_fit` check). */
     ignoreFit: z.boolean().optional(),
+    /** 간결 모드 (the device's pref): answer results-first, short, decisions as cards (shared/concise CONCISE_STYLE_PROMPT). Claude only for now. */
+    concise: z.boolean().optional(),
   }),
   z.object({ type: z.literal('permission_response'), requestId: z.string().min(1), decision: z.enum(['once', 'session', 'deny']) }),
   /** D8: answers keyed by the question text, values are option labels (comma-joined for multiSelect) or free text. */

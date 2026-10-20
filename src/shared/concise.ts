@@ -22,12 +22,74 @@ export function conciseAck(input: {
   model?: string | null;
   engine?: EngineKind | null;
   accountLabel?: string | null;
+  /** First step guessed from the prompt (conciseFirstStep): "확인 · Opus — 원인부터 찾을게요". */
+  step?: string | null;
 }): string {
   const model = input.model ? modelLabelOf(input.model) : null;
   // Prefer a short family name when the full label is long (e.g. "GPT-6.1-Sol" → keep as-is from MODEL_LABEL).
   const who = model ?? (input.engine ? CONCISE_ENGINE_LABEL[input.engine] : null) ?? '모델';
   const acct = input.accountLabel?.trim();
-  return acct ? `확인 · ${who}(${acct})로 처리 중` : `확인 · ${who}로 처리 중`;
+  const whoAcct = acct ? `${who}(${acct})` : who;
+  const step = input.step?.trim();
+  return step ? `확인 · ${whoAcct} — ${step}` : `확인 · ${whoAcct}로 처리 중`;
+}
+
+/**
+ * Instant, deterministic first step for the ack line (no model call): what the turn will most likely do first,
+ * from cue words in the prompt. null = no clear cue (the ack then just names the model).
+ * Order matters: a failing test / error beats a plain build cue, a question beats nothing.
+ */
+const FIRST_STEPS: [RegExp, string][] = [
+  [/왜\s*(안\s*)?(실패|깨|안\s*돼|안\s*되|죽)|원인|에러|오류|버그|안\s*돼|안\s*되|\bbug\b|\berror\b|\bfail|\bcrash|\bbroken\b/i, '원인부터 찾을게요'],
+  [/테스트|돌려|실행해|빌드해|\btests?\b|\brun\b|\bbuild it\b/i, '먼저 실행해 볼게요'],
+  [/고쳐|수정해|구현|만들어|추가해|리팩터|리팩토링|작성해|\bimplement|\bfix\b|\badd\b|\brefactor/i, '관련 코드부터 볼게요'],
+  [/설계|아키텍처|구조|계획|방안|\bdesign\b|\barchitect|\bplan\b/i, '현재 구조부터 살펴볼게요'],
+  [/요약|정리해|번역|\bsummari[sz]e\b|\btranslate\b/i, '내용부터 읽어 볼게요'],
+  [/찾아|어디|검색|\bfind\b|\bwhere\b|\bsearch\b/i, '먼저 찾아볼게요'],
+  [/뭐야|무엇|설명|알려|어떻게|\?\s*$|\bwhat\b|\bhow\b|\bwhy\b|\bexplain\b/i, '바로 답할게요'],
+];
+
+export function conciseFirstStep(prompt: string | null | undefined): string | null {
+  const t = (prompt ?? '').trim();
+  if (!t) return null;
+  for (const [re, step] of FIRST_STEPS) if (re.test(t)) return step;
+  return null;
+}
+
+/**
+ * The model's own opening line while it works (concise mode hides the streaming answer): the first sentence of the text
+ * so far, when it reads like a plan ("먼저 … 볼게요") rather than half an answer. null = nothing worth showing yet.
+ */
+export function conciseLeadLine(text: string | null | undefined, max = 120): string | null {
+  const t = (text ?? '').trim();
+  if (!t) return null;
+  const firstPara = t.split(/\n\s*\n/)[0]!.replace(/\s+/g, ' ').trim();
+  // A finished sentence only (it may still be streaming): ends with . ! ? 。 or a Korean sentence ending + space.
+  const m = /^(.+?[.!?。])(\s|$)/.exec(firstPara);
+  const sentence = m?.[1]?.trim() ?? null;
+  if (!sentence) return null;
+  if (/^[#>|`-]/.test(sentence)) return null;
+  return sentence.length > max ? `${sentence.slice(0, max - 1)}…` : sentence;
+}
+
+/**
+ * Appended to the system prompt of turns sent in 간결 모드 (`send.concise`; Claude: `--append-system-prompt`).
+ * Never shown in the pane. Kept short: it rides every turn's process.
+ */
+export const CONCISE_STYLE_PROMPT = [
+  '[deck 간결 모드] 사용자는 대개 폰으로, 결과만 빠르게 봅니다. 이렇게 답하세요:',
+  '- 도구를 쓰는 긴 작업이면 맨 처음에 무엇부터 할지 한 문장만 쓰고 바로 진행하세요(예: "먼저 실패하는 테스트부터 볼게요.").',
+  '- 최종 답은 결과(무엇을 했고 결론이 무엇인지)로 시작하고, 보통 1–2개의 짧은 문단, 쉬운 한국어로. 과정 되풀이·요약 반복·인사말·"도와드릴게요" 같은 군더더기는 쓰지 마세요.',
+  '- 목록·표·제목은 꼭 필요할 때만. 파일·명령은 인라인 코드로.',
+  '- 사용자가 골라야 할 결정이 있으면 문장으로 묻지 말고 AskUserQuestion 도구로 2–4개의 짧은 선택지를 주세요.',
+  '- 되돌리기 어려운 행동(메시지·메일 전송, 삭제, 결제, 배포·push, 실거래 설정 변경)은 실행하지 말고 초안·변경 내용을 보여 준 뒤 확인을 받으세요.',
+].join('\n');
+
+/** Tags a `send` with `concise: true` while 간결 모드 is on (other messages, handoff-note turns: unchanged). */
+export function withConcise<M extends { type: string }>(msg: M, on: boolean): M {
+  if (!on || msg.type !== 'send') return msg;
+  if ((msg as { handoff?: boolean }).handoff) return msg;
+  return { ...msg, concise: true };
 }
 
 /** How the concise UI treats each mid-turn server event (full mode ignores this). */

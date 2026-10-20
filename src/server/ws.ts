@@ -972,6 +972,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.sessionId === null && msg.permissionMode ? { permissionMode: msg.permissionMode } : {}),
           ...(msg.handoff ? { handoff: true } : {}),
           ...(msg.ignoreFit ? { ignoreFit: true } : {}),
+          ...(msg.concise && !msg.handoff ? { concise: true } : {}),
           ...hop,
           ...(commanderHop ? { commanderHop } : {}),
           ...(commanderHop && commanderNote ? { commanderNote } : {}),

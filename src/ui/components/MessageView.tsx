@@ -5,6 +5,7 @@ import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
 import { usePrefs } from '../usePrefs';
+import { conciseLeadLine } from '../../shared/concise';
 import { codeFileName, useCodeWrap } from '../codeWrap';
 import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
 import { has } from '../features';
@@ -497,6 +498,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
       {item.streaming && !(concise && item.toolCalls.length === 0 && !item.thinking) && !concise && <span className="cursor">▍</span>}
       {concise && item.streaming && (
         <div className="concise-progress" data-testid="concise-progress" aria-live="polite">
+          {conciseLeadLine(item.text) && <div className="concise-lead" data-testid="concise-lead">{conciseLeadLine(item.text)}</div>}
           {item.toolCalls.length > 0
             ? `계속 작업 중 · 단계 ${item.toolCalls.length}`
             : item.thinking

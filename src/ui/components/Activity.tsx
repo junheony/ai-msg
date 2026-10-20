@@ -87,7 +87,7 @@ export function StatusRow({ startedAt, started, queuedBehind = null, progress, l
   /** 시작하는 중…: stop waiting for the turn (there is nothing to interrupt yet, so 중단 cannot help). */
   onCancel?: () => void;
   /** Concise-mode ack: model/engine/account once turn_started is known. */
-  routeAck?: { model?: string | null; engine?: string | null; accountLabel?: string | null } | null;
+  routeAck?: { model?: string | null; engine?: string | null; accountLabel?: string | null; step?: string | null } | null;
 }) {
   const now = useNow(true);
   const [prefs] = usePrefs();
@@ -102,7 +102,7 @@ export function StatusRow({ startedAt, started, queuedBehind = null, progress, l
   } else if (concise) {
     // Instant short ack naming the chosen engine/model; then milestone-style progress.
     if (tools > 0 && ms >= 15_000) verb = `계속 작업 중 · 단계 ${tools}`;
-    else if (routeAck) verb = conciseAck({ model: routeAck.model, engine: routeAck.engine as 'claude' | 'codex' | 'gemini' | 'grok' | null, accountLabel: routeAck.accountLabel });
+    else if (routeAck) verb = conciseAck({ model: routeAck.model, engine: routeAck.engine as 'claude' | 'codex' | 'gemini' | 'grok' | null, accountLabel: routeAck.accountLabel, step: routeAck.step ?? null });
     else verb = '확인 · 처리 중';
   } else {
     verb = tool ? tool.verb : progress ? PHASE_VERB[progress.phase] : IDLE_VERBS[Math.floor(ms / 6000) % IDLE_VERBS.length]!;
