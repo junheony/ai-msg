@@ -5,6 +5,7 @@ import { GEMINI_ACCOUNTS, GEMINI_LABEL, GROK_LABEL, isGeminiAccount, isGrokAccou
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, GROK_CLI_ALIAS, IMPORTED_DEFAULT_MODEL, MODEL_EFFORTS, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type GeminiModel, type GrokModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import { CONCISE_STYLE_PROMPT } from '../../shared/concise';
+import { deckAddendum } from '../../shared/memory';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -117,6 +118,8 @@ export const FORCE_HOLDERS_SCAN_TIMEOUT_MS = 1000;
 
 export type TurnRunnerDeps = {
   engine: Engine;
+  /** deck 메모 (MemoryStore.get): appended to every turn's system prompt except a handoff note's; absent = none. */
+  memory?: () => string;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
   codex: Pick<CodexEngine, 'runTurn'> | null;
   /** Null = agy not installed. `loggedIn` reads the cached `agy models` probe (only g1 can be logged in). */
@@ -990,6 +993,18 @@ export class TurnRunner {
     return out;
   }
 
+  /**
+   * What rides this turn's system prompt, never the transcript: the 간결 모드 style note (a person's concise turn — not a
+   * handoff note nor a 총사령탑 hop) and the deck 메모 (every turn but a handoff note, which must stay tool- and context-free).
+   */
+  private addendum(p: TurnParams): string | null {
+    if (p.handoff) return null;
+    const style = p.concise && p.commanderHop === undefined ? CONCISE_STYLE_PROMPT : null;
+    let memory = '';
+    try { memory = this.deps.memory?.() ?? ''; } catch { /* a broken store never blocks a turn */ }
+    return deckAddendum({ style, memory });
+  }
+
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, forkAt: string | null, sink: TurnSink, grants: SessionGrants, modeRef: ModeRef, attachments: Attachment[], cur: Cursor, systemNote?: string): Promise<Attempt> {
     const scope = () => ({ turnId: cur.turnId, sessionId: out.sessionId, cwd });
     // The effort applies to the resolved model (a Fable → Opus downgrade keeps it when Opus supports it).
@@ -997,6 +1012,7 @@ export class TurnRunner {
     const commanderHop = p.commanderHop ?? (this.deps.devCommanderGate ? 1 : undefined);
     // 보안 #8: a person's turn gated only by DECK_DEV_COMMANDER_GATE is labelled in the audit log.
     const devGate = commanderHop !== undefined && p.commanderHop === undefined;
+    const addendum = this.addendum(p);
     // An edit on an earlier automatic turn of this session — or of any session in the same (realpath) folder — still holds
     // test runners and git at ask (rules.ts GateContext).
     const priorEdited = commanderHop !== undefined
@@ -1069,7 +1085,7 @@ export class TurnRunner {
       },
       onLive: (l) => { out.live = l; this.inputs.set(p.turnId, l); },
       ...(p.handoff ? { noTools: true } : {}),
-      ...(p.concise && !p.handoff && p.commanderHop === undefined ? { appendSystemPrompt: CONCISE_STYLE_PROMPT } : {}),
+      ...(addendum ? { appendSystemPrompt: addendum } : {}),
       ...(systemNote ? { systemNote } : {}),
       ...(commanderHop ? {
         commanderHop,

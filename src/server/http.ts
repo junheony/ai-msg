@@ -12,6 +12,8 @@ import { FileReadError, type FileLister } from './files';
 import type { PushNotifier } from './push/PushNotifier';
 import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
 import { MAX_PINS, isPinnableId, type PinStore } from './sessions/PinStore';
+import { MemoryTooLarge, type MemoryStore } from './memory/MemoryStore';
+import { MEMORY_MAX_BYTES } from '../shared/memory';
 import { isTrashId } from './sessions/SessionTrash';
 import { MAX_TITLE_CHARS, type SessionMetaStore } from './sessions/SessionMetaStore';
 import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
@@ -34,6 +36,8 @@ export type HttpDeps = {
   onIndexChanged?: () => void;
   /** F2: pinned sessions; absent = no /api/pins. */
   pins?: PinStore;
+  /** deck 메모 (Settings → 일반); absent = no /api/memory. */
+  memory?: MemoryStore;
   /** Session rename / 보관 (session-meta.json); absent = no /api/session-meta. */
   meta?: SessionMetaStore;
   /** Full-text transcript search; absent = no /api/search. */
@@ -352,6 +356,21 @@ export function createRequestHandler(deps: HttpDeps) {
           return;
         }
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }
+        if (url.pathname === '/api/memory' && (req.method === 'GET' || req.method === 'PUT')) {
+          if (!deps.memory) { json(res, 404, { error: 'not found' }); return; }
+          if (req.method === 'GET') { json(res, 200, { text: deps.memory.get(), max: MEMORY_MAX_BYTES }); return; }
+          let body: { text?: unknown } = {};
+          try { body = JSON.parse(await readBody(req, 64 * 1024)) as typeof body; } catch { /* invalid below */ }
+          if (!body || typeof body.text !== 'string') { json(res, 400, { error: '잘못된 메모 요청입니다' }); return; }
+          try {
+            json(res, 200, { text: await deps.memory.set(body.text), max: MEMORY_MAX_BYTES });
+          } catch (err) {
+            if (err instanceof MemoryTooLarge) { json(res, 413, { error: err.message }); return; }
+            console.error('deck: 메모 저장 실패', err instanceof Error ? err.message : err);
+            json(res, 500, { error: '메모를 저장하지 못했습니다' });
+          }
+          return;
+        }
         if (url.pathname === '/api/pins' && req.method === 'POST') {
           if (!deps.pins) { json(res, 404, { error: 'not found' }); return; }
           let body: { sessionId?: unknown; pinned?: unknown } = {};
