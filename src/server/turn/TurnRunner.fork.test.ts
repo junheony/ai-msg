@@ -13,6 +13,7 @@ import { writeCooldown } from '../routing/cooldown';
 import { COMMANDER_ENGINE_REFUSED, DECK_INTRO_NOTE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 import { CONCISE_STYLE_PROMPT } from '../../shared/concise';
+import { deckAddendum, memoryNote } from '../../shared/memory';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const PARENT = '22222222-2222-4222-8222-222222222222';
@@ -241,6 +242,32 @@ describe('TurnRunner · 간결 모드 style note', () => {
     await c.runner.run({ turnId: 't3:cmd1', cwd: '/w/one', sessionId: PARENT, text: '목표: x', commanderHop: 1, concise: true }, c.sink);
     expect(eng.calls).toHaveLength(3);
     for (const call of eng.calls) expect(call.appendSystemPrompt).toBeUndefined();
+  });
+  it('deck 메모 rides every turn but a handoff note, after the style note; never in the pane', async () => {
+    const eng = new StubEngine(() => ok(PARENT));
+    let memo = '배포는 금요일에 하지 않음';
+    const c = await setup(eng, { memory: () => memo });
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 3_600_000, justCompacted: false, defaultModel: 'sonnet' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: PARENT, text: '계속', concise: true }, c.sink);
+    await c.runner.run({ turnId: 't2', cwd: '/w/one', sessionId: PARENT, text: '계속' }, c.sink);
+    await c.runner.run({ turnId: 't3:cmd1', cwd: '/w/one', sessionId: PARENT, text: '목표: x', commanderHop: 1, concise: true }, c.sink);
+    await c.runner.run({ turnId: 't4', cwd: '/w/one', sessionId: PARENT, text: '인계', handoff: true }, c.sink);
+    memo = '   ';
+    await c.runner.run({ turnId: 't5', cwd: '/w/one', sessionId: PARENT, text: '계속' }, c.sink);
+    const [a, b, cmd, handoff, blank] = eng.calls.map((x) => x.appendSystemPrompt);
+    expect(a).toBe(deckAddendum({ style: CONCISE_STYLE_PROMPT, memory: '배포는 금요일에 하지 않음' }));
+    expect(a!.indexOf('[deck 간결 모드]')).toBeLessThan(a!.indexOf('[deck 메모]'));
+    expect(b).toBe(memoryNote('배포는 금요일에 하지 않음'));
+    expect(cmd).toBe(b); // a 총사령탑 hop: memory, no style note
+    expect(handoff).toBeUndefined();
+    expect(blank).toBeUndefined();
+    expect(JSON.stringify(c.msgs)).not.toContain('금요일');
+  });
+  it('a memory store that throws never blocks the turn', async () => {
+    const eng = new StubEngine(() => ok(CHILD));
+    const c = await setup(eng, { memory: () => { throw new Error('disk'); } });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: '안녕', concise: true }, c.sink);
+    expect(eng.calls[0]?.appendSystemPrompt).toBe(CONCISE_STYLE_PROMPT);
   });
 });
 

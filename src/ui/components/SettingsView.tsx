@@ -9,6 +9,7 @@ import { NotifyMenu } from './NotifyMenu';
 import { describeShell } from '../shellFit';
 import { Sheet } from './Dialogs';
 import { TASK_SOFT_CAP_MAX, TASK_SOFT_CAP_MIN } from '../../shared/tasks';
+import { MemoryEditor } from './MemoryEditor';
 
 /** What turning 같은 벤더 계정 자동 순환 on asks the user to agree to (spec: paid design §3 rule 3). */
 export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁니다. 계정 공유·재판매·한도 회피 목적의 계정 생성은 각 제공자 약관 위반입니다.';
@@ -94,6 +95,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           </>
         )}
         <p className="muted">간결 모드(기본 켜짐): 짧은 확인 뒤 결과만 보여 주고, 생각·도구 본문은 접어둡니다. 끄면 지금처럼 스트리밍·도구·경로 이유가 모두 보입니다. 이 기기에만 저장됩니다 (폰과 맥이 따로).</p>
+        <MemoryEditor />
       </section>
       <section aria-label="권한">
         <h3>권한</h3>
