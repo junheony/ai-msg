@@ -85,9 +85,9 @@ export const CONCISE_STYLE_PROMPT = [
   '- 되돌리기 어려운 행동(메시지·메일 전송, 삭제, 결제, 배포·push, 실거래 설정 변경)은 실행하지 말고 초안·변경 내용을 보여 준 뒤 확인을 받으세요.',
 ].join('\n');
 
-/** Tags a `send` with `concise: true` while 간결 모드 is on (other messages, handoff-note turns: unchanged). */
+/** Tags a `send` / `start_task` with `concise: true` while 간결 모드 is on (other messages, handoff-note turns: unchanged). */
 export function withConcise<M extends { type: string }>(msg: M, on: boolean): M {
-  if (!on || msg.type !== 'send') return msg;
+  if (!on || (msg.type !== 'send' && msg.type !== 'start_task')) return msg;
   if ((msg as { handoff?: boolean }).handoff) return msg;
   return { ...msg, concise: true };
 }

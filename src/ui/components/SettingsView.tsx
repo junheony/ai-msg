@@ -8,6 +8,7 @@ import type { EngineKind } from '../../shared/models';
 import { NotifyMenu } from './NotifyMenu';
 import { describeShell } from '../shellFit';
 import { Sheet } from './Dialogs';
+import { TASK_SOFT_CAP_MAX, TASK_SOFT_CAP_MIN } from '../../shared/tasks';
 
 /** What turning 같은 벤더 계정 자동 순환 on asks the user to agree to (spec: paid design §3 rule 3). */
 export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁니다. 계정 공유·재판매·한도 회피 목적의 계정 생성은 각 제공자 약관 위반입니다.';
@@ -31,7 +32,7 @@ function Seg<T extends string>({ label, value, options, onPick }: { label: strin
   );
 }
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, onOpenUsage, onOpenHighlights, onClose }: {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onOpenUsage, onOpenHighlights, onClose }: {
   build: string | null;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
@@ -53,6 +54,9 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   /** Why the Grok engine is locked (a tripwire fired, §14.9-3); null = not locked. */
   grokLocked?: string | null;
   onGrokUnlock?: () => void;
+  /** 백그라운드 작업 running at once before new ones wait (server setting; null = not known yet / an older server). */
+  taskCap?: number | null;
+  onTaskCap?: (n: number) => void;
   onOpenUsage: () => void;
   onOpenHighlights?: () => void;
   onClose: () => void;
@@ -78,6 +82,17 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
         <Seg<SendKey> label="Enter 동작" value={prefs.sendKey} onPick={(v) => set('sendKey', v)} options={[['enter', 'Enter 전송'], ['mod-enter', '⌘Enter 전송']]} />
         <Seg<'off' | 'on'> label="코드 줄바꿈" value={codeWrap ? 'on' : 'off'} onPick={(v) => setCodeWrap(v === 'on')} options={[['off', '가로 스크롤'], ['on', '줄바꿈']]} />
         <Seg<'off' | 'on'> label="간결 모드" value={prefs.conciseMode ? 'on' : 'off'} onPick={(v) => set('conciseMode', v === 'on')} options={[['on', '켜기'], ['off', '끄기']]} />
+        {onTaskCap && taskCap !== null && (
+          <>
+            <label className="settings-row">
+              <span>동시 백그라운드 작업</span>
+              <select value={taskCap} aria-label="동시 백그라운드 작업" data-testid="task-cap-select" onChange={(e) => onTaskCap(Number(e.target.value))}>
+                {Array.from({ length: TASK_SOFT_CAP_MAX - TASK_SOFT_CAP_MIN + 1 }, (_, i) => i + TASK_SOFT_CAP_MIN).map((n) => <option key={n} value={n}>{n}개</option>)}
+              </select>
+            </label>
+            <p className="muted">입력창의 작업으로 버튼이나 <code>/bg 할 일</code> 로 시작한 작업은 같은 폴더의 새 세션에서 돌고, 이 대화는 계속 쓸 수 있습니다. 이 수를 넘으면 앞 작업이 끝날 때까지 기다리고, 끝나면 늘 알림과 결과 카드가 옵니다.</p>
+          </>
+        )}
         <p className="muted">간결 모드(기본 켜짐): 짧은 확인 뒤 결과만 보여 주고, 생각·도구 본문은 접어둡니다. 끄면 지금처럼 스트리밍·도구·경로 이유가 모두 보입니다. 이 기기에만 저장됩니다 (폰과 맥이 따로).</p>
       </section>
       <section aria-label="권한">

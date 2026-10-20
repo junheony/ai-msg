@@ -116,6 +116,8 @@ export class PushNotifier {
     now?: () => number;
     /** 총사령탑이 이 세션을 실제로 돌리고 있다(Commander.quiet): 그때만 자동 턴 결과를 사령탑에 맡긴다. 없으면 늘 맡긴다. */
     commanderQuiet?: (sessionId: string) => boolean;
+    /** 백그라운드 작업's first turn: the task pushes its own (always) result, so this one is skipped. */
+    taskTurn?: (turnId: string) => boolean;
   }) {
     this.send = opts.send ?? ((sub, payload, o) => webpush.sendNotification(sub, payload, {
       ...o,
@@ -147,6 +149,7 @@ export class PushNotifier {
       if (msg.auto === 'commander' && (!this.opts.commanderQuiet || !msg.sessionId || this.opts.commanderQuiet(msg.sessionId))) { this.started.delete(msg.turnId); this.autoRetried.delete(msg.turnId); return; }
       const at = this.started.get(msg.turnId);
       this.started.delete(msg.turnId);
+      if (this.opts.taskTurn?.(msg.turnId)) { this.autoRetried.delete(msg.turnId); return; }
       const auto = this.autoRetried.delete(msg.turnId);
       // A background segment (`<turnId>:bg<n>`) only when it failed.
       if (!auto && (/:bg\d+$/.test(msg.turnId) ? msg.ok : !turnNeedsAttention(msg.text, msg.ok, at === undefined ? null : now - at))) return;

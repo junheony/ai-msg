@@ -1,3 +1,4 @@
+import type { TaskInfo } from '../shared/tasks';
 import type { Account, Seat } from '../shared/accounts';
 import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
 import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSettings, type RefusalCode, type SessionFacts, type GeminiStatus, type GrokStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
@@ -310,6 +311,9 @@ const withNotice = (p: PaneState, n: PaneNotice): PaneState => ({ ...p, notices:
 
 export type AppState = {
   connected: boolean;
+  /** 백그라운드 작업 ('tasks' servers): the server's list and soft cap (null = not known yet / an older server). */
+  tasks?: TaskInfo[];
+  taskCap?: number | null;
   /** Start (ms) of the current outage — set by the first disconnect, kept while retries fail, null once connected. */
   disconnectedSince: number | null;
   usage: UsageSnapshot | null;
@@ -1148,6 +1152,8 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     }
     case 'grok_status':
       return { ...state, grok: msg.grok };
+    case 'tasks':
+      return { ...state, tasks: msg.tasks, taskCap: msg.cap };
     case 'settings': {
       // 총사령탑 turned off: what was cached of it goes (turned on again, no old chip or epoch shows).
       const off = msg.features && !msg.features.includes('commander') && (Object.keys(state.commanders).length || Object.keys(state.commanderRefusals).length);

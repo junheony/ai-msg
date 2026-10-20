@@ -6,6 +6,7 @@ import { isGeminiAccount, isGrokAccount } from '../../shared/accounts';
 import type { AccountInfo, ClientMessage } from '../../shared/protocol';
 import { LEGACY_ACCOUNT_LIST, activePin, useAccounts } from '../accounts';
 import { has } from '../features';
+import { tasksForPane } from '../../shared/tasks';
 import { newChatDraftKey } from '../drafts';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
@@ -92,6 +93,13 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
     clientRef,
   });
   if (sent === false) dispatch({ type: 'send_failed', clientRef, paneId: pane.id });
+}
+
+/** 백그라운드 작업: `text` as a new session in the pane's folder (the server answers with `tasks`). */
+export function startTaskFromPane(pane: PaneState, text: string, send: SendFn): void {
+  const s = pane.session;
+  if (!s) return;
+  send({ type: 'start_task', cwd: s.cwd, text, fromSessionId: s.sessionId, clientRef: nextClientRef() });
 }
 
 /** 새 세션으로 이어가기, step 1: the handoff-note turn in the current session (same account and model: warm cache). */
@@ -194,7 +202,7 @@ export const TOGGLE_SIDE_EVENT = 'deck:toggle-side';
 
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
@@ -565,6 +573,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           attachments={pane.attachments}
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
+          {...(has('tasks') && s.cwd && !grokBot ? { onStartTask: (text: string) => startTaskFromPane(pane, text, send) } : {})}
+          tasks={tasksForPane(app.tasks ?? [], s.sessionId, s.cwd)}
+          taskCap={app.taskCap ?? null}
+          onOpenTask={(t) => { if (t.sessionId) onOpenSession?.(t.sessionId, t.cwd, t.title); }}
+          onDismissTask={(taskId) => { send({ type: 'dismiss_task', taskId }); }}
           onBranch={canBranch ? (n, text, original) => { branchUndo.current = { sessionId: s.sessionId!, cwd: s.cwd, title: s.title }; startBranch(pane, n, text, original, dispatch, send, names.all); } : undefined}
           editNote={editNote}
           versions={versions}

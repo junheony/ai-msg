@@ -3,6 +3,7 @@ import path from 'node:path';
 import { isPermMode, permModeFromAutoApprove, type PermMode } from '../shared/permission';
 import type { EngineKind } from '../shared/models';
 import { ENGINE_KINDS, ROUTING_POLICIES, type DeckSettings, type RoutingPolicy } from '../shared/protocol';
+import { DEFAULT_TASK_SOFT_CAP, clampTaskCap } from '../shared/tasks';
 
 /**
  * A fresh install asks before every tool call (기본 — 묻기); 모두 자동 승인 is opt-in through the settings screen.
@@ -10,14 +11,14 @@ import { ENGINE_KINDS, ROUTING_POLICIES, type DeckSettings, type RoutingPolicy }
  * off until the user turns it on (and agrees to the own-accounts-only notice); a file without it = off. 자동 분배 may use
  * every engine, but Gemini / Grok only after their external-transfer card (autoConsent, empty by default).
  */
-export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: [...ENGINE_KINDS], autoConsent: [], grokFast: false };
+export const DEFAULT_SETTINGS: Required<DeckSettings> = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: [...ENGINE_KINDS], autoConsent: [], grokFast: false, taskSoftCap: DEFAULT_TASK_SOFT_CAP };
 
 type CommanderSettings = Pick<Required<DeckSettings>, 'commanderEnabled' | 'commanderMaxTurns' | 'commanderTokenCap'>;
-type AutoRouteSettings = Pick<Required<DeckSettings>, 'autoEngines' | 'autoConsent' | 'grokFast'>;
+type AutoRouteSettings = Pick<Required<DeckSettings>, 'autoEngines' | 'autoConsent' | 'grokFast'> & Partial<Pick<DeckSettings, 'taskSoftCap'>>;
 
 /** Both permission fields from one source: `defaultPermissionMode` wins; a lone legacy `autoApprove` maps to bypass / default. */
 function normalize(mode: PermMode, routingPolicy: RoutingPolicy, sameVendorRotation: boolean, commander: CommanderSettings, auto: AutoRouteSettings): Required<DeckSettings> {
-  return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode, routingPolicy, sameVendorRotation, ...commander, ...auto };
+  return { autoApprove: mode === 'bypassPermissions', defaultPermissionMode: mode, routingPolicy, sameVendorRotation, ...commander, ...auto, taskSoftCap: clampTaskCap(auto.taskSoftCap) };
 }
 
 /** Known engines only, each once, in ENGINE_KINDS order; anything else (not an array) = null. */
@@ -32,6 +33,7 @@ function autoRouteFrom(r: Record<string, unknown>): AutoRouteSettings {
     autoEngines: engineList(r.autoEngines) ?? [...DEFAULT_SETTINGS.autoEngines],
     autoConsent: engineList(r.autoConsent) ?? [],
     grokFast: r.grokFast === true,
+    taskSoftCap: clampTaskCap(r.taskSoftCap),
   };
 }
 
@@ -79,6 +81,7 @@ export class SettingsStore {
       autoEngines: engineList(patch.autoEngines) ?? this.current.autoEngines,
       autoConsent: engineList(patch.autoConsent) ?? this.current.autoConsent,
       grokFast: patch.grokFast ?? this.current.grokFast,
+      taskSoftCap: patch.taskSoftCap ?? this.current.taskSoftCap,
     });
     this.current = next;
     this.writing = this.writing.catch(() => {}).then(async () => {
