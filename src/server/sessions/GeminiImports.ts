@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { stripSystemReminders } from '../../shared/choices';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,7 +94,8 @@ export function geminiRowToEntry(row: GeminiRow, account: GeminiAccount, db: str
   if (!cwd) return null;
   const gone = cwdGone(cwd);
   if (gone && isTempCwd(cwd)) return null;
-  const preview = row.preview?.trim() || null;
+  // A deck turn's prompt starts with its hidden `<system-reminder>` context (TurnRunner.runGemini): not the user's words.
+  const preview = stripSystemReminders(row.preview ?? '').trim() || null;
   return {
     sessionId: row.conversation_id, account, engine: 'gemini', cwd, projectDir: path.dirname(db), file: db,
     title: row.title?.trim() || preview?.split('\n')[0]?.slice(0, 80) || UNTITLED,

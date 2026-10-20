@@ -15,6 +15,8 @@ describe('grokUserText', () => {
   it('otherwise keeps the text, dropping only injected <system-reminder> / <user_info> items', () => {
     expect(grokUserText([{ type: 'text', text: '<system-reminder>ctx</system-reminder>' }, { type: 'text', text: 'hello <b>tag</b>' }, { type: 'image', url: 'x' }])).toBe('hello <b>tag</b>');
     expect(grokUserText('plain')).toBe('plain');
+    // A prompt deck prefixed with its context in the same part keeps the user's words.
+    expect(grokUserText([{ type: 'text', text: '<system-reminder>\n[deck 메모] x\n</system-reminder>\n\n고쳐줘' }])).toBe('고쳐줘');
     expect(grokUserText([{ type: 'text', text: '<user_info>only</user_info>' }])).toBeNull();
     expect(grokUserText(42)).toBeNull();
   });

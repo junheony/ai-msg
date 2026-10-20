@@ -2268,3 +2268,12 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
 .memory-count.over { color: var(--danger); }
 .memory-status { color: var(--muted); font-size: .85em; margin-right: auto; }
 .memory-foot .btn { margin-left: auto; }
+
+/* deck-choices option cards (GPT · Gemini · Grok decisions) */
+.choice-cards { margin: 8px 0 4px; display: flex; flex-direction: column; gap: 6px; }
+.choice-q { color: var(--fg-strong); font-weight: 600; }
+.choice-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.choice { border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg-raised); color: var(--fg); padding: 7px 12px; font: inherit; text-align: left; cursor: pointer; max-width: 100%; }
+.choice:hover:not(:disabled) { background: var(--hover); border-color: var(--accent); }
+.choice:disabled { cursor: default; opacity: .6; }
+.choice.picked { opacity: 1; border-color: var(--accent); background: var(--accent-soft); }

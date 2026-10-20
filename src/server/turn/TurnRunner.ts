@@ -4,7 +4,8 @@ import path from 'node:path';
 import { GEMINI_ACCOUNTS, GEMINI_LABEL, GROK_LABEL, isGeminiAccount, isGrokAccount, type Account, type AccountNames, type GeminiAccount, type GrokAccount, type ProjectsRoots } from '../../shared/accounts';
 import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, GROK_CLI_ALIAS, IMPORTED_DEFAULT_MODEL, MODEL_EFFORTS, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type GeminiModel, type GrokModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
-import { CONCISE_STYLE_PROMPT } from '../../shared/concise';
+import { conciseStylePrompt } from '../../shared/concise';
+import { DECK_CHOICES_PROMPT, systemReminder } from '../../shared/choices';
 import { deckAddendum } from '../../shared/memory';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
@@ -997,12 +998,31 @@ export class TurnRunner {
    * What rides this turn's system prompt, never the transcript: the 간결 모드 style note (a person's concise turn — not a
    * handoff note nor a 총사령탑 hop) and the deck 메모 (every turn but a handoff note, which must stay tool- and context-free).
    */
-  private addendum(p: TurnParams): string | null {
+  private addendum(p: TurnParams, engine: EngineKind = 'claude'): string | null {
     if (p.handoff) return null;
-    const style = p.concise && p.commanderHop === undefined ? CONCISE_STYLE_PROMPT : null;
+    const style = p.concise && p.commanderHop === undefined ? conciseStylePrompt(engine) : null;
     let memory = '';
     try { memory = this.deps.memory?.() ?? ''; } catch { /* a broken store never blocks a turn */ }
-    return deckAddendum({ style, memory });
+    // GPT, Gemini and Grok have no question tool: they offer decisions as a deck-choices block (option cards in the pane).
+    return deckAddendum({ style, choices: engine === 'claude' ? null : DECK_CHOICES_PROMPT, memory });
+  }
+
+  /**
+   * Gemini and Grok take deck's context inside the prompt (a `<system-reminder>` the pane and history readers hide), so it
+   * is sent on a session's first turn and again only when it changed — not on every turn of a long session. Keyed by the
+   * engine's session id; after a server restart it is sent once more.
+   */
+  private readonly contextSent = new Map<string, string>();
+  private contextFor(sessionId: string | null, addendum: string | null): string | null {
+    if (!addendum) return null;
+    if (sessionId && this.contextSent.get(sessionId) === addendum) return null;
+    return addendum;
+  }
+  private contextDelivered(sessionId: string | null, context: string | null): void {
+    if (!sessionId || !context) return;
+    this.contextSent.delete(sessionId); // re-insert: the map keeps the most recent sessions last
+    this.contextSent.set(sessionId, context);
+    if (this.contextSent.size > 500) this.contextSent.delete(this.contextSent.keys().next().value!);
   }
 
   private async attempt(p: TurnParams, account: Account, model: ClaudeModel, cwd: string, resumeSessionId: string | null, forkAt: string | null, sink: TurnSink, grants: SessionGrants, modeRef: ModeRef, attachments: Attachment[], cur: Cursor, systemNote?: string): Promise<Attempt> {
@@ -1589,7 +1609,8 @@ export class TurnRunner {
     let result: EngineResult | null = null;
     const effort = effortFor(model, p.effort);
     const createdAtMs = state?.createdAtMs ?? this.now();
-    for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, ...(effort ? { effort } : {}), prompt: promptWithFiles(p.text, attachments), imagePaths: attachments.filter((a) => a.isImage).map((a) => a.path), signal: sink.signal })) {
+    const developerInstructions = this.addendum(p, 'codex');
+    for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, ...(effort ? { effort } : {}), ...(developerInstructions ? { developerInstructions } : {}), prompt: promptWithFiles(p.text, attachments), imagePaths: attachments.filter((a) => a.isImage).map((a) => a.path), signal: sink.signal })) {
       switch (ev.kind) {
         case 'init':
           sessionId = ev.sessionId;
@@ -1663,7 +1684,9 @@ export class TurnRunner {
     let result: EngineResult | null = null;
     // A picked effort Gemini does not have (xhigh) becomes the closest lower one (high).
     const effort = p.effort ? clampEffort(model, p.effort) : DEFAULT_EFFORT.gemini;
-    for await (const ev of gem.engine.runTurn({ account, cwd, resumeSessionId: state?.sessionId ?? null, model, effort, sandbox, prompt: promptWithFiles(p.text, attachments), signal: sink.signal })) {
+    const context = this.contextFor(state?.sessionId ?? null, this.addendum(p, 'gemini'));
+    const prompt = promptWithFiles(p.text, attachments);
+    for await (const ev of gem.engine.runTurn({ account, cwd, resumeSessionId: state?.sessionId ?? null, model, effort, sandbox, prompt: context ? `${systemReminder(context)}\n\n${prompt}` : prompt, signal: sink.signal })) {
       switch (ev.kind) {
         case 'init': if (ev.sessionId !== sessionId) sink.sessionKnown?.(ev.sessionId); sessionId = ev.sessionId; break;
         case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
@@ -1675,6 +1698,7 @@ export class TurnRunner {
       }
     }
     const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
+    this.contextDelivered(sessionId, context);
     // Only an id the CLI reported (init) is stored, never a rejected resume id echoed back.
     if (sessionId) {
       await deps.store.set({
@@ -1729,12 +1753,13 @@ export class TurnRunner {
     this.steering.set(p.turnId, { pending: new Map(), ids: new Set() });
     this.modes.set(p.turnId, { ref: modeRef, sessionId: () => sessionId, notice: (message) => sink.emit({ type: 'turn_notice', ...scope(), message }) });
     let result: EngineResult | null = null;
+    const context = this.contextFor(state?.sessionId ?? null, this.addendum(p, 'grok'));
     try {
       const events = deps.grok.run({
         account, cwd: canonicalCwd, resumeSessionId: state?.sessionId ?? null, model: GROK_CLI_ALIAS[model], effort,
         // Grok's session mode is always default; deck answers the requests per the live mode (§14.1-3). Plan is refused.
         permissionMode: modeRef.mode === 'plan' ? 'plan' : 'default',
-        prompt: p.text, attachments, signal: sink.signal,
+        prompt: p.text, ...(context ? { context } : {}), attachments, signal: sink.signal,
         autoApprove: () => modeRef.mode === 'bypassPermissions',
         editAuto: () => modeRef.mode === 'acceptEdits',
         onPermission: async (pr) => {
@@ -1773,6 +1798,7 @@ export class TurnRunner {
       this.steering.delete(p.turnId);
     }
     const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
+    this.contextDelivered(sessionId, context);
     // Only an id Grok reported is stored, never a rejected resume id echoed back.
     if (sessionId) await record(sessionId, res.ok).catch((err: unknown) => console.error('deck: saving the Grok session failed', err instanceof Error ? err.message : err));
     if (!res.ok && res.errorKind === 'rate_limit') this.grokCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;

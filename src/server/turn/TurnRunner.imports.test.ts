@@ -159,7 +159,8 @@ describe('TurnRunner: continuing an imported agy conversation', () => {
     const c = await setup({ gemini: [entry({ sessionId: 'conv-1', engine: 'gemini', account: 'g2', title: 'agy 대화' })], age: 0 });
     await c.runner.run({ turnId: 't1', cwd: work, sessionId: 'conv-1', text: '계속' }, c.sink);
     expect(c.geminiCalls).toHaveLength(1);
-    expect(c.geminiCalls[0]).toMatchObject({ account: 'g2', resumeSessionId: 'conv-1', cwd: work, prompt: '계속' });
+    // The prompt is the user's words after deck's hidden context (TurnRunner.context.test).
+    expect(c.geminiCalls[0]).toMatchObject({ account: 'g2', resumeSessionId: 'conv-1', cwd: work, prompt: expect.stringMatching(/^<system-reminder>[\s\S]*<\/system-reminder>\n\n계속$/) });
     expect(c.msgs.find((m) => m.type === 'turn_notice')).toMatchObject({ message: expect.stringContaining('agy 대화') });
     expect(c.store.get('conv-1')).toMatchObject({ engine: 'gemini', account: 'g2', cwd: work });
   });
