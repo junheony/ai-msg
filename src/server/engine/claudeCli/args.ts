@@ -27,6 +27,8 @@ export interface ArgsInput {
   forkSession?: boolean;
   /** Only for brand-new sessions: lets deck know the id before the init frame arrives. */
   sessionId?: string;
+  /** 간결 모드 style note (TurnRequest.appendSystemPrompt): `--append-system-prompt`, one argv element (never shell-parsed). */
+  appendSystemPrompt?: string;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -60,6 +62,7 @@ export function claudeArgs(a: ArgsInput): string[] {
     `--mcp-config=${a.mcpConfigPath}`,
   );
   for (const d of a.addDirs ?? []) if (path.isAbsolute(d)) out.push(`--add-dir=${d}`);
+  if (a.appendSystemPrompt?.trim()) out.push(`--append-system-prompt=${a.appendSystemPrompt}`);
   if (a.resume !== undefined) {
     if (!validResume(a.resume)) throw new Error(`invalid resume target: ${a.resume}`);
     out.push(`--resume=${a.resume}`);

@@ -7,6 +7,7 @@ import type { Effort } from '../../shared/models';
 import { ZERO_USAGE, type PermissionDecision, type TurnUsage } from '../../shared/turn-types';
 import type { GrokBilling } from '../../shared/usage-types';
 import { promptWithFiles, type Attachment } from '../attachments/AttachmentStore';
+import { systemReminder } from '../../shared/choices';
 import { AcpAbortError, AcpClosedError, AcpConnection, AcpRpcError, AcpTimeoutError, METHOD_NOT_FOUND } from './acp/AcpConnection';
 import type { ChildLike, SpawnFn } from './CodexEngine';
 import type { EngineEvent, EngineResult, FollowUp, LiveInput, PermissionRequest } from './Engine';
@@ -87,6 +88,8 @@ export type GrokTurnRequest = {
   /** `plan` is refused; anything else runs with Grok's default mode (deck answers the requests). */
   permissionMode: GrokPermissionMode;
   prompt: string;
+  /** deck's hidden context (style note, deck-choices note, 메모) as a `<system-reminder>` text block before the prompt's own block. */
+  context?: string;
   attachments?: Attachment[];
   signal: AbortSignal;
   /** 모두 자동 승인, read per permission request (a mid-turn change applies to the next request). */
@@ -735,7 +738,8 @@ class GrokTurn {
     this.q.push({ kind: 'init', sessionId, model: this.actualModel ?? req.model });
 
     // Prompt.
-    const blocks: Rec[] = [{ type: 'text', text: promptWithFiles(req.prompt, attachments) }];
+    // deck's context is its own block, so the history reader (grokHistory, which drops `<system-reminder>` items) keeps the prompt.
+    const blocks: Rec[] = [...(req.context?.trim() ? [{ type: 'text', text: systemReminder(req.context) }] : []), { type: 'text', text: promptWithFiles(req.prompt, attachments) }];
     for (const img of images) blocks.push({ type: 'image', mimeType: img.mediaType, data: (await fs.readFile(img.path)).toString('base64') });
     // Nothing awaited between this check and the send: an abort or a trip during the reads above stops here.
     if (this.cancelled || this.tripped !== null) throw new AcpAbortError('session/prompt');

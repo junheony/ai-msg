@@ -133,6 +133,7 @@ export class ClaudeEngine implements Engine {
         model: req.model, ...(req.effort ? { effort: req.effort } : {}), permissionMode: startMode,
         settingsPath, mcpConfigPath, ...(req.allowDirs?.length ? { addDirs: req.allowDirs } : {}),
         ...(resume !== undefined ? { resume, forkSession } : { sessionId: randomUUID() }),
+        ...(req.appendSystemPrompt ? { appendSystemPrompt: req.appendSystemPrompt } : {}),
       });
       const env = claudeEnv(this.o.accounts.env(req.account, this.o.baseEnv ?? process.env), MCP_TOOL_TIMEOUT_MS);
       const p = new ClaudeProcess({ bin: this.bin.bin, args, cwd: req.cwd, env, ...(this.o.spawnFn ? { spawnFn: this.o.spawnFn } : {}), ...(this.o.killGraceMs !== undefined ? { killGraceMs: this.o.killGraceMs } : {}) });

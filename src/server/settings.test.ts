@@ -5,7 +5,7 @@ import path from 'node:path';
 import { SettingsStore } from './settings';
 
 /** 자동 분배 defaults: every engine, no external-transfer consent, Grok 4.7 (not Fast). */
-const AUTO = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false };
+const AUTO = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 };
 
 describe('SettingsStore', () => {
   it('defaults to asking (자동 승인 off); persists a change; a corrupt file falls back to defaults', async () => {

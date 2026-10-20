@@ -9,6 +9,7 @@ import { createRequestHandler } from './http';
 import { PushNotifier, type PushSender } from './push/PushNotifier';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { PinStore } from './sessions/PinStore';
+import { MemoryStore } from './memory/MemoryStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageService } from './usage/UsageService';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
@@ -580,5 +581,49 @@ describe('PWA + Web Push over http', () => {
     expect((await raw('POST', '/api/push/unsubscribe', h, JSON.stringify({ endpoint: SUB.endpoint }))).status).toBe(200);
     expect(JSON.parse((await raw('POST', '/api/push/status', h, JSON.stringify({ endpoint: SUB.endpoint }))).text)).toEqual({ subscribed: false });
     expect((await raw('POST', '/api/push/test', h, JSON.stringify({ endpoint: SUB.endpoint }))).status).toBe(502);
+  });
+});
+
+describe('/api/memory (deck 메모)', () => {
+  let base = '';
+  let srv: http.Server;
+  let memory: MemoryStore;
+  let dir: string;
+  const cookie = () => `deck_session=${cookieValueFor(TOKEN)}`;
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-memhttp-'));
+    const roots = { a: path.join(dir, 'a'), b: path.join(dir, 'b'), c: path.join(dir, 'c') };
+    const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(dir, 'p.json') });
+    await idx.refresh();
+    memory = new MemoryStore(path.join(dir, 'memory.md'));
+    await memory.load();
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    srv = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index: idx, memory }));
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  });
+  afterAll(async () => { srv.close(); await fs.rm(dir, { recursive: true, force: true }); });
+
+  it('needs auth; a PUT also needs our own Origin', async () => {
+    expect((await fetch(`${base}/api/memory`)).status).toBe(401);
+    const body = JSON.stringify({ text: 'x' });
+    expect((await fetch(`${base}/api/memory`, { method: 'PUT', headers: { cookie: cookie() }, body })).status).toBe(403);
+    expect(memory.get()).toBe('');
+  });
+
+  it('reads and writes the note; validates; refuses over 4KB with 413', async () => {
+    const get = await fetch(`${base}/api/memory`, { headers: { cookie: cookie() } });
+    expect(await get.json()).toEqual({ text: '', max: 4096 });
+    const put = (body: string) => fetch(`${base}/api/memory`, { method: 'PUT', headers: { cookie: cookie(), origin: base }, body });
+    const ok = await put(JSON.stringify({ text: '답은 한국어로  ' }));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ text: '답은 한국어로', max: 4096 });
+    expect(memory.get()).toBe('답은 한국어로');
+    for (const bad of ['{bad', JSON.stringify({ text: 3 }), JSON.stringify({})]) expect((await put(bad)).status).toBe(400);
+    const big = await put(JSON.stringify({ text: '가'.repeat(1400) })); // 4200 bytes
+    expect(big.status).toBe(413);
+    expect((await big.json() as { error: string }).error).toContain('4096');
+    expect(memory.get()).toBe('답은 한국어로');
   });
 });

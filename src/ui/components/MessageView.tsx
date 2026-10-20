@@ -1,10 +1,12 @@
 import { createContext, isValidElement, memo, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { splitDeckChoices, type DeckChoices } from '../../shared/choices';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
 import { usePrefs } from '../usePrefs';
+import { conciseLeadLine } from '../../shared/concise';
 import { codeFileName, useCodeWrap } from '../codeWrap';
 import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
 import { has } from '../features';
@@ -269,6 +271,8 @@ export type MessageActions = {
   versions?: (n: number) => { index: number; count: number; go: (i: number) => void } | null;
   /** Touch screen: Enter adds a newline (send with the button), like the composer. */
   coarse?: boolean;
+  /** deck-choices option card clicked: send its text as the user's reply. Absent = cannot send now (busy, read-only). */
+  onReply?: (text: string) => void;
 };
 export const MessageActionsContext = createContext<MessageActions>({});
 
@@ -423,6 +427,22 @@ function UserText({ text }: { text: string }) {
   );
 }
 
+/** deck-choices option cards: a click sends the option as the reply; without onPick (not the last reply, or busy) they are shown disabled. */
+function ChoiceCards({ choices, onPick }: { choices: DeckChoices; onPick: ((text: string) => void) | undefined }) {
+  const [picked, setPicked] = useState<string | null>(null);
+  return (
+    <div className="choice-cards" role="group" aria-label={choices.question ?? '선택지'} data-testid="choice-cards">
+      {choices.question && <div className="choice-q">{choices.question}</div>}
+      <div className="choice-list">
+        {choices.options.map((o) => (
+          <button key={o} type="button" className={`choice${picked === o ? ' picked' : ''}`} data-testid="choice" disabled={!onPick || picked !== null}
+            onClick={() => { if (!onPick) return; setPicked(o); onPick(o); }}>{o}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Desktop style: user = right-aligned bubble; assistant = plain text on the background, tool calls as muted lines.
  * Memoized: the composer's draft lives in Chat, so without this every keystroke re-rendered (and re-parsed the
@@ -481,6 +501,9 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   // Another model: a Claude branch (which keeps it as its model), or GPT / Gemini's last turn sent again with it this one time.
   const pickable = regen && regen.models.some((m) => m !== regen.current);
   const pick = !pickable || item.streaming ? undefined : turn && branchFrom ? (m: ModelChoice) => branchFrom(turn, m) : retry ? regen.retryWith : undefined;
+  // deck-choices (GPT, Gemini, Grok): the block becomes option cards; only the last reply's cards can be clicked.
+  const { text: shownText, choices } = splitDeckChoices(item.text, item.streaming);
+  const reply = last && !item.streaming ? actions.onReply : undefined;
   const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
   return (
     <FileRootContext.Provider value={cwd || null}>
@@ -493,10 +516,12 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
       )}
       <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} concise={concise} />
       {/* Concise results-only: hide streamed answer text until the turn finishes. */}
-      {item.text && !(concise && item.streaming) && <Markdown text={item.text} />}
+      {shownText && !(concise && item.streaming) && <Markdown text={shownText} />}
+      {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
       {item.streaming && !(concise && item.toolCalls.length === 0 && !item.thinking) && !concise && <span className="cursor">▍</span>}
       {concise && item.streaming && (
         <div className="concise-progress" data-testid="concise-progress" aria-live="polite">
+          {conciseLeadLine(shownText) && <div className="concise-lead" data-testid="concise-lead">{conciseLeadLine(shownText)}</div>}
           {item.toolCalls.length > 0
             ? `계속 작업 중 · 단계 ${item.toolCalls.length}`
             : item.thinking
@@ -509,7 +534,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
         <div className="turn-foot">
           {hasActions && (
             <div className="msg-actions" data-testid="turn-actions">
-              {item.text && <CopyButton icon text={item.text} label="응답 복사" />}
+              {item.text && <CopyButton icon text={shownText || item.text} label="응답 복사" />}
               {retry && <button type="button" className="msg-act" aria-label="재시도" title="재시도" onClick={retry}><RetryIcon /></button>}
               {again && <button type="button" className="msg-act" aria-label="다시 생성" title="다시 생성 — 이 답장부터 새 갈래로" onClick={again}><RetryIcon /></button>}
               {pick && regen && <RegenModelMenu models={regen.models} current={regen.current} sticky={!!(turn && branchFrom)} onPick={pick} />}

@@ -30,6 +30,19 @@ function mapAll(lines: string[], resume: string | null = null): EngineEvent[] {
 }
 
 describe('codexArgs', () => {
+  it('developer_instructions: one -c element, a JSON-escaped (TOML basic) string, both forms; blank = none', () => {
+    const text = '[deck 메모] 첫 줄\n"따옴표" \\ 백슬래시\t탭';
+    for (const resumeThreadId of [null, 'tid']) {
+      const a = codexArgs({ cwd: '/w', resumeThreadId, model: 'gpt-6-sol', sandbox: 'read-only', developerInstructions: text });
+      const i = a.findIndex((x) => x.startsWith('developer_instructions='));
+      expect(a[i - 1]).toBe('-c');
+      expect(a[i]).not.toContain('\n'); // escaped: no raw newline in the element
+      expect(JSON.parse(a[i]!.slice('developer_instructions='.length))).toBe(text);
+      expect(a.at(-1)).toBe('-');
+    }
+    expect(codexArgs({ cwd: '/w', resumeThreadId: null, model: 'gpt-6-sol', sandbox: 'read-only', developerInstructions: '  ' }).join(' ')).not.toContain('developer_instructions');
+  });
+
   it('new thread: exec -C cwd, images before flags, sandbox/approval overrides, stdin prompt', () => {
     expect(codexArgs({ cwd: '/w', resumeThreadId: null, model: 'gpt-6-sol', sandbox: 'read-only', imagePaths: ['/a.png'] })).toEqual([
       'exec', '-C', '/w', '-i', '/a.png', '--json', '--skip-git-repo-check', '-m', 'gpt-6.1-sol',

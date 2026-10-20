@@ -79,6 +79,9 @@ describe('StatusRow', () => {
     render(<StatusRow startedAt={Date.now()} started progress={null} live={null} routeAck={{ model: 'gpt-6-sol', engine: 'codex' }} onInterrupt={() => {}} />);
     expect(screen.getByTestId('turn-status').textContent).toContain('확인 · GPT Sol로 처리 중');
     cleanup();
+    render(<StatusRow startedAt={Date.now()} started progress={null} live={null} routeAck={{ model: 'opus', engine: 'claude', step: '원인부터 찾을게요' }} onInterrupt={() => {}} />);
+    expect(screen.getByTestId('turn-status').textContent).toContain('확인 · Opus — 원인부터 찾을게요');
+    cleanup();
     render(<StatusRow startedAt={Date.now()} started={false} progress={null} live={null} />);
     expect(screen.getByTestId('turn-status').textContent).toContain('확인…');
   });
