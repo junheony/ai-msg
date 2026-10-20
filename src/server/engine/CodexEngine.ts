@@ -25,6 +25,11 @@ export type CodexTurnRequest = {
   prompt: string;
   /** Absolute paths of image attachments (D7), passed as `-i`. */
   imagePaths?: string[];
+  /**
+   * deck's style note / deck-choices note / 메모: `-c developer_instructions="…"` (a codex config key, checked in the
+   * 0.159 binary), so it rides as a developer message — not the user's prompt, and the rollout reader shows no such role.
+   */
+  developerInstructions?: string;
   signal: AbortSignal;
 };
 
@@ -50,7 +55,7 @@ export type SpawnFn = (bin: string, args: string[], opts: { cwd: string; env: Re
  * (verified `codex exec resume --help`), hence `-c sandbox_mode=…` for both forms. Given every turn, so a sandbox changed
  * on an existing session (set_sandbox) applies from its next turn.
  */
-export function codexArgs(req: Pick<CodexTurnRequest, 'cwd' | 'resumeThreadId' | 'model' | 'sandbox' | 'imagePaths' | 'effort'>): string[] {
+export function codexArgs(req: Pick<CodexTurnRequest, 'cwd' | 'resumeThreadId' | 'model' | 'sandbox' | 'imagePaths' | 'effort' | 'developerInstructions'>): string[] {
   const images = (req.imagePaths ?? []).flatMap((p) => ['-i', p]);
   const common = [
     '--json', '--skip-git-repo-check', '-m', CODEX_CLI_MODEL[req.model],
@@ -60,6 +65,9 @@ export function codexArgs(req: Pick<CodexTurnRequest, 'cwd' | 'resumeThreadId' |
     ...(req.sandbox === 'workspace-write' ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
     // Overrides config.toml's model_reasoning_effort; values from ~/.codex/models_cache.json supported_reasoning_levels.
     ...(req.effort ? ['-c', `model_reasoning_effort="${req.effort}"`] : []),
+    // A TOML basic string: JSON's escapes (\n \" \\ \uXXXX) are all valid TOML, so the value is one argv element, never
+    // shell-parsed, and cannot end the string early.
+    ...(req.developerInstructions?.trim() ? ['-c', `developer_instructions=${JSON.stringify(req.developerInstructions)}`] : []),
   ];
   return req.resumeThreadId
     ? ['exec', 'resume', req.resumeThreadId, ...images, ...common, '-']

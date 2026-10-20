@@ -361,6 +361,7 @@ export function Chat(p: ChatProps) {
   const onBranchRef = useRef(p.onBranch);
   onBranchRef.current = p.onBranch;
   const canBranch = !!p.onBranch;
+  const canReply = !p.busy && !p.readOnly;
   const canRetry = !p.busy && !p.readOnly && retryPrompt === null && retryable !== null && last?.kind === 'assistant';
   const msgActions = useMemo<MessageActions>(() => ({
     onEdit: (t) => {
@@ -372,7 +373,8 @@ export function Chat(p: ChatProps) {
     editNote: p.editNote ?? null,
     ...(p.versions ? { versions: p.versions } : {}),
     coarse,
-  }), [canRetry, retryable, scroll.attach, canBranch, p.editNote, p.versions, coarse]);
+    ...(canReply ? { onReply: (t: string) => { onSendRef.current(t); scroll.attach(); } } : {}),
+  }), [canRetry, retryable, scroll.attach, canBranch, p.editNote, p.versions, coarse, canReply]);
   // 다시 생성 / 다른 모델로 (Pane's context): the new turn is followed from the bottom, as after a send.
   const paneRegen = useContext(RegenerateContext);
   const regen = useMemo<Regenerate | null>(() => {
