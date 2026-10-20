@@ -2240,3 +2240,22 @@ html[data-concise='on'] .msg.assistant.streaming .tool-group.concise { margin-bo
 html[data-concise='on'] .turn-status.concise .status-verb { color: var(--fg); }
 html[data-concise='on'] .concise-lead { color: var(--fg); margin-bottom: 2px; }
 html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font-scale, 1)); color: var(--faint); }
+
+/* 백그라운드 작업: cards in the originating chat, and 작업으로 next to send. */
+.task-cards { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.task-card { border: 1px solid var(--line-strong); border-radius: 10px; padding: 8px 10px; font-size: calc(13.5px * var(--font-scale, 1)); }
+.task-card.done { border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.task-card.failed { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.task-card-head { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.task-badge { flex: none; font-size: 0.85em; color: var(--muted); }
+.task-badge.running::before { content: '⏳ '; }
+.task-badge.queued::before { content: '⏸ '; }
+.task-badge.done::before { content: '✓ '; }
+.task-badge.failed::before { content: '✕ '; }
+.task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-line { margin-top: 4px; color: var(--fg); }
+.task-line.muted { color: var(--muted); }
+.task-actions { display: flex; gap: 6px; margin-top: 4px; }
+.task-actions:empty { display: none; }
+.task-add { flex: none; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--muted); padding: 0 10px; height: 32px; font-size: calc(12.5px * var(--font-scale, 1)); cursor: pointer; }
+.task-add:hover { color: var(--fg); }

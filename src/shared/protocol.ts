@@ -5,6 +5,7 @@ import { PERM_MODES, type PermMode } from './permission';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from './session-types';
 import type { BgTaskInfo, PermissionDecision, Question, QuestionAnswers, TaskUpdate, TaskUsage, TurnPhase, TurnUsage } from './turn-types';
 import type { UsageSnapshot } from './usage-types';
+import type { TaskInfo } from './tasks';
 
 /** Attachment ids are the UUIDs POST /api/attachments returned (Task 6); nothing path-like is accepted. */
 export const ATTACHMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -112,7 +113,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('grok_unlock') }),
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional(),
     /** 자동 분배: engines 자동 may use, engines whose external-transfer card was accepted, Grok fast model. */
-    autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional() }),
+    autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
    * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),
@@ -132,6 +133,13 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * 'commander' servers (총사령탑): arm a goal on an existing Claude session. Refused (`error` with a RefusalCode) while
    * one is active, on a bypass session, on a non-Claude session, or with the feature off. Answered by a `commander` broadcast.
    */
+  /**
+   * 백그라운드 작업 ('tasks' servers): run `text` as a new session in `cwd` (자동 engine and model), leaving the sending chat
+   * free. Queued behind the soft cap (설정 taskSoftCap). Answered with `tasks` to every device; refused with `error`.
+   */
+  z.object({ type: z.literal('start_task'), cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }), text: z.string().trim().min(1).max(200_000), fromSessionId: z.string().min(1).max(200).nullable(), concise: z.boolean().optional(), clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional() }),
+  /** 닫기 on an ended task's card. */
+  z.object({ type: z.literal('dismiss_task'), taskId: z.string().min(1).max(64) }),
   z.object({ type: z.literal('commander_set'), sessionId: z.string().min(1).max(200), goal: z.string().trim().min(1).max(2000), done: z.string().trim().min(1).max(2000), maxTurns: z.number().int().min(1).max(50).optional() }),
   /** ■ 정지 / 일시 정지 / 재개 — `epoch` is the one the device last saw; another one is refused (`commander_stale_epoch`). */
   z.object({ type: z.literal('commander_stop'), sessionId: z.string().min(1).max(200), epoch: z.number().int().min(0) }),
@@ -161,7 +169,9 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
   /** Engines whose "code goes to Google / xAI" card was accepted (only Gemini and Grok need one; default none). */
   autoConsent?: EngineKind[];
   /** 자동 uses Grok 4.7 Build Fast instead of Grok 4.7 (2× price; default off). */
-  grokFast?: boolean };
+  grokFast?: boolean;
+  /** 백그라운드 작업 running at once before new ones wait (1–10, default 3). Absent from older servers. */
+  taskSoftCap?: number };
 
 /**
  * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;
@@ -215,7 +225,7 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - commander: `commander_set|stop|pause|resume` are answered and `commander` is broadcast (총사령탑). Advertised only while
  *   the settings turn it on (`commanderEnabled`); a `settings` broadcast that changes it carries the new list.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**
@@ -249,6 +259,8 @@ export type ServerMessage =
   | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
   /** `features`: the server's list again when a setting changed it (총사령탑 켜기·끄기 → 'commander'); absent = unchanged. */
   | { type: 'settings'; settings: DeckSettings; features?: string[] }
+  /** 백그라운드 작업 ('tasks' servers): the whole list (newest last) and the soft cap, after hello and on every change. */
+  | { type: 'tasks'; tasks: TaskInfo[]; cap: number }
   | ({ type: 'commander'; sessionId: string } & CommanderView)
   /** A Claude session's permission mode changed (picker, Shift+Tab, or an approved plan). */
   | { type: 'permission_mode'; sessionId: string; mode: PermMode }

@@ -28,6 +28,7 @@ import { flushThenExit, installGracefulShutdown } from './lifecycle';
 import { EventLog } from './highlights';
 import { BottleneckWatch, type RetryRequest } from './push/BottleneckWatch';
 import { PushNotifier } from './push/PushNotifier';
+import { TaskRegistry } from './tasks/TaskRegistry';
 import { readAllCooldownsMs } from './routing/cooldown';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { loadOrCreateVapid } from './push/vapid';
@@ -93,9 +94,10 @@ async function main(): Promise<void> {
   const store = new SessionStateStore(cfg.stateFile);
   const pins = new PinStore(cfg.pinsFile);
   const settings = new SettingsStore(cfg.settingsFile);
+  const tasks = new TaskRegistry(path.join(cfg.configDir, 'tasks.json'));
   const pushSubs = new SubscriptionStore(cfg.pushSubscriptionsFile);
   // Codex rollouts (~1000 files) are read after listening; the sidebar is told when they are in.
-  await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), settings.load(), pushSubs.load()]);
+  await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), settings.load(), pushSubs.load(), tasks.load()]);
   const commands = new SlashCommandCache();
   const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries(), { all: true }).flatMap((p) => p.sessions) });
   // /api/file never previews deck's own config (token, VAPID key, push subscriptions), even with the cwd at ~.
@@ -200,6 +202,7 @@ async function main(): Promise<void> {
     titleOf,
     // 자동 턴 결과는 사령탑이 실제로 돌 때만 사령탑에 맡긴다(paused·stopped 뒤 끝난 자동 턴은 여느 턴처럼).
     commanderQuiet: (sessionId) => commander.quiet(sessionId),
+    taskTurn: (turnId) => ws.isTaskTurn(turnId),
   });
   // 하이라이트: what push would announce (plus restart cuts and server start/drain), kept 7 days in events.jsonl.
   const events = new EventLog(path.join(cfg.configDir, 'events.jsonl'), { titleOf });
@@ -250,7 +253,7 @@ async function main(): Promise<void> {
   const handler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate });
   const bound = addresses.map((address) => ({ address, server: http.createServer(handler) }));
   const servers = bound.map((b) => b.server);
-  const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json') });
+  const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); } });
   notifyIndex = () => ws.broadcastIndex();
   submitRetry = (r) => ws.submitRetry(r);
   serverSend = (r) => ws.submitServerSend(r);

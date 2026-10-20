@@ -150,7 +150,7 @@ const consecutive = (ns: number[]) => ns.every((n, i) => i === 0 || n === ns[i -
 describe('features', () => {
   it('hello lists what this server can do', async () => {
     const c = await client();
-    expect(c.got[0]).toMatchObject({ type: 'hello', features: FEATURES.filter((f) => f !== 'commander' && f !== 'grok') });
+    expect(c.got[0]).toMatchObject({ type: 'hello', features: FEATURES.filter((f) => f !== 'commander' && f !== 'grok' && f !== 'tasks') });
     expect(FEATURES).toContain('catchup');
     c.close();
   });

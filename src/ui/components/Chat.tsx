@@ -18,6 +18,8 @@ import { FolderChip } from './FileMenu';
 import { AccountPicker } from './AccountPicker';
 import { useAccounts } from '../accounts';
 import { conciseFirstStep } from '../../shared/concise';
+import { parseBgCommand, type TaskInfo } from '../../shared/tasks';
+import { TaskCards } from './TaskCards';
 import { AttachMenu, AttachmentBar } from './AttachmentBar';
 import { ContextGauge, ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
@@ -75,6 +77,13 @@ export type ChatProps = {
   attachments: UploadedAttachment[];
   uploadFn?: UploadFn;
   onSend: (text: string) => void;
+  /** 백그라운드 작업 ('tasks' servers): `/bg <text>` or 작업으로 starts `text` as a new session in this folder. */
+  onStartTask?: (text: string) => void;
+  /** This chat's tasks (newest first) and the soft cap. */
+  tasks?: TaskInfo[];
+  taskCap?: number | null;
+  onOpenTask?: (t: TaskInfo) => void;
+  onDismissTask?: (taskId: string) => void;
   onInterrupt: () => void;
   /** 취소 on 시작하는 중… (busy, no turn yet): stop waiting; the text goes back into the composer. */
   onCancelStart?: () => void;
@@ -380,7 +389,16 @@ export function Chat(p: ChatProps) {
   const permMode: PermMode = p.permMode ?? 'default';
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
+  /** 작업으로 / `/bg`: the draft runs as its own new session; this chat stays free (even mid-turn). */
+  const startTask = (body: string) => {
+    if (!p.onStartTask || !body.trim() || p.attachments.length > 0) return false;
+    p.onStartTask(body.trim());
+    setText('');
+    return true;
+  };
   const submit = () => {
+    const bg = parseBgCommand(text);
+    if (bg !== null && startTask(bg)) return;
     if (!canSend) return;
     if (p.onHandoff && text.trim() === `/${HANDOFF_COMMAND}` && p.attachments.length === 0) {
       p.onHandoff();
@@ -621,6 +639,7 @@ export function Chat(p: ChatProps) {
         {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>deck 에서 새 GPT 세션으로 이어가기</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
+        {p.tasks && p.tasks.length > 0 && <TaskCards tasks={p.tasks} cap={p.taskCap ?? null} {...(p.onOpenTask ? { onOpen: p.onOpenTask } : {})} {...(p.onDismissTask ? { onDismiss: p.onDismissTask } : {})} />}
         {p.nextSession && <button type="button" className="session-link next" data-testid="handoff-next" onClick={p.nextSession.open} title={p.nextSession.title}>→ 새 세션으로 이어감 · {p.nextSession.title}</button>}
       </div>
       {scroll.detached && (
@@ -718,6 +737,9 @@ export function Chat(p: ChatProps) {
                 <button type="button" className="queue-add" onClick={submit} title={steering ? '대기열에 추가 (Enter) — 실행 중인 턴에 보내 다음 도구 실행 뒤 전달합니다' : '대기열에 추가 (Enter) — 지금 턴이 끝나면 보냅니다'}>
                   <QueueIcon /><span className="sr-only">대기열에 추가</span>
                 </button>
+              )}
+              {p.onStartTask && hasDraft && p.attachments.length === 0 && parseBgCommand(text) === null && (
+                <button type="button" className="task-add" data-testid="task-add" onClick={() => startTask(text)} title="작업으로 — 새 세션에서 따로 돌리고, 이 대화는 계속 씁니다. 끝나면 알림과 결과 카드가 옵니다 (/bg 로도 시작)">작업으로</button>
               )}
               {p.activeTurnId
                 ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
