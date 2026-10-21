@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
-import { agoText, bucketLabel, countdown, creditsText, fullestWindow, geminiHint, observedText, resetStamp, shortCountdown, type RouteNext } from './usageSeats';
+import { agoText, bucketLabel, chipCountdown, countdown, creditsText, fullestWindow, geminiHint, observedText, resetStamp, shortCountdown, type RouteNext } from './usageSeats';
 import { UsageSheet } from './UsageSheet';
 import { localDay, type GrokUsage, type UsageSnapshot } from '../../shared/usage-types';
 import type { GrokStatus } from '../../shared/protocol';
@@ -370,5 +370,18 @@ describe('styles.css', () => {
     let depth = 0;
     for (const ch of css.replace(/\/\*[\s\S]*?\*\//g, '')) { if (ch === '{') depth++; if (ch === '}') depth--; expect(depth).toBeGreaterThanOrEqual(0); }
     expect(depth).toBe(0);
+  });
+});
+
+describe('chipCountdown', () => {
+  const at = (ms: number) => new Date(NOW + ms).toISOString();
+  it('m / h / d, nothing when past or unknown', () => {
+    expect(chipCountdown(at(40 * 60_000), NOW)).toBe('40m');
+    expect(chipCountdown(at(2 * 3_600_000 + 60_000), NOW)).toBe('2h');
+    expect(chipCountdown(at(47 * 3_600_000), NOW)).toBe('47h');
+    expect(chipCountdown(at(3 * 86_400_000), NOW)).toBe('3d');
+    expect(chipCountdown(at(-1), NOW)).toBe('');
+    expect(chipCountdown(null, NOW)).toBe('');
+    expect(chipCountdown('junk', NOW)).toBe('');
   });
 });

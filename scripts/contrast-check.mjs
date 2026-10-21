@@ -68,7 +68,8 @@ function check(name, t) {
     ["fg / panel+hover (seg)", c("fg"), over("hover", c("panel")), 4.5],
     ["muted / panel+hover", c("muted"), over("hover", c("panel")), 4.5],
     ["danger / panel", c("danger"), c("panel"), 4.5],
-    // Usage strip (top bar / phone line): segments on --bg, the session's segment on --panel; the "→" of the next turn
+    // Usage strip (top bar / phone line): segments on --bg, the session's segment (and the line under the bar, hovered /
+    // its sheet open) on --panel; the "→" of the next turn
     // is a glyph (graphics floor 3).
     ...[["fg", 4.5], ["muted", 4.5], ["warn", 4.5], ["danger", 4.5], ["accent", 3]].flatMap(([k, floor]) => [
       [`${k} / strip`, c(k), bg, floor],

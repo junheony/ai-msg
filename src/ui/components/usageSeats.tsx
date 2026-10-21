@@ -135,6 +135,8 @@ export type SeatData = {
   credits?: string | null;
   /** No usable window at all (Grok, a logged-out/broken Gemini seat), or a state that wins over the numbers (a cooldown). */
   reasonLine?: string;
+  /** A live cooldown's end (Grok), when known. */
+  until?: string;
   /** Appended to the sheet below the rows (Grok's "오늘 · deck 기준" block). */
   extraPopover?: ReactNode;
 };
@@ -236,6 +238,7 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
     return {
       seat, engine: 'grok', mark, rows: [], status: g.status,
       reasonLine: grokMainText(g, now), extraPopover,
+      ...(g.status === 'cooldown' && g.cooldownUntil ? { until: g.cooldownUntil } : {}),
     };
   }
   const blocked = g.status === 'down' || g.status === 'cooldown';
@@ -244,6 +247,7 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
     // The subscription answered: no turn yet is not "unknown" any more.
     status: g.status === 'unknown' ? 'ok' : g.status,
     ...(blocked ? { reasonLine: grokMainText(g, now) } : {}),
+    ...(g.status === 'cooldown' && g.cooldownUntil ? { until: g.cooldownUntil } : {}),
     observed: `확인 · ${resetStamp(g.billing.fetchedAt)}`,
     extraPopover,
   };
@@ -350,4 +354,110 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
     }),
     ...(grok?.bin ? GROK_ACCOUNTS : []).map((a) => grokSeatData(a, grokOf(a) ?? { status: 'unknown', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } }, now, usage.grokBot)),
   ];
+}
+
+/** "40m" / "2h" / "3d" for the usage strip; '' without a (future) reset time. */
+export function chipCountdown(resetsAt: string | null | undefined, now: number): string {
+  if (!resetsAt) return '';
+  const ms = parseIsoUtc(resetsAt) - now;
+  if (Number.isNaN(ms) || ms <= 0) return '';
+  const m = Math.ceil(ms / 60_000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
+}
+
+/** The same span spelled out for the aria-label ("40분" / "2시간" / "3일"). */
+export function spokenCountdown(short: string): string {
+  const n = short.slice(0, -1);
+  return `${n}${short.endsWith('m') ? '분' : short.endsWith('h') ? '시간' : '일'}`;
+}
+
+export type ChipKind = 'ok' | 'warn' | 'danger' | 'spent' | 'stale' | 'estimated' | 'cooldown' | 'unknown';
+
+export type ChipState = {
+  /** The seat whose numbers the chip shows (null: no session yet — a generic "사용량" chip). */
+  target: Seat | null;
+  /** Shown as "A→B" when the next turn goes to another seat. */
+  nextSeat: Seat | null;
+  /** The session's own seat is not known yet (no history): the chip is about the next turn alone ("→B"). */
+  onlyNext: boolean;
+  kind: ChipKind;
+  /** The numbers are old (a stale seat / usage-deck out of reach): a mark added on top, the amber / red of kind kept. */
+  stale: boolean;
+  /** Used % of the fullest window (null without a number). */
+  used: number | null;
+  /** Short reset countdown of that window ("2h"; '' when unknown). */
+  reset: string;
+  /** The value text after the label on desktop ("42% · 2h", "소진 · 12m", "쿨다운"). */
+  text: string;
+  /** The value text on a phone ("42%", "✕", ''). */
+  compactText: string;
+  /** Another seat (not the target) is red or spent: a small red dot. */
+  otherDanger: boolean;
+  aria: string;
+  title: string;
+};
+
+/**
+ * One seat's state for the usage strip (UsageStrip, one call per seat), as the one-seat chip of design §3.5 said it: the current seat's fullest window as USED %, its reset, where the next
+ * turn goes, and a red dot when some other seat is in danger. null = nothing to show at all (hidden).
+ */
+export function chipState({ seats, current, next, stale: snapshotStale, now, label }: {
+  seats: SeatData[]; current: Seat | null; next: RouteNext | null; stale: boolean; now: number; label: (s: Seat) => string;
+}): ChipState | null {
+  const target = current ?? next?.account ?? null;
+  const d = target ? seats.find((s) => s.seat === target) ?? null : null;
+  const dangerOf = (s: SeatData) => {
+    if (s.dim) return false;
+    const m = pickMain(s.rows);
+    return !!m && (m.rem === 0 || levelClass(m.row.w) === 'danger');
+  };
+  const otherDanger = seats.some((s) => s.seat !== target && dangerOf(s));
+  const onlyNext = !current && !!next;
+  const nextSeat = next && (onlyNext || next.account !== target) ? next.account : null;
+  const nextAria = next && !onlyNext ? `, 다음 턴은 ${label(next.account)} 계정${next.asOpus ? '(Opus)' : ''}` : '';
+  const nextTitle = next ? `다음 턴: ${label(next.account)}${next.asOpus ? ' · Opus' : ''} — ${next.reason}` : '';
+  const dangerAria = otherDanger ? ', 다른 계정 한도 임박' : '';
+
+  if (!d) {
+    if (!seats.some((s) => pickMain(s.rows))) return null;
+    return {
+      target: null, nextSeat: null, onlyNext: false, kind: otherDanger ? 'danger' : 'ok', stale: false, used: null, reset: '', text: '', compactText: '', otherDanger,
+      aria: `사용량 보기${dangerAria}`, title: '계정별 사용량',
+    };
+  }
+
+  const name = label(d.seat);
+  const main = pickMain(d.rows);
+  const used = main ? 100 - main.rem : null;
+  const reset = main ? chipCountdown(main.row.w?.resetsAt, now) : '';
+  const stale = d.dim || d.status === 'stale' || snapshotStale || ((d.status === 'down' || d.status === 'unknown') && !!main);
+  const estimated = !!main?.row.w?.estimated || d.status === 'kept';
+  let kind: ChipKind;
+  let text: string;
+  let compactText: string;
+  let spoken: string;
+  if (d.status === 'cooldown') {
+    kind = 'cooldown'; text = '쿨다운'; compactText = '쿨다운'; spoken = '쿨다운 중';
+  } else if (main && main.rem === 0) {
+    kind = 'spent'; text = reset ? `소진 · ${reset}` : '소진'; compactText = '✕';
+    spoken = `소진${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}`;
+  } else if (main) {
+    const lvl = levelClass(main.row.w);
+    // Amber / red first: old numbers that were near the limit still warn (오래됨 is added, not swapped in).
+    kind = lvl === 'danger' ? 'danger' : lvl === 'warn' ? 'warn' : stale ? 'stale' : estimated ? 'estimated' : 'ok';
+    text = `${used}%${stale ? ' · 오래됨' : reset ? ` · ${reset}` : ''}`;
+    compactText = `${used}%`;
+    spoken = `${used}퍼센트${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}${stale ? ', 오래된 값' : estimated ? ', 추정' : ''}`;
+  } else {
+    const ok = d.engine === 'grok' && d.status === 'ok';
+    kind = ok ? 'ok' : 'unknown'; text = ok ? '가능' : '?'; compactText = text; spoken = ok ? '사용 가능' : '알 수 없음';
+  }
+  if (nextSeat) compactText = kind === 'spent' || kind === 'cooldown' ? compactText : '';
+  return {
+    target: d.seat, nextSeat, onlyNext, kind, stale: stale && !!main && d.status !== 'cooldown', used, reset, text, compactText, otherDanger,
+    aria: `${onlyNext ? `다음 턴 ${name}${next!.asOpus ? '(Opus)' : ''}` : name} 계정 사용량 ${spoken}${nextAria}${dangerAria}`,
+    title: [`${name} 계정${main ? ` · ${main.row.name} ${used}% 사용` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
+  };
 }

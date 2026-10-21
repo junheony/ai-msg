@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { UsageStrip, pickStage, STRIP_SLACK } from './UsageStrip';
+import { UsageStrip, barRoom, pickStage, STRIP_SLACK } from './UsageStrip';
 import type { Seat } from '../../shared/accounts';
 import type { GrokStatus } from '../../shared/protocol';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
@@ -70,7 +72,8 @@ describe('UsageStrip', () => {
     expect(seg('a').hasAttribute('data-current')).toBe(true);
     expect(seg('b').hasAttribute('data-current')).toBe(false);
     expect(screen.getByTestId('next-b').textContent).toBe('→');
-    expect(el().getAttribute('aria-label')).toBe('계정별 사용량: 지금 A 42%, B 18%, C 소진 12분 뒤 초기화, GPT 85%, 다음 턴 B');
+    // Said like the old chip: 퍼센트; the reset only for amber / red / spent.
+    expect(el().getAttribute('aria-label')).toBe('계정별 사용량: 지금 A 42퍼센트, B 18퍼센트, C 소진 12분 뒤 초기화, GPT 85퍼센트 2시간 뒤 초기화, 다음 턴 B');
     expect(el().title).toContain('5h 여유 많음');
     cleanup();
     // The same seat: no arrow.
@@ -85,11 +88,14 @@ describe('UsageStrip', () => {
     expect(el().getAttribute('aria-label')).toContain('다음 턴 C(Opus)');
   });
 
-  it('쿨다운, Grok without numbers (가능 / ?), stale (오래됨) and estimated', () => {
+  it('쿨다운 (only what is known), Grok without numbers (가능 / ?), stale (오래됨, a spent seat too) and estimated', () => {
     const grok = { bin: true } as GrokStatus;
     strip(snap({ grokSeats: { x1: { status: 'cooldown', lastTurnAt: null, lastError: null, cooldownUntil: at(30 * 60_000), today } } }), 'a', { grok });
     expect(seg('x1').className).toContain('cooldown');
-    expect(seg('x1').textContent).toBe('Grok쿨다운');
+    expect(seg('x1').textContent).toBe('Grok쿨다운· 30m');
+    // No used % is known in a cooldown: an empty track, not a full bar; its end is said when known.
+    expect((seg('x1').querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('0%');
+    expect(el().getAttribute('aria-label')).toContain('Grok 쿨다운 30분 뒤 해제');
     cleanup();
     strip(snap({ grokSeats: { x1: { status: 'ok', lastTurnAt: at(-60_000), lastError: null, cooldownUntil: null, today } } }), 'a', { grok });
     expect(seg('x1').querySelector('.usage-seg-num')!.textContent).toBe('가능');
@@ -103,11 +109,16 @@ describe('UsageStrip', () => {
     expect(seg('a').className).toBe('usage-seg danger stale');
     expect(seg('a').textContent).toBe('A97%오래됨');
     expect(seg('b').className).toBe('usage-seg stale');
-    expect(el().getAttribute('aria-label')).toContain('A 97% 오래됨');
+    expect(el().getAttribute('aria-label')).toContain('A 97퍼센트 2시간 뒤 초기화 오래됨');
+    expect(el().getAttribute('aria-label')).toContain('B 30퍼센트 오래됨');
+    cleanup();
+    strip(snap({ accounts: { a: acct(42, 10), c: acct(100, 10, { status: 'stale', fiveHour: { usedPct: 100, resetsAt: at(12 * 60_000) } }) } }), 'a');
+    expect(seg('c').className).toBe('usage-seg spent stale');
+    expect(el().getAttribute('aria-label')).toContain('C 소진 12분 뒤 초기화 오래됨');
     cleanup();
     strip(snap({ accounts: { a: acct(null, 30, { weekly: { usedPct: 30, resetsAt: at(3 * 86_400_000), estimated: true } }) } }), 'a');
     expect(seg('a').className).toContain('estimated');
-    expect(el().getAttribute('aria-label')).toContain('A 30% 추정');
+    expect(el().getAttribute('aria-label')).toContain('A 30퍼센트 추정');
   });
 
   it('phone: the mid stage in a line of its own (no bar; the reset only when amber / red / spent)', () => {
@@ -119,48 +130,113 @@ describe('UsageStrip', () => {
     expect(seg('c').textContent).toBe('C소진· 12m');
   });
 
-  it('measured (ResizeObserver): steps down to mid / min and, when not even min fits, moves to the line under the bar (and back only past the slack)', () => {
-    const RO = globalThis.ResizeObserver;
-    const proto = HTMLElement.prototype;
-    const ow = Object.getOwnPropertyDescriptor(proto, 'offsetWidth')!;
-    const cw = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')!;
-    let avail = 1000;
-    // The measuring copies: full 600, mid 400, min 300 (in that order inside .usage-strip-measure).
-    Object.defineProperty(proto, 'offsetWidth', { configurable: true, get(this: HTMLElement) { return ({ 0: 600, 1: 400, 2: 300 } as Record<number, number>)[[...(this.parentElement?.children ?? [])].indexOf(this)] ?? 0; } });
-    Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true, get() { return avail; } });
+  describe('measured in a top bar (ResizeObserver)', () => {
+    // A bar 10px padded each side, 10px gaps, actions 100px wide, the session chip at least 220px: the strip's room is
+    // barW − 20 − 100 − 220 − 2 × 10 = barW − 360. The measured stages: full / mid / min (in that order).
+    let barW = 1000;
+    let needs = [600, 400, 300];
     let fire = () => {};
-    globalThis.ResizeObserver = class { constructor(cb: () => void) { fire = cb; } observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
-    try {
-      const stageOf = (a: number) => { avail = a; const r = strip(snap(), 'a'); const w = r.container.firstElementChild as HTMLElement; const s = w.getAttribute('data-stage'); cleanup(); return { s, maxWidth: w.style.maxWidth }; };
-      expect(stageOf(1000)).toEqual({ s: 'full', maxWidth: `${600 + STRIP_SLACK}px` });
-      expect(stageOf(500).s).toBe('mid');
-      expect(stageOf(320).s).toBe('min');
-      avail = 200;
-      const slot = document.body.appendChild(document.createElement('div'));
-      const { container } = strip(snap(), 'a', { rowSlot: slot });
-      const wrap = container.querySelector<HTMLElement>('.usage-strip-wrap')!;
-      // In the bar: only the (invisible) measuring box, no usage of its own; every seat is in the line under it.
-      expect(wrap.getAttribute('data-stage')).toBe('row');
-      expect(wrap.querySelector('[data-testid="usage-strip"]')).toBeNull();
-      expect(screen.getAllByTestId('usage-strip')).toHaveLength(1);
-      expect(slot.querySelector('.usage-strip-row [data-testid="usage-strip"]')).toBeTruthy();
-      expect(seg('a').textContent).toBe('A42%');
-      expect(screen.queryByTestId('usage-chip')).toBeNull();
-      // Back into the bar only with the slack on top of min (the line appearing does not change the bar's width).
-      avail = 300 + STRIP_SLACK - 1;
-      act(() => fire());
-      expect(wrap.getAttribute('data-stage')).toBe('row');
-      avail = 300 + STRIP_SLACK;
-      act(() => fire());
-      expect(wrap.getAttribute('data-stage')).toBe('min');
-      expect(slot.childElementCount).toBe(0);
-      expect(wrap.querySelector('[data-testid="usage-strip"]')).toBeTruthy();
-      slot.remove();
-    } finally {
+    const RO = globalThis.ResizeObserver;
+    const cw = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')!;
+    const rect = Element.prototype.getBoundingClientRect;
+    const gcs = globalThis.getComputedStyle;
+    beforeEach(() => {
+      barW = 1000; needs = [600, 400, 300];
+      Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true, get(this: Element) { return this.tagName === 'HEADER' ? barW : 0; } });
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        const p = this.parentElement;
+        const width = this.hasAttribute('data-w') ? Number(this.getAttribute('data-w'))
+          : p?.classList.contains('usage-strip-measure') ? needs[[...p.children].indexOf(this)]! : 0;
+        return { width } as DOMRect;
+      };
+      globalThis.getComputedStyle = ((e: Element) => {
+        const base = { display: 'block', position: 'static', paddingLeft: '0px', paddingRight: '0px', minWidth: '0px', columnGap: 'normal', gap: 'normal' };
+        if (e.tagName === 'HEADER') return { ...base, display: 'flex', paddingLeft: '10px', paddingRight: '10px', columnGap: '10px' };
+        if (e.classList.contains('topbar-head')) return { ...base, minWidth: '220px' };
+        if (e.classList.contains('usage-strip-measure')) return { ...base, position: 'fixed' };
+        if (e.classList.contains('gone')) return { ...base, display: 'none' };
+        return base;
+      }) as unknown as typeof getComputedStyle;
+      globalThis.ResizeObserver = class { constructor(cb: () => void) { fire = cb; } observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
+    });
+    afterEach(() => {
       globalThis.ResizeObserver = RO;
-      Object.defineProperty(proto, 'offsetWidth', ow);
       Object.defineProperty(Element.prototype, 'clientWidth', cw);
-    }
+      Element.prototype.getBoundingClientRect = rect;
+      globalThis.getComputedStyle = gcs;
+    });
+    const inBar = (slot: HTMLElement | null, grok: GrokStatus | null = null) => (
+      <header className="topbar">
+        <button type="button" className="gone">☰</button>
+        <div className="topbar-head" />
+        <UsageStrip usage={snap()} current="a" grok={grok} rowSlot={slot} now={NOW} onToggle={() => {}} />
+        <div className="topbar-end" data-w="100" />
+      </header>
+    );
+    const wrapIn = (bar: Element) => bar.querySelector<HTMLElement>('.usage-strip-wrap');
+
+    it('the strip takes only its stage\'s width; past min it leaves the bar entirely (no box left to fill), back only past the slack; the focus follows', () => {
+      const slot = document.body.appendChild(document.createElement('div'));
+      try {
+        const { container } = render(inBar(slot));
+        const bar = container.querySelector('header')!;
+        // full: no width of its own beyond the content (flex: none in CSS, no inline max-width / flex).
+        expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('full');
+        expect(wrapIn(bar)!.getAttribute('style')).toBeNull();
+        const own = (e: Element) => e.matches('.usage-strip-wrap, .usage-strip-measure, .usage-strip-row');
+        const roomInBar = barRoom(bar, own);
+        expect(roomInBar).toBe(1000 - 360);
+        barW = 760; act(() => fire());
+        expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('mid');
+        barW = 680; act(() => fire());
+        expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('min');
+        el().focus();
+        // Room 300 − 1: the line under the bar; nothing of the strip is left in the bar to take its width.
+        barW = 659; act(() => fire());
+        expect(wrapIn(bar)).toBeNull();
+        expect(bar.querySelector('[data-testid="usage-strip"]')).toBeNull();
+        expect(slot.querySelector('.usage-strip-row [data-testid="usage-strip"]')).toBeTruthy();
+        expect(seg('a').textContent).toBe('A42%');
+        expect(document.activeElement).toBe(el());
+        // The room does not depend on where the strip is: the same with it in the bar or in the line.
+        barW = 1000;
+        expect(barRoom(bar, own)).toBe(roomInBar);
+        // Back to min only with the slack on top.
+        barW = 360 + 300 + STRIP_SLACK - 1; act(() => fire());
+        expect(wrapIn(bar)).toBeNull();
+        barW = 360 + 300 + STRIP_SLACK; act(() => fire());
+        expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('min');
+        expect(slot.childElementCount).toBe(0);
+        expect(document.activeElement).toBe(el());
+        expect(bar.contains(el())).toBe(true);
+      } finally { slot.remove(); }
+    });
+
+    it('a strip that grows (a seat added) is judged against the bar at once, not against its old width', () => {
+      const { container, rerender } = render(inBar(null));
+      const bar = container.querySelector('header')!;
+      expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('full');
+      // Grok joins: full grows by 30px (more than the slack) and still fits the 640px room — it stays full, no dip to mid.
+      needs = [630, 420, 315];
+      rerender(inBar(null, { bin: true } as GrokStatus));
+      expect(screen.getByTestId('seg-x1')).toBeTruthy();
+      expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('full');
+      // Grown past the room: mid on that same render, without waiting for the observer.
+      needs = [650, 430, 320];
+      rerender(inBar(null, { bin: false } as GrokStatus));
+      expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('mid');
+    });
+  });
+
+  it('touch: the strip, 열기 on a toast, the sheets\' small buttons get a 44px hit area; 열기 is in the link colour; the line tints on hover', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const touch = css.slice(css.indexOf('@media (hover: none), (max-width: 720px) {'));
+    const hit = touch.slice(0, touch.indexOf('\n}\n'));
+    for (const sel of ['.usage-strip-wrap > .usage-strip::before', '.act-line .text-btn::before', '.toast-item .text-btn::before', '.usage-history-toggle::before']) expect(hit).toContain(sel);
+    expect(hit).toMatch(/width: max\(100%, var\(--phone-tap\)\); height: max\(100%, var\(--phone-tap\)\)/);
+    expect(css).toMatch(/\.toast-item:not\(\.error\) \.text-btn \{[^}]*color: var\(--link\)/);
+    expect(css).toMatch(/\.usage-strip-row \.usage-strip:hover, \.usage-strip-row \.usage-strip\[aria-expanded="true"\] \{ background: var\(--panel\);/);
+    expect(css).not.toContain('.usage-chip');
   });
 
   it('nothing without a snapshot or any number; click toggles; aria-expanded follows open', () => {
