@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { AccountRegistry } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage } from '../../shared/turn-types';
@@ -17,6 +16,7 @@ import { SessionGrants, permissionHandler, type ModeGate } from './claudeCli/per
 import { ClaudeProcess, exitFailureText } from './claudeCli/process';
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
 import type { ClaudeSpawnFn } from './claudeCli/spawnTypes';
+import { childScript } from './claudeCli/childScripts';
 import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
 import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, fastFailureKind, fastModeText, invalidResumeText } from './claudeCli/texts';
 import type { ClaudeBin } from './claudeCli/version';
@@ -34,9 +34,8 @@ export const BG_MAX_MS = Infinity;
 const MAX_TIMER_MS = 2_147_483_647;
 export const BG_GRACE_MS = 60_000;
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HOOK_RELAY = path.join(HERE, 'claudeCli', 'hookRelay.ts');
-const PERMISSION_MCP = path.join(HERE, 'claudeCli', 'permissionMcp.ts');
+const HOOK_RELAY = childScript('hookRelay');
+const PERMISSION_MCP = childScript('permissionMcp');
 
 export type ClaudeEngineOptions = {
   bin: ClaudeBin | string;
