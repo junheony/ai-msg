@@ -635,7 +635,7 @@ describe('Sidebar rows: list rows (avatar, title + meta, ⋯ / 고정 on demand)
     const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first'), s('s2', '/w/one', 'second')] }];
     render(<Sidebar projects={p} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} onTogglePin={noop} onRename={noop} />);
     const li = (t: string) => screen.getByText(t).closest('li')!;
-    const touch = (el: Element) => fireEvent.pointerDown(el, { pointerType: 'touch', pointerId: 1, clientX: 10, clientY: 10 });
+    const touch = (el: Element) => fireEvent.pointerDown(el, { pointerType: 'touch', pointerId: 1, isPrimary: true, clientX: 10, clientY: 10 });
     expect(li('first').hasAttribute('data-revealed')).toBe(false);
     touch(screen.getByText('first'));
     act(() => { vi.advanceTimersByTime(ROW_PRESS_MS - 1); });

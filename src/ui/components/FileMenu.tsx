@@ -186,6 +186,8 @@ export function useLongPress(onLong: (x: number, y: number) => void | boolean, {
     onPointerUp: (e: ReactPointerEvent) => {
       if (held.current !== null && e.pointerId === held.current) {
         if (e.pointerType === 'touch') e.preventDefault();
+        // The release guard takes over the click that ends this press; left set, `fired` would eat the next real tap.
+        fired.current = false;
         swallowReleaseClick();
         // touchend (after this) clears it; a pen sends none.
         if (e.pointerType !== 'touch') held.current = null;
@@ -201,6 +203,7 @@ export function useLongPress(onLong: (x: number, y: number) => void | boolean, {
       if (held.current === null) return;
       held.current = null;
       if (e.cancelable) e.preventDefault();
+      fired.current = false;
       swallowReleaseClick();
     },
     onClickCapture: (e: ReactMouseEvent) => {
