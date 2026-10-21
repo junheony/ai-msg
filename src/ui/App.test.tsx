@@ -1078,20 +1078,30 @@ describe('App boot', () => {
     vi.setSystemTime(new Date(2026, 9, 11, 0, 25, 0));
     sock.retries = 0;
     await boot();
-    expect(screen.getByText('연결됨')).toBeTruthy();
+    const dot = screen.getByTestId('activity-btn');
+    expect(dot.getAttribute('aria-label')).toBe('활동');
+    expect(document.querySelector('.conn')).toBeNull(); // no 연결됨 text in the top bar any more
     act(() => sock.onStatus!(false));
-    // A short blip (a restart) stays at 재연결 중…
-    expect(screen.getByText('재연결 중…')).toBeTruthy();
+    // The dot turns danger; a short blip (a restart) says 재연결 중… in the sheet, no banner yet.
+    expect(dot.classList.contains('lvl-down')).toBe(true);
+    expect(dot.getAttribute('aria-label')).toBe('활동 · 연결 끊김');
+    fireEvent.click(dot);
+    expect(within(screen.getByTestId('act-conn')).getByText('재연결 중…')).toBeTruthy();
     expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(21_000); });
-    expect(screen.getByText(/서버 응답 없음 · 00:25부터/)).toBeTruthy();
-    // Both the bar's button and the header chip retry now.
+    expect(screen.getByText(/서버 응답 없음 · 00:25부터 — 연결되면/)).toBeTruthy();
+    // Both the banner's button and the sheet's retry now.
     fireEvent.click(screen.getByText('다시 시도'));
-    fireEvent.click(screen.getByTitle(/눌러서 다시 시도/));
+    fireEvent.click(dot);
+    expect(within(screen.getByTestId('act-conn')).getByText('서버 응답 없음 · 00:25부터')).toBeTruthy();
+    fireEvent.click(within(screen.getByTestId('act-conn')).getByRole('button', { name: '다시 시도' }));
     expect(sock.retries).toBe(2);
     act(() => sock.onStatus!(true));
     expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
-    expect(screen.getByText('연결됨')).toBeTruthy();
+    expect(screen.queryByTestId('act-conn')).toBeNull();
+    expect(dot.classList.contains('lvl-down')).toBe(false);
   });
 });
 
@@ -1172,58 +1182,132 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '사용량' }));
   });
 
-  it('작업 현황: zeros are left out, nothing at all is 한가함, 승인 대기 is emphasised', async () => {
+  const dot = () => screen.getByTestId('activity-btn');
+  const openSheet = () => { fireEvent.click(dot()); return screen.getByRole('dialog', { name: '활동' }); };
+  const rowsOf = (sec: string) => within(screen.getByTestId(sec)).getAllByRole('button').filter((b) => b.classList.contains('act-row'));
+
+  it('활동 점: one state at a time; 승인 대기 counts cards in a badge and wins; the label lists the counts', async () => {
     await boot();
     activity([]);
-    expect(chipText()).toBe('한가함');
-    expect(screen.getByTestId('work-chip').classList.contains('idle')).toBe(true);
+    expect(dot().classList.contains('lvl-idle')).toBe(true);
+    expect(dot().getAttribute('aria-label')).toBe('활동');
+    expect(screen.queryByTestId('activity-badge')).toBeNull();
     activity([act1('s1', true, 0)]);
-    expect(chipText()).toBe('실행 중 1');
+    expect(dot().classList.contains('lvl-running')).toBe(true);
+    expect(dot().getAttribute('aria-label')).toBe('활동 · 실행 중 1');
+    activity([act1('s1', false, 2)]);
+    expect(dot().classList.contains('lvl-bg')).toBe(true);
     activity([act1('s1', true, 0), act1('s2', false, 2)]);
-    expect(chipText()).toBe('실행 중 1 · 백그라운드 1');
-    expect(screen.getByTestId('work-chip').querySelector('.chip-short')!.textContent).toBe('▶1 · ⏸1');
+    expect(dot().getAttribute('aria-label')).toBe('활동 · 실행 중 1 · 백그라운드 1');
     permission('s3');
-    const chip = screen.getByTestId('work-chip');
-    expect(chipText()).toBe('실행 중 1 · 백그라운드 1 · 승인 대기 1');
-    expect(chip.querySelector('.chip-long b.work-wait')!.textContent).toBe('승인 대기 1');
-    expect(chip.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(dot().classList.contains('lvl-waiting')).toBe(true);
+    expect(screen.getByTestId('activity-badge').textContent).toBe('1');
+    expect(dot().getAttribute('aria-label')).toBe('활동 · 승인 대기 1 · 실행 중 1 · 백그라운드 1');
+    expect(dot().getAttribute('aria-haspopup')).toBe('dialog');
+    permission('s3', 1);
+    expect(screen.getByTestId('activity-badge').textContent).toBe('2');
+    server({ type: 'permission_resolved', requestId: 'r-s3-0' } as ServerMessage);
+    server({ type: 'permission_resolved', requestId: 'r-s3-1' } as ServerMessage);
+    expect(screen.queryByTestId('activity-badge')).toBeNull();
   });
 
-  it('작업 현황: 승인 대기 counts sessions (two cards of one = 1) and wins over 실행 중 / 백그라운드', async () => {
+  it('시트: 승인 대기 cards are answered right in the sheet; the card head opens its session', async () => {
     await boot();
-    activity([act1('s1', true, 0), act1('s2', false, 1)]);
-    permission('s1', 0);
-    permission('s1', 1);
-    expect(chipText()).toBe('백그라운드 1 · 승인 대기 1');
     permission('s2');
-    expect(chipText()).toBe('승인 대기 2');
-    expect(screen.getByTestId('work-chip').title).toMatch(/승인 대기인 세션은 실행 중·백그라운드에 세지 않습니다/);
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button').filter((b) => b.classList.contains('work-row'));
-    expect(rows.map((r) => r.textContent)).toEqual(['one승인 대기', 'two승인 대기']);
+    const sheet = openSheet();
+    expect(within(sheet).getByTestId('act-waiting').querySelector('.act-sec-title')!.textContent).toBe('승인 대기 1');
+    sock.frames = [];
+    fireEvent.click(within(screen.getByTestId('act-waiting')).getByRole('button', { name: '허용 1회' }));
+    expect(frames()).toContainEqual({ type: 'permission_response', requestId: 'r-s2-0', decision: 'once' });
+    expect(screen.getByRole('dialog', { name: '활동' })).toBeTruthy(); // answered without leaving the sheet
+    fireEvent.click(rowsOf('act-waiting')[0]!);
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
   });
 
-  it('작업 현황: a click lists the sessions (승인 대기 first) and a row opens its session', async () => {
+  it('시트: 실행 중 rows open their session or 중단 its turn; a session with a card shows only under 승인 대기', async () => {
+    await boot();
+    activity([act1('s1', true, 0), act1('s2', true, 0)]);
+    permission('s2');
+    openSheet();
+    expect(rowsOf('act-running').map((r) => r.textContent)).toEqual(['one실행 중']);
+    sock.frames = [];
+    fireEvent.click(within(screen.getByTestId('act-running')).getByRole('button', { name: 'one 중단' }));
+    expect(frames()).toContainEqual({ type: 'interrupt', turnId: 't-s1' });
+    fireEvent.click(rowsOf('act-running')[0]!);
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's1' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
+  });
+
+  it('시트: 백그라운드 lists sessions with their task titles and /bg tasks with 승인 대기 and 취소', async () => {
+    await boot(['tasks']);
+    server({ type: 'activity', sessions: [{ ...act1('s1', false, 2), tasks: ['dev server', 'watch'] }], serverStartedAt: 1 } as ServerMessage);
+    server({ type: 'tasks', tasks: [{ taskId: 'k1', fromSessionId: 's1', cwd: '/w', title: '리팩터', status: 'running', sessionId: 's7', createdAt: 1, waiting: true }, { taskId: 'k2', fromSessionId: 's1', cwd: '/w', title: '끝난 일', status: 'done', sessionId: 's8', createdAt: 1 }], cap: 3 } as ServerMessage);
+    // A task stopped on a card counts as 승인 대기 even when its card is not here.
+    expect(screen.getByTestId('activity-badge').textContent).toBe('1');
+    openSheet();
+    const bg = screen.getByTestId('act-bg');
+    expect(rowsOf('act-bg').map((r) => r.textContent)).toEqual(['one백그라운드 2']);
+    expect(bg.textContent).toContain('· dev server');
+    const tasks = within(bg).getAllByTestId('act-task');
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]!.textContent).toContain('승인 대기');
+    sock.frames = [];
+    fireEvent.click(within(tasks[0]!).getByRole('button', { name: '취소' }));
+    expect(frames()).toContainEqual({ type: 'cancel_task', taskId: 'k1' });
+    fireEvent.click(within(tasks[0]!).getByRole('button', { name: '열어 보기' }));
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's7' });
+  });
+
+  it('시트: a card with no pane opens in its folder; a new chat\'s card (no id yet) heads as 새 대화', async () => {
+    await boot();
+    permission('s9', 0, '/w/other');
+    permission(null);
+    openSheet();
+    expect(rowsOf('act-waiting').map((r) => r.textContent)).toEqual(['other열기', '새 대화열기']);
+    sock.frames = [];
+    fireEvent.click(rowsOf('act-waiting')[0]!);
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's9' });
+  });
+
+  it('시트: a modal dialog — Escape closes it and gives focus back to the dot; Tab stays inside', async () => {
     await boot();
     activity([act1('s1', true, 0)]);
-    permission('s2');
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const pop = screen.getByRole('dialog', { name: '작업 현황' });
-    const rows = within(pop).getAllByRole('button').filter((b) => b.classList.contains('work-row'));
-    expect(rows.map((r) => r.textContent)).toEqual(['two승인 대기', 'one실행 중']);
-    sock.frames = [];
-    fireEvent.click(rows[0]!);
-    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+    dot().focus();
+    const sheet = openSheet();
+    expect(dot().getAttribute('aria-expanded')).toBe('true');
+    expect(sheet.getAttribute('aria-modal')).toBe('true');
+    const close = within(sheet).getByRole('button', { name: '닫기' });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).not.toBe(close);
+    expect(sheet.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
+    expect(document.activeElement).toBe(dot());
+    expect(dot().getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('하이라이트: the 작업 현황 link, the palette action and the Settings row show only when the server has the feature', async () => {
+  it('비어 있음: the sheet says nothing is running (with when work ended, once seen) and offers 새 대화', async () => {
+    await boot();
+    let sheet = openSheet();
+    expect(within(sheet).getByText('지금 실행 중인 작업이 없어요')).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole('button', { name: '새 대화' }));
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
+    activity([act1('s1', true, 0)]);
+    activity([]);
+    sheet = openSheet();
+    expect(within(sheet).getByText(/^지금 실행 중인 작업이 없어요 · \d\d:\d\d 까지 작업$/)).toBeTruthy();
+  });
+
+  it('하이라이트: the sheet row, the palette action and the Settings row show only when the server has the feature', async () => {
     const press = () => fireEvent.keyDown(window, { code: 'KeyK', key: '', ctrlKey: true });
     await boot();
-    activity([act1('s1', true, 0)]);
-    fireEvent.click(screen.getByTestId('work-chip'));
-    expect(within(screen.getByRole('dialog', { name: '작업 현황' })).queryByRole('button', { name: '하이라이트 보기 →' })).toBeNull();
-    fireEvent.click(screen.getByTestId('work-chip'));
+    openSheet();
+    expect(screen.queryByTestId('act-highlights')).toBeNull();
+    fireEvent.keyDown(document, { key: 'Escape' });
     press();
     expect(screen.queryByText('하이라이트 보기')).toBeNull();
     fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Escape' });
@@ -1232,11 +1316,10 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     cleanup();
     sock.onMessage = null;
     await boot(['highlights']);
-    activity([act1('s1', true, 0)]);
-    fireEvent.click(screen.getByTestId('work-chip'));
-    fireEvent.click(within(screen.getByRole('dialog', { name: '작업 현황' })).getByRole('button', { name: '하이라이트 보기 →' }));
+    openSheet();
+    fireEvent.click(screen.getByTestId('act-highlights'));
     expect(screen.getByRole('dialog', { name: '하이라이트' })).toBeTruthy();
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
     fireEvent.keyDown(document, { key: 'Escape' });
     press();
     expect(screen.getByText('하이라이트 보기')).toBeTruthy();
@@ -1245,85 +1328,27 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '하이라이트' })).toBeTruthy();
   });
 
-  it('작업 현황: a session that only waits for approval (not in the list) opens in its folder', async () => {
-    await boot();
-    permission('s9', 0, '/w/other');
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button').filter((b) => b.classList.contains('work-row'));
-    expect(rows.map((r) => r.textContent)).toEqual(['other승인 대기']);
-    sock.frames = [];
-    fireEvent.click(rows[0]!);
-    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's9' });
-  });
-
-  it('작업 현황: a card of a new chat (no session id yet) is a 새 대화 row', async () => {
-    await boot();
-    permission(null);
-    expect(chipText()).toBe('승인 대기 1');
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button').filter((b) => b.classList.contains('work-row'));
-    expect(rows.map((r) => r.textContent)).toEqual(['새 대화승인 대기']);
-    fireEvent.click(rows[0]!);
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
-  });
-
-  it('작업 현황: Escape closes the list and gives focus back to the chip', async () => {
-    await boot();
-    activity([act1('s1', true, 0)]);
-    const chip = screen.getByTestId('work-chip');
-    fireEvent.click(chip);
-    expect(chip.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
-    expect(document.activeElement).toBe(chip);
-    expect(chip.getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('작업 현황: when everything finishes with the list open, the list is gone and does not come back with new work', async () => {
-    await boot();
-    activity([act1('s1', true, 0)]);
-    fireEvent.click(screen.getByTestId('work-chip'));
-    expect(screen.getByRole('dialog', { name: '작업 현황' })).toBeTruthy();
-    activity([]);
-    expect(chipText()).toMatch(/^한가함 · \d\d:\d\d 까지 작업$/);
-    activity([act1('s2', true, 0)]);
-    expect(screen.getByTestId('work-chip').getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
-  });
-
-  it('한가함: the popover says nothing is running and offers 새 대화', async () => {
-    await boot();
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const pop = screen.getByRole('dialog', { name: '작업 현황' });
-    expect(within(pop).getByText('지금 실행 중인 작업이 없어요')).toBeTruthy();
-    fireEvent.click(within(pop).getByRole('button', { name: '새 대화' }));
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
-  });
-
-  it('하이라이트 badge: only with the feature; asks once connected, shows the 24h count, a click opens the sheet', async () => {
-    await boot();
-    expect(screen.queryByTestId('hl-badge')).toBeNull();
-    cleanup();
-    sock.onMessage = null;
-    const list = { events: [{ at: 1, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }, { at: 2, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }] };
+  it('하이라이트: asks once connected (not without the feature), the sheet row shows the 24h count', async () => {
+    const list = { events: [{ at: 1, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }, { at: 2, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }, { at: 3, kind: 'task', sessionId: 's1', cwd: '/w', title: 'one', body: 'x', ok: true }] };
     const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(JSON.stringify(list), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
+    await boot();
+    expect(fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24')).toHaveLength(0);
+    cleanup();
+    sock.onMessage = null;
     await boot(['highlights']);
-    await waitFor(() => expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-long')!.textContent).toBe('하이라이트 2'));
-    expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-short')!.textContent).toBe('✦ 2');
-    expect(fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24')).toHaveLength(1);
-    fireEvent.click(screen.getByTestId('hl-badge'));
-    expect(screen.getByRole('dialog', { name: '하이라이트' })).toBeTruthy();
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24')).toHaveLength(1));
+    openSheet();
+    await waitFor(() => expect(screen.getByTestId('act-highlights').textContent).toBe('하이라이트 2보기 →'));
   });
 
-  it('하이라이트 badge: asks again 2s after a turn ends', async () => {
+  it('하이라이트: asks again 2s after a turn ends', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(JSON.stringify({ events: [] }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     await boot(['highlights']);
     const asks = () => fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24').length;
     await waitFor(() => expect(asks()).toBe(1));
-    expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-long')!.textContent).toBe('하이라이트');
     activity([act1('s1', true, 0)]);
     activity([]);
     act(() => { vi.advanceTimersByTime(1_900); });
@@ -1332,65 +1357,64 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(asks()).toBe(2);
   });
 
-  it('서버 chip: uptime from serverStartedAt; draining and 재시작됨 take its place; none without a start time', async () => {
+  it('서버: uptime from serverStartedAt; draining and 재시작됨 take its place; no section without a start time', async () => {
     await boot();
-    expect(document.querySelector('.server-chip')).toBeNull();
+    openSheet();
+    expect(screen.queryByTestId('act-server')).toBeNull();
     activity([], { serverStartedAt: Date.now() - 3 * 3_600_000 - 60_000 });
-    const chip = screen.getByTestId('server-chip');
-    expect(chip.textContent).toBe('서버 · 3시간째');
-    expect(chip.classList.contains('server-uptime')).toBe(true);
-    expect(chip.title).toMatch(/^서버 시작 \d+\/\d+ \d\d:\d\d$/);
+    const up = screen.getByTestId('server-uptime');
+    expect(up.textContent).toBe('서버 · 3시간째');
+    expect(up.title).toMatch(/^서버 시작 \d+\/\d+ \d\d:\d\d$/);
     activity([act1('s1', true, 0)], { serverStartedAt: Date.now() - 3 * 3_600_000, draining: true });
-    expect(screen.queryByTestId('server-chip')).toBeNull();
-    expect(document.querySelectorAll('.server-chip')).toHaveLength(1);
-    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 대기 중 · 작업 1개 기다림');
+    expect(screen.queryByTestId('server-uptime')).toBeNull();
+    expect(screen.getByTestId('drain-status').textContent).toBe('재시작 대기 중 · 작업 1개 기다림');
+    expect(dot().classList.contains('lvl-running')).toBe(false);
+    expect(dot().classList.contains('lvl-server')).toBe(true);
+    expect(dot().querySelector('.activity-ring')!.textContent).toBe('↻');
+    // A row of what the restart waits for opens its session.
+    sock.frames = [];
+    fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: /^one/ }));
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's1' });
     activity([], { serverStartedAt: Date.now() - 60_000 });
+    openSheet();
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
-    expect(screen.queryByTestId('server-chip')).toBeNull();
-    fireEvent.click(screen.getByText(/^재시작됨/));
-    expect(screen.getByTestId('server-chip').textContent).toBe('서버 · 1분째');
+    fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByText(/^재시작됨/)).toBeNull();
+    expect(screen.getByTestId('server-uptime').textContent).toBe('서버 · 1분째');
   });
 
-  it('작업 현황 and server chips are desktop only', async () => {
-    mockMatchMedia(true);
-    await boot();
-    activity([act1('s1', true, 0)], { draining: true });
-    expect(screen.queryByTestId('work-chip')).toBeNull();
-    expect(screen.queryByText(/재시작 대기 중/)).toBeNull();
-    activity([], { serverStartedAt: Date.now() - 60_000 });
-    expect(document.querySelector('.server-chip')).toBeNull();
-    expect(screen.queryByTestId('hl-badge')).toBeNull();
-  });
-
-  it('draining: 재시작 대기 중 · 작업 N개 기다림 (short: 재시작 대기 · N), or 재시작 중… when nothing is left', async () => {
+  it('draining: 재시작 대기 중 · 작업 N개 기다림, or 재시작 중… when nothing is left', async () => {
     await boot();
     activity([act1('s1', true, 0), act1('s2', false, 1)], { draining: true });
-    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 대기 중 · 작업 2개 기다림');
-    expect(screen.getByRole('status').querySelector('.chip-short')!.textContent).toBe('재시작 대기 · 2');
+    openSheet();
+    expect(screen.getByTestId('drain-status').textContent).toBe('재시작 대기 중 · 작업 2개 기다림');
     activity([], { draining: true });
-    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 중…');
+    expect(screen.getByTestId('drain-status').textContent).toBe('재시작 중…');
     activity([]);
-    expect(screen.queryByText('재시작 중…')).toBeNull();
+    expect(screen.queryByTestId('drain-status')).toBeNull();
   });
 
-  it('재시작됨 HH:MM appears only when serverStartedAt changes, and goes on click or after 10 minutes', async () => {
+  it('재시작됨 HH:MM appears only when serverStartedAt changes (one toast), and goes on 닫기 or after 10 minutes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     await boot();
+    openSheet();
     activity([], { serverStartedAt: 100 });
     expect(screen.queryByText(/재시작됨/)).toBeNull();
     activity([], { serverStartedAt: 100 });
     expect(screen.queryByText(/재시작됨/)).toBeNull();
     activity([], { serverStartedAt: 200 });
-    fireEvent.click(screen.getByText(/^재시작됨 \d\d:\d\d$/));
-    expect(screen.queryByText(/재시작됨/)).toBeNull();
+    expect([...document.querySelectorAll('.toast-item')].filter((t) => /서버가 다시 시작됐어요 · \d\d:\d\d/.test(t.textContent ?? ''))).toHaveLength(1);
+    fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByText(/^재시작됨/)).toBeNull();
     activity([], { serverStartedAt: 300 });
-    expect(screen.getByText(/재시작됨/)).toBeTruthy();
+    expect(screen.getByText(/^재시작됨/)).toBeTruthy();
     act(() => { vi.advanceTimersByTime(10 * 60_000 + 1); });
-    expect(screen.queryByText(/재시작됨/)).toBeNull();
+    expect(screen.queryByText(/^재시작됨/)).toBeNull();
   });
 
-  it('an older server\'s activity without serverStartedAt shows no 재시작됨 chip (and no NaN:NaN)', async () => {
+  it('an older server\'s activity without serverStartedAt shows no 재시작됨 (and no NaN:NaN)', async () => {
     await boot();
+    openSheet();
     activity([], { serverStartedAt: 100 });
     activity([], { serverStartedAt: undefined });
     activity([], { serverStartedAt: undefined });
@@ -1407,16 +1431,20 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     sock.onMessage = null;
     await boot();
     activity([], { serverStartedAt: 200 });
+    openSheet();
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
-    cleanup(); // a second reload keeps the chip that was showing
+    cleanup(); // a second reload keeps what was showing, without a second toast
     sock.onMessage = null;
     await boot();
+    openSheet();
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
+    expect(screen.queryByText(/서버가 다시 시작됐어요/)).toBeNull();
     activity([], { serverStartedAt: 200 });
-    fireEvent.click(screen.getByText(/^재시작됨/));
+    fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: '닫기' }));
     cleanup();
     sock.onMessage = null;
     await boot();
+    openSheet();
     expect(screen.queryByText(/재시작됨/)).toBeNull();
   });
 
@@ -1428,8 +1456,38 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     act(() => sock.onStatus!(false));
     server(hello(PREVIEW));
     activity([], { serverStartedAt: 200 });
+    openSheet();
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
-    expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
+    expect(frames()).toContainEqual({ route_preview: undefined, type: 'route_preview', sessionId: 's1', cwd: '/w' });
+  });
+
+  it('폰: another session\'s approval → the dot\'s badge number, one toast (열기 opens it), a live line; answered from the sheet', async () => {
+    mockMatchMedia(true);
+    await boot();
+    openSession('one');
+    activity([act1('s1', true, 0)], { draining: true });
+    expect(screen.queryByTestId('work-chip')).toBeNull();
+    // The open session's own card raises no toast (it is on screen).
+    server({ type: 'permission_request', requestId: 'own', toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, turnId: 't-s1', sessionId: 's1', cwd: '/w' } as ServerMessage);
+    const toasts = () => [...document.querySelectorAll('.toast-item')].filter((t) => (t.textContent ?? '').includes('승인 대기'));
+    expect(toasts()).toHaveLength(0);
+    permission('s2');
+    expect(screen.getByTestId('activity-badge').textContent).toBe('2');
+    expect(dot().getAttribute('aria-label')).toBe('활동 · 승인 대기 2 · 실행 중 1');
+    expect(toasts()).toHaveLength(1);
+    const toast = toasts()[0] as HTMLElement;
+    expect(toast.textContent).toContain('two · 승인 대기');
+    await waitFor(() => expect(screen.getByTestId('cards-live').textContent).toBe('two · 승인 대기'));
+    // The same card again (a reconnect's snapshot) does not toast twice.
+    server({ type: 'permission_resolved', requestId: 'r-s2-0' } as ServerMessage);
+    permission('s2');
+    expect(toasts()).toHaveLength(1);
+    sock.frames = [];
+    fireEvent.click(within(toast).getByRole('button', { name: '열기' }));
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
+    expect(toasts()).toHaveLength(0);
+    const sheet = openSheet();
+    expect(within(sheet).getAllByRole('button', { name: '허용 1회' }).length).toBe(2);
   });
 
   it('다음 턴: an open Claude session asks route_preview and its answer tags that account', async () => {
