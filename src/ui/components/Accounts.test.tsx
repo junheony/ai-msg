@@ -11,7 +11,7 @@ import { AccountsContext, LEGACY_UI_ACCOUNTS, uiAccounts } from '../accounts';
 import { setFeatures } from '../features';
 import { newPane, type PaneState } from '../state';
 import { Pane } from './Pane';
-import { AccountPicker } from './AccountPicker';
+import { AccountChipName, AccountMenu } from './AccountPicker';
 import { TurnBadge } from './TurnBadge';
 import { UsageSheet } from './UsageSheet';
 import { UsageHistoryView, usageTabs } from './UsageView';
@@ -67,13 +67,16 @@ describe('usage sheet with any number of accounts', () => {
 });
 
 describe('AccountPicker with the configured accounts', () => {
+  // The session chip's account name and the sheet's account list, side by side.
+  const AccountPicker = ({ pin, current, usage, onPin }: { pin: string | null; current: string | null; usage: UsageSnapshot | null; onPin: (p: string | null) => void }) => (
+    <><AccountChipName pin={pin} current={current} /><AccountMenu pin={pin} usage={usage} onPin={onPin} /></>
+  );
   const names = () => within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent);
 
   it('lists the active accounts only, by label, (Desktop) on the home one; picks report the id', () => {
     const onPin = vi.fn();
     render(<With list={SIX}><AccountPicker pin={null} current="team-2" usage={usage} onPin={onPin} /></With>);
     expect(screen.getByTestId('account-picker').textContent).toContain('자동 · Team-2');
-    fireEvent.click(screen.getByTestId('account-picker'));
     expect(names()).toEqual(['자동', 'Main', 'Work (Desktop)', 'D', 'Team-2', 'Personal']);
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
     expect(items[1]!.textContent).toContain('5h 10% · 주간 20%');
@@ -85,7 +88,6 @@ describe('AccountPicker with the configured accounts', () => {
   it('one account: 자동 and that account', () => {
     render(<With list={ONE}><AccountPicker pin="solo" current="solo" usage={null} onPin={() => {}} /></With>);
     expect(screen.getByTestId('account-picker').getAttribute('aria-label')).toBe('계정: Solo (Desktop) 고정');
-    fireEvent.click(screen.getByTestId('account-picker'));
     expect(names()).toEqual(['자동', 'Solo (Desktop)']);
   });
 
@@ -100,7 +102,6 @@ describe('AccountPicker with the configured accounts', () => {
     expect(gone.textContent).toContain('자동 · c');
     expect(gone.textContent).not.toContain('undefined');
     expect(gone.querySelector('.acct-unknown')).not.toBeNull();
-    fireEvent.click(gone);
     expect(names()).not.toContain('Old');
     expect(names()).not.toContain('c');
   });

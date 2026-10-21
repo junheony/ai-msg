@@ -2,35 +2,22 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { WARM_MS, type ContextInfo } from '../context';
-import { ContextGauge, ContextHint } from './ContextGauge';
+import { ContextHint, ContextRing, contextLevel } from './ContextGauge';
 
 const info = (cacheReadTokens: number, over: Partial<ContextInfo> = {}): ContextInfo =>
   ({ usage: { inputTokens: 2_000, cacheReadTokens, cacheCreationTokens: 10_000 }, window: 1_000_000, at: Date.now(), model: 'opus', account: 'b', ...over });
 
-describe('ContextGauge', () => {
+describe('ContextRing', () => {
   afterEach(cleanup);
 
-  it('renders nothing without a context', () => {
-    const { container } = render(<ContextGauge info={null} />);
-    expect(container.innerHTML).toBe('');
-  });
-
-  it('shows the size with the Desktop-style tooltip, and the label on tap', () => {
-    const { getByTestId, container } = render(<ContextGauge info={info(300_000)} />);
-    const g = getByTestId('context-gauge');
-    expect(g.getAttribute('title')).toBe('컨텍스트 312k / 1M · 캐시 적중 96%');
-    expect(g.querySelector('.ctx-num')?.textContent).toBe('312k');
-    // Narrow panes hide the count but keep the % so the ring isn't mistaken for a spinner.
-    expect(g.querySelector('.ctx-pct')?.textContent).toBe('31%');
-    expect(g.classList.contains('long')).toBe(true);
-    expect(container.querySelector('.ctx-pop')).toBeNull();
-    fireEvent.click(g);
-    expect(container.querySelector('.ctx-pop')?.textContent).toBe('컨텍스트 312k / 1M · 캐시 적중 96%');
-  });
-
-  it('a small context is not flagged', () => {
-    const { getByTestId } = render(<ContextGauge info={info(50_000)} />);
-    expect(getByTestId('context-gauge').classList.contains('ok')).toBe(true);
+  it('a long session is flagged on the ring, a small one is not, ≥85% is high', () => {
+    expect(contextLevel(info(300_000))).toEqual({ pct: 31, level: 'long' });
+    expect(contextLevel(info(50_000)).level).toBe('ok');
+    expect(contextLevel(info(880_000)).level).toBe('high');
+    const { getByTestId } = render(<ContextRing info={info(300_000)} />);
+    const ring = getByTestId('context-ring');
+    expect(ring.getAttribute('class')).toBe('ctx-ring long');
+    expect(ring.getAttribute('aria-hidden')).toBe('true');
   });
 });
 
@@ -49,26 +36,12 @@ describe('ContextHint', () => {
 describe('새 세션으로 이어가기 button', () => {
   afterEach(cleanup);
 
-  it('the gauge popover offers it when onHandoff is given; mousedown does not blur the gauge, click hands off and closes', () => {
-    let n = 0;
-    const { getByTestId, container } = render(<ContextGauge info={info(300_000)} onHandoff={() => { n++; }} />);
-    fireEvent.click(getByTestId('context-gauge'));
-    const btn = getByTestId('handoff-btn');
-    expect(btn.textContent).toBe('새 세션으로 이어가기');
-    expect(fireEvent.mouseDown(btn)).toBe(false); // default prevented: focus stays, the popover is not closed by blur
-    fireEvent.click(btn);
-    expect(n).toBe(1);
-    expect(container.querySelector('.ctx-pop')).toBeNull();
-    cleanup();
-    render(<ContextGauge info={info(300_000)} />);
-    fireEvent.click(document.querySelector('[data-testid="context-gauge"]')!);
-    expect(document.querySelector('[data-testid="handoff-btn"]')).toBeNull();
-  });
-
   it('the long-session hint carries the button; other hints and a missing onHandoff do not', () => {
     let n = 0;
     const long = render(<ContextHint info={info(300_000)} onHandoff={() => { n++; }} />);
-    fireEvent.click(long.getByTestId('handoff-btn'));
+    const btn = long.getByTestId('handoff-btn');
+    expect(fireEvent.mouseDown(btn)).toBe(false); // default prevented: focus stays where it is
+    fireEvent.click(btn);
     expect(n).toBe(1);
     cleanup();
     expect(render(<ContextHint info={info(300_000)} />).queryByTestId('handoff-btn')).toBeNull();

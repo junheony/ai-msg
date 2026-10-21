@@ -15,7 +15,6 @@ import type { UploadFn } from '../upload';
 import { Chat, modelChoices, type ChatProps } from './Chat';
 import { RegenerateContext, type Regenerate } from './MessageView';
 import { replyTurn, type ReplyTurn } from '../replyTurn';
-import { ModelPicker } from './ModelPicker';
 import { ForkMenu } from './ForkMenu';
 import { NewChat } from './NewChat';
 import { OpenInDesktop } from './OpenInDesktop';
@@ -694,7 +693,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           {onStartChat
             ? <NewChat projects={projects} pins={app.pins ?? []} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} {...(onStartChatSplit ? { onStartSplit: onStartChatSplit } : {})} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} gemini={app.gemini ?? null} grok={app.grok ?? null}
                 onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })} onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}
-                modelPicker={<ModelPicker models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} />} />
+                models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} />
             : <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>}
         </>
       )}

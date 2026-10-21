@@ -145,7 +145,11 @@ describe('desktop-like navigation', () => {
     fireEvent.click(within(sidebar()).getByText('one'));
     press('KeyN');
     const pane = screen.getAllByTestId(/^pane-/)[0]!;
-    expect((within(pane).getByLabelText('프로젝트') as HTMLSelectElement).value).toBe('/w');
+    // The project is in the session chip's sheet.
+    fireEvent.click(within(pane).getByTestId('session-chip'));
+    const sheet = within(pane).getByRole('dialog', { name: '세션 설정' });
+    expect((within(sheet).getByLabelText('프로젝트') as HTMLSelectElement).value).toBe('/w');
+    fireEvent.click(within(sheet).getByLabelText('닫기'));
     expect(within(pane).getByText('two')).toBeTruthy(); // recent card
     const box = within(pane).getByLabelText('첫 메시지');
     fireEvent.change(box, { target: { value: '안녕' } });

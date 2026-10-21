@@ -18,6 +18,9 @@ function renderChat(items: ChatItem[], busy = false, onSend = vi.fn(), extra: Pa
   return onSend;
 }
 
+/** Opens the session chip's sheet, where the engine / sandbox / model / account / permission pickers live. */
+const openSheet = () => fireEvent.click(screen.getByTestId('session-chip'));
+
 const chatProps = (items: ChatItem[]): ChatProps => ({ items, pending: [], questions: [], activeTurnId: null, busy: false, title: 't', model: 'opus', effort: 'high', engine: 'claude', sandbox: 'read-only', sessionEngine: null, sessionSandbox: null, isNew: false, codexAvailable: false, attachments: [], onSend: () => {}, onInterrupt: () => {}, onDecide: () => {}, onAnswer: () => {}, onModel: () => {}, onEffort: () => {}, onEngine: () => {}, onSandbox: () => {}, onAttach: () => {}, onUnattach: () => {} });
 
 describe('Chat', () => {
@@ -27,6 +30,7 @@ describe('Chat', () => {
     expect(modelChoices('grok')).toEqual(GROK_MODELS);
     const onPermMode = vi.fn();
     renderChat([], false, vi.fn(), { sessionEngine: 'grok', model: 'grok-4.6', onPermMode, permMode: 'default' });
+    openSheet();
     const perm = screen.getByTestId('perm-select') as HTMLSelectElement;
     expect(perm.disabled).toBe(false);
     fireEvent.change(perm, { target: { value: 'acceptEdits' } });
@@ -35,10 +39,12 @@ describe('Chat', () => {
     // 모두 자동 승인 explains Grok's narrower rule.
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'grok', model: 'grok-4.6', onPermMode, permMode: 'bypassPermissions' });
+    openSheet();
     expect(screen.getByTestId('perm-select').getAttribute('title')).toContain(GROK_BYPASS_HINT);
     expect(screen.getByTestId('perm-badge').getAttribute('title')).toContain(GROK_BYPASS_HINT);
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'claude', onPermMode, permMode: 'bypassPermissions' });
+    openSheet();
     expect(screen.getByTestId('perm-select').getAttribute('title')).toContain(PERM_MODE_HINT.bypassPermissions);
   });
 
@@ -115,44 +121,50 @@ describe('Chat', () => {
 
   it('engine picker only for a new session with Codex available; GPT engine shows the sandbox picker and GPT models; a Codex session shows its sandbox tag', () => {
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false });
+    openSheet();
     expect(screen.queryByTestId('engine-select')).toBeNull();
     cleanup();
     const onEngine = vi.fn();
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, engine: 'codex', model: 'gpt-6-sol', onEngine });
+    openSheet();
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'auto' } });
     expect(onEngine).toHaveBeenCalledWith('auto');
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('model-picker'));
     expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'workspace-write', model: 'gpt-6-astra' });
     expect(screen.getByText(/샌드박스: 작업폴더 쓰기/)).toBeTruthy();
+    openSheet();
     expect(screen.queryByTestId('engine-select')).toBeNull();
   });
 
   it('an existing Codex session: the sandbox chip is the same picker as a new one (with onSessionSandbox) and sends the pick', () => {
     const onSessionSandbox = vi.fn();
     renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'read-only', model: 'gpt-6-sol', onSessionSandbox });
+    openSheet();
     const pick = screen.getByTestId('session-sandbox-select') as HTMLSelectElement;
     expect(pick.value).toBe('read-only');
     expect(within(pick).getAllByRole('option').map((o) => o.textContent)).toEqual(['읽기 전용', '작업폴더 쓰기 · 네트워크']);
-    expect(pick.parentElement!.querySelector('.pick-label')!.textContent).toBe('GPT · 샌드박스: 읽기 전용');
+    expect(pick.parentElement!.querySelector('.pick-label')!.textContent).toBe('읽기 전용');
     fireEvent.change(pick, { target: { value: 'workspace-write' } });
     expect(onSessionSandbox).toHaveBeenCalledWith('workspace-write');
     expect(screen.queryByTestId('engine-select')).toBeNull();
     cleanup();
     // Without the handler (an older server, or a Claude / Gemini session) the chip stays a tag.
     renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'workspace-write', model: 'gpt-6-sol' });
-    expect(screen.queryByTestId('session-sandbox-select')).toBeNull();
     expect(screen.getByText('GPT · 샌드박스: 작업폴더 쓰기 · 네트워크')).toBeTruthy();
+    openSheet();
+    expect(screen.queryByTestId('session-sandbox-select')).toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'gemini', sessionSandbox: 'read-only', model: 'gemini-pro', onSessionSandbox });
+    openSheet();
     expect(screen.queryByTestId('session-sandbox-select')).toBeNull();
   });
 
   it('Gemini: option only with agy; disabled with 로그인 필요 until agy is logged in; Gemini models with effort', () => {
     const out = { available: true, loggedIn: { g1: false, g2: false } };
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false, gemini: out, grok: { bin: false } });
+    openSheet();
     const opt = () => within(screen.getByTestId('engine-select')).getByRole('option', { name: /Gemini/ }) as HTMLOptionElement;
     expect(opt().disabled).toBe(true);
     expect(opt().textContent).toBe('Gemini · 로그인 필요');
@@ -161,16 +173,18 @@ describe('Chat', () => {
     cleanup();
     // An older server (no hello.grok): no Grok option at all.
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: false, gemini: out });
+    openSheet();
     expect(within(screen.getByTestId('engine-select')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude', 'Gemini · 로그인 필요']);
     cleanup();
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, gemini: { available: false, loggedIn: { g1: false, g2: false } } });
+    openSheet();
     expect(within(screen.getByTestId('engine-select')).queryByRole('option', { name: /Gemini/ })).toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, engine: 'gemini', model: 'gemini-pro', effort: 'medium', gemini: { available: true, loggedIn: { g1: false, g2: true } } });
+    openSheet();
     expect(opt().disabled).toBe(false);
     expect(opt().textContent).toBe('Gemini');
     expect(within(screen.getByTestId('sandbox-select')).getAllByRole('option').map((o) => o.textContent)).toEqual(['읽기 전용', '파일 편집 허용(셸 거부)']);
-    fireEvent.click(screen.getByTestId('model-picker'));
     expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent)).toEqual(['Gemini 4 Argon', 'Gemini Flash', '낮음', '중간', '높음']); // agy: no xhigh for Gemini
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'gemini', sessionSandbox: 'read-only', model: 'gemini-pro' });
@@ -179,8 +193,8 @@ describe('Chat', () => {
 
   it('PF11: a new session follows the engine picker even when the session engine frozen at open says claude', () => {
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, engine: 'codex', sessionEngine: 'claude', model: 'gpt-6-sol' });
+    openSheet();
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('model-picker'));
     expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
     expect(screen.queryByText(/샌드박스:/)).toBeNull();
   });
