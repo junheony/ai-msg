@@ -2,17 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { defaultCooldownDir, readAllCooldownsMs, readCooldownUntilMs, writeCooldown } from './cooldown';
+import { readAllCooldownsMs, readCooldownUntilMs, writeCooldown } from './cooldown';
 
 describe('cooldown', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-cd-'));
   const now = 1_790_000_000_000;
-
-  it('resolves the directory the way claude-pick does', () => {
-    expect(defaultCooldownDir({ CLAUDE_PICK_COOLDOWN_DIR: '/x/cd' }, '/h')).toBe('/x/cd');
-    expect(defaultCooldownDir({ XDG_CACHE_HOME: '/xdg' }, '/h')).toBe('/xdg/offload/cooldown');
-    expect(defaultCooldownDir({}, '/h')).toBe('/h/.cache/offload/cooldown');
-  });
 
   it('writes epoch seconds and reads back milliseconds; expired or missing → null', () => {
     writeCooldown(dir, 'b', now + 3_600_000);

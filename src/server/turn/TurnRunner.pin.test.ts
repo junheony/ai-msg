@@ -23,7 +23,7 @@ function card(id: string, s: number, w: number, resetH: number) {
 
 async function usageWith(a: [number, number], b: [number, number], c: [number, number]) {
   const state = { cards: [card('claude:main', ...a, 154), card('claude:second', ...b, 84), card('claude:third', ...c, 36)] };
-  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
+  const u = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }

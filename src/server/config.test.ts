@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, readDeckSeen, readDeckUrl, readProtect, resolveGrokBin, usageModeOf } from './config';
+import { writeCooldown } from './routing/cooldown';
 import { testRegistry } from '../shared/accounts.testkit';
 
 describe('config', () => {
@@ -118,7 +119,7 @@ describe('config', () => {
       auditFile: path.join(home, '.config/deck/audit.log'),
       deckUrl: 'http://deck:9310',
       protectedAccount: 'a',
-      cooldownDir: path.join(home, '.cache/offload/cooldown'),
+      cooldownDir: path.join(home, '.config/deck/cooldown'),
       port: 9320,
       loopbackOnly: false,
       devOrigins: [],
@@ -215,5 +216,38 @@ describe('config', () => {
     expect(cfg.grokBin).toBe(installed);
     expect(cfg.grokHome).toBe(fs.realpathSync(path.join(home, '.grok')));
     fs.rmSync(t, { recursive: true, force: true });
+  });
+  const listFiles = (root: string): string[] => fs.readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((d) => !d.isDirectory()).map((d) => path.relative(root, path.join(d.parentPath, d.name))).sort();
+
+  it('loadConfig writes nothing', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-cfg-nowrite-'));
+    loadConfig({ PATH: '' }, home, '/repo', () => {});
+    expect(fs.readdirSync(home)).toEqual([]);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('loadConfig + writeCooldown on a fresh home write only under configDir; usage defaults to cli', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-cfg-fresh-'));
+    const cfg = loadConfig({ PATH: '' }, home, '/repo', () => {});
+    writeCooldown(cfg.cooldownDir, 'a', Date.now() + 60_000);
+    const files = listFiles(home);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.every((f) => f.startsWith(path.join('.config', 'deck') + path.sep))).toBe(true);
+    expect(cfg.usageMode).toBe('cli');
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('a relative DECK_CONFIG_DIR is made absolute; <configDir>/protect is read before the offload file', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-cfg-rel-'));
+    for (const p of ['.claude', '.claude-b']) fs.mkdirSync(path.join(home, p, 'projects'), { recursive: true });
+    expect(path.isAbsolute(loadConfig({ DECK_CONFIG_DIR: 'rel-cfg', PATH: '' }, home, '/repo', () => {}).configDir)).toBe(true);
+    const cfgDir = path.join(home, 'cfg');
+    fs.mkdirSync(cfgDir);
+    fs.mkdirSync(path.join(home, '.config', 'offload'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', 'offload', 'protect'), 'a\n');
+    fs.writeFileSync(path.join(cfgDir, 'protect'), 'b\n');
+    expect(loadConfig({ DECK_CONFIG_DIR: cfgDir, PATH: '' }, home, '/repo', () => {}).protectedAccount).toBe('b');
+    fs.rmSync(home, { recursive: true, force: true });
   });
 });

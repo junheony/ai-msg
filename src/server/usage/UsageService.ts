@@ -136,7 +136,7 @@ export class UsageService {
    * null → by the record) decide the snapshot's `usageSource`; with neither, the snapshot has none (= 'deck').
    * `deckConfigured`: the user set the usage-deck address (not the default), so with no record yet a failed first fetch
    * still reads as 'deck' (usage-deck is late or down, not absent). Order: `strict` > the record > this > the first fetch.
-   * `mode` 'cli' (`DECK_USAGE_SOURCE`, default 'usage-deck' here; config picks the real default): usage-deck is never
+   * `mode` 'cli' (`DECK_USAGE_SOURCE`, default 'cli' here too; config picks the real default): usage-deck is never
    * asked — Claude accounts carry only what deck's own turns observed (`observedFile`, kept across restarts).
    */
   constructor(opts: { mode?: UsageMode; observedFile?: string; deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; deckConfigured?: boolean; log?: (line: string) => void }) {
@@ -150,7 +150,7 @@ export class UsageService {
     this.strict = opts.strict ?? null;
     this.deckConfigured = opts.deckConfigured ?? false;
     this.log = opts.log ?? (() => {});
-    this.mode = opts.mode ?? 'usage-deck';
+    this.mode = opts.mode ?? 'cli';
     this.observedFile = opts.observedFile ?? null;
     if (this.mode === 'cli') {
       if (this.observedFile) this.readObserved(this.observedFile);

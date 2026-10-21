@@ -61,7 +61,7 @@ beforeAll(async () => {
   meta = new SessionMetaStore(path.join(base, 'session-meta.json'));
   index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), meta });
   await index.refresh();
-  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
+  const usage = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
   await usage.pollOnce();
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();

@@ -8,7 +8,8 @@ import { loadAccountRegistry } from './accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
 import { resolveClaudeBin, type ClaudeBin } from './engine/claudeCli/version';
 import { resolveGeminiBin } from './engine/GeminiEngine';
-import { defaultCooldownDir } from './routing/cooldown';
+import { legacyIntegrations } from './integrations';
+import { resolveConfigDir } from './paths';
 
 export type DeckConfig = {
   home: string;
@@ -97,7 +98,7 @@ export type DeckConfig = {
   vapidSubject: string | null;
 };
 
-/** ~/.config/offload/protect: comment lines start with '#'; the first non-blank token must be a configured account — any other is no protection, and `warn` is told once. */
+/** `<configDir>/protect` (or offload's ~/.config/offload/protect): comment lines start with '#'; the first non-blank token must be a configured account — any other is no protection, and `warn` is told once. */
 export function readProtect(file: string, accounts: AccountNames, warn: (line: string) => void = () => {}): Account | null {
   try {
     for (const raw of fs.readFileSync(file, 'utf8').split('\n')) {
@@ -193,16 +194,17 @@ export function resolveGrokBin(env: NodeJS.ProcessEnv, home: string, existsFn: (
 
 /** Throws `AccountsFileError` when `<configDir>/accounts.json` is there and cannot be used. `log`: startup notes (skipped profile dirs, an unknown protected account). */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), repoRoot: string = repoRootDefault(), log: (line: string) => void = (l) => console.error(l)): DeckConfig {
-  const configDir = env.DECK_CONFIG_DIR || path.join(home, '.config', 'deck');
+  const configDir = resolveConfigDir(env, home);
+  const legacy = legacyIntegrations(env, home, configDir);
   const accounts = loadAccountRegistry({ configDir, homeDir: home, log });
   // CLAUDE_PROTECT wins over the file; a value that is not a configured account falls through to the file, with a warning.
   if (env.CLAUDE_PROTECT && !accounts.has(env.CLAUDE_PROTECT)) log(`deck: CLAUDE_PROTECT="${env.CLAUDE_PROTECT}" 는 설정에 없는 계정이라 무시합니다 (계정: ${accounts.all().join(', ')})`);
-  const deckUrlFromFile = readDeckUrl(path.join(home, '.config', 'claude-pick', 'deck_url'), '');
+  const deckUrlFromFile = legacy.deckUrlFile ? readDeckUrl(legacy.deckUrlFile, '') : '';
   const deckUrlConfigured = !!env.DECK_URL || deckUrlFromFile !== '';
   // A usage-deck at the default address (no DECK_URL, no deck_url) that has answered before still counts as expected.
   const deckExpected = deckUrlConfigured || readDeckSeen(path.join(configDir, 'usage-source.json'));
   if (env.DECK_USAGE_SOURCE && !['cli', 'usage-deck'].includes(env.DECK_USAGE_SOURCE.trim())) log(`deck: DECK_USAGE_SOURCE="${env.DECK_USAGE_SOURCE}" 는 cli 나 usage-deck 이 아니라 무시합니다 — ${usageModeOf({}, deckExpected)} 로 시작합니다`);
-  const protectedAccount = accounts.has(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : readProtect(path.join(home, '.config', 'offload', 'protect'), accounts, log);
+  const protectedAccount = accounts.has(env.CLAUDE_PROTECT) ? env.CLAUDE_PROTECT : legacy.protectFile ? readProtect(legacy.protectFile, accounts, log) : null;
   return {
     home,
     configDir,
@@ -213,7 +215,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     auditFile: path.join(configDir, 'audit.log'),
     deckUrl: env.DECK_URL || deckUrlFromFile || DEFAULT_DECK_URL,
     protectedAccount,
-    cooldownDir: defaultCooldownDir(env, home),
+    cooldownDir: legacy.cooldownDir,
     port: Number(env.DECK_PORT) || 9320,
     loopbackOnly: env.DECK_LOOPBACK_ONLY === '1',
     devOrigins: (env.DECK_DEV_ORIGIN ?? '').split(',').map((s) => s.trim()).filter(Boolean),
