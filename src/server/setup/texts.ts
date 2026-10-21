@@ -65,3 +65,19 @@ export const PROBE_TEXTS = {
   homeProfile: '기본',
   profile: '프로필',
 } as const;
+
+/** Claude profile add (setup wizard, plan ② Task 5): the `error` of POST /api/setup/profiles. */
+export const PROFILE_TEXTS = {
+  badId: (id: string, pattern: string) => `계정 id "${id}" 는 쓸 수 없습니다 — 영문 소문자·숫자로 시작하는 16자 이하(${pattern})`,
+  reservedId: (id: string) => `계정 id "${id}" 는 다른 자리에 쓰는 이름입니다`,
+  duplicate: (id: string) => `이미 있는 계정입니다: ${id}`,
+  badLabel: '이름은 1~40자여야 합니다',
+  badRequest: '잘못된 프로필 추가 요청입니다',
+  symlink: (file: string) => `${file} 이 심볼릭 링크라 건드리지 않습니다 — 직접 정리한 뒤 다시 시도하세요`,
+  notOwner: (file: string) => `${file} 의 소유자가 이 사용자가 아니라 건드리지 않습니다`,
+  notDir: (file: string) => `${file} 이 폴더가 아닙니다`,
+  brokenFile: (msg: string) => `계정 파일을 고치기 전에는 추가할 수 없습니다 — ${msg}`,
+  invalid: (msg: string) => `계정을 추가할 수 없습니다 — ${msg}`,
+  changed: '계정 파일이 그사이 바뀌었습니다 — 다시 시도하세요',
+  busy: '다른 곳에서 계정 파일을 고치는 중입니다 — 잠시 뒤 다시 시도하세요',
+} as const;

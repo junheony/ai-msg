@@ -11,6 +11,8 @@ import { bindAddresses, tailscaleDnsName, tailscaleIPv4s } from './bind';
 import { loadConfig, repoRootDefault, type DeckConfig } from './config';
 import { acquireInstanceLock, commandOfPid } from './instanceLock';
 import { TEXTS } from './setup/texts';
+import { SetupService } from './setup/SetupService';
+import { SetupStore, existingInstall } from './setup/SetupStore';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { MIN_CLAUDE_VERSION, RECOMMENDED_CLAUDE_VERSION, type ClaudeBin } from './engine/claudeCli/version';
 import { CodexEngine } from './engine/CodexEngine';
@@ -123,6 +125,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
   const cleanup: Array<() => void> = [];
   try {
     await lock.update({ addresses, port });
+    // Before any store writes its file: was this config dir in use already (no wizard for it)?
+    const setupStore = await SetupStore.open(path.join(cfg.configDir, 'setup.json'), { existingInstall: existingInstall(cfg.configDir) });
     const transcriptCacheDir = path.join(cfg.configDir, 'transcript-cache');
     setTranscriptCacheDir(transcriptCacheDir);
     const pruneTranscriptCache = () => {
@@ -322,8 +326,9 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // Bound once installGracefulShutdown has run (after listening).
     let restartCtl: ReturnType<typeof installGracefulShutdown> = { draining: () => false, request: () => {}, force: () => false };
     const serverUpdate: ServerUpdateDeps = { check: () => updates.check(), supervised: supervisionCheck({ env: cfg.supervised, pidFile: path.join(cfg.configDir, 'relaunch.pid') }), draining: () => restartCtl.draining(), activeTurns: () => ws.activeTurns(), restart: () => restartCtl.request('UI 재시작'), forceRestart: () => restartCtl.force('UI 강제 재시작') };
-    const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate });
-    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); } });
+    const setup = new SetupService({ cfg, accounts, store: setupStore, supervised: serverUpdate.supervised, addresses: [...addresses.map((a) => `http://${a.includes(':') ? `[${a}]` : a}:${port}`), ...(dnsName ? [`https://${dnsName}/`] : [])] });
+    const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup });
+    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });
     cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();
     submitRetry = (r) => ws.submitRetry(r);

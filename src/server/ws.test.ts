@@ -799,6 +799,22 @@ describe('ws', () => {
     }
   });
 
+  it('hello carries setup.needed and the setup feature', async () => {
+    for (const [setup, feature] of [[{ needed: () => true }, true], [{ needed: () => false }, true], [undefined, false]] as const) {
+      const srv = http.createServer();
+      const api = attachWebSocket([srv], { ...wsDeps, ...(setup ? { setup } : {}) });
+      await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+      const { port } = srv.address() as { port: number };
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { Origin: `http://127.0.0.1:${port}`, Cookie: COOKIE } });
+      const hello = await new Promise<Extract<ServerMessage, { type: 'hello' }>>((resolve) => ws.on('message', (d) => { const m = JSON.parse(String(d)) as ServerMessage; if (m.type === 'hello') resolve(m); }));
+      expect(hello.setup).toEqual(setup ? { needed: setup.needed() } : undefined);
+      expect(hello.features?.includes('setup')).toBe(feature);
+      ws.close();
+      api.close();
+      srv.close();
+    }
+  });
+
   // Regression: a session written after the server's initial index scan (e.g. by Claude
   // Desktop) is not yet in the in-memory index. open_session must rescan once and still
   // find it, without the client ever triggering refresh_index itself.

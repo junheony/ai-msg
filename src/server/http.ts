@@ -24,6 +24,9 @@ import type { EventLog } from './highlights';
 import type { ServerUpdate } from './serverUpdate';
 import { DEFAULT_HIGHLIGHT_HOURS, HIGHLIGHT_HOURS } from '../shared/highlights';
 import type { UsageService } from './usage/UsageService';
+import type { ClaudeProfileProbe, SetupStatus } from '../shared/setup-types';
+import { ProfileError } from './setup/profiles';
+import { PROFILE_TEXTS } from './setup/texts';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
 export type HttpDeps = {
@@ -58,6 +61,14 @@ export type HttpDeps = {
   highlights?: Pick<EventLog, 'query'>;
   /** 서버 업데이트 대기 / 지금 재시작; absent = no /api/server-update, /api/restart. */
   serverUpdate?: ServerUpdateDeps;
+  /** 첫 실행 마법사 (SetupService); absent = no /api/setup*. */
+  setup?: SetupDeps;
+};
+
+export type SetupDeps = {
+  status: (force?: boolean) => Promise<SetupStatus>;
+  addProfile: (id: string, label?: string) => Promise<{ profile: ClaudeProfileProbe; restartNeeded: true }>;
+  markDone: () => Promise<void>;
 };
 
 export type ServerUpdateDeps = {
@@ -353,6 +364,29 @@ export function createRequestHandler(deps: HttpDeps) {
           // Already draining: nothing more without force.
           if (!su.draining()) su.restart();
           json(res, 200, { ok: true, draining: su.draining() });
+          return;
+        }
+        if (url.pathname === '/api/setup' || url.pathname.startsWith('/api/setup/')) {
+          const setup = deps.setup;
+          if (!setup) { json(res, 404, { error: 'not found' }); return; }
+          if (url.pathname === '/api/setup' && req.method === 'GET') { json(res, 200, await setup.status()); return; }
+          if (url.pathname === '/api/setup/refresh' && req.method === 'POST') { json(res, 200, await setup.status(true)); return; }
+          if (url.pathname === '/api/setup/done' && req.method === 'POST') { await setup.markDone(); json(res, 200, { ok: true }); return; }
+          if (url.pathname === '/api/setup/profiles' && req.method === 'POST') {
+            let body: { id?: unknown; label?: unknown } = {};
+            try { body = JSON.parse(await readBody(req, 4096)) as typeof body; } catch { /* invalid below */ }
+            if (!body || typeof body.id !== 'string' || (body.label !== undefined && typeof body.label !== 'string')) { json(res, 400, { error: PROFILE_TEXTS.badRequest }); return; }
+            const label = typeof body.label === 'string' && body.label.trim() ? body.label : undefined;
+            try {
+              const r = await setup.addProfile(body.id, label);
+              json(res, 200, { ok: true, profile: r.profile, restartNeeded: true });
+            } catch (err) {
+              if (err instanceof ProfileError) { json(res, err.status, { error: err.message }); return; }
+              throw err;
+            }
+            return;
+          }
+          json(res, 404, { error: 'not found' });
           return;
         }
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }
