@@ -76,8 +76,8 @@ function check(name, t) {
       [`${k} / strip current`, c(k), c("panel"), floor],
     ]),
     ["fg-strong / strip current", c("fg-strong"), c("panel"), 4.5],
-    // Sidebar row avatars: a bold 16px white letter on the project colour, held to the body-text floor too.
-    ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`#fff / avatar-${n}`, [255, 255, 255], c(`avatar-${n}`), 4.5]),
+    // Sidebar row avatars: the session glyph (a 2px line icon, --avatar-glyph) on the project colour — graphics floor 3.
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`glyph / avatar-${n}`, c("avatar-glyph"), c(`avatar-${n}`), 3]),
   ];
   console.log(`\n${name}`);
   let bad = 0;

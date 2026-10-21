@@ -14,6 +14,7 @@ import { isMacPlatform, isPlainMod, pinKeyLabel } from '../shortcuts';
 import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
 import { DeckMark } from './DeckMark';
+import { SessionGlyph, assignSessionIcons, sessionIconBase, type IconRow } from './SessionIcon';
 
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
 export const SEARCH_MIN_CHARS = 2;
@@ -49,12 +50,6 @@ export function avatarIndex(slug: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < slug.length; i++) { h ^= slug.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return ((h >>> 0) % AVATAR_COLORS) + 1;
-}
-
-/** The avatar's letter: the slug's first letter or digit, upper-cased (`.dotfiles` → D); none → ·. */
-export function avatarLetter(slug: string): string {
-  const m = slug.match(/[\p{L}\p{N}]/u);
-  return m ? m[0].toUpperCase() : '·';
 }
 
 /** A stable default: a fresh [] per render would read as a new list (and hide a revealed row) every time. */
@@ -263,14 +258,15 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     return <span className="open-mark" role="img" aria-label={label} title={label}>{at === 'float' ? '◱' : at}</span>;
   };
   /**
-   * The row's round avatar (§3.2): project colour + letter, the status dot top left, the engine mark bottom left, the open
-   * mark bottom right. The letter, dot and engine mark are decoration — the meta line names the project and says the status.
+   * The row's round avatar (§3.2): project colour + the session's glyph (SessionIcon: one per session, so a project's
+   * rows tell apart), the status dot top left, the engine mark bottom left, the open mark bottom right. The glyph, dot and
+   * engine mark are decoration — the row's title and meta line name the session and project and say the status.
    */
-  const avatarOf = (slug: string, ids: string[], engine: EngineKind, marked = true) => {
+  const avatarOf = (slug: string, ids: string[], engine: EngineKind, marked = true, sessionId = ids[0]!) => {
     const st = status(ids);
     return (
       <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties}>
-        <span className="row-avatar-letter" aria-hidden="true">{avatarLetter(slug)}</span>
+        <SessionGlyph index={icons.get(sessionId) ?? sessionIconBase(sessionId)} />
         {st && <span className={`row-dot ${st.kind}`} aria-hidden="true" title={st.label} />}
         {engine === 'claude' || engine === 'codex' || engine === 'grok' ? <span className="row-engine"><EngineMark engine={engine} decorative /></span> : null}
         {marked && openMark(ids)}
@@ -311,9 +307,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const more = canEdit && !edit;
     const current = !!currentSessionId && members.includes(currentSessionId);
     const meta = <span className="session-meta" {...(s.imported ? { title: importTitle(s) } : {})}>{[slug, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, status(members)?.label].filter(Boolean).join(' · ')}</span>;
-    const avatarEl = avatarOf(slug, members, engineOf(target), !edit);
+    const avatarEl = avatarOf(slug, members, engineOf(target), !edit, s.sessionId);
     return (
-      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} title={target.title}
+      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} title={`${target.title} · ${slug}`}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
         {edit ? (
           // Renaming: an input cannot sit inside a button, so the row is plain for the while.
@@ -375,7 +371,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const key = `${group}:${d.sessionId}`;
     const more = !!(onTogglePin || onOpenSplit);
     return (
-      <li key={d.sessionId} {...rowProps(key)} className={rowClass(d.sessionId === currentSessionId)} title={`${d.title}\n${d.cwd}`}>
+      <li key={d.sessionId} {...rowProps(key)} className={rowClass(d.sessionId === currentSessionId)} title={`${d.title} · ${d.project}\n${d.cwd}`}>
         {openButton({
           current: d.sessionId === currentSessionId, keys: onTogglePin ? reorderKeys(group) : undefined,
           onOpen: () => open(d.sessionId, d.cwd, d.title),
@@ -426,6 +422,18 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     return { count: groups.length + ds.length, list };
     // match / dMatch read only `q`.
   }, [projects, desktop, q, archivedOpen, !!onArchive]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Session glyphs: the pins as a whole (not just those the search leaves), then the rows below in the order shown.
+  const iconRow = (id: string, cwd: string): IconRow => ({ id, project: projectName.get(id) ?? baseName(cwd) });
+  const listRow = (t: RecentItem): IconRow => (t.kind === 'session' ? iconRow(t.g.entry.sessionId, t.g.entry.cwd) : { id: t.d.sessionId, project: t.d.project });
+  const icons = assignSessionIcons(
+    pins.flatMap((id): IconRow[] => {
+      const s = byId.get(id);
+      if (s) return inView(s) ? [iconRow(id, s.cwd)] : [];
+      const d = desktopById.get(id);
+      return d && inView(d) ? [{ id, project: d.project }] : [];
+    }),
+    [...recentList, ...archived.list].map(listRow),
+  );
   // A full-text hit in an archived session shows once 보관됨 is open (as its row does).
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || !s.archived || archivedOpen; });
   const searching = fullOn && found?.q !== fullQ;
