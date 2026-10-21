@@ -5,7 +5,7 @@ import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
 import { Sheet, SheetHead } from './Dialogs';
 import { UsageHistoryView } from './UsageView';
-import { buildSeats, LEGEND, PopRow, seatTitle, statusLabel, useClock, type RouteNext } from './usageSeats';
+import { buildSeats, LEGEND, PopRow, seatStale, seatTitle, statusLabel, useClock, type RouteNext } from './usageSeats';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -46,6 +46,7 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
         <ul className="usage-seats">
           {seats.map((d) => {
             const st = statusLabel(d);
+            const old = seatStale(d, !!usage && !cli && !usage.deckReachable) && d.status !== 'cooldown';
             const isNext = next?.account === d.seat && (d.seat !== current || !!next.asOpus);
             return (
               <li key={d.seat} data-testid={`account-${d.seat}`} className={`usage-seat ${d.engine} ${d.status}${d.seat === current ? ' current' : ''}${d.dim ? ' dim' : ''}`} title={seatTitle(d)}>
@@ -59,7 +60,7 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
                 {d.hint && d.reasonLine === undefined && <div className="usage-pop-row hint">{d.hint}</div>}
                 {d.reasonLine !== undefined && <div className="usage-pop-row hint" data-testid={`${d.seat}-main`}>{d.reasonLine}</div>}
                 {d.observed && <div className="usage-pop-row" data-testid={`${d.seat}-observed`}><span>관측</span><b>{d.observed}</b></div>}
-                {d.rows.map((r) => <PopRow key={r.key} seat={d.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} />)}
+                {d.rows.map((r) => <PopRow key={r.key} seat={d.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} stale={old} />)}
                 {d.credits && <div className="usage-pop-row" data-testid={`${d.seat}-credits`}><span>크레딧</span><b>{d.credits}</b></div>}
                 {d.extraPopover}
               </li>

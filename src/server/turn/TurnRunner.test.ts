@@ -110,9 +110,9 @@ describe('TurnRunner', () => {
     const c = await ctx(eng, { routeLog: (l) => lines.push(l) }, usage);
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
     expect(eng.calls[0]).toMatchObject({ account: 'c' });
-    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ reason: '새 세션 · 분산: 5h C 0% < A 13%' });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ reason: '새 세션 · 분산: 5h C 100% 남음 > A 87% 남음' });
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/^deck: route 새 세션 → C \(새 세션 · 분산: 5h C 0% < A 13%\) · 후보 /);
+    expect(lines[0]).toMatch(/^deck: route 새 세션 → C \(새 세션 · 분산: 5h C 100% 남음 > A 87% 남음\) · 후보 /);
     const eng2 = new StubEngine(() => ok('new2'));
     const d = await ctx(eng2, { routingPolicy: () => 'drain' }, usage);
     await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, d.sink);
@@ -142,8 +142,8 @@ describe('TurnRunner', () => {
     const c = await ctx(eng, {}, roomy);
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', accountPin: 'a' }, c.sink);
     expect(eng.calls[0]).toMatchObject({ account: 'b', model: 'fable' });
-    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ account: 'b', reason: expect.stringMatching(/^고정 A Fable 85% → /) });
-    expect(msgsOf(c, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 Fable 85%(상한 80%) — 이번 턴은 B 로 (고정은 유지 · 계정 칩에서 풀면 매 턴 자동으로 고릅니다)']);
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ account: 'b', reason: expect.stringMatching(/^고정 A Fable 15% 남음 → /) });
+    expect(msgsOf(c, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 Fable 15% 남음(하한 20%) — 이번 턴은 B 로 (고정은 유지 · 계정 칩에서 풀면 매 턴 자동으로 고릅니다)']);
     expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ badge: { account: 'b' } });
     expect((msgsOf(c, 'turn_result')[0] as { badge: { pinned?: boolean } }).badge.pinned).toBeUndefined();
     expect(c.deps.store.get('pinned1')).toMatchObject({ account: 'b', accountPin: 'a' });
@@ -154,8 +154,8 @@ describe('TurnRunner', () => {
     const d = await ctx(eng2, {}, capped);
     await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi', accountPin: 'a' }, d.sink);
     expect(eng2.calls[0]).toMatchObject({ account: 'a', model: 'opus' });
-    expect(msgsOf(d, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 고정 · Fable 85%(상한 80%) — 대신 쓸 계정이 없어 그대로 A 로']);
-    expect(msgsOf(d, 'turn_result')[0]).toMatchObject({ badge: { account: 'a', pinned: true, model: 'opus', modelNote: 'Fable 85% 이상 → Opus 로 대체' } });
+    expect(msgsOf(d, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 고정 · Fable 15% 남음(하한 20%) — 대신 쓸 계정이 없어 그대로 A 로']);
+    expect(msgsOf(d, 'turn_result')[0]).toMatchObject({ badge: { account: 'a', pinned: true, model: 'opus', modelNote: 'Fable 15% 남음 → Opus 로 대체' } });
   });
 
   it('new session in a symlinked cwd: projectDir comes from the CLI-reported (real) cwd', async () => {

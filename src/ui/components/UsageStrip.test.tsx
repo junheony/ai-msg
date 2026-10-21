@@ -177,6 +177,29 @@ describe('UsageStrip', () => {
     expect(seg('c').textContent).toBe('C리셋됨?');
   });
 
+  it('old numbers per window: a 5h window past its reset is dropped, the weekly one not reset yet still shows (a lower bound)', () => {
+    const read = at(-3 * 86_400_000);
+    // 5h read at 95 % used, reset an hour ago; weekly 30 % used, resets in 2 days: C 70% with the age, not 5 % nor 리셋됨?.
+    const c = { status: 'stale' as const, fetchedAt: read, fiveHour: { usedPct: 95, resetsAt: at(-3_600_000) }, weekly: { usedPct: 30, resetsAt: at(2 * 86_400_000) }, fable: null };
+    strip(snap({ accounts: { a: acct(42, 10), c } }), 'a');
+    expect(seg('c').className).toBe('usage-seg stale');
+    expect(seg('c').textContent).toBe('C70%· 3일 전');
+    expect((seg('c').querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('70%');
+    expect(el().getAttribute('aria-label')).toContain('C 70퍼센트 남음, 2일 뒤 초기화, 마지막 턴 기준 3일 전 값');
+    cleanup();
+    // Both windows past their reset: only then 리셋됨?.
+    strip(snap({ accounts: { a: acct(42, 10), c: { ...c, weekly: { usedPct: 30, resetsAt: at(-60_000) } } } }), 'a');
+    expect(seg('c').querySelector('.usage-seg-num')!.textContent).toBe('리셋됨?');
+    cleanup();
+    // A window without a reset time is not known to have passed: it stays, as 오래됨.
+    strip(snap({ accounts: { a: acct(42, 10), c: { ...c, weekly: { usedPct: 30, resetsAt: null } } } }), 'a');
+    expect(seg('c').textContent).toBe('C70%오래됨');
+    cleanup();
+    // Fresh numbers are not judged by reset time (the server's own job): the fuller window still shows.
+    strip(snap({ accounts: { a: acct(42, 10), c: { ...c, status: 'ok' as const } } }), 'a');
+    expect(seg('c').querySelector('.usage-seg-num')!.textContent).toBe('5%');
+  });
+
   it('phone: the mid stage in a line of its own (no bar; the reset only when amber / red / spent)', () => {
     const { container } = strip(snap(), 'a', { phone: true });
     expect(container.querySelector('.usage-strip-row')).toBeTruthy();
@@ -192,18 +215,20 @@ describe('UsageStrip', () => {
     // barW − 20 − 100 − 220 − 2 × 10 = barW − 360. The measured stages: full / mid / min (in that order).
     let barW = 1000;
     let needs = [600, 400, 300];
+    /** The '남음' label in front of every stage's copy (min too): its width is part of each measured need. */
+    let headW = 0;
     let fire = () => {};
     const RO = globalThis.ResizeObserver;
     const cw = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')!;
     const rect = Element.prototype.getBoundingClientRect;
     const gcs = globalThis.getComputedStyle;
     beforeEach(() => {
-      barW = 1000; needs = [600, 400, 300];
+      barW = 1000; needs = [600, 400, 300]; headW = 0;
       Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true, get(this: Element) { return this.tagName === 'HEADER' ? barW : 0; } });
       Element.prototype.getBoundingClientRect = function (this: Element) {
         const p = this.parentElement;
         const width = this.hasAttribute('data-w') ? Number(this.getAttribute('data-w'))
-          : p?.classList.contains('usage-strip-measure') ? needs[[...p.children].indexOf(this)]! : 0;
+          : p?.classList.contains('usage-strip-measure') ? needs[[...p.children].indexOf(this)]! + (this.querySelector('.usage-strip-head') ? headW : 0) : 0;
         return { width } as DOMRect;
       };
       globalThis.getComputedStyle = ((e: Element) => {
@@ -266,6 +291,29 @@ describe('UsageStrip', () => {
         expect(slot.childElementCount).toBe(0);
         expect(document.activeElement).toBe(el());
         expect(bar.contains(el())).toBe(true);
+      } finally { slot.remove(); }
+    });
+
+    it('min keeps the 남음 label in front; its width counts in the min need, so the strip drops to the line that much sooner', () => {
+      headW = 30;
+      const slot = document.body.appendChild(document.createElement('div'));
+      try {
+        const { container } = render(inBar(slot));
+        const bar = container.querySelector('header')!;
+        barW = 360 + 300 + 30; act(() => fire());
+        expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('min');
+        expect(el().querySelector('.usage-strip-head')!.textContent).toBe('남음');
+        expect(el().firstElementChild!.classList.contains('usage-strip-head')).toBe(true);
+        // Room for the segments but not the label: the line under the bar (still with its label).
+        barW = 360 + 300 + 29; act(() => fire());
+        expect(wrapIn(bar)).toBeNull();
+        expect(slot.querySelector('.usage-strip-row .usage-strip-head')!.textContent).toBe('남음');
+        // Back up only with the label and the slack.
+        barW = 360 + 300 + 30 + STRIP_SLACK - 1; act(() => fire());
+        expect(wrapIn(bar)).toBeNull();
+        barW = 360 + 300 + 30 + STRIP_SLACK; act(() => fire());
+        expect(wrapIn(bar)!.getAttribute('data-stage')).toBe('min');
+        expect(el().querySelector('.usage-strip-head')).toBeTruthy();
       } finally { slot.remove(); }
     });
 

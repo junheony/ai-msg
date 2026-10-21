@@ -1,4 +1,5 @@
 import { FABLE_MAX_PCT, type ClaudeModel } from '../../shared/models';
+import { leftPct } from '../../shared/usage-types';
 
 /**
  * Values for Options.model: exact versions, so the picker's "Opus 5.5" is what runs. Verified 2026-10-01 with the SDK's
@@ -20,6 +21,6 @@ export function resolveModel(
   if (wanted !== 'fable') return { model: wanted, downgraded: false, note: null };
   if (fableUsedPct === null && usageSource === 'none') return { model: 'fable', downgraded: false, note: null };
   if (fableUsedPct === null) return { model: 'opus', downgraded: true, note: 'Fable 잔여량 불명 → Opus 로 대체' };
-  if (fableUsedPct >= FABLE_MAX_PCT) return { model: 'opus', downgraded: true, note: `Fable ${fableUsedPct}% 이상 → Opus 로 대체` };
+  if (fableUsedPct >= FABLE_MAX_PCT) return { model: 'opus', downgraded: true, note: `Fable ${leftPct(fableUsedPct)}% 남음 → Opus 로 대체` };
   return { model: 'fable', downgraded: false, note: null };
 }

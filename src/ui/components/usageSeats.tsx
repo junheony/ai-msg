@@ -266,7 +266,16 @@ export function shownPct(w: UsageWindow | null): number | null {
  * One window row in the sheet: label · bar (or spent pill) · REMAINING % · countdown. Every seat (Claude, GPT, Gemini
  * buckets, Grok) says the share left, like the strip: the bar is as full as what is left (a battery).
  */
-export function PopRow({ seat, name, k, w, now, empty }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string }) {
+export function PopRow({ seat, name, k, w, now, empty, stale }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean }) {
+  if (stale && windowPassed(w, now)) {
+    return (
+      <div data-testid={`${seat}-${k}`} className="usage-row passed" title={`${name} · 마지막 값 이후 초기화 시각이 지남`}>
+        <span className="usage-label">{name}</span>
+        <span className="usage-bar" aria-hidden="true"><i style={{ width: '0%' }} /></span>
+        <span className="usage-value"><span className="usage-na">리셋됨?</span></span>
+      </div>
+    );
+  }
   const rem = shownPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
   const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '');
@@ -287,6 +296,19 @@ export function PopRow({ seat, name, k, w, now, empty }: { seat: Seat; name: str
       {reset && <span className="usage-reset">{reset}</span>}
     </div>
   );
+}
+
+/**
+ * Old numbers (a stale seat, usage-deck out of reach, a seat down / unknown that still shows values): each window is
+ * then judged by its own reset time (windowPassed). One definition for the strip and the sheet.
+ */
+export function seatStale(d: SeatData, snapshotStale: boolean): boolean {
+  return d.dim || d.status === 'stale' || snapshotStale || ((d.status === 'down' || d.status === 'unknown') && !!pickMain(d.rows));
+}
+
+/** A read value whose window has reset since (its reset time has passed): the old % says nothing any more. An estimated window already is the server's 0 % after a reset. */
+export function windowPassed(w: UsageWindow | null, now: number): boolean {
+  return !!w && !w.estimated && !!w.resetsAt && parseIsoUtc(w.resetsAt) <= now;
 }
 
 /** The lowest-remaining (= fullest) of the main-eligible rows; null when none has a value. */
@@ -435,16 +457,19 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   }
 
   const name = label(d.seat);
-  const main = pickMain(d.rows);
+  const stale = seatStale(d, snapshotStale);
+  // Old numbers are judged window by window: one whose reset time has passed is dropped (its old % says nothing any
+  // more); the least left among the rest is shown (a weekly window not reset yet is still a lower bound), with how long
+  // ago it was read. "리셋됨?" only once every known window has passed. No reset time: "오래됨" as before.
+  const known = pickMain(d.rows);
+  const judged = stale && d.status !== 'cooldown';
+  const main = judged ? pickMain(d.rows.filter((r) => !windowPassed(r.w, now))) : known;
+  const resetPassed = judged && !!known && !main;
   const reset = main ? chipCountdown(main.row.w?.resetsAt, now) : '';
-  const stale = d.dim || d.status === 'stale' || snapshotStale || ((d.status === 'down' || d.status === 'unknown') && !!main);
   const estimated = !!main?.row.w?.estimated || d.status === 'kept';
-  // Old numbers are judged by their window's reset time: past it the old % says nothing any more (an estimated window
-  // already is the server's 0 % after a reset); before it, how long ago they were read. No reset time: "오래됨" as before.
   const resetAt = main?.row.w?.resetsAt ? parseIsoUtc(main.row.w.resetsAt) : NaN;
-  const resetPassed = stale && !!main && d.status !== 'cooldown' && !main.row.w?.estimated && resetAt <= now;
-  const ago = stale && !!main && !resetPassed && resetAt > now ? agoText(d.fetchedAt ?? null, now) : '';
-  const left = main && !resetPassed ? main.rem : null;
+  const ago = stale && !!main && resetAt > now ? agoText(d.fetchedAt ?? null, now) : '';
+  const left = main ? main.rem : null;
   let kind: ChipKind;
   let text: string;
   let compactText: string;
@@ -469,7 +494,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   }
   if (nextSeat) compactText = kind === 'spent' || kind === 'cooldown' ? compactText : '';
   return {
-    target: d.seat, nextSeat, onlyNext, kind, stale: stale && !!main && d.status !== 'cooldown', left, resetPassed, ago, reset: resetPassed ? '' : reset, text, compactText, otherDanger,
+    target: d.seat, nextSeat, onlyNext, kind, stale: stale && !!known && d.status !== 'cooldown', left, resetPassed, ago, reset: resetPassed ? '' : reset, text, compactText, otherDanger,
     aria: `${onlyNext ? `다음 턴 ${name}${next!.asOpus ? '(Opus)' : ''}` : name} 계정 사용량 ${spoken}${nextAria}${dangerAria}`,
     title: [`${name} 계정${resetPassed ? ' · 마지막 값 이후 초기화 시각이 지남' : left !== null ? ` · ${main!.row.name} ${left}% 남음${ago ? ` (마지막 턴 기준 ${ago} 값)` : ''}` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
   };

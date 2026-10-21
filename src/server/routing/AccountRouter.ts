@@ -1,7 +1,7 @@
 import type { Account, AccountNames } from '../../shared/accounts';
 import { FABLE_MAX_PCT } from '../../shared/models';
 import type { RoutingPolicy } from '../../shared/protocol';
-import { parseIsoUtc, trusted, usageOf, type UsageSnapshot } from '../../shared/usage-types';
+import { leftPct, parseIsoUtc, trusted, usageOf, type UsageSnapshot } from '../../shared/usage-types';
 
 export { FABLE_MAX_PCT };
 
@@ -71,7 +71,7 @@ export type RouterDecision = {
   unknown?: Account[];
   /** The account is the session's pinned one, chosen because of the pin. */
   pinned?: boolean;
-  /** The pinned account was unusable this turn (e.g. '한도 도달', 'Fable 85%(상한 80%)'); `account` is the router's own choice. */
+  /** The pinned account was unusable this turn (e.g. '한도 도달', 'Fable 15% 남음(하한 20%)'); `account` is the router's own choice. */
   pinBlocked?: string;
   /** The pin is honoured although the router would not pick it (Fable at the cap, nowhere else with room): shown to the user. */
   pinWarn?: string;
@@ -136,13 +136,13 @@ export function rankCandidates(input: RouterInput): { candidates: Candidate[]; e
     const weekly = u.weekly?.usedPct;
     if (weekly === undefined || weekly === null) { excluded[account] = '주간 사용률 없음'; unknown.push(account); continue; }
     const fiveHour = u.fiveHour?.usedPct ?? 0;
-    if (fiveHour >= EXCLUDE_PCT) { excluded[account] = `5h ${fiveHour}%`; continue; }
-    if (weekly >= EXCLUDE_PCT) { excluded[account] = `주간 ${weekly}%`; continue; }
+    if (fiveHour >= EXCLUDE_PCT) { excluded[account] = `5h ${leftPct(fiveHour)}% 남음`; continue; }
+    if (weekly >= EXCLUDE_PCT) { excluded[account] = `주간 ${leftPct(weekly)}% 남음`; continue; }
     if (input.needFable) {
       const f = u.fable?.usedPct;
       if (f === undefined || f === null) {
         if (!lax) { excluded[account] = 'Fable 값 없음'; continue; }
-      } else if (f >= FABLE_MAX_PCT) { excluded[account] = `Fable ${f}%`; continue; }
+      } else if (f >= FABLE_MAX_PCT) { excluded[account] = `Fable ${leftPct(f)}% 남음`; continue; }
     }
     const hoursToReset = hoursUntil(u.weekly?.resetsAt ?? null, input.nowMs);
     candidates.push({
@@ -220,17 +220,22 @@ function pct5(c: Candidate): string {
   return c.fiveHourKnown ? `${c.fiveHourPct}%` : '?';
 }
 
-/** Why `cands[0]` (safe) won under 고르게 분산, against the runner-up. */
+/** A candidate's 5h said as what is left, for reasons: '?' when the card has no 5h row. */
+function left5(c: Candidate): string {
+  return c.fiveHourKnown ? `${leftPct(c.fiveHourPct)}% 남음` : '?';
+}
+
+/** Why `cands[0]` (safe) won under 고르게 분산, against the runner-up (what is left: the UI's numbers). */
 function balanceWhy(reg: AccountNames, cands: Candidate[], cli = false): string {
   const [b, n] = cands as [Candidate, Candidate | undefined];
   const B = reg.label(b.account);
-  if (!n) return `분산: 5h ${B} ${pct5(b)} · 유일한 후보`;
+  if (!n) return `분산: 5h ${B} ${left5(b)} · 유일한 후보`;
   const N = reg.label(n.account);
-  if (!isSafe(n)) return `분산: 5h ${B} ${pct5(b)} · ${N} 문턱 근접`;
-  if (cli && !b.stale && n.stale) return `분산: 5h ${B} ${pct5(b)} · ${N} 오래된 관측(추정)`;
-  if (b.fiveHourKnown && !n.fiveHourKnown) return `분산: 5h ${B} ${pct5(b)} · ${N} 5h 값 없음`;
-  if (n.fiveHourPct - b.fiveHourPct > BALANCE_TIE_PCT) return `분산: 5h ${B} ${pct5(b)} < ${N} ${pct5(n)}`;
-  if (b.weeklyPct < n.weeklyPct) return `분산: 5h 비슷(${B} ${pct5(b)} · ${N} ${pct5(n)}) · 주간 ${B} ${b.weeklyPct}% < ${N} ${n.weeklyPct}%`;
+  if (!isSafe(n)) return `분산: 5h ${B} ${left5(b)} · ${N} 문턱 근접`;
+  if (cli && !b.stale && n.stale) return `분산: 5h ${B} ${left5(b)} · ${N} 오래된 관측(추정)`;
+  if (b.fiveHourKnown && !n.fiveHourKnown) return `분산: 5h ${B} ${left5(b)} · ${N} 5h 값 없음`;
+  if (n.fiveHourPct - b.fiveHourPct > BALANCE_TIE_PCT) return `분산: 5h ${B} ${left5(b)} > ${N} ${left5(n)}`;
+  if (b.weeklyPct < n.weeklyPct) return `분산: 5h 비슷(${B} ${left5(b)} · ${N} ${left5(n)}) · 주간 ${B} ${leftPct(b.weeklyPct)}% 남음 > ${N} ${leftPct(n.weeklyPct)}% 남음`;
   if (n.protected && !b.protected && b.fiveHourKnown && n.fiveHourKnown && b.weeklyPct === n.weeklyPct) return `분산: 5h·주간 비슷 · ${N} 동률이면 마지막`;
   return `분산: 5h·주간 비슷 · 리셋 임박 ${B}`;
 }
@@ -239,7 +244,7 @@ function balanceWhy(reg: AccountNames, cands: Candidate[], cli = false): string 
 function bestWhy(input: RouterInput, cands: Candidate[]): string {
   const b = cands[0] as Candidate;
   const reg = input.accounts;
-  const drain = `리셋 임박 ${reg.label(b.account)}(주간 ${b.weeklyPct}% · ${Math.round(b.hoursToReset)}시간 뒤 리셋)`;
+  const drain = `리셋 임박 ${reg.label(b.account)}(주간 ${leftPct(b.weeklyPct)}% 남음 · ${Math.round(b.hoursToReset)}시간 뒤 리셋)`;
   if ((input.policy ?? 'balance') === 'drain') return drain;
   return isSafe(b) ? balanceWhy(reg, cands, input.usage.usageMode === 'cli') : `안전한 후보 없음 → ${drain}`;
 }
@@ -282,8 +287,8 @@ function pinBlock(input: RouterInput, pin: Account): { why: string; detail: stri
   const u = usageOf(input.usage, pin);
   const fiveHour = u.fiveHour?.usedPct ?? 0;
   const weekly = u.weekly?.usedPct ?? 0;
-  if (fiveHour >= EXCLUDE_PCT) return { why: '한도 도달', detail: `5h ${fiveHour}%` };
-  if (weekly >= EXCLUDE_PCT) return { why: '한도 도달', detail: `주간 ${weekly}%` };
+  if (fiveHour >= EXCLUDE_PCT) return { why: '한도 도달', detail: `5h ${leftPct(fiveHour)}% 남음` };
+  if (weekly >= EXCLUDE_PCT) return { why: '한도 도달', detail: `주간 ${leftPct(weekly)}% 남음` };
   return null;
 }
 
@@ -338,12 +343,12 @@ export function chooseAccount(input: RouterInput): RouterDecision {
       const over = pinFableOver(input, pin);
       if (over !== null) {
         const d = chooseAccount({ ...input, pinned: null, exclude: [...(input.exclude ?? []), pin] });
-        if (d.account !== pin && !d.asOpus) return { ...d, pinBlocked: `Fable ${over}%(상한 ${FABLE_MAX_PCT}%)`, reason: `고정 ${LABEL(pin)} Fable ${over}% → ${d.reason}` };
+        if (d.account !== pin && !d.asOpus) return { ...d, pinBlocked: `Fable ${leftPct(over)}% 남음(하한 ${100 - FABLE_MAX_PCT}%)`, reason: `고정 ${LABEL(pin)} Fable ${leftPct(over)}% 남음 → ${d.reason}` };
       }
       const ranked = rankCandidates(input);
       const switched = input.current !== null && input.current !== pin;
-      const warn = over === null ? undefined : `Fable ${over}%(상한 ${FABLE_MAX_PCT}%) — 대신 쓸 계정이 없어 그대로`;
-      const reason = warn ? `고정 ${LABEL(pin)}${switched ? ' 전환' : ''} · Fable ${over}%(상한 ${FABLE_MAX_PCT}%) · 대안 없음` : `고정 ${LABEL(pin)}${switched ? ' 전환' : ''}`;
+      const warn = over === null ? undefined : `Fable ${leftPct(over)}% 남음(하한 ${100 - FABLE_MAX_PCT}%) — 대신 쓸 계정이 없어 그대로`;
+      const reason = warn && over !== null ? `고정 ${LABEL(pin)}${switched ? ' 전환' : ''} · Fable ${leftPct(over)}% 남음(하한 ${100 - FABLE_MAX_PCT}%) · 대안 없음` : `고정 ${LABEL(pin)}${switched ? ' 전환' : ''}`;
       return { ...ranked, account: pin, switched, pinned: true, reason, ...(warn ? { pinWarn: warn } : {}) };
     }
     // Unusable: the router's own choice for this turn only (the pin stays).
@@ -390,10 +395,10 @@ export function chooseAccount(input: RouterInput): RouterDecision {
 
   let force: string | null = null;
   if (inCooldown) force = `쿨다운(~${hhmm(cd)})`;
-  else if (fiveHour >= FIVE_HOUR_SWITCH_PCT || weekly >= WEEKLY_SWITCH_PCT) force = `문턱 초과(5h ${fiveHour}% · 주간 ${weekly}%)`;
+  else if (fiveHour >= FIVE_HOUR_SWITCH_PCT || weekly >= WEEKLY_SWITCH_PCT) force = `문턱 초과(5h ${leftPct(fiveHour)}% 남음 · 주간 ${leftPct(weekly)}% 남음)`;
   // Unknown Fable counts as not Fable-eligible, same as rankCandidates.
   else if (input.needFable && fable === null && !lax) force = 'Fable 값 없음';
-  else if (input.needFable && fable !== null && fable >= FABLE_MAX_PCT) force = `Fable ${fable}% 이상`;
+  else if (input.needFable && fable !== null && fable >= FABLE_MAX_PCT) force = `Fable ${leftPct(fable)}% 남음`;
 
   if (force) {
     // Only move to an account that would not itself be forced off next turn (no ping-pong, no wasted cache rewrite).

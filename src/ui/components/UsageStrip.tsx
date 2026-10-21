@@ -218,7 +218,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
       title={title}
       onClick={onToggle}
     >
-      {st !== 'min' && <span className="usage-strip-head" aria-hidden="true">남음</span>}
+      <span className="usage-strip-head" aria-hidden="true">남음</span>
       {segs.map((s) => <Segment key={s.seat} s={s} stage={st} />)}
     </button>
   );
@@ -232,7 +232,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
       {/* Off-screen copies of the three stages (position: fixed: not a flex item of the bar, never in its gaps). */}
       {canMeasure && (
         <div ref={measureRef} className="usage-strip-measure" aria-hidden="true">
-          {STAGES.map((st) => <div key={st} className="usage-strip">{st !== 'min' && <span className="usage-strip-head">남음</span>}{segs.map((s) => <Segment key={s.seat} s={s} stage={st} measure />)}</div>)}
+          {STAGES.map((st) => <div key={st} className="usage-strip"><span className="usage-strip-head">남음</span>{segs.map((s) => <Segment key={s.seat} s={s} stage={st} measure />)}</div>)}
         </div>
       )}
       {placedRow}

@@ -637,7 +637,7 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     expect(usageOf(s.snapshot(), 'b').fable).toBeNull();
     expect(usageOf(make({ clock, file }).snapshot(), 'a').fable).toEqual({ usedPct: 100, resetsAt: WEEK.resetsAt });
     const r = rank(s, T0, true);
-    expect(r.excluded.a).toBe('Fable 100%');
+    expect(r.excluded.a).toBe('Fable 0% 남음');
     expect(r.candidates.map((c) => c.account)).toEqual(['b']);
     expect(noFableWhy({ usage: s.routingSnapshot(), accounts: testRegistry() })).toBe('Fable 여유 계정 없음');
     // Without a reset time it is kept for STALE_MAX_MS only.

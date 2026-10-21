@@ -214,6 +214,23 @@ describe('short countdowns and the fullest window', () => {
   });
 });
 
+describe('usage sheet · old numbers per window', () => {
+  it('a row whose reset has passed since an old reading says 리셋됨? on an empty bar; the window not reset yet keeps its %', () => {
+    const iso = (ms: number) => new Date(NOW + ms).toISOString();
+    const old: UsageSnapshot = { ...usage, accounts: { a: { status: 'stale', fetchedAt: iso(-3 * 86_400_000), fiveHour: { usedPct: 95, resetsAt: iso(-3_600_000) }, weekly: { usedPct: 30, resetsAt: iso(2 * 86_400_000) }, fable: null } } };
+    sheet(old, 'a');
+    const five = screen.getByTestId('a-fiveHour');
+    expect(five.querySelector('.usage-value')!.textContent).toBe('리셋됨?');
+    expect((five.querySelector('.usage-bar > i') as HTMLElement).style.width).toBe('0%');
+    expect(five.title).toBe('5h · 마지막 값 이후 초기화 시각이 지남');
+    expect(screen.getByTestId('a-weekly').querySelector('.usage-value')!.textContent).toBe('70% 남음');
+    cleanup();
+    // Fresh numbers: the row is as read (the server judges resets on its side).
+    sheet({ ...old, deckReachable: true, accounts: { a: { ...old.accounts.a!, status: 'ok' } } }, 'a');
+    expect(screen.getByTestId('a-fiveHour').querySelector('.usage-value')!.textContent).toBe('5% 남음');
+  });
+});
+
 describe('usage seats · cli usage mode (observed times)', () => {
   const cliUsage: UsageSnapshot = {
     generatedAt: 'x',

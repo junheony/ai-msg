@@ -3,7 +3,7 @@ import {
   AUTO_EFFORT, EFFORTS, MODEL_EFFORTS, isClaudeModel, isCodexModel, isGeminiModel,
   type AnyModel, type ClaudeModel, type EngineChoice, type EngineKind, type Effort, type GrokModel, type ModelChoice,
 } from '../../shared/models';
-import { parseIsoUtc, usageOf, type UsageSnapshot } from '../../shared/usage-types';
+import { leftPct, parseIsoUtc, usageOf, type UsageSnapshot } from '../../shared/usage-types';
 import { FABLE_MAX_PCT, WEEKLY_SWITCH_PCT, isLax, noFableWhy, rankCandidates } from './AccountRouter';
 import { LONG_PROMPT, classifyPrompt } from './AutoModel';
 import { GPT_MARGIN_PCT } from './EngineChoice';
@@ -190,13 +190,13 @@ export function claudeAutoModel(difficulty: TaskDifficulty, l: ClaudeLimits, now
   const fable = model === 'fable' ? rankCandidates({ ...base, needFable: true }) : null;
   if (fable && fable.candidates.length === 0) {
     const why = isLax(l.usage) && fable.unknown.length > 0 ? null : noFableWhy(base);
-    if (why !== null) { model = 'opus'; notes.push(why === 'Fable 여유 계정 없음' ? `Fable ${FABLE_MAX_PCT}%↑` : why); }
+    if (why !== null) { model = 'opus'; notes.push(why === 'Fable 여유 계정 없음' ? `Fable ${100 - FABLE_MAX_PCT}% 이하 남음` : why); }
   }
   const { candidates } = rankCandidates({ ...base, needFable: false });
   const best = candidates.length ? Math.min(...candidates.map((x) => x.weeklyPct)) : null;
   if (best !== null && best >= WEEKLY_SWITCH_PCT && model !== 'sonnet') {
     model = model === 'fable' ? 'opus' : 'sonnet';
-    notes.push(`Claude 주간 ${best}%`);
+    notes.push(`Claude 주간 ${leftPct(best)}% 남음`);
   }
   return { model, notes };
 }
@@ -214,7 +214,7 @@ function claudeState(l: ClaudeLimits, model: AnyModel, nowMs: number): EngineCap
     const best = candidates.reduce((x, y) => (y.weeklyPct < x.weeklyPct ? y : x));
     const resetIso = usageOf(l.usage, best.account).weekly?.resetsAt ?? null;
     const resetMs = resetIso ? parseIsoUtc(resetIso) : Number.NaN;
-    general = cap('ok', `Claude 주간 ${best.weeklyPct}%`, 100 - best.weeklyPct, Number.isNaN(resetMs) ? null : resetMs);
+    general = cap('ok', `Claude 주간 ${leftPct(best.weeklyPct)}% 남음`, 100 - best.weeklyPct, Number.isNaN(resetMs) ? null : resetMs);
   } else if (unknown.length > 0) {
     general = isLax(l.usage) ? cap('ok', 'Claude 잔여량 모름(usage-deck 없음)') : cap('unknown', 'Claude 잔여량 모름');
   } else {
@@ -227,7 +227,7 @@ function claudeState(l: ClaudeLimits, model: AnyModel, nowMs: number): EngineCap
   if (fable.candidates.length > 0) return general;
   const why = isLax(l.usage) && fable.unknown.length > 0 ? null : noFableWhy(base);
   if (why === null) return general;
-  return cap('blocked', why === 'Fable 여유 계정 없음' ? `Fable ${FABLE_MAX_PCT}%↑` : why, general.weeklyRemainingPct, general.weeklyResetsAtMs);
+  return cap('blocked', why === 'Fable 여유 계정 없음' ? `Fable ${100 - FABLE_MAX_PCT}% 이하 남음` : why, general.weeklyRemainingPct, general.weeklyResetsAtMs);
 }
 
 function gptState(l: GptLimits, nowMs: number): EngineCapacity {
@@ -236,8 +236,8 @@ function gptState(l: GptLimits, nowMs: number): EngineCapacity {
   if (l.weeklyUsedPct === null) return cap('unknown', 'GPT 잔여량 모름');
   if (stale(l.observedAtMs, nowMs)) return cap('unknown', l.observedAtMs === null ? 'GPT 관측 시각 없음' : `GPT 관측 ${ageMin(l.observedAtMs, nowMs)}분 전`);
   const rem = Math.max(0, 100 - l.weeklyUsedPct);
-  if (l.weeklyUsedPct >= WEEKLY_SWITCH_PCT) return cap('blocked', `GPT 주간 ${l.weeklyUsedPct}%`, rem, l.weeklyResetsAtMs);
-  return cap('ok', `GPT 주간 ${l.weeklyUsedPct}%`, rem, l.weeklyResetsAtMs);
+  if (l.weeklyUsedPct >= WEEKLY_SWITCH_PCT) return cap('blocked', `GPT 주간 ${leftPct(l.weeklyUsedPct)}% 남음`, rem, l.weeklyResetsAtMs);
+  return cap('ok', `GPT 주간 ${leftPct(l.weeklyUsedPct)}% 남음`, rem, l.weeklyResetsAtMs);
 }
 
 function geminiState(l: GeminiLimits, model: AnyModel, nowMs: number): EngineCapacity {
@@ -254,9 +254,9 @@ function geminiState(l: GeminiLimits, model: AnyModel, nowMs: number): EngineCap
     // review #6: a logged-in seat with no number of its own (not in cooldown) is unknown, not a 0 — one blocked (or
     // cooling) seat does not speak for a seat deck has no data on.
     if (enabled.some((s) => typeof s.remainingPct[group] !== 'number')) return cap('unknown', `${name} 잔여량 모름(계정별 다름)`);
-    return cap('blocked', `${name} 남은 ${best}%`);
+    return cap('blocked', `${name} ${best}% 남음`);
   }
-  return cap('ok', `${name} 남은 ${best}%`);
+  return cap('ok', `${name} ${best}% 남음`);
 }
 
 function grokState(l: GrokLimits, nowMs: number): EngineCapacity {
@@ -267,8 +267,8 @@ function grokState(l: GrokLimits, nowMs: number): EngineCapacity {
   if (used === null) return cap('ok', 'Grok 한도 관측 없음');
   const resetsAtMs = l.periodResetsAtMs ?? null;
   // Usage within a period never goes down, so a reading stays a lower bound until the period ends (the caller drops it then).
-  if (used >= WEEKLY_SWITCH_PCT) return cap('blocked', `Grok 구독 ${Math.round(used)}% 사용`, Math.max(0, 100 - used), resetsAtMs);
-  return cap('ok', `Grok 구독 ${Math.round(used)}% 사용`, Math.max(0, 100 - used), resetsAtMs);
+  if (used >= WEEKLY_SWITCH_PCT) return cap('blocked', `Grok 구독 ${leftPct(used)}% 남음`, Math.max(0, 100 - used), resetsAtMs);
+  return cap('ok', `Grok 구독 ${leftPct(used)}% 남음`, Math.max(0, 100 - used), resetsAtMs);
 }
 
 /** §5 + §10-6: one engine model's limit state from the caller's normalized limits. */
@@ -514,7 +514,7 @@ export function chooseRoute(i: RouteInput): RouteDecision {
     if (other && a !== null && b !== null && b >= a + GPT_MARGIN_PCT) {
       ok.splice(ok.indexOf(other), 1);
       ok.unshift(other);
-      note = `${ENGINE_LABEL[first.engine]} 여유 ${a}% · ${ENGINE_LABEL[other.engine]} ${b}%`;
+      note = `${ENGINE_LABEL[first.engine]} ${a}% 남음 · ${ENGINE_LABEL[other.engine]} ${b}% 남음`;
       why.push(`균형: ${note} → ${ROUTE_LABEL[other.model]}`);
     }
   }
