@@ -38,7 +38,7 @@ describe('Grok Bot conversation pane', () => {
   it.each([['source', bot], ['the grokbot- id alone (old index)', oldBot]])('by %s: the title menu has no 복제 and 삭제 is disabled with the reason', (_, entry) => {
     const a = actions();
     render(<Pane pane={paneOn(entry)} app={{ pending: [], questions: [], codexAvailable: false, projects: projects([entry]) }} active closable={false} dispatch={noop} send={noop} onClose={noop} sessionActions={a} />);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     expect(screen.queryByText('복제')).toBeNull();
     const del = screen.getByRole('menuitem', { name: '삭제…' });
     expect(del.getAttribute('aria-disabled')).toBe('true');

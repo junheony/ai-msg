@@ -50,13 +50,13 @@ describe('Chat', () => {
 
   it('pane header: engine mark (role=img) only once the engine is known — no Claude flash on an opening Codex thread', () => {
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: null });
-    expect(document.querySelector('.chat-title .engine-mark')).toBeNull();
+    expect(document.querySelector('.head-chip-title .engine-mark')).toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'codex' });
-    expect(screen.getByRole('img', { name: 'Codex (GPT)' }).closest('.chat-title')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Codex (GPT)' }).closest('.head-chip-title')).not.toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude' });
-    expect(screen.getByRole('img', { name: 'Claude' }).closest('.chat-title')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Claude' }).closest('.head-chip-title')).not.toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude', isNew: true });
     expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();
@@ -133,8 +133,8 @@ describe('Chat', () => {
     expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'workspace-write', model: 'gpt-6-astra' });
-    expect(screen.getByText(/샌드박스: 작업폴더 쓰기/)).toBeTruthy();
     openSheet();
+    expect(screen.getByText(/샌드박스: 작업폴더 쓰기/)).toBeTruthy(); // the composer chip's sheet (the head no longer repeats it)
     expect(screen.queryByTestId('engine-select')).toBeNull();
   });
 
@@ -152,8 +152,8 @@ describe('Chat', () => {
     cleanup();
     // Without the handler (an older server, or a Claude / Gemini session) the chip stays a tag.
     renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'workspace-write', model: 'gpt-6-sol' });
-    expect(screen.getByText('GPT · 샌드박스: 작업폴더 쓰기 · 네트워크')).toBeTruthy();
     openSheet();
+    expect(screen.getByText('샌드박스: 작업폴더 쓰기 · 네트워크')).toBeTruthy();
     expect(screen.queryByTestId('session-sandbox-select')).toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'gemini', sessionSandbox: 'read-only', model: 'gemini-pro', onSessionSandbox });
@@ -188,7 +188,8 @@ describe('Chat', () => {
     expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent)).toEqual(['Gemini 4 Argon', 'Gemini Flash', '낮음', '중간', '높음']); // agy: no xhigh for Gemini
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'gemini', sessionSandbox: 'read-only', model: 'gemini-pro' });
-    expect(screen.getByText('Gemini · 읽기 전용')).toBeTruthy();
+    openSheet();
+    expect(screen.getByText('승인 모드: 읽기 전용')).toBeTruthy();
   });
 
   it('PF11: a new session follows the engine picker even when the session engine frozen at open says claude', () => {
@@ -224,7 +225,8 @@ describe('Chat composer and header (Desktop style)', () => {
   it('header shows the title and the folder chip (full path on hover); a running turn shows the status line and a stop button', () => {
     const onInterrupt = vi.fn();
     renderChat([{ kind: 'user', text: 'x' }, { kind: 'assistant', turnId: 't1', text: '', toolCalls: [{ toolUseId: '1', name: 'Bash', input: { command: 'ls' }, result: null, isError: false }], badge: null, streaming: true, error: null, notes: [], attempts: [] }], true, vi.fn(), { activeTurnId: 't1', cwd: '/Users/u/Documents/proj', onInterrupt });
-    const chip = screen.getByText('proj');
+    fireEvent.click(screen.getByTestId('session-chip-head')); // in a pane (not the top bar) the folder is the menu's first row
+    const chip = screen.getByRole('menuitem', { name: /폴더: proj/ });
     expect(chip.getAttribute('title')).toBe('/Users/u/Documents/proj');
     const status = screen.getByTestId('turn-status');
     expect(status.textContent).toContain('명령 실행 중');
@@ -385,7 +387,9 @@ describe('Chat title ⌄ menu', () => {
     const title = screen.getByRole('button', { name: /내 채팅/ });
     expect(title.getAttribute('aria-haspopup')).toBe('menu');
     fireEvent.click(title);
-    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '삭제…']);
+    const names = screen.getAllByRole('menuitem').map((b) => b.textContent);
+    expect(names.slice(0, 3)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관']); // 세션 first, 위험 last
+    expect(names.at(-1)).toBe('삭제…');
     fireEvent.click(screen.getByText('맨 위에 고정'));
     expect(tm.onTogglePin).toHaveBeenCalled();
     expect(screen.queryByRole('menu')).toBeNull();
@@ -427,7 +431,9 @@ describe('Chat title ⌄ menu', () => {
     expect(tm.onDelete).not.toHaveBeenCalled();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'plain' });
-    expect(screen.queryByRole('button', { name: /plain/ })).toBeNull();
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    expect(screen.queryByRole('menuitem', { name: '이름 바꾸기' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: '삭제…' })).toBeNull();
   });
 
   describe('history placeholder and pane drop', () => {

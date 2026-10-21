@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { OpenInDesktop } from './OpenInDesktop';
+import { useOpenInDesktop } from './OpenInDesktop';
 
 const SID = '33333333-3333-4333-8333-333333333333';
 const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)';
@@ -25,22 +25,34 @@ beforeEach(() => { restore = noTouch(); });
 
 afterEach(() => { restore(); cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks();  });
 
-describe('OpenInDesktop', () => {
-  it('is hidden off macOS and on touch clients', () => {
+/** The 세션 › Desktop에서 열기 row as the session chip's menu shows it. */
+function Item({ sessionId = SID, onError = () => {}, navigate }: { sessionId?: string | null; onError?: (m: string) => void; navigate?: (url: string) => void }) {
+  const run = useOpenInDesktop(sessionId, onError, navigate);
+  return <div role="menu">{run && <button type="button" role="menuitem" onClick={run}>Desktop에서 열기</button>}</div>;
+}
+const item = () => screen.getByRole('menuitem', { name: 'Desktop에서 열기' });
+
+describe('useOpenInDesktop', () => {
+  it('is not offered off macOS, without a session, or on touch clients', () => {
     ua('Mozilla/5.0 (X11; Linux x86_64)');
-    expect(render(<OpenInDesktop sessionId={SID} onError={() => {}} />).container.textContent).toBe('');
+    render(<Item />);
+    expect(screen.queryByRole('menuitem')).toBeNull();
     cleanup();
     ua(MAC);
+    render(<Item sessionId={null} />);
+    expect(screen.queryByRole('menuitem')).toBeNull();
+    cleanup();
     restore();
-    expect(render(<OpenInDesktop sessionId={SID} onError={() => {}} />).container.textContent).toBe('');
+    render(<Item />);
+    expect(screen.queryByRole('menuitem')).toBeNull();
   });
 
   it('posts, then navigates to the claude:// url', async () => {
     ua(MAC);
     const f = stub({ ok: true, url: `claude://resume?session=${SID}`, busy: false });
     const navigate = vi.fn();
-    render(<OpenInDesktop sessionId={SID} onError={() => {}} navigate={navigate} />);
-    fireEvent.click(screen.getByText('Desktop에서 열기'));
+    render(<Item navigate={navigate} />);
+    fireEvent.click(item());
     await waitFor(() => expect(navigate).toHaveBeenCalledWith(`claude://resume?session=${SID}`));
     expect(f).toHaveBeenCalledWith(`/api/sessions/${SID}/open-in-desktop`, expect.objectContaining({ method: 'POST' }));
   });
@@ -50,8 +62,8 @@ describe('OpenInDesktop', () => {
     stub({ ok: true, url: `claude://resume?session=${SID}`, busy: true });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const navigate = vi.fn();
-    render(<OpenInDesktop sessionId={SID} onError={() => {}} navigate={navigate} />);
-    fireEvent.click(screen.getByText('Desktop에서 열기'));
+    render(<Item navigate={navigate} />);
+    fireEvent.click(item());
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -61,11 +73,11 @@ describe('OpenInDesktop', () => {
     const onError = vi.fn();
     const navigate = vi.fn();
     stub({ ok: false, reason: 'diverged' });
-    render(<OpenInDesktop sessionId={SID} onError={onError} navigate={navigate} />);
-    fireEvent.click(screen.getByText('Desktop에서 열기'));
+    render(<Item onError={onError} navigate={navigate} />);
+    fireEvent.click(item());
     await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringContaining('기록이 갈라져 있어 먼저 맞춰야 합니다')));
     stub({ error: '실패함' }, 500);
-    fireEvent.click(screen.getByText('Desktop에서 열기'));
+    fireEvent.click(item());
     await waitFor(() => expect(onError).toHaveBeenLastCalledWith('실패함'));
     expect(navigate).not.toHaveBeenCalled();
   });

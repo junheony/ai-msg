@@ -41,7 +41,9 @@ async function bootOpen(features: string[], commander: CommanderView | null = nu
   server({ type: 'history', sessionId: 's1', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [], ...(features.includes('commander') ? { commander } : {}) });
 }
 const pane = () => screen.getAllByTestId(/^pane-/)[0]!;
-const openMenu = () => fireEvent.click(within(pane()).getByLabelText('채팅 메뉴'));
+/** The pane's head: a lone pane's sits in the top bar, outside the pane. */
+const head = () => document.querySelector<HTMLElement>('[data-pane-head]')!;
+const openMenu = () => fireEvent.click(within(head()).getByTestId('session-chip-head'));
 const menuItem = (name: string) => screen.queryByRole('menuitem', { name });
 
 describe('총사령탑 (commander) UI', () => {
@@ -81,7 +83,7 @@ describe('총사령탑 (commander) UI', () => {
     expect(sent('commander_set')).toEqual([{ type: 'commander_set', sessionId: 's1', goal: '테스트 고치기', done: 'npm test 통과', maxTurns: 12 }]);
     server({ type: 'commander', sessionId: 's1', ...view({ status: 'armed', hop: 0, maxTurns: 12, epoch: 1 }) });
     expect(screen.queryByRole('dialog', { name: '총사령탑 걸기' })).toBeNull();
-    expect(within(pane()).getByText('사령탑 진행 중 · 0/12턴')).toBeTruthy();
+    expect(within(head()).getByText('사령탑 진행 중 · 0/12턴')).toBeTruthy();
   });
 
   it('a refused 걸기 says why in Korean and the sheet stays', async () => {
@@ -99,9 +101,9 @@ describe('총사령탑 (commander) UI', () => {
 
   it('restored from history: the chip, ■ 정지 in one tap with the epoch it saw, and ⋯ offers 정지 instead of 걸기', async () => {
     await bootOpen(['commander'], view());
-    expect(within(pane()).getByText('사령탑 진행 중 · 7/20턴')).toBeTruthy();
-    expect(within(pane()).queryByRole('button', { name: '사령탑 재개' })).toBeNull();
-    fireEvent.click(within(pane()).getByRole('button', { name: '사령탑 정지' }));
+    expect(within(head()).getByText('사령탑 진행 중 · 7/20턴')).toBeTruthy();
+    expect(within(head()).queryByRole('button', { name: '사령탑 재개' })).toBeNull();
+    fireEvent.click(within(head()).getByRole('button', { name: '사령탑 정지' }));
     expect(sent('commander_stop')).toEqual([{ type: 'commander_stop', sessionId: 's1', epoch: 3 }]);
     openMenu();
     expect(menuItem('총사령탑 걸기…')).toBeNull();
@@ -111,18 +113,18 @@ describe('총사령탑 (commander) UI', () => {
 
   it('a stale-epoch refusal says so on the chip; 재개 when it waits for a person; the chip opens the last verdict', async () => {
     await bootOpen(['commander'], view({ status: 'waiting_human', epoch: 5 }, { note: '권한 카드 응답 대기', lastVerdict: { verdict: 'human', reason: '되돌리기 어려움', next: '확인 필요', atMs: new Date(2026, 9, 18, 9, 5).getTime() } }));
-    expect(within(pane()).getByText('사령탑 · 사람 필요 · 7/20턴')).toBeTruthy();
-    fireEvent.click(within(pane()).getByRole('button', { name: '사령탑 재개' }));
+    expect(within(head()).getByText('사령탑 · 사람 필요 · 7/20턴')).toBeTruthy();
+    fireEvent.click(within(head()).getByRole('button', { name: '사령탑 재개' }));
     expect(sent('commander_resume')).toEqual([{ type: 'commander_resume', sessionId: 's1', epoch: 5 }]);
     server({ type: 'error', turnId: null, sessionId: 's1', code: 'commander_stale_epoch', message: 'stale' });
-    expect(within(pane()).getByRole('alert').textContent).toBe('화면이 오래됐습니다 — 다시 시도');
-    fireEvent.click(within(pane()).getByText('사령탑 · 사람 필요 · 7/20턴'));
-    const detail = within(pane()).getByRole('region', { name: '마지막 판정' });
+    expect(within(head()).getByRole('alert').textContent).toBe('화면이 오래됐습니다 — 다시 시도');
+    fireEvent.click(within(head()).getByText('사령탑 · 사람 필요 · 7/20턴'));
+    const detail = within(head()).getByRole('region', { name: '마지막 판정' });
     expect(detail.textContent).toContain('되돌리기 어려움');
     expect(detail.textContent).toContain('확인 필요');
     expect(detail.textContent).toContain('09:05');
     expect(detail.textContent).toContain('권한 카드 응답 대기');
-    expect(within(pane()).queryByRole('alert')).toBeNull(); // tapping the chip clears the refusal line
+    expect(within(head()).queryByRole('alert')).toBeNull(); // tapping the chip clears the refusal line
   });
 
   it('a settings broadcast that turns it off takes the menu item away', async () => {
