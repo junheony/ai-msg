@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **진행 (2026-10-22):** Task 1–7 구현·독립 리뷰 3회 반영·master 병합 완료. Task 8 은 D1(npm 이름) 결정 대기. 계획과 달라진 점은 끝의 '구현 메모'.
+
 > **개정 1판 (2026-10-18):** 독립 교차 검토(Claude + GPT-6 Astra) 지적을 반영했다 — 설정 폴더 단일 인스턴스 락, listen 부분 실패 정리, 서비스 생존·종료 계약, 서비스 설정 기록, node 경로, 서비스 파일 소유권·롤백, 계정 파일 쓰기 안전, 설치 스모크 보강, 번들 검사, 라벨 고정. 지적별 반영 위치는 맨 끝 "검토 반영 기록".
 
 **Goal:** 다른 기기에서 `npx <패키지>` 한 줄로 deck 서버가 뜨고, 웹 첫 실행 마법사가 네 CLI(claude·codex·agy·grok)의 설치·버전·로그인 상태를 보여 주며 Claude 프로필을 추가할 수 있고, Linux(systemd)·macOS(LaunchAgent)에서 상주 서비스로 등록할 수 있게 한다 — 이 맥의 기존 설치(저장소 + relaunch 루프 + `com.deck.server`)는 그대로 둔 채.
