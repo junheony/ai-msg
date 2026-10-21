@@ -1,0 +1,178 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- 세션 칩 머리 fixture for scripts/render-check.sh (keep in step with SessionChipHead.tsx / Pane.tsx / App.tsx):
+     1 pane (the chip in the top bar's middle, folder line under it, its menu open), split 2, split 3 with the three
+     conditional chips (갈라짐 · 총사령탑 · 모두 자동 승인 ⚠) and a split pane's menu open, a floating card's head (– ✕).
+     Phone (≤720px): the top bar with ☰ · chip · usage · activity, the 2-pane strip and the menu as a bottom sheet
+     (a dialog in <body>, outside the top bar — as SessionChipHead portals it).
+     Tall: RENDER_HEIGHT=2400. 412px needs an iframe (headless Chrome will not go below 500). -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  /* Static capture: no fade from the UA button face while the file:// stylesheet lands. */
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
+  .fx-name { margin: 14px 12px 6px; font-size: 12px; color: var(--muted); }
+  .fx-frame { position: relative; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .fx-frame .panes { height: 150px; }
+  .fx-frame.tall .panes { height: 900px; }
+  .fx-room { height: 720px; }
+  .fx-floats { position: relative; height: 290px; background: var(--line); }
+  .fx-floats .float-card { left: 24px; top: 16px; width: 420px; height: 250px; }
+  .fx-phone { display: none; }
+  @media (max-width: 720px) { .fx-desk { display: none; } .fx-phone { display: block; } .fx-phone .panes { height: 520px; } }
+</style>
+</head><body>
+
+<div class="fx-desk">
+<div class="fx-name">1 패널 — 칩이 상단바 가운데, 폴더는 두 번째 줄 · 메뉴 열림</div>
+<div class="fx-frame">
+  <header class="topbar">
+    <button type="button" class="icon-btn sidebar-toggle" aria-label="사이드바 숨기기">▤</button>
+    <div class="topbar-head">
+      <div class="pane-head in-topbar" data-pane-head="p0">
+        <div class="pane-head-main">
+          <span class="head-chip-wrap">
+            <button type="button" class="head-chip" aria-haspopup="menu" aria-expanded="true"><span class="head-chip-title"><span class="engine-mark claude" role="img" aria-label="Claude">✳</span>deck UI 개편 — 2c 세션 칩</span><span class="caret" aria-hidden="true">▾</span></button>
+            <div class="session-menu head-menu" role="menu" aria-label="채팅 메뉴">
+              <button type="button" role="menuitem">이름 바꾸기</button>
+              <button type="button" role="menuitem">맨 위에 고정</button>
+              <button type="button" role="menuitem">보관</button>
+              <button type="button" role="menuitem">작업 폴더 바꾸기…</button>
+              <button type="button" role="menuitem">복제</button>
+              <button type="button" role="menuitem">Desktop에서 열기</button>
+              <div class="menu-sep" role="separator"></div>
+              <button type="button" role="menuitem">대화에서 찾기<kbd class="menu-hint">⌘F</kbd></button>
+              <button type="button" role="menuitem">명령 팔레트…<kbd class="menu-hint">⌘K</kbd></button>
+              <button type="button" role="menuitem">파일 열기<kbd class="menu-hint">⌘⇧E</kbd></button>
+              <button type="button" role="menuitem">새 세션으로 이어가기</button>
+              <div class="menu-sep" role="separator"></div>
+              <button type="button" role="menuitem">대화 복사 (마크다운)</button>
+              <button type="button" role="menuitem">링크 복사</button>
+              <div class="menu-sep" role="separator"></div>
+              <button type="button" role="menuitem">새 분할<kbd class="menu-hint">⌘⇧O</kbd></button>
+              <div class="menu-sep" role="separator"></div>
+              <button type="button" role="menuitem">총사령탑 걸기…</button>
+              <div class="menu-sep" role="separator"></div>
+              <button type="button" role="menuitem" class="danger">삭제…</button>
+            </div>
+          </span>
+          <button type="button" class="folder-chip head-folder" title="/home/u/deck">deck</button>
+        </div>
+      </div>
+    </div>
+    <button type="button" class="usage-chip ok" aria-label="정상"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">42% · 2h</span></button>
+    <div class="topbar-end">
+      <button type="button" class="text-btn split">+ 분할</button>
+      <button type="button" class="activity-btn lvl-idle" aria-label="활동"><span class="activity-dot"></span></button>
+    </div>
+  </header>
+  <div class="fx-room"></div>
+</div>
+
+<div class="fx-name">분할 2 — 머리엔 칩만 (활성 = 진한 글자)</div>
+<div class="fx-frame">
+  <header class="topbar">
+    <button type="button" class="icon-btn sidebar-toggle" aria-label="사이드바 숨기기">▤</button>
+    <div class="topbar-head"></div>
+    <button type="button" class="usage-chip ok" aria-label="정상"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">42% · 2h</span></button>
+    <div class="topbar-end"><button type="button" class="text-btn split">+ 분할 2</button><button type="button" class="activity-btn lvl-running" aria-label="활동"><span class="activity-dot"></span></button></div>
+  </header>
+  <div class="panes" data-count="2" style="--cols: 2">
+    <section class="pane active"><main class="chat">
+      <div class="pane-head" data-pane-head="p0"><div class="pane-head-main"><span class="head-chip-wrap"><button type="button" class="head-chip" data-grip aria-haspopup="menu"><span class="head-chip-title"><span class="engine-mark claude" role="img" aria-label="Claude">✳</span>서버 재시작 흐름 정리</span><span class="caret">▾</span></button></span></div></div>
+      <div class="chat-body"></div></main></section>
+    <section class="pane"><main class="chat">
+      <div class="pane-head" data-pane-head="p1"><div class="pane-head-main"><span class="head-chip-wrap"><button type="button" class="head-chip" data-grip aria-haspopup="menu"><span class="head-chip-title"><span class="engine-mark codex" role="img" aria-label="Codex (GPT)">◎</span>GPT 리뷰</span><span class="caret">▾</span></button></span></div></div>
+      <div class="chat-body"></div></main></section>
+  </div>
+</div>
+
+<div class="fx-name">분할 3 — 조건부 칩 3종 · 가운데 패널 메뉴 열림</div>
+<div class="fx-frame tall">
+  <div class="panes" data-count="3" style="--cols: 3">
+    <section class="pane"><main class="chat">
+      <div class="pane-head" data-pane-head="p0"><div class="pane-head-main"><span class="head-chip-wrap"><button type="button" class="head-chip" data-grip aria-haspopup="menu"><span class="head-chip-title"><span class="engine-mark claude" role="img" aria-label="Claude">✳</span>아주 긴 세션 제목이 들어가면 말줄임으로 잘려야 합니다</span><span class="caret">▾</span></button></span></div>
+        <div class="pane-head-chips"><div class="fork"><button type="button" class="text-btn fork-btn" aria-haspopup="menu">갈라짐</button></div></div></div>
+      <div class="chat-body"></div></main></section>
+    <section class="pane active"><main class="chat">
+      <div class="pane-head" data-pane-head="p1"><div class="pane-head-main"><span class="head-chip-wrap"><button type="button" class="head-chip" data-grip aria-haspopup="menu" aria-expanded="true"><span class="head-chip-title"><span class="engine-mark claude" role="img" aria-label="Claude">✳</span>총사령탑 작업</span><span class="caret">▾</span></button>
+          <div class="session-menu head-menu" role="menu" aria-label="채팅 메뉴">
+            <button type="button" role="menuitem" class="menu-folder" aria-haspopup="menu">폴더: deck <span aria-hidden="true">›</span></button>
+            <button type="button" role="menuitem">이름 바꾸기</button>
+            <button type="button" role="menuitem">고정 해제</button>
+            <div class="menu-sep" role="separator"></div>
+            <button type="button" role="menuitem">대화에서 찾기<kbd class="menu-hint">⌘F</kbd></button>
+            <button type="button" role="menuitem">명령 팔레트…<kbd class="menu-hint">⌘K</kbd></button>
+            <button type="button" role="menuitem">파일 열기<kbd class="menu-hint">⌘⇧E</kbd></button>
+            <div class="menu-sep" role="separator"></div>
+            <button type="button" role="menuitem">링크 복사</button>
+            <div class="menu-sep" role="separator"></div>
+            <button type="button" role="menuitem">새 분할<kbd class="menu-hint">⌘⇧O</kbd></button>
+            <button type="button" role="menuitem">왼쪽으로 이동<kbd class="menu-hint">⌘⌥⇧[</kbd></button>
+            <button type="button" role="menuitem">오른쪽으로 이동<kbd class="menu-hint">⌘⌥⇧]</kbd></button>
+            <button type="button" role="menuitem">떠 있는 카드로 떼기</button>
+            <button type="button" role="menuitem">패널 최대화<kbd class="menu-hint">⌘⇧Enter</kbd></button>
+            <button type="button" role="menuitem">카드 배치…</button>
+            <button type="button" role="menuitem">새 탭으로 떼어내기</button>
+            <button type="button" role="menuitem">이 창 닫기<kbd class="menu-hint">⌘⇧X</kbd></button>
+            <div class="menu-sep" role="separator"></div>
+            <button type="button" role="menuitem">총사령탑 정지</button>
+            <div class="menu-sep" role="separator"></div>
+            <button type="button" role="menuitem" class="danger">삭제…</button>
+          </div></span></div>
+        <div class="pane-head-chips"><span class="commander-wrap"><button type="button" class="chip commander commander-live">사령탑 진행 중 · 7/20턴</button><button type="button" class="chip commander-btn" aria-label="사령탑 정지">■ 정지</button></span></div></div>
+      <div class="chat-body"></div></main></section>
+    <section class="pane"><main class="chat">
+      <div class="pane-head" data-pane-head="p2"><div class="pane-head-main"><span class="head-chip-wrap"><button type="button" class="head-chip" data-grip aria-haspopup="menu"><span class="head-chip-title"><span class="engine-mark claude" role="img" aria-label="Claude">✳</span>배포 스크립트</span><span class="caret">▾</span></button></span></div>
+        <div class="pane-head-chips"><span class="chip perm-badge perm-bypassPermissions" title="모두 자동 승인"><svg class="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z"/><path d="M8 6.6v3M8 11.6v.1"/></svg><span class="perm-badge-full">모두 자동 승인</span></span></div></div>
+      <div class="chat-body"></div></main></section>
+  </div>
+</div>
+
+<div class="fx-name">떠 있는 카드 — 칩 · 접기 · 닫기만</div>
+<div class="fx-floats">
+  <div class="float-card on"><section class="pane active"><main class="chat">
+    <div class="pane-head" data-pane-head="p3"><div class="pane-head-main"><span class="head-chip-wrap"><button type="button" class="head-chip" data-grip aria-haspopup="menu"><span class="head-chip-title"><span class="engine-mark claude" role="img" aria-label="Claude">✳</span>카드 세션</span><span class="caret">▾</span></button></span></div>
+      <div class="pane-head-end"><button type="button" class="icon-btn pane-fold" aria-label="카드 접기">–</button><button type="button" class="icon-btn pane-close" aria-label="패널 닫기">✕</button></div></div>
+    <div class="chat-body"></div></main></section></div>
+</div>
+</div>
+
+<div class="fx-phone">
+  <header class="topbar">
+    <button type="button" class="menu" aria-label="메뉴">☰</button>
+    <div class="topbar-head">
+      <div class="pane-head in-topbar" data-pane-head="p0">
+        <div class="pane-head-main"><span class="head-chip-wrap">
+          <button type="button" class="head-chip" aria-haspopup="menu" aria-expanded="true"><span class="head-chip-title"><span class="engine-mark claude" role="img" aria-label="Claude">✳</span>deck UI 개편 — 2c 세션 칩</span><span class="caret">▾</span></button>
+        </span></div>
+      </div>
+    </div>
+    <button type="button" class="usage-chip ok" aria-label="정상"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">42%</span></button>
+    <div class="topbar-end"><button type="button" class="activity-btn lvl-idle" aria-label="활동"><span class="activity-dot"></span></button></div>
+  </header>
+  <div class="panes" data-count="1" style="--cols: 1">
+    <div class="pane-switch"><button type="button" class="on">deck UI 개편</button><button type="button">GPT 리뷰</button><button type="button" class="add" aria-label="새 분할">+</button></div>
+    <section class="pane active"><main class="chat"><div class="chat-body"></div></main></section>
+  </div>
+  <!-- In the app these two are children of <body> (createPortal). -->
+  <div class="head-menu-scrim" aria-hidden="true"></div>
+  <div class="session-menu head-menu as-sheet" role="dialog" aria-modal="true" aria-label="세션 메뉴">
+    <div class="head-menu-list" role="menu" aria-label="채팅 메뉴">
+      <button type="button" role="menuitem" class="menu-folder" aria-haspopup="menu">폴더: deck <span aria-hidden="true">›</span></button>
+      <button type="button" role="menuitem">이름 바꾸기</button>
+      <button type="button" role="menuitem">맨 위에 고정</button>
+      <button type="button" role="menuitem">보관</button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" role="menuitem">대화에서 찾기<kbd class="menu-hint">⌘F</kbd></button>
+      <button type="button" role="menuitem">명령 팔레트…<kbd class="menu-hint">⌘K</kbd></button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" role="menuitem">링크 복사</button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" role="menuitem">새 분할</button>
+      <button type="button" role="menuitem">이 창 닫기</button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" role="menuitem" class="danger">삭제…</button>
+    </div>
+  </div>
+</div>
+</body></html>

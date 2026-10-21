@@ -2,34 +2,32 @@ import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState
 import type { ClientMessage } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import { CommandPalette, type PaletteAction, type PaletteSession } from './components/CommandPalette';
-import { DeckMark } from './components/DeckMark';
 import { engineOf } from './components/EngineMark';
 import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
 import { SessionCwdDialog } from './components/SessionCwdDialog';
 import { LayoutsDialog } from './components/LayoutsDialog';
 import { deleteLayout, layoutPanes, listLayouts, saveLayout, type SavedLayout } from './layouts';
 import { Login } from './components/Login';
-import { NotifyMenu } from './components/NotifyMenu';
 import { SettingsView } from './components/SettingsView';
 import { Toasts, type ToastItem } from './components/Toasts';
+import { SplitIcon } from './components/icons';
 import { postPin, postPinOrder } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
 import { Pane, sendFromPane, TOGGLE_SIDE_EVENT, useQueueRunner } from './components/Pane';
-import { PermissionCard } from './components/PermissionCard';
-import { QuestionCard } from './components/QuestionCard';
-import { Sidebar, type SidebarView } from './components/Sidebar';
-import { UsagePanel } from './components/UsagePanel';
-import { UsageView } from './components/UsageView';
+import { Sidebar } from './components/Sidebar';
+import { UsageChip } from './components/UsageChip';
+import { UsageSheet } from './components/UsageSheet';
 import { Highlights } from './components/Highlights';
-import { HighlightsBadge, ServerChip, ServerUpdateChip, WorkStatus, type WorkRow } from './components/WorkStatus';
+import { ActivityButton, type ActivityAlert } from './components/ActivityButton';
+import type { WorkRow } from './components/ActivitySheet';
 import { isGeminiAccount, isGrokAccount } from '../shared/accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
 import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
-import { dockedPanes, initialState, openPanes, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
+import { dockedPanes, initialState, openPanes, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
@@ -60,7 +58,6 @@ import { AccountsContext, uiAccounts } from './accounts';
 import { has, setFeatures } from './features';
 import { withConcise } from '../shared/concise';
 
-const VIEW_KEY = 'deck.sidebarView';
 const HIDDEN_KEY = 'deck.sidebarHidden';
 const UNDO_MS = 10_000;
 /** 보관 되돌리기 toast: shorter than 삭제's (보관 is milder and also undone from the 보관됨 list). */
@@ -73,13 +70,12 @@ const SETTLE_MS = 250;
 /** A body size as a `floatBySize` key. */
 const sizeKey = (b: { w: number; h: number }) => `${Math.round(b.w)}x${Math.round(b.h)}`;
 /**
- * A double-click on a floating card's header (the ⋮⋮ grip, the bare strip, a plain title) — not on its other controls:
- * the title button opens the session menu, so it stays out too.
+ * A double-click on a floating card's header strip — not on its controls: the session chip renames on a double-click,
+ * the – / ✕ buttons and the menu keep theirs.
  */
 const onCardHead = (t: EventTarget | null): boolean => {
-  if (!(t instanceof Element) || !t.closest('.chat-head')) return false;
-  const control = t.closest('button, input, select, textarea, a, [role="menu"]');
-  return !control || control.matches('.pane-grip');
+  if (!(t instanceof Element) || !t.closest('.pane-head')) return false;
+  return !t.closest('button, input, select, textarea, a, [role="menu"]');
 };
 const THEME_LABEL: Record<Theme, string> = { system: '시스템', light: '라이트', dark: '다크' };
 
@@ -154,7 +150,7 @@ export function App() {
     const start = loadServerStart();
     return hydrate({ ...initialState, serverStartedAt: start.startedAt, restartedAt: start.restartedAt }, ui, loadQueues());
   });
-  const [collapsed, setCollapsed] = useState<string[]>(() => saved?.collapsed ?? []);
+  const [collapsed] = useState<string[]>(() => saved?.collapsed ?? []);
   const firstBuild = useRef<string | null | undefined>(undefined);
   const [newBuild, setNewBuild] = useState(false);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
@@ -174,8 +170,9 @@ export function App() {
   /** 고정됨 reorder requests: only the newest one's answer is applied. */
   const pinOrderSeq = useRef(0);
   const phone = useIsPhone();
+  const [headSlot, setHeadSlot] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
-  const [usageOpen, setUsageOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState<null | 'limits' | 'history'>(null);
   const [highlightsOpen, setHighlightsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [buildId, setBuildId] = useState<string | null>(null);
@@ -197,9 +194,7 @@ export function App() {
    * pane is gone, floated, the only docked one, or another docked pane becomes active (a card coming forward keeps it).
    */
   const [maxPane, setMaxPane] = useState<string | null>(null);
-  const [sidebarView, setSidebarView] = useState<SidebarView>(() => (readLocal(VIEW_KEY) === 'projects' ? 'projects' : 'recent'));
   const [sidebarHidden, setSidebarHidden] = useState(() => readLocal(HIDDEN_KEY) === '1');
-  useEffect(() => { writeLocal(VIEW_KEY, sidebarView); }, [sidebarView]);
   useEffect(() => { writeLocal(HIDDEN_KEY, sidebarHidden ? '1' : '0'); }, [sidebarHidden]);
   // Peek: with the sidebar hidden (desktop), resting the pointer on the window's left edge (or on ☰) slides it out over
   // the panes; leaving it slides it back. A rename field or an open menu inside keeps it out until that is done.
@@ -1156,15 +1151,19 @@ export function App() {
     requestFocus(target.id);
     return true;
   };
+  /** A docked pane shown alone / with the rest (⌘⇧Enter, 창 › 패널 최대화). */
+  const toggleMaxDocked = (paneId: string) => {
+    if (docked.length < 2) return;
+    const on = maxed !== paneId;
+    setMaxPane(on ? paneId : null);
+    announce(on ? '패널을 최대화했습니다' : '패널 배치를 되돌렸습니다');
+    requestFocus(paneId);
+  };
   /** ⌘⇧Enter: a card maximizes / comes back as its header double-click does; a docked pane is shown alone / with the rest. */
   const toggleMaxPane = () => {
     if (phone) return;
     if (active.float) { toggleMaxCard(active.id); return; }
-    if (docked.length < 2) return;
-    const on = maxed !== active.id;
-    setMaxPane(on ? active.id : null);
-    announce(on ? '패널을 최대화했습니다' : '패널 배치를 되돌렸습니다');
-    requestFocus(active.id);
+    toggleMaxDocked(active.id);
   };
   /** ⌘⌥⇧[ / ⌘⌥⇧]: the active docked pane one place left / right, as ⋯ 왼쪽으로 / 오른쪽으로 이동. */
   const shiftActivePane = (dir: -1 | 1) => {
@@ -1195,7 +1194,7 @@ export function App() {
     { id: 'new-chat', label: '새 대화', hint: `${mod}N`, run: () => newChat() },
     { id: 'new-pane', label: '새 분할', hint: `${mod}⇧O`, run: addPane },
     { id: 'settings', label: '설정 열기', hint: `${mod},`, run: () => window.dispatchEvent(new CustomEvent('deck:open-settings')) },
-    { id: 'usage', label: '사용량 보기', run: () => setUsageOpen(true) },
+    { id: 'usage', label: '사용량 보기', run: () => setUsageOpen('limits') },
     ...(has('highlights') ? [{ id: 'highlights', label: '하이라이트 보기', run: () => setHighlightsOpen(true) }] : []),
     { id: 'theme', label: '테마 전환', run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
     { id: 'sidebar', label: phone ? '사이드바 열기' : sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기', hint: `${mod}\\`, run: toggleSidebar },
@@ -1229,18 +1228,17 @@ export function App() {
   const setCwd = has('sessionOps') ? (s: SessionEntry) => setCwdFor(s) : undefined;
   const duplicate = has('sessionOps') ? (sessionId: string) => { send({ type: 'duplicate_session', sessionId }); } : undefined;
   const sessionActions = { pins: state.pins, onRename: renameSession, onTogglePin: togglePin, onArchive: archiveSession, onDelete: (s: SessionEntry) => askDelete(s), ...(setCwd ? { onSetCwd: setCwd } : {}), ...(duplicate ? { onDuplicate: duplicate } : {}) };
-  const footAccount = active.session?.account ?? null;
-  const orphanPerms = orphanCards(state.panes, state.pending);
-  const orphanQs = orphanCards(state.panes, state.questions);
-  const waitingCards = [...state.pending, ...state.questions].map((c) => ({ sessionId: c.sessionId, cwd: c.cwd, turnId: c.turnId }));
   /** A session's name for the 작업 현황 list: its title, else its folder, else its id's first 8 characters. */
   const titleOf = (sessionId: string, cwd: string | null) => paletteSessions.find((x) => x.sessionId === sessionId)?.title
     ?? state.panes.find((p) => p.session?.sessionId === sessionId)?.session?.title
     ?? (cwd ? cwd.split('/').filter(Boolean).pop() : undefined)
     ?? sessionId.slice(0, 8);
   const preview = previewKey && state.routePreview && state.routePreview.sessionId === previewKey.sessionId ? state.routePreview : null;
-  const busySessions = state.activity.filter((a) => a.running || a.bg > 0).length;
-  /** A 작업 현황 / 재시작 대기 row: opens its session. */
+  /** 활동 점: a new 승인 대기 elsewhere (8 s toast with 열기) or 재시작됨; the toast's role="status" reads it out (once). */
+  const onActivityAlert = (a: ActivityAlert) => {
+    setToasts((t) => [...t, { id: ++toastSeq.current, text: a.text, kind: 'info', ms: 8_000, ...(a.open ? { action: { label: '열기', run: a.open } } : {}) }]);
+  };
+  /** An 활동 sheet row (승인 대기 · 실행 중 · 재시작 대기): opens its session. */
   const openWorkRow = (r: WorkRow) => {
     if (r.sessionId) { if (!openById.current(r.sessionId) && r.cwd) openIn(active.id, r.sessionId, r.cwd, r.title); return; }
     // 새 대화: the pane whose turn the card belongs to.
@@ -1255,23 +1253,28 @@ export function App() {
         {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
         {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
-        <span className="brand"><DeckMark className="spark" />deck</span>
-        <button type="button" className="text-btn palette-open" onClick={() => setPaletteOpen(true)} title={`세션 검색 · 명령 (${mod}K)`} aria-label="세션 검색 · 명령">
-          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="4.75" /><path d="m10.5 10.5 3.25 3.25" /></svg>
-          {!phone && <><span>검색</span><kbd>{mod}K</kbd></>}
-        </button>
-        <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} next={!phone ? preview : null} grok={state.grok ?? null} />
+        {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
+        <div className="topbar-head" ref={setHeadSlot} />
+        <UsageChip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} compact={phone} tight={phone && state.pending.length + state.questions.length > 0} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
         <div className="topbar-end">
-          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onNewChat={() => newChat()} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={openWorkRow} />}
-          {!phone && has('highlights') && <HighlightsBadge ready={state.ready} running={state.activity.filter((a) => a.running).length} onOpen={() => setHighlightsOpen(true)} />}
-          {has('serverUpdate') && <ServerUpdateChip ready={state.ready} draining={state.draining} activity={state.activity} />}
-          {!phone && <ServerChip startedAt={state.serverStartedAt} restartedAt={state.restartedAt} draining={state.draining} busy={busySessions} activity={state.activity} titleOf={titleOf} onOpen={openWorkRow} onDismissRestart={() => dispatch({ type: 'dismiss_restart' })} />}
-          <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={usageOpen} data-sheet-return="" title="토큰 사용량 기록 (주별·일별)">사용량</button>
-          {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (⋮⋮ 를 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
-          <NotifyMenu />
-          {state.connected
-            ? <span className="conn on" title="연결됨">연결됨</span>
-            : <button type="button" className="conn off" onClick={retryNow} title={downSince !== null ? `서버 응답 없음 · ${hhmm(downSince)}부터 — 눌러서 다시 시도` : '재연결 중… — 눌러서 지금 다시 시도'}>{downSince !== null ? '서버 응답 없음' : '재연결 중…'}</button>}
+          {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
+          <ActivityButton
+            ready={state.ready} connected={state.connected} downSince={downSince} onRetry={retryNow}
+            pending={state.pending} questions={state.questions}
+            onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
+            onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
+            activity={state.activity} tasks={has('tasks') ? (state.tasks ?? []) : []}
+            onOpenTask={(t) => { if (t.sessionId && !openById.current(t.sessionId)) openIn(active.id, t.sessionId, t.cwd, t.title); }}
+            onCancelTask={(taskId) => { send({ type: 'cancel_task', taskId }); }}
+            paneBg={state.panes.flatMap((p) => (p.bg ? [p.bg] : []))}
+            onStopTask={(turnId, taskId) => { send({ type: 'stop_task', turnId, taskId }); }}
+            onInterrupt={(turnId) => { send({ type: 'interrupt', turnId }); }}
+            titleOf={titleOf} onOpen={openWorkRow} onNewChat={() => newChat()}
+            serverUpdate={has('serverUpdate')} highlights={has('highlights')} onOpenHighlights={() => setHighlightsOpen(true)}
+            server={{ startedAt: state.serverStartedAt, restartedAt: state.restartedAt, draining: state.draining, onDismissRestart: () => dispatch({ type: 'dismiss_restart' }) }}
+            visibleSessions={phone ? [active.session?.sessionId ?? null] : state.panes.map((p) => p.session?.sessionId ?? null)}
+            onAlert={onActivityAlert}
+          />
         </div>
       </header>
       {downSince !== null && (
@@ -1280,9 +1283,9 @@ export function App() {
           <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
         </div>
       )}
-      {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
+      {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
-      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onClose={() => setSettingsOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)}
         onOpenSessionSplit={(s) => openSplit(s.sessionId, s.cwd, s.title)}
         onOpenSessionFloat={phone ? undefined : (s) => { const before = latest.current.panes.length; openSplit(s.sessionId, s.cwd, s.title); if (latest.current.panes.length > before) floatPane(latest.current.activePaneId); }}
@@ -1309,13 +1312,7 @@ export function App() {
         </div>
       )}
       {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
-      <Toasts toasts={toasts} onDismiss={dismissToast} />
-      {(orphanPerms.length > 0 || orphanQs.length > 0) && (
-        <div className="global-cards">
-          {orphanPerms.map((p) => <PermissionCard key={p.requestId} req={p} onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })} />)}
-          {orphanQs.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })} />)}
-        </div>
-      )}
+      <Toasts toasts={toasts} onDismiss={dismissToast} aboveComposer />
       <div ref={bodyRef} className="body">
         <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" data-testid="cards-live" />
         {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
@@ -1338,6 +1335,7 @@ export function App() {
               requestFocus(shown.id);
             }}
             openPanes={openPanes(state.panes)}
+            onOpenPalette={() => { setDrawer(false); setHelpOpen(false); setPaletteOpen(true); }}
             onOpenSplit={openSplit}
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
@@ -1364,13 +1362,9 @@ export function App() {
                 },
               );
             }}
-            collapsed={collapsed}
-            onCollapsedChange={setCollapsed}
             onRename={renameSession}
             onArchive={archiveSession}
             onOpenHit={openHit}
-            view={sidebarView}
-            onViewChange={setSidebarView}
             onDelete={askDelete}
             onSetCwd={setCwd}
             onDuplicate={duplicate}
@@ -1378,11 +1372,13 @@ export function App() {
             unread={state.unread}
             waiting={[...state.pending, ...state.questions].map((c) => c.sessionId).filter((id): id is string => !!id)}
             onOpenSettings={() => setSettingsOpen(true)}
-            avatar={footAccount ? ([...accounts.label(footAccount)][0] ?? '').toUpperCase() : 'D'}
-            avatarTitle={footAccount ? `deck · ${footAccount === 'gpt' ? 'GPT' : `계정 ${accounts.label(footAccount)}`}` : 'deck'}
+            // The avatar is the person using deck, not the shown session's account (that one is the usage chip's): the
+            // same letter on the new-session screen and in any chat.
+            avatar="D"
+            avatarTitle="deck"
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
-              { label: '사용량 기록', run: () => setUsageOpen(true) },
+              { label: '사용량 기록', run: () => setUsageOpen('history') },
               { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
               { label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) },
               { label: '새로고침', run: () => location.reload() },
@@ -1393,9 +1389,10 @@ export function App() {
         </div>
         <div ref={panesRef} className="panes" data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
           {phone && state.panes.length > 1 && (
-            <div className="pane-switch" {...tabs.stripProps}>
-              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} {...(p.session?.sessionId ? { title: `분할 ${i + 1}번 패널에 열림` } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
-              <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}>+</button>
+            // 36px strip, 44px presses: "1 · 제목…" (the title cut by CSS), + at the end; press-and-drag reorders.
+            <div className="pane-switch" data-testid="split-tabs" role="group" aria-label="분할" {...tabs.stripProps}>
+              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} aria-pressed={p.id === active.id} {...(p.session ? { title: p.session.title } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}><span className="tab-pill">{i + 1} · {p.session?.title ?? '새 세션'}</span></button>)}
+              <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}><span className="tab-pill">+</span></button>
             </div>
           )}
           {(phone ? [active] : docked).map((p, i, shown) => (
@@ -1405,12 +1402,12 @@ export function App() {
                 onPointerDown={(e) => startPaneResize(e, shown[i - 1]!.id, p.id)}
                 onDoubleClick={() => dispatch({ type: 'resize_panes', sizes: Object.fromEntries(docked.map((x) => [x.id, 1])) })} />
             )}
-            <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+            <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} headSlot={(phone || state.panes.length === 1) ? headSlot : null} onAddPane={addPane} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
               onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
               hidden={!!maxed && p.id !== maxed}
               {...(!phone && (docked.length > 1 || floats.length > 0) ? { grip: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => startPaneDrag(e, p.id), onKeyDown: (e: ReactKeyboardEvent<HTMLButtonElement>) => gripKey(e, p.id) } } : {})}
-              {...(!phone && docked.length > 1 ? { onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
-              onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />
+              {...(!phone && docked.length > 1 ? { onMaxPane: () => toggleMaxDocked(p.id), paneMaxed: maxed === p.id, onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
+              onLayouts={() => setLayouts({ list: listLayouts(), error: null })} onPalette={() => onShortcut.current('palette')} />
             </Fragment>
           ))}
         </div>
@@ -1419,11 +1416,11 @@ export function App() {
             {floats.map((p) => (
               <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}${p.floatCollapsed ? ' collapsed' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.floatCollapsed ? COLLAPSED_H : p.float!.h }}
                 onDoubleClick={(e) => { if (onCardHead(e.target)) { if (p.floatCollapsed) toggleCollapseCard(p.id); else toggleMaxCard(p.id); } }}>
-                <Pane pane={p} app={state} active={p.id === state.activePaneId} closable dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+                <Pane pane={p} app={state} active={p.id === state.activePaneId} closable onAddPane={addPane} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
                   onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
                   floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})}
                   onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore}
-                  collapsed={!!p.floatCollapsed} onToggleCollapse={() => toggleCollapseCard(p.id)} onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />
+                  collapsed={!!p.floatCollapsed} onToggleCollapse={() => toggleCollapseCard(p.id)} onLayouts={() => setLayouts({ list: listLayouts(), error: null })} onPalette={() => onShortcut.current('palette')} />
                 {!p.floatCollapsed && <div className="float-resize" role="separator" tabIndex={0} aria-label="카드 크기 조절" aria-valuetext={`${p.float!.w} × ${p.float!.h}`} title="드래그: 카드 크기 · 키보드: ←→ 너비, ↑↓ 높이 (Shift: 크게)"
                   onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />}
               </div>

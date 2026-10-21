@@ -77,6 +77,7 @@ describe('composer queue (ux-state)', () => {
     fireEvent.click(screen.getByText('보내기'));
     const ref1 = (send.mock.lastCall![0] as { clientRef: string }).clientRef;
     server({ type: 'turn_started', turnId: 't1', sessionId: null, cwd: '/w', clientRef: ref1 } as ServerMessage);
+    fireEvent.click(screen.getByTestId('session-chip'));
     fireEvent.change(screen.getByTestId('perm-select'), { target: { value: 'plan' } });
     expect(send.mock.calls.some(([m]) => m.type === 'set_permission_mode')).toBe(false);
     server({ type: 'turn_result', turnId: 't1', sessionId: 'n1', cwd: '/w', ok: true, text: 'done', badge: null, errorText: null });

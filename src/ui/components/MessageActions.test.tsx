@@ -12,6 +12,8 @@ import { HANDOFF_PROMPT } from '../../shared/handoff';
 
 Element.prototype.scrollIntoView = () => {};
 
+/** Menu row labels without their shortcut hint. */
+const menuNames = () => screen.getAllByRole('menuitem').map((b) => (b.textContent ?? '').replace(b.querySelector('.menu-hint')?.textContent ?? '', ''));
 const reply = (text: string, extra: Partial<Extract<ChatItem, { kind: 'assistant' }>> = {}): ChatItem => ({ kind: 'assistant', turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [], ...extra });
 
 let writeText: ReturnType<typeof vi.fn>;
@@ -165,15 +167,15 @@ describe('useShareActions', () => {
   it('chat header: the share actions sit in the ⋯ menu, for an existing session only', async () => {
     renderChat(items);
     expect(screen.queryByRole('button', { name: '공유' })).toBeNull(); // no separate share button: Claude keeps one ⋯
-    fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
-    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['대화에서 찾기', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기']);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    expect(menuNames()).toEqual(['대화에서 찾기', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기']);
     fireEvent.click(screen.getByRole('menuitem', { name: '링크 복사' }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(`${window.location.origin}/?session=s-1`));
     expect(screen.queryByRole('menu')).toBeNull();
     expect((await screen.findByRole('status')).textContent).toBe('링크를 복사했습니다');
     cleanup();
     renderChat([], { isNew: true, sessionId: null });
-    expect(screen.queryByRole('button', { name: '채팅 메뉴' })).toBeNull();
+    expect(screen.getByTestId('session-chip-head').getAttribute('aria-haspopup')).toBeNull(); // nothing to offer: a plain chip
   });
 
   it('⋯ menu: session actions, share, pane items, then 삭제 last; keyboard roving and Esc back to ⋯', () => {
@@ -181,14 +183,12 @@ describe('useShareActions', () => {
     const onDelete = vi.fn();
     const onFiles = vi.fn();
     renderChat(items, { cwd: '/w/deck', titleMenu: { pinned: false, archived: false, onRename, onTogglePin: () => {}, onArchive: () => {}, onDelete }, headMenu: [{ label: '파일 열기', run: onFiles }] });
-    // the title (centred) carries the folder as its second line
-    expect(document.querySelector('.chat-head-main .chat-subtitle')?.textContent).toBe('deck');
-    const more = screen.getByRole('button', { name: '채팅 메뉴' });
+    const more = screen.getByTestId('session-chip-head');
     expect(more.getAttribute('aria-haspopup')).toBe('menu');
     fireEvent.click(more);
     const menu = screen.getByRole('menu', { name: '채팅 메뉴' });
-    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '맨 위에 고정', '보관', '대화에서 찾기', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기', '파일 열기', '삭제…']);
-    expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(2);
+    expect(menuNames()).toEqual(['폴더: deck ›', '이름 바꾸기', '맨 위에 고정', '보관', '대화에서 찾기', '파일 열기', '대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기', '삭제…']); // in a pane the folder is the first row
+    expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(3); // 세션 · 보기 · 공유 · 위험
     expect(document.activeElement).toBe(screen.getAllByRole('menuitem')[0]);
     fireEvent.keyDown(menu, { key: 'End' });
     expect(document.activeElement?.textContent).toBe('삭제…');
@@ -205,7 +205,7 @@ describe('useShareActions', () => {
 
   it('⋯ menu: an empty conversation shows copy / export disabled, not missing', () => {
     renderChat([], { titleMenu: { pinned: false, archived: false } });
-    fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     expect(screen.getByRole('menuitem', { name: '대화 복사 (마크다운)' }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByRole('menuitem', { name: '링크 복사' }).hasAttribute('aria-disabled')).toBe(false);
   });

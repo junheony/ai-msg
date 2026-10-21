@@ -1,4 +1,5 @@
 import { createContext, isValidElement, memo, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createPortal, flushSync } from 'react-dom';
 import { splitDeckChoices, type DeckChoices } from '../../shared/choices';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,13 +12,14 @@ import { codeFileName, useCodeWrap } from '../codeWrap';
 import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
 import { has } from '../features';
 import { rawFileUrl } from '../sessionApi';
-import { baseName, useFileMenu } from './FileMenu';
+import { Sheet, SheetHead } from './Dialogs';
+import { baseName, useFileActions, useFileMenu, useLongPress } from './FileMenu';
 import type { ChatItem, SentFile } from '../state';
 import { MODEL_INFO, modelLabelOf, type ModelChoice } from '../../shared/models';
 import type { ReplyTurn } from '../replyTurn';
 import { usePopoverPlacement } from './usePopoverPlacement';
 import { CopyButton } from './CopyButton';
-import { EditIcon, RetryIcon } from './icons';
+import { CopyIcon, EditIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
 import { RoleBadge } from './RoleBadge';
 import { ToolCalls } from './ToolCallView';
@@ -119,14 +121,21 @@ function MdImage({ src, alt }: { src?: unknown; alt?: string }) {
   return <FileLink path={path} fallback={link}>🖼 {alt || path}</FileLink>;
 }
 
+/** `a/b/c` → a/<wbr>b/<wbr>c. */
+function breakAfterSlash(text: string): ReactNode[] {
+  return text.split('/').flatMap((part, i, all) => (i < all.length - 1 ? [part, '/', <wbr key={i} />] : [part]));
+}
+
 const MD_COMPONENTS: Components = {
   img: ({ src, alt }) => <MdImage src={src} alt={alt} />,
   a: ({ href, children }) => <FileLink path={href && !/^[a-z][\w+.-]*:/i.test(href) && !href.startsWith('#') ? filePathIn(decodeSafe(href)) : null} fallback={<a href={href} title={href} rel="noreferrer noopener" target="_blank">{children}</a>}>{children}</FileLink>,
   // Inline code naming a file opens it in the pane's side panel (fenced code ends with a newline, so it never matches).
   code: ({ className, children }) => {
     const text = typeof children === 'string' ? children : null;
-    const plain = <code className={className}>{children}</code>;
-    return <FileLink path={text && !className ? filePathIn(text) : null} fallback={plain}><code>{children}</code></FileLink>;
+    // A long inline path wraps after a `/` (a <wbr>) before it would break mid-name; copying the text is unchanged.
+    const shown = text && !className && text.includes('/') && !text.includes('\n') ? breakAfterSlash(text) : children;
+    const plain = <code className={className}>{shown}</code>;
+    return <FileLink path={text && !className ? filePathIn(text) : null} fallback={plain}><code>{shown}</code></FileLink>;
   },
   // GFM tables scroll sideways inside the message instead of widening the chat (phone).
   table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
@@ -268,13 +277,14 @@ export type MessageActions = {
   /** Why 편집 uses onEdit (tooltip). */
   editNote?: string | null;
   /** `< i/N >` under a user message with several versions. */
-  versions?: (n: number) => { index: number; count: number; go: (i: number) => void } | null;
+  versions?: (n: number) => Versions | null;
   /** Touch screen: Enter adds a newline (send with the button), like the composer. */
   coarse?: boolean;
   /** deck-choices option card clicked: send its text as the user's reply. Absent = cannot send now (busy, read-only). */
   onReply?: (text: string) => void;
 };
 export const MessageActionsContext = createContext<MessageActions>({});
+type Versions = { index: number; count: number; go: (i: number) => void };
 
 /**
  * 메시지 편집 갈래: the bubble as an editor. Enter sends (or ⌘Enter only, per 설정 › Enter 동작), Shift+Enter is a
@@ -326,7 +336,7 @@ function InlineEdit({ initial, coarse, onCancel, onSubmit }: { initial: string; 
 }
 
 /** `< 2/3 >`: switches the pane to another version of this message (a sibling branch session). */
-function VersionSwitcher({ v }: { v: { index: number; count: number; go: (i: number) => void } }) {
+function VersionSwitcher({ v }: { v: Versions }) {
   return (
     <div className="msg-versions" data-testid="msg-versions">
       <button type="button" className="msg-act" aria-label="이전 버전" title="이전 버전" disabled={v.index <= 0} onClick={() => v.go(v.index - 1)}>‹</button>
@@ -388,6 +398,91 @@ function RegenModelMenu({ models, current, sticky, onPick }: { models: readonly 
         </div>
       )}
     </>
+  );
+}
+
+const SelectIcon = () => <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4h7M3 8h10M3 12h5" /><path d="M12 10v4M10.5 10h3M10.5 14h3" /></svg>;
+
+/**
+ * 텍스트 선택: selects all of `body` (a message's text) so the phone's own selection handles can narrow it — the long press
+ * that opens the sheet is the gesture a phone would otherwise use to start a selection.
+ */
+function selectAll(body: Element | null | undefined) {
+  const sel = typeof window.getSelection === 'function' ? window.getSelection() : null;
+  if (!body || !sel) return;
+  const range = document.createRange();
+  range.selectNodeContents(body);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/** A message's first non-empty line, markdown marks dropped: the long-press sheet's head (CSS cuts it to one line). */
+function excerptOf(text: string): string {
+  const line = text.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  return line.replace(/^(#+|[-*>]|\d+\.)\s+/, '').replace(/[*_`~]/g, '').slice(0, 200);
+}
+
+/** Touch: a press this long on a message opens its menu (§7.2); moving past FileMenu's slop cancels it (a scroll). */
+export const MSG_PRESS_MS = 350;
+/** A press starting on a control inside the message keeps its own tap / long press (file chips, code buttons, tool rows). */
+const PRESS_IGNORE = 'button, a, input, textarea, select, summary, [role="button"]';
+
+type RegenPick = { models: readonly ModelChoice[]; current: ModelChoice; sticky: boolean; onPick: (m: ModelChoice) => void };
+
+/**
+ * A message's actions as a bottom sheet (touch long press): 복사 · 편집 · 재시도 · 다시 생성 · 다른 모델로 · 버전 ‹ ›, the
+ * same set the hover row offers. A modal dialog (Sheet: Esc yields to popups over it, focus goes back to the message);
+ * Tab stays inside. A portal so a transformed message never clips it, its events kept from the message's long press.
+ */
+function MessageSheet({ excerpt, copy, select, edit, retry, again, pick, versions, onClose }: {
+  /** The message's first line: the sheet's one-line head (which message the menu is for). */
+  excerpt: string;
+  copy: (() => void) | null; select: (() => void) | null; edit: (() => void) | null; retry: (() => void) | undefined; again: (() => void) | undefined;
+  pick: RegenPick | null; versions: Versions | null; onClose: () => void;
+}) {
+  const [models, setModels] = useState(false);
+  // Opened by a long press: the first item takes focus without a ring; the ring comes once a key is pressed.
+  const [keyed, setKeyed] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { ref.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true, focusVisible: false } as FocusOptions); }, []);
+  // The sheet closes (focus back on the message) before the action runs, so an action that moves focus keeps it.
+  const run = (f: () => void) => () => { flushSync(onClose); f(); };
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+  return createPortal(
+    <div className="msg-sheet-root" onPointerDown={stop} onClick={stop} onContextMenu={stop} onKeyDownCapture={keyed ? undefined : () => setKeyed(true)}>
+      <Sheet className={`msg-sheet${keyed ? '' : ' by-touch'}`} label="메시지 메뉴" onClose={onClose}>
+        <SheetHead title={excerpt} onClose={onClose} autoFocus={false} excerpt />
+        <div ref={ref} className="msg-sheet-list" data-testid="msg-sheet">
+          {copy && <button type="button" className="msg-sheet-item" onClick={run(copy)}><CopyIcon />복사</button>}
+          {select && <button type="button" className="msg-sheet-item" onClick={run(select)}><SelectIcon />텍스트 선택</button>}
+          {edit && <button type="button" className="msg-sheet-item" onClick={run(edit)}><EditIcon />편집</button>}
+          {retry && <button type="button" className="msg-sheet-item" onClick={run(retry)}><RetryIcon />재시도</button>}
+          {again && <button type="button" className="msg-sheet-item" onClick={run(again)}><RetryIcon />다시 생성</button>}
+          {pick && (
+            <>
+              <button type="button" className="msg-sheet-item" aria-expanded={models} onClick={() => setModels((o) => !o)}><CaretIcon />다른 모델로 다시 생성</button>
+              {models && (
+                <div className="msg-sheet-models" role="group" aria-label="다시 생성할 모델">
+                  {pick.models.map((m) => (
+                    <button key={m} type="button" className={`msg-sheet-item sub${m === pick.current ? ' on' : ''}`} onClick={run(() => pick.onPick(m))}>
+                      {m === 'auto' ? '자동' : MODEL_INFO[m].name}{m === pick.current && <span className="msg-sheet-hint">지금 모델</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          {versions && (
+            <div className="msg-sheet-versions" role="group" aria-label="버전">
+              <button type="button" className="msg-sheet-item" aria-label="이전 버전" disabled={versions.index <= 0} onClick={run(() => versions.go(versions.index - 1))}>‹</button>
+              <span>버전 {versions.index + 1}/{versions.count}</span>
+              <button type="button" className="msg-sheet-item" aria-label="다음 버전" disabled={versions.index >= versions.count - 1} onClick={run(() => versions.go(versions.index + 1))}>›</button>
+            </div>
+          )}
+        </div>
+      </Sheet>
+    </div>,
+    document.body,
   );
 }
 
@@ -455,6 +550,23 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   const [prefs] = usePrefs();
   const concise = prefs.conciseMode;
   const [editing, setEditing] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const msgRef = useRef<HTMLDivElement>(null);
+  // Touch long press → the action sheet. Not over a text selection the user is making; the message takes focus first so
+  // the sheet hands it back there when it closes.
+  const press = useLongPress(() => {
+    const sel = typeof window.getSelection === 'function' ? window.getSelection() : null;
+    const el = msgRef.current;
+    if ((sel && !sel.isCollapsed) || !el) return false;
+    el.tabIndex = -1;
+    el.focus({ preventScroll: true });
+    setMenu(true);
+  }, { ms: MSG_PRESS_MS, ignore: PRESS_IGNORE });
+  const closeMenu = () => setMenu(false);
+  // Copy feedback as one toast (a status: read out once). The hover row's ✓ already says it on a desktop; on touch the
+  // icon alone is easy to miss, so the row's copy toasts too.
+  const feedback = useFileActions();
+  const copied = actions.coarse ? (ok: boolean) => feedback.toast(ok ? '복사했어요' : '복사하지 못했어요', ok ? 'info' : 'error') : undefined;
   if (item.kind === 'user') {
     if (item.text === HANDOFF_PROMPT) return <div className="msg user handoff-req" title={HANDOFF_PROMPT}><pre>인계 메모 요청 (새 세션으로 이어가기)</pre></div>;
     const { text, notices } = parseUserText(item.text);
@@ -466,6 +578,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
     const branch = actions.onBranch && n !== undefined ? actions.onBranch : null;
     const editTitle = branch ? '편집 — 이 메시지를 고쳐 새 갈래로 다시 보내기' : `편집 — ${actions.editNote ?? (actions.onBranch ? '메시지 위치를 알 수 없어 입력창에 넣습니다' : '입력창에서 고쳐 다시 보내기')}`;
     const versions = n !== undefined ? (actions.versions?.(n) ?? null) : null;
+    const edit = branch || actions.onEdit ? () => (branch ? setEditing(true) : actions.onEdit?.(text)) : null;
     if (editing && branch && n !== undefined) {
       return (
         <>
@@ -477,17 +590,24 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
     return (
       <>
         {system}
-        <div className="msg user">
+        <div ref={msgRef} className="msg user" {...(text ? press : {})}>
           {files.length > 0 && <AttachmentTiles files={files} />}
           {text && <UserText text={text} />}
-          {text && (
-            <div className="msg-actions" data-testid="user-actions">
-              <CopyButton icon text={text} label="메시지 복사" />
-              {(branch || actions.onEdit) && <button type="button" className="msg-act" aria-label="편집" title={editTitle} onClick={() => (branch ? setEditing(true) : actions.onEdit?.(text))}><EditIcon /></button>}
+          {/* The versions sit right under the bubble, beside its (hover / touch-hidden) action row. */}
+          {(text || versions) && (
+            <div className="msg-user-foot">
+              {versions && <VersionSwitcher v={versions} />}
+              {text && (
+                <div className="msg-actions" data-testid="user-actions">
+                  <CopyButton icon text={text} label="메시지 복사" {...(copied ? { onDone: copied } : {})} />
+                  {edit && <button type="button" className="msg-act" aria-label="편집" title={editTitle} onClick={edit}><EditIcon /></button>}
+                </div>
+              )}
             </div>
           )}
         </div>
-        {versions && <VersionSwitcher v={versions} />}
+        {menu && text && <MessageSheet excerpt={excerptOf(text)} copy={() => feedback.copy(text, '복사했어요')} select={() => selectAll(msgRef.current?.querySelector('pre'))} edit={edit} retry={undefined} again={undefined} pick={null} versions={versions} onClose={closeMenu} />}
+        {feedback.node}
       </>
     );
   }
@@ -505,9 +625,10 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   const { text: shownText, choices } = splitDeckChoices(item.text, item.streaming);
   const reply = last && !item.streaming ? actions.onReply : undefined;
   const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
+  const regenPick: RegenPick | null = pick && regen ? { models: regen.models, current: regen.current, sticky: !!(turn && branchFrom), onPick: pick } : null;
   return (
     <FileRootContext.Provider value={cwd || null}>
-    <div className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}`}>
+    <div ref={msgRef} className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}`} {...(hasActions ? press : {})}>
       {/* Concise: mid-turn notes stay (milestones); full-mode attempts always show. */}
       {item.notes.map((n, i) => <div key={i} className={`note${concise ? ' concise-note' : ''}`}>{n}</div>)}
       {(!concise || !item.streaming) && item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
@@ -532,20 +653,29 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
       {(item.badge || item.model || item.toolCalls.length > 0 || hasActions) && (
         <div className="turn-foot">
+          {item.badge && <TurnBadge badge={item.badge} {...(item.model ? { model: item.model } : {})} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} ctx={last ? (item.ctx ?? null) : null} />}
+          {!item.badge && item.model && <span className="msg-model" data-testid="msg-model" title={item.model}>{modelLabelOf(item.model)}</span>}
           {hasActions && (
             <div className="msg-actions" data-testid="turn-actions">
-              {item.text && <CopyButton icon text={shownText || item.text} label="응답 복사" />}
+              {item.text && <CopyButton icon text={shownText || item.text} label="응답 복사" {...(copied ? { onDone: copied } : {})} />}
               {retry && <button type="button" className="msg-act" aria-label="재시도" title="재시도" onClick={retry}><RetryIcon /></button>}
               {again && <button type="button" className="msg-act" aria-label="다시 생성" title="다시 생성 — 이 답장부터 새 갈래로" onClick={again}><RetryIcon /></button>}
-              {pick && regen && <RegenModelMenu models={regen.models} current={regen.current} sticky={!!(turn && branchFrom)} onPick={pick} />}
+              {regenPick && <RegenModelMenu models={regenPick.models} current={regenPick.current} sticky={regenPick.sticky} onPick={regenPick.onPick} />}
             </div>
           )}
-          {item.badge && <TurnBadge badge={item.badge} {...(item.model ? { model: item.model } : {})} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} />}
-          {!item.badge && item.model && <span className="msg-model" data-testid="msg-model" title={item.model}>{modelLabelOf(item.model)}</span>}
           <RoleBadge roles={roleSummary(item.toolCalls)} />
         </div>
       )}
     </div>
+    {menu && hasActions && (
+      <MessageSheet
+        excerpt={excerptOf(shownText || item.text)}
+        copy={item.text ? () => feedback.copy(shownText || item.text, '복사했어요') : null}
+        select={shownText ? () => selectAll(msgRef.current?.querySelector('.markdown:not(.failed-attempt)')) : null}
+        edit={null} retry={retry} again={again} pick={regenPick} versions={null} onClose={closeMenu}
+      />
+    )}
+    {feedback.node}
     </FileRootContext.Provider>
   );
 });

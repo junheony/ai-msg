@@ -28,3 +28,44 @@ export function groupByDate<T extends { lastModified: number }>(items: T[], now:
   }
   return DATE_GROUPS.filter((g) => out.has(g)).map((label) => ({ label, items: out.get(label)! }));
 }
+
+/** A divider goes in when the conversation picks up after this long a pause (or on another day). */
+export const DIVIDER_GAP_MS = 30 * 60_000;
+
+const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Date(b).toDateString();
+
+/** The transcript's time divider, Grok Bot style: "오전 11:50"; "어제 오후 3:05"; "10월 20일 오전 9:00"; another year leads with it. */
+export function timeLabel(ms: number, now: number = Date.now()): string {
+  const d = new Date(ms);
+  const h = d.getHours();
+  const time = `${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (sameDay(ms, now)) return time;
+  if (sameDay(ms, dayStart(now, 1))) return `어제 ${time}`;
+  const date = `${d.getMonth() + 1}월 ${d.getDate()}일`;
+  return d.getFullYear() === new Date(now).getFullYear() ? `${date} ${time}` : `${d.getFullYear()}년 ${date} ${time}`;
+}
+
+/**
+ * Where the transcript's time dividers go: index → the time to show (null = none). A user message shows its own send
+ * time (`at`: the transcript's, or the clock when sent here); one without falls back to its exchange's — the first timed
+ * reply after it (the reply's context `at`, when it ended). It gets a divider when that is on another day or more than
+ * DIVIDER_GAP_MS after the last time seen above it — a reply's end or a message's send — (the first exchange always does).
+ */
+export function timeDividers(items: readonly { kind: string; at?: number; ctx?: { at: number | null } }[]): (number | null)[] {
+  const turnAt = new Map<number, number>();
+  let user = -1;
+  items.forEach((it, i) => {
+    if (it.kind === 'user') {
+      user = i;
+      if (it.at != null) turnAt.set(i, it.at);
+    } else if (user >= 0 && !turnAt.has(user) && it.ctx?.at != null) turnAt.set(user, it.ctx.at);
+  });
+  let prev: number | null = null;
+  return items.map((it, i) => {
+    const t = turnAt.get(i);
+    const show = t !== undefined && (prev === null || !sameDay(prev, t) || t - prev > DIVIDER_GAP_MS);
+    const seen = it.kind === 'user' ? it.at : it.ctx?.at;
+    if (seen != null) prev = seen;
+    return show ? t! : null;
+  });
+}

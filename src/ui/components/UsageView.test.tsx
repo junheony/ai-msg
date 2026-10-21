@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { UsagePanel } from './UsagePanel';
-import { UsageView, dailyStacks, fmtCost, fmtTokens, sumRows, weeklyRows } from './UsageView';
+import { UsageSheet } from './UsageSheet';
+import { dailyStacks, fmtCost, fmtTokens, sumRows, weeklyRows } from './UsageView';
 import type { UsageHistory, UsageRow } from '../../shared/token-usage';
-import { emptyAccountUsage } from '../../shared/usage-types';
+import { emptyAccountUsage, type UsageSnapshot } from '../../shared/usage-types';
 
 const row = (day: string, source: UsageRow['source'], family: UsageRow['family'], input: number, output: number, cacheRead = 0, cacheWrite = 0): UsageRow =>
   ({ day, source, family, input, output, cacheRead, cacheWrite, messages: 1 });
@@ -37,12 +37,13 @@ describe('UsageView helpers', () => {
   });
 });
 
-describe('UsageView', () => {
+describe('usage sheet · history', () => {
+  const usage: UsageSnapshot = { generatedAt: 'x', deckReachable: true, accounts: { a: emptyAccountUsage(), b: emptyAccountUsage(), c: emptyAccountUsage() } };
   it('renders totals, weekly table and chart; switches account; closes on Escape', async () => {
     const body: UsageHistory = { generatedAt: 'x', days: 84, lastScanAt: '2026-10-02T03:00:00Z', scanning: false, rows };
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
     const onClose = vi.fn();
-    render(<UsageView onClose={onClose} fetchFn={fetchFn} now={NOW} />);
+    render(<UsageSheet usage={usage} current={null} initialHistory onClose={onClose} fetchFn={fetchFn} now={NOW.getTime()} />);
     await waitFor(() => expect(screen.getByTestId('usage-weekly').textContent).toContain('2026-09-28 (이번 주)'));
     expect(screen.getByText('오늘').parentElement!.textContent).toContain('10.1M');
     expect(screen.getByText('이번 주').parentElement!.textContent).toContain('10.6M');
@@ -64,7 +65,7 @@ describe('UsageView', () => {
     const body: UsageHistory = { generatedAt: 'x', days: 84, lastScanAt: null, scanning: false, rows };
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
     const onClose = vi.fn();
-    render(<UsageView onClose={onClose} fetchFn={fetchFn} now={NOW} />);
+    render(<UsageSheet usage={usage} current={null} initialHistory onClose={onClose} fetchFn={fetchFn} now={NOW.getTime()} />);
     const close = screen.getByRole('button', { name: '닫기' });
     expect(close.textContent).toBe('✕');
     expect(close.getAttribute('title')).toBe('닫기 (Esc)');
@@ -74,7 +75,7 @@ describe('UsageView', () => {
     fireEvent.click(screen.getByRole('button', { name: '새로고침' }));
     await waitFor(() => expect(fetchFn).toHaveBeenLastCalledWith('/api/usage/history?days=84&refresh=1'));
 
-    const dialog = screen.getByRole('dialog', { name: '토큰 사용량' });
+    const dialog = screen.getByRole('dialog', { name: '사용량' });
     fireEvent.mouseDown(dialog);
     fireEvent.mouseDown(screen.getByTestId('usage-weekly'));
     expect(onClose).not.toHaveBeenCalled();
@@ -87,7 +88,7 @@ describe('UsageView', () => {
   it('Esc yields to a popup opened over the sheet, an Esc already taken, a held key and IME', () => {
     const fetchFn = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
     const onClose = vi.fn();
-    render(<UsageView onClose={onClose} fetchFn={fetchFn} now={NOW} />);
+    render(<UsageSheet usage={usage} current={null} initialHistory onClose={onClose} fetchFn={fetchFn} now={NOW.getTime()} />);
     const over = document.body.appendChild(document.createElement('div'));
     over.setAttribute('role', 'dialog');
     fireEvent.keyDown(window, { key: 'Escape' });
@@ -107,19 +108,39 @@ describe('UsageView', () => {
 
   it('shows the error when the API fails', async () => {
     const fetchFn = vi.fn(async () => new Response('{}', { status: 500 })) as unknown as typeof fetch;
-    render(<UsageView onClose={() => {}} fetchFn={fetchFn} now={NOW} />);
+    render(<UsageSheet usage={usage} current={null} initialHistory onClose={() => {}} fetchFn={fetchFn} now={NOW.getTime()} />);
     await waitFor(() => expect(screen.getByText('사용량을 불러오지 못했습니다 (500)')).toBeTruthy());
   });
 });
 
-describe('UsagePanel → 사용량', () => {
-  it('a clicked (pinned) usage card offers the history view', () => {
-    const onOpenHistory = vi.fn();
-    const usage = { generatedAt: 'x', deckReachable: true, accounts: { a: emptyAccountUsage(), b: emptyAccountUsage(), c: emptyAccountUsage() } };
-    render(<UsagePanel usage={usage} current={null} now={NOW.getTime()} onOpenHistory={onOpenHistory} />);
-    fireEvent.click(screen.getByTestId('account-a'));
-    fireEvent.click(screen.getByRole('button', { name: '토큰 사용량 기록 보기 ›' }));
-    expect(onOpenHistory).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('tooltip')).toBeNull();
+describe('usage sheet · the 기록 toggle', () => {
+  it('starts closed from the chip (no fetch), opens on 기록 and fetches; from settings it opens expanded', async () => {
+    const usage: UsageSnapshot = { generatedAt: 'x', deckReachable: true, accounts: { a: emptyAccountUsage(), b: emptyAccountUsage(), c: emptyAccountUsage() } };
+    const body: UsageHistory = { generatedAt: 'x', days: 84, lastScanAt: null, scanning: false, rows };
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+    const { unmount } = render(<UsageSheet usage={usage} current={null} onClose={() => {}} fetchFn={fetchFn} now={NOW.getTime()} />);
+    const toggle = screen.getByRole('button', { name: /토큰 사용량 기록/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByTestId('usage-weekly')).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    await waitFor(() => expect(screen.getByTestId('usage-weekly').textContent).toContain('2026-09-28 (이번 주)'));
+    expect(document.querySelector('.sheet.usage-sheet')!.className).toContain('with-history');
+    unmount();
+    render(<UsageSheet usage={usage} current={null} initialHistory onClose={() => {}} fetchFn={fetchFn} now={NOW.getTime()} />);
+    expect(screen.getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('Tab wraps inside the sheet (focus trap)', () => {
+    const usage: UsageSnapshot = { generatedAt: 'x', deckReachable: true, accounts: { a: emptyAccountUsage() } };
+    render(<UsageSheet usage={usage} current={null} onClose={() => {}} now={NOW.getTime()} />);
+    const close = screen.getByRole('button', { name: '닫기' });
+    const toggle = screen.getByRole('button', { name: /토큰 사용량 기록/ });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(toggle);
+    fireEvent.keyDown(toggle, { key: 'Tab' });
+    expect(document.activeElement).toBe(close);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from 'react';
 import { shortcutList } from '../shortcuts';
 import { POPUP } from '../composerFocus';
 
@@ -10,11 +10,26 @@ function useEscape(onClose: () => void) {
   }, [onClose]);
 }
 
+export const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Tab / Shift+Tab wrap inside a sheet (a modal: focus never walks out behind it). */
+export function trapTab(e: ReactKeyboardEvent<HTMLElement>) {
+  // A sheet's own inner trap already wrapped it (the Sheet traps too).
+  if (e.key !== 'Tab' || e.defaultPrevented) return;
+  const all = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
+  if (!all.length) return;
+  const first = all[0]!;
+  const last = all[all.length - 1]!;
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
 /**
  * A large modal card over a dimmed backdrop (설정, 사용량): full screen on a phone. Closes on Esc and on a mousedown that
- * starts on the backdrop. Esc yields to a popup inside the card or opened over it (later in the DOM: palette, help,
+ * starts on the backdrop. Esc yields to a popup opened over it (later in the DOM, not inside the card — its own menus do not count: palette, help,
  * confirm, another sheet), to an Esc someone already took and to a held key's repeats. Focus goes back where it was when
  * the sheet closes, or to the top bar's `[data-sheet-return]` button when that is gone (설정 → 사용량 보기) or was nowhere.
+ * Tab / Shift+Tab wrap inside it; on open, focus goes to its 닫기 button (`autoFocus` in the content) or, if nothing in it
+ * took focus, the first focusable control.
  */
 export function Sheet({ label, className, onClose, children }: { label: string; className: string; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -24,12 +39,16 @@ export function Sheet({ label, className, onClose, children }: { label: string; 
   // Layout: runs before a sheet opened in the same commit (설정 → 사용량) focuses its own ✕.
   useLayoutEffect(() => () => { (opener?.isConnected && opener !== document.body ? opener : document.querySelector<HTMLElement>('[data-sheet-return]'))?.focus(); }, [opener]);
   useEffect(() => {
+    const self = ref.current;
+    if (self && !self.contains(document.activeElement)) self.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
     let owned = false;
     // Capture: decided before the popup's own Esc handler removes it.
     const note = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const self = ref.current;
-      owned = !!self && Array.from(document.querySelectorAll(POPUP)).some((el) => el !== self && (self.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+      owned = !!self && Array.from(document.querySelectorAll(POPUP)).some((el) => el !== self && !self.contains(el) && (self.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.repeat || e.defaultPrevented || e.isComposing || e.keyCode === 229 || owned) return;
@@ -42,8 +61,23 @@ export function Sheet({ label, className, onClose, children }: { label: string; 
   }, []);
   return (
     <div className="sheet-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={ref} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-label={label}>{children}</div>
+      <div ref={ref} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-label={label} onKeyDown={trapTab}>{children}</div>
     </div>
+  );
+}
+
+/**
+ * Every sheet's head row (사용량 · 세션 설정 · 활동 · 설정 · 메시지 메뉴): the title left, a ✕ icon button right — 32px seen
+ * on a desktop with a 44px press area (44px seen on a phone), the same padding and title size everywhere. `excerpt`: a
+ * one-line quote instead of a heading (the message menu names its message, not itself). The ✕ takes the first focus
+ * unless `autoFocus` is off (a sheet that focuses its first item itself).
+ */
+export function SheetHead({ title, onClose, autoFocus = true, closeRef, excerpt = false }: { title: ReactNode; onClose: () => void; autoFocus?: boolean; closeRef?: Ref<HTMLButtonElement>; excerpt?: boolean }) {
+  return (
+    <header className={`sheet-head${excerpt ? ' excerpt' : ''}`}>
+      {excerpt ? <p className="sheet-title">{title}</p> : <h2 className="sheet-title">{title}</h2>}
+      <button ref={closeRef} type="button" className="icon-btn sheet-btn sheet-close" onClick={onClose} aria-label="닫기" title="닫기 (Esc)" autoFocus={autoFocus}>✕</button>
+    </header>
   );
 }
 

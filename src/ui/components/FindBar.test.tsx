@@ -88,7 +88,7 @@ describe('대화에서 찾기', () => {
 
   it('the ⋯ menu offers 대화에서 찾기', () => {
     render(<Chat {...props(ITEMS)} />);
-    fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     fireEvent.click(screen.getByRole('menuitem', { name: '대화에서 찾기' }));
     expect(screen.getByTestId('find-bar')).toBeTruthy();
   });

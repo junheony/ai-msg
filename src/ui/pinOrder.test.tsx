@@ -91,7 +91,7 @@ describe('Sidebar 고정됨 reorder', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('Escape cancels a drag; a press on a row button never starts one', () => {
+  it('Escape cancels a drag; a press on ⋯ never starts one (the row\'s own open button does)', () => {
     const { onReorderPins } = setup();
     const rows = layout();
     pointer(rows[3]!, 'pointerdown', 112);
@@ -100,7 +100,7 @@ describe('Sidebar 고정됨 reorder', () => {
     pointer(window, 'pointerup', 10);
     expect(onReorderPins).not.toHaveBeenCalled();
     expect(rows[3]!.style.transform).toBe('');
-    pointer(rows[0]!.querySelector('button')!, 'pointerdown', 16);
+    pointer(rows[0]!.querySelector('.row-more-btn')!, 'pointerdown', 16);
     pointer(window, 'pointermove', 100);
     pointer(window, 'pointerup', 100);
     expect(onReorderPins).not.toHaveBeenCalled();
@@ -137,10 +137,10 @@ describe('Sidebar 고정됨 reorder', () => {
     pointer(window, 'pointermove', 0, 'touch');
     pointer(window, 'pointerup', 0, 'touch');
     act(() => { vi.advanceTimersByTime(300); });
-    fireEvent.click(rows[3]!);
+    fireEvent.click(rows[3]!.querySelector('.row-open')!);
     expect(onOpen).not.toHaveBeenCalled();
     act(() => { vi.advanceTimersByTime(700); });
-    fireEvent.click(rows[3]!);
+    fireEvent.click(rows[3]!.querySelector('.row-open')!);
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
@@ -190,6 +190,7 @@ describe('Sidebar 고정됨 reorder', () => {
 
   it('a filtered 고정됨 list reorders within the full pin list', () => {
     const { onReorderPins } = setup();
+    fireEvent.click(screen.getByRole('button', { name: '검색' }));
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'o' } }); // one, two, four (three has no o)
     const btn = screen.getByTestId('pinned-group').querySelectorAll('li')[2]!.querySelector('button')!; // four
     fireEvent.keyDown(btn, { key: 'ArrowUp', altKey: true });

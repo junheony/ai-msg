@@ -7,14 +7,14 @@ import { CheckIcon, CopyIcon } from './icons';
  * for ~1.5s; otherwise the code-block header's text button. `compact`: a text button that also carries the icon, so a
  * narrow container can show the icon alone (styles.css: the side panel's header) — the label stays as its title.
  */
-export function CopyButton({ text, label = '복사', icon = false, className, caption = '복사', compact = false }: { text: string | (() => string); label?: string; icon?: boolean; className?: string; /** Text button's resting caption. */ caption?: string; compact?: boolean }) {
+export function CopyButton({ text, label = '복사', icon = false, className, caption = '복사', compact = false, onDone }: { text: string | (() => string); label?: string; icon?: boolean; className?: string; /** Text button's resting caption. */ caption?: string; compact?: boolean; /** Told whether the copy worked (a touch screen's toast). */ onDone?: (ok: boolean) => void }) {
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle');
   useEffect(() => {
     if (state === 'idle') return;
     const id = setTimeout(() => setState('idle'), 1500);
     return () => clearTimeout(id);
   }, [state]);
-  const run = () => void copyText(typeof text === 'function' ? text() : text).then((ok) => setState(ok ? 'ok' : 'fail'));
+  const run = () => void copyText(typeof text === 'function' ? text() : text).then((ok) => { setState(ok ? 'ok' : 'fail'); onDone?.(ok); });
   const said = state === 'ok' ? '복사됨' : state === 'fail' ? '복사 실패' : null;
   if (!icon && compact) {
     return (

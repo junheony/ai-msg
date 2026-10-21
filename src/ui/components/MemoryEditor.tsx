@@ -57,13 +57,13 @@ export function MemoryEditor({ fetchFn = fetch }: { fetchFn?: typeof fetch }) {
   return (
     <div className="memory-editor" data-testid="memory-editor">
       <label htmlFor="deck-memory"><span>deck 메모</span></label>
-      <textarea id="deck-memory" data-testid="memory-text" rows={6} value={draft} placeholder="예: 답은 한국어로. 회사 저장소는 ~/work 아래에 있음. 배포는 금요일에 하지 않음." onChange={(e) => { setDraft(e.target.value); setStatus(null); }} />
+      <p className="settings-hint" id="deck-memory-hint">모든 엔진(Claude·GPT·Gemini·Grok)이 매 턴 참고하는 메모입니다. 대화 기록에는 남지 않고, 이 서버의 모든 기기가 같이 씁니다.</p>
+      <textarea id="deck-memory" aria-describedby="deck-memory-hint" data-testid="memory-text" rows={6} value={draft} placeholder="예: 답은 한국어로. 회사 저장소는 ~/work 아래에 있음. 배포는 금요일에 하지 않음." onChange={(e) => { setDraft(e.target.value); setStatus(null); }} />
       <div className="memory-foot">
         <span className={over ? 'memory-count over' : 'memory-count'} data-testid="memory-count">{bytes} / {load.max}바이트</span>
         {status && <span className="memory-status" role="status">{status}</span>}
         <button type="button" className="btn" data-testid="memory-save" disabled={!dirty || over || saving} onClick={() => { void save(); }}>{saving ? '저장 중…' : '저장'}</button>
       </div>
-      <p className="muted">모든 엔진(Claude·GPT·Gemini·Grok)이 매 턴 참고하는 메모입니다. 대화 기록에는 남지 않고, 이 서버의 모든 기기가 같이 씁니다.</p>
     </div>
   );
 }

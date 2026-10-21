@@ -17,7 +17,7 @@ import { paneSize } from './paneResize';
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
 
 export type ChatItem =
-  | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number }
+  | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number; /** When it was sent (ms): the transcript's time, or this device's clock for one sent here; absent = unknown. */ at?: number }
   /** A hook's message to the model (e.g. a Stop hook made it keep going): a muted row, collapsed. Never counted as a user message. */
   | { kind: 'system'; source: string; label: string; text: string }
   | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null; /** This client sent an interrupt for this turn (중단, 지금 전송): its error is the stop, not a failure. */ interrupted?: true; /** The model that answered (the server's per-turn model, or the transcript's); absent = unknown. */ model?: string; /** The failed turn's turn_result.errorCode (e.g. 'thread_locked': deck 에서 새 GPT 세션으로 이어가기 is offered). */ errorCode?: 'thread_locked' };
@@ -512,7 +512,10 @@ export type ThinkingInfo = { text: string; redacted: boolean; startedAt: number 
 export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   for (const m of messages) {
-    if (m.kind === 'user') items.push({ kind: 'user', text: m.text, ...(m.n !== undefined ? { n: m.n } : {}) });
+    if (m.kind === 'user') {
+      const at = m.ts ? Date.parse(m.ts) : NaN;
+      items.push({ kind: 'user', text: m.text, ...(m.n !== undefined ? { n: m.n } : {}), ...(Number.isNaN(at) ? {} : { at }) });
+    }
     else if (m.kind === 'system') items.push({ kind: 'system', source: m.source, label: m.label, text: m.text });
     else if (m.kind === 'assistant') {
       const at = m.ts ? Date.parse(m.ts) : NaN;
@@ -600,7 +603,7 @@ function streamingItem(turnId: string): AssistantItem {
   return { kind: 'assistant', turnId, text: '', toolCalls: [], badge: null, streaming: true, error: null, notes: [], attempts: [] };
 }
 
-function promptItem(prompt: TurnPrompt, n?: number): ChatItem {
+function promptItem(prompt: TurnPrompt, n?: number): Extract<ChatItem, { kind: 'user' }> {
   return { kind: 'user', text: prompt.text, ...(prompt.attachments.length ? { attachments: prompt.attachments } : {}), ...(n !== undefined ? { n } : {}) };
 }
 
@@ -860,8 +863,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       if (!q && msg.replay && pane.items.slice(-20).some((it) => it.kind === 'user' && (it.text === msg.prompt.text || it.text.startsWith(`${msg.prompt.text}\n`)))) return pane;
       const n = nextUserN(pane.items, pane.session);
       const bubble: ChatItem = q
-        ? { kind: 'user', text: q.text, ...(q.attachments.length ? { attachments: q.attachments.map(({ id, name, isImage }) => ({ id, name, isImage })) } : {}), ...(n !== undefined ? { n } : {}) }
-        : promptItem(msg.prompt, n);
+        ? { kind: 'user', text: q.text, ...(q.attachments.length ? { attachments: q.attachments.map(({ id, name, isImage }) => ({ id, name, isImage })) } : {}), ...(n !== undefined ? { n } : {}), at: Date.now() }
+        : { ...promptItem(msg.prompt, n), at: Date.now() };
       const items = withSteerBubble(pane.items, msg.turnId, bubble);
       return q ? { ...pane, items, queue: pane.queue.filter((x) => x !== q), ...(pane.queueSendNow === q.id ? { queueSendNow: null } : {}) } : { ...pane, items };
     }
@@ -1365,7 +1368,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...p,
         // The server forks in the parent's mode; the pane shows that mode until the fork's own arrives.
         session: { sessionId: null, cwd: p.session!.cwd, account: null, title: p.session!.title, engine: 'claude', sandbox: null, ...(activePin(state.accounts, p.session!.accountPin) ? { accountPin: p.session!.accountPin } : {}), ...(p.session!.permissionMode ? { permissionMode: p.session!.permissionMode } : {}) },
-        items: [...kept, { kind: 'user', text: action.text, n: action.n }],
+        items: [...kept, { kind: 'user', text: action.text, n: action.n, at: Date.now() }],
         // A refused fork keeps its text (paused in the queue); messages queued for the parent stay, paused.
         activeTurnId: null, myTurns: [], awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingSend: { text: action.text, attachments: [], branch: true }, awaitingBehind: null,
         queue: split.queue, queuePaused: p.queuePaused || split.queue.length > 0,
@@ -1378,7 +1381,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...p,
         // A new session is sent with the picker's model: the session keeps sending it.
         ...(p.session?.sessionId === null ? { modelPicked: true } : {}),
-        items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(n) }],
+        items: [...p.items, { kind: 'user', text: action.text, ...(action.attachments?.length ? { attachments: action.attachments } : {}), ...withN(n), at: Date.now() }],
         routeFit: null,
         awaitingStart: true, awaitingRef: action.clientRef ?? null, awaitingBehind: null, awaitingSend: action.handoff ? null : { text: action.text, attachments: action.attachments ?? [], ...withN(n), at: Date.now() }, attachments: action.keepAttachments ? p.attachments : [], queuePaused: action.keepPaused ? p.queuePaused : false, prefill: null,
         ...(p.activeTurnId === null ? { runStartedAt: Date.now(), progress: null } : {}),

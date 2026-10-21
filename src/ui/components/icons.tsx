@@ -5,6 +5,8 @@ export const CopyIcon = () => <svg {...svg}><rect x="5.5" y="5.5" width="8" heig
 export const CheckIcon = () => <svg {...svg}><path d="M3.5 8.5l3 3 6-7" /></svg>;
 export const RetryIcon = () => <svg {...svg}><path d="M13 8a5 5 0 1 1-1.5-3.6" /><path d="M13 2.8v2.6h-2.6" /></svg>;
 export const EditIcon = () => <svg {...svg}><path d="M10.6 2.9l2.5 2.5L6 12.5l-3 .5.5-3z" /></svg>;
+/** 새 분할: a window split in two (the top bar's split button). */
+export const SplitIcon = () => <svg {...svg}><rect x="2.5" y="3" width="11" height="10" rx="1.6" /><path d="M8 3v10" /></svg>;
 export const ShareIcon = () => <svg {...svg}><path d="M8 10V2.5" /><path d="M5.2 5.2L8 2.4l2.8 2.8" /><path d="M5 7.5H4c-.6 0-1 .4-1 1v4c0 .6.4 1 1 1h8c.6 0 1-.4 1-1v-4c0-.6-.4-1-1-1h-1" /></svg>;
 
 /** 고정됨 pin (sidebar rows, new-chat cards); filled when pinned. */

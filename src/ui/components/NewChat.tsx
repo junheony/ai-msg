@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
-import { CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_SANDBOX_LABEL, SANDBOX_LABEL, type CodexSandbox, type EngineChoice } from '../../shared/models';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { DEFAULT_SANDBOX, type CodexSandbox, type Effort, type EngineChoice, type ModelChoice } from '../../shared/models';
+import type { PermMode } from '../../shared/permission';
 import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
 import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
-import { AttachMenu, AttachmentBar } from './AttachmentBar';
+import { AttachmentBar } from './AttachmentBar';
+import { Composer } from './Composer';
+import { SessionChip } from './SessionChip';
 import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
 import { has } from '../features';
-import { touchEnterIsNewline } from './Chat';
+import { modelChoices, touchEnterIsNewline } from './Chat';
 import { PinIcon } from './icons';
 import { useAutoGrow } from '../useAutoGrow';
 import { clearDraft, loadDraft, saveDraft } from '../drafts';
@@ -30,32 +33,18 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-const FolderIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
-    <path d="M2 4.5c0-.6.4-1 1-1h3.2l1.4 1.5H13c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H3c-.6 0-1-.4-1-1z" />
-  </svg>
-);
-
 /** The engine and sandbox the new session opens with (D3: the engine is fixed once it exists; a GPT sandbox can change later). */
 export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
 
-/** Same markup as Chat's composer picker (`.pick`: ellipsizing label over a transparent native select), so the rows match. */
-function Pick({ className, label, children, ...rest }: { className?: string; label: ReactNode } & Omit<ComponentProps<'select'>, 'className'>) {
-  return (
-    <span className={`pick ${className ?? ''}`} data-disabled={rest.disabled ? '' : undefined}>
-      <span className="pick-label" aria-hidden="true">{label}</span>
-      <select {...rest}>{children}</select>
-    </span>
-  );
-}
-
 /**
- * The empty pane, Desktop-style: greeting, a composer card (auto-growing text; [+] attach, project chip, model, ↑ in
- * its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
+ * The empty pane, Desktop-style: greeting, the same composer card as a chat (session chip — folder, engine, model —
+ * above the auto-growing text; [+] · mic · ↑ in its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, modelPicker, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox }: {
+export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null }: {
   projects: ProjectEntry[];
+  /** The server's default permission mode for a new session (the chip's read-only tail; null = unknown, no tail). */
+  defaultPerm?: PermMode | null;
   /** Pinned session ids in pin order (AppState.pins): shown above 최근 대화 and left out of it. */
   pins?: string[];
   /** Preselected project (the pane's last one); falls back to the first listed. */
@@ -67,8 +56,12 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   onOpenSession?: (sessionId: string, cwd: string, title: string) => void;
   now?: number;
   uploadFn?: UploadFn;
-  /** The pane's model picker: the new session's first turn uses the pane's model. */
-  modelPicker?: ReactNode;
+  /** The pane's model and effort (the session chip's sheet): the new session's first turn uses them. */
+  models?: readonly ModelChoice[];
+  model?: ModelChoice;
+  effort?: Effort | null;
+  onModel?: (m: ModelChoice) => void;
+  onEffort?: (e: Effort | null) => void;
   /** Where the unsent text is kept (see drafts.ts); one per pane, e.g. newChatDraftKey(pane.id). */
   draftKey?: string;
   /** The pane's engine/sandbox the pickers start from (a new session follows the picker, as in Chat). */
@@ -143,13 +136,8 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
     start(mod && sendKey !== 'mod-enter' && (isMacPlatform() ? e.metaKey : e.ctrlKey));
   };
   const edit = (v: string) => { setText(v); saveDraft(draftKey, v); };
-  const geminiReady = !!gemini && (gemini.loggedIn.g1 || gemini.loggedIn.g2);
-  // Grok: offered once the server found the grok CLI (feature 'grok'); a server that knows Grok without the CLI shows it
-  // dimmed when the picker is up; an older server (no hello.grok) not at all.
-  const grokReady = has('grok');
-  const grokShown = grokReady || !!grok;
-  const engineSelect = codexAvailable || !!gemini?.available || grokReady;
-  const sandboxLabel = engine === 'gemini' ? GEMINI_SANDBOX_LABEL : SANDBOX_LABEL;
+  // The sandbox row follows the engine picker (shown only when another engine than Claude is available).
+  const engineSelect = codexAvailable || !!gemini?.available || has('grok');
   const remove = (id: string) => setAttachments((all) => {
     const url = all.find((a) => a.id === id)?.previewUrl;
     if (url) URL.revokeObjectURL(url);
@@ -173,47 +161,44 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
         {projects.length === 0 ? (
           <p className="muted">프로젝트가 없습니다. 사이드바의 폴더 열기로 시작하거나 ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</p>
         ) : (
-          <form className={`newchat-box ${drag ? 'dragover' : ''}`} onSubmit={(e) => { e.preventDefault(); start(); }}
+          <form className="newchat-box" onSubmit={(e) => { e.preventDefault(); start(); }}
             onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
             onDrop={(e) => { e.preventDefault(); setDrag(false); const files = filesFrom(e.dataTransfer); if (files.length) void addFiles(files); }}>
-            <textarea ref={taRef} value={text} onChange={(e) => edit(e.target.value)} rows={2} placeholder="무엇을 도와드릴까요?" aria-label="첫 메시지"
-              name="deck-message" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore="" data-lpignore="true"
-              onPaste={onPaste}
-              onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey && !touchEnterIsNewline())} />
-            {(attachments.length > 0 || uploading > 0 || error) && (
-              <div className="newchat-files"><AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} onReplace={replace} pastedTexts={pastedTexts} /></div>
-            )}
-            <div className="newchat-row">
-              <AttachMenu onFiles={(f) => void addFiles(f)} />
-              <label className="newchat-project" title={cwd ?? ''}>
-                <FolderIcon />
-                <span className="sr-only">프로젝트</span>
-                <select value={cwd ?? ''} onChange={(e) => setPicked(e.target.value)} onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey)} aria-label="프로젝트">
-                  {pinned.length > 0 && <optgroup label="고정">{pinned.map(option)}</optgroup>}
-                  {others.length > 0 && <optgroup label="최근">{others.map(option)}</optgroup>}
-                </select>
-              </label>
-              <span className="newchat-actions">
-                {engineSelect && (
-                  <Pick label={engine === 'codex' ? 'GPT' : engine === 'gemini' ? 'Gemini' : engine === 'grok' ? 'Grok' : engine === 'auto' ? '자동' : 'Claude'} value={engine}
-                    onChange={(e) => { const v = e.target.value as EngineChoice; setEngine(v); onEngine?.(v); }} title="이 세션의 엔진 (세션 생성 후 변경 불가)" aria-label="엔진" data-testid="engine-select">
-                    <option value="claude">Claude</option>
-                    {codexAvailable && <option value="codex">GPT</option>}
-                    {gemini?.available && <option value="gemini" disabled={!geminiReady} title={geminiReady ? undefined : 'docs/gemini-spike.md 의 로그인 명령을 먼저 실행하세요'}>{geminiReady ? 'Gemini' : 'Gemini · 로그인 필요'}</option>}
-                    {grokShown && <option value="grok" disabled={!grokReady} title={grokReady ? undefined : 'grok CLI 가 없습니다 — README 의 설치 명령 후 grok login'}>{grokReady ? 'Grok' : 'Grok · 설치 필요'}</option>}
-                    {codexAvailable && <option value="auto">자동</option>}
-                  </Pick>
-                )}
-                {engineSelect && engine !== 'claude' && engine !== 'grok' && (
-                  <Pick className="sandbox" label={sandboxLabel[sandbox]} value={sandbox} onChange={(e) => { const v = e.target.value as CodexSandbox; setSandbox(v); onSandbox?.(v); }}
-                    title={engine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 카드 없음 · 세션을 만든 뒤에도 바꿀 수 있음)'} aria-label="샌드박스" data-testid="sandbox-select">
-                    {CODEX_SANDBOXES.map((x) => <option key={x} value={x}>{sandboxLabel[x]}</option>)}
-                  </Pick>
-                )}
-                {modelPicker}
-                <button type="submit" className="send" disabled={!canStart} title={sendLabel} aria-label={sendLabel}><span aria-hidden="true">↑</span></button>
-              </span>
-            </div>
+            <Composer
+              dragover={drag}
+              chip={(
+                <SessionChip
+                  isNew
+                  defaultPerm={defaultPerm}
+                  folder={project?.name ?? null}
+                  folderPicker={(
+                    <label className="ss-project" title={cwd ?? ''}>
+                      <span className="sr-only">프로젝트</span>
+                      <select value={cwd ?? ''} onChange={(e) => setPicked(e.target.value)} onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey)} aria-label="프로젝트">
+                        {pinned.length > 0 && <optgroup label="고정">{pinned.map(option)}</optgroup>}
+                        {others.length > 0 && <optgroup label="최근">{others.map(option)}</optgroup>}
+                      </select>
+                    </label>
+                  )}
+                  engine={engine}
+                  engines={{ codexAvailable, gemini, grok, onEngine: (v) => { setEngine(v); onEngine?.(v); } }}
+                  sandbox={engineSelect ? { value: sandbox, onChange: (v) => { setSandbox(v); onSandbox?.(v); } } : null}
+                  models={models ?? modelChoices(engine)} model={model} effort={effort} onModel={(m) => onModel?.(m)} onEffort={(e) => onEffort?.(e)}
+                />
+              )}
+              files={(attachments.length > 0 || uploading > 0 || error)
+                ? <AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} onReplace={replace} pastedTexts={pastedTexts} />
+                : null}
+              onFiles={(f) => void addFiles(f)}
+              text={text}
+              onText={edit}
+              action={<button type="submit" className="send" disabled={!canStart} title={sendLabel} aria-label={sendLabel}><span aria-hidden="true">↑</span></button>}
+            >
+              <textarea ref={taRef} value={text} onChange={(e) => edit(e.target.value)} rows={2} placeholder="무엇을 도와드릴까요?" aria-label="첫 메시지"
+                name="deck-message" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore="" data-lpignore="true"
+                onPaste={onPaste}
+                onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey && !touchEnterIsNewline())} />
+            </Composer>
           </form>
         )}
         {pinnedCards.length > 0 && onOpenSession && (

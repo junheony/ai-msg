@@ -72,6 +72,20 @@ describe('parseTranscript', () => {
       { kind: 'assistant', text: 'Done.', model: 'claude-opus-5-5', toolCalls: [], ts: 't4' },
     ]);
   });
+
+  it('a user message carries its own send time (the record timestamp), a prompt queued mid-turn too — the UI\'s time dividers go by it', () => {
+    const msgs = parseTranscript([
+      L({ type: 'user', uuid: 'u0', timestamp: '2026-10-21T02:50:00.000Z', message: { role: 'user', content: '오래 걸릴 일' } }),
+      L({ type: 'assistant', uuid: 'a0', parentUuid: 'u0', timestamp: '2026-10-21T03:21:00.000Z', message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'text', text: '끝났어요' }] } }),
+      L({ type: 'attachment', timestamp: '2026-10-21T03:05:00.000Z', attachment: { type: 'queued_command', prompt: '중간에 하나 더', source_uuid: 'q1' } }),
+      L({ type: 'user', uuid: 'u1', message: { role: 'user', content: '시각 없음' } }),
+    ].join('\n'));
+    expect(msgs.filter((m) => m.kind === 'user').map((m) => [m.text, m.ts])).toEqual([
+      ['오래 걸릴 일', '2026-10-21T02:50:00.000Z'],
+      ['중간에 하나 더', '2026-10-21T03:05:00.000Z'],
+      ['시각 없음', null],
+    ]);
+  });
 });
 
 describe('parseTranscript — context usage', () => {

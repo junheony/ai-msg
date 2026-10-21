@@ -123,11 +123,11 @@ describe('file chip menu', () => {
     vi.useFakeTimers();
     const { open } = renderReply('`src/a.ts`');
     const chip = screen.getByRole('button', { name: 'src/a.ts' });
-    fireEvent.pointerDown(chip, { pointerType: 'touch', pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerDown(chip, { pointerType: 'touch', isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 });
     fireEvent.pointerMove(chip, { pointerType: 'touch', pointerId: 1, clientX: 10, clientY: 40 });
     act(() => { vi.advanceTimersByTime(LONG_PRESS_MS + 10); });
     expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.pointerDown(chip, { pointerType: 'touch', pointerId: 2, clientX: 10, clientY: 10 });
+    fireEvent.pointerDown(chip, { pointerType: 'touch', isPrimary: true, pointerId: 2, clientX: 10, clientY: 10 });
     act(() => { vi.advanceTimersByTime(LONG_PRESS_MS + 10); });
     expect(screen.getByRole('menu')).toBeTruthy();
     fireEvent.click(chip);

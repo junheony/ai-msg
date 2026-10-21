@@ -5,7 +5,7 @@ import { useReducer } from 'react';
 import type { ClientMessage, ServerMessage } from '../../shared/protocol';
 import { emptySnapshot, type UsageSnapshot } from '../../shared/usage-types';
 import { initialState, reducer, type AppState } from '../state';
-import { AccountPicker } from './AccountPicker';
+import { AccountChipName, AccountMenu } from './AccountPicker';
 import { Pane } from './Pane';
 import { TurnBadge } from './TurnBadge';
 
@@ -24,32 +24,31 @@ describe('AccountPicker', () => {
 
   it('shows 자동 · current letter, lists 자동 / A (Desktop) / B / C with their 5h and weekly %, reports the pick', () => {
     const onPin = vi.fn();
-    render(<AccountPicker pin={null} current="b" usage={usage()} onPin={onPin} />);
+    render(<><AccountChipName pin={null} current="b" /><AccountMenu pin={null} usage={usage()} onPin={onPin} /></>);
     expect(screen.getByTestId('account-picker').textContent).toContain('자동 · B');
-    expect(screen.queryByTestId('account-menu')).toBeNull();
-    fireEvent.click(screen.getByTestId('account-picker'));
+    expect(screen.getByTestId('account-picker').getAttribute('aria-label')).toBe('계정: 자동 · B');
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
     expect(items.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['자동', 'A (Desktop)', 'B', 'C']);
     expect(items[0]!.getAttribute('aria-checked')).toBe('true');
     expect(items[1]!.textContent).toContain('5h 12% · 주간 70% · Fable 85%');
-    expect(items[2]!.textContent).toContain('5h 40% · 주간 60% · Fable —%');
-    expect(items[3]!.textContent).toContain('5h —% · 주간 —% · Fable —%');
+    expect(items[2]!.textContent).toContain('5h 40% · 주간 60%');
+    expect(items[2]!.textContent).not.toContain('Fable');
+    // No known window: no desc line at all (not "5h —% · 주간 —% · Fable —%").
+    expect(items[3]!.textContent).not.toContain('—');
+    expect(items[3]!.querySelector('.mp-desc')).toBeNull();
     fireEvent.click(items[2]!);
     expect(onPin).toHaveBeenCalledWith('b');
-    expect(screen.queryByTestId('account-menu')).toBeNull();
   });
 
-  it('pinned: the button shows the pinned letter; choosing 자동 clears it; re-choosing the same pin does nothing', () => {
+  it('pinned: the chip shows the pinned letter; choosing 자동 clears it; re-choosing the same pin does nothing', () => {
     const onPin = vi.fn();
-    render(<AccountPicker pin="a" current="b" usage={null} onPin={onPin} />);
-    const btn = screen.getByTestId('account-picker');
-    expect(btn.textContent).toContain('A');
-    expect(btn.textContent).not.toContain('자동');
-    expect(btn.getAttribute('aria-label')).toBe('계정: A (Desktop) 고정');
-    fireEvent.click(btn);
+    render(<><AccountChipName pin="a" current="b" /><AccountMenu pin="a" usage={null} onPin={onPin} /></>);
+    const chip = screen.getByTestId('account-picker');
+    expect(chip.textContent).toContain('A');
+    expect(chip.textContent).not.toContain('자동');
+    expect(chip.getAttribute('aria-label')).toBe('계정: A (Desktop) 고정');
     fireEvent.click(within(screen.getByTestId('account-menu')).getByText('A (Desktop)'));
     expect(onPin).not.toHaveBeenCalled();
-    fireEvent.click(btn);
     fireEvent.click(within(screen.getByTestId('account-menu')).getByText('자동'));
     expect(onPin).toHaveBeenCalledWith(null);
   });
@@ -80,7 +79,7 @@ describe('Pane · account pin', () => {
   it('a new session sends its pin with the first turn; an existing one sends set_account_pin and follows the server', () => {
     const frames: ClientMessage[] = [];
     harness({ ...reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' }), usage: usage() }, frames);
-    fireEvent.click(screen.getByTestId('account-picker'));
+    fireEvent.click(screen.getByTestId('session-chip'));
     fireEvent.click(within(screen.getByTestId('account-menu')).getByText('B'));
     expect(frames).toEqual([]);
     fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: 'hi' } });
@@ -92,7 +91,7 @@ describe('Pane · account pin', () => {
     const server = harness(reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' }), frames2);
     server({ type: 'history', sessionId: 's1', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, accountPin: 'c', messages: [], runningTurnId: null });
     expect(screen.getByTestId('account-picker').textContent).toContain('C');
-    fireEvent.click(screen.getByTestId('account-picker'));
+    fireEvent.click(screen.getByTestId('session-chip'));
     fireEvent.click(within(screen.getByTestId('account-menu')).getByText('자동'));
     expect(frames2).toEqual([{ type: 'set_account_pin', sessionId: 's1', pin: null }]);
     expect(screen.getByTestId('account-picker').textContent).toContain('자동 · B');
