@@ -100,7 +100,7 @@
         <div class="settings-row"><span>같은 벤더 계정 자동 순환</span><div class="seg" role="group"><button type="button" aria-pressed="true">끄기</button><button type="button" aria-pressed="false">켜기</button></div></div>
         <div class="settings-hint"><p>꺼 두면 세션은 고른 Claude 계정에만 머뭅니다. <button type="button" class="hint-more" aria-expanded="false">자세히</button></p></div>
         <div class="settings-row grok-locked" role="alert"><span class="grok-locked-why">Grok 엔진 잠김 — 안전 장치 작동: 15분 동안 같은 파일을 40번 넘게 고쳐 쓰는 반복이 감지되어 src/ui/components/really/long/nested/path/SettingsView.tsx 에서 멈췄습니다</span><button type="button" class="btn">잠금 해제</button></div>
-        <div class="settings-hint"><p>계정별 5시간·주간 한도는 상단 사용량 칩의 시트에서 봅니다.</p></div>
+        <div class="settings-hint"><p>계정별 5시간·주간 한도는 상단 사용량 띠를 눌러 시트에서 봅니다.</p></div>
       </section>
     </div>
   </div>
@@ -118,9 +118,9 @@
         </span></div>
       </div>
     </div>
-    <button type="button" class="usage-chip ok" aria-label="정상"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">42%</span></button>
     <div class="topbar-end"><button type="button" class="activity-btn lvl-idle" aria-label="활동"><span class="activity-dot"></span></button></div>
   </header>
+  <div class="usage-strip-row"><button type="button" class="usage-strip" aria-label="계정별 사용량"><span class="usage-seg ok" data-current=""><span class="usage-seg-who">A</span><span class="usage-seg-num">42%</span></span><span class="usage-seg ok"><span class="usage-seg-who">B</span><span class="usage-seg-num">18%</span></span></button></div>
   <div class="panes" data-count="1" style="--cols: 1">
     <div class="pane-switch" role="group" aria-label="분할">
       <button type="button" data-tab="p0" class="on" aria-pressed="true"><span class="tab-pill">1 · deck UI 개편 — 6단계 설정·메뉴·분할 정리</span></button>
