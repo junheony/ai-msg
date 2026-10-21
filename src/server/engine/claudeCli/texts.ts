@@ -1,4 +1,5 @@
 // src/server/engine/claudeCli/texts.ts
+import type { RateLimitSignal } from '../Engine';
 import { classifyFailure } from '../limitDetect';
 import { MIN_CLAUDE_VERSION } from './version';
 /** The handoff-note turn (TurnRequest.noTools): what a denied tool call tells the model. */
@@ -48,12 +49,14 @@ export function fastModeKind(text: string, failed = false): FastModeKind | null 
 }
 
 /**
- * ⚡ 빠르게: the fast-mode kind of a failed fast turn, read from its error text only (never stderr). An auth failure or a
- * plan-limit line (limitDetect) keeps its own handling (failover, cooldown): null then, as for any other error.
+ * ⚡ 빠르게: the fast-mode kind of a failed fast turn, read from its error text only (never stderr). A limit of any kind
+ * on a fast turn is one too (`cooldown`): never a cooldown / failover / retry on another account, which would bill that
+ * account's credits fast again — the person picks 표준으로 다시 보내기. Only an auth failure keeps its own handling.
  */
-export function fastFailureKind(errorText: string | null, errorKind: string | null): FastModeKind | null {
-  if (classifyFailure({ ok: false, errorText, errorKind, rateLimitStatus: null }) !== 'other') return null;
-  return fastModeKind(errorText ?? '', true);
+export function fastFailureKind(errorText: string | null, errorKind: string | null, rateLimitStatus: RateLimitSignal['status'] | null = null): FastModeKind | null {
+  const base = classifyFailure({ ok: false, errorText, errorKind, rateLimitStatus });
+  if (base === 'auth') return null;
+  return fastModeKind(errorText ?? '', true) ?? (base === 'limit' ? 'cooldown' : null);
 }
 
 /** What a fast-mode line means for the person: `failed` = the turn failed on it (nothing is retried by itself), else the CLI went on at standard speed. */

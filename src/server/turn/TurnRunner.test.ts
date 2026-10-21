@@ -1751,10 +1751,24 @@ describe('TurnRunner — ⚡ 빠르게', () => {
     expect(c.deps.store.get('fr1')?.pendingRetry).toBeUndefined();
   });
   it.each([
-    ['a plan-limit line', 'API Error: 429 Fast mode rate limit exceeded'],
-    ['an auth failure', 'Failed to authenticate (fast mode)'],
-  ])('a fast turn failing on %s keeps the usual handling (moves account), never fast_refused', async (_what, text) => {
-    const eng = new StubEngine((_r, call) => (call === 0 ? [{ kind: 'init', sessionId: 'fl1', model: 'm' }, failResult(text, { sessionId: 'fl1' })] : ok('fl1')));
+    ['a plan-limit line naming fast mode', [failResult('API Error: 429 Fast mode rate limit exceeded', { sessionId: 'fl1' })]],
+    ['a plain plan-limit line', [failResult('API Error: 429 usage limit reached', { sessionId: 'fl1' })]],
+    ['a rejected rate limit', [{ kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('Request failed', { sessionId: 'fl1' })]],
+  ] as [string, EngineEvent[]][])('a fast turn failing on %s: no cooldown, no other account, no retry — 표준으로 다시 보내기', async (_what, tail) => {
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fl1', model: 'm' }, ...tail]);
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    // No second call — and none that could carry fast onto another account's credits.
+    expect(eng.calls.length).toBe(1);
+    expect(eng.calls.slice(1).every((call) => !call.fast)).toBe(true);
+    expect(readCooldownUntilMs(c.deps.cooldownDir, eng.calls[0]!.account, NOW)).toBeNull();
+    expect(msgsOf(c, 'turn_retry')).toEqual([]);
+    expect(c.moves).toEqual([]);
+    expect(c.deps.store.get('fl1')?.pendingRetry).toBeUndefined();
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: false, errorCode: 'fast_refused' });
+  });
+  it('a fast turn failing on auth keeps the usual handling (moves account), never fast_refused', async () => {
+    const eng = new StubEngine((_r, call) => (call === 0 ? [{ kind: 'init', sessionId: 'fa1', model: 'm' }, failResult('Failed to authenticate (fast mode)', { sessionId: 'fa1' })] : ok('fa1')));
     const c = await ctx(eng);
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
     expect(eng.calls.length).toBe(2);

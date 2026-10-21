@@ -165,12 +165,15 @@ describe('fastModeKind', () => {
     expect(fastModeKind('API Error: 500', true)).toBeNull();
     for (const k of ['org', 'exhausted', 'off', 'cooldown'] as const) expect(fastModeText(k, true)).not.toContain('다시 시도');
   });
-  it('fastFailureKind: an auth failure or plan-limit line keeps its own handling', () => {
+  it('fastFailureKind: any limit on a fast turn is a fast refusal; only an auth failure keeps its own handling', () => {
     expect(fastFailureKind('Fast mode usage credits exhausted', null)).toBe('exhausted');
-    expect(fastFailureKind('API Error: 429 Fast mode rate limit exceeded', null)).toBeNull();
+    expect(fastFailureKind('API Error: 429 Fast mode rate limit exceeded', null)).toBe('cooldown');
+    expect(fastFailureKind('API Error: 429', null)).toBe('cooldown');
+    expect(fastFailureKind('boom', 'rate_limit')).toBe('cooldown');
+    expect(fastFailureKind('boom', null, 'rejected')).toBe('cooldown');
     expect(fastFailureKind('Failed to authenticate (fast mode)', null)).toBeNull();
     expect(fastFailureKind('Fast mode unavailable', 'authentication_failed')).toBeNull();
-    expect(fastFailureKind('Fast mode unavailable', 'rate_limit')).toBeNull();
+    expect(fastFailureKind('API Error: 500', null)).toBeNull();
     expect(fastFailureKind(null, null)).toBeNull();
   });
 });

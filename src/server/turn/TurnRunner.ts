@@ -123,8 +123,8 @@ export { FAST_FELL_BACK_NOTE, FAST_NOTE };
 export const FAST_OFF_NOTICE = '⚡ 사용 크레딧이 떨어져 이 세션의 ↯ 빠르게를 껐습니다';
 const FAST_SAID_MAX = 500;
 /** ⚡ A fast turn's failure that is about fast mode itself (claudeCli/texts fastFailureKind): never a plan limit. */
-function fastFailureOf(p: TurnParams, ev: { ok: boolean; errorText: string | null; errorKind: string | null }, aborted: boolean): FastModeKind | null {
-  return fastTurn(p) && !ev.ok && !aborted ? fastFailureKind(ev.errorText, ev.errorKind) : null;
+function fastFailureOf(p: TurnParams, ev: { ok: boolean; errorText: string | null; errorKind: string | null }, aborted: boolean, rateLimitStatus: RateLimitSignal['status'] | null = null): FastModeKind | null {
+  return fastTurn(p) && !ev.ok && !aborted ? fastFailureKind(ev.errorText, ev.errorKind, rateLimitStatus) : null;
 }
 
 /** A commanderHop turn on a Codex/Gemini/Grok session (총사령탑 v1 = Claude only): refused, never run ungated. */
@@ -2142,7 +2142,7 @@ export class TurnRunner {
       if (res.ok) deps.usage.noteTurnOk(account);
       // ⚡ A fast turn refused for fast mode / credits: shown as it is, no cooldown, no account move, no booked retry —
       // the person picks 표준으로 다시 보내기 (errorCode). Credits used up turn the session's switch off (fastOff).
-      const fastFailed = fastFailureOf(p, res, sink.signal.aborted);
+      const fastFailed = fastFailureOf(p, res, sink.signal.aborted, a.rateLimit?.status ?? null);
       const failure = fastFailed ? 'other' : classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
       const fastOff = fastTurn(p) && (fastFailed ?? a.fastKind) === 'exhausted';
       const badge = { account, model, reason, usage: res.usage, modelNote: res.ok && fastTurn(p) && a.fastKind ? FAST_FELL_BACK_NOTE : note, ...pinMark() };
