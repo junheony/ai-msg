@@ -1,0 +1,114 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- 메시지 메타·액션 fixture for scripts/render-check.sh (keep in step with MessageView.tsx / TurnBadge.tsx / Chat.tsx):
+     a few turns with time dividers ("오전 11:50" centred, a later one after a pause), each reply's turn meta as one pill
+     (model · account, a dot for a cache note), the last reply's action row always shown, an earlier reply hovered.
+     Desktop: the first pill opened (tokens · reason · cache line). Phone (≤720px): 412px iframes of this page —
+     the plain conversation, then the long-press sheet open on an earlier reply (복사 · 다시 생성 · 다른 모델로 → models).
+     Tall: RENDER_HEIGHT=1800. 412px needs an iframe (headless Chrome will not go below 500):
+       RENDER_HEIGHT=1800 scripts/render-check.sh message-actions 412 1440 -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  /* Static capture: no fade or slide-in while the file:// stylesheet lands. */
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
+  .fx-name { margin: 14px 20px 6px; font-size: 12px; color: var(--muted); }
+  .fx .chat { position: relative; height: auto; }
+  .fx .chat-body { overflow: visible; }
+  .fx .turn-badge { position: relative; }
+  .fx-hover .msg-actions { opacity: 1; }
+  .fx-phones { display: none; }
+  .fx-phones iframe { display: block; width: 412px; height: 860px; border: 0; border-bottom: 1px solid var(--line); }
+  @media (max-width: 720px) { .fx-top .fx { display: none; } .fx-top .fx-phones { display: block; } }
+</style>
+<script>
+  // At the top level on a narrow window, show 412px frames of this page (the conversation, then the sheet open).
+  if (window === window.top) document.documentElement.classList.add('fx-top');
+</script>
+</head><body>
+
+<div class="fx-phones">
+  <div class="fx-name">폰 412 — 마지막 답장만 액션 상시 · 알약 · 시간 구분선</div>
+  <iframe src="message-actions.html?phone" title="phone"></iframe>
+  <div class="fx-name">폰 412 — 앞 답장 길게 누르기 → 메뉴 시트 (다른 모델로 펼침)</div>
+  <iframe src="message-actions.html?sheet" title="sheet"></iframe>
+</div>
+
+<div class="fx panes" data-count="1"><main class="chat"><div class="chat-body">
+
+  <div class="msg-time" data-testid="msg-time"><time>오전 11:50</time></div>
+  <div class="msg user">
+    <pre>설정 화면에서 글자 크기 옵션은 어디에 있어요?</pre>
+    <div class="msg-actions" data-testid="user-actions">
+      <button type="button" class="msg-act" aria-label="메시지 복사"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"></rect><path d="M10.5 5.5V3.6c0-.6-.5-1.1-1.1-1.1H3.6c-.6 0-1.1.5-1.1 1.1v5.8c0 .6.5 1.1 1.1 1.1h1.9"></path></svg></button>
+      <button type="button" class="msg-act" aria-label="편집"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5L6 12.5l-3 .5.5-3z"></path></svg></button>
+    </div>
+  </div>
+  <div class="msg assistant fx-hover-target">
+    <div class="markdown"><p><strong>설정 → 보기</strong>에 있어요. 슬라이더로 90%에서 130%까지 고를 수 있어요.</p></div>
+    <div class="turn-foot">
+      <details class="turn-badge fx-open-pill" data-testid="turn-badge">
+        <summary class="tb-pill"><span class="tb-model">Opus</span><span class="acct acct-active" data-acct-idx="0" title="계정 A"><span class="acct-name">A</span></span></summary>
+        <div class="tb-detail">
+          <span class="tb-tokens"><span>입력 <b>1.2k</b></span><span>출력 <b>340</b></span><span>캐시 읽기 <b>900</b></span><span>캐시 쓰기 <b>0</b></span></span>
+          <span class="reason">가장 여유</span>
+        </div>
+      </details>
+      <div class="msg-actions" data-testid="turn-actions">
+        <button type="button" class="msg-act" aria-label="응답 복사"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"></rect><path d="M10.5 5.5V3.6c0-.6-.5-1.1-1.1-1.1H3.6c-.6 0-1.1.5-1.1 1.1v5.8c0 .6.5 1.1 1.1 1.1h1.9"></path></svg></button>
+        <button type="button" class="msg-act" aria-label="다시 생성"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"></path><path d="M13 2.8v2.6h-2.6"></path></svg></button>
+        <button type="button" class="msg-act regen-caret" aria-label="다른 모델로 다시 생성" aria-haspopup="menu" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="msg-time" data-testid="msg-time"><time>오후 2:05</time></div>
+  <div class="msg user">
+    <pre>기본값으로 되돌리는 버튼도 있나요?</pre>
+    <div class="msg-actions" data-testid="user-actions">
+      <button type="button" class="msg-act" aria-label="메시지 복사"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"></rect><path d="M10.5 5.5V3.6c0-.6-.5-1.1-1.1-1.1H3.6c-.6 0-1.1.5-1.1 1.1v5.8c0 .6.5 1.1 1.1 1.1h1.9"></path></svg></button>
+      <button type="button" class="msg-act" aria-label="편집"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5L6 12.5l-3 .5.5-3z"></path></svg></button>
+    </div>
+  </div>
+  <div class="msg-versions" data-testid="msg-versions"><button type="button" class="msg-act" aria-label="이전 버전">‹</button><span>2/2</span><button type="button" class="msg-act" aria-label="다음 버전" disabled>›</button></div>
+  <div class="msg assistant last">
+    <div class="markdown"><p>네, 슬라이더 오른쪽의 <strong>기본값</strong> 버튼을 누르면 100%로 돌아가요. 바꾼 값은 이 기기에만 저장돼요.</p></div>
+    <div class="turn-foot">
+      <details class="turn-badge" data-testid="turn-badge">
+        <summary class="tb-pill"><span class="tb-model">Sonnet</span><span class="acct acct-active" data-acct-idx="1" title="계정 B"><span class="acct-name">B</span></span><span class="tb-dot" data-testid="badge-dot"><span class="sr-only">캐시 알림</span></span></summary>
+        <div class="tb-detail">
+          <span class="tb-tokens"><span>입력 <b>1.2k</b></span><span>출력 <b>340</b></span><span>캐시 읽기 <b>900</b></span><span class="tb-cold">캐시 쓰기 <b>4.2k</b></span></span>
+          <span class="reason">가장 여유</span>
+          <span class="tb-cache">캐시 새로 씀 · 모델 바뀜</span>
+        </div>
+      </details>
+      <div class="msg-actions" data-testid="turn-actions">
+        <button type="button" class="msg-act" aria-label="응답 복사"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"></rect><path d="M10.5 5.5V3.6c0-.6-.5-1.1-1.1-1.1H3.6c-.6 0-1.1.5-1.1 1.1v5.8c0 .6.5 1.1 1.1 1.1h1.9"></path></svg></button>
+        <button type="button" class="msg-act" aria-label="재시도"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"></path><path d="M13 2.8v2.6h-2.6"></path></svg></button>
+        <button type="button" class="msg-act regen-caret" aria-label="다른 모델로 다시 생성" aria-haspopup="menu" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></button>
+      </div>
+    </div>
+  </div>
+
+</div></main></div>
+
+<template id="fx-sheet">
+  <div class="msg-sheet-root"><div class="sheet-backdrop"><div class="sheet msg-sheet" role="dialog" aria-modal="true" aria-label="메시지 메뉴">
+    <div class="msg-sheet-list" data-testid="msg-sheet">
+      <button type="button" class="msg-sheet-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"></rect><path d="M10.5 5.5V3.6c0-.6-.5-1.1-1.1-1.1H3.6c-.6 0-1.1.5-1.1 1.1v5.8c0 .6.5 1.1 1.1 1.1h1.9"></path></svg>복사</button>
+      <button type="button" class="msg-sheet-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"></path><path d="M13 2.8v2.6h-2.6"></path></svg>다시 생성</button>
+      <button type="button" class="msg-sheet-item" aria-expanded="true"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg>다른 모델로 다시 생성</button>
+      <div class="msg-sheet-models" role="group" aria-label="다시 생성할 모델">
+        <button type="button" class="msg-sheet-item sub on">Opus<span class="msg-sheet-hint">지금 모델</span></button>
+        <button type="button" class="msg-sheet-item sub">Sonnet</button>
+      </div>
+      <button type="button" class="msg-sheet-item close">닫기</button>
+    </div>
+  </div></div></div>
+</template>
+<script>
+  const q = location.search;
+  // The desktop view shows the first reply hovered and its pill open; the phone frames show neither.
+  if (!q) { document.querySelector('.fx-hover-target').classList.add('fx-hover'); document.querySelector('.fx-open-pill').open = true; }
+  if (q === '?sheet') document.body.append(document.getElementById('fx-sheet').content.cloneNode(true));
+</script>
+</body></html>

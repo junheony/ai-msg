@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { shortcutList } from '../shortcuts';
 import { POPUP } from '../composerFocus';
 
@@ -8,6 +8,18 @@ function useEscape(onClose: () => void) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+}
+
+export const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Tab / Shift+Tab wrap inside a sheet (a modal: focus never walks out behind it). */
+export function trapTab(e: ReactKeyboardEvent<HTMLElement>) {
+  if (e.key !== 'Tab') return;
+  const all = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
+  if (!all.length) return;
+  const first = all[0]!;
+  const last = all[all.length - 1]!;
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }
 
 /**

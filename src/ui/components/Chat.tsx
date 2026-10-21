@@ -1,5 +1,6 @@
 import { loadDraft, saveDraft } from '../autoReload';
-import { useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { timeDividers, timeLabel } from '../dateGroups';
 import { CLAUDE_MODELS, CODEX_MODELS, DEFAULT_SANDBOX, GEMINI_MODELS, GROK_MODELS, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
@@ -318,6 +319,7 @@ export function Chat(p: ChatProps) {
   const composing = useRef(false);
   const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
   const keys = useMemo(() => messageKeys(shown), [shown]);
+  const dividers = useMemo(() => timeDividers(shown), [shown]);
   const todos = useMemo(() => latestTodos(p.items), [p.items]);
 
   // Review M12: a failed last turn can be re-sent as-is.
@@ -348,6 +350,9 @@ export function Chat(p: ChatProps) {
   const agentCtx = useMemo<AgentCtx>(() => ({ agents, bgLive, active: turnActive }), [agents, bgLive, turnActive]);
   const suggest = useComposerSuggest({ text, setText, textareaRef: taRef, cwd: p.cwd, sessionId: p.sessionId ?? null, commands: effectiveEngine !== 'codex', ...(p.onHandoff ? { extraCommands: HANDOFF_COMMANDS } : {}) });
   const ctx = useMemo(() => latestContext(p.items), [p.items]);
+  // The last reply's pill carries the cache-expiry dot (TurnBadge ctx); the line above the composer is left for when it cannot.
+  const lastItem = shown[shown.length - 1];
+  const pillCold = lastItem?.kind === 'assistant' && !!lastItem.badge && !!lastItem.ctx && lastItem.ctx === ctx;
   // Message actions: 편집 puts the text back in the composer (sent as a new turn); 재시도 re-sends the last prompt.
   // Stable across keystrokes (refs) so the memoized transcript does not re-render while typing.
   const onSendRef = useRef(p.onSend);
@@ -573,7 +578,15 @@ export function Chat(p: ChatProps) {
         <AgentContext.Provider value={agentCtx}>
           <MessageActionsContext.Provider value={msgActions}>
             <RegenerateContext.Provider value={regen}>
-              {shown.map((it, i) => <MessageView key={keys[i]} item={it} cwd={p.cwd} last={i === shown.length - 1} />)}
+              {shown.map((it, i) => {
+                const at = dividers[i];
+                return (
+                  <Fragment key={keys[i]}>
+                    {at != null && <div className="msg-time" data-testid="msg-time"><time dateTime={new Date(at).toISOString()}>{timeLabel(at)}</time></div>}
+                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} />
+                  </Fragment>
+                );
+              })}
             </RegenerateContext.Provider>
           </MessageActionsContext.Provider>
         </AgentContext.Provider>
@@ -603,7 +616,7 @@ export function Chat(p: ChatProps) {
           </div>
         )}
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
-        {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} />}
+        {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} cold={!pillCold} />}
         {p.composerNote && <div className="pane-notice notice composer-note" role="status" data-testid="composer-note"><span className="pane-notice-text">{p.composerNote}</span></div>}
         {p.onPickCwd && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff-cwd" onClick={p.onPickCwd}>작업 폴더 바꾸기</button>}
         {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>deck Grok 새 세션으로 이어가기</button>}

@@ -114,9 +114,11 @@ export function PointMenu({ x, y, label, items, anchor, onClose }: {
 
 /**
  * Touch long press (≈LONG_PRESS_MS; moving cancels) → `onLong(x, y)`. The click that ends a long press is swallowed so
- * the chip does not also open the panel.
+ * the chip does not also open the panel. `ms`: another wait (a message: 350); `ignore`: a press starting on an element
+ * matching this selector is not one (the controls inside a message keep their own taps and long presses). `onLong`
+ * returning false opened nothing: the click after it goes through.
  */
-export function useLongPress(onLong: (x: number, y: number) => void) {
+export function useLongPress(onLong: (x: number, y: number) => void | boolean, { ms = LONG_PRESS_MS, ignore }: { ms?: number; ignore?: string } = {}) {
   const press = useRef<{ id: number; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const fired = useRef(false);
   const onLongRef = useRef(onLong);
@@ -131,8 +133,9 @@ export function useLongPress(onLong: (x: number, y: number) => void) {
       fired.current = false;
       cancel();
       if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      if (ignore && e.target instanceof Element && e.target.closest(ignore)) return;
       const { clientX: x, clientY: y, pointerId: id } = e;
-      press.current = { id, x, y, timer: setTimeout(() => { press.current = null; fired.current = true; onLongRef.current(x, y); }, LONG_PRESS_MS) };
+      press.current = { id, x, y, timer: setTimeout(() => { press.current = null; fired.current = onLongRef.current(x, y) !== false; }, ms) };
     },
     onPointerMove: (e: ReactPointerEvent) => {
       const p = press.current;

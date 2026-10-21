@@ -4,7 +4,7 @@ import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-type
 import type { TaskInfo } from '../../shared/tasks';
 import type { PaneBackground, PendingPermission, PendingQuestion } from '../state';
 import { pushBlocker } from '../push';
-import { Sheet } from './Dialogs';
+import { FOCUSABLE, Sheet, trapTab } from './Dialogs';
 import { BLOCKER_TEXT, NotifyMenu } from './NotifyMenu';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
@@ -46,20 +46,8 @@ export function idleLabel(lastWorkAt: number | null): string {
   return lastWorkAt === null ? '지금 실행 중인 작업이 없어요' : `지금 실행 중인 작업이 없어요 · ${hhmm(lastWorkAt)} 까지 작업`;
 }
 
-const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 /** A sheet row that can go away under the user's hand (a card answered, a turn stopped, a task cancelled). */
 const ROW = '.act-card, .act-item';
-
-/** Tab / Shift+Tab wrap inside the sheet (a modal: focus never walks out behind it). */
-function trapTab(e: ReactKeyboardEvent<HTMLDivElement>) {
-  if (e.key !== 'Tab') return;
-  const all = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
-  if (!all.length) return;
-  const first = all[0]!;
-  const last = all[all.length - 1]!;
-  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-}
 
 function Section({ title, testId, children }: { title: string; testId: string; children: ReactNode }) {
   return (
