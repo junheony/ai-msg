@@ -10,7 +10,10 @@ export function countdown(resetsAt: string | null, now: number): string {
   if (Number.isNaN(ms) || ms <= 0) return '리셋됨';
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
-  return h >= 24 ? `${Math.floor(h / 24)}일 ${h % 24}시간 후 리셋` : `${h}시간 ${m}분 후 리셋`;
+  // A zero part is left out ("7분", "2시간", "3일"), never "0시간 7분".
+  if (h >= 24) return h % 24 ? `${Math.floor(h / 24)}일 ${h % 24}시간 후 리셋` : `${h / 24}일 후 리셋`;
+  if (!h) return m ? `${m}분 후 리셋` : '1분 안에 리셋';
+  return m ? `${h}시간 ${m}분 후 리셋` : `${h}시간 후 리셋`;
 }
 
 /**

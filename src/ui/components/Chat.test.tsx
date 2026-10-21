@@ -130,7 +130,8 @@ describe('Chat', () => {
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'auto' } });
     expect(onEngine).toHaveBeenCalledWith('auto');
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra')]);
+    expect(Array.from((screen.getByRole('combobox', { name: '추론 수준' }) as HTMLSelectElement).options).map((o) => o.textContent)).toEqual(['낮음', '중간', '높음', '엑스트라']);
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'codex', sessionSandbox: 'workspace-write', model: 'gpt-6-astra' });
     openSheet();
@@ -196,7 +197,8 @@ describe('Chat', () => {
     renderChat([], false, vi.fn(), { isNew: true, codexAvailable: true, engine: 'codex', sessionEngine: 'claude', model: 'gpt-6-sol' });
     openSheet();
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra'), '낮음', '중간', '높음', '엑스트라']);
+    expect(within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra')]);
+    expect(Array.from((screen.getByRole('combobox', { name: '추론 수준' }) as HTMLSelectElement).options).map((o) => o.textContent)).toEqual(['낮음', '중간', '높음', '엑스트라']);
     expect(screen.queryByText(/샌드박스:/)).toBeNull();
   });
 

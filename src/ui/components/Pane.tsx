@@ -404,11 +404,11 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const desktopOpen = useOpenInDesktop(s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
   if (desktopOpen) fileMenu.push({ label: 'Desktop에서 열기', run: desktopOpen, group: 'session' });
   // 보기: 파일 패널 right after 대화에서 찾기 (spec §3.8 order); 명령 팔레트… closes the group (after 새 세션으로 이어가기)
-  // — the phone's only way to ⌘K (and the new-session screen's too).
+  // — phone only: its only way to ⌘K. A desktop has ⌘K and the sidebar's search, and its menu must fit the window.
   if (s) fileMenu.push({ label: side ? '파일 패널 닫기' : '파일 열기', hint: mod('⇧E'), run: () => (side ? closeSide() : openSide({ kind: 'pick' })), group: 'view' });
-  if (onPalette) fileMenu.push({ label: '명령 팔레트…', hint: mod('K'), run: onPalette, group: 'viewEnd' });
-  // 창: split, move, card ⇄ pane (the chip's drag does the same), size, layouts, a new tab, close.
-  if (onAddPane) fileMenu.push({ label: '새 분할', hint: mod('⇧O'), run: onAddPane, group: 'window' });
+  if (onPalette && phone) fileMenu.push({ label: '명령 팔레트…', hint: mod('K'), run: onPalette, group: 'viewEnd' });
+  // 창: split (phone only — a desktop has the top bar's split button and ⌘⇧O), move, card ⇄ pane (the chip's drag does the same), size, layouts, a new tab, close.
+  if (onAddPane && phone) fileMenu.push({ label: '새 분할', hint: mod('⇧O'), run: onAddPane, group: 'window' });
   if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', hint: mod('⌥⇧['), run: onShift.left, group: 'window' });
   if (onShift?.right) fileMenu.push({ label: '오른쪽으로 이동', hint: mod('⌥⇧]'), run: onShift.right, group: 'window' });
   if (floating && onDock) fileMenu.push({ label: '패널에 다시 붙이기', run: onDock, group: 'window' });

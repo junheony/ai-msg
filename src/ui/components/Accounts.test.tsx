@@ -80,7 +80,7 @@ describe('AccountPicker with the configured accounts', () => {
     expect(names()).toEqual(['자동', 'Main', 'Work (Desktop)', 'D', 'Team-2', 'Personal']);
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
     expect(items[1]!.textContent).toContain('5h 10% · 주간 20%');
-    expect(items[2]!.textContent).toContain('5h —% · 주간 —%');
+    expect(items[2]!.querySelector('.mp-desc')).toBeNull();
     fireEvent.click(items[4]!);
     expect(onPin).toHaveBeenCalledWith('team-2');
   });

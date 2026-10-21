@@ -14,11 +14,10 @@ export function PinIcon({ title }: { title?: string }) {
 }
 
 /** 5h · 주간 · Fable — the Fable value is shown so a pin on an account at the Fable cap is visible where the pin is set. */
+/** Only the windows with a value ("5h 40% · 주간 60%"): an unknown one is left out, never "Fable —%". '' with none. */
 function pct(u: AccountUsage | undefined): string {
-  const f = u?.fiveHour?.usedPct;
-  const w = u?.weekly?.usedPct;
-  const fb = u?.fable?.usedPct;
-  return `5h ${f ?? '—'}% · 주간 ${w ?? '—'}% · Fable ${fb ?? '—'}%`;
+  const parts: [string, number | null | undefined][] = [['5h', u?.fiveHour?.usedPct], ['주간', u?.weekly?.usedPct], ['Fable', u?.fable?.usedPct]];
+  return parts.filter(([, v]) => v != null).map(([k, v]) => `${k} ${v}%`).join(' · ');
 }
 
 /**
@@ -69,7 +68,7 @@ export function AccountMenu({ pin, usage, onPin }: {
     <button key={value ?? 'auto'} type="button" role="menuitemradio" aria-checked={value === pin} className={`mp-item ${value === pin ? 'on' : ''}`} onClick={() => choose(value)}>
       <span className="mp-text">
         <span className="mp-name">{name}</span>
-        <span className="mp-desc">{desc}</span>
+        {desc && <span className="mp-desc">{desc}</span>}
       </span>
       <span className="mp-check" aria-hidden="true">{value === pin ? '✓' : ''}</span>
     </button>

@@ -29,11 +29,14 @@ describe('ModelMenu (the session sheet\'s model section)', () => {
     expect(models.map((b) => b.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false']);
     // A single engine: no section header for it, but the effort section is headed.
     expect(menu.queryByText('Claude')).toBeNull();
-    const effort = within(menu.getByRole('group', { name: '추론 수준' }));
-    expect(effort.getAllByRole('menuitemradio').map((b) => [b.textContent, b.getAttribute('aria-checked')])).toEqual([['낮음', 'false'], ['중간', 'false'], ['높음', 'true'], ['엑스트라', 'false']]);
+    // Four levels are over the segment limit (3): a select after the menu, not menu items.
+    expect(menu.queryByRole('group', { name: '추론 수준' })).toBeNull();
+    const effort = screen.getByRole('combobox', { name: '추론 수준' }) as HTMLSelectElement;
+    expect(Array.from(effort.options).map((o) => o.textContent)).toEqual(['낮음', '중간', '높음', '엑스트라']);
+    expect(effort.value).toBe('high');
     fireEvent.click(menu.getByText('Fable 5.1'));
     expect(onModel).toHaveBeenCalledWith('fable');
-    fireEvent.click(effort.getByText('엑스트라'));
+    fireEvent.change(effort, { target: { value: 'xhigh' } });
     expect(onEffort).toHaveBeenCalledWith('xhigh');
   });
 
@@ -49,11 +52,12 @@ describe('ModelMenu (the session sheet\'s model section)', () => {
     const menu = within(screen.getByTestId('model-menu'));
     const models = within(menu.getByRole('group', { name: 'Claude' })).getAllByRole('menuitemradio');
     expect(models.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['자동', 'Sonnet 5.5', 'Opus 5.5', 'Fable 5.1']);
-    const effort = within(menu.getByRole('group', { name: '추론 수준' }));
-    expect(effort.getAllByRole('menuitemradio').map((b) => [b.textContent, b.getAttribute('aria-checked')])).toEqual([['자동', 'true'], ['낮음', 'false'], ['중간', 'false'], ['높음', 'false'], ['엑스트라', 'false']]);
-    fireEvent.click(effort.getByText('낮음'));
+    const effort = screen.getByRole('combobox', { name: '추론 수준' }) as HTMLSelectElement;
+    expect(Array.from(effort.options).map((o) => o.textContent)).toEqual(['자동', '낮음', '중간', '높음', '엑스트라']);
+    expect(effort.value).toBe('');
+    fireEvent.change(effort, { target: { value: 'low' } });
     expect(onEffort).toHaveBeenCalledWith('low');
-    fireEvent.click(effort.getByText('자동'));
+    fireEvent.change(effort, { target: { value: '' } });
     expect(onEffort).toHaveBeenLastCalledWith(null);
     fireEvent.click(menu.getByText('Opus 5.5'));
     expect(onModel).toHaveBeenCalledWith('opus');

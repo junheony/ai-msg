@@ -88,7 +88,16 @@ describe('usage seats in the sheet', () => {
   });
 
   it('countdown reads a zone-less reset time as UTC', () => {
-    expect(countdown('2026-09-30T14:30:00', NOW)).toBe('2시간 0분 후 리셋');
+    expect(countdown('2026-09-30T14:30:00', NOW)).toBe('2시간 후 리셋');
+  });
+
+  it('countdown leaves zero parts out: "7분", "2시간", "3일" — never "0시간 7분"', () => {
+    const at = (ms: number) => new Date(NOW + ms).toISOString();
+    expect(countdown(at(7 * 60_000 + 30_000), NOW)).toBe('7분 후 리셋');
+    expect(countdown(at(30_000), NOW)).toBe('1분 안에 리셋');
+    expect(countdown(at(2 * 3_600_000 + 5 * 60_000), NOW)).toBe('2시간 5분 후 리셋');
+    expect(countdown(at(3 * 86_400_000), NOW)).toBe('3일 후 리셋');
+    expect(countdown(at(3 * 86_400_000 + 4 * 3_600_000), NOW)).toBe('3일 4시간 후 리셋');
   });
 
   it('without a fixed now, the countdown ticks every 30 s', () => {
@@ -96,7 +105,7 @@ describe('usage seats in the sheet', () => {
     vi.setSystemTime(NOW);
     const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
     sheet(u, null, { now: undefined });
-    expect(screen.getByTestId('a-fiveHour').textContent).toContain('2시간 0분');
+    expect(screen.getByTestId('a-fiveHour').textContent).toContain('2시간 후 리셋');
     act(() => { vi.advanceTimersByTime(60_000); });
     expect(screen.getByTestId('a-fiveHour').textContent).toContain('1시간 59분');
   });

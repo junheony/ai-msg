@@ -73,7 +73,7 @@ describe('Pane (D6)', () => {
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    expect(screen.getByRole('menuitemradio', { name: '중간' }).getAttribute('aria-checked')).toBe('true');
+    expect((screen.getByRole('combobox', { name: '추론 수준' }) as HTMLSelectElement).value).toBe('medium');
     const items = within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio');
     expect(items.slice(0, 2).map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra')]);
     expect(items[0]!.getAttribute('aria-checked')).toBe('true');
@@ -94,10 +94,14 @@ describe('Pane (D6)', () => {
     render(<Harness />);
     const p0 = within(screen.getByTestId('pane-p0'));
     const p1 = within(screen.getByTestId('pane-p1'));
-    // The effort the pane's model menu has checked.
-    const checked = (pane: typeof p0) => within(pane.getByTestId('model-menu')).getAllByRole('menuitemradio').filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent);
+    // The model the pane's menu has checked and the effort its select shows (four levels: a select, not a segment).
+    const effortOf = (pane: typeof p0) => pane.getByRole('combobox', { name: '추론 수준' }) as HTMLSelectElement;
+    const checked = (pane: typeof p0) => [
+      ...within(pane.getByTestId('model-menu')).getAllByRole('menuitemradio').filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent),
+      effortOf(pane).selectedOptions[0]?.textContent,
+    ];
     fireEvent.click(p0.getByTestId('session-chip'));
-    fireEvent.click(within(p0.getByTestId('model-menu')).getByText('엑스트라'));
+    fireEvent.change(effortOf(p0), { target: { value: 'xhigh' } });
     expect(checked(p0)).toEqual(['Fable 5.1', '엑스트라']);
     // The other pane keeps the default.
     fireEvent.click(p1.getByTestId('session-chip'));
@@ -440,11 +444,13 @@ describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
     try { fn(); } finally { window.matchMedia = mm; }
   };
 
-  it('보기 › 명령 팔레트… opens the palette, also from a new session (no session yet)', () => {
+  it('phone: 보기 › 명령 팔레트… opens the palette, also from a new session (no session yet)', () => {
     const onPalette = vi.fn();
-    render(<Pane pane={{ ...newPane('p1') }} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} onPalette={onPalette} />);
-    fireEvent.click(screen.getByTestId('session-chip-head'));
-    fireEvent.click(screen.getByRole('menuitem', { name: '명령 팔레트…' }));
+    withPhone(true, () => {
+      render(<Pane pane={{ ...newPane('p1') }} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} onPalette={onPalette} />);
+      fireEvent.click(screen.getByTestId('session-chip-head'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '명령 팔레트…' }));
+    });
     expect(onPalette).toHaveBeenCalledTimes(1);
   });
 
@@ -480,7 +486,7 @@ describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
     expect(shown).toEqual(expect.arrayContaining(['.pane:hover > .pane-head.idle', '.pane-head.idle:focus-within']));
   });
 
-  it('칩 메뉴: all five groups in order — 세션 · 보기 (명령 팔레트… last) · 공유 · 창 · 위험', () => {
+  it('칩 메뉴 (desktop): all five groups in order — 세션 · 보기 · 공유 · 창 · 위험; no 명령 팔레트… / 새 분할 (⌘K and the top bar have them)', () => {
     const entry = { sessionId: 's1', account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 1 };
     const actions = { pins: [], onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn() };
     const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null }, items: [{ kind: 'user', text: 'hi' } as PaneState['items'][number]] };
@@ -494,18 +500,21 @@ describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
     }
     expect(groups).toEqual([
       ['폴더: w ›', '이름 바꾸기', '맨 위에 고정', '보관'],
-      ['대화에서 찾기', '파일 열기', '새 세션으로 이어가기', '명령 팔레트…'],
+      ['대화에서 찾기', '파일 열기', '새 세션으로 이어가기'],
       ['대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기'],
-      ['새 분할', '새 탭으로 떼어내기', '이 창 닫기'],
+      ['새 탭으로 떼어내기', '이 창 닫기'],
       ['삭제…'],
     ]);
   });
 
-  it('보기 group order: 대화에서 찾기 → 파일 열기 → 명령 팔레트…', () => {
+  it('phone: 보기 group order: 대화에서 찾기 → 파일 열기 → 명령 팔레트…', () => {
     const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null }, items: [{ kind: 'user', text: 'hi' } as PaneState['items'][number]] };
-    render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} onPalette={() => {}} />);
-    fireEvent.click(screen.getByTestId('session-chip-head'));
-    const names = screen.getAllByRole('menuitem').map((m) => m.textContent!.replace(/(⌘|Ctrl\+).*$/, ''));
+    let names: string[] = [];
+    withPhone(true, () => {
+      render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} onPalette={() => {}} />);
+      fireEvent.click(screen.getByTestId('session-chip-head'));
+      names = screen.getAllByRole('menuitem').map((m) => m.textContent!.replace(/(⌘|Ctrl\+).*$/, ''));
+    });
     const at = (n: string) => names.indexOf(n);
     expect(at('대화에서 찾기')).toBeGreaterThanOrEqual(0);
     expect(at('대화에서 찾기')).toBeLessThan(at('파일 열기'));
@@ -528,7 +537,7 @@ describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
       expect(screen.getByRole('menuitem', { name: '카드 배치…' })).toBeTruthy();
       // jsdom is not a Mac: the close row's hint is spelled out.
       expect(screen.getByRole('menuitem', { name: '이 창 닫기' }).querySelector('kbd')!.textContent).toBe('Ctrl+Shift+X');
-      expect(screen.getByRole('menuitem', { name: '명령 팔레트…' }).querySelector('kbd')!.textContent).toBe('Ctrl+K');
+      expect(screen.queryByRole('menuitem', { name: '명령 팔레트…' })).toBeNull();
     });
   });
 });

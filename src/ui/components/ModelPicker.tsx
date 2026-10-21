@@ -12,6 +12,9 @@ export function modelLabel(model: ModelChoice, effort: Effort | null): { name: s
  * Claude Desktop-style model list, shown inline in the session chip's sheet: exact model versions (grouped Claude / GPT /
  * Gemini / Grok when more than one is offered) and a reasoning-effort segment limited to what the model supports.
  */
+/** Effort levels shown as a segment row up to this many; more become a select. */
+const EFFORT_SEG_MAX = 3;
+
 export function ModelMenu({ models, model, effort, onModel, onEffort }: {
   models: readonly ModelChoice[];
   model: ModelChoice;
@@ -28,7 +31,13 @@ export function ModelMenu({ models, model, effort, onModel, onEffort }: {
   const grok = models.filter((m) => isGrokModel(m));
   const groups = [{ title: 'Claude', items: claude }, { title: 'GPT', items: gpt }, { title: 'Gemini', items: gemini }, { title: 'Grok', items: grok }].filter((g) => g.items.length);
 
+  // 자동 (model 자동 only) plus the model's levels. Over three they do not fit a segment row: a select instead,
+  // after the menu (a select is not a menu item) — the same rule as the settings' segments (SettingsView SEG_MAX).
+  const effortOptions: [Effort | null, string][] = [...(auto ? [[null, '자동'] as [null, string]] : []), ...efforts.map((e): [Effort, string] => [e, EFFORT_LABEL[e]])];
+  const effortSelect = effortOptions.length > EFFORT_SEG_MAX;
+
   return (
+    <>
     <div className="mp-list" role="menu" aria-label="모델" data-testid="model-menu">
       {groups.map((g) => (
         <div key={g.title} className="mp-section" role="group" aria-label={g.title}>
@@ -51,7 +60,7 @@ export function ModelMenu({ models, model, effort, onModel, onEffort }: {
           ))}
         </div>
       ))}
-      {efforts.length > 0 && (
+      {efforts.length > 0 && !effortSelect && (
         <div className="mp-section" role="group" aria-label="추론 수준">
           <div className="mp-head">추론 수준</div>
           <div className="mp-effort">
@@ -76,5 +85,16 @@ export function ModelMenu({ models, model, effort, onModel, onEffort }: {
         </div>
       )}
     </div>
+    {effortSelect && (
+      <label className="mp-effort-row">
+        <span className="mp-head">추론 수준</span>
+        <select className="mp-effort-select" aria-label="추론 수준" value={effort ?? ''} title={auto ? '자동: Sonnet 중간 · Opus/Fable 높음' : undefined}
+          onChange={(e) => onEffort(e.target.value ? e.target.value as Effort : null)}>
+          {effort === null && !auto && <option value="" disabled>기본</option>}
+          {effortOptions.map(([v, text]) => <option key={v ?? 'auto'} value={v ?? ''}>{text}</option>)}
+        </select>
+      </label>
+    )}
+    </>
   );
 }

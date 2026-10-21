@@ -31,8 +31,11 @@ describe('AccountPicker', () => {
     expect(items.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['자동', 'A (Desktop)', 'B', 'C']);
     expect(items[0]!.getAttribute('aria-checked')).toBe('true');
     expect(items[1]!.textContent).toContain('5h 12% · 주간 70% · Fable 85%');
-    expect(items[2]!.textContent).toContain('5h 40% · 주간 60% · Fable —%');
-    expect(items[3]!.textContent).toContain('5h —% · 주간 —% · Fable —%');
+    expect(items[2]!.textContent).toContain('5h 40% · 주간 60%');
+    expect(items[2]!.textContent).not.toContain('Fable');
+    // No known window: no desc line at all (not "5h —% · 주간 —% · Fable —%").
+    expect(items[3]!.textContent).not.toContain('—');
+    expect(items[3]!.querySelector('.mp-desc')).toBeNull();
     fireEvent.click(items[2]!);
     expect(onPin).toHaveBeenCalledWith('b');
   });

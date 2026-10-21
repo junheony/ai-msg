@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { EngineKind } from '../../shared/models';
 import { EngineMark } from './EngineMark';
@@ -63,6 +63,10 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   const down = useRef<{ x: number; y: number; slop: number } | null>(null);
   const moved = useRef(false);
   const chipRef = useRef<HTMLButtonElement>(null);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  // Desktop menu: as tall as the window allows (scrolling inside past that), opening upward when it does not fit below
+  // and there is more room above.
+  const [place, setPlace] = useState<{ up: boolean; max: number } | null>(null);
   // Rename: the session it started on, and whether the head is still mounted (a session switch remounts it).
   const renameKey = useRef<string | null | undefined>(undefined);
   const keyRef = useRef(sessionKey);
@@ -127,10 +131,28 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   const items = built.map((g, i) => <Fragment key={i}>{i > 0 && <div className="menu-sep" role="separator" />}{g}</Fragment>);
   const label = <><span className="head-chip-title">{engine && <EngineMark engine={engine} />}{title}</span>{hasMenu && <span className="caret" aria-hidden="true">▾</span>}</>;
 
+  useLayoutEffect(() => {
+    if (!open || phone) { setPlace(null); return; }
+    const measure = () => {
+      const wrap = wrapRef.current;
+      const menu = wrap?.querySelector<HTMLElement>('.head-menu');
+      if (!wrap || !menu) return;
+      const r = wrap.getBoundingClientRect();
+      const gap = 4 + 8; // the menu's offset from the chip + a margin to the window edge
+      const below = window.innerHeight - r.bottom - gap;
+      const above = r.top - gap;
+      const up = menu.scrollHeight > below && above > below;
+      setPlace({ up, max: Math.max(120, Math.floor(up ? above : below)) });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [open, phone]);
+
   const head = (
     <div className={`pane-head${topbar ? ' in-topbar' : ''}${idle ? ' idle' : ''}`} data-pane-head={paneId}>
       <div className="pane-head-main">
-        <span className="head-chip-wrap">
+        <span ref={wrapRef} className="head-chip-wrap" data-menu-up={place?.up ? '' : undefined} style={place ? { '--head-menu-max': `${place.max}px` } as CSSProperties : undefined}>
           {renaming !== null ? (
             <input className="head-chip-input" aria-label="채팅 이름" value={renaming} autoFocus maxLength={200}
               onChange={(e) => setRenaming(e.target.value)} onBlur={blurRename}
