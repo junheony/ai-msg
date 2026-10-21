@@ -47,7 +47,7 @@
   --ease: cubic-bezier(.2, .8, .2, 1);
   --t-fast: 120ms; --t-base: 200ms; --t-sheet: 280ms;
   --avatar-1: #c9674a; --avatar-2: #7f9a5b; --avatar-3: #4e9a8f; --avatar-4: #5b8fc9;
-  --avatar-5: #8a7bc9; --avatar-6: #c96488; --avatar-7: #c9a03f; --avatar-8: #7a8694;
+  --avatar-5: #8a7bc9; --avatar-6: #c96488; --avatar-7: #ad8a2d; --avatar-8: #7a8694;
   font-family: var(--font);
   font-size: calc(15px * var(--font-scale, 1));
   line-height: 1.55;
@@ -224,27 +224,13 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .pinned-group ul.pin-reordering > li { transition: transform 160ms cubic-bezier(.2, 0, 0, 1); }
 .pinned-group ul.pin-reordering > li:hover:not(.pin-dragging) { background: transparent; }
 .pinned-group ul.pin-reordering > li.pin-dragging { transition: none; z-index: 2; background: var(--panel); box-shadow: var(--shadow); cursor: grabbing; }
-.sidebar li { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 6px 4px 22px; border-radius: 7px; cursor: pointer; font-size: calc(14px * var(--font-scale, 1)); }
-.sidebar li:hover { background: var(--hover); }
-.sidebar li.active { background: var(--selected); }
-.sidebar li.active .session-title { color: var(--fg-strong); }
-.session-row { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.session-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
-.session-meta { flex-shrink: 0; color: var(--faint); font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.pin-btn { flex-shrink: 0; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--faint); font-size: calc(12px * var(--font-scale, 1)); opacity: 0; }
-.pin-btn:hover { color: var(--fg); background: var(--hover); }
-.sidebar li:hover .pin-btn, .pin-btn:focus-visible { opacity: 1; }
-.pin-btn.on { opacity: 1; color: var(--accent); }
 /* ⌘1 … ⌘9 on the first nine 고정됨 rows while ⌘/Ctrl is held: laid over the row's end where ⋯ / pin sit (out of the
    flow, so nothing moves), after a beat so a quick ⌘C does not flash it. */
-.pin-key { position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; padding: 0 8px 0 30px; border-radius: 0 9px 9px 0; font-family: var(--mono); font-size: calc(11px * var(--font-scale, 1)); color: var(--muted); white-space: nowrap; pointer-events: none; animation: pin-key-in .12s ease .18s both; }
+.pin-key { position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; padding: 0 var(--s3) 0 var(--s6); border-radius: 0 var(--r-sm) var(--r-sm) 0; font-family: var(--mono); font-size: calc(11px * var(--font-scale, 1)); color: var(--muted); white-space: nowrap; pointer-events: none; animation: pin-key-in .12s ease .18s both; }
 @keyframes pin-key-in { from { opacity: 0; } }
-.sidebar li:has(> .pin-key) :is(.row-more-btn, .pin-btn) { visibility: hidden; }
-/* Wide sidebar with a mouse: the title runs to the row's end, so the hint fades in over its tail like the hover overlay, and replaces that overlay. */
-@media (hover: hover) and (min-width: 1101px) {
-  .pin-key { background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); }
-  .sidebar li:has(> .pin-key) .row-end { visibility: hidden; }
-}
+/* The hint fades in over the title's tail like the ⋯ / 고정 overlay, and replaces that overlay. */
+.pin-key { background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); }
+.sidebar li:has(> .pin-key) .row-end { visibility: hidden; }
 .more-btn { margin: 1px 0 0 16px; height: 24px; padding: 0 6px; font-size: calc(13px * var(--font-scale, 1)); color: var(--faint); border-radius: 6px; align-self: flex-start; }
 .more-btn:hover { color: var(--fg); background: var(--hover); }
 .sidebar-empty { padding: 12px 8px; }
@@ -459,8 +445,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .sidebar-wrap.drawer.open { transform: none; box-shadow: var(--shadow); }
   .sidebar { width: 100%; height: 100%; padding-top: 12px; }
   .drawer-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 25; }
-  .sidebar li { min-height: var(--phone-tap); }
-  .pin-btn { width: 32px; height: 32px; }
   .project-head { height: 40px; }
   .sidebar-head .text-btn, .sidebar-head .icon-btn, .project-head .icon-btn, .more-btn { min-height: var(--phone-tap); min-width: var(--phone-tap); }
   .sidebar-search { height: 40px; }
@@ -480,7 +464,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .tool-group > summary, .tool-call > summary { min-height: 30px; }
   .folder-picker input { height: var(--phone-tap); }
 }
-@media (hover: none) { .pin-btn { opacity: .5; } .pin-btn.on { opacity: 1; } .project-head .icon-btn { opacity: 1; } }
+@media (hover: none) { .project-head .icon-btn { opacity: 1; } }
 
 /* === desktop-sessions & permissions === */
 /* Permission / question cards: never wider than their pane (300px panes, phones). */
@@ -499,8 +483,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .permission-actions .btn.session-allow { line-height: var(--phone-tap); }
 }
 
-/* Recent Claude Desktop sessions */
-.desktop-group .session-meta { max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Sidebar footer: the settings button, sticky at the end of the list (bottom edge: see the end of this file) */
 .sidebar-foot { position: sticky; bottom: -24px; margin: auto -8px -24px; padding: 8px 10px 12px; border-top: 1px solid var(--line); background: var(--sidebar); }
@@ -981,17 +963,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .permission-raw { font-size: calc(12.5px * var(--font-scale, 1)); color: var(--muted); margin-bottom: 6px; }
 .permission-raw > summary { cursor: pointer; }
 /* sessions: rename / archive / 대화 내용 검색 */
-.sidebar li { position: relative; }
-.row-more-btn { flex-shrink: 0; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--faint); font-size: calc(13px * var(--font-scale, 1)); line-height: 1; opacity: 0; }
-.row-more-btn:hover, .row-more-btn[aria-expanded="true"] { color: var(--fg); background: var(--hover); opacity: 1; }
-.sidebar li:hover .row-more-btn, .row-more-btn:focus-visible { opacity: 1; }
-@media (hover: none) { .row-more-btn { opacity: .5; } }
-.session-rename { flex: 1; min-width: 0; height: 22px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--accent); background: var(--bg); color: var(--fg); font: inherit; outline: none; }
 .session-menu { position: absolute; z-index: 30; right: 6px; top: calc(100% - 2px); display: flex; flex-direction: column; min-width: 120px; padding: 4px; border-radius: 8px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); }
 .session-menu button { text-align: left; padding: 6px 9px; border-radius: 5px; color: var(--fg); font-size: calc(13px * var(--font-scale, 1)); }
 .session-menu button:hover, .session-menu button:focus-visible { background: var(--hover); }
 .session-menu-which { padding: 4px 9px 6px; font-size: calc(11.5px * var(--font-scale, 1)); white-space: nowrap; }
-.archived-filter.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .search-group li.search-hit { flex-direction: column; align-items: stretch; gap: 2px; }
 .search-snippet { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: calc(12.5px * var(--font-scale, 1)); line-height: 1.4; word-break: break-word; }
 .search-snippet mark, .suggest mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: var(--fg-strong); border-radius: 2px; padding: 0 1px; }
@@ -1007,7 +982,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .suggest-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: calc(12.5px * var(--font-scale, 1)); }
 .suggest-empty { padding: 6px 9px; }
 @media (max-width: 720px) {
-  .row-more-btn { width: 32px; height: 32px; }
   .session-menu button { min-height: var(--phone-tap); }
   .suggest li { min-height: 36px; align-items: center; }
 }
@@ -1108,13 +1082,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .agent-detail > summary::-webkit-details-marker { display: none; }
 .agent-detail > summary:hover { color: var(--fg); }
 
-.row-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; }
-.row-dot.running { width: 10px; height: 10px; border: 1.5px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); animation: spark-spin .9s linear infinite; }
-.row-dot.bg { background: var(--accent); animation: activity-pulse 1.6s ease-in-out infinite; }
-.row-dot.unread { background: var(--accent); }
-/* In the row's left padding, so titles stay aligned with or without a dot. */
-.sidebar li .row-dot { position: absolute; left: 8px; top: calc(50% - 4px); }
-.sidebar li .row-dot.running { left: 7px; top: calc(50% - 5px); }
 
 @media (max-width: 720px) {
   .turn-status .status-arg { display: none; }
@@ -1127,7 +1094,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .agent-meta .agent-status { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pulse-dot, .row-dot.bg, .row-dot.running { animation: none; }
+  .pulse-dot, .row-dot.bg, .row-dot.running, .row-dot.waiting { animation: none; }
 }
 
 /* Context ring (inside the session chip) and its one-line cost hint above the composer */
@@ -1490,9 +1457,6 @@ button.hl-row-main:hover { background: var(--hover); }
 }
 @media (prefers-reduced-motion: reduce) { .toast-item { animation: none; } }
 .session-menu button.danger { color: var(--danger); }
-.view-toggle { display: inline-flex; padding: 2px; border-radius: 7px; box-shadow: inset 0 0 0 1px var(--line); }
-.view-toggle button { height: 22px; padding: 0 8px; border-radius: 5px; font-size: calc(12.5px * var(--font-scale, 1)); color: var(--muted); }
-.view-toggle button.on { background: var(--selected); color: var(--fg); }
 .newchat { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; display: flex; justify-content: center; padding: 10vh 16px 24px; container: newchat / inline-size; }
 .newchat-inner { width: 100%; max-width: 680px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
 .newchat-greeting { margin: 0; display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; font-size: calc(30px * var(--font-scale, 1)); font-weight: 500; color: var(--fg-strong); font-family: Georgia, "Times New Roman", var(--font); }
@@ -1520,7 +1484,7 @@ button.hl-row-main:hover { background: var(--hover); }
 @media (max-width: 720px) {
   .modal-backdrop { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
   .palette { max-height: 80vh; }
-  .palette-item, .view-toggle button { min-height: 36px; }
+  .palette-item { min-height: 36px; }
   .newchat { padding-top: 5vh; }
   .newchat-greeting { font-size: calc(24px * var(--font-scale, 1)); }
   .newchat-box textarea { font-size: calc(16px * var(--font-scale, 1)); }
@@ -1604,31 +1568,11 @@ button.hl-row-main:hover { background: var(--hover); }
 }
 
 /* === fold layout: Galaxy Z Fold cover (phone) and unfolded inner screen (tablet, 721–1100px) === */
-/* Everywhere, only when something overflows: the segmented control never breaks a word, the sidebar head wraps
-   instead; a long meta (project · engine · time) gives way before the title; header chips shrink before the title. */
-.view-toggle { flex-shrink: 0; }
-.view-toggle button { white-space: nowrap; }
-.sidebar-head { flex-wrap: wrap; row-gap: 4px; }
-.session-meta { max-width: 50%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Everywhere, only when something overflows: header chips shrink before the title. */
 .sidebar-toggle { display: inline-flex; width: 30px; height: 30px; font-size: calc(15px * var(--font-scale, 1)); color: var(--fg); }
 .sidebar-toggle[aria-pressed="false"] { color: var(--muted); }
 
 
-/* Sidebar rows on phone + tablet, and on any touch screen (no hover to reveal the meta): title on line 1, meta on
-   line 2, the buttons span both lines at the end. */
-@media (max-width: 1100px), (hover: none) {
-  .session-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 2px; }
-  .session-row > .session-title, .session-row > .session-rename { grid-column: 1; grid-row: 1; }
-  .sidebar .session-row .session-meta { grid-column: 1; grid-row: 2; max-width: none; line-height: 1.35; }
-  .session-row .row-more-btn { grid-column: 2; grid-row: 1 / span 2; }
-  .session-row .pin-btn { grid-column: 3; grid-row: 1 / span 2; }
-  .sidebar li { padding-top: 5px; padding-bottom: 5px; }
-}
-/* Touch: no hover to reveal them, so only a compact ⋯ stays (고정 is in its menu); a pinned row keeps its pin. */
-@media (pointer: coarse) {
-  .row-more-btn ~ .pin-btn:not(.on) { display: none; }
-  .row-more-btn { opacity: .6; }
-}
 
 
 /* Tablet / unfolded inner screen: menu · logo · usage chip · actions in the top bar (wrapping only if they overflow),
@@ -1642,8 +1586,6 @@ button.hl-row-main:hover { background: var(--hover); }
 }
 /* Unfolded and touch: tap targets a step up from desktop's 26–30px, still denser than the phone's 44px. */
 @media (min-width: 721px) and (max-width: 1100px) and (pointer: coarse) {
-  .sidebar li { min-height: 40px; }
-  .row-more-btn, .pin-btn { width: 30px; height: 30px; }
   .project-head { height: 34px; }
   .pane-head-end .icon-btn { min-width: 36px; height: 36px; }
   .attach, .icon-btn.dictate { min-height: 36px; }
@@ -1734,24 +1676,17 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar { --sidebar-end: 24px; }
 .sidebar-foot { bottom: calc(-1 * var(--sidebar-end)); margin-bottom: calc(-1 * var(--sidebar-end)); padding: 28px 10px max(12px, env(safe-area-inset-bottom, 0px)); border-top: 0; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--sidebar) 85%, transparent) 20px, var(--sidebar) 34px); pointer-events: none; }
 .sidebar-foot > * { pointer-events: auto; }
-/* Claude's bottom corners: the avatar (설정 및 계정 menu) left, the floating 새 세션 pill right. */
-.sidebar-foot { justify-content: space-between; gap: 8px; }
+/* The avatar (설정 및 계정 menu) bottom left; 새 세션 is in the head's + menu. Flat: no drop shadow, just its ring. */
+.sidebar-foot { gap: var(--s2); }
 .foot-menu-wrap { position: relative; display: inline-flex; }
-.sidebar-avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--panel); color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--line-strong), 0 2px 8px rgba(0, 0, 0, .18); font-size: calc(14px * var(--font-scale, 1)); font-weight: 600; letter-spacing: .01em; transition: background .15s, box-shadow .15s; }
+.sidebar-avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--panel); color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: calc(var(--fs-label) * var(--font-scale, 1)); font-weight: 600; letter-spacing: .01em; transition: background var(--t-fast); }
 .sidebar-avatar:hover, .sidebar-avatar[aria-expanded="true"] { background: var(--bubble); }
-.sidebar-avatar:focus-visible, .sidebar-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.sidebar-new { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 16px 0 13px; border-radius: 999px; background: var(--btn-primary-bg); color: var(--btn-primary-fg); box-shadow: 0 4px 16px rgba(0, 0, 0, .28); font-size: calc(14px * var(--font-scale, 1)); font-weight: 560; white-space: nowrap; transition: transform .15s ease, box-shadow .15s ease, filter .15s; }
-.sidebar-new:hover { filter: brightness(.94); box-shadow: 0 6px 20px rgba(0, 0, 0, .32); }
-.sidebar-new:active { transform: scale(.97); }
-:root[data-theme="light"] .sidebar-new, :root[data-theme="light"] .sidebar-avatar { box-shadow: 0 3px 12px rgba(0, 0, 0, .12), inset 0 0 0 1px var(--line); }
-@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .sidebar-new, :root:not([data-theme="dark"]) .sidebar-avatar { box-shadow: 0 3px 12px rgba(0, 0, 0, .12), inset 0 0 0 1px var(--line); } }
+.sidebar-avatar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .session-menu.foot-menu { left: 0; right: auto; top: auto; bottom: calc(100% + 8px); min-width: 210px; }
 .foot-menu button { display: flex; align-items: center; gap: 12px; }
 .foot-menu kbd { margin-left: auto; color: var(--faint); font: inherit; font-size: calc(11.5px * var(--font-scale, 1)); }
 .foot-menu-head { padding: 6px 9px 7px; margin-bottom: 3px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; }
-@media (pointer: coarse) { .sidebar-avatar { width: var(--phone-tap); height: var(--phone-tap); } .sidebar-new { height: var(--phone-tap); padding: 0 18px 0 15px; } }
-/* Touch on a wide screen (iPad landscape): the same 40px rows as the unfolded/tablet range; phones use --phone-tap. */
-@media (pointer: coarse) and (min-width: 1101px) { .sidebar li { min-height: 40px; } }
+@media (pointer: coarse) { .sidebar-avatar { width: var(--phone-tap); height: var(--phone-tap); } }
 
 .session-menu .menu-sep { height: 1px; margin: 4px 6px; background: var(--line); flex-shrink: 0; }
 /* 모두 자동 승인 stays on screen as a warning, but small and outlined rather than a loud block. */
@@ -1860,44 +1795,75 @@ button.hl-row-main:hover { background: var(--hover); }
   .task-add-icon { display: block; }
 }
 
-/* === sidebar rows (Claude parity) ===
-   Roomier rows: a bigger title led by its engine mark, and the meta (project · account · time) a quiet second voice.
-   With a mouse the meta waits for hover / keyboard focus, so a title reads whole; on touch it stays on line 2.
-   The running / unread dots keep their seat in the left padding. */
-.sidebar li { min-height: 36px; padding: 6px 6px 6px 22px; border-radius: 9px; font-size: calc(15px * var(--font-scale, 1)); }
-@media (pointer: coarse) { .sidebar li { min-height: 40px; } }
-.sidebar .session-title { line-height: 1.35; letter-spacing: -.005em; }
-.sidebar .session-title .engine-mark { width: 1.05em; margin-right: .5em; opacity: .9; }
+/* === sidebar rows (list rows) ===
+   56px rows: a round project avatar (its colour from the project slug, its first letter in white) that carries the
+   status dot top left and the open-split number bottom right; the title on line 1, the meta (project · time / status)
+   on line 2. ⋯ / 고정 sit over the row's end on the row's own tint: shown on hover / keyboard focus (a mouse), after a
+   long press (touch: li[data-revealed]), or while the row's menu is open. Search hits / folder rows keep the plain li. */
+.sidebar li { position: relative; display: flex; align-items: center; gap: var(--s2); min-height: 32px; padding: var(--s1) var(--s2); border-radius: var(--r-sm); cursor: pointer; font-size: calc(var(--fs-label) * var(--font-scale, 1)); }
+.sidebar li:hover { background: var(--hover); }
+.sidebar li.active { background: var(--selected); }
+.sidebar li.session-item { --row-tint: transparent; min-height: 56px; padding: var(--s2); }
+.sidebar li.session-item:hover { --row-tint: var(--hover); }
+.sidebar li.session-item.active { --row-tint: var(--selected); }
+.session-row { display: flex; align-items: center; gap: var(--s3); flex: 1; min-width: 0; }
+.row-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.session-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: calc(var(--fs-body) * var(--font-scale, 1)); line-height: 1.35; letter-spacing: -.005em; }
+.sidebar .session-title .engine-mark { width: 1em; margin-right: .4em; opacity: .9; }
+.session-meta { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); font-variant-numeric: tabular-nums; }
+.sidebar li.active .session-title { color: var(--fg-strong); }
 .sidebar li.active .session-title .engine-mark { opacity: 1; }
-.sidebar .session-meta { color: var(--faint); font-size: calc(12px * var(--font-scale, 1)); }
 .sidebar li.active .session-meta { color: var(--muted); }
-/* The trailing group (meta · ⋯ · pin). By default its children sit in the row as before (display: contents). */
-.row-end { display: contents; }
-/* With a mouse on a wide sidebar it is an overlay at the row's end: hidden until hover / keyboard focus / its menu is
-   open, and fading in over the title's tail (the row's own tint, opaque) so the title keeps its full width. */
-@media (hover: hover) and (min-width: 1101px) {
-  .sidebar li { --row-tint: transparent; }
-  .sidebar li:hover { --row-tint: var(--hover); }
-  .sidebar li.active { --row-tint: var(--selected); }
-  .sidebar .row-end { display: flex; align-items: center; gap: 4px; position: absolute; top: 0; bottom: 0; right: 0; max-width: 72%; padding: 0 6px 0 30px; border-radius: 0 9px 9px 0; background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); opacity: 0; pointer-events: none; transition: opacity .12s ease; }
-  .sidebar .row-end .session-meta { min-width: 0; max-width: none; flex: 0 1 auto; }
-  .sidebar li:hover .row-end, .sidebar li:has(:focus-visible) .row-end, .sidebar li:has(.row-more-btn[aria-expanded="true"]) .row-end { opacity: 1; pointer-events: auto; }
-  .sidebar li:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--hover); }
-  .sidebar li.active:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--selected); }
-  .pinned-group ul.pin-reordering .row-end { opacity: 0 !important; }
-  .sidebar li:has(.session-rename) .row-end { display: none; }
-}
-@media (max-width: 1100px), (hover: none) {
-  .sidebar li { padding-top: 7px; padding-bottom: 7px; }
-  .sidebar .session-row .session-meta { margin-top: 1px; padding-left: calc(23px * var(--font-scale, 1)); } /* under the title text, past the engine mark */
-}
-@media (hover: none) and (min-width: 1101px) { .sidebar li { min-height: 44px; } }
-@media (max-width: 720px) {
-  .sidebar li { min-height: var(--phone-tap); font-size: calc(16px * var(--font-scale, 1)); }
-  .sidebar .session-meta { font-size: calc(12.5px * var(--font-scale, 1)); }
-  .sidebar .session-row .session-meta { padding-left: calc(25px * var(--font-scale, 1)); }
+.session-rename { min-width: 0; height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--accent); background: var(--bg); color: var(--fg); font: inherit; font-size: calc(var(--fs-body) * var(--font-scale, 1)); outline: none; }
+/* Avatar: 40px, the palette colour behind a bold white letter (decorative; the meta names the project). */
+.row-avatar { position: relative; flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: #fff; font-size: 16px; font-weight: 700; line-height: 1; }
+.row-avatar .row-dot { position: absolute; top: -1px; left: -1px; width: 12px; height: 12px; border-radius: var(--r-full); outline: 2px solid var(--sidebar); }
+.sidebar li:hover .row-avatar .row-dot { outline-color: color-mix(in srgb, var(--fg) 6%, var(--sidebar)); }
+.row-dot.unread { background: var(--accent); }
+.row-dot.bg { background: var(--accent); animation: activity-pulse 1.6s ease-in-out infinite; }
+.row-dot.running { background: var(--sidebar); border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); animation: spark-spin .9s linear infinite; }
+.row-dot.waiting { background: var(--warn); animation: row-waiting 1.4s ease-in-out infinite; }
+@keyframes row-waiting { 50% { transform: scale(.7); opacity: .55; } }
+.row-avatar .open-mark { position: absolute; right: -4px; bottom: -3px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: var(--r-full); background: var(--panel); box-shadow: 0 0 0 2px var(--sidebar), inset 0 0 0 1px var(--line-strong); color: var(--fg); font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+.sidebar li.active .row-avatar .open-mark { box-shadow: 0 0 0 2px var(--sidebar), inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--line-strong)); }
+/* ⋯ / 고정: an overlay at the row's end, fading in over the title's tail (row tint over the sidebar, opaque). */
+.row-end { position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; gap: 2px; padding: 0 var(--s2) 0 var(--s6); border-radius: 0 var(--r-sm) var(--r-sm) 0; background: linear-gradient(to right, transparent, var(--row-tint) 24px), linear-gradient(to right, transparent, var(--sidebar) 24px); opacity: 0; pointer-events: none; transition: opacity var(--t-fast) ease; }
+@media (hover: hover) { .sidebar li.session-item:hover .row-end { opacity: 1; pointer-events: auto; } }
+.sidebar li.session-item:has(:focus-visible) .row-end, .sidebar li.session-item[data-revealed] .row-end, .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) .row-end { opacity: 1; pointer-events: auto; }
+.sidebar li.session-item[data-revealed], .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--hover); background: var(--hover); }
+.sidebar li.session-item.active:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--selected); }
+.pinned-group ul.pin-reordering .row-end { opacity: 0 !important; }
+.sidebar li:has(.session-rename) .row-end { display: none; }
+.row-more-btn, .pin-btn { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--r-sm); color: var(--muted); font-size: calc(14px * var(--font-scale, 1)); line-height: 1; }
+.row-more-btn:hover, .row-more-btn[aria-expanded="true"], .pin-btn:hover { color: var(--fg); background: var(--hover); }
+.pin-btn.on { color: var(--accent); }
+/* Touch: 44px targets, and a long press is the row's (no text selection / iOS callout). */
+@media (pointer: coarse) {
+  .row-more-btn, .pin-btn { width: var(--phone-tap); height: var(--phone-tap); }
+  .sidebar li.session-item { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 }
 @media (prefers-reduced-motion: reduce) { .sidebar .row-end { transition: none !important; } }
+/* Head: just 검색 and + (새 세션 · 폴더 열기 · 프로젝트별 새 세션 · 보기 · 새로고침); the search box opens under it. */
+.new-menu-wrap { position: relative; display: inline-flex; }
+.session-menu.new-menu { right: 0; top: calc(100% + 4px); min-width: 220px; max-height: min(440px, 70vh); overflow-y: auto; overscroll-behavior: contain; }
+.new-menu button { display: flex; align-items: center; gap: var(--s3); }
+.new-menu button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-menu kbd { margin-left: auto; color: var(--faint); font: inherit; font-size: calc(11.5px * var(--font-scale, 1)); }
+.new-menu .foot-menu-head { margin-top: 3px; border-top: 1px solid var(--line); padding-top: 7px; }
+.sidebar-search-row { display: flex; align-items: center; gap: var(--s1); margin: 0 0 6px; flex-shrink: 0; }
+.sidebar-search-row .sidebar-search { flex: 1; margin: 0; }
+.sidebar-search-row .icon-btn { font-size: calc(11.5px * var(--font-scale, 1)); color: var(--muted); }
+/* 보관됨 N: one quiet row at the end of the list, folded until pressed. */
+.archived-group { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--line); }
+.archived-row { display: flex; align-items: center; gap: 6px; width: 100%; height: 32px; padding: 0 var(--s2) 0 var(--s1); border-radius: var(--r-sm); text-align: left; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); font-weight: 500; }
+.archived-row:hover { background: var(--hover); }
+.archived-row .chev { color: var(--faint); transition: transform var(--t-fast) ease; flex-shrink: 0; }
+.archived-count { margin-left: auto; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+  .sidebar li.session-item { min-height: 60px; }
+  .archived-row { min-height: var(--phone-tap); }
+  .sidebar-search-row .icon-btn { min-width: var(--phone-tap); min-height: var(--phone-tap); }
+}
 /* A narrow split column gets the phone's tighter spacing too. */
 @container pane (max-width: 420px) {
   .composer-send { gap: 3px; }
@@ -1968,7 +1934,7 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .msg.search-flash { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   :root { --t-fast: 0ms; --t-base: 0ms; --t-sheet: 0ms; }
-  .pulse-dot, .row-dot.bg, .row-dot.running { animation: none !important; }
+  .pulse-dot, .row-dot.bg, .row-dot.running, .row-dot.waiting { animation: none !important; }
 }
 
 /* === 다시 생성 / 긴 사용자 메시지 접기 ===
@@ -2099,9 +2065,6 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
   .update-actions .btn { height: 40px; padding: 0 16px; }
 }
 
-/* Sidebar: open-session markers — the split number (◱: a floating card) of a session already open in a pane */
-.open-mark { flex-shrink: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); font-size: calc(10.5px * var(--font-scale, 1)); font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
-.sidebar li.active .open-mark { color: var(--fg-strong); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--line-strong)); }
 
 /* 총사령탑 (CommanderChip / CommanderSheet): header chip + ■ 정지 · 재개, the last verdict under it; the sheet is a bottom sheet on a phone. */
 .commander-wrap { position: relative; display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex-shrink: 1; }

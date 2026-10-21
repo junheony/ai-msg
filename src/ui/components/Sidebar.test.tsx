@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { META_TICK_MS, Sidebar } from './Sidebar';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { AVATAR_COLORS, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex, avatarLetter } from './Sidebar';
 
 const noop = () => {};
+/** The head's search icon opens the 세션 검색 box (it is not on screen until then). */
+const openSearch = () => fireEvent.click(screen.getByRole('button', { name: '검색' }));
+/** The head's + menu (새 세션 · 폴더 열기 · 프로젝트별 새 세션 · 보기 · 새로고침). */
+const openNewMenu = () => fireEvent.click(screen.getByRole('button', { name: '새 세션' }));
 /** Fixture times: now, each one 1 ms older, so the 최근 view's newest-first order is the creation order (equal / ms-apart Date.now() made it flaky). */
 const stamp = (() => { const base = Date.now(); let k = 0; return () => base - k++; })();
 
@@ -19,7 +23,8 @@ describe('Sidebar 폴더 열기 (F1)', () => {
     const onOpenFolder = vi.fn();
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenFolder={onOpenFolder} fetchFn={fetchFn} />);
     expect(screen.queryByLabelText('폴더 경로')).toBeNull();
-    fireEvent.click(screen.getByText('폴더 열기'));
+    openNewMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: '폴더 열기' }));
     fireEvent.change(screen.getByLabelText('폴더 경로'), { target: { value: '~/x' } });
     fireEvent.click(screen.getByText('열기'));
     await waitFor(() => expect(onOpenFolder).toHaveBeenCalledWith('/Users/u/x'));
@@ -121,6 +126,7 @@ describe('Sidebar ⌘1 … ⌘9 hints', () => {
   it('no hints without the shortcut wired; with a filter the numbers follow the rows shown, and the opener opens that row', () => {
     const onOpen = vi.fn();
     const pinShortcut = setup(onOpen);
+    openSearch();
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'session 1' } }); // "session 1" (s10 is not pinned)
     hold();
     expect(hints()).toEqual(['Ctrl+1']);
@@ -158,6 +164,7 @@ describe('Sidebar folding and search', () => {
   it('the search box filters sessions by title across the fold', () => {
     const onNew = vi.fn();
     const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={onNew} onRefresh={noop} />);
+    openSearch();
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'session 7' } });
     expect([...container.querySelectorAll('.session-title')].map((e) => e.textContent)).toEqual(['session 7']);
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'nothing' } });
@@ -181,6 +188,7 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
     expect(group.textContent).toContain('deck · 1시간 전');
     fireEvent.click(screen.getByText('Write docs'));
     expect(onOpen).toHaveBeenCalledWith('d2', '/Users/u/harness', 'Write docs');
+    openSearch();
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'harness' } });
     expect(screen.queryByText('Fix login')).toBeNull();
     expect(screen.getByText('Write docs')).toBeTruthy();
@@ -264,14 +272,20 @@ describe('Sidebar rename / archive / 대화 내용 검색', () => {
     expect(onArchive).toHaveBeenCalledWith('s2', true);
     expect(screen.queryByRole('menu')).toBeNull();
 
-    fireEvent.click(screen.getByText('보관됨'));
-    // Pinned: listed once, under 고정됨 (not again under its project).
-    expect(titles()).toEqual(['Old']);
-    expect(screen.getByTestId('pinned-group').textContent).toContain('Old');
-    fireEvent.click(screen.getAllByLabelText('세션 메뉴')[0]!);
+    // 보관됨 N: one folded row at the end of the list; pressing it lists them in place, under the rest.
+    const archived = screen.getByTestId('archived-group');
+    const toggle = within(archived).getByRole('button', { name: '보관됨 1' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    // Pinned but archived: listed once, in 보관됨 (고정됨 stays empty).
+    expect(titles()).toEqual(['Alpha', 'Beta', 'Old']);
+    expect(screen.queryByTestId('pinned-group')).toBeNull();
+    expect(archived.textContent).toContain('Old');
+    fireEvent.click(within(archived).getByLabelText('세션 메뉴'));
     fireEvent.click(screen.getByRole('menuitem', { name: '보관 해제' }));
     expect(onArchive).toHaveBeenLastCalledWith('s3', false);
-    fireEvent.click(screen.getAllByLabelText('세션 메뉴')[0]!);
+    fireEvent.click(within(archived).getByLabelText('세션 메뉴'));
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
   });
@@ -291,6 +305,7 @@ describe('Sidebar rename / archive / 대화 내용 검색', () => {
     const searchFn = vi.fn(async (q: string) => ({ hits: [hit('s1', '…fix the flaky test…', 9), hit('s3', 'flaky old', 0), hit('zz', 'other flaky', 6)], truncated: q === 'flaky' }));
     const onOpenHit = vi.fn();
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenHit={onOpenHit} searchFn={searchFn} onArchive={noop} />);
+    openSearch();
     const box = screen.getByLabelText('세션 검색');
     fireEvent.change(box, { target: { value: 'f' } });
     fireEvent.change(box, { target: { value: 'fl' } });
@@ -381,9 +396,9 @@ describe('Sidebar imported Codex threads', () => {
     const goneMeta = screen.getByText('gone').closest('li')!.querySelector('.session-meta')!;
     expect(goneMeta.textContent).toBe('폴더 없음 · 2분 전');
     expect(goneMeta.getAttribute('title')).toContain('폴더가 없어 이어서 보낼 수 없음');
-    fireEvent.click(screen.getByRole('button', { name: '보관됨' }));
+    fireEvent.click(screen.getByRole('button', { name: '보관됨 1' }));
     const li = screen.getByText('arch').closest('li')!;
-    expect(li.querySelector('.session-meta')?.textContent).toBe('Codex 보관 · 2분 전');
+    expect(li.querySelector('.session-meta')?.textContent).toBe('w · Codex 보관 · 2분 전'); // 보관됨 lists every project: the meta names it
     fireEvent.click(li.querySelector('.row-more-btn')!);
     expect(screen.queryByRole('menuitem', { name: '보관 해제' })).toBeNull();
   });
@@ -419,14 +434,15 @@ describe('Sidebar engine marks', () => {
     expect(markOf('codex chat')?.classList.contains('codex')).toBe(true);
     expect(markOf('desk chat')?.classList.contains('claude')).toBe(true);
     const codexRow = screen.getByText('codex chat').closest('li')!;
-    expect(codexRow.querySelector('.session-row > .row-dot.unread')).not.toBeNull();
-    expect(screen.getByText('claude chat').closest('li')!.querySelector('.session-row > .row-dot.running')).not.toBeNull();
+    expect(codexRow.querySelector('.row-avatar > .row-dot.unread')).not.toBeNull();
+    expect(screen.getByText('claude chat').closest('li')!.querySelector('.row-avatar > .row-dot.running')).not.toBeNull();
   });
 
   it('marks 대화 내용 search hits by engine; Gemini gets none', async () => {
     const hit = (id: string, engine: 'claude' | 'codex' | 'gemini') => ({ sessionId: id, title: `hit ${id}`, cwd: '/w', account: 'a', engine, lastModified: Date.now(), role: 'assistant' as const, snippet: 'abc', matchStart: 0, matchLength: 2 });
     const searchFn = vi.fn(async () => ({ hits: [hit('h1', 'claude'), hit('h2', 'codex'), hit('h3', 'gemini')], truncated: false }));
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenHit={noop} searchFn={searchFn} />);
+    openSearch();
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'ab' } });
     await waitFor(() => expect(screen.getByText('hit h2')).toBeTruthy());
     expect(screen.getByText('hit h1').querySelector('.engine-mark')?.getAttribute('title')).toBe('Claude');
@@ -439,16 +455,22 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
   afterEach(cleanup);
   const e = (id: string, title: string, extra: Record<string, unknown> = {}) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1, ...extra });
 
-  it('새 세션 is a pill at the bottom (after the list) in both views and calls onNewChat', () => {
+  it('새 세션 is the first item of the head\'s + menu in both views and calls onNewChat; the foot keeps only the avatar', () => {
     const onNewChat = vi.fn();
-    const { container, rerender } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} view="recent" />);
+    const { container, rerender } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} onOpenSettings={noop} view="recent" />);
     const foot = container.querySelector('.sidebar')!.lastElementChild!;
     expect(foot.className).toBe('sidebar-foot');
-    expect(foot.querySelector('.sidebar-new')?.textContent).toBe('새 세션');
-    expect(screen.queryByText('새 채팅')).toBeNull(); // no second, top-of-list button
-    fireEvent.click(screen.getByRole('button', { name: '새 세션' }));
-    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} view="projects" />);
-    fireEvent.click(screen.getByRole('button', { name: '새 세션' }));
+    expect(Array.from(foot.querySelectorAll('button')).map((b) => b.getAttribute('aria-label'))).toEqual(['설정 및 계정']);
+    const plus = screen.getByRole('button', { name: '새 세션' });
+    expect(container.querySelector('.sidebar-head')!.contains(plus)).toBe(true);
+    expect(plus.getAttribute('aria-haspopup')).toBe('menu');
+    openNewMenu();
+    expect(screen.getAllByRole('menuitem')[0]!.textContent).toMatch(/^새 세션/);
+    fireEvent.click(screen.getByRole('menuitem', { name: /^새 세션/ }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} onOpenSettings={noop} view="projects" />);
+    openNewMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /^새 세션/ }));
     expect(onNewChat).toHaveBeenCalledTimes(2);
   });
 
@@ -470,10 +492,6 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     expect(avatar.textContent).toBe('B');
     expect(avatar.getAttribute('aria-haspopup')).toBe('menu');
     expect(avatar.getAttribute('aria-expanded')).toBe('false');
-    // focus order: the avatar comes before the 새 세션 pill
-    const foot = document.querySelector('.sidebar-foot')!;
-    const buttons: HTMLElement[] = Array.from(foot.querySelectorAll('button'));
-    expect(buttons.indexOf(avatar)).toBeLessThan(buttons.indexOf(screen.getByRole('button', { name: '새 세션' })));
     fireEvent.click(avatar);
     expect(avatar.getAttribute('aria-expanded')).toBe('true');
     const menu = screen.getByRole('menu', { name: '설정 및 계정' });
@@ -551,30 +569,154 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
   });
 });
 
-describe('Sidebar rows: Claude parity (icon left, quiet trailing meta)', () => {
-  afterEach(cleanup);
-  const s = (id: string, cwd: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd, projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1 });
+describe('Sidebar rows: list rows (avatar, title + meta, ⋯ / 고정 on demand)', () => {
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
+  const s = (id: string, cwd: string, title: string, extra: Record<string, unknown> = {}) => ({ sessionId: id, account: 'b' as const, cwd, projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1, ...extra });
   const projects = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first')] }];
   const desktop = [{ sessionId: 'd1', account: 'a' as const, title: 'desk chat', cwd: '/d', project: 'd', lastModified: stamp() }];
 
-  it('the title leads with its engine mark; meta, ⋯ and pin form one trailing group; the dot stays outside it', () => {
+  it('avatar · text (title led by its engine mark, then meta) · trailing ⋯ / 고정; the dot sits on the avatar', () => {
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" onTogglePin={noop} onRename={noop}
       desktop={desktop} unread={['s1']} />);
     for (const title of ['first', 'desk chat']) {
       const row = screen.getByText(title).closest('li')!.querySelector('.session-row')!;
-      const kids = Array.from(row.children).map((el) => el.className.split(' ')[0]);
-      expect(kids.slice(-2)).toEqual(['session-title', 'row-end']);
+      expect(Array.from(row.children).map((el) => el.className.split(' ')[0])).toEqual(['row-avatar', 'row-text', 'row-end']);
+      const text = row.querySelector('.row-text')!;
+      expect(Array.from(text.children).map((el) => el.className.split(' ')[0])).toEqual(['session-title', 'session-meta']);
       expect(row.querySelector('.session-title')!.firstElementChild!.classList.contains('engine-mark')).toBe(true);
-      const end = row.querySelector('.row-end')!;
-      expect(Array.from(end.children).map((el) => el.className.split(' ')[0])).toEqual(['session-meta', 'row-more-btn', 'pin-btn']);
       // keyboard: ⋯ then 고정, both labelled
-      const btns = Array.from(end.querySelectorAll('button')).map((b) => b.getAttribute('aria-label'));
+      const btns = Array.from(row.querySelectorAll('.row-end button')).map((b) => b.getAttribute('aria-label'));
       expect(btns).toEqual(['세션 메뉴', '고정']);
     }
     const first = screen.getByText('first').closest('li')!;
-    expect(first.querySelector('.session-row > .row-dot.unread')).not.toBeNull();
+    expect(first.querySelector('.row-avatar > .row-dot.unread')).not.toBeNull();
     expect(first.querySelector('.row-end .row-dot')).toBeNull();
-    expect(first.querySelector('.row-end .session-meta')!.textContent).toMatch(/^one · /);
+    expect(first.querySelector('.session-meta')!.textContent).toMatch(/^one · /);
+    // The letter is decoration (the meta names the project): hidden from the accessibility tree.
+    expect(first.querySelector('.row-avatar-letter')!.getAttribute('aria-hidden')).toBe('true');
+    expect(first.querySelector('.row-avatar-letter')!.textContent).toBe('O');
+  });
+
+  it('avatar colour: the same slug always gets the same palette slot, in 1 … AVATAR_COLORS, on every row of that project', () => {
+    const slugs = ['deck', 'my-app', 'one', 'two', '.dotfiles', '한글 프로젝트', 'x', ''];
+    for (const slug of slugs) {
+      const n = avatarIndex(slug);
+      expect(n).toBe(avatarIndex(slug));
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(n).toBeLessThanOrEqual(AVATAR_COLORS);
+    }
+    expect(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'].map(avatarIndex)).size).toBeGreaterThan(3); // spread, not one colour
+    expect(avatarLetter('deck')).toBe('D');
+    expect(avatarLetter('.dotfiles')).toBe('D');
+    expect(avatarLetter('한글')).toBe('한');
+    expect(avatarLetter('--')).toBe('·');
+    const two = [{ cwd: '/w/deck', name: 'deck', pinned: false, sessions: [s('a1', '/w/deck', 'alpha'), s('a2', '/w/deck', 'beta')] }];
+    render(<Sidebar projects={two} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" />);
+    const av = (t: string) => screen.getByText(t).closest('li')!.querySelector<HTMLElement>('.row-avatar')!;
+    expect(av('alpha').dataset.avatar).toBe(String(avatarIndex('deck')));
+    expect(av('alpha').style.getPropertyValue('--av')).toBe(`var(--avatar-${avatarIndex('deck')})`);
+    expect(av('beta').dataset.avatar).toBe(av('alpha').dataset.avatar);
+  });
+
+  it('승인 대기: a warn dot on the avatar, ahead of running / unread, labelled for screen readers', () => {
+    const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'asks'), s('s2', '/w/one', 'runs')] }];
+    render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} waiting={['s1']} unread={['s1']}
+      activity={[{ sessionId: 's1', cwd: '/w/one', turnId: 't', running: true, bg: 0, forMs: 0 }, { sessionId: 's2', cwd: '/w/one', turnId: 't2', running: true, bg: 0, forMs: 0 }]} />);
+    const dots = (t: string) => Array.from(screen.getByText(t).closest('li')!.querySelectorAll('.row-dot'));
+    expect(dots('asks')).toHaveLength(1);
+    expect(dots('asks')[0]!.classList.contains('waiting')).toBe(true);
+    expect(screen.getByRole('img', { name: '승인 대기' })).toBe(dots('asks')[0]);
+    expect(dots('runs')[0]!.classList.contains('running')).toBe(true);
+  });
+
+  it('touch: a long press on a row shows its ⋯ / 고정 (one row at a time) and does not open it; a short tap opens', () => {
+    vi.useFakeTimers();
+    const onOpen = vi.fn();
+    const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first'), s('s2', '/w/one', 'second')] }];
+    render(<Sidebar projects={p} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} onTogglePin={noop} onRename={noop} />);
+    const li = (t: string) => screen.getByText(t).closest('li')!;
+    const touch = (el: Element) => fireEvent.pointerDown(el, { pointerType: 'touch', pointerId: 1, clientX: 10, clientY: 10 });
+    expect(li('first').hasAttribute('data-revealed')).toBe(false);
+    touch(screen.getByText('first'));
+    act(() => { vi.advanceTimersByTime(ROW_PRESS_MS - 1); });
+    expect(li('first').hasAttribute('data-revealed')).toBe(false);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(li('first').hasAttribute('data-revealed')).toBe(true);
+    fireEvent.pointerUp(screen.getByText('first'), { pointerType: 'touch', pointerId: 1 });
+    fireEvent.click(screen.getByText('first'));
+    expect(onOpen).not.toHaveBeenCalled(); // the click ending the long press is swallowed
+    // Its ⋯ works from there (the menu keeps the .session-menu class).
+    fireEvent.click(within(li('first')).getByLabelText('세션 메뉴'));
+    expect(screen.getByRole('menu').classList.contains('session-menu')).toBe(true);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // A long press on another row moves the reveal there.
+    touch(screen.getByText('second'));
+    expect(li('first').hasAttribute('data-revealed')).toBe(false);
+    act(() => { vi.advanceTimersByTime(ROW_PRESS_MS); });
+    expect(li('second').hasAttribute('data-revealed')).toBe(true);
+    fireEvent.pointerUp(screen.getByText('second'), { pointerType: 'touch', pointerId: 1 });
+    fireEvent.click(screen.getByText('second'));
+    // A short tap opens as before.
+    touch(screen.getByText('first'));
+    fireEvent.pointerUp(screen.getByText('first'), { pointerType: 'touch', pointerId: 1 });
+    fireEvent.click(screen.getByText('first'));
+    expect(onOpen).toHaveBeenCalledWith('s1', '/w/one', 'first');
+    // A mouse press never reveals (hover does that).
+    fireEvent.pointerDown(screen.getByText('first'), { pointerType: 'mouse', pointerId: 2 });
+    act(() => { vi.advanceTimersByTime(ROW_PRESS_MS * 2); });
+    expect(li('first').hasAttribute('data-revealed')).toBe(false);
+  });
+
+  it('보관됨 N: folded at the end of the list; pressing it lists the archived rows newest first, pressing again folds', () => {
+    const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'live'), s('s2', '/w/one', 'old a', { archived: true }), s('s3', '/w/one', 'old b', { archived: true })] }];
+    const { container } = render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onArchive={noop} onOpenSettings={noop} />);
+    const group = screen.getByTestId('archived-group');
+    // Last in the list (only the foot after it).
+    const sections = Array.from(container.querySelectorAll('.sidebar > section'));
+    expect(sections[sections.length - 1]).toBe(group);
+    const toggle = within(group).getByRole('button', { name: '보관됨 2' });
+    expect(group.querySelectorAll('li')).toHaveLength(0);
+    fireEvent.click(toggle);
+    expect(Array.from(group.querySelectorAll('.session-title')).map((e) => e.textContent)).toEqual(['old a', 'old b']);
+    fireEvent.click(toggle);
+    expect(group.querySelectorAll('li')).toHaveLength(0);
+    // A search narrows the count; no match there and the row steps aside.
+    openSearch();
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'old b' } });
+    expect(within(screen.getByTestId('archived-group')).getByRole('button', { name: '보관됨 1' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'live' } });
+    expect(screen.queryByTestId('archived-group')).toBeNull();
+  });
+
+  it('head: 검색 opens / closes the box (Esc too, clearing it) with a 명령 팔레트 button; + holds 폴더 열기, per-project 새 세션, the view switch and 새로고침', () => {
+    const onNew = vi.fn();
+    const onRefresh = vi.fn();
+    const onView = vi.fn();
+    const onOpenPalette = vi.fn();
+    const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first')] }];
+    render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={onNew} onRefresh={onRefresh} view="projects" onViewChange={onView} onOpenPalette={onOpenPalette} onOpenFolder={noop} />);
+    expect(screen.queryByLabelText('세션 검색')).toBeNull();
+    openSearch();
+    const box = screen.getByLabelText('세션 검색');
+    expect(document.activeElement).toBe(box);
+    expect(screen.getByRole('button', { name: '검색' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: '명령 팔레트' }));
+    expect(onOpenPalette).toHaveBeenCalledTimes(1);
+    fireEvent.change(box, { target: { value: 'zzz' } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByLabelText('세션 검색')).toBeNull();
+    expect(screen.getByText('first')).toBeTruthy(); // the filter went with it
+    openNewMenu();
+    const items = screen.getAllByRole('menuitem').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+    expect(items).toEqual(['폴더 열기', 'one 새 세션', '날짜별로 보기', '세션 목록 다시 읽기']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'one 새 세션' }));
+    expect(onNew).toHaveBeenCalledWith('/w/one', 'one');
+    openNewMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: '날짜별로 보기' }));
+    expect(onView).toHaveBeenCalledWith('recent');
+    openNewMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: '세션 목록 다시 읽기' }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });
 
