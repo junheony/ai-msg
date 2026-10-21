@@ -227,6 +227,8 @@ export type TurnRequest = {
   noTools?: boolean;
   /** deck 의 메모(모델만 본다): 이 프로세스의 첫 사용자 프롬프트에만 UserPromptSubmit 훅의 additionalContext 로 붙는다. */
   systemNote?: string;
+  /** ⚡ 빠르게: `fastMode: true` in this process's `--settings` and the model forced to Opus (fast mode is Opus-only). */
+  fast?: boolean;
   /** 간결 모드: appended to the engine's system prompt for this process (Claude `--append-system-prompt`); not stored in the transcript. */
   appendSystemPrompt?: string;
   /**

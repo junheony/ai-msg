@@ -80,6 +80,11 @@ export type TurnParams = {
   fork?: { from: string; at: string };
   /** 간결 모드 (send.concise): the engine gets shared/concise CONCISE_STYLE_PROMPT as an appended system prompt (Claude). */
   concise?: boolean;
+  /**
+   * ⚡ 빠르게 (send.fast): a person's Claude turn runs on Opus with `fastMode` (usage credits). Not a handoff note, a
+   * 총사령탑 hop, deck's own cap continuation or automatic retry (fastTurn); Codex / Gemini / Grok ignore it.
+   */
+  fast?: boolean;
   /** Server-internal: a 백그라운드 작업's turn (no one watches it: the style note asks no AskUserQuestion). */
   bgTask?: boolean;
   /** Server-internal: how many times this turn already moved on to another account after a background segment hit a limit (failoverAfterBackground). */
@@ -105,6 +110,13 @@ export type TurnParams = {
 export type AutoRouteSettings = { autoEngines: readonly EngineKind[]; autoConsent: readonly EngineKind[]; grokFast: boolean };
 const DEFAULT_AUTO_ROUTE: AutoRouteSettings = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false };
 const ROUTE_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
+
+/** ⚡ 빠르게 applies to this turn: only a person's turn (never a handoff note, 총사령탑 hop, cap continuation or automatic retry). */
+export function fastTurn(p: Pick<TurnParams, 'fast' | 'handoff' | 'commanderHop' | 'bgCapHop' | 'retryHop'>): boolean {
+  return p.fast === true && !p.handoff && p.commanderHop === undefined && !p.bgCapHop && !p.retryHop;
+}
+/** The badge note of a ⚡ 빠르게 turn. */
+export const FAST_NOTE = '빠르게 · 사용 크레딧';
 
 /** A commanderHop turn on a Codex/Gemini/Grok session (총사령탑 v1 = Claude only): refused, never run ungated. */
 export const COMMANDER_ENGINE_REFUSED = '총사령탑 자동 턴은 Claude 세션에서만 실행됩니다';
@@ -1107,6 +1119,7 @@ export class TurnRunner {
       },
       onLive: (l) => { out.live = l; this.inputs.set(p.turnId, l); },
       ...(p.handoff ? { noTools: true } : {}),
+      ...(fastTurn(p) ? { fast: true } : {}),
       ...(addendum ? { appendSystemPrompt: addendum } : {}),
       ...(systemNote ? { systemNote } : {}),
       ...(commanderHop ? {
@@ -2044,7 +2057,9 @@ export class TurnRunner {
       }
       const fable = usageOf(deps.usage.snapshot(), account).fable?.usedPct ?? null;
       const resolved = resolveModel(wantedClaude, sessionDefault, fable, deps.usage.snapshot().usageSource);
-      const { model, note } = asOpus && resolved.model === 'fable' ? { model: 'opus' as const, note: `${asOpus} → Opus 로 대체` } : resolved;
+      const routed = asOpus && resolved.model === 'fable' ? { model: 'opus' as const, note: `${asOpus} → Opus 로 대체` } : resolved;
+      // ⚡ 빠르게: fast mode runs on Opus only — the account choice above is left as routed, only the model is forced.
+      const { model, note } = fastTurn(p) ? { model: 'opus' as const, note: routed.model === 'opus' ? FAST_NOTE : `${FAST_NOTE} → Opus` } : routed;
       sink.emit({ type: 'turn_started', turnId: p.turnId, sessionId: shownId(), cwd, account, model, reason, attempt, engine: 'claude', sessionModel: sessionDefault, ...(p.clientRef && attempt === 0 ? { clientRef: p.clientRef } : {}) });
       flushEarly();
 

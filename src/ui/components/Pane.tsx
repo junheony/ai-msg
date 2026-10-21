@@ -30,6 +30,7 @@ import { NO_TABS, activeTab, carriesTabs, closeTab, openTab, readSideWidth, reca
 import { hasOpenPopup } from '../composerFocus';
 import { isMacPlatform, isTypingTarget, modKeys } from '../shortcuts';
 import { PHONE_QUERY, useIsPhone } from '../useIsPhone';
+import { isFast } from '../fastMode';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -89,6 +90,7 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
     ...(s.sessionId === null && pane.handoffFrom ? { handoffFrom: pane.handoffFrom.sessionId } : {}),
     ...(s.sessionId === null && s.newTitle ? { title: s.newTitle } : {}),
     ...(opts.ignoreFit ? { ignoreFit: true } : {}),
+    ...(isFast(s.sessionId) ? { fast: true } : {}),
     clientRef,
   });
   if (sent === false) dispatch({ type: 'send_failed', clientRef, paneId: pane.id });
@@ -102,7 +104,7 @@ export function startTaskFromPane(pane: PaneState, text: string, dispatch: (a: A
   const s = pane.session;
   if (!s) return false;
   const clientRef = nextClientRef();
-  if (send({ type: 'start_task', cwd: s.cwd, text, fromSessionId: s.sessionId, clientRef }) === false) return false;
+  if (send({ type: 'start_task', cwd: s.cwd, text, fromSessionId: s.sessionId, ...(isFast(s.sessionId) ? { fast: true } : {}), clientRef }) === false) return false;
   dispatch({ type: 'task_sent', paneId: pane.id, clientRef, text });
   return true;
 }

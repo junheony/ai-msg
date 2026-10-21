@@ -40,6 +40,7 @@ import { TodoPanel } from './TodoPanel';
 import { usePrefs } from '../usePrefs';
 import { BlockedDeleteItem } from './SessionMenu';
 import { useAutoGrow } from '../useAutoGrow';
+import { FAST_TITLE, requestFast, useFast } from '../fastMode';
 
 export type ChatProps = {
   items: ChatItem[];
@@ -416,6 +417,9 @@ export function Chat(p: ChatProps) {
     scroll.attach();
   };
   const tm = p.titleMenu;
+  // ⚡ 빠르게: an existing Claude session's switch (an id-less one has no key yet); on, a ↯ next to the composer chip.
+  const fastEligible = !!p.sessionId && !p.isNew && effectiveEngine === 'claude' && !p.readOnly;
+  const fastOn = useFast(p.sessionId) && fastEligible;
   const showAccount = !!p.onAccountPin && (effectiveEngine === 'claude' || (!!p.isNew && effectiveEngine === 'auto'));
   const phone = useIsPhone();
   // The share actions close the menu themselves once done (a copy is async): the open menu's closer, kept here.
@@ -451,6 +455,7 @@ export function Chat(p: ChatProps) {
         tm?.onArchive && <HeadItem key="archive" label={tm.archived ? '보관 해제' : '보관'} run={tm.onArchive} ctl={ctl} />,
         tm?.onSetCwd && <HeadItem key="cwd" label="작업 폴더 바꾸기" run={tm.onSetCwd} ctl={ctl} />,
         tm?.onDuplicate && <HeadItem key="dup" label="복제" run={tm.onDuplicate} ctl={ctl} />,
+        fastEligible && <HeadItem key="fast" label={fastOn ? '빠르게 끄기 (Opus fast)' : '빠르게 (Opus fast)'} run={() => requestFast(p.sessionId!, !fastOn)} ctl={ctl} />,
         ...paneRows('session', ctl),
       ],
       [
@@ -624,7 +629,7 @@ export function Chat(p: ChatProps) {
         <Composer
           dragover={drag && !p.readOnly}
           popup={suggest.popup}
-          chip={(
+          chip={(<>
             <SessionChip
               key={p.sessionId ?? 'new'}
               isNew={p.isNew}
@@ -642,7 +647,8 @@ export function Chat(p: ChatProps) {
               {...(p.onHandoff ? { onHandoff: p.onHandoff } : {})}
               disabled={!!p.readOnly}
             />
-          )}
+            {fastOn && <button type="button" className="fast-chip" data-testid="fast-chip" aria-label={`${FAST_TITLE} — 누르면 끕니다`} title={`${FAST_TITLE} — 누르면 끕니다`} onClick={() => requestFast(p.sessionId!, false)}>↯</button>}
+          </>)}
           files={(p.attachments.length > 0 || uploading > 0 || error) ? (
             <AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} pastedTexts={pastedTexts}
               {...(p.onReattach && !p.readOnly ? { onReplace: (old: UploadedAttachment, f: File) => replaceAttachment(old, f, uploadOne, () => attachmentsRef.current, (a) => p.onReattach!(old.id, a)) } : {})} />

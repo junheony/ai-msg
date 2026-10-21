@@ -28,3 +28,16 @@ export const CLAUDE_MISSING_TEXT = 'Claude Code(claude)를 찾지 못했습니�
 export const claudeTooOldText = (version: string): string => `Claude Code ${version} 은 너무 오래됐습니다 — ${MIN_CLAUDE_VERSION} 이상으로 업데이트한 뒤 deck 을 다시 시작해 주세요`;
 /** = TurnRunner.ABORTED: the UI hides a stopped turn's error when it is exactly this. */
 export const ABORTED_TEXT = '중단됨';
+/**
+ * ⚡ 빠르게: what a fast-mode refusal, fallback or cooldown line from the CLI means for the person; null = not one of
+ * those. Matched loosely (the CLI's wording moves): only lines naming fast mode or usage credits count.
+ */
+export function fastModeHint(text: string): string | null {
+  const t = text.toLowerCase();
+  if (!t.includes('fast mode') && !t.includes('usage credit')) return null;
+  if (t.includes('organization')) return '조직 설정에서 빠르게 모드(사용 크레딧)를 막아 두었습니다 — 표준 속도로 돕니다';
+  if (t.includes('exhausted') || t.includes('limit reached')) return '사용 크레딧이 떨어져 표준 속도로 다시 시도합니다';
+  if (t.includes('requires usage credits') || t.includes('not available') || t.includes('turned off')) return '이 계정은 사용 크레딧이 꺼져 있어 빠르게 모드를 쓸 수 없습니다 — Claude 계정 설정에서 사용 크레딧을 켜거나 ⚡ 빠르게를 끄세요';
+  if (t.includes('cooldown') || t.includes('rate limit') || t.includes('overloaded') || t.includes('temporarily unavailable')) return '빠르게 전용 한도에 걸려 잠시 표준 속도로 돕니다 — 쿨다운이 끝나면 다시 빨라집니다';
+  return null;
+}

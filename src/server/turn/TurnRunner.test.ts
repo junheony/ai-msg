@@ -22,7 +22,7 @@ import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState, type GrokSessionState } from './SessionState';
 import { DEFAULT_EFFORT, DEFAULT_GROK_MODEL, GROK_CLI_ALIAS, type Effort, type GrokModel } from '../../shared/models';
-import { GROK_MODE_NEXT_TURN_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type AutoRouteSettings, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { FAST_NOTE, fastTurn, GROK_MODE_NEXT_TURN_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type AutoRouteSettings, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -1709,5 +1709,32 @@ describe('TurnRunner: 자동 분배 (chooseRoute)', () => {
     c.msgs.length = 0;
     await runner.run({ turnId: 't4', cwd: c.base, sessionId: null, text: '기능 구현해줘', engine: 'auto' }, c.sink);
     expect(started(c)).toMatchObject({ engine: 'grok' });
+  });
+});
+
+describe('TurnRunner — ⚡ 빠르게', () => {
+  const msgsOf = (c: Ctx, t: ServerMessage['type']) => c.msgs.filter((m) => m.type === t);
+  it('a fast Claude turn runs on Opus with fast set; the badge says so', async () => {
+    const eng = new StubEngine(() => ok('fast1'));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ model: 'opus', fast: true });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ model: 'opus' });
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ badge: { model: 'opus', modelNote: `${FAST_NOTE} → Opus` } });
+  });
+  it('without fast nothing changes', async () => {
+    const eng = new StubEngine(() => ok('slow1'));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls[0]!.fast).toBeUndefined();
+    expect(eng.calls[0]).toMatchObject({ model: 'fable' });
+  });
+  it('only user turns: handoff, commander, cap and retry hops never carry it', () => {
+    expect(fastTurn({ fast: true })).toBe(true);
+    expect(fastTurn({})).toBe(false);
+    expect(fastTurn({ fast: true, handoff: { fromSessionId: 's' } as never })).toBe(false);
+    expect(fastTurn({ fast: true, commanderHop: 0 })).toBe(false);
+    expect(fastTurn({ fast: true, bgCapHop: true as never })).toBe(false);
+    expect(fastTurn({ fast: true, retryHop: true as never })).toBe(false);
   });
 });

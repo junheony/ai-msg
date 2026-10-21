@@ -100,7 +100,11 @@ export function relayCommand(r: RelaySpec, fail: 'open' | 'deny' | 'closed'): st
  * closed`: a relay error / timeout / crash denies with exit 2), and Bash / `mcp__*` allow rules stay out of
  * `permissions.allow` so the CLI cannot approve them on its own.
  */
-export interface SettingsInput { allowRules?: string[]; noTools?: boolean; systemNote?: string; commander?: boolean; relay: RelaySpec }
+export interface SettingsInput {
+  allowRules?: string[]; noTools?: boolean; systemNote?: string; commander?: boolean; relay: RelaySpec;
+  /** ⚡ 빠르게: `fastMode: true` rides the same per-process settings file (one `--settings`), for this session only. */
+  fast?: boolean;
+}
 
 /**
  * Contents of the per-process `--settings` file (0600, inside a 0700 temp dir). Merged by the CLI
@@ -118,6 +122,7 @@ export function buildSettings(s: SettingsInput): Record<string, unknown> {
   const out: Record<string, unknown> = { hooks };
   const allow = commander ? (s.allowRules ?? []).filter((r) => !COMMANDER_GATED_RULE.test(r)) : s.allowRules ?? [];
   if (allow.length) out.permissions = { allow: [...allow] };
+  if (s.fast) out.fastMode = true;
   return out;
 }
 

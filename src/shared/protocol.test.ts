@@ -105,3 +105,17 @@ describe('account ids on the wire', () => {
     expect(accountInfos(LEGACY_ACCOUNTS).map((a) => [a.id, a.label, a.home, a.retired])).toEqual([['a', 'A', true, false], ['b', 'B', false, false], ['c', 'C', false, false]]);
   });
 });
+
+describe('⚡ 빠르게 on send / start_task', () => {
+  it('fast is an optional boolean on both', () => {
+    const send = { type: 'send', sessionId: 'x', cwd: '/w', text: 'hi' };
+    expect(ClientMessageSchema.safeParse({ ...send, fast: true }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...send, fast: false }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...send, fast: 'yes' }).success).toBe(false);
+    const parsed = ClientMessageSchema.parse({ ...send, fast: true });
+    expect(parsed.type === 'send' && parsed.fast).toBe(true);
+    const task = { type: 'start_task', cwd: '/w', text: 'do it', fromSessionId: 's' };
+    expect(ClientMessageSchema.safeParse({ ...task, fast: true }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...task, fast: 1 }).success).toBe(false);
+  });
+});

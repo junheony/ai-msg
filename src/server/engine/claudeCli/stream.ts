@@ -3,6 +3,7 @@ import { systemRow, textOfContent } from '../../sessions/transcript';
 import type { BgTask, EngineEvent, EngineResult, RateLimitSignal, TurnRequest } from '../Engine';
 import type { SlashCommandInfo } from '../slashCommands';
 import type { CliMessage, Rec } from './messages';
+import { fastModeHint } from './texts';
 
 /**
  * Which background tasks are live. Prefers the CLI's level signal `background_tasks_changed`
@@ -349,6 +350,13 @@ export function mapCliMessage(m: CliMessage): EngineEvent[] {
     case 'system': {
       if (m.subtype === 'init') return [{ kind: 'init', sessionId: String(m.session_id ?? ''), model: String(m.model ?? ''), ...(typeof m.cwd === 'string' ? { cwd: m.cwd } : {}) }];
       if (m.subtype === 'compact_boundary') return [{ kind: 'compact' }];
+      // A CLI notification (fast-mode credits / cooldown, compaction errors, …): a turn note, a fast-mode one with deck's words.
+      if (m.subtype === 'notification') {
+        const text = (m as Rec).text;
+        if (typeof text !== 'string' || !text.trim()) return [];
+        const hint = fastModeHint(text);
+        return [{ kind: 'notice', message: hint ? `⚡ ${text.trim()} — ${hint}` : text.trim() }];
+      }
       if (m.subtype === 'task_notification') {
         const r = m as Rec;
         const status = r.status === 'failed' || r.status === 'stopped' ? r.status : 'completed';

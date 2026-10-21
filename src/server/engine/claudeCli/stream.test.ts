@@ -137,3 +137,13 @@ describe('ToolTracker (replaces PostToolUse/PostToolUseFailure audit)', () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe('system/notification → notice', () => {
+  it('plain notifications pass through; fast-mode ones get deck’s explanation; empty ones are dropped', () => {
+    expect(mapCliMessage({ type: 'system', subtype: 'notification', key: 'k', text: 'Auto-compact failed' } as CliMessage)).toEqual([{ kind: 'notice', message: 'Auto-compact failed' }]);
+    const [fast] = mapCliMessage({ type: 'system', subtype: 'notification', key: 'k', text: 'Fast mode cooldown triggered' } as CliMessage);
+    expect(fast).toMatchObject({ kind: 'notice' });
+    expect((fast as { message: string }).message).toMatch(/^⚡ Fast mode cooldown triggered — .*쿨다운/);
+    expect(mapCliMessage({ type: 'system', subtype: 'notification', key: 'k', text: '  ' } as CliMessage)).toEqual([]);
+  });
+});

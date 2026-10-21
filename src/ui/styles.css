@@ -1826,6 +1826,21 @@ button.hl-row-main:hover { background: var(--hover); }
   .session-chip::after { content: ""; position: absolute; left: 0; right: 0; top: -6px; bottom: -6px; }
 }
 @media (prefers-reduced-motion: reduce) { .session-chip { transition: none; } }
+/* ⚡ 빠르게 on: a ↯ next to the composer's session chip (warn text: >= 4.5 on bg/panel); presses to turn it off. Its
+   44px touch area is in the shared touch hit-area block below. */
+.fast-chip { position: relative; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-full); background: transparent; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 55%, transparent); font: inherit; font-size: var(--fs-meta); line-height: 1; font-weight: 700; cursor: pointer; }
+.fast-chip:hover { background: var(--hover); }
+.fast-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sheet.fast-consent { width: min(480px, 100%); padding: 0 var(--sheet-pad) var(--sheet-pad); }
+.fast-consent-body { font-size: var(--fs-body); line-height: 1.6; }
+.fast-consent-body p { margin: 0 0 var(--s2); }
+.fast-consent-body ul { margin: 0 0 var(--s3); padding-left: 1.2em; display: flex; flex-direction: column; gap: var(--s1); }
+.fast-consent-body .modal-actions { margin-top: var(--s3); }
+@media (max-width: 720px) {
+  .sheet-backdrop:has(> .fast-consent) { align-items: flex-end; }
+  .sheet.fast-consent { max-height: 92%; height: auto; border-radius: var(--r-md) var(--r-md) 0 0; }
+  .fast-consent-body .modal-actions .btn { min-height: var(--phone-tap); }
+}
 
 /* The session sheet. Desktop: a 320px panel on the right edge; phone: a bottom sheet. */
 .sheet-backdrop:has(> .session-sheet) { justify-content: flex-end; align-items: stretch; padding: 0; }
@@ -2148,7 +2163,7 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
 /* Touch: 44px hit areas for the small controls without changing their look — an invisible box centred on each. */
 @media (hover: none), (max-width: 720px) {
   .act-line .text-btn, .toast-item .text-btn, .usage-history-toggle, .usage-strip-wrap > .usage-strip { position: relative; }
-  .usage-strip-wrap > .usage-strip::before, .act-line .text-btn::before, .toast-item .text-btn::before, .usage-history-toggle::before {
+  .usage-strip-wrap > .usage-strip::before, .act-line .text-btn::before, .toast-item .text-btn::before, .usage-history-toggle::before, .fast-chip::before {
     content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, var(--phone-tap)); height: max(100%, var(--phone-tap)); transform: translate(-50%, -50%);
   }
 }

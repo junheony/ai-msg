@@ -997,6 +997,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.handoff ? { handoff: true } : {}),
           ...(msg.ignoreFit ? { ignoreFit: true } : {}),
           ...(msg.concise && !msg.handoff ? { concise: true } : {}),
+          ...(msg.fast && !msg.handoff ? { fast: true } : {}),
           ...(taskSockets.has(ws) ? { bgTask: true } : {}),
           ...hop,
           ...(commanderHop ? { commanderHop } : {}),
@@ -1094,7 +1095,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const taskCap = () => clampTaskCap(deps.settings?.get().taskSoftCap);
   const broadcastTasks = () => { if (deps.tasks) broadcast({ type: 'tasks', tasks: deps.tasks.list(), cap: taskCap() }); };
   /** What a queued task will send once it gets a slot (kept in memory only: a restart fails queued tasks). */
-  const taskTexts = new Map<string, { text: string; concise: boolean }>();
+  const taskTexts = new Map<string, { text: string; concise: boolean; fast: boolean }>();
   const taskRef = (taskId: string) => `task-${taskId}`;
   /** Each running task's first turn id (its process), while it runs. */
   const taskBase = new Map<string, string>();
@@ -1147,7 +1148,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       send: (data: string) => { try { onEvent(JSON.parse(data) as ServerMessage); } catch (err) { console.error('deck: task event failed', errMsg(err)); } },
     } as unknown as WebSocket;
     taskSockets.set(sock, (sid) => { if (reg.get(taskId)?.sessionId !== sid) { reg.sessionKnown(taskId, sid); broadcastTasks(); } });
-    startTurn(sock, { type: 'send', sessionId: null, cwd: t.cwd, text: what.text, engine: 'auto', model: 'auto', title: `작업 · ${t.title}`.slice(0, 200), clientRef: ref, ...(what.concise ? { concise: true } : {}) });
+    startTurn(sock, { type: 'send', sessionId: null, cwd: t.cwd, text: what.text, engine: 'auto', model: 'auto', title: `작업 · ${t.title}`.slice(0, 200), clientRef: ref, ...(what.concise ? { concise: true } : {}), ...(what.fast ? { fast: true } : {}) });
   };
   /** Start queued tasks while there is room under the soft cap. */
   const pumpTasks = () => {
@@ -1567,7 +1568,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); break; }
           if (deps.tasks.queued() >= TASKS_QUEUED_MAX) { send(ws, { type: 'error', turnId: null, message: `대기 중인 작업이 ${TASKS_QUEUED_MAX}개라 더 받을 수 없습니다`, ...ref }); break; }
           const t = deps.tasks.create({ fromSessionId: msg.fromSessionId, cwd: msg.cwd, text: msg.text }, taskCap());
-          taskTexts.set(t.taskId, { text: msg.text, concise: msg.concise === true });
+          taskTexts.set(t.taskId, { text: msg.text, concise: msg.concise === true, fast: msg.fast === true });
           broadcastTasks();
           if (t.status === 'running') launchTask(t.taskId);
           break;
