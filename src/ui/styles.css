@@ -839,7 +839,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .mp-effort button.on { background: var(--bg-raised); color: var(--fg-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
 @media (max-width: 720px) {
   .mp-item { min-height: var(--phone-tap); }
-  .mp-effort button { height: 36px; }
+  .mp-effort button { height: 36px; position: relative; }
+  .mp-effort button::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: var(--phone-tap); transform: translateY(-50%); }
 }
 
 /* === lifecycle === */
@@ -1405,14 +1406,14 @@ button.hl-row-main:hover { background: var(--hover); }
 .markdown :not(.katex-display) > .katex { max-width: 100%; overflow: hidden; }
 /* Permission modes: the composer picker / header badge (plan = blue, bypass = red warning) and the plan card. */
 .pick.perm-acceptEdits { color: var(--accent); }
-.pick.perm-plan { color: #3b82f6; }
+.pick.perm-plan { color: var(--link); }
 .pick.perm-bypassPermissions { color: var(--danger, #dc2626); }
 .pick[data-disabled] { opacity: .5; }
 .pick[data-disabled]:hover { background: transparent; }
 .pick select:disabled { cursor: not-allowed; }
 .chip.perm-badge { flex-shrink: 0; border: 1px solid currentColor; }
 .chip.perm-acceptEdits { color: var(--accent); }
-.chip.perm-plan { color: #3b82f6; background: rgba(59, 130, 246, .1); }
+.chip.perm-plan { color: var(--link); background: rgba(59, 130, 246, .1); }
 .chip.perm-bypassPermissions { color: var(--danger, #dc2626); background: rgba(220, 38, 38, .1); }
 .plan-card { border-color: rgba(59, 130, 246, .5); }
 .plan-card .dot { background: #3b82f6; }
@@ -1845,7 +1846,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .sc-acct { display: inline-flex; align-items: center; gap: 2px; }
 .sc-acct.pinned { color: var(--accent); }
 .sc-perm.perm-acceptEdits { color: var(--accent); }
-.sc-perm.perm-plan { color: #3b82f6; }
+.sc-perm.perm-plan { color: var(--link); }
 .sc-perm.perm-bypassPermissions { color: var(--danger); }
 .sc-caret { flex-shrink: 0; color: var(--faint); font-size: calc(11px * var(--font-scale, 1)); transform: translateY(-2px); }
 .ctx-ring { display: block; }
@@ -2215,3 +2216,6 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
 .choice:hover:not(:disabled) { background: var(--hover); border-color: var(--accent); }
 .choice:disabled { cursor: default; opacity: .6; }
 .choice.picked { opacity: 1; border-color: var(--accent); background: var(--accent-soft); }
+
+/* Phone: the 작업으로 button keeps its 44px square (this rule comes after the base .task-add above). */
+@media (max-width: 720px) { .task-add { width: var(--phone-tap); height: var(--phone-tap); padding: 0; } }

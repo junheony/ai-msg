@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DEFAULT_SANDBOX, type CodexSandbox, type Effort, type EngineChoice, type ModelChoice } from '../../shared/models';
+import type { PermMode } from '../../shared/permission';
 import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
 import type { ProjectEntry } from '../../shared/session-types';
 import type { UploadedAttachment } from '../state';
@@ -40,8 +41,10 @@ export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
  * above the auto-growing text; [+] · mic · ↑ in its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox }: {
+export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null }: {
   projects: ProjectEntry[];
+  /** The server's default permission mode for a new session (the chip's read-only tail; null = unknown, no tail). */
+  defaultPerm?: PermMode | null;
   /** Pinned session ids in pin order (AppState.pins): shown above 최근 대화 and left out of it. */
   pins?: string[];
   /** Preselected project (the pane's last one); falls back to the first listed. */
@@ -166,6 +169,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
               chip={(
                 <SessionChip
                   isNew
+                  defaultPerm={defaultPerm}
                   folder={project?.name ?? null}
                   folderPicker={(
                     <label className="ss-project" title={cwd ?? ''}>

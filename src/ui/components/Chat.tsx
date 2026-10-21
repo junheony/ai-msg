@@ -654,6 +654,7 @@ export function Chat(p: ChatProps) {
           popup={suggest.popup}
           chip={(
             <SessionChip
+              key={p.sessionId ?? 'new'}
               isNew={p.isNew}
               folder={folder}
               engine={effectiveEngine}

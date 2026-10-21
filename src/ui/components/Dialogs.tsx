@@ -12,7 +12,7 @@ function useEscape(onClose: () => void) {
 
 /**
  * A large modal card over a dimmed backdrop (설정, 사용량): full screen on a phone. Closes on Esc and on a mousedown that
- * starts on the backdrop. Esc yields to a popup inside the card or opened over it (later in the DOM: palette, help,
+ * starts on the backdrop. Esc yields to a popup opened over it (later in the DOM, not inside the card — its own menus do not count: palette, help,
  * confirm, another sheet), to an Esc someone already took and to a held key's repeats. Focus goes back where it was when
  * the sheet closes, or to the top bar's `[data-sheet-return]` button when that is gone (설정 → 사용량 보기) or was nowhere.
  */
@@ -29,7 +29,7 @@ export function Sheet({ label, className, onClose, children }: { label: string; 
     const note = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const self = ref.current;
-      owned = !!self && Array.from(document.querySelectorAll(POPUP)).some((el) => el !== self && (self.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+      owned = !!self && Array.from(document.querySelectorAll(POPUP)).some((el) => el !== self && !self.contains(el) && (self.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.repeat || e.defaultPrevented || e.isComposing || e.keyCode === 229 || owned) return;

@@ -10,11 +10,25 @@ import { AccountChipName, AccountMenu, useAccountWords } from './AccountPicker';
 import { ContextRing, HandoffButton, contextLevel } from './ContextGauge';
 import { Sheet } from './Dialogs';
 import { ModelMenu, modelLabel } from './ModelPicker';
+import { menuStep } from './SessionMenu';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** ↑/↓ (Home/End) move focus between the items of a role="menu" list inside the sheet (model, account). */
+function menuArrows(e: KeyboardEvent<HTMLDivElement>) {
+  const active = document.activeElement;
+  const menu = active instanceof HTMLElement ? active.closest<HTMLElement>('[role="menu"]') : null;
+  if (!menu || !e.currentTarget.contains(menu)) return;
+  const items = Array.from(menu.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])'));
+  const next = menuStep(items.indexOf(active as HTMLElement), e.key, items.length);
+  if (next === null) return;
+  e.preventDefault();
+  items[next]?.focus();
+}
+
 /** Tab / Shift+Tab wrap inside the sheet (it is modal). */
 function trapTab(e: KeyboardEvent<HTMLDivElement>) {
+  menuArrows(e);
   if (e.key !== 'Tab') return;
   const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
   if (items.length === 0) return;
@@ -27,6 +41,8 @@ function trapTab(e: KeyboardEvent<HTMLDivElement>) {
 /** The chip's compact permission wording. */
 export const PERM_MODE_SHORT: Record<PermMode, string> = { default: '묻기', acceptEdits: '편집 승인', plan: '계획', bypassPermissions: '자동 승인' };
 const ENGINE_NAME: Record<EngineChoice, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok', auto: '자동' };
+/** On the chip an auto engine must not read as a permission mode. */
+const ENGINE_CHIP: Record<EngineChoice, string> = { ...ENGINE_NAME, auto: '엔진 자동' };
 
 const FolderIcon = () => (
   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
@@ -67,6 +83,8 @@ export type SessionChipProps = {
   onEffort: (e: Effort | null) => void;
   /** 이 세션은 B 써 (absent = no account section). */
   account?: { pin: Account | null; current: Seat | null; usage: UsageSnapshot | null; onPin: (pin: Account | null) => void } | null;
+  /** A new session's default permission mode, shown as a read-only tail of the chip (absent = no tail). */
+  defaultPerm?: PermMode | null;
   /** Permission mode (absent = no permission section); `supported` false = GPT/Gemini, shown disabled. */
   perm?: { mode: PermMode; supported: boolean; onChange: (m: PermMode) => void } | null;
   ctx?: ContextInfo | null;
@@ -107,15 +125,17 @@ export function SessionChip(p: SessionChipProps) {
   const perm = p.perm;
   const permShown: PermMode = perm?.supported ? perm.mode : 'default';
   const m = modelLabel(p.model, p.effort);
+  const modelText = m.effort ? `${m.name} ${m.effort}` : m.name;
   const ctx = p.ctx ? { ...contextLevel(p.ctx), label: contextLabel(p.ctx) } : null;
   const acct = useAccountWords(p.account?.pin ?? null, p.account?.current ?? null);
 
   // The third part: GPT/Gemini name their sandbox (no approvals there), the others their permission mode.
-  const tail = sb ? sandboxLabel[sb.value].split(' · ')[0]! : perm ? PERM_MODE_SHORT[permShown] : null;
+  const tail = sb ? sandboxLabel[sb.value].split(' · ')[0]! : perm ? PERM_MODE_SHORT[permShown] : p.isNew && p.defaultPerm ? PERM_MODE_SHORT[p.defaultPerm] : null;
   const parts: ReactNode[] = p.isNew
     ? [
         ...(p.folder ? [<span key="f" className="sc-part sc-folder"><FolderIcon />{p.folder}</span>] : []),
-        <span key="e" className="sc-part">{ENGINE_NAME[engine]}</span>,
+        <span key="e" className="sc-part">{ENGINE_CHIP[engine]}</span>,
+        ...(p.model !== 'auto' ? [<span key="m" className="sc-part sc-model">{m.name}{m.effort && <span className="sc-extra"> {m.effort}</span>}</span>] : []),
       ]
     : [
         <span key="m" className="sc-part sc-model">{m.name}{m.effort && <span className="sc-extra"> {m.effort}</span>}</span>,
@@ -123,7 +143,7 @@ export function SessionChip(p: SessionChipProps) {
       ];
   if (tail) parts.push(<span key="t" className={`sc-part sc-perm${!sb && perm ? ` perm-${permShown}` : ''}`}>{tail}</span>);
   const aria = [
-    p.isNew ? [p.folder, ENGINE_NAME[engine]] : [m.effort ? `${m.name} ${m.effort}` : m.name, p.account ? acct.aria : null],
+    p.isNew ? [p.folder, ENGINE_CHIP[engine], `모델 ${modelText}`] : [m.effort ? `${m.name} ${m.effort}` : m.name, p.account ? acct.aria : null],
     tail,
     ctx ? `컨텍스트 ${ctx.pct}%` : null,
   ].flat().filter(Boolean).join(' · ');
@@ -136,7 +156,7 @@ export function SessionChip(p: SessionChipProps) {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={`세션 설정: ${aria}`}
-        title={`세션 설정 — 모델·계정·권한${perm?.supported ? ' (Shift+Tab 으로 권한 전환)' : ''}`}
+        title={`세션 설정 — 모델·계정·권한${p.isNew ? ` (모델: ${modelText})` : ''}${perm?.supported ? ' (Shift+Tab 으로 권한 전환)' : ''}`}
         data-testid="session-chip"
         disabled={p.disabled}
         onClick={() => setOpen(true)}
