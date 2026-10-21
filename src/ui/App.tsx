@@ -16,7 +16,7 @@ import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type 
 import { Pane, sendFromPane, TOGGLE_SIDE_EVENT, useQueueRunner } from './components/Pane';
 import { PermissionCard } from './components/PermissionCard';
 import { QuestionCard } from './components/QuestionCard';
-import { Sidebar, type SidebarView } from './components/Sidebar';
+import { Sidebar } from './components/Sidebar';
 import { UsageChip } from './components/UsageChip';
 import { UsageSheet } from './components/UsageSheet';
 import { Highlights } from './components/Highlights';
@@ -59,7 +59,6 @@ import { AccountsContext, uiAccounts } from './accounts';
 import { has, setFeatures } from './features';
 import { withConcise } from '../shared/concise';
 
-const VIEW_KEY = 'deck.sidebarView';
 const HIDDEN_KEY = 'deck.sidebarHidden';
 const UNDO_MS = 10_000;
 /** 보관 되돌리기 toast: shorter than 삭제's (보관 is milder and also undone from the 보관됨 list). */
@@ -152,7 +151,7 @@ export function App() {
     const start = loadServerStart();
     return hydrate({ ...initialState, serverStartedAt: start.startedAt, restartedAt: start.restartedAt }, ui, loadQueues());
   });
-  const [collapsed, setCollapsed] = useState<string[]>(() => saved?.collapsed ?? []);
+  const [collapsed] = useState<string[]>(() => saved?.collapsed ?? []);
   const firstBuild = useRef<string | null | undefined>(undefined);
   const [newBuild, setNewBuild] = useState(false);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
@@ -196,9 +195,7 @@ export function App() {
    * pane is gone, floated, the only docked one, or another docked pane becomes active (a card coming forward keeps it).
    */
   const [maxPane, setMaxPane] = useState<string | null>(null);
-  const [sidebarView, setSidebarView] = useState<SidebarView>(() => (readLocal(VIEW_KEY) === 'projects' ? 'projects' : 'recent'));
   const [sidebarHidden, setSidebarHidden] = useState(() => readLocal(HIDDEN_KEY) === '1');
-  useEffect(() => { writeLocal(VIEW_KEY, sidebarView); }, [sidebarView]);
   useEffect(() => { writeLocal(HIDDEN_KEY, sidebarHidden ? '1' : '0'); }, [sidebarHidden]);
   // Peek: with the sidebar hidden (desktop), resting the pointer on the window's left edge (or on ☰) slides it out over
   // the panes; leaving it slides it back. A rename field or an open menu inside keeps it out until that is done.
@@ -1375,13 +1372,9 @@ export function App() {
                 },
               );
             }}
-            collapsed={collapsed}
-            onCollapsedChange={setCollapsed}
             onRename={renameSession}
             onArchive={archiveSession}
             onOpenHit={openHit}
-            view={sidebarView}
-            onViewChange={setSidebarView}
             onDelete={askDelete}
             onSetCwd={setCwd}
             onDuplicate={duplicate}

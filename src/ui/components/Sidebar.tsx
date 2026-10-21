@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import type { EngineKind } from '../../shared/models';
 import type { SessionActivity } from '../../shared/protocol';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { groupByDate } from '../dateGroups';
@@ -11,12 +12,9 @@ import { BlockedDeleteItem, MenuList, deleteBlockedReason, isGrokBotEntry } from
 import { openInNewTab } from './ShareMenu';
 import { isMacPlatform, isPlainMod, pinKeyLabel } from '../shortcuts';
 import { hasOpenModal } from '../autoReload';
-import { PinIcon } from './icons';
 import { useLongPress } from './FileMenu';
+import { DeckMark } from './DeckMark';
 
-/** Sessions shown per project before "더 보기". */
-export const FOLD_AT = 5;
-const MAX_SESSIONS = 30;
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
 export const SEARCH_MIN_CHARS = 2;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -25,12 +23,12 @@ const MAX_RECENT = 150;
 /** How often the rows' "N분 전" is recomputed. */
 export const META_TICK_MS = 60_000;
 
-/** Touch: holding a row this long shows its ⋯ / 고정 buttons (design §7.2: 350ms). */
+/** Touch: holding a row this long shows its ⋯ button (design §7.2: 350ms). */
 export const ROW_PRESS_MS = 350;
 /** Project avatar palette size (`--avatar-1` … `--avatar-8` in styles.css). */
 export const AVATAR_COLORS = 8;
-
-export type SidebarView = 'recent' | 'projects';
+/** The head's + menu: 지금 프로젝트 plus this many other recently used folders. */
+export const RECENT_FOLDERS = 3;
 /** One entry of the avatar (설정 및 계정) menu at the bottom left. */
 export type SidebarMenuItem = { label: string; hint?: string; run: () => void };
 
@@ -55,9 +53,12 @@ export function avatarLetter(slug: string): string {
   return m ? m[0].toUpperCase() : '·';
 }
 
+/** A stable default: a fresh [] per render would read as a new list (and hide a revealed row) every time. */
+const NO_DESKTOP: DesktopSession[] = [];
+
 const baseName = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() || cwd;
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = [], collapsed: collapsedProp, onCollapsedChange, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, view: viewProp, onViewChange, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked, openPanes, onOpenPalette }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = NO_DESKTOP, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked, openPanes, onOpenPalette }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
   /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
@@ -85,9 +86,6 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onReorderPins?: (order: string[]) => void;
   /** Recent Claude Desktop sessions (newest first); opened like any session. */
   desktop?: DesktopSession[];
-  /** ux-state: folded project groups (cwd), owned by the app so they survive a reload; absent = local state. */
-  collapsed?: string[];
-  onCollapsedChange?: (cwds: string[]) => void;
   /** Custom title (null = back to the transcript's own title); stored by deck, the jsonl is untouched. */
   onRename?: (sessionId: string, title: string | null) => void;
   /** 보관 / 보관 해제: archived sessions only show under the "보관됨 N" row at the end of the list, folded until opened. */
@@ -101,9 +99,6 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   unread?: string[];
   /** Sessions with a permission card or question waiting for the user: 승인 대기 in place of the row's time. */
   waiting?: string[];
-  /** 최근 (one list, date groups) or 프로젝트 (grouped by project), switched in the head's "+" menu; owned by the app when given. Default 프로젝트. */
-  view?: SidebarView;
-  onViewChange?: (view: SidebarView) => void;
   /** 삭제 (Claude sessions): the app confirms, moves it to the trash and offers undo. `which` names the branch of a 갈래 row. */
   onDelete?: (s: SessionEntry, which?: string) => void;
   /** 작업 폴더 바꾸기 / 복제 (servers with 'sessionOps'); absent = no such items. */
@@ -120,32 +115,37 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** ⌘K: a button next to the opened search box (a phone's second way to the palette). Absent = no button. */
   onOpenPalette?: () => void;
 }) {
-  const [localView, setLocalView] = useState<SidebarView>(viewProp ?? 'projects');
-  const view = viewProp ?? localView;
-  const setView = (v: SidebarView) => { if (onViewChange) onViewChange(v); else setLocalView(v); };
   const [picking, setPicking] = useState(false);
   // "N분 전" moves on by itself: the rows re-render every minute even when no index arrives.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), META_TICK_MS); return () => clearInterval(t); }, []);
   const [footOpen, setFootOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [localCollapsed, setLocalCollapsed] = useState<Set<string>>(() => new Set(collapsedProp ?? []));
-  const collapsed = collapsedProp ? new Set(collapsedProp) : localCollapsed;
-  const setCollapsed = (fn: (c: Set<string>) => Set<string>) => {
-    const n = fn(collapsed);
-    if (onCollapsedChange) onCollapsedChange([...n]);
-    else setLocalCollapsed(n);
-  };
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [menu, setMenu] = useState<string | null>(null);
   const [newMenu, setNewMenu] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const closeSearch = () => { setSearchOpen(false); setQuery(''); };
-  // Touch: a long press on a row shows its ⋯ / 고정 (a mouse gets them on hover). One row at a time; a press elsewhere hides them.
+  const searchBtn = useRef<HTMLButtonElement>(null);
+  const plusBtn = useRef<HTMLButtonElement>(null);
+  /** Closing the box by Esc hands the focus back to the 검색 button (it would fall to <body> with the box gone). */
+  const closeSearch = (refocus = false) => { setSearchOpen(false); setQuery(''); if (refocus) searchBtn.current?.focus(); };
+  // Touch: a long press on a row shows its ⋯ (a mouse gets it on hover). One row at a time; it hides again on a press
+  // anywhere outside that row, a scroll of the list, opening a session, or a new list.
   const [revealed, setRevealed] = useState<string | null>(null);
   const pressRow = useRef<string | null>(null);
-  const press = useLongPress(() => { if (!pressRow.current) return false; setRevealed(pressRow.current); }, { ms: ROW_PRESS_MS, ignore: 'button, input, a, [role="menu"]' });
+  // The row's own open button (.row-open) is the row: a press on it may become a long press; its other buttons may not.
+  const press = useLongPress(() => { if (!pressRow.current) return false; setRevealed(pressRow.current); }, { ms: ROW_PRESS_MS, ignore: 'button:not(.row-open), input, a, [role="menu"]' });
+  useEffect(() => {
+    if (!revealed) return;
+    const outside = (e: PointerEvent) => {
+      const row = e.target instanceof Element ? e.target.closest<HTMLElement>('li[data-row]') : null;
+      if (row?.dataset.row !== revealed) setRevealed(null);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [revealed]);
+  useEffect(() => { setRevealed(null); }, [projects, desktop]);
+  const open = (sessionId: string, cwd: string, title: string) => { setRevealed(null); onOpen(sessionId, cwd, title); };
   // ⌘/Ctrl held (alone, no dialog open): the 고정됨 rows show ⌘1 … ⌘9. Cleared on blur / hide, where the keyup never arrives.
   const [modHeld, setModHeld] = useState(false);
   const pinKeys = !!pinShortcut;
@@ -163,12 +163,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // Keyed `${group}:${sessionId}`: a pinned session is listed twice and only the clicked copy opens its menu / editor.
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [found, setFound] = useState<{ q: string; hits: SearchHit[]; truncated: boolean; error: string | null } | null>(null);
-  const toggle = (set: Set<string>, key: string) => { const n = new Set(set); if (n.has(key)) n.delete(key); else n.add(key); return n; };
 
   const q = query.trim().toLowerCase();
   const match = (s: SessionEntry) => !q || s.title.toLowerCase().includes(q);
   const inView = (s: { archived?: boolean }) => !s.archived;
-  const canEdit = !!(onRename || onArchive || onDelete || onOpenSplit);
+  const canEdit = !!(onRename || onArchive || onDelete || onOpenSplit || onTogglePin);
 
   // 대화 내용 검색: debounced; a stale answer (query changed meanwhile) is dropped.
   const fullQ = query.trim();
@@ -229,7 +228,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       if (!it) return false;
       if (peek) return true;
       const t = it.kind === 'session' ? it.s : it.d;
-      onOpen(t.sessionId, t.cwd, t.title);
+      open(t.sessionId, t.cwd, t.title);
       return true;
     };
   }
@@ -242,46 +241,59 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const actById = new Map(activity.map((a) => [a.sessionId, a]));
   const unreadSet = new Set(unread);
   const waitingSet = new Set(waiting);
-  /** The avatar's corner dot, same order as the row's status text: 승인 대기 (it needs the user) → 실행 중 → 백그라운드 → 새 응답. */
-  const dot = (sessionId: string) => {
-    if (waitingSet.has(sessionId)) return <span className="row-dot waiting" role="img" aria-label="승인 대기" title="승인 대기" />;
-    const a = actById.get(sessionId);
-    if (a?.running) return <span className="row-dot running" role="img" aria-label="실행 중" title="실행 중" />;
-    if (a && a.bg > 0) return <span className="row-dot bg" role="img" aria-label={`백그라운드 작업 ${a.bg}개`} title={`백그라운드 작업 ${a.bg}개`} />;
-    if (unreadSet.has(sessionId)) return <span className="row-dot unread" role="img" aria-label="새 응답" title="새 응답" />;
+  /** What the row says on its meta line, same order as the dot (승인 대기 first: it needs the user). A 갈래 row: any member. */
+  const status = (ids: string[]): { kind: 'waiting' | 'running' | 'bg' | 'unread'; label: string } | null => {
+    if (ids.some((id) => waitingSet.has(id))) return { kind: 'waiting', label: '승인 대기' };
+    const acts = ids.map((id) => actById.get(id)).filter((a): a is SessionActivity => !!a);
+    if (acts.some((a) => a.running)) return { kind: 'running', label: '실행 중' };
+    const bg = acts.reduce((n, a) => n + a.bg, 0);
+    if (bg > 0) return { kind: 'bg', label: `백그라운드 ${bg}개` };
+    if (ids.some((id) => unreadSet.has(id))) return { kind: 'unread', label: '새 응답' };
     return null;
   };
-  /** 분할 N / ◱ (a floating card), on the avatar's lower right: the session is open already — a click brings that pane forward. A 갈래 row: any member. */
+  /** 분할 N / ◱ (a floating card), on the avatar's lower right: the session is open already. A 갈래 row: any member. */
   const openMark = (ids: string[]) => {
     const at = ids.map((id) => openPanes?.get(id)).find((x) => x !== undefined);
     if (at === undefined) return null;
     const label = at === 'float' ? '떠 있는 카드에 열림' : `분할 ${at}번 패널에 열림`;
     return <span className="open-mark" role="img" aria-label={label} title={label}>{at === 'float' ? '◱' : at}</span>;
   };
-  /** The row's round avatar: project colour + letter (decorative: the meta line names the project), the status dot top left, the open mark bottom right. */
-  const avatarOf = (slug: string, ids: string[], marked = true) => (
-    <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties}>
-      <span className="row-avatar-letter" aria-hidden="true">{avatarLetter(slug)}</span>
-      {ids.map(dot).find((d) => d !== null) ?? null}
-      {marked && openMark(ids)}
-    </span>
-  );
+  /**
+   * The row's round avatar (§3.2): project colour + letter, the status dot top left, the engine mark bottom left, the open
+   * mark bottom right. The letter, dot and engine mark are decoration — the meta line names the project and says the status.
+   */
+  const avatarOf = (slug: string, ids: string[], engine: EngineKind, marked = true) => {
+    const st = status(ids);
+    return (
+      <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties}>
+        <span className="row-avatar-letter" aria-hidden="true">{avatarLetter(slug)}</span>
+        {st && <span className={`row-dot ${st.kind}`} aria-hidden="true" title={st.label} />}
+        {engine === 'claude' || engine === 'codex' || engine === 'grok' ? <span className="row-engine"><EngineMark engine={engine} decorative /></span> : null}
+        {marked && openMark(ids)}
+      </span>
+    );
+  };
   const rowClass = (active: boolean) => (active ? 'session-item active' : 'session-item');
   // An attribute, not a class: a re-render must not wipe the 고정됨 drag's own classes (pin-dragging) on the same press.
   const rowProps = (key: string) => ({ 'data-row': key, ...(revealed === key ? { 'data-revealed': '' } : {}) });
-  /** What the row says in place of its time, same order as the dot (승인 대기 first: it needs the user). A 갈래 row: any member. */
-  const status = (ids: string[]): string | null => {
-    if (ids.some((id) => waitingSet.has(id))) return '승인 대기';
-    const acts = ids.map((id) => actById.get(id)).filter((a): a is SessionActivity => !!a);
-    if (acts.some((a) => a.running)) return '실행 중';
-    const bg = acts.reduce((n, a) => n + a.bg, 0);
-    if (bg > 0) return `백그라운드 ${bg}개`;
-    if (ids.some((id) => unreadSet.has(id))) return '새 응답';
-    return null;
-  };
+  /** Line 1: the title and, top right, the time (⋯ takes its place when shown). */
+  const titleLine = (title: ReactNode, time: number) => (
+    <span className="row-line">{title}<span className="row-time">{ago(time, now)}</span></span>
+  );
+  /** The row's open button: Tab reaches it, Enter / Space open it; the current session says so (aria-current). */
+  const openButton = (p: { current: boolean; keys?: string; onOpen: (detail: number) => void; children: ReactNode }) => (
+    <button type="button" className="row-open" aria-current={p.current ? 'page' : undefined} aria-keyshortcuts={p.keys}
+      onClick={(e) => p.onOpen(e.detail)}>{p.children}</button>
+  );
+  const moreButton = (key: string, group: string, title: string) => (
+    <span className="row-end">
+      <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title={title} aria-haspopup="menu" aria-expanded={menu === key}
+        onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
+    </span>
+  );
 
-  /** `tree`: a 메시지 편집 갈래 tree shown as this one row — a click opens its newest session. `project`: the meta label (최근 / 보관됨). */
-  const row = (s: SessionEntry, group: string, tree?: BranchGroup<SessionEntry>, project?: string, keyHint?: string | null) => {
+  /** `tree`: a 메시지 편집 갈래 tree shown as this one row — a click opens its newest session. */
+  const row = (s: SessionEntry, group: string, tree?: BranchGroup<SessionEntry>, keyHint?: string | null) => {
     const on = pinSet.has(s.sessionId);
     const key = `${group}:${s.sessionId}`;
     const edit = editing?.id === key ? editing : null;
@@ -290,19 +302,20 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const target = byId.get(openId) ?? s;
     // The row's menu acts on the session a click opens (the newest version of a 갈래 tree), and says which one it is.
     const order = members.map((id) => byId.get(id)).filter((x): x is SessionEntry => !!x).sort((a, b) => a.lastModified - b.lastModified);
-    const engine = engineOf(target);
     const which = members.length > 1 ? `갈래 ${order.findIndex((x) => x.sessionId === target.sessionId) + 1}/${members.length} · ${ago(target.lastModified, now)} 수정` : undefined;
     const slug = projectName.get(s.sessionId) ?? baseName(s.cwd);
     const more = canEdit && !edit;
+    const current = !!currentSessionId && members.includes(currentSessionId);
+    const meta = <span className="session-meta" {...(s.imported ? { title: importTitle(s) } : {})}>{[slug, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, status(members)?.label].filter(Boolean).join(' · ')}</span>;
+    const avatarEl = avatarOf(slug, members, engineOf(target), !edit);
     return (
-      <li key={s.sessionId} {...rowProps(key)} className={rowClass(!!currentSessionId && members.includes(currentSessionId))} title={target.title}
-        // The second click of a double-click (rename) must not re-open the session.
-        onClick={(e) => { if (e.detail > 1 || edit) return; onOpen(target.sessionId, target.cwd, target.title); }}
+      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} title={target.title}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
-        <span className="session-row">
-          {avatarOf(slug, members, !edit)}
-          <span className="row-text">
-            {edit ? (
+        {edit ? (
+          // Renaming: an input cannot sit inside a button, so the row is plain for the while.
+          <span className="row-open">
+            {avatarEl}
+            <span className="row-text">
               <input className="session-rename" aria-label="세션 이름" value={edit.text} autoFocus maxLength={200}
                 onChange={(e) => setEditing({ id: key, text: e.target.value })}
                 onKeyDown={(e) => {
@@ -311,26 +324,25 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
                   if (e.key === 'Escape') { e.preventDefault(); setEditing(null); }
                 }}
                 onBlur={() => commitEdit(target, key)} onClick={(e) => e.stopPropagation()} />
-            ) : (
-              <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}><EngineMark engine={engine} decorative />{target.title}</span>
-            )}
-            <span className="session-meta" {...(s.imported ? { title: importTitle(s) } : {})}>{[project, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, status(members) ?? ago(s.lastModified, now)].filter(Boolean).join(' · ')}</span>
-          </span>
-          {/* ⋯ / 고정: shown on hover or keyboard focus (a mouse), after a long press (touch), or while the menu is open */}
-          {(more || onTogglePin) && (
-            <span className="row-end">
-              {more && (
-                <button type="button" className="row-more-btn" aria-keyshortcuts={reorderKeys(group)} aria-label="세션 메뉴" title="이름 바꾸기 · 보관 · 삭제" aria-haspopup="menu" aria-expanded={menu === key}
-                  onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
-              )}
-              {onTogglePin && (
-                <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-keyshortcuts={reorderKeys(group)} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(s.sessionId, !on); }}>
-                  <PinIcon filled={on} />
-                </button>
-              )}
+              {meta}
             </span>
-          )}
-        </span>
+          </span>
+        ) : openButton({
+          current, keys: reorderKeys(group),
+          // The second click of a double-click (rename) must not re-open the session.
+          onOpen: (detail) => { if (detail <= 1) open(target.sessionId, target.cwd, target.title); },
+          children: (
+            <>
+              {avatarEl}
+              <span className="row-text">
+                {titleLine(<span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}>{target.title}</span>, s.lastModified)}
+                {meta}
+              </span>
+            </>
+          ),
+        })}
+        {/* ⋯: shown on hover or keyboard focus (a mouse), after a long press (touch), or while the menu is open */}
+        {more && moreButton(key, group, '이름 바꾸기 · 보관 · 삭제')}
         {keyHint && !edit && <kbd className="pin-key" aria-hidden="true">{keyHint}</kbd>}
         {menu === key && (
           <MenuList onClose={() => setMenu(null)}>
@@ -338,7 +350,6 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {onRename && <button type="button" role="menuitem" onClick={() => startEdit(target, key)}>이름 바꾸기</button>}
             {splitItem(target)}
             {tabItem(target.sessionId)}
-            {/* Touch screens hide the row's pin button until a long press; pinning lives here too. */}
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {/* Archived in Codex: only the Codex app can unarchive it. */}
             {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
@@ -354,31 +365,27 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     );
   };
 
-  /** A Claude Desktop session outside deck's projects: opens like any session; the only action is 고정. */
+  /** A Claude Desktop session outside deck's projects: opens like any session; its menu has 분할 / 새 탭 / 고정. */
   const desktopRow = (d: DesktopSession, group: string, keyHint?: string | null) => {
     const on = pinSet.has(d.sessionId);
     const key = `${group}:${d.sessionId}`;
     const more = !!(onTogglePin || onOpenSplit);
     return (
-      <li key={d.sessionId} {...rowProps(key)} className={rowClass(d.sessionId === currentSessionId)} title={`${d.title}\n${d.cwd}`} onClick={() => onOpen(d.sessionId, d.cwd, d.title)}>
-        <span className="session-row">
-          {avatarOf(d.project, [d.sessionId])}
-          <span className="row-text">
-            <span className="session-title"><EngineMark engine="claude" decorative />{d.title}</span>
-            <span className="session-meta">{d.project}{group === 'desktop' ? '' : ' · Desktop'} · {status([d.sessionId]) ?? ago(d.lastModified, now)}</span>
-          </span>
-          {more && (
-            <span className="row-end">
-              <button type="button" className="row-more-btn" aria-keyshortcuts={onTogglePin ? reorderKeys(group) : undefined} aria-label="세션 메뉴" title={[onOpenSplit && '분할 보기로 열기', onTogglePin && '고정'].filter(Boolean).join(' · ')} aria-haspopup="menu" aria-expanded={menu === key}
-                onClick={(e) => { e.stopPropagation(); setMenu((m) => (m === key ? null : key)); }}>⋯</button>
-              {onTogglePin && (
-                <button type="button" className={`pin-btn ${on ? 'on' : ''}`} aria-keyshortcuts={reorderKeys(group)} aria-label={on ? '고정 해제' : '고정'} title={on ? '고정 해제' : '맨 위에 고정'} onClick={(e) => { e.stopPropagation(); onTogglePin(d.sessionId, !on); }}>
-                  <PinIcon filled={on} />
-                </button>
-              )}
-            </span>
-          )}
-        </span>
+      <li key={d.sessionId} {...rowProps(key)} className={rowClass(d.sessionId === currentSessionId)} title={`${d.title}\n${d.cwd}`}>
+        {openButton({
+          current: d.sessionId === currentSessionId, keys: onTogglePin ? reorderKeys(group) : undefined,
+          onOpen: () => open(d.sessionId, d.cwd, d.title),
+          children: (
+            <>
+              {avatarOf(d.project, [d.sessionId], 'claude')}
+              <span className="row-text">
+                {titleLine(<span className="session-title">{d.title}</span>, d.lastModified)}
+                <span className="session-meta">{[d.project, 'Desktop', status([d.sessionId])?.label].filter(Boolean).join(' · ')}</span>
+              </span>
+            </>
+          ),
+        })}
+        {more && moreButton(key, onTogglePin ? group : '', [onOpenSplit && '분할 보기로 열기', onTogglePin && '고정'].filter(Boolean).join(' · '))}
         {keyHint && <kbd className="pin-key" aria-hidden="true">{keyHint}</kbd>}
         {menu === key && more && (
           <MenuList onClose={() => setMenu(null)}>
@@ -396,64 +403,77 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // 메시지 편집 갈래: one row per branch tree (its root, opening the newest version); the tree's other sessions are not listed.
   // A deleted root (휴지통) just drops out: its children keep their link and group under the oldest one left.
   const links = linksOf(byId.values());
-  // 최근: deck sessions and Desktop-only sessions in one date-split list, minus what 고정됨 already shows.
+  // deck sessions and Desktop-only sessions in one date-split list, minus what 고정됨 already shows.
   type RecentItem = { kind: 'session'; g: BranchGroup<SessionEntry>; lastModified: number } | { kind: 'desktop'; d: DesktopSession; lastModified: number };
-  const recentList: RecentItem[] = view === 'recent'
-    ? [
-        ...groupBranches([...byId.values()].filter(inView), links).filter((g) => match(g.entry) && !pinSet.has(g.entry.sessionId)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
-        ...desktopShown.map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified })),
-      ].sort((a, b) => b.lastModified - a.lastModified).slice(0, MAX_RECENT)
-    : [];
+  const recentList: RecentItem[] = [
+    ...groupBranches([...byId.values()].filter(inView), links).filter((g) => match(g.entry) && !pinSet.has(g.entry.sessionId)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
+    ...desktopShown.map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified })),
+  ].sort((a, b) => b.lastModified - a.lastModified).slice(0, MAX_RECENT);
   // 보관됨 N: archived sessions (pinned or not) and archived Desktop-only ones, newest first, in one folded section at the end.
-  const archivedList: RecentItem[] = onArchive
-    ? [
-        ...groupBranches([...byId.values()].filter((s) => s.archived), links).filter((g) => match(g.entry)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
-        ...desktop.filter((d) => d.archived && !byId.has(d.sessionId) && dMatch(d)).map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified })),
-      ].sort((a, b) => b.lastModified - a.lastModified)
-    : [];
+  // The count is all a folded row needs: the rows are only built (and sorted) once it is open; neither on every tick.
+  const archived = useMemo(() => {
+    if (!onArchive) return { count: 0, list: [] as RecentItem[] };
+    const all = projects.flatMap((p) => p.sessions);
+    const groups = groupBranches(all.filter((s) => s.archived), linksOf(all)).filter((g) => match(g.entry));
+    const ds = desktop.filter((d) => d.archived && !all.some((s) => s.sessionId === d.sessionId) && dMatch(d));
+    const list = archivedOpen
+      ? [...groups.map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })), ...ds.map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified }))].sort((a, b) => b.lastModified - a.lastModified)
+      : [];
+    return { count: groups.length + ds.length, list };
+    // match / dMatch read only `q`.
+  }, [projects, desktop, q, archivedOpen, !!onArchive]); // eslint-disable-line react-hooks/exhaustive-deps
   // A full-text hit in an archived session shows once 보관됨 is open (as its row does).
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || !s.archived || archivedOpen; });
   const searching = fullOn && found?.q !== fullQ;
-  // 프로젝트: the same — what 고정됨 shows is not listed again under its project.
-  const visible = projects.map((p) => ({ p, sessions: groupBranches(p.sessions.filter(inView), links).filter((g) => !pinSet.has(g.entry.sessionId)).slice(0, MAX_SESSIONS).filter((g) => match(g.entry)) })).filter(({ sessions }) => !q || sessions.length > 0);
   const menuItems: SidebarMenuItem[] = footMenu ?? (onOpenSettings ? [{ label: '설정', hint: `${isMacPlatform() ? '⌘' : 'Ctrl+'},`, run: onOpenSettings }] : []);
   const mod = isMacPlatform() ? '⌘' : 'Ctrl+';
+  // + menu folders (§3.2 / §8-1): the current session's project, then the other projects by their newest session.
+  const currentCwd = currentSessionId ? (byId.get(currentSessionId)?.cwd ?? desktopById.get(currentSessionId)?.cwd) : undefined;
+  const hereProject = currentCwd !== undefined ? projects.find((p) => p.cwd === currentCwd) : undefined;
+  const newest = (p: ProjectEntry) => p.sessions.reduce((m, s) => Math.max(m, s.lastModified), 0);
+  const recentFolders = projects.filter((p) => p !== hereProject).map((p) => ({ p, t: newest(p) })).sort((a, b) => b.t - a.t).slice(0, RECENT_FOLDERS).map((x) => x.p);
+  /** A + menu item that leaves the focus with + (an item opening its own screen takes it from there). */
+  const plusItem = (run: () => void) => () => { setNewMenu(false); plusBtn.current?.focus(); run(); };
+  const folderItem = (p: ProjectEntry, here: boolean) => (
+    <button key={p.cwd} type="button" role="menuitem" aria-label={`${p.name} 새 세션${here ? ' (지금 프로젝트)' : ''}`} title={p.cwd} onClick={plusItem(() => onNew(p.cwd, p.name))}>
+      <span>{p.name}</span>{here && <span className="menu-tag">지금</span>}
+    </button>
+  );
   return (
     <aside className="sidebar" {...press}
       onPointerDown={(e) => {
-        // Which row a long press would reveal; a press anywhere else hides the one shown.
+        // Which row a long press would reveal (a press elsewhere hides the one shown: the document listener above).
         const li = e.target instanceof Element ? e.target.closest<HTMLElement>('li[data-row]') : null;
         pressRow.current = li?.dataset.row ?? null;
-        if (revealed && revealed !== pressRow.current) setRevealed(null);
         press.onPointerDown(e);
-      }}>
+      }}
+      onScroll={revealed ? () => setRevealed(null) : undefined}>
       <div className="sidebar-head">
+        <span className="sidebar-brand"><DeckMark className="sidebar-brand-mark" />deck</span>
         <span className="grow" />
-        <button type="button" className="icon-btn" aria-label="검색" title="세션 검색" aria-expanded={searchOpen} onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}><SearchIcon /></button>
+        <button ref={searchBtn} type="button" className="icon-btn" aria-label="검색" title="세션 검색" aria-expanded={searchOpen} onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}><SearchIcon /></button>
         <span className="new-menu-wrap">
-          <button type="button" className="icon-btn" aria-label="새 세션" title="새 세션 · 폴더 열기 · 보기" aria-haspopup="menu" aria-expanded={newMenu} onClick={() => setNewMenu((o) => !o)}><PlusIcon /></button>
+          <button ref={plusBtn} type="button" className="icon-btn" aria-label="새 세션" title="새 세션 · 폴더 열기" aria-haspopup="menu" aria-expanded={newMenu} onClick={() => setNewMenu((o) => !o)}><PlusIcon /></button>
           {newMenu && (
             <MenuList className="session-menu new-menu" label="새 세션" onClose={() => setNewMenu(false)}>
-              {onNewChat && <button type="button" role="menuitem" onClick={() => { setNewMenu(false); onNewChat(); }}><span>새 세션</span><kbd>{mod}N</kbd></button>}
-              {onOpenFolder && <button type="button" role="menuitem" title="아무 폴더에서 새 세션" onClick={() => { setNewMenu(false); setPicking(true); }}><span>폴더 열기</span></button>}
-              {projects.length > 0 && <div className="foot-menu-head">프로젝트에서 새 세션</div>}
-              {projects.map((p) => (
-                <button key={p.cwd} type="button" role="menuitem" aria-label={`${p.name} 새 세션`} title={p.cwd} onClick={() => { setNewMenu(false); onNew(p.cwd, p.name); }}><span>{p.pinned ? '★ ' : ''}{p.name}</span></button>
-              ))}
+              {onNewChat && <button type="button" role="menuitem" onClick={plusItem(onNewChat)}><span>새 세션</span><kbd>{mod}N</kbd></button>}
+              {onOpenFolder && <button type="button" role="menuitem" title="아무 폴더에서 새 세션" onClick={plusItem(() => setPicking(true))}><span>폴더 열기…</span></button>}
+              {(hereProject || recentFolders.length > 0) && <div className="menu-sep" role="separator" />}
+              {hereProject && folderItem(hereProject, true)}
+              {recentFolders.map((p) => folderItem(p, false))}
               <div className="menu-sep" role="separator" />
-              <button type="button" role="menuitem" onClick={() => { setNewMenu(false); setView(view === 'recent' ? 'projects' : 'recent'); }}><span>{view === 'recent' ? '프로젝트별로 묶기' : '날짜별로 보기'}</span></button>
-              <button type="button" role="menuitem" onClick={() => { setNewMenu(false); onRefresh(); }}><span>세션 목록 다시 읽기</span></button>
+              <button type="button" role="menuitem" onClick={plusItem(onRefresh)}><span>세션 목록 다시 읽기</span></button>
             </MenuList>
           )}
         </span>
       </div>
-      {picking && onOpenFolder && <FolderPicker onOpen={(cwd) => { setPicking(false); onOpenFolder(cwd); }} onClose={() => setPicking(false)} {...(fetchFn ? { fetchFn } : {})} />}
+      {picking && onOpenFolder && <FolderPicker onOpen={(cwd) => { setPicking(false); onOpenFolder(cwd); }} onClose={() => { setPicking(false); plusBtn.current?.focus(); }} {...(fetchFn ? { fetchFn } : {})} />}
       {searchOpen && (
         <div className="sidebar-search-row">
           <label className="sidebar-search">
             <SearchIcon />
             <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="세션 검색" aria-label="세션 검색" autoFocus
-              onKeyDown={(e) => { if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); closeSearch(); } }} />
+              onKeyDown={(e) => { if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); closeSearch(true); } }} />
           </label>
           {onOpenPalette && <button type="button" className="icon-btn" aria-label="명령 팔레트" title={`명령 팔레트 (${mod}K)`} onClick={onOpenPalette}>{mod === '⌘' ? '⌘K' : 'K'}</button>}
         </div>
@@ -461,58 +481,28 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       {pinned.length > 0 && (
         <section className="project pinned-group" data-testid="pinned-group">
           <div className="project-head"><span className="project-name">고정됨</span></div>
-          <ul {...pinDrag.listProps}>{pinned.map((it, i) => (it.kind === 'session' ? row(it.s, 'pinned', undefined, undefined, pinKey(i)) : desktopRow(it.d, 'pinned', pinKey(i))))}</ul>
+          <ul {...pinDrag.listProps}>{pinned.map((it, i) => (it.kind === 'session' ? row(it.s, 'pinned', undefined, pinKey(i)) : desktopRow(it.d, 'pinned', pinKey(i))))}</ul>
           <span className="sr-only" role="status" aria-live="polite">{pinDrag.live}</span>
         </section>
       )}
-      {view === 'projects' && desktopShown.length > 0 && (
-        <section className="project desktop-group" data-testid="desktop-group">
-          <div className="project-head"><span className="project-name">최근 Desktop 세션</span></div>
-          <ul>{desktopShown.map((d) => desktopRow(d, 'desktop'))}</ul>
-        </section>
-      )}
-      {projects.length === 0 && <div className="muted sidebar-empty">아직 대화가 없어요. 위 + 메뉴의 폴더 열기로 작업할 폴더를 고른 뒤, 새 세션으로 시작해 보세요.</div>}
-      {view === 'recent' && groupByDate(recentList).map((g) => (
+      {projects.length === 0 && desktop.length === 0 && <div className="muted sidebar-empty">아직 대화가 없어요. 위 + 메뉴의 폴더 열기로 작업할 폴더를 고른 뒤, 새 세션으로 시작해 보세요.</div>}
+      {groupByDate(recentList).map((g) => (
         <section key={g.label} className="project date-group" data-testid={`date-group-${g.label}`}>
           <div className="project-head"><span className="project-name">{g.label}</span></div>
-          <ul>{g.items.map((t) => (t.kind === 'session' ? row(t.g.entry, 'recent', t.g, projectName.get(t.g.entry.sessionId)) : desktopRow(t.d, 'recent')))}</ul>
+          <ul>{g.items.map((t) => (t.kind === 'session' ? row(t.g.entry, 'recent', t.g) : desktopRow(t.d, 'recent')))}</ul>
         </section>
       ))}
-      {q && (view === 'recent' ? recentList.length === 0 : visible.length === 0 && desktopShown.length === 0) && pinned.length === 0 && archivedList.length === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
-      {view === 'projects' && visible.map(({ p, sessions }) => {
-        const isCollapsed = !q && collapsed.has(p.cwd);
-        const showAll = !!q || expanded.has(p.cwd);
-        const shown = showAll ? sessions : sessions.slice(0, FOLD_AT);
-        const hidden = sessions.length - shown.length;
-        return (
-          <section key={p.cwd} className={`project ${isCollapsed ? 'collapsed' : ''}`}>
-            <div className="project-head">
-              <button type="button" className="project-toggle" aria-expanded={!isCollapsed} title={p.cwd} onClick={() => setCollapsed((c) => toggle(c, p.cwd))}>
-                <Chevron />
-                <span className="project-name">{p.pinned ? '★ ' : ''}{p.name}</span>
-              </button>
-              <button type="button" className="icon-btn" aria-label={`${p.name} 새 세션`} title="+ 새 세션" onClick={() => onNew(p.cwd, p.name)}>+</button>
-            </div>
-            {!isCollapsed && (
-              <>
-                <ul>{shown.map((g) => row(g.entry, p.cwd, g))}</ul>
-                {hidden > 0 && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>더 보기 ({hidden})</button>}
-                {!q && expanded.has(p.cwd) && sessions.length > FOLD_AT && <button type="button" className="more-btn" onClick={() => setExpanded((e) => toggle(e, p.cwd))}>접기</button>}
-              </>
-            )}
-          </section>
-        );
-      })}
-      {onArchive && (!q || archivedList.length > 0) && (
+      {q && recentList.length === 0 && pinned.length === 0 && archived.count === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
+      {onArchive && (!q || archived.count > 0) && (
         <section className={`project archived-group ${archivedOpen ? '' : 'collapsed'}`} data-testid="archived-group">
-          <button type="button" className="archived-row" aria-expanded={archivedOpen} aria-label={`보관됨 ${archivedList.length}`} onClick={() => setArchivedOpen((o) => !o)}>
+          <button type="button" className="archived-row" aria-expanded={archivedOpen} aria-label={`보관됨 ${archived.count}`} onClick={() => setArchivedOpen((o) => !o)}>
             <Chevron />
             <span className="project-name">보관됨</span>
-            <span className="archived-count">{archivedList.length}</span>
+            <span className="archived-count">{archived.count}</span>
           </button>
-          {archivedOpen && (archivedList.length === 0
+          {archivedOpen && (archived.list.length === 0
             ? <div className="muted sidebar-empty">보관된 세션이 없습니다.</div>
-            : <ul>{archivedList.map((t) => (t.kind === 'session' ? row(t.g.entry, 'archived', t.g, projectName.get(t.g.entry.sessionId)) : desktopRow(t.d, 'archived')))}</ul>)}
+            : <ul>{archived.list.map((t) => (t.kind === 'session' ? row(t.g.entry, 'archived', t.g) : desktopRow(t.d, 'archived')))}</ul>)}
         </section>
       )}
       {fullOn && (searching || hitsShown.length > 0 || found?.error) && (
@@ -522,14 +512,16 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           {found?.error && <div className="error sidebar-empty">{found.error}</div>}
           <ul>
             {hitsShown.map((h, i) => (
-              <li key={`${h.sessionId}-${i}`} className="search-hit" title={`${h.title}\n${h.cwd}`} onClick={() => onOpenHit?.(h)}>
-                <span className="session-row">
-                  <span className="session-title"><EngineMark engine={h.engine} decorative />{h.title}</span>
-                  <span className="session-meta">{h.role === 'user' ? '나' : h.engine === 'codex' ? 'GPT' : 'Claude'} · {ago(h.lastModified, now)}</span>
-                </span>
-                <span className="search-snippet">
-                  {h.snippet.slice(0, h.matchStart)}<mark>{h.snippet.slice(h.matchStart, h.matchStart + h.matchLength)}</mark>{h.snippet.slice(h.matchStart + h.matchLength)}
-                </span>
+              <li key={`${h.sessionId}-${i}`} className="search-hit" title={`${h.title}\n${h.cwd}`}>
+                <button type="button" className="row-open" onClick={() => onOpenHit?.(h)}>
+                  <span className="session-row">
+                    <span className="session-title"><EngineMark engine={h.engine} decorative />{h.title}</span>
+                    <span className="session-meta">{h.role === 'user' ? '나' : h.engine === 'codex' ? 'GPT' : 'Claude'} · {ago(h.lastModified, now)}</span>
+                  </span>
+                  <span className="search-snippet">
+                    {h.snippet.slice(0, h.matchStart)}<mark>{h.snippet.slice(h.matchStart, h.matchStart + h.matchLength)}</mark>{h.snippet.slice(h.matchStart + h.matchLength)}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>

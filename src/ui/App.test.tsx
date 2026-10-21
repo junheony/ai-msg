@@ -56,24 +56,20 @@ describe('App split view (D6)', () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-  it('ux-state: a reload restores the split, each pane\'s session/picker and folded groups, and re-opens the sessions', async () => {
-    localStorage.setItem('deck.sidebarView', 'projects'); // folding is a 프로젝트 view feature
+  it('ux-state: a reload restores the split, each pane\'s session/picker, and re-opens the sessions', async () => {
     await boot();
     openSession('one');
     fireEvent.click(screen.getByText(/^\+ 분할/));
     openSession('two');
-    fireEvent.click(within(document.querySelector('.sidebar') as HTMLElement).getByTitle('/w')); // fold the project group
     const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { session: { sessionId: string } }[]; active: number; collapsed: string[] };
     expect(stored.panes.map((p) => p.session.sessionId)).toEqual(['s1', 's2']);
     expect(stored.active).toBe(1);
-    expect(stored.collapsed).toEqual(['/w']);
     cleanup();
     sock.frames = [];
     sock.onMessage = null;
     await boot();
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
     expect(frames().filter((f) => f.type === 'open_session').map((f) => (f as { sessionId: string }).sessionId)).toEqual(['s1', 's2']);
-    expect(document.querySelector('.project.collapsed')).not.toBeNull();
     server({ type: 'history', sessionId: 's2', cwd: '/w', account: 'b', messages: [{ kind: 'user', text: 'restored', ts: null }], runningTurnId: null } as ServerMessage);
     expect(within(lastPane()).getByText('restored')).toBeTruthy();
   });

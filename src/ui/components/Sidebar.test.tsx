@@ -6,7 +6,7 @@ import { AVATAR_COLORS, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex, avatar
 const noop = () => {};
 /** The head's search icon opens the 세션 검색 box (it is not on screen until then). */
 const openSearch = () => fireEvent.click(screen.getByRole('button', { name: '검색' }));
-/** The head's + menu (새 세션 · 폴더 열기 · 프로젝트별 새 세션 · 보기 · 새로고침). */
+/** The head's + menu (새 세션 · 폴더 열기… · 지금 / 최근 폴더 · 세션 목록 다시 읽기). */
 const openNewMenu = () => fireEvent.click(screen.getByRole('button', { name: '새 세션' }));
 /** Fixture times: now, each one 1 ms older, so the 최근 view's newest-first order is the creation order (equal / ms-apart Date.now() made it flaky). */
 const stamp = (() => { const base = Date.now(); let k = 0; return () => base - k++; })();
@@ -24,7 +24,7 @@ describe('Sidebar 폴더 열기 (F1)', () => {
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenFolder={onOpenFolder} fetchFn={fetchFn} />);
     expect(screen.queryByLabelText('폴더 경로')).toBeNull();
     openNewMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: '폴더 열기' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '폴더 열기…' }));
     fireEvent.change(screen.getByLabelText('폴더 경로'), { target: { value: '~/x' } });
     fireEvent.click(screen.getByText('열기'));
     await waitFor(() => expect(onOpenFolder).toHaveBeenCalledWith('/Users/u/x'));
@@ -48,33 +48,35 @@ describe('Sidebar pins (F2)', () => {
     expect(titles).toEqual(['third', 'first']);
   });
 
-  it('no 고정됨 group without pins; the pin toggle reports the new state and does not open the session', () => {
+  it('no 고정됨 group without pins; pinning is a ⋯ menu item (no pin button in the row) and does not open the session', () => {
     const onTogglePin = vi.fn();
     const onOpen = vi.fn();
     const { rerender } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} pins={[]} onTogglePin={onTogglePin} />);
     expect(screen.queryByTestId('pinned-group')).toBeNull();
-    fireEvent.click(screen.getAllByRole('button', { name: '고정' })[0]!);
+    expect(screen.queryByRole('button', { name: '고정' })).toBeNull();
+    const menuOf = (title: string) => fireEvent.click(screen.getByText(title).closest('li')!.querySelector('[aria-label="세션 메뉴"]')!);
+    menuOf('first');
+    fireEvent.click(screen.getByRole('menuitem', { name: '맨 위에 고정' }));
     expect(onTogglePin).toHaveBeenCalledWith('s1', true);
     expect(onOpen).not.toHaveBeenCalled();
     rerender(<Sidebar projects={projects} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} pins={['s1']} onTogglePin={onTogglePin} />);
-    fireEvent.click(screen.getAllByRole('button', { name: '고정 해제' })[0]!);
+    menuOf('first');
+    fireEvent.click(screen.getByRole('menuitem', { name: '고정 해제' }));
     expect(onTogglePin).toHaveBeenLastCalledWith('s1', false);
   });
 
-  it('프로젝트 view: each session once — pinned rows leave their project list (as in 최근)', () => {
-    const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="projects" pins={['s1', 's3']} onTogglePin={noop} />);
-    const pinnedTitles = [...screen.getByTestId('pinned-group').querySelectorAll('.session-title')].map((e) => e.textContent);
-    expect(pinnedTitles).toEqual(['first', 'third']);
-    const listed = [...container.querySelectorAll('section.project:not([data-testid]) .session-title')].map((e) => e.textContent);
-    expect(listed).toEqual(['second']);
-    // The project whose only session is pinned keeps its header (+ 새 세션).
-    expect(screen.getByRole('button', { name: 'two 새 세션' })).toBeTruthy();
+  it('each session once — pinned rows leave the date groups; a pinned row still names its project in the meta', () => {
+    const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s1', 's3']} onTogglePin={noop} />);
+    const pinned = screen.getByTestId('pinned-group');
+    expect([...pinned.querySelectorAll('.session-title')].map((e) => e.textContent)).toEqual(['first', 'third']);
+    expect([...pinned.querySelectorAll('.session-meta')].map((e) => e.textContent)).toEqual(['one', 'two']);
+    expect([...container.querySelectorAll('.date-group .session-title')].map((e) => e.textContent)).toEqual(['second']);
   });
 
   it('clicking a pinned row opens its session', () => {
     const onOpen = vi.fn();
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} pins={['s3']} onTogglePin={noop} />);
-    fireEvent.click(screen.getByTestId('pinned-group').querySelector('li')!);
+    fireEvent.click(screen.getByTestId('pinned-group').querySelector('.row-open')!);
     expect(onOpen).toHaveBeenCalledWith('s3', '/w/two', 'third');
   });
 });
@@ -144,35 +146,28 @@ describe('Sidebar ⌘1 … ⌘9 hints', () => {
   });
 });
 
-describe('Sidebar folding and search', () => {
+describe('Sidebar date list and search', () => {
   afterEach(cleanup);
   const s = (i: number) => ({ sessionId: `s${i}`, account: 'a' as const, cwd: '/w', projectDir: '/p', file: '/f', title: `session ${i}`, lastModified: Date.now() - 3 * 3_600_000, sizeBytes: 1 });
   const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: Array.from({ length: 8 }, (_, i) => s(i)) }];
 
-  it('shows 5 sessions then 더 보기; the project header collapses its list; rows carry the time, not an account letter', () => {
+  it('lists every session in date groups (no per-project fold); the time sits top right, the meta names the project, no account letter', () => {
     const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
-    expect(container.querySelectorAll('li')).toHaveLength(5);
-    expect(container.querySelector('.session-meta')?.textContent).toBe('3시간 전'); // turns are spread over accounts, so a per-session letter would mislead
-    fireEvent.click(screen.getByText('더 보기 (3)'));
     expect(container.querySelectorAll('li')).toHaveLength(8);
-    fireEvent.click(screen.getByText('접기'));
-    expect(container.querySelectorAll('li')).toHaveLength(5);
-    fireEvent.click(screen.getByText('w'));
-    expect(container.querySelectorAll('li')).toHaveLength(0);
+    expect(container.querySelectorAll('.date-group')).not.toHaveLength(0);
+    expect(screen.queryByText(/더 보기/)).toBeNull();
+    const li = container.querySelector('li')!;
+    expect(li.querySelector('.row-line > .row-time')?.textContent).toBe('3시간 전');
+    expect(li.querySelector('.session-meta')?.textContent).toBe('w'); // turns are spread over accounts, so a per-session letter would mislead
   });
 
-  it('the search box filters sessions by title across the fold', () => {
-    const onNew = vi.fn();
-    const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={onNew} onRefresh={noop} />);
+  it('the search box filters sessions by title', () => {
+    const { container } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     openSearch();
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'session 7' } });
     expect([...container.querySelectorAll('.session-title')].map((e) => e.textContent)).toEqual(['session 7']);
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'nothing' } });
     expect(screen.getByText(/맞는 세션이 없습니다/)).toBeTruthy();
-    expect(screen.queryByLabelText('w 새 세션')).toBeNull(); // the project hides while nothing in it matches
-    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: '' } });
-    fireEvent.click(screen.getByLabelText('w 새 세션'));
-    expect(onNew).toHaveBeenCalledWith('/w', 'w');
   });
 });
 
@@ -183,9 +178,10 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
   it('lists the Desktop sessions with project and relative time; a click opens it like any session; search filters them', () => {
     const onOpen = vi.fn();
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} desktop={[d(1, 'Fix login', 'deck'), d(2, 'Write docs', 'harness')]} />);
-    const group = screen.getByTestId('desktop-group');
-    expect(group.textContent).toContain('최근 Desktop 세션');
-    expect(group.textContent).toContain('deck · 1시간 전');
+    expect(screen.queryByTestId('desktop-group')).toBeNull();
+    const row = screen.getByText('Fix login').closest('li')!;
+    expect(row.querySelector('.session-meta')?.textContent).toBe('deck · Desktop');
+    expect(row.querySelector('.row-time')?.textContent).toBe('1시간 전');
     fireEvent.click(screen.getByText('Write docs'));
     expect(onOpen).toHaveBeenCalledWith('d2', '/Users/u/harness', 'Write docs');
     openSearch();
@@ -198,7 +194,7 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
     const s = (id: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd: '/w/one', projectDir: '/p', file: '/f', title, lastModified: Date.now() - 60_000, sizeBytes: 1 });
     const projects = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', 'first'), s('s2', 'second'), s('d1', 'Fix login')] }];
     const onTogglePin = vi.fn();
-    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" pins={['s1', 'd3']} onTogglePin={onTogglePin}
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s1', 'd3']} onTogglePin={onTogglePin}
       desktop={[d(1, 'Fix login', 'one'), d(2, 'Write docs', 'harness'), d(3, 'Pinned desktop', 'x')]} />);
     expect(screen.queryByTestId('desktop-group')).toBeNull();
     const titles = [...document.querySelectorAll('.session-title')].map((e) => e.textContent);
@@ -209,18 +205,18 @@ describe('Sidebar 최근 Desktop 세션 / 자동 승인', () => {
     // a Desktop-only row sits in its date group (which one depends on the clock), labelled, and can be pinned too
     const docs = [...document.querySelectorAll('.date-group li')].find((li) => li.textContent?.includes('Write docs'))!;
     expect(docs.textContent).toContain('harness · Desktop');
-    fireEvent.click(docs.querySelector('button[aria-label="고정"]')!);
+    fireEvent.click(docs.querySelector('button[aria-label="세션 메뉴"]')!);
+    fireEvent.click(screen.getByRole('menuitem', { name: '맨 위에 고정' }));
     expect(onTogglePin).toHaveBeenCalledWith('d2', true);
   });
 
-  it('프로젝트 view: the Desktop section skips sessions a project already lists', () => {
+  it('a Desktop session a project already lists shows once, as that project\'s row', () => {
     const s = { sessionId: 'd1', account: 'a' as const, cwd: '/w/deck', projectDir: '/p', file: '/f', title: 'Fix login', lastModified: Date.now(), sizeBytes: 1 };
     render(<Sidebar projects={[{ cwd: '/w/deck', name: 'deck', pinned: true, sessions: [s] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop}
       desktop={[d(1, 'Fix login', 'deck'), d(2, 'Write docs', 'harness')]} />);
-    const group = screen.getByTestId('desktop-group');
-    expect(group.textContent).not.toContain('Fix login');
-    expect(group.textContent).toContain('Write docs');
     expect(screen.getAllByText('Fix login')).toHaveLength(1);
+    expect(screen.getByText('Fix login').closest('li')!.querySelector('.session-meta')?.textContent).toBe('deck');
+    expect(screen.getByText('Write docs')).toBeTruthy();
   });
 
   it('no Desktop sessions → no section', () => {
@@ -317,7 +313,7 @@ describe('Sidebar rename / archive / 대화 내용 검색', () => {
     expect([...group.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['flaky', 'flaky']);
     expect(group.querySelector('.search-snippet')!.textContent).toBe('…fix the flaky test…');
     expect(screen.getByText('결과 일부만 표시됩니다.')).toBeTruthy();
-    fireEvent.click(group.querySelector('.search-hit')!);
+    fireEvent.click(group.querySelector('.search-hit button')!);
     expect(onOpenHit).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1' }));
     fireEvent.change(box, { target: { value: 'f' } });
     expect(screen.queryByTestId('search-group')).toBeNull();
@@ -327,14 +323,17 @@ describe('Sidebar rename / archive / 대화 내용 검색', () => {
 describe('Sidebar activity dots', () => {
   afterEach(cleanup);
   const s = (id: string, title: string) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1 });
-  it('running → spinner, background only → pulsing dot, finished unseen → unread dot', () => {
+  it('running / background / unread dots (decorative: the meta says the status in words)', () => {
     const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'one'), s('s2', 'two'), s('s3', 'three'), s('s4', 'four')] }];
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop}
       activity={[{ sessionId: 's1', cwd: '/w', turnId: 't1', running: true, bg: 0, forMs: 0 }, { sessionId: 's2', cwd: '/w', turnId: 't2', running: false, bg: 2, forMs: 0 }]}
       unread={['s3']} />);
     const dotOf = (title: string) => screen.getByText(title).closest('li')!.querySelector('.row-dot');
     expect(dotOf('one')?.classList.contains('running')).toBe(true);
-    expect(dotOf('two')?.getAttribute('aria-label')).toBe('백그라운드 작업 2개');
+    expect(dotOf('two')?.classList.contains('bg')).toBe(true);
+    expect(dotOf('two')?.getAttribute('title')).toBe('백그라운드 2개');
+    expect(dotOf('two')?.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByText('two').closest('li')!.querySelector('.session-meta')?.textContent).toBe('w · 백그라운드 2개');
     expect(dotOf('three')?.classList.contains('unread')).toBe(true);
     expect(dotOf('four')).toBeNull();
   });
@@ -344,26 +343,29 @@ describe('Sidebar row status and time', () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); });
   const s = (id: string, title: string, lastModified = Date.now() - 2 * 60_000) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified, sizeBytes: 1 });
   const metaOf = (title: string) => screen.getByText(title).closest('li')!.querySelector('.session-meta')?.textContent;
+  const timeOf = (title: string) => screen.getByText(title).closest('li')!.querySelector('.row-time')?.textContent;
 
-  it('승인 대기 → 실행 중 → 백그라운드 N개 → 새 응답 replace the time; otherwise the time', () => {
+  it('승인 대기 → 실행 중 → 백그라운드 N개 → 새 응답 end the meta after the project; the time stays top right', () => {
     const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s0', 'zero'), s('s1', 'one'), s('s2', 'two'), s('s3', 'three'), s('s4', 'four')] }];
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop}
       activity={[{ sessionId: 's0', cwd: '/w', turnId: 't0', running: true, bg: 0, forMs: 0 }, { sessionId: 's1', cwd: '/w', turnId: 't1', running: true, bg: 1, forMs: 0 }, { sessionId: 's2', cwd: '/w', turnId: 't2', running: false, bg: 2, forMs: 0 }]}
       unread={['s2', 's3']} waiting={['s0']} />);
-    expect(metaOf('zero')).toBe('승인 대기');
-    expect(metaOf('one')).toBe('실행 중');
-    expect(metaOf('two')).toBe('백그라운드 2개');
-    expect(metaOf('three')).toBe('새 응답');
-    expect(metaOf('four')).toBe('2분 전');
+    expect(metaOf('zero')).toBe('w · 승인 대기');
+    expect(metaOf('one')).toBe('w · 실행 중');
+    expect(metaOf('two')).toBe('w · 백그라운드 2개');
+    expect(metaOf('three')).toBe('w · 새 응답');
+    expect(metaOf('four')).toBe('w');
+    expect(timeOf('zero')).toBe('2분 전');
+    expect(timeOf('four')).toBe('2분 전');
   });
 
   it('"N분 전" advances every minute without a new index', () => {
     vi.useFakeTimers();
     const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'one', Date.now() - 2 * 60_000)] }];
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
-    expect(metaOf('one')).toBe('2분 전');
+    expect(timeOf('one')).toBe('2분 전');
     act(() => { vi.advanceTimersByTime(META_TICK_MS * 3); });
-    expect(metaOf('one')).toBe('5분 전');
+    expect(timeOf('one')).toBe('5분 전');
   });
 });
 
@@ -375,8 +377,9 @@ describe('Sidebar imported Codex threads', () => {
     const e = { sessionId: 'tid', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'from codex', lastModified: Date.now(), sizeBytes: 1, imported: true };
     render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} />);
     const li = screen.getByText('from codex').closest('li')!;
-    expect(li.querySelector('.session-title .engine-mark.codex')?.getAttribute('title')).toBe('Codex (GPT)');
-    expect(li.querySelector('.session-meta')?.textContent).toBe('방금');
+    expect(li.querySelector('.row-engine .engine-mark.codex')?.getAttribute('title')).toBe('Codex (GPT)');
+    expect(li.querySelector('.session-meta')?.textContent).toBe('w');
+    expect(li.querySelector('.row-time')?.textContent).toBe('방금');
     fireEvent.click(screen.getByText('from codex'));
     expect(onOpen).toHaveBeenCalledWith('tid', '/w', 'from codex');
   });
@@ -384,7 +387,7 @@ describe('Sidebar imported Codex threads', () => {
   it('tags a `codex exec` thread 자동 실행 in the meta', () => {
     const e = { sessionId: 'x1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'You are the docs lane', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true, codexExec: true };
     const { container } = render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
-    expect(container.querySelector('.session-meta')?.textContent).toBe('자동 실행 · 2분 전');
+    expect(container.querySelector('.session-meta')?.textContent).toBe('w · 자동 실행');
     expect(container.querySelector('.engine-mark.codex')).not.toBeNull();
   });
 
@@ -394,11 +397,11 @@ describe('Sidebar imported Codex threads', () => {
     const arch = { ...base, sessionId: 'x3', title: 'arch', archived: true, codexArchived: true };
     render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [gone, arch] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onArchive={noop} />);
     const goneMeta = screen.getByText('gone').closest('li')!.querySelector('.session-meta')!;
-    expect(goneMeta.textContent).toBe('폴더 없음 · 2분 전');
+    expect(goneMeta.textContent).toBe('w · 폴더 없음');
     expect(goneMeta.getAttribute('title')).toContain('폴더가 없어 이어서 보낼 수 없음');
     fireEvent.click(screen.getByRole('button', { name: '보관됨 1' }));
     const li = screen.getByText('arch').closest('li')!;
-    expect(li.querySelector('.session-meta')?.textContent).toBe('w · Codex 보관 · 2분 전'); // 보관됨 lists every project: the meta names it
+    expect(li.querySelector('.session-meta')?.textContent).toBe('w · Codex 보관');
     fireEvent.click(li.querySelector('.row-more-btn')!);
     expect(screen.queryByRole('menuitem', { name: '보관 해제' })).toBeNull();
   });
@@ -411,24 +414,24 @@ describe('Sidebar engine marks', () => {
   const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [claude, codex] }];
   const markOf = (title: string) => screen.getByText(title).closest('li')!.querySelector('.engine-mark');
 
-  it('puts a Claude / Codex mark before the title in the 프로젝트 view; no account letter on either row', () => {
+  it('puts a small Claude / Codex mark on the avatar\'s lower left, not in the title; no account letter on either row', () => {
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     expect(markOf('claude chat')?.getAttribute('title')).toBe('Claude');
     expect(markOf('codex chat')?.getAttribute('title')).toBe('Codex (GPT)');
+    expect(markOf('claude chat')?.parentElement?.matches('.row-avatar > .row-engine')).toBe(true);
     // Dense list: the row's text already identifies it, so the mark stays out of the accessibility tree.
     expect(markOf('claude chat')?.getAttribute('aria-hidden')).toBe('true');
     expect(markOf('claude chat')?.hasAttribute('role')).toBe(false);
-    // Inside the truncating title (first child), so the ellipsis never hides it and the row does not grow.
     const title = screen.getByText('claude chat');
     expect(title.classList.contains('session-title')).toBe(true);
-    expect(title.firstElementChild?.classList.contains('engine-mark')).toBe(true);
+    expect(title.children).toHaveLength(0);
     expect(title.textContent).toBe('claude chat');
     expect(screen.getByText('claude chat').closest('li')!.querySelector('.session-meta')?.textContent).not.toMatch(/^[ABC] · /);
   });
 
   it('marks rows in 최근, 고정됨 and Desktop rows, next to an unchanged unread / running dot', () => {
     const desktop = [{ sessionId: 'd1', account: 'a' as const, title: 'desk chat', cwd: '/d', project: 'd', lastModified: stamp() }];
-    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" pins={['c1']} onTogglePin={noop}
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['c1']} onTogglePin={noop}
       desktop={desktop} unread={['g1']} activity={[{ sessionId: 'c1', cwd: '/w', turnId: 't', running: true, bg: 0, forMs: 0 }]} />);
     expect(screen.getByTestId('pinned-group').querySelector('.engine-mark.claude')).not.toBeNull();
     expect(markOf('codex chat')?.classList.contains('codex')).toBe(true);
@@ -455,9 +458,9 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
   afterEach(cleanup);
   const e = (id: string, title: string, extra: Record<string, unknown> = {}) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1, ...extra });
 
-  it('새 세션 is the first item of the head\'s + menu in both views and calls onNewChat; the foot keeps only the avatar', () => {
+  it('새 세션 is the first item of the head\'s + menu and calls onNewChat; the foot keeps only the avatar', () => {
     const onNewChat = vi.fn();
-    const { container, rerender } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} onOpenSettings={noop} view="recent" />);
+    const { container } = render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} onOpenSettings={noop} />);
     const foot = container.querySelector('.sidebar')!.lastElementChild!;
     expect(foot.className).toBe('sidebar-foot');
     expect(Array.from(foot.querySelectorAll('button')).map((b) => b.getAttribute('aria-label'))).toEqual(['설정 및 계정']);
@@ -468,10 +471,7 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     expect(screen.getAllByRole('menuitem')[0]!.textContent).toMatch(/^새 세션/);
     fireEvent.click(screen.getByRole('menuitem', { name: /^새 세션/ }));
     expect(screen.queryByRole('menu')).toBeNull();
-    rerender(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={onNewChat} onOpenSettings={noop} view="projects" />);
-    openNewMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: /^새 세션/ }));
-    expect(onNewChat).toHaveBeenCalledTimes(2);
+    expect(onNewChat).toHaveBeenCalledTimes(1);
   });
 
   it('the empty list points at 폴더 열기 / 새 세션, not a config file', () => {
@@ -569,29 +569,36 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
   });
 });
 
-describe('Sidebar rows: list rows (avatar, title + meta, ⋯ / 고정 on demand)', () => {
+describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); });
   const s = (id: string, cwd: string, title: string, extra: Record<string, unknown> = {}) => ({ sessionId: id, account: 'b' as const, cwd, projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1, ...extra });
   const projects = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first')] }];
   const desktop = [{ sessionId: 'd1', account: 'a' as const, title: 'desk chat', cwd: '/d', project: 'd', lastModified: stamp() }];
 
-  it('avatar · text (title led by its engine mark, then meta) · trailing ⋯ / 고정; the dot sits on the avatar', () => {
-    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" onTogglePin={noop} onRename={noop}
-      desktop={desktop} unread={['s1']} />);
+  it('open button (avatar · title + time / meta) then ⋯ alone; the dot, engine and open marks sit on the avatar', () => {
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onTogglePin={noop} onRename={noop}
+      desktop={desktop} unread={['s1']} openPanes={new Map([['s1', 1]])} />);
     for (const title of ['first', 'desk chat']) {
-      const row = screen.getByText(title).closest('li')!.querySelector('.session-row')!;
-      expect(Array.from(row.children).map((el) => el.className.split(' ')[0])).toEqual(['row-avatar', 'row-text', 'row-end']);
-      const text = row.querySelector('.row-text')!;
-      expect(Array.from(text.children).map((el) => el.className.split(' ')[0])).toEqual(['session-title', 'session-meta']);
-      expect(row.querySelector('.session-title')!.firstElementChild!.classList.contains('engine-mark')).toBe(true);
-      // keyboard: ⋯ then 고정, both labelled
-      const btns = Array.from(row.querySelectorAll('.row-end button')).map((b) => b.getAttribute('aria-label'));
-      expect(btns).toEqual(['세션 메뉴', '고정']);
+      const li = screen.getByText(title).closest('li')!;
+      expect(Array.from(li.children).map((el) => el.className.split(' ')[0])).toEqual(['row-open', 'row-end']);
+      const open = li.querySelector('.row-open')!;
+      expect(open.tagName).toBe('BUTTON');
+      expect(open.getAttribute('aria-haspopup')).toBeNull(); // the ⋯ menu's trigger is ⋯, not the row
+      expect(Array.from(open.children).map((el) => el.className.split(' ')[0])).toEqual(['row-avatar', 'row-text']);
+      const text = open.querySelector('.row-text')!;
+      expect(Array.from(text.children).map((el) => el.className.split(' ')[0])).toEqual(['row-line', 'session-meta']);
+      expect(Array.from(text.querySelector('.row-line')!.children).map((el) => el.className)).toEqual(['session-title', 'row-time']);
+      expect(open.querySelector('.row-avatar > .row-engine > .engine-mark.claude')).not.toBeNull();
+      // ⋯ only (pinning is in its menu); hidden it stays in the tab order
+      const btns = Array.from(li.querySelectorAll('.row-end button'));
+      expect(btns.map((b) => b.getAttribute('aria-label'))).toEqual(['세션 메뉴']);
+      expect(btns[0]!.getAttribute('tabindex')).toBeNull();
     }
     const first = screen.getByText('first').closest('li')!;
     expect(first.querySelector('.row-avatar > .row-dot.unread')).not.toBeNull();
     expect(first.querySelector('.row-end .row-dot')).toBeNull();
-    expect(first.querySelector('.session-meta')!.textContent).toMatch(/^one · /);
+    expect(first.querySelector('.session-meta')!.textContent).toBe('one · 새 응답');
+    expect(first.querySelector('.row-avatar > .open-mark')?.textContent).toBe('1');
     // The letter is decoration (the meta names the project): hidden from the accessibility tree.
     expect(first.querySelector('.row-avatar-letter')!.getAttribute('aria-hidden')).toBe('true');
     expect(first.querySelector('.row-avatar-letter')!.textContent).toBe('O');
@@ -611,25 +618,26 @@ describe('Sidebar rows: list rows (avatar, title + meta, ⋯ / 고정 on demand)
     expect(avatarLetter('한글')).toBe('한');
     expect(avatarLetter('--')).toBe('·');
     const two = [{ cwd: '/w/deck', name: 'deck', pinned: false, sessions: [s('a1', '/w/deck', 'alpha'), s('a2', '/w/deck', 'beta')] }];
-    render(<Sidebar projects={two} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="recent" />);
+    render(<Sidebar projects={two} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     const av = (t: string) => screen.getByText(t).closest('li')!.querySelector<HTMLElement>('.row-avatar')!;
     expect(av('alpha').dataset.avatar).toBe(String(avatarIndex('deck')));
     expect(av('alpha').style.getPropertyValue('--av')).toBe(`var(--avatar-${avatarIndex('deck')})`);
     expect(av('beta').dataset.avatar).toBe(av('alpha').dataset.avatar);
   });
 
-  it('승인 대기: a warn dot on the avatar, ahead of running / unread, labelled for screen readers', () => {
+  it('승인 대기: a warn dot on the avatar, ahead of running / unread; screen readers get it from the meta', () => {
     const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'asks'), s('s2', '/w/one', 'runs')] }];
     render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} waiting={['s1']} unread={['s1']}
       activity={[{ sessionId: 's1', cwd: '/w/one', turnId: 't', running: true, bg: 0, forMs: 0 }, { sessionId: 's2', cwd: '/w/one', turnId: 't2', running: true, bg: 0, forMs: 0 }]} />);
     const dots = (t: string) => Array.from(screen.getByText(t).closest('li')!.querySelectorAll('.row-dot'));
     expect(dots('asks')).toHaveLength(1);
     expect(dots('asks')[0]!.classList.contains('waiting')).toBe(true);
-    expect(screen.getByRole('img', { name: '승인 대기' })).toBe(dots('asks')[0]);
+    expect(dots('asks')[0]!.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByText('asks').closest('li')!.querySelector('.session-meta')?.textContent).toBe('one · 승인 대기');
     expect(dots('runs')[0]!.classList.contains('running')).toBe(true);
   });
 
-  it('touch: a long press on a row shows its ⋯ / 고정 (one row at a time) and does not open it; a short tap opens', () => {
+  it('touch: a long press on a row shows its ⋯ (one row at a time) and does not open it; a short tap opens', () => {
     vi.useFakeTimers();
     const onOpen = vi.fn();
     const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first'), s('s2', '/w/one', 'second')] }];
@@ -688,35 +696,93 @@ describe('Sidebar rows: list rows (avatar, title + meta, ⋯ / 고정 on demand)
     expect(screen.queryByTestId('archived-group')).toBeNull();
   });
 
-  it('head: 검색 opens / closes the box (Esc too, clearing it) with a 명령 팔레트 button; + holds 폴더 열기, per-project 새 세션, the view switch and 새로고침', () => {
-    const onNew = vi.fn();
-    const onRefresh = vi.fn();
-    const onView = vi.fn();
+  it('head: brand, 검색 opens / closes the box (Esc too, clearing it, focus back on 검색) with a 명령 팔레트 button', () => {
     const onOpenPalette = vi.fn();
     const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first')] }];
-    render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={onNew} onRefresh={onRefresh} view="projects" onViewChange={onView} onOpenPalette={onOpenPalette} onOpenFolder={noop} />);
+    const { container } = render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenPalette={onOpenPalette} onOpenFolder={noop} />);
+    const brand = container.querySelector('.sidebar-head .sidebar-brand')!;
+    expect(brand.textContent).toBe('deck');
+    expect(brand.querySelector('svg.deck-mark')).not.toBeNull();
     expect(screen.queryByLabelText('세션 검색')).toBeNull();
     openSearch();
     const box = screen.getByLabelText('세션 검색');
     expect(document.activeElement).toBe(box);
-    expect(screen.getByRole('button', { name: '검색' }).getAttribute('aria-expanded')).toBe('true');
+    const searchBtn = screen.getByRole('button', { name: '검색' });
+    expect(searchBtn.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: '명령 팔레트' }));
     expect(onOpenPalette).toHaveBeenCalledTimes(1);
     fireEvent.change(box, { target: { value: 'zzz' } });
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(screen.queryByLabelText('세션 검색')).toBeNull();
+    expect(document.activeElement).toBe(searchBtn);
     expect(screen.getByText('first')).toBeTruthy(); // the filter went with it
+  });
+
+  it('+ menu: 새 세션 ⌘N · 폴더 열기… | 지금 프로젝트 + 최근 폴더 3 (each a new session there) | 세션 목록 다시 읽기; focus back on +', () => {
+    const onNew = vi.fn();
+    const onRefresh = vi.fn();
+    const proj = (name: string, age: number) => ({ cwd: `/w/${name}`, name, pinned: false, sessions: [s(`${name}1`, `/w/${name}`, `${name} chat`, { lastModified: Date.now() - age * 60_000 })] });
+    // here = c (the current session's), the rest by their newest session: a, e, b; d is the oldest and left out.
+    const p = [proj('a', 1), proj('b', 30), proj('c', 50), proj('d', 90), proj('e', 10)];
+    render(<Sidebar projects={p} currentSessionId="c1" onOpen={noop} onNew={onNew} onRefresh={onRefresh} onNewChat={noop} onOpenFolder={noop} />);
+    const plus = screen.getByRole('button', { name: '새 세션' });
     openNewMenu();
-    const items = screen.getAllByRole('menuitem').map((b) => b.getAttribute('aria-label') ?? b.textContent);
-    expect(items).toEqual(['폴더 열기', 'one 새 세션', '날짜별로 보기', '세션 목록 다시 읽기']);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'one 새 세션' }));
-    expect(onNew).toHaveBeenCalledWith('/w/one', 'one');
-    openNewMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: '날짜별로 보기' }));
-    expect(onView).toHaveBeenCalledWith('recent');
+    const menu = screen.getByRole('menu', { name: '새 세션' });
+    const parts = Array.from(menu.children).map((el) => (el.getAttribute('role') === 'separator' ? '|' : el.getAttribute('aria-label') ?? el.textContent));
+    expect(parts).toEqual(['새 세션Ctrl+N', '폴더 열기…', '|', 'c 새 세션 (지금 프로젝트)', 'a 새 세션', 'e 새 세션', 'b 새 세션', '|', '세션 목록 다시 읽기']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'e 새 세션' }));
+    expect(onNew).toHaveBeenCalledWith('/w/e', 'e');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(plus);
     openNewMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: '세션 목록 다시 읽기' }));
     expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(plus);
+  });
+
+  it('rows open from the keyboard: each is a button in the tab order; the current one says aria-current', () => {
+    const onOpen = vi.fn();
+    const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first'), s('s2', '/w/one', 'second')] }];
+    render(<Sidebar projects={p} currentSessionId="s2" onOpen={onOpen} onNew={noop} onRefresh={noop} onRename={noop} />);
+    const btn = (t: string) => screen.getByText(t).closest('button.row-open') as HTMLButtonElement;
+    expect(btn('first').getAttribute('type')).toBe('button');
+    expect(btn('first').getAttribute('aria-current')).toBeNull();
+    expect(btn('second').getAttribute('aria-current')).toBe('page');
+    btn('first').focus();
+    expect(document.activeElement).toBe(btn('first'));
+    // Enter / Space on a <button> fire its click (detail 0).
+    fireEvent.click(btn('first'), { detail: 0 });
+    expect(onOpen).toHaveBeenCalledWith('s1', '/w/one', 'first');
+  });
+
+  it('a shown ⋯ hides again on a press outside its row, a scroll of the list, opening a session or a new list', () => {
+    vi.useFakeTimers();
+    const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first'), s('s2', '/w/one', 'second')] }];
+    const pinShortcut = { current: (_: number) => false };
+    const props = { currentSessionId: null, onOpen: noop, onNew: noop, onRefresh: noop, onRename: noop, onTogglePin: noop, pins: ['s2'], pinShortcut };
+    const { container, rerender } = render(<Sidebar projects={p} {...props} />);
+    const li = () => screen.getByText('first').closest('li')!;
+    const reveal = () => {
+      fireEvent.pointerDown(screen.getByText('first'), { pointerType: 'touch', pointerId: 1, isPrimary: true, clientX: 10, clientY: 10 });
+      act(() => { vi.advanceTimersByTime(ROW_PRESS_MS); });
+      fireEvent.pointerUp(screen.getByText('first'), { pointerType: 'touch', pointerId: 1 });
+      fireEvent.click(screen.getByText('first')); // the click ending the long press (swallowed)
+      expect(li().hasAttribute('data-revealed')).toBe(true);
+    };
+    reveal();
+    fireEvent.pointerDown(li()); // inside the row: stays
+    expect(li().hasAttribute('data-revealed')).toBe(true);
+    fireEvent.pointerDown(document.body);
+    expect(li().hasAttribute('data-revealed')).toBe(false);
+    reveal();
+    fireEvent.scroll(container.querySelector('.sidebar')!);
+    expect(li().hasAttribute('data-revealed')).toBe(false);
+    reveal();
+    act(() => { pinShortcut.current(0); });
+    expect(li().hasAttribute('data-revealed')).toBe(false);
+    reveal();
+    rerender(<Sidebar projects={[...p]} {...props} />);
+    expect(li().hasAttribute('data-revealed')).toBe(false);
   });
 });
 
@@ -729,7 +795,7 @@ describe('Sidebar ⋯ 분할 보기로 열기', () => {
   it('sits after 이름 바꾸기 and opens the row in a split; a Desktop row offers it too', () => {
     const onOpenSplit = vi.fn();
     const onOpen = vi.fn();
-    render(<Sidebar projects={projects} desktop={desktop} view="projects" currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} onRename={noop} onTogglePin={noop} onOpenSplit={onOpenSplit} />);
+    render(<Sidebar projects={projects} desktop={desktop} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} onRename={noop} onTogglePin={noop} onOpenSplit={onOpenSplit} />);
     fireEvent.click(screen.getByText('one').closest('li')!.querySelector('[aria-label="세션 메뉴"]')!);
     expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['이름 바꾸기', '분할 보기로 열기', '새 탭에서 열기', '맨 위에 고정']);
     fireEvent.click(screen.getByRole('menuitem', { name: '분할 보기로 열기' }));
@@ -766,7 +832,7 @@ describe('Sidebar open-session markers', () => {
 
   it('marks every open session with its split number (◱ for a card), not just the focused one; the rest stay unmarked', () => {
     const openPanes = new Map<string, number | 'float'>([['s3', 1], ['s1', 2], ['s4', 'float']]);
-    const { container } = render(<Sidebar projects={projects} currentSessionId="s1" onOpen={noop} onNew={noop} onRefresh={noop} view="projects" openPanes={openPanes} />);
+    const { container } = render(<Sidebar projects={projects} currentSessionId="s1" onOpen={noop} onNew={noop} onRefresh={noop} openPanes={openPanes} />);
     expect(mark(container, 'third')?.textContent).toBe('1');
     expect(mark(container, 'first')?.textContent).toBe('2');
     expect(mark(container, 'fourth')?.textContent).toBe('◱');
@@ -779,7 +845,7 @@ describe('Sidebar open-session markers', () => {
 
   it('names where the session is open (aria-label and tooltip)', () => {
     const openPanes = new Map<string, number | 'float'>([['s2', 3], ['s4', 'float']]);
-    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="projects" openPanes={openPanes} />);
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} openPanes={openPanes} />);
     const split = screen.getByRole('img', { name: '분할 3번 패널에 열림' });
     expect(split.getAttribute('title')).toBe('분할 3번 패널에 열림');
     expect(split.textContent).toBe('3');
@@ -789,10 +855,10 @@ describe('Sidebar open-session markers', () => {
   it('a pinned (and a Desktop) row is marked too; no openPanes = no markers', () => {
     const desktop = [{ sessionId: 'd1', account: 'a' as const, title: 'desk', cwd: '/elsewhere', project: 'elsewhere', lastModified: stamp() }];
     const openPanes = new Map<string, number | 'float'>([['s2', 1], ['d1', 2]]);
-    const { container, rerender } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="projects" pins={['s2']} onTogglePin={noop} desktop={desktop} openPanes={openPanes} />);
+    const { container, rerender } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s2']} onTogglePin={noop} desktop={desktop} openPanes={openPanes} />);
     expect(screen.getByTestId('pinned-group').querySelector('.open-mark')?.textContent).toBe('1');
-    expect(screen.getByTestId('desktop-group').querySelector('.open-mark')?.textContent).toBe('2');
-    rerender(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} view="projects" pins={['s2']} onTogglePin={noop} desktop={desktop} />);
+    expect(screen.getByText('desk').closest('li')!.querySelector('.open-mark')?.textContent).toBe('2');
+    rerender(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s2']} onTogglePin={noop} desktop={desktop} />);
     expect(container.querySelectorAll('.open-mark')).toHaveLength(0);
   });
 });

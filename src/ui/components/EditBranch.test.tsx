@@ -208,7 +208,7 @@ describe('메시지 편집 갈래 · sidebar', () => {
     expect(rows.map((r) => r.querySelector('.session-title')?.textContent)).toEqual(['원본', '다른 세션']);
     expect(rows[0]!.className).toContain('active');
     expect(rows[0]!.textContent).toContain('갈래 3');
-    fireEvent.click(rows[0]!);
+    fireEvent.click(rows[0]!.querySelector('.row-open')!);
     expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
   });
 
@@ -238,17 +238,15 @@ describe('메시지 편집 갈래 · sidebar', () => {
     cleanup();
   });
 
-  it('a deleted root: the remaining versions still group as one row (under the oldest left), in both views', () => {
+  it('a deleted root: the remaining versions still group as one row (under the oldest left)', () => {
     const left = [{ cwd: '/w', name: 'w', pinned: false, sessions: projects[0]!.sessions.filter((x) => x.sessionId !== 'R') }];
-    for (const view of ['projects', 'recent'] as const) {
-      const onOpen = vi.fn();
-      render(<Sidebar projects={left} currentSessionId={null} onOpen={onOpen} onNew={() => {}} onRefresh={() => {}} view={view} onViewChange={() => {}} />);
-      const rows = [...document.querySelectorAll('.project li')];
-      expect(rows.map((r) => r.querySelector('.session-title')?.textContent)).toEqual(['원본', '다른 세션']);
-      expect(rows[0]!.textContent).toContain('갈래 2');
-      fireEvent.click(rows[0]!);
-      expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
-      cleanup();
-    }
+    const onOpen = vi.fn();
+    render(<Sidebar projects={left} currentSessionId={null} onOpen={onOpen} onNew={() => {}} onRefresh={() => {}} />);
+    const rows = [...document.querySelectorAll('.project li')];
+    expect(rows.map((r) => r.querySelector('.session-title')?.textContent)).toEqual(['원본', '다른 세션']);
+    expect(rows[0]!.textContent).toContain('갈래 2');
+    fireEvent.click(rows[0]!.querySelector('.row-open')!);
+    expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
+    cleanup();
   });
 });

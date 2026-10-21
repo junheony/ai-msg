@@ -29,6 +29,16 @@ function check(name, t) {
     return hex(v);
   };
   const pct = (k) => Number(t[k].match(/var\(--fg\) ([\d.]+)%/)[1]) / 100;
+  // --hover / --selected: a hex, an rgba(...) or a color-mix(var(--fg|--accent) N%, transparent), laid over `base`.
+  const over = (k, base) => {
+    const v = t[k];
+    if (/^#[0-9a-f]{6}$/i.test(v)) return hex(v);
+    const rgba = v.match(/^rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)$/);
+    if (rgba) return mix([+rgba[1], +rgba[2], +rgba[3]], base, Number(rgba[4]));
+    const cm = v.match(/var\(--([\w-]+)\) ([\d.]+)%, transparent/);
+    if (cm) return mix(c(cm[1]), base, Number(cm[2]) / 100);
+    throw new Error(`${name} --${k}: cannot composite ${v}`);
+  };
   const bg = c("bg");
   const pill = (base) => mix(c("fg"), base, pct("pill-bg"));
   // [label, foreground, background, floor]
@@ -50,9 +60,12 @@ function check(name, t) {
     ["bg / warn (badge)", bg, c("warn"), 4.5],
     ["fg / bubble", c("fg"), c("bubble"), 7],
     ["btn-primary", c("btn-primary-fg"), c("btn-primary-bg"), 4.5],
-    // Sidebar row avatars: a bold 16px white letter on the project colour. Large-text floor (3:1): the letter is
-    // decorative (aria-hidden; the meta line names the project), one glyph, 700 weight; every avatar sits below 4.5.
-    ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`#fff / avatar-${n} (large)`, [255, 255, 255], c(`avatar-${n}`), 3]),
+    // Sidebar rows: the meta / time are faint at rest (faint / sidebar above) and muted on a tinted row (hover, shown ⋯,
+    // open menu, current): faint there drops under 4.5 in the light theme.
+    ["muted / sidebar+hover", c("muted"), over("hover", c("sidebar")), 4.5],
+    ["muted / sidebar+selected", c("muted"), over("selected", c("sidebar")), 4.5],
+    // Sidebar row avatars: a bold 16px white letter on the project colour, held to the body-text floor too.
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`#fff / avatar-${n}`, [255, 255, 255], c(`avatar-${n}`), 4.5]),
   ];
   console.log(`\n${name}`);
   let bad = 0;

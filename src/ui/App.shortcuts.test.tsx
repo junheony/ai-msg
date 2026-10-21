@@ -173,17 +173,14 @@ describe('desktop-like navigation', () => {
     expect(frames().find((f) => f.type === 'send')).toMatchObject({ type: 'send', sessionId: null, cwd: '/w', text: '봐줘', attachments: ['att-1'] });
   });
 
-  it('sidebar 최근 view groups by date; 삭제 asks, moves to trash, offers undo', async () => {
+  it('sidebar groups by date (no 프로젝트 view); 삭제 asks, moves to trash, offers undo', async () => {
     await boot();
     expect(within(sidebar()).getByTestId('date-group-오늘').textContent).toContain('two');
     expect(within(sidebar()).getByTestId('date-group-이전').textContent).toContain('ancient');
-    // The 최근 / 프로젝트 switch lives in the head's + menu.
+    // The + menu has no view switch any more.
     fireEvent.click(within(sidebar()).getByRole('button', { name: '새 세션' }));
-    fireEvent.click(within(sidebar()).getByRole('menuitem', { name: '프로젝트별로 묶기' }));
-    expect(within(sidebar()).queryByTestId('date-group-오늘')).toBeNull();
-    expect(localStorage.getItem('deck.sidebarView')).toBe('projects');
-    fireEvent.click(within(sidebar()).getByRole('button', { name: '새 세션' }));
-    fireEvent.click(within(sidebar()).getByRole('menuitem', { name: '날짜별로 보기' }));
+    expect(within(sidebar()).queryByRole('menuitem', { name: '프로젝트별로 묶기' })).toBeNull();
+    fireEvent.keyDown(within(sidebar()).getByRole('menu'), { key: 'Escape' });
 
     const row = within(sidebar()).getByText('two').closest('li')!;
     fireEvent.click(within(row).getByLabelText('세션 메뉴'));
