@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { copyText } from '../clipboard';
 import { has } from '../features';
@@ -112,15 +112,45 @@ export function PointMenu({ x, y, label, items, anchor, onClose }: {
   );
 }
 
+/** After a long press opened something: how long the tap's leftover mousedown / click is swallowed. */
+const RELEASE_GUARD_MS = 400;
+let releaseGuard: (() => void) | null = null;
+
+/**
+ * The finger that opened a menu lifts: the browser may still deliver the press's compatibility mousedown / click — onto
+ * whatever is under the finger by then (the sheet's backdrop closes it, a menu item would run). One of each, within
+ * RELEASE_GUARD_MS, is swallowed in the capture phase.
+ */
+function swallowReleaseClick() {
+  releaseGuard?.();
+  const eat = (e: Event) => { e.preventDefault(); e.stopPropagation(); };
+  const opts = { capture: true, once: true } as const;
+  window.addEventListener('mousedown', eat, opts);
+  window.addEventListener('click', eat, opts);
+  const done = () => {
+    clearTimeout(timer);
+    window.removeEventListener('mousedown', eat, true);
+    window.removeEventListener('click', eat, true);
+    if (releaseGuard === done) releaseGuard = null;
+  };
+  const timer = setTimeout(done, RELEASE_GUARD_MS);
+  releaseGuard = done;
+}
+
 /**
  * Touch long press (≈LONG_PRESS_MS; moving cancels) → `onLong(x, y)`. The click that ends a long press is swallowed so
- * the chip does not also open the panel. `ms`: another wait (a message: 350); `ignore`: a press starting on an element
+ * the chip does not also open the panel, and the release of a press that opened something is kept from turning into a
+ * tap (touchend's default prevented, plus swallowReleaseClick) — it would land on the sheet just opened under the finger.
+ * One finger at a time: a second finger (not `isPrimary`) or a press while another is held is ignored, and only the
+ * held pointer's up / cancel ends it. `ms`: another wait (a message: 350); `ignore`: a press starting on an element
  * matching this selector is not one (the controls inside a message keep their own taps and long presses). `onLong`
  * returning false opened nothing: the click after it goes through.
  */
 export function useLongPress(onLong: (x: number, y: number) => void | boolean, { ms = LONG_PRESS_MS, ignore }: { ms?: number; ignore?: string } = {}) {
   const press = useRef<{ id: number; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const fired = useRef(false);
+  /** The pointer whose press opened something, until it lifts. */
+  const held = useRef<number | null>(null);
   const onLongRef = useRef(onLong);
   onLongRef.current = onLong;
   const cancel = useCallback(() => {
@@ -128,21 +158,51 @@ export function useLongPress(onLong: (x: number, y: number) => void | boolean, {
     press.current = null;
   }, []);
   useEffect(() => cancel, [cancel]);
+  const ends = (e: ReactPointerEvent) => !press.current || e.pointerId === press.current.id;
   return {
     onPointerDown: (e: ReactPointerEvent) => {
+      const touch = e.pointerType === 'touch' || e.pointerType === 'pen';
+      if (touch && (e.isPrimary === false || press.current)) return;
+      // A primary pointer starts a new gesture: every finger is off, whatever release was missed.
+      held.current = null;
       fired.current = false;
       cancel();
-      if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      if (!touch) return;
       if (ignore && e.target instanceof Element && e.target.closest(ignore)) return;
       const { clientX: x, clientY: y, pointerId: id } = e;
-      press.current = { id, x, y, timer: setTimeout(() => { press.current = null; fired.current = onLongRef.current(x, y) !== false; }, ms) };
+      press.current = {
+        id, x, y,
+        timer: setTimeout(() => {
+          press.current = null;
+          fired.current = onLongRef.current(x, y) !== false;
+          if (fired.current) held.current = id;
+        }, ms),
+      };
     },
     onPointerMove: (e: ReactPointerEvent) => {
       const p = press.current;
       if (p && e.pointerId === p.id && (Math.abs(e.clientX - p.x) > TOUCH_SLOP || Math.abs(e.clientY - p.y) > TOUCH_SLOP)) cancel();
     },
-    onPointerUp: cancel,
-    onPointerCancel: cancel,
+    onPointerUp: (e: ReactPointerEvent) => {
+      if (held.current !== null && e.pointerId === held.current) {
+        if (e.pointerType === 'touch') e.preventDefault();
+        swallowReleaseClick();
+        // touchend (after this) clears it; a pen sends none.
+        if (e.pointerType !== 'touch') held.current = null;
+        return;
+      }
+      if (ends(e)) cancel();
+    },
+    onPointerCancel: (e: ReactPointerEvent) => {
+      if (held.current !== null && e.pointerId === held.current) held.current = null;
+      if (ends(e)) cancel();
+    },
+    onTouchEnd: (e: ReactTouchEvent) => {
+      if (held.current === null) return;
+      held.current = null;
+      if (e.cancelable) e.preventDefault();
+      swallowReleaseClick();
+    },
     onClickCapture: (e: ReactMouseEvent) => {
       if (!fired.current) return;
       fired.current = false;
@@ -164,6 +224,7 @@ export function useFileActions() {
   const node: ReactNode = toasts.length > 0 ? createPortal(<div className="file-toasts"><Toasts toasts={toasts} onDismiss={dismiss} /></div>, document.body) : null;
   return {
     node,
+    toast,
     copy: (text: string, done: string) => { void copyText(text).then((ok) => toast(ok ? done : '복사하지 못했어요', ok ? 'info' : 'error')); },
     /** A plain <a download> click: the browser saves it on the device the user is looking at (phone, other Mac). */
     download: (cwd: string, path: string) => {

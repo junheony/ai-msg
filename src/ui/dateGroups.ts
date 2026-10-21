@@ -46,22 +46,26 @@ export function timeLabel(ms: number, now: number = Date.now()): string {
 }
 
 /**
- * Where the transcript's time dividers go: index → the time to show (null = none). Only replies carry a time (their
- * context's `at`), so a user message takes its exchange's — the first timed reply after it — and gets a divider when that
- * is on another day or more than DIVIDER_GAP_MS after the last time seen above it (the first exchange always does).
+ * Where the transcript's time dividers go: index → the time to show (null = none). A user message shows its own send
+ * time (`at`: the transcript's, or the clock when sent here); one without falls back to its exchange's — the first timed
+ * reply after it (the reply's context `at`, when it ended). It gets a divider when that is on another day or more than
+ * DIVIDER_GAP_MS after the last time seen above it — a reply's end or a message's send — (the first exchange always does).
  */
-export function timeDividers(items: readonly { kind: string; ctx?: { at: number | null } }[]): (number | null)[] {
+export function timeDividers(items: readonly { kind: string; at?: number; ctx?: { at: number | null } }[]): (number | null)[] {
   const turnAt = new Map<number, number>();
   let user = -1;
   items.forEach((it, i) => {
-    if (it.kind === 'user') user = i;
-    else if (user >= 0 && !turnAt.has(user) && it.ctx?.at != null) turnAt.set(user, it.ctx.at);
+    if (it.kind === 'user') {
+      user = i;
+      if (it.at != null) turnAt.set(i, it.at);
+    } else if (user >= 0 && !turnAt.has(user) && it.ctx?.at != null) turnAt.set(user, it.ctx.at);
   });
   let prev: number | null = null;
   return items.map((it, i) => {
     const t = turnAt.get(i);
     const show = t !== undefined && (prev === null || !sameDay(prev, t) || t - prev > DIVIDER_GAP_MS);
-    if (it.ctx?.at != null) prev = it.ctx.at;
+    const seen = it.kind === 'user' ? it.at : it.ctx?.at;
+    if (seen != null) prev = seen;
     return show ? t! : null;
   });
 }

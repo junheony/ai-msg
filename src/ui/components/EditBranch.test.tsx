@@ -159,7 +159,7 @@ describe('메시지 편집 갈래 · version switcher', () => {
     fireEvent.keyDown(editor(), { key: 'Enter' });
     expect(sent[0]).toMatchObject({ type: 'send', sessionId: null, cwd: '/w', text: '고친 두 번째', engine: 'claude', accountPin: 'c', branch: { from: 'R', n: 1, expect: '두 번째' } });
     expect(pane.session).toMatchObject({ sessionId: null, cwd: '/w', title: '원본', accountPin: 'c' });
-    expect(pane.items).toEqual([{ kind: 'user', text: '첫 질문', n: 0 }, { kind: 'user', text: '고친 두 번째', n: 1 }]);
+    expect(pane.items).toEqual([{ kind: 'user', text: '첫 질문', n: 0 }, { kind: 'user', text: '고친 두 번째', n: 1, at: expect.any(Number) }]);
     expect(pane.awaitingStart).toBe(true);
   });
 

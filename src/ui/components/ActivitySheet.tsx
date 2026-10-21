@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type ReactNode } from 'react';
 import type { SessionActivity } from '../../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-types';
 import type { TaskInfo } from '../../shared/tasks';

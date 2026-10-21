@@ -94,7 +94,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
             <p className="muted">입력창의 작업으로 버튼이나 <code>/bg 할 일</code> 로 시작한 작업은 같은 폴더의 새 세션에서 돌고, 이 대화는 계속 쓸 수 있습니다. 이 수를 넘으면 앞 작업이 끝날 때까지 기다리고, 끝나면 늘 알림과 결과 카드가 옵니다.</p>
           </>
         )}
-        <p className="muted">간결 모드(기본 켜짐): 짧은 확인 뒤 결과만 보여 주고, 생각·도구 본문은 접어둡니다. 끄면 지금처럼 스트리밍·도구·경로 이유가 모두 보입니다. 이 기기에만 저장됩니다 (폰과 맥이 따로).</p>
+        <p className="muted">간결 모드(기본 켜짐): 짧은 확인 뒤 결과만 보여 주고, 생각·도구 본문은 접어둡니다. 끄면 답이 스트리밍으로 보이고 도구 호출도 하나씩 보입니다. 경로 이유·토큰은 어느 쪽이든 답장 끝 모델 알약을 눌러야 보입니다. 이 기기에만 저장됩니다 (폰과 맥이 따로).</p>
         <MemoryEditor />
       </section>
       <section aria-label="권한">
