@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UsageStrip, pickStage, STRIP_SLACK } from './UsageStrip';
 import type { Seat } from '../../shared/accounts';
 import type { GrokStatus } from '../../shared/protocol';
@@ -23,8 +23,8 @@ const snap = (over: Partial<UsageSnapshot> = {}): UsageSnapshot => ({
   ...over,
 });
 
-const strip = (u: UsageSnapshot | null, current: Seat | null, opts: { next?: RouteNext | null; grok?: GrokStatus | null; phone?: boolean; open?: boolean; onToggle?: () => void } = {}) =>
-  render(<UsageStrip usage={u} current={current} next={opts.next ?? null} grok={opts.grok ?? null} phone={opts.phone ?? false} open={opts.open ?? false} now={NOW} onToggle={opts.onToggle ?? (() => {})} />);
+const strip = (u: UsageSnapshot | null, current: Seat | null, opts: { next?: RouteNext | null; grok?: GrokStatus | null; phone?: boolean; rowSlot?: HTMLElement | null; open?: boolean; onToggle?: () => void } = {}) =>
+  render(<UsageStrip usage={u} current={current} next={opts.next ?? null} grok={opts.grok ?? null} phone={opts.phone ?? false} rowSlot={opts.rowSlot ?? null} open={opts.open ?? false} now={NOW} onToggle={opts.onToggle ?? (() => {})} />);
 const el = () => screen.getByTestId('usage-strip');
 const seg = (s: string) => screen.getByTestId(`seg-${s}`);
 
@@ -32,21 +32,21 @@ afterEach(cleanup);
 
 describe('pickStage', () => {
   const need = { full: 600, mid: 400, min: 300 };
-  it('the widest stage that fits; past min the chip', () => {
+  it('the widest stage that fits; past min the line under the bar', () => {
     expect(pickStage('full', 700, need)).toBe('full');
     expect(pickStage('full', 599, need)).toBe('mid');
     expect(pickStage('full', 350, need)).toBe('min');
-    expect(pickStage('full', 299, need)).toBe('chip');
+    expect(pickStage('full', 299, need)).toBe('row');
   });
   it('going back up needs the slack on top; staying or going down does not', () => {
     expect(pickStage('mid', 600, need)).toBe('mid');
     expect(pickStage('mid', 600 + STRIP_SLACK - 1, need)).toBe('mid');
     expect(pickStage('mid', 600 + STRIP_SLACK, need)).toBe('full');
     expect(pickStage('mid', 400, need)).toBe('mid');
-    expect(pickStage('chip', 300, need)).toBe('chip');
-    expect(pickStage('chip', 300 + STRIP_SLACK, need)).toBe('min');
+    expect(pickStage('row', 300, need)).toBe('row');
+    expect(pickStage('row', 300 + STRIP_SLACK, need)).toBe('min');
     expect(pickStage('min', 300, need)).toBe('min');
-    expect(pickStage('chip', 1000, need)).toBe('full');
+    expect(pickStage('row', 1000, need)).toBe('full');
   });
 });
 
@@ -119,7 +119,7 @@ describe('UsageStrip', () => {
     expect(seg('c').textContent).toBe('C소진· 12m');
   });
 
-  it('measured (ResizeObserver): steps down to mid / min and, when not even min fits, hands over to the one-seat chip', () => {
+  it('measured (ResizeObserver): steps down to mid / min and, when not even min fits, moves to the line under the bar (and back only past the slack)', () => {
     const RO = globalThis.ResizeObserver;
     const proto = HTMLElement.prototype;
     const ow = Object.getOwnPropertyDescriptor(proto, 'offsetWidth')!;
@@ -128,16 +128,34 @@ describe('UsageStrip', () => {
     // The measuring copies: full 600, mid 400, min 300 (in that order inside .usage-strip-measure).
     Object.defineProperty(proto, 'offsetWidth', { configurable: true, get(this: HTMLElement) { return ({ 0: 600, 1: 400, 2: 300 } as Record<number, number>)[[...(this.parentElement?.children ?? [])].indexOf(this)] ?? 0; } });
     Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true, get() { return avail; } });
-    globalThis.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
+    let fire = () => {};
+    globalThis.ResizeObserver = class { constructor(cb: () => void) { fire = cb; } observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
     try {
       const stageOf = (a: number) => { avail = a; const r = strip(snap(), 'a'); const w = r.container.firstElementChild as HTMLElement; const s = w.getAttribute('data-stage'); cleanup(); return { s, maxWidth: w.style.maxWidth }; };
       expect(stageOf(1000)).toEqual({ s: 'full', maxWidth: `${600 + STRIP_SLACK}px` });
       expect(stageOf(500).s).toBe('mid');
       expect(stageOf(320).s).toBe('min');
       avail = 200;
-      strip(snap(), 'a');
-      expect(screen.queryByTestId('usage-strip')).toBeNull();
-      expect(screen.getByTestId('usage-chip').textContent).toBe('A42% · 2h');
+      const slot = document.body.appendChild(document.createElement('div'));
+      const { container } = strip(snap(), 'a', { rowSlot: slot });
+      const wrap = container.querySelector<HTMLElement>('.usage-strip-wrap')!;
+      // In the bar: only the (invisible) measuring box, no usage of its own; every seat is in the line under it.
+      expect(wrap.getAttribute('data-stage')).toBe('row');
+      expect(wrap.querySelector('[data-testid="usage-strip"]')).toBeNull();
+      expect(screen.getAllByTestId('usage-strip')).toHaveLength(1);
+      expect(slot.querySelector('.usage-strip-row [data-testid="usage-strip"]')).toBeTruthy();
+      expect(seg('a').textContent).toBe('A42%');
+      expect(screen.queryByTestId('usage-chip')).toBeNull();
+      // Back into the bar only with the slack on top of min (the line appearing does not change the bar's width).
+      avail = 300 + STRIP_SLACK - 1;
+      act(() => fire());
+      expect(wrap.getAttribute('data-stage')).toBe('row');
+      avail = 300 + STRIP_SLACK;
+      act(() => fire());
+      expect(wrap.getAttribute('data-stage')).toBe('min');
+      expect(slot.childElementCount).toBe(0);
+      expect(wrap.querySelector('[data-testid="usage-strip"]')).toBeTruthy();
+      slot.remove();
     } finally {
       globalThis.ResizeObserver = RO;
       Object.defineProperty(proto, 'offsetWidth', ow);

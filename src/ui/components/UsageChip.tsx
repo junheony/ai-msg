@@ -111,7 +111,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   };
 }
 
-/** The one-seat usage chip: UsageStrip's fallback when not even its narrowest stage fits; it opens the usage sheet (UsageSheet). */
+/** The one-seat usage chip (no longer in the top bar: UsageStrip shows every seat); its chipState / countdowns feed UsageStrip. */
 export function UsageChip({ usage, current, next = null, grok = null, compact = false, open = false, onToggle, now: fixedNow }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
   /** Phone: the value shrinks to "42%" / "A→B" / "✕". */

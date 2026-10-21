@@ -1,16 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { GrokStatus } from '../../shared/protocol';
 import type { Seat } from '../../shared/accounts';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
-import { UsageChip, chipState, spokenCountdown, type ChipKind } from './UsageChip';
+import { chipState, spokenCountdown, type ChipKind } from './UsageChip';
 import { buildSeats, pickMain, useClock, type RouteNext, type SeatData } from './usageSeats';
 
 /**
  * How much each segment says, widest first: full = label · bar · % · reset; mid = label · % (the reset only when amber /
- * red / spent); min = label · %. chip = not even min fits: the one-seat UsageChip instead.
+ * red / spent); min = label · %. row = not even min fits in the top bar: the strip moves to a line of its own under the
+ * bar (mid, scrolled sideways), as on a phone — every seat stays in view, never a one-seat summary.
  */
-export type StripStage = 'full' | 'mid' | 'min' | 'chip';
+export type StripStage = 'full' | 'mid' | 'min' | 'row';
 const STAGES = ['full', 'mid', 'min'] as const;
 export type StripNeeds = Record<(typeof STAGES)[number], number>;
 
@@ -22,11 +24,11 @@ export const STRIP_SLACK = 16;
  * stage needs; staying or going down asks only the need itself.
  */
 export function pickStage(cur: StripStage, avail: number, need: StripNeeds, slack = STRIP_SLACK): StripStage {
-  const rank = (s: StripStage) => (s === 'chip' ? STAGES.length : STAGES.indexOf(s));
+  const rank = (s: StripStage) => (s === 'row' ? STAGES.length : STAGES.indexOf(s));
   for (const s of STAGES) {
     if (avail >= need[s] + (rank(s) < rank(cur) ? slack : 0)) return s;
   }
-  return 'chip';
+  return 'row';
 }
 
 /** One seat in the strip. */
@@ -71,7 +73,7 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
 /** The reset is said in mid only when it matters: amber, red, spent. */
 const loud = (k: ChipKind) => k === 'warn' || k === 'danger' || k === 'spent';
 
-function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage, 'chip'>; measure?: boolean }) {
+function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage, 'row'>; measure?: boolean }) {
   const reset = stage === 'full' || (stage === 'mid' && loud(s.kind)) ? s.reset : '';
   return (
     <span
@@ -89,14 +91,18 @@ function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage
 }
 
 /**
- * Every seat's usage in one row (the top bar on a desktop / tablet, a thin line under it on a phone); a press opens
- * the usage sheet. The segments shrink in steps as room runs out (pickStage) and, past the last, the one-seat chip
- * takes over. The session's seat is highlighted; "→" marks where the next turn goes when that is another seat.
+ * Every seat's usage in one row; a press opens the usage sheet. Rendered in the top bar: on a desktop / tablet the
+ * segments shrink in steps as room runs out (pickStage) and, past min, the strip goes to `rowSlot` (a line under the
+ * bar, a portal). A phone always has that line. In the bar an (empty, invisible) box keeps measuring the bar's free
+ * width — what the strip may take, not the strip itself — so the line coming and going cannot loop. The session's seat
+ * is highlighted; "→" marks where the next turn goes when that is another seat.
  */
-export function UsageStrip({ usage, current, next = null, grok = null, phone = false, open = false, onToggle, now: fixedNow }: {
+export function UsageStrip({ usage, current, next = null, grok = null, phone = false, rowSlot = null, open = false, onToggle, now: fixedNow }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
-  /** Phone: the mid stage always, scrolled sideways when it does not fit. */
+  /** Phone: the line under the bar always (mid, scrolled sideways when it does not fit). */
   phone?: boolean;
+  /** Where the line under the top bar goes (null: rendered in place, e.g. in tests). */
+  rowSlot?: HTMLElement | null;
   open?: boolean; onToggle: () => void; now?: number;
 }) {
   const now = useClock(fixedNow);
@@ -127,49 +133,54 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
     return () => ro.disconnect();
   }, [canMeasure]);
 
-  const curSeat = current;
+  const inRow = phone || stage === 'row';
+  const rowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!phone || !curSeat) return;
-    const seg = wrapRef.current?.querySelector<HTMLElement>('[data-current]');
+    if (!inRow || !current) return;
+    const seg = rowRef.current?.querySelector<HTMLElement>('[data-current]');
     if (seg && typeof seg.scrollIntoView === 'function') seg.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-  }, [phone, curSeat, shown]);
+  }, [inRow, current, shown, rowSlot]);
 
   if (!usage || !shown) return null;
   const segs = stripSegs({ seats, current, next, stale: usage.usageMode !== 'cli' && !usage.deckReachable, now, label });
   const nextSays = next && (next.account !== current || next.asOpus) ? `, 다음 턴 ${label(next.account)}${next.asOpus ? '(Opus)' : ''}` : '';
   const aria = `계정별 사용량: ${segs.map((s) => `${s.current ? '지금 ' : ''}${s.spoken}`).join(', ')}${nextSays}`;
   const title = ['계정별 사용량', next ? `다음 턴: ${label(next.account)}${next.asOpus ? ' · Opus' : ''} — ${next.reason}` : ''].filter(Boolean).join(' · ');
-  const use: Exclude<StripStage, 'chip'> = phone ? 'mid' : stage === 'chip' ? 'min' : stage;
+  const button = (st: Exclude<StripStage, 'row'>) => (
+    <button
+      type="button"
+      className="usage-strip"
+      data-testid="usage-strip"
+      aria-label={aria}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      data-sheet-return=""
+      title={title}
+      onClick={onToggle}
+    >
+      {segs.map((s) => <Segment key={s.seat} s={s} stage={st} />)}
+    </button>
+  );
+  const row = inRow && <div ref={rowRef} className="usage-strip-row" data-stage="row">{button('mid')}</div>;
+  const placedRow = row && rowSlot ? createPortal(row, rowSlot) : row;
+  if (phone) return placedRow;
 
   return (
-    <div
-      ref={wrapRef}
-      className={phone ? 'usage-strip-row' : 'usage-strip-wrap'}
-      data-stage={phone ? 'mid' : stage}
-      style={!phone && fullNeed !== null ? { maxWidth: fullNeed + STRIP_SLACK } : undefined}
-    >
-      {!phone && stage === 'chip' ? (
-        <UsageChip usage={usage} current={current} next={next} grok={grok} open={open} onToggle={onToggle} {...(fixedNow !== undefined ? { now: fixedNow } : {})} />
-      ) : (
-        <button
-          type="button"
-          className="usage-strip"
-          data-testid="usage-strip"
-          aria-label={aria}
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          data-sheet-return=""
-          title={title}
-          onClick={onToggle}
-        >
-          {segs.map((s) => <Segment key={s.seat} s={s} stage={use} />)}
-        </button>
-      )}
-      {canMeasure && (
-        <div ref={measureRef} className="usage-strip-measure" aria-hidden="true">
-          {STAGES.map((st) => <div key={st} className="usage-strip">{segs.map((s) => <Segment key={s.seat} s={s} stage={st} measure />)}</div>)}
-        </div>
-      )}
-    </div>
+    <>
+      <div
+        ref={wrapRef}
+        className="usage-strip-wrap"
+        data-stage={stage}
+        style={fullNeed !== null ? { maxWidth: fullNeed + STRIP_SLACK } : undefined}
+      >
+        {!inRow && button(stage as Exclude<StripStage, 'row'>)}
+        {canMeasure && (
+          <div ref={measureRef} className="usage-strip-measure" aria-hidden="true">
+            {STAGES.map((st) => <div key={st} className="usage-strip">{segs.map((s) => <Segment key={s.seat} s={s} stage={st} measure />)}</div>)}
+          </div>
+        )}
+      </div>
+      {placedRow}
+    </>
   );
 }

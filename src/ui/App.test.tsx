@@ -896,8 +896,10 @@ describe('App phone layout (D10)', () => {
     const strip = screen.getByTestId('usage-strip');
     expect(strip.closest('.topbar')).toBeNull();
     const row = strip.closest('.usage-strip-row')!;
-    expect(row.previousElementSibling?.classList.contains('topbar')).toBe(true);
-    expect(document.querySelector('.topbar [data-testid="usage-chip"]')).toBeNull();
+    // Portalled into the slot right after the top bar; the bar keeps no usage element of its own.
+    expect(row.parentElement?.classList.contains('usage-strip-slot')).toBe(true);
+    expect(row.parentElement?.previousElementSibling?.classList.contains('topbar')).toBe(true);
+    expect(document.querySelector('.topbar [data-testid="usage-strip"], .topbar [data-testid="usage-chip"]')).toBeNull();
     // Phone: the mid stage (no bars).
     expect(strip.querySelector('.usage-seg-bar')).toBeNull();
   });

@@ -555,8 +555,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seg.estimated .usage-seg-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
 /* Off-screen copies of the three stages, measured for pickStage (fixed: they never widen a scroll area). */
 .usage-strip-measure { position: fixed; top: 0; left: 0; display: flex; flex-direction: column; align-items: flex-start; width: max-content; visibility: hidden; pointer-events: none; }
-/* Phone: a line of its own under the top bar, mid stage, scrolled sideways (no scrollbar) when the seats do not fit.
-   The whole line is the button: 32px tall (the segments 24) and as wide as the screen. */
+/* A line of its own under the top bar (a phone always; a desktop / tablet when not even min fits in the bar): mid stage,
+   scrolled sideways (no scrollbar) when the seats do not fit. The whole line is the button: 32px tall (the segments 24)
+   and as wide as the window. The slot it is portalled into does not box it (an .app flex item of its own). */
+.usage-strip-slot { display: contents; }
 .usage-strip-row {
   flex-shrink: 0; height: 32px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
   border-bottom: 1px solid var(--line); background: var(--bg);

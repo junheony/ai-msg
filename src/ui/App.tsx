@@ -171,6 +171,7 @@ export function App() {
   const pinOrderSeq = useRef(0);
   const phone = useIsPhone();
   const [headSlot, setHeadSlot] = useState<HTMLDivElement | null>(null);
+  const [stripRow, setStripRow] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
   const [usageOpen, setUsageOpen] = useState<null | 'limits' | 'history'>(null);
   const [highlightsOpen, setHighlightsOpen] = useState(false);
@@ -1246,8 +1247,6 @@ export function App() {
     if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); requestFocus(pane.id); }
   };
 
-  const usageStrip = <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />;
-
   return (
     <AccountsContext value={accounts}>
     <div className="app">
@@ -1257,8 +1256,9 @@ export function App() {
         {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <div className="topbar-head" ref={setHeadSlot} />
-        {/* Every seat's usage (desktop / tablet: in the bar, shrinking in steps; a phone has its own line under the bar). */}
-        {!phone && usageStrip}
+        {/* Every seat's usage: in the bar, shrinking in steps; when even its narrowest does not fit (and always on a phone)
+            a line of its own under the bar (the slot below, a portal). */}
+        <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
         <div className="topbar-end">
           {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
           <ActivityButton
@@ -1280,7 +1280,7 @@ export function App() {
           />
         </div>
       </header>
-      {phone && usageStrip}
+      <div className="usage-strip-slot" ref={setStripRow} />
       {downSince !== null && (
         <div className="conn-down" role="status">
           <span>서버 응답 없음 · {hhmm(downSince)}부터 — 연결되면 자동으로 이어집니다</span>
