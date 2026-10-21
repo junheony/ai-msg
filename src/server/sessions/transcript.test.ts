@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { findBranchPoint, hookMessage, parseHead, parseTranscript, readHead, readTranscript, textOfContent } from './transcript';
+import { PREVIEW_CHARS, findBranchPoint, hookMessage, lastReplyOf, parseHead, parseTranscript, readHead, readTailPreview, readTranscript, textOfContent } from './transcript';
 
 const L = (o: unknown) => JSON.stringify(o);
 const CWD = '/Users/alice/Documents/작업/sample-project';
@@ -121,7 +121,7 @@ describe('readHead — title', () => {
 
   it('uses the LAST custom-title even when it is past the first 256 KB', async () => {
     const file = await big([L({ type: 'custom-title', customTitle: 'Mid', sessionId: ID }), L({ type: 'custom-title', customTitle: 'Late', sessionId: ID })]);
-    expect(await readHead(file)).toEqual({ cwd: CWD, title: 'Late' });
+    expect(await readHead(file)).toMatchObject({ cwd: CWD, title: 'Late' });
   });
 
   it('a custom-title in the tail beats the companion file (the companion can be stale)', async () => {
@@ -287,5 +287,56 @@ describe('isMeta user lines (hook feedback and other harness injections)', () =>
     expect(hookMessage('SubagentStop hook feedback:\n…')?.event).toBe('SubagentStop');
     expect(hookMessage('Continue from where you left off.')).toBeNull();
     expect(hookMessage('my Stop hook feedback: is great')).toBeNull();
+  });
+});
+
+describe('list preview — the last reply', () => {
+  const ID = '77777777-7777-4777-8777-777777777777';
+  const user = (text: string) => L({ type: 'user', cwd: CWD, message: { role: 'user', content: text } });
+  const said = (content: unknown, extra: Record<string, unknown> = {}) => L({ type: 'assistant', ...extra, message: { id: 'm', role: 'assistant', content } });
+  const tool = L({ type: 'assistant', message: { id: 't', role: 'assistant', content: [{ type: 'tool_use', id: 'u', name: 'Bash', input: { command: 'ls' } }] } });
+  const buf = (lines: string[]) => Buffer.from(lines.join('\n') + '\n');
+  async function file(lines: string[]): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-preview-'));
+    const f = path.join(dir, `${ID}.jsonl`);
+    await fs.writeFile(f, lines.join('\n') + '\n');
+    return f;
+  }
+
+  it('takes the newest main-thread text, skipping tool-only turns, subagent records and user lines', () => {
+    expect(lastReplyOf(buf([user('q'), said([{ type: 'text', text: 'older' }]), said([{ type: 'text', text: 'Done:\n  all  green' }]), tool,
+      said([{ type: 'text', text: 'subagent says' }], { isSidechain: true }), user('thanks')]))).toBe('Done: all green');
+    expect(lastReplyOf(buf([user('q'), tool]))).toBeNull();
+    expect(lastReplyOf(Buffer.alloc(0))).toBeNull();
+  });
+
+  it('strips reminders and deck-choices, hides secrets and cuts to PREVIEW_CHARS', () => {
+    const text = '<system-reminder>ignore me</system-reminder>\nPick one\n```deck-choices\n- a\n- b\n```';
+    const out = lastReplyOf(buf([said([{ type: 'text', text }])]));
+    expect(out).toContain('Pick one');
+    expect(out).not.toContain('ignore me');
+    expect(out).not.toContain('deck-choices');
+    const secret = lastReplyOf(buf([said('token sk-ant-api03-' + 'a'.repeat(40))]));
+    expect(secret).not.toContain('a'.repeat(40));
+    const long = lastReplyOf(buf([said('가'.repeat(500))]))!;
+    expect(long.length).toBe(PREVIEW_CHARS);
+    expect(long.endsWith('…')).toBe(true);
+  });
+
+  it('readHead fills preview from bytes it already read (small and big files); none without a reply', async () => {
+    expect((await readHead(await file([user('q'), said('short answer')]))).preview).toBe('short answer');
+    const pad = said([{ type: 'text', text: 'x'.repeat(1000) }]);
+    const big = await file([user('q'), ...Array(400).fill(pad), said('the latest answer'), tool]);
+    expect((await fs.stat(big)).size).toBeGreaterThan(300 * 1024);
+    expect((await readHead(big)).preview).toBe('the latest answer');
+    expect(await readHead(await file([user('only a question')]))).toEqual({ cwd: CWD, title: 'only a question' });
+  });
+
+  it('only looks at the last 64 KB: an older reply past a long tool run is not dug up', async () => {
+    const noisy = L({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u', content: 'y'.repeat(2000) }] } });
+    const f = await file([user('q'), said('ancient reply'), ...Array(40).fill(noisy), tool]);
+    expect(await readTailPreview(f)).toBeNull();
+    await fs.appendFile(f, said('fresh reply') + '\n');
+    expect(await readTailPreview(f)).toBe('fresh reply');
   });
 });

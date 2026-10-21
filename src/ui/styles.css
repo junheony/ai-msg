@@ -220,13 +220,13 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .pinned-group ul.pin-reordering > li { transition: transform 160ms cubic-bezier(.2, 0, 0, 1); }
 .pinned-group ul.pin-reordering > li:hover:not(.pin-dragging) { background: transparent; }
 .pinned-group ul.pin-reordering > li.pin-dragging { transition: none; z-index: 2; background: var(--panel); box-shadow: var(--shadow); cursor: grabbing; }
-/* ⌘1 … ⌘9 on the first nine 고정됨 rows while ⌘/Ctrl is held: laid over the row's end where ⋯ / the time sit (out of the
+/* ⌘1 … ⌘9 on the first nine 고정됨 rows while ⌘/Ctrl is held: laid over the row's end where ⋯ / the status mark sit (out of the
    flow, so nothing moves), after a beat so a quick ⌘C does not flash it. */
-.pin-key { position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; padding: 0 var(--s3) 0 var(--s6); border-radius: 0 var(--r-sm) var(--r-sm) 0; font-family: var(--mono); font-size: calc(11px * var(--font-scale, 1)); color: var(--muted); white-space: nowrap; pointer-events: none; animation: pin-key-in .12s ease .18s both; }
+.pin-key { position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; padding: 0 var(--s3) 0 var(--s6); border-radius: 0 var(--r-md) var(--r-md) 0; font-family: var(--mono); font-size: calc(11px * var(--font-scale, 1)); color: var(--muted); white-space: nowrap; pointer-events: none; animation: pin-key-in .12s ease .18s both; }
 @keyframes pin-key-in { from { opacity: 0; } }
-/* The hint fades in over the title's tail like the ⋯ overlay, and replaces that overlay (and the time). */
+/* The hint fades in over the title's tail like the ⋯ overlay, and replaces that overlay (and the status mark). */
 .pin-key { background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); }
-.sidebar li:has(> .pin-key) :is(.row-end, .row-time) { visibility: hidden; }
+.sidebar li:has(> .pin-key) :is(.row-end, .row-status) { visibility: hidden; }
 .more-btn { margin: 1px 0 0 16px; height: 24px; padding: 0 6px; font-size: calc(13px * var(--font-scale, 1)); color: var(--faint); border-radius: var(--r-xs); align-self: flex-start; }
 .more-btn:hover { color: var(--fg); background: var(--hover); }
 .sidebar-empty { padding: 12px 8px; }
@@ -1136,7 +1136,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .agent-meta .agent-status { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pulse-dot, .row-dot.bg, .row-dot.running, .row-dot.waiting { animation: none; }
+  .pulse-dot { animation: none; }
 }
 
 /* Context ring (inside the session chip) and its one-line cost hint above the composer */
@@ -1903,63 +1903,69 @@ button.hl-row-main:hover { background: var(--hover); }
 }
 
 /* === sidebar rows (list rows) ===
-   56px rows, one <button class="row-open"> each (Tab, Enter / Space open it): a round project avatar (its colour from
-   the project slug, its first letter in white) carrying the status dot top left, the engine mark bottom left and the
-   open-split number bottom right; the title with the time top right on line 1, the meta (project · … · status) on line 2.
-   ⋯ sits over the row's end, in the time's place, on the row's own tint: shown on hover / keyboard focus (a mouse),
-   after a long press (touch: li[data-revealed]), or while the row's menu is open. Search hits keep a plain button. */
+   Grok Bot's list: one <button class="row-open"> per row (Tab, Enter / Space open it) — a round avatar (project colour
+   behind the session's glyph, nothing on its edge), the title on line 1, the last reply's preview (else the folder) on
+   line 2, and at the end at most one quiet mark: 승인 대기 (warn dot with a ring), 응답 중 / 백그라운드 (a turning ring),
+   안 읽음 (accent dot), else a pane's number. No time, no separators; the tooltip and aria-labels keep the rest.
+   ⋯ sits over the row's end on the row's own tint: shown on hover / keyboard focus (a mouse), after a long press
+   (touch: li[data-revealed]), or while the row's menu is open. Search hits keep a plain button. */
 .sidebar li { position: relative; display: flex; align-items: center; gap: var(--s2); min-height: 32px; padding: var(--s1) var(--s2); border-radius: var(--r-sm); cursor: pointer; font-size: calc(var(--fs-label) * var(--font-scale, 1)); }
 .sidebar li:hover { background: var(--hover); }
 .sidebar li.active { background: var(--selected); }
-.sidebar li.session-item { --row-tint: transparent; min-height: 56px; padding: 0; }
+.sidebar li.session-item { --row-tint: transparent; min-height: 60px; padding: 0; border-radius: var(--r-md); }
 .sidebar li.session-item:hover { --row-tint: var(--hover); }
 .sidebar li.session-item.active { --row-tint: var(--selected); }
 .sidebar li.search-hit { padding: 0; }
-.row-open { display: flex; align-items: center; gap: var(--s3); flex: 1; align-self: stretch; min-width: 0; padding: var(--s2); border-radius: var(--r-sm); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.row-open { display: flex; align-items: center; gap: var(--s3); flex: 1; align-self: stretch; min-width: 0; padding: 10px var(--s3) 10px 10px; border-radius: inherit; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .row-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .search-hit .row-open { flex-direction: column; align-items: stretch; gap: 2px; padding: var(--s1) var(--s2); }
 .session-row { display: flex; align-items: center; gap: var(--s3); flex: 1; min-width: 0; }
-.row-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.row-line { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
-.row-line .session-title { flex: 1; }
-.row-time { flex-shrink: 0; margin-left: auto; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.session-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: calc(var(--fs-body) * var(--font-scale, 1)); line-height: 1.35; letter-spacing: -.005em; }
+.row-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.session-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: calc(var(--fs-body) * var(--font-scale, 1)); line-height: 1.3; font-weight: 500; letter-spacing: -.01em; }
 .sidebar .session-title .engine-mark { width: 1em; margin-right: .4em; opacity: .9; }
-.session-meta { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); font-variant-numeric: tabular-nums; }
+.session-meta { display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; color: var(--faint); font-size: calc(13px * var(--font-scale, 1)); line-height: var(--lh-meta); }
+.meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.meta-tag { flex-shrink: 0; color: var(--muted); font-weight: 500; }
+.meta-engine { flex-shrink: 0; display: inline-block; width: 12px; height: 12px; color: var(--muted); }
+.meta-engine-svg { display: block; width: 100%; height: 100%; }
 .sidebar li.active .session-title { color: var(--fg-strong); }
 /* On a tinted row (current, hover, shown ⋯, open menu) the faint grey drops under 4.5:1 in the light theme: muted there. */
-.sidebar li.active :is(.session-meta, .row-time),
-.sidebar li.session-item[data-revealed] :is(.session-meta, .row-time),
-.sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) :is(.session-meta, .row-time) { color: var(--muted); }
-@media (hover: hover) { .sidebar li.session-item:hover :is(.session-meta, .row-time) { color: var(--muted); } }
+.sidebar li.active .session-meta,
+.sidebar li.session-item[data-revealed] .session-meta,
+.sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) .session-meta { color: var(--muted); }
+@media (hover: hover) { .sidebar li.session-item:hover .session-meta { color: var(--muted); } }
 .session-rename { min-width: 0; height: 24px; padding: 0 6px; border-radius: var(--r-xs); border: 1px solid var(--accent); background: var(--bg); color: var(--fg); font: inherit; font-size: calc(var(--fs-body) * var(--font-scale, 1)); outline: none; }
-/* Avatar: 40px, the project's palette colour behind the session's line glyph (SessionIcon, --avatar-glyph; decorative —
-   the row's title and meta name the session and project). */
-.row-avatar { position: relative; flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
+/* Avatar: 40px circle, the project's palette colour behind the session's line glyph (SessionIcon, --avatar-glyph;
+   decorative — the title and tooltip name the session and project). */
+.row-avatar { flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
 .row-avatar-icon { display: block; width: 20px; height: 20px; }
-/* Status dot, top left: 승인 대기 warn (pulsing), 실행 중 accent (a ring pulsing out), 백그라운드 muted, 새 응답 fg.
-   Without motion the colours still differ and 승인 대기 keeps a ring of its own; the meta line says the status in words. */
-.row-avatar .row-dot { position: absolute; top: -1px; left: -1px; width: 12px; height: 12px; border-radius: var(--r-full); outline: 2px solid var(--sidebar); }
-.row-dot.unread { background: var(--fg); }
-.row-dot.bg { background: var(--muted); }
-.row-dot.running { background: var(--accent); animation: row-running 1.6s ease-out infinite; }
-.row-dot.waiting { background: var(--warn); animation: row-waiting 1.4s ease-in-out infinite; }
-@keyframes row-running { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 6px transparent; } }
-@keyframes row-waiting { 50% { transform: scale(.7); opacity: .55; } }
-.row-avatar .row-engine { position: absolute; left: -4px; bottom: -3px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: var(--r-full); background: var(--panel); box-shadow: 0 0 0 2px var(--sidebar); color: var(--fg); }
-.row-engine .engine-mark { width: 10px; height: 10px; margin: 0; vertical-align: 0; }
-.row-avatar .open-mark { position: absolute; right: -4px; bottom: -3px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: var(--r-full); background: var(--panel); box-shadow: 0 0 0 2px var(--sidebar), inset 0 0 0 1px var(--line-strong); color: var(--fg); font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
-.sidebar li.active .row-avatar .open-mark { box-shadow: 0 0 0 2px var(--sidebar), inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--line-strong)); }
-/* ⋯: an overlay at the row's top end, in the time's place, fading in over the title's tail (row tint over the sidebar,
+/* The row's end mark: a 16px slot, so the dot / ring / number line up down the list. */
+.row-status { flex-shrink: 0; position: relative; display: grid; place-items: center; width: 16px; height: 16px; margin-left: 2px; }
+.row-status::before { content: ""; box-sizing: border-box; border-radius: var(--r-full); }
+.row-status.unread::before { width: 8px; height: 8px; background: var(--accent); }
+/* 승인 대기: warn, and a ring round it — told apart from 안 읽음 by shape, not only colour. */
+.row-status.waiting::before { width: 6px; height: 6px; background: var(--warn); outline: 1.5px solid var(--warn); outline-offset: 2px; }
+/* 응답 중: an accent arc turning on a faint track; 백그라운드 only: the same in muted, slower. */
+.row-status:is(.running, .bg)::before { width: 14px; height: 14px; border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent); border-top-color: var(--accent); animation: row-spin .9s linear infinite; }
+.row-status.bg::before { border-color: color-mix(in srgb, var(--muted) 30%, transparent); border-top-color: var(--muted); animation-duration: 1.6s; }
+/* The current row's tint takes light --accent under 3:1: lean it 15% toward --fg there (darker in light, lighter in dark). */
+.sidebar li.active .row-status.unread::before { background: color-mix(in srgb, var(--accent) 85%, var(--fg)); }
+.sidebar li.active .row-status.running::before { border-top-color: color-mix(in srgb, var(--accent) 85%, var(--fg)); }
+@keyframes row-spin { to { transform: rotate(1turn); } }
+.row-status.open { width: auto; min-width: 16px; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); font-weight: 500; font-variant-numeric: tabular-nums; }
+.row-status.open::before { content: none; }
+.sidebar li.active .row-status.open { color: var(--muted); }
+@media (hover: hover) { .sidebar li.session-item:hover .row-status.open { color: var(--muted); } }
+/* ⋯: an overlay at the row's end, over the status mark, fading in over the title's tail (row tint over the sidebar,
    opaque). Hidden it takes no pointer, but it stays focusable: focused (Tab, a screen reader's cursor) it shows and takes
    the press, so activating it never falls through to the row's open button underneath. */
-.row-end { position: absolute; top: 0; right: 0; display: flex; align-items: center; height: 36px; padding: 0 var(--s2) 0 var(--s6); border-radius: 0 var(--r-sm) 0 0; background: linear-gradient(to right, transparent, var(--row-tint) 24px), linear-gradient(to right, transparent, var(--sidebar) 24px); opacity: 0; pointer-events: none; transition: opacity var(--t-fast) ease; }
+.row-end { position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; padding: 0 var(--s2) 0 var(--s6); border-radius: 0 var(--r-md) var(--r-md) 0; background: linear-gradient(to right, transparent, var(--row-tint) 24px), linear-gradient(to right, transparent, var(--sidebar) 24px); opacity: 0; pointer-events: none; transition: opacity var(--t-fast) ease; }
 @media (hover: hover) { .sidebar li.session-item:hover .row-end { opacity: 1; pointer-events: auto; } }
 .sidebar li.session-item:has(:focus-visible) .row-end, .row-end:focus-within, .sidebar li.session-item[data-revealed] .row-end, .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) .row-end { opacity: 1; pointer-events: auto; }
 .sidebar li.session-item[data-revealed], .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--hover); background: var(--hover); }
-/* ⋯ takes the time's place: the time steps aside whenever ⋯ shows. */
-@media (hover: hover) { .sidebar li.session-item:hover .row-time { visibility: hidden; } }
-.sidebar li.session-item:is(:has(:focus-visible), :has(.row-end:focus-within), [data-revealed], :has(.row-more-btn[aria-expanded="true"])) .row-time { visibility: hidden; }
+/* ⋯ takes the mark's place: the mark steps aside whenever ⋯ shows. */
+@media (hover: hover) { .sidebar li.session-item:hover .row-status { visibility: hidden; } }
+.sidebar li.session-item:is(:has(:focus-visible), :has(.row-end:focus-within), [data-revealed], :has(.row-more-btn[aria-expanded="true"])) .row-status { visibility: hidden; }
 .sidebar li.session-item.active:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--selected); }
 .pinned-group ul.pin-reordering .row-end { opacity: 0 !important; }
 .sidebar li:has(.session-rename) .row-end { display: none; }
@@ -1967,13 +1973,15 @@ button.hl-row-main:hover { background: var(--hover); }
 .row-more-btn:hover, .row-more-btn[aria-expanded="true"] { color: var(--fg); background: var(--hover); }
 /* Touch: a 44px ⋯ 8px in from the row's edge, and a long press is the row's (no text selection / iOS callout). */
 @media (pointer: coarse) {
-  .row-end { height: 44px; }
   .row-more-btn { width: var(--phone-tap); height: var(--phone-tap); }
   .sidebar li.session-item { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 }
+/* Without motion the ring stops as a dot in its colour (응답 중 accent, 백그라운드 muted); the label still says which. */
 @media (prefers-reduced-motion: reduce) {
   .sidebar .row-end { transition: none !important; }
-  .row-dot.waiting { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 3.5px var(--warn); }
+  .row-status:is(.running, .bg)::before { width: 8px; height: 8px; border: 0; background: var(--accent); }
+  .row-status.bg::before { background: var(--muted); }
+  .sidebar li.active .row-status.running::before { background: color-mix(in srgb, var(--accent) 85%, var(--fg)); }
 }
 /* Head: the brand, then 검색 and + (새 세션 · 폴더 열기 · 지금 / 최근 폴더 · 다시 읽기); the search box opens under it. */
 .sidebar-brand { display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--s1); color: var(--fg); font-size: calc(var(--fs-label) * var(--font-scale, 1)); font-weight: 600; letter-spacing: -.005em; }
@@ -1995,7 +2003,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .archived-row .chev { color: var(--faint); transition: transform var(--t-fast) ease; flex-shrink: 0; }
 .archived-count { margin-left: auto; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) {
-  .sidebar li.session-item { min-height: 60px; }
+  .sidebar li.session-item { min-height: 64px; }
   .archived-row { min-height: var(--phone-tap); }
   .sidebar-search-row .icon-btn { min-width: var(--phone-tap); min-height: var(--phone-tap); }
 }
@@ -2069,7 +2077,7 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .msg.search-flash { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   :root { --t-fast: 0ms; --t-base: 0ms; --t-sheet: 0ms; }
-  .pulse-dot, .row-dot.bg, .row-dot.running, .row-dot.waiting { animation: none !important; }
+  .pulse-dot { animation: none !important; }
 }
 
 /* === 다시 생성 / 긴 사용자 메시지 접기 ===

@@ -222,6 +222,8 @@ describe('SessionIndex.touch', () => {
     expect(await idx.touch(undefined, new Set([ID1]))).toBe(false); // skipped (a running turn's session)
     expect(await idx.touch([ID1])).toBe(true);
     expect(idx.lookup(ID1)?.lastModified).toBe(3_000_000);
+    expect(idx.lookup(ID1)?.preview).toBe('x'); // the grown transcript's last reply, read from its tail
+    expect(idx.lookup(ID2)).not.toHaveProperty('preview');
     expect(idx.projects()[0]?.sessions.map((s) => s.sessionId)).toEqual([ID1, ID2]);
     // A file that vanished is left alone (the next full refresh drops it).
     await fs.rm(f1);

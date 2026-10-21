@@ -86,6 +86,13 @@ function check(name, t) {
     ["fg / sheet old seat name", c("fg"), mix(c("fg"), c("panel"), 0.025), 4.5],
     // Sidebar row avatars: the session glyph (a 2px line icon, --avatar-glyph) on the project colour — graphics floor 3.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`glyph / avatar-${n}`, c("avatar-glyph"), c(`avatar-${n}`), 3]),
+    // Sidebar row end: the one status mark (unread / running ring in --accent, 승인 대기 in --warn, background in --muted)
+    // on the row at rest, hovered and current (there accent leans 15% toward --fg) — graphics floor 3. The engine glyph and 읽기 전용 tag are muted (above).
+    ...["accent", "warn", "muted"].flatMap((k) => [
+      [`${k} mark / sidebar`, c(k), c("sidebar"), 3],
+      [`${k} mark / sidebar+hover`, c(k), over("hover", c("sidebar")), 3],
+      [`${k} mark / sidebar+selected`, k === "accent" ? mix(c("fg"), c("accent"), 0.15) : c(k), over("selected", c("sidebar")), 3],
+    ]),
   ];
   console.log(`\n${name}`);
   let bad = 0;

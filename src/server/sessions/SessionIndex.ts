@@ -10,7 +10,7 @@ import type { ImportIndex } from './ImportIndex';
 import { recentDesktopSessions } from './DesktopSessions';
 import { ancestorInfo, type FileState } from './SessionMover';
 import { pathKey } from './slug';
-import { readHead } from './transcript';
+import { readHead, readTailPreview } from './transcript';
 
 const UUID_JSONL = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 
@@ -50,6 +50,7 @@ export async function scanProfile(account: Account, projectsRoot: string): Promi
           lastModified: st.mtimeMs,
           sizeBytes: st.size,
           ...(head.headless ? { headless: true } : {}),
+          ...(head.preview ? { preview: head.preview } : {}),
         });
       } catch {
         // unreadable file: skip
@@ -322,14 +323,21 @@ export class SessionIndex {
     const list = this.entries.filter((e) => (!want || want.has(e.sessionId)) && !skip?.has(e.sessionId));
     const stats = await Promise.all(list.map((e) => fs.stat(e.file).catch(() => null)));
     let changed = false;
+    const grown: SessionEntry[] = [];
     list.forEach((e, i) => {
       const st = stats[i];
       if (!st || (st.mtimeMs === e.lastModified && st.size === e.sizeBytes)) return;
       // In place: `byId` holds these same objects.
       e.lastModified = st.mtimeMs;
       e.sizeBytes = st.size;
+      if (e.engine === 'claude') grown.push(e);
       changed = true;
     });
+    // Only the transcripts that moved (usually the one turn that just ended): their last 64 KB for the list preview.
+    await Promise.all(grown.map(async (e) => {
+      const preview = await readTailPreview(e.file).catch(() => undefined);
+      if (preview) e.preview = preview;
+    }));
     if (changed) this.grouped = this.group(this.entries);
     return changed;
   }

@@ -5,10 +5,11 @@ import path from 'node:path';
 import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 import { contextUsageOf } from '../../shared/turn-types';
+import { splitDeckChoices, stripSystemReminders } from '../../shared/choices';
 import { TOKEN_PATTERNS, redactSecrets } from '../engine/redact';
 
 /** `headless`: every record in the head that names its writer is a non-interactive `claude -p` run (`sdk-cli`) — a script's one-shot, or deck's own CLI child (SessionIndex tells them apart). */
-export type HeadInfo = { cwd: string | null; title: string | null; headless?: boolean };
+export type HeadInfo = { cwd: string | null; title: string | null; headless?: boolean; preview?: string };
 
 /** The `entrypoint` a non-interactive `claude -p` run stamps on its records. */
 export const HEADLESS_ENTRYPOINT = 'sdk-cli';
@@ -179,28 +180,75 @@ async function companionTitle(file: string): Promise<string | null> {
  * `<id>/custom-title.json` (it can lag behind the jsonl), else the last `custom-title` in the head,
  * else the first real user message in the head.
  */
+/** How much of a transcript's end the list preview looks at, and how long the preview may be. */
+export const PREVIEW_TAIL_BYTES = 64 * 1024;
+export const PREVIEW_CHARS = 120;
+
+/**
+ * The last thing the assistant said, as one short line for the session list: the newest main-thread assistant record
+ * with text in `buf`'s last PREVIEW_TAIL_BYTES (reminders, deck-choices blocks and secrets taken out). Only lines that
+ * name `"assistant"` are parsed, newest first, so a long tool-heavy tail costs one backwards walk and a parse or two.
+ * null when the window holds no reply (a turn made only of tool calls, a cut first line).
+ */
+export function lastReplyOf(buf: Buffer): string | null {
+  const text = buf.subarray(Math.max(0, buf.length - PREVIEW_TAIL_BYTES)).toString('utf8');
+  let end = text.length;
+  while (end > 0) {
+    const nl = text.lastIndexOf('\n', end - 1);
+    const line = text.slice(nl + 1, end);
+    end = nl < 0 ? 0 : nl;
+    if (!line.includes('"assistant"')) continue;
+    const r = parseLine(line);
+    if (!r || r.type !== 'assistant' || r.isSidechain) continue;
+    const raw = textOfContent(message(r)?.content);
+    if (!raw) continue;
+    const one = redactSecrets(splitDeckChoices(stripSystemReminders(raw)).text).replace(/\s+/g, ' ').trim();
+    if (one) return one.length > PREVIEW_CHARS ? `${one.slice(0, PREVIEW_CHARS - 1)}…` : one;
+  }
+  return null;
+}
+
+/** The list preview alone, for a file whose head SessionIndex already knows (after a turn grew it). */
+export async function readTailPreview(file: string): Promise<string | null> {
+  const fh = await fs.open(file, 'r');
+  try {
+    const { size } = await fh.stat();
+    const start = Math.max(0, size - PREVIEW_TAIL_BYTES);
+    const buf = Buffer.alloc(size - start);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+    return lastReplyOf(buf.subarray(0, bytesRead));
+  } finally {
+    await fh.close();
+  }
+}
+
 export async function readHead(file: string, maxBytes = 256 * 1024): Promise<HeadInfo> {
   const fh = await fs.open(file, 'r');
   let head: ReturnType<typeof scan>;
   let tailCustom: string | null = null;
+  let preview: string | null = null;
   try {
     const { size } = await fh.stat();
     const buf = Buffer.alloc(Math.min(maxBytes, size));
     const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
     head = scan(buf.subarray(0, bytesRead).toString('utf8'));
-    if (size <= maxBytes) tailCustom = head.custom; // the head is the whole file
-    else {
+    if (size <= maxBytes) {
+      tailCustom = head.custom; // the head is the whole file
+      preview = lastReplyOf(buf.subarray(0, bytesRead));
+    } else {
       const start = Math.max(maxBytes, size - maxBytes);
       const tail = Buffer.alloc(size - start);
       const r = await fh.read(tail, 0, tail.length, start);
       // The first tail line is usually cut mid-record; parseLines skips it.
       tailCustom = scan(tail.subarray(0, r.bytesRead).toString('utf8')).custom;
+      // The preview reads from bytes already in memory: no extra I/O for the list.
+      preview = lastReplyOf(tail.subarray(0, r.bytesRead));
     }
   } finally {
     await fh.close();
   }
   const title = tailCustom ?? (await companionTitle(file)) ?? head.custom ?? head.firstUser;
-  return { cwd: head.cwd, title, ...(head.headless ? { headless: true } : {}) };
+  return { cwd: head.cwd, title, ...(head.headless ? { headless: true } : {}), ...(preview ? { preview } : {}) };
 }
 
 function stringify(v: unknown): string {
