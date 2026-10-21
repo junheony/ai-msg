@@ -5,7 +5,7 @@ import type { ClientMessage } from '../shared/protocol';
 import { Chat, type ChatProps } from './components/Chat';
 import { FastConsentSheet } from './components/FastConsentSheet';
 import { sendFromPane, startTaskFromPane } from './components/Pane';
-import { FAST_CONSENT_KEY, FAST_KEY, hasFastConsent, isFast, requestFast, resetFastForTests, setFast } from './fastMode';
+import { FAST_CONSENT_KEY, FAST_KEY, hasFastConsent, isFast, requestFast, resetFastForTests, setFast, useFast } from './fastMode';
 import { newPane, type PaneState } from './state';
 
 Element.prototype.scrollIntoView = () => {};
@@ -22,8 +22,12 @@ describe('⚡ 빠르게 switch', () => {
     renderAll();
     expect(screen.queryByTestId('fast-chip')).toBeNull();
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: '빠르게 (Opus fast)' }));
+    const row = screen.getByRole('menuitemcheckbox', { name: '빠르게 (Opus fast)' });
+    expect(row.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(row);
     const sheet = screen.getByRole('dialog', { name: '빠르게 모드 켜기' });
+    // A paid switch: the sheet opens on 취소, so Enter right away never agrees.
+    expect(document.activeElement).toBe(screen.getByTestId('fast-consent-cancel'));
     expect(sheet.textContent).toContain('$8');
     expect(sheet.textContent).toContain('$40');
     expect(sheet.textContent).toContain('한도가 남아 있어도');
@@ -46,18 +50,19 @@ describe('⚡ 빠르게 switch', () => {
     expect(isFast('s1')).toBe(false);
     expect(screen.queryByTestId('fast-chip')).toBeNull();
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: '빠르게 (Opus fast)' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: '빠르게 (Opus fast)' }));
     expect(screen.queryByRole('dialog', { name: '빠르게 모드 켜기' })).toBeNull();
     expect(isFast('s1')).toBe(true);
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: '빠르게 끄기 (Opus fast)' }));
+    expect(screen.getByRole('menuitemcheckbox', { name: '빠르게 끄기 (Opus fast)' }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: '빠르게 끄기 (Opus fast)' }));
     expect(isFast('s1')).toBe(false);
   });
 
   it('declining leaves it off and asks again next time', () => {
     renderAll();
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: '빠르게 (Opus fast)' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: '빠르게 (Opus fast)' }));
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
     expect(isFast('s1')).toBe(false);
     expect(hasFastConsent()).toBe(false);
@@ -72,7 +77,7 @@ describe('⚡ 빠르게 switch', () => {
       renderAll(extra);
       expect(screen.queryByTestId('fast-chip')).toBeNull();
       const head = screen.queryByTestId('session-chip-head');
-      if (head?.tagName === 'BUTTON') { fireEvent.click(head); expect(screen.queryByRole('menuitem', { name: /빠르게/ })).toBeNull(); }
+      if (head?.tagName === 'BUTTON') { fireEvent.click(head); expect(screen.queryByRole('menuitemcheckbox', { name: /빠르게/ })).toBeNull(); }
       cleanup();
     }
   });
@@ -80,7 +85,7 @@ describe('⚡ 빠르게 switch', () => {
 
 describe('⚡ 빠르게 on the wire', () => {
   const pane = (sessionId: string | null): PaneState => ({ ...newPane('p1'), session: { sessionId, cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } });
-  it('send and start_task carry fast only for a session that has it on', () => {
+  it('send carries fast only for a Claude session that has it on; a background task or a model-naming retry never does', () => {
     const out: ClientMessage[] = [];
     const send = vi.fn((m: ClientMessage) => { out.push(m); return true; });
     sendFromPane(pane('s1'), 'hi', [], () => {}, send);
@@ -90,7 +95,37 @@ describe('⚡ 빠르게 on the wire', () => {
     sendFromPane(pane('s1'), 'hi', [], () => {}, send);
     startTaskFromPane(pane('s1'), 'bg', () => {}, send);
     sendFromPane(pane('s2'), 'hi', [], () => {}, send);
-    expect(out.slice(2).map((m) => (m as { fast?: boolean }).fast)).toEqual([true, true, undefined]);
+    // 다시 생성 › a model (Pane retryWith): the picked model goes as chosen, never turned into fast Opus.
+    sendFromPane({ ...pane('s1'), model: 'sonnet', modelPicked: true }, 'again', [], () => {}, send, null, false, undefined, { keepAttachments: true, noFast: true });
+    expect((out[5] as { model?: string }).model).toBe('sonnet');
+    sendFromPane({ ...pane('s1'), session: { ...pane('s1').session!, engine: 'codex' } }, 'hi', [], () => {}, send);
+    expect(out.slice(2).map((m) => (m as { fast?: boolean }).fast)).toEqual([true, undefined, undefined, undefined, undefined]);
+    expect(out[3]!.type).toBe('start_task');
+  });
+  it('two tabs: a change in one shows in the other (storage event) and neither overwrites the other', () => {
+    const seen: boolean[] = [];
+    function Probe() { const v = useFast('s1'); seen.push(v); return null; }
+    render(<Probe />);
+    // The other tab writes straight to the shared store, then the browser fires 'storage' here.
+    act(() => {
+      localStorage.setItem(FAST_KEY, JSON.stringify(['s1']));
+      window.dispatchEvent(new StorageEvent('storage', { key: FAST_KEY }));
+    });
+    expect(seen.at(-1)).toBe(true);
+    // This tab turns on s2 after the other tab's write: s1 survives (read-modify-write).
+    setFast('s2', true);
+    expect(JSON.parse(localStorage.getItem(FAST_KEY)!)).toEqual(['s1', 's2']);
+    act(() => {
+      localStorage.setItem(FAST_KEY, JSON.stringify(['s2']));
+      window.dispatchEvent(new StorageEvent('storage', { key: FAST_KEY }));
+    });
+    expect(seen.at(-1)).toBe(false);
+    // Consent given in another tab counts here at once.
+    expect(hasFastConsent()).toBe(false);
+    localStorage.setItem(FAST_CONSENT_KEY, '1');
+    expect(hasFastConsent()).toBe(true);
+    requestFast('s3', true);
+    expect(isFast('s3')).toBe(true);
   });
   it('a corrupt store reads as off', () => {
     localStorage.setItem(FAST_KEY, '{nope');

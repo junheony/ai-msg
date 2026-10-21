@@ -11,6 +11,7 @@ export function FastConsentSheet() {
   const cancel = () => answerFastConsent(false);
   return (
     <Sheet className="fast-consent" label="빠르게 모드 켜기" onClose={cancel}>
+      {/* A paid switch: Enter right after opening cancels, never agrees. */}
       <SheetHead title="빠르게 모드 (Opus fast)" onClose={cancel} autoFocus={false} />
       <div className="fast-consent-body">
         <p>이 세션의 Claude 답을 더 빠르게 받습니다. 켜기 전에 확인해 주세요.</p>
@@ -23,8 +24,8 @@ export function FastConsentSheet() {
         </ul>
         <p className="muted">이 안내는 처음 한 번만 나옵니다. 끄려면 입력창의 ↯ 를 누르거나 세션 메뉴에서 끄세요.</p>
         <div className="modal-actions">
-          <button type="button" className="btn ghost" onClick={cancel}>취소</button>
-          <button type="button" className="btn primary" data-testid="fast-consent-agree" onClick={() => answerFastConsent(true)} autoFocus>동의하고 켜기</button>
+          <button type="button" className="btn ghost" data-testid="fast-consent-cancel" onClick={cancel} autoFocus>취소</button>
+          <button type="button" className="btn primary" data-testid="fast-consent-agree" onClick={() => answerFastConsent(true)}>동의하고 켜기</button>
         </div>
       </div>
     </Sheet>

@@ -28,16 +28,44 @@ export const CLAUDE_MISSING_TEXT = 'Claude Code(claude)를 찾지 못했습니�
 export const claudeTooOldText = (version: string): string => `Claude Code ${version} 은 너무 오래됐습니다 — ${MIN_CLAUDE_VERSION} 이상으로 업데이트한 뒤 deck 을 다시 시작해 주세요`;
 /** = TurnRunner.ABORTED: the UI hides a stopped turn's error when it is exactly this. */
 export const ABORTED_TEXT = '중단됨';
+/** ⚡ 빠르게: which fast-mode line the CLI sent — blocked by the organization, credits used up, credits off, cooldown. */
+export type FastModeKind = 'org' | 'exhausted' | 'off' | 'cooldown';
+
 /**
- * ⚡ 빠르게: what a fast-mode refusal, fallback or cooldown line from the CLI means for the person; null = not one of
- * those. Matched loosely (the CLI's wording moves): only lines naming fast mode or usage credits count.
+ * ⚡ 빠르게: the kind of a fast-mode refusal, fallback or cooldown line from the CLI; null = not one of those. Matched
+ * loosely (the CLI's wording moves): only lines naming fast mode or usage credits count. `failed` (the text of a failed
+ * fast turn): any such line counts, an unknown one as a refusal (`off`) — never taken for a plan limit (TurnRunner).
  */
-export function fastModeHint(text: string): string | null {
+export function fastModeKind(text: string, failed = false): FastModeKind | null {
   const t = text.toLowerCase();
   if (!t.includes('fast mode') && !t.includes('usage credit')) return null;
-  if (t.includes('organization')) return '조직 설정에서 빠르게 모드(사용 크레딧)를 막아 두었습니다 — 표준 속도로 돕니다';
-  if (t.includes('exhausted') || t.includes('limit reached')) return '사용 크레딧이 떨어져 표준 속도로 다시 시도합니다';
-  if (t.includes('requires usage credits') || t.includes('not available') || t.includes('turned off')) return '이 계정은 사용 크레딧이 꺼져 있어 빠르게 모드를 쓸 수 없습니다 — Claude 계정 설정에서 사용 크레딧을 켜거나 ⚡ 빠르게를 끄세요';
-  if (t.includes('cooldown') || t.includes('rate limit') || t.includes('overloaded') || t.includes('temporarily unavailable')) return '빠르게 전용 한도에 걸려 잠시 표준 속도로 돕니다 — 쿨다운이 끝나면 다시 빨라집니다';
+  if (t.includes('organization')) return 'org';
+  if (t.includes('exhausted') || t.includes('limit reached') || t.includes('out of')) return 'exhausted';
+  if (t.includes('cooldown') || t.includes('rate limit') || t.includes('overloaded') || t.includes('temporarily unavailable')) return 'cooldown';
+  if (failed || t.includes('requires usage credits') || t.includes('not available') || t.includes('turned off') || t.includes('disabled')) return 'off';
   return null;
+}
+
+/** What a fast-mode line means for the person: `failed` = the turn failed on it (nothing is retried by itself), else the CLI went on at standard speed. */
+export function fastModeText(kind: FastModeKind, failed: boolean): string {
+  if (failed) {
+    switch (kind) {
+      case 'org': return '조직 설정에서 빠르게 모드(사용 크레딧)를 막아 두었습니다 — 표준으로 다시 보내세요';
+      case 'exhausted': return '사용 크레딧이 떨어졌습니다 — 표준으로 다시 보내면 플랜 한도로 돕니다';
+      case 'off': return '빠르게 모드를 쓸 수 없습니다(사용 크레딧이 꺼져 있거나 거부됨) — Claude 계정 설정에서 사용 크레딧을 켜거나 표준으로 다시 보내세요';
+      case 'cooldown': return '빠르게 전용 한도에 걸렸습니다 — 쿨다운이 끝난 뒤 다시 보내거나 표준으로 다시 보내세요';
+    }
+  }
+  switch (kind) {
+    case 'org': return '조직 설정에서 빠르게 모드(사용 크레딧)를 막아 두어 표준 속도로 돕니다';
+    case 'exhausted': return '사용 크레딧이 떨어져 표준 속도로 돕니다';
+    case 'off': return '빠르게 모드를 쓸 수 없어 표준 속도로 돕니다 — Claude 계정 설정에서 사용 크레딧을 확인하세요';
+    case 'cooldown': return '빠르게 전용 한도에 걸려 잠시 표준 속도로 돕니다 — 쿨다운이 끝나면 다시 빨라집니다';
+  }
+}
+
+/** The fallback text of a fast-mode line (fastModeKind → fastModeText); null = not one. */
+export function fastModeHint(text: string): string | null {
+  const kind = fastModeKind(text);
+  return kind ? fastModeText(kind, false) : null;
 }

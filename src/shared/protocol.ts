@@ -142,7 +142,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * 백그라운드 작업 ('tasks' servers): run `text` as a new session in `cwd` (자동 engine and model), leaving the sending chat
    * free. Queued behind the soft cap (설정 taskSoftCap). Answered with `tasks` to every device; refused with `error`.
    */
-  z.object({ type: z.literal('start_task'), cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }), text: z.string().trim().min(1).max(200_000), fromSessionId: z.string().min(1).max(200).nullable(), concise: z.boolean().optional(), fast: z.boolean().optional(), clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional() }),
+  z.object({ type: z.literal('start_task'), cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }), text: z.string().trim().min(1).max(200_000), fromSessionId: z.string().min(1).max(200).nullable(), concise: z.boolean().optional(), clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional() }),
   /** 닫기 on an ended task's card. */
   z.object({ type: z.literal('dismiss_task'), taskId: z.string().min(1).max(64) }),
   /** 백그라운드 작업 취소: a queued task leaves the list; a running one's turn is stopped (it ends as 취소됨). */
@@ -340,7 +340,7 @@ export type ServerMessage =
    * `turnId` names the turn the work belongs to (interrupt it to stop the work).
    */
   | ({ type: 'turn_background'; tasks: string[]; /** Per task: id (for stop_task), type, age. */ detail?: BgTaskInfo[]; /** stop_task works for this turn. */ canStop?: boolean } & TurnScope)
-  | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null; /** The model alias the engine ran this turn on (absent: unknown / an older server). */ model?: string; /** An automatic (총사령탑) turn: no completion push of its own. */ auto?: 'commander'; /** Why it failed, when the client can act on it: 'thread_locked' = another app (ChatGPT desktop) holds this GPT thread. Older clients ignore it. */ errorCode?: 'thread_locked' } & TurnScope)
+  | ({ type: 'turn_result'; ok: boolean; text: string; badge: TurnBadge | null; errorText: string | null; /** The model alias the engine ran this turn on (absent: unknown / an older server). */ model?: string; /** An automatic (총사령탑) turn: no completion push of its own. */ auto?: 'commander'; /** Why it failed, when the client can act on it: 'thread_locked' = another app (ChatGPT desktop) holds this GPT thread; 'fast_refused' = a ⚡ 빠르게 turn refused for fast mode / usage credits (표준으로 다시 보내기 is offered). Older clients ignore it. */ errorCode?: 'thread_locked' | 'fast_refused'; /** ⚡ Usage credits ran out: the session's ↯ switch is turned off on every device that gets this. */ fastOff?: true } & TurnScope)
   /**
    * A steer reached the model, at this point of the transcript (mid-turn after a tool round, or as the start of its own
    * turn right after `turnId`'s result). Every device viewing the session shows `prompt` as the user's message here.

@@ -17,6 +17,8 @@ import type { GrokTurnRequest } from '../engine/GrokEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetAtMs, limitResetHint } from '../engine/limitDetect';
+import { fastModeKind, type FastModeKind } from '../engine/claudeCli/texts';
+import { FAST_FELL_BACK_NOTE, FAST_NOTE } from '../../shared/models';
 import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
 import { NO_ROTATION, chooseAccount, fixedAccount, onlyAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
@@ -116,7 +118,14 @@ export function fastTurn(p: Pick<TurnParams, 'fast' | 'handoff' | 'commanderHop'
   return p.fast === true && !p.handoff && p.commanderHop === undefined && !p.bgCapHop && !p.retryHop;
 }
 /** The badge note of a ⚡ 빠르게 turn. */
-export const FAST_NOTE = '빠르게 · 사용 크레딧';
+export { FAST_FELL_BACK_NOTE, FAST_NOTE };
+/** ⚡ Said with the turn_result whose `fastOff` turns the session's switch off (credits used up). */
+export const FAST_OFF_NOTICE = '⚡ 사용 크레딧이 떨어져 이 세션의 ↯ 빠르게를 껐습니다';
+const FAST_SAID_MAX = 500;
+/** ⚡ A fast turn's failure that is about fast mode itself (claudeCli/texts fastModeKind): never a plan limit. */
+function fastFailureOf(p: TurnParams, ev: { ok: boolean; errorText: string | null; stderr?: string | null }, aborted: boolean): FastModeKind | null {
+  return fastTurn(p) && !ev.ok && !aborted ? fastModeKind(`${ev.errorText ?? ''}\n${ev.stderr ?? ''}`, true) : null;
+}
 
 /** A commanderHop turn on a Codex/Gemini/Grok session (총사령탑 v1 = Claude only): refused, never run ungated. */
 export const COMMANDER_ENGINE_REFUSED = '총사령탑 자동 턴은 Claude 세션에서만 실행됩니다';
@@ -220,6 +229,8 @@ type Attempt = {
   rest: AsyncIterator<EngineEvent>; live: LiveInput | null; bgTasks: string[];
   /** 자동 턴(commanderHop)에서 편집 도구가 불렸다 — runClaudeTurn 이 상태를 쓴 뒤 SessionState.commanderEdited 로 남긴다. */
   commanderEdited?: boolean;
+  /** ⚡ The fast-mode line the CLI sent during the attempt (a notice tagged `fast`). */
+  fastKind?: FastModeKind;
 };
 
 /** What the next Claude turn of a session would be routed to (previewRoute): no turn is run, nothing is moved or stored. */
@@ -339,6 +350,8 @@ export class TurnRunner {
   private readonly modes = new Map<string, { ref: ModeRef; sessionId: () => string | null; notice?: (message: string) => void }>();
   /** A pin set for a new or forked session during its first turn (no stored state yet), by turn id: stored with it. */
   private readonly bornPins = new Map<string, Account | null>();
+  /** ⚡ The fast-mode notice kinds each session was told already (once per session and kind; oldest dropped past FAST_SAID_MAX). */
+  private readonly fastSaid = new Map<string, Set<FastModeKind>>();
   /** setSandbox on a Codex Desktop / CLI thread deck has not run yet (no stored state): its first turn uses and stores it. */
   private readonly importSandboxes = new Map<string, CodexSandbox>();
   /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
@@ -722,6 +735,19 @@ export class TurnRunner {
     }
     // Rejected (process ended, retry) or delivered meanwhile: that answer stands.
     return st.pending.delete(s.steerId) ? false : null;
+  }
+
+  /** A Claude engine notice as turn_notice — a ⚡ fast-mode one only the first time its session gets that kind. */
+  private notice(ev: { message: string; fast?: FastModeKind }, sessionId: string | null, sink: TurnSink, scope: { turnId: string; sessionId: string | null; cwd: string }): void {
+    if (ev.fast && sessionId) {
+      const said = this.fastSaid.get(sessionId) ?? new Set<FastModeKind>();
+      if (said.has(ev.fast)) return;
+      said.add(ev.fast);
+      this.fastSaid.delete(sessionId);
+      this.fastSaid.set(sessionId, said);
+      if (this.fastSaid.size > FAST_SAID_MAX) this.fastSaid.delete(this.fastSaid.keys().next().value!);
+    }
+    sink.emit({ type: 'turn_notice', ...scope, message: redactSecrets(ev.message) });
   }
 
   private steerDelivered(turnId: string, steerId: string, sink: TurnSink, scope: { turnId: string; sessionId: string | null; cwd: string }): void {
@@ -1165,7 +1191,7 @@ export class TurnRunner {
             this.deps.usage.applyTurn(account, { ...(ev.info.fiveHour ? { fiveHour: ev.info.fiveHour } : {}), ...(ev.info.weekly ? { weekly: ev.info.weekly } : {}), ...(ev.info.fable ? { fable: ev.info.fable } : {}) });
             break;
           case 'compact': out.compacted = true; break;
-          case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          case 'notice': if (ev.fast) out.fastKind = ev.fast; this.notice(ev, p.sessionId ?? out.sessionId, sink, scope()); break;
           case 'system': sink.emit({ type: 'turn_system', ...scope(), source: ev.source, label: ev.label, text: redactSecrets(ev.text) }); break;
           case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
           case 'steer_delivered': this.steerDelivered(p.turnId, ev.id, sink, scope()); break;
@@ -1209,6 +1235,8 @@ export class TurnRunner {
   private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants; startedAt: number }): Promise<Failover | Capped | null> {
     const { p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt } = c;
     const scope = () => ({ turnId: cur.turnId, sessionId, cwd });
+    // ⚡ Everything this process answers is billed as it was started (ws never joins a send asking otherwise).
+    const fastNote = fastTurn(p) ? FAST_NOTE : null;
     type Seg = { turnId: string; reason: string; modelNote: string | null; followUp?: { f: FollowUpParams; attachments: Attachment[] } };
     let seg: Seg | null = null;
     let failover: Failover | null = null;
@@ -1238,11 +1266,11 @@ export class TurnRunner {
       sink.emit({ type: 'turn_started', turnId, sessionId, cwd, account, model, reason, attempt: 0, engine: 'claude', ...(clientRef ? { clientRef } : {}) });
     };
     const openBackground = () => {
-      open(`${p.turnId}:bg${++n}`, '백그라운드 계속', null);
+      open(`${p.turnId}:bg${++n}`, '백그라운드 계속', fastNote);
       sink.emit({ type: 'turn_notice', ...scope(), message: '백그라운드 계속 — 백그라운드 작업이 끝나 이어서 진행합니다' });
     };
     const sendFollowUp = (f: FollowUpParams, attachments: Attachment[]) => {
-      const note = isClaudeModel(f.model) && f.model !== model ? '백그라운드 대기 중인 프로세스의 모델 유지' : null;
+      const note = isClaudeModel(f.model) && f.model !== model ? `${fastNote ? `${fastNote} · ` : ''}백그라운드 대기 중인 프로세스의 모델 유지` : fastNote;
       open(f.turnId, '백그라운드 대기 중 이어 보냄', note, f.clientRef, { f, attachments });
       if (f.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: AUTO_RETRY_NOTICE });
       const turnId = f.turnId;
@@ -1299,7 +1327,7 @@ export class TurnRunner {
         // Output with no segment open (e.g. a continuation racing a follow-up) still gets a turn of its own.
         const needSeg = ev.kind === 'delta' || ev.kind === 'tool_call' || ev.kind === 'tool_result' || ev.kind === 'result';
         // A steer the CLI ran as its own turn (no tool boundary came before the result): a segment of its own.
-        if (ev.kind === 'steer_delivered' && !seg) open(`${p.turnId}:s${++steered}`, '실행 중 보낸 메시지', null);
+        if (ev.kind === 'steer_delivered' && !seg) open(`${p.turnId}:s${++steered}`, '실행 중 보낸 메시지', fastNote);
         if ((ev.kind === 'continue' && !seg) || (needSeg && !seg)) openBackground();
         switch (ev.kind) {
           case 'steer_delivered': this.steerDelivered(p.turnId, ev.id, sink, scope()); break;
@@ -1312,7 +1340,7 @@ export class TurnRunner {
           case 'thinking': emitThinking(ev); break;
           case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
-          case 'notice': sink.emit({ type: 'turn_notice', ...scope(), message: redactSecrets(ev.message) }); break;
+          case 'notice': this.notice(ev, sessionId, sink, scope()); break;
           // Only work that was really still running counts (an abort or shutdown racing the cap is theirs to report).
           case 'bg_cap': if (!sink.signal.aborted && (ev.tasks.length || live.length)) capped = { cap: true, tasks: ev.tasks.length ? ev.tasks : [...live], minutes: ev.minutes }; break;
           case 'system': sink.emit({ type: 'turn_system', ...scope(), source: ev.source, label: ev.label, text: redactSecrets(ev.text) }); break;
@@ -1324,7 +1352,8 @@ export class TurnRunner {
             seg = null;
             // A limit / auth failure of a segment: no turn_result here — the work goes on on another account
             // (failoverAfterBackground says so with turn_retry, or ends the segment if no account is left).
-            const failure = !ev.ok && !sink.signal.aborted ? classifyFailure({ ok: false, errorText: ev.errorText, errorKind: ev.errorKind, rateLimitStatus: null }) : null;
+            const fastFailed = fastFailureOf(p, ev, sink.signal.aborted);
+            const failure = !ev.ok && !sink.signal.aborted && !fastFailed ? classifyFailure({ ok: false, errorText: ev.errorText, errorKind: ev.errorKind, rateLimitStatus: null }) : null;
             if (s && (failure === 'limit' || failure === 'auth')) {
               writeCooldown(this.deps.cooldownDir, account, this.now() + COOLDOWN_MS[failure]);
               // No follow-up goes into the closing process: one arriving now waits in the queue and goes on with the rest
@@ -1336,7 +1365,7 @@ export class TurnRunner {
               break;
             }
             if (s) {
-              sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(ev.errorText, ev.stderr) });
+              sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(ev.errorText, ev.stderr), ...(fastFailed ? { errorCode: 'fast_refused' as const } : {}), ...(fastFailed === 'exhausted' ? { fastOff: true as const } : {}) });
             }
             // Sent before the engine resumes, so it sees the message outstanding and keeps the input open — and before any
             // await: its turn_started refills ws's `current` in this same tick, so the microtask that ends a held process
@@ -2111,11 +2140,16 @@ export class TurnRunner {
 
       // The account works for deck even if its usage-deck card says setup_needed (down).
       if (res.ok) deps.usage.noteTurnOk(account);
-      const failure = classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
-      const badge = { account, model, reason, usage: res.usage, modelNote: note, ...pinMark() };
+      // ⚡ A fast turn refused for fast mode / credits: shown as it is, no cooldown, no account move, no booked retry —
+      // the person picks 표준으로 다시 보내기 (errorCode). Credits used up turn the session's switch off (fastOff).
+      const fastFailed = fastFailureOf(p, res, sink.signal.aborted);
+      const failure = fastFailed ? 'other' : classifyFailure({ ok: res.ok, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: a.rateLimit?.status ?? null });
+      const fastOff = fastTurn(p) && (fastFailed ?? a.fastKind) === 'exhausted';
+      const badge = { account, model, reason, usage: res.usage, modelNote: res.ok && fastTurn(p) && a.fastKind ? FAST_FELL_BACK_NOTE : note, ...pinMark() };
       const shownError = sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr);
       if (res.ok || failure === 'other' || failure === null || attempt === this.maxRetries || sink.signal.aborted) {
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError });
+        if (fastOff) sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId, cwd, message: FAST_OFF_NOTICE });
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: res.ok, text: res.text, badge, errorText: res.ok ? null : shownError, ...(fastFailed ? { errorCode: 'fast_refused' as const } : {}), ...(fastOff ? { fastOff: true as const } : {}) });
         announceMode();
         // Held open for background work: write back now too, not only once at the end.
         if (sessionId && a.bgTasks.length) this.mirrorSoon(sessionId, sink, p.turnId);

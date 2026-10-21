@@ -18,7 +18,7 @@ import { ClaudeProcess, exitFailureText } from './claudeCli/process';
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
 import type { ClaudeSpawnFn } from './claudeCli/spawnTypes';
 import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
-import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, fastModeHint, invalidResumeText } from './claudeCli/texts';
+import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, fastModeKind, fastModeText, invalidResumeText } from './claudeCli/texts';
 import type { ClaudeBin } from './claudeCli/version';
 
 export { BackgroundTracker, ProgressMeter, isActivity, isInjectedNoopResult, toolAudit, deniedCalls, noteCommands, mapCliMessage, type CommandsListener, type ToolAudit } from './claudeCli/stream';
@@ -166,8 +166,8 @@ export class ClaudeEngine implements Engine {
       // ⚡ 빠르게: a failed turn whose error names fast mode / usage credits gets deck's explanation as a note first.
       const fastRefusal = (ev: { ok: boolean; errorText: string | null }): EngineEvent | null => {
         if (!req.fast || ev.ok) return null;
-        const hint = fastModeHint(`${ev.errorText ?? ''}\n${p.stderrTail}`);
-        return hint ? { kind: 'notice', message: `⚡ ${hint}` } : null;
+        const kind = fastModeKind(`${ev.errorText ?? ''}\n${p.stderrTail}`, true);
+        return kind ? { kind: 'notice', message: `⚡ ${fastModeText(kind, true)}`, fast: kind } : null;
       };
       const toolInputs = new Map<string, unknown>();
       const writeMsg = (m: CliUserMessage): boolean => { if (typeof m.uuid === 'string') this.owned.add(m.uuid); return p.write(m); }; // changed

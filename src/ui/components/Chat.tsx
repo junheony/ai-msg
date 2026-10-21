@@ -330,6 +330,8 @@ export function Chat(p: ChatProps) {
   const retryable = lastPrompt !== HANDOFF_PROMPT ? lastPrompt : null;
   const retryPrompt = !p.busy && !p.readOnly && last?.kind === 'assistant' && last.error !== null && !last.streaming ? retryable : null;
   const lockedTurn = !p.busy && !p.readOnly && p.sessionEngine === 'codex' && last?.kind === 'assistant' && last.error !== null && !last.streaming && isThreadLocked(last.errorCode, last.error) ? last.turnId : null;
+  // ⚡ A fast turn refused for fast mode / credits: the same prompt again at standard speed (the switch goes off first).
+  const fastRefused = retryPrompt !== null && !!p.sessionId && last?.kind === 'assistant' && last.errorCode === 'fast_refused';
 
   // D3 / PF11: a new session follows the picker (the engine recorded at open time is ignored while it is new);
   // once the session exists its engine is fixed.
@@ -455,7 +457,7 @@ export function Chat(p: ChatProps) {
         tm?.onArchive && <HeadItem key="archive" label={tm.archived ? '보관 해제' : '보관'} run={tm.onArchive} ctl={ctl} />,
         tm?.onSetCwd && <HeadItem key="cwd" label="작업 폴더 바꾸기" run={tm.onSetCwd} ctl={ctl} />,
         tm?.onDuplicate && <HeadItem key="dup" label="복제" run={tm.onDuplicate} ctl={ctl} />,
-        fastEligible && <HeadItem key="fast" label={fastOn ? '빠르게 끄기 (Opus fast)' : '빠르게 (Opus fast)'} run={() => requestFast(p.sessionId!, !fastOn)} ctl={ctl} />,
+        fastEligible && <HeadItem key="fast" label={fastOn ? '빠르게 끄기 (Opus fast)' : '빠르게 (Opus fast)'} checked={fastOn} run={() => requestFast(p.sessionId!, !fastOn)} ctl={ctl} />,
         ...paneRows('session', ctl),
       ],
       [
@@ -597,6 +599,7 @@ export function Chat(p: ChatProps) {
           </MessageActionsContext.Provider>
         </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
+        {fastRefused && <button type="button" className="btn ghost retry" data-testid="fast-standard-retry" onClick={() => { requestFast(p.sessionId!, false); p.onSend(retryPrompt!); scroll.attach(); }}>표준으로 다시 보내기</button>}
         {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>deck 에서 새 GPT 세션으로 이어가기</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}

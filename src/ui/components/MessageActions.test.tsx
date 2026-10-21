@@ -13,7 +13,7 @@ import { HANDOFF_PROMPT } from '../../shared/handoff';
 Element.prototype.scrollIntoView = () => {};
 
 /** Menu row labels without their shortcut hint. */
-const menuNames = () => screen.getAllByRole('menuitem').map((b) => (b.textContent ?? '').replace(b.querySelector('.menu-hint')?.textContent ?? '', ''));
+const menuNames = () => Array.from(document.querySelectorAll<HTMLElement>('[role^="menuitem"]')).map((b) => (b.textContent ?? '').replace(b.querySelector('.menu-hint')?.textContent ?? '', ''));
 const reply = (text: string, extra: Partial<Extract<ChatItem, { kind: 'assistant' }>> = {}): ChatItem => ({ kind: 'assistant', turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [], ...extra });
 
 let writeText: ReturnType<typeof vi.fn>;

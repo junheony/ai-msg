@@ -251,6 +251,9 @@ describe('ClaudeEngine — ⚡ 빠르게 (fast mode)', () => {
     const evs = await drain(engine.runTurn(req({ fast: true })));
     const i = evs.findIndex((e) => e.kind === 'notice' && e.message.startsWith('⚡') && e.message.includes('사용 크레딧'));
     expect(i).toBeGreaterThanOrEqual(0);
+    expect(evs[i]).toMatchObject({ fast: 'off' });
+    // Nothing is retried by itself: the words never promise one.
+    expect((evs[i] as { message: string }).message).not.toContain('다시 시도');
     expect(evs.findIndex((e) => e.kind === 'result')).toBeGreaterThan(i);
   });
 
@@ -266,8 +269,9 @@ describe('ClaudeEngine — ⚡ 빠르게 (fast mode)', () => {
     f.push(cli.init('s1'), { type: 'system', subtype: 'notification', key: 'fast', text: 'Fast mode disabled · usage credits exhausted', priority: 'high', session_id: 's1' }, cli.result('a', 's1'));
     const evs = await drain(engine.runTurn(req({ fast: true })));
     const n = evs.find((e) => e.kind === 'notice');
-    expect(n).toMatchObject({ kind: 'notice' });
+    expect(n).toMatchObject({ kind: 'notice', fast: 'exhausted' });
     expect((n as { message: string }).message).toContain('usage credits exhausted');
-    expect((n as { message: string }).message).toContain('표준 속도로 다시 시도');
+    expect((n as { message: string }).message).toContain('표준 속도로 돕니다');
+    expect((n as { message: string }).message).not.toContain('다시 시도');
   });
 });

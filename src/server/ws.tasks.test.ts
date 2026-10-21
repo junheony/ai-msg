@@ -160,6 +160,16 @@ describe('ws · 백그라운드 작업', () => {
     ws.close();
   });
 
+  it('⚡ a background task never runs fast, even if an old client asks', async () => {
+    const { ws, msgs } = await open();
+    await until(() => lastTasks(msgs));
+    ws.send(JSON.stringify({ type: 'start_task', cwd: work, text: 'quick-f', fromSessionId: 'from-1', fast: true }));
+    await until(() => byTitle(msgs, 'quick-f')?.status === 'done');
+    const call = calls.find((c) => c.prompt === 'quick-f')!;
+    expect(call.fast).toBeUndefined();
+    ws.close();
+  });
+
   it('a failed task is reported failed and pushed; a bad folder fails before it starts', async () => {
     const { ws, msgs } = await open();
     await until(() => lastTasks(msgs));

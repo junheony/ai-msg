@@ -494,7 +494,7 @@ describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
     render(<Pane pane={pane} app={app} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} onPalette={() => {}} onAddPane={() => {}} />);
     fireEvent.click(screen.getByTestId('session-chip-head'));
     const groups: string[][] = [[]];
-    for (const el of Array.from(screen.getByRole('menu').querySelectorAll('[role="menuitem"], [role="separator"]'))) {
+    for (const el of Array.from(screen.getByRole('menu').querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"], [role="separator"]'))) {
       if (el.getAttribute('role') === 'separator') groups.push([]);
       else groups.at(-1)!.push(el.textContent!.replace(/(⌘|Ctrl\+).*$/, ''));
     }

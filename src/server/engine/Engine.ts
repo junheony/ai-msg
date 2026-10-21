@@ -1,3 +1,4 @@
+import type { FastModeKind } from './claudeCli/texts';
 import type { PermissionUpdate } from './claudeCli/permissionTypes';
 import type { Account } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
@@ -44,7 +45,8 @@ export type EngineEvent =
   | { kind: 'rate_limit'; info: RateLimitSignal }
   | { kind: 'compact' }
   /** Non-fatal engine warning shown as a turn note (Codex `item.type === 'error'` items). */
-  | { kind: 'notice'; message: string }
+  /** `fast`: a ⚡ 빠르게 line (claudeCli/texts fastModeKind) — TurnRunner says it once per session and marks the badge. */
+  | { kind: 'notice'; message: string; fast?: FastModeKind }
   /** Live background tasks (Agent run_in_background, background Bash), emitted whenever the set changes; descriptions, one per task. */
   | { kind: 'background'; tasks: string[]; /** Same tasks with id, type and start (for the task popover / per-task stop). */ detail?: BgTask[] }
   /** The process was ended because its background work did not finish within `minutes` (ClaudeEngine bgMaxMs): `tasks` were cut. Sent before the clearing `background`. */

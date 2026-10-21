@@ -5,6 +5,7 @@ import { parseLine, type CliMessage } from './messages';
 import { mapCliMessage, isActivity, BackgroundTracker } from './stream';
 import { ToolTracker, toolAudit as mkAudit } from './stream';
 import { toUserMessage } from './prompt';
+import { fastModeKind, fastModeText } from './texts';
 import { fakeClaudeCli, cli, argValue } from './fakeClaudeCli';
 
 const fixture = (name: string): CliMessage[] =>
@@ -144,6 +145,24 @@ describe('system/notification → notice', () => {
     const [fast] = mapCliMessage({ type: 'system', subtype: 'notification', key: 'k', text: 'Fast mode cooldown triggered' } as CliMessage);
     expect(fast).toMatchObject({ kind: 'notice' });
     expect((fast as { message: string }).message).toMatch(/^⚡ Fast mode cooldown triggered — .*쿨다운/);
+    expect(fast).toMatchObject({ fast: 'cooldown' });
+    // A line merely naming fast mode is no fallback; a long notification is cut.
+    expect(mapCliMessage({ type: 'system', subtype: 'notification', key: 'k', text: 'Fast mode is on' } as CliMessage)).toEqual([{ kind: 'notice', message: 'Fast mode is on' }]);
+    const [long] = mapCliMessage({ type: 'system', subtype: 'notification', key: 'k', text: 'x'.repeat(5000) } as CliMessage);
+    expect((long as { message: string }).message.length).toBe(300);
     expect(mapCliMessage({ type: 'system', subtype: 'notification', key: 'k', text: '  ' } as CliMessage)).toEqual([]);
+  });
+});
+
+describe('fastModeKind', () => {
+  it('reads the kind of a fast-mode line; on a failed fast turn any such line counts (unknown → off)', () => {
+    expect(fastModeKind('Fast mode usage credits exhausted')).toBe('exhausted');
+    expect(fastModeKind('Your organization has disabled fast mode')).toBe('org');
+    expect(fastModeKind('Fast mode cooldown triggered')).toBe('cooldown');
+    expect(fastModeKind('Fast mode requires usage credits')).toBe('off');
+    expect(fastModeKind('Fast mode hiccup')).toBeNull();
+    expect(fastModeKind('Fast mode hiccup', true)).toBe('off');
+    expect(fastModeKind('API Error: 500', true)).toBeNull();
+    for (const k of ['org', 'exhausted', 'off', 'cooldown'] as const) expect(fastModeText(k, true)).not.toContain('다시 시도');
   });
 });
