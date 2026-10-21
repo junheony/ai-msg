@@ -834,8 +834,8 @@ describe('App phone layout (D10)', () => {
     expect(screen.getByTestId('pane-p0')).toBeTruthy();
     expect(screen.queryByTestId('pane-p1')).toBeNull();
     // The tab row ends in +: another pane (as a tab), no ceiling.
-    fireEvent.click(within(document.querySelector('.pane-switch') as HTMLElement).getByLabelText('새 분할'));
-    expect(document.querySelectorAll('.pane-switch button[data-tab]')).toHaveLength(3);
+    fireEvent.click(within(screen.getByTestId('split-tabs')).getByRole('button', { name: '새 분할' }));
+    expect(screen.getByTestId('split-tabs').querySelectorAll('button[data-tab]')).toHaveLength(3);
     expect(screen.getByTestId('pane-p2')).toBeTruthy();
     // No grip / card menu on a phone: a card means nothing on one screen.
     expect(document.querySelector('[data-grip]')).toBeNull();
@@ -849,21 +849,21 @@ describe('App phone layout (D10)', () => {
     ] }));
     const mm = mockMatchMedia(true);
     await boot();
-    const labels = () => Array.from(document.querySelectorAll('.pane-switch button[data-tab]')).map((b) => b.textContent);
+    const labels = () => Array.from(screen.getByTestId('split-tabs').querySelectorAll('button[data-tab]')).map((b) => b.textContent);
     // The float landed at the end: one, two, (blank) → two, blank, one.
     await waitFor(() => expect(labels()).toEqual(['1 · two', '2', '3 · one']));
     const stored = () => JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: unknown; parkedFloat?: unknown }[] };
     expect(stored().panes.some((p) => p.float)).toBe(false);
     expect(stored().panes[2]!.parkedFloat).toEqual({ x: 10, y: 10, w: 400, h: 300 });
     // Drag tab 3 (one) to the front: tabs 100 wide at 0 / 100 / 200.
-    const tabs = Array.from(document.querySelectorAll<HTMLElement>('.pane-switch button[data-tab]'));
+    const tabs = Array.from(screen.getByTestId('split-tabs').querySelectorAll<HTMLElement>('button[data-tab]'));
     const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
       const i = tabs.indexOf(this as HTMLElement);
       const x = i >= 0 ? i * 100 : 0;
       return { width: i >= 0 ? 100 : 400, height: 30, left: x, right: x + (i >= 0 ? 100 : 400), top: 0, bottom: 30, x, y: 0, toJSON: () => ({}) } as DOMRect;
     });
     try {
-      const strip = document.querySelector('.pane-switch') as HTMLElement;
+      const strip = screen.getByTestId('split-tabs');
       fireEvent.pointerDown(tabs[2]!, { clientX: 250, clientY: 15, pointerId: 1, button: 0, pointerType: 'mouse' });
       fireEvent.pointerMove(window, { clientX: 20, clientY: 15, pointerId: 1 });
       expect(strip.classList.contains('tabs-reordering')).toBe(true);
