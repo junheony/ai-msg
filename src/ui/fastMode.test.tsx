@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ClientMessage } from '../shared/protocol';
+import { useReducer } from 'react';
+import type { ClientMessage, ServerMessage } from '../shared/protocol';
 import { Chat, type ChatProps } from './components/Chat';
 import { FastConsentSheet } from './components/FastConsentSheet';
-import { sendFromPane, startTaskFromPane } from './components/Pane';
+import { Pane, sendFromPane, startTaskFromPane, useQueueRunner } from './components/Pane';
 import { FAST_CONSENT_KEY, FAST_KEY, hasFastConsent, isFast, requestFast, resetFastForTests, setFast, useFast } from './fastMode';
-import { newPane, type PaneState } from './state';
+import { initialState, newPane, reducer, type AppState, type PaneState } from './state';
 
 Element.prototype.scrollIntoView = () => {};
 
@@ -134,5 +135,59 @@ describe('⚡ 빠르게 on the wire', () => {
     localStorage.setItem(FAST_KEY, JSON.stringify([1, 's9']));
     resetFastForTests();
     expect(isFast('s9')).toBe(true);
+  });
+});
+
+describe('⚡ 빠르게 — a message typed during a running turn (steer)', () => {
+  /** A Claude pane whose first send started turn t1 (↯ as `fastAtStart`), with the queue runner on. */
+  function running(fastAtStart: boolean) {
+    setFast('s1', fastAtStart);
+    const send = vi.fn<(m: ClientMessage) => unknown>();
+    const start: AppState = { ...initialState, connected: true, panes: [{ ...newPane('p0'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }] };
+    let dispatchOut: (a: Parameters<typeof reducer>[1]) => void = () => {};
+    function Harness() {
+      const [s, dispatch] = useReducer(reducer, start);
+      dispatchOut = dispatch;
+      useQueueRunner(s.panes, s.connected, dispatch, send);
+      return <Pane pane={s.panes[0]!} app={s} active closable={false} dispatch={dispatch} send={send} onClose={() => {}} />;
+    }
+    render(<Harness />);
+    const server = (msg: ServerMessage) => act(() => dispatchOut({ type: 'server', msg }));
+    const box = () => screen.getByLabelText('메시지');
+    fireEvent.change(box(), { target: { value: 'one' } });
+    fireEvent.click(screen.getByText('보내기'));
+    const first = send.mock.lastCall![0] as Extract<ClientMessage, { type: 'send' }>;
+    expect(first.fast === true).toBe(fastAtStart);
+    server({ type: 'turn_started', turnId: 't1', sessionId: 's1', cwd: '/w', engine: 'claude', clientRef: first.clientRef } as ServerMessage);
+    const steer = (text: string) => {
+      fireEvent.change(box(), { target: { value: text } });
+      fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+      return send.mock.lastCall![0] as Extract<ClientMessage, { type: 'steer' }>;
+    };
+    return { send, server, steer };
+  }
+
+  it.each([
+    ['turned off mid-turn', true, false],
+    ['turned on mid-turn', false, true],
+  ])('↯ %s: the steer carries the switch; refused by the server it waits as a queue item and goes out after the turn as a send with ↯ as it is then', (_what, was, now) => {
+    const { send, server, steer } = running(was);
+    act(() => setFast('s1', now));
+    const st = steer('also this');
+    expect(st.type).toBe('steer');
+    expect(st.fast === true).toBe(now);
+    server({ type: 'steer_rejected', turnId: 't1', sessionId: 's1', cwd: '/w', steerId: st.steerId, message: '↯ 빠르게 설정이 바뀌어 이 턴이 끝난 뒤 새로 보냅니다' });
+    expect(screen.getByTestId('queue').textContent).toContain('also this');
+    const before = send.mock.calls.length;
+    server({ type: 'turn_result', turnId: 't1', sessionId: 's1', cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null });
+    expect(send.mock.calls.length).toBe(before + 1);
+    const again = send.mock.lastCall![0] as Extract<ClientMessage, { type: 'send' }>;
+    expect(again).toMatchObject({ type: 'send', sessionId: 's1', text: 'also this' });
+    expect(again.fast === true).toBe(now);
+  });
+
+  it('the same ↯ as at the start: the steer carries it (the server folds it in)', () => {
+    const { steer } = running(true);
+    expect(steer('more').fast).toBe(true);
   });
 });

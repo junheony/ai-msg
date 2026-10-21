@@ -116,5 +116,9 @@ describe('⚡ 빠르게 on send', () => {
     expect(parsed.type === 'send' && parsed.fast).toBe(true);
     const task = { type: 'start_task', cwd: '/w', text: 'do it', fromSessionId: 's' };
     expect(ClientMessageSchema.parse({ ...task, fast: true })).not.toHaveProperty('fast');
+    // A steer carries the device's ↯ too (the server refuses one that differs from the running process's).
+    const steer = { type: 'steer', turnId: 't1', steerId: 'k1', text: 'x' };
+    expect(ClientMessageSchema.parse({ ...steer, fast: true })).toMatchObject({ fast: true });
+    expect(ClientMessageSchema.safeParse({ ...steer, fast: 'yes' }).success).toBe(false);
   });
 });

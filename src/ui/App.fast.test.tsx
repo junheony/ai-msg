@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ClientMessage, ServerMessage } from '../shared/protocol';
-import { FAST_CONSENT_KEY, isFast, resetFastForTests, setFast } from './fastMode';
+import { FAST_CONSENT_KEY, FAST_KEY, isFast, resetFastForTests, setFast } from './fastMode';
 
 Element.prototype.scrollIntoView = () => {};
 
@@ -50,14 +50,23 @@ describe('⚡ 빠르게 — a refused fast turn in the app', () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
 
-  it('표준으로 다시 보내기: the switch goes off and the same prompt goes again without fast', async () => {
+  it('표준으로 다시 보내기: the same prompt goes again without fast, straight from the button — the switch is not touched', async () => {
     await failedFastTurn({ errorCode: 'fast_refused' });
     expect(isFast('s1')).toBe(true);
+    const write = vi.spyOn(Storage.prototype, 'setItem');
     fireEvent.click(screen.getByTestId('fast-standard-retry'));
-    expect(isFast('s1')).toBe(false);
+    expect(write.mock.calls.filter(([k]) => k === FAST_KEY)).toEqual([]);
+    write.mockRestore();
+    expect(isFast('s1')).toBe(true);
     const again = sends()[1]!;
     expect(again.text).toBe('hi');
     expect(again.fast).toBeUndefined();
+    // Only that one send: the next one goes with ↯ as the switch says.
+    server({ type: 'turn_started', turnId: 't2', sessionId: 's1', cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0, clientRef: again.clientRef });
+    server({ type: 'turn_result', turnId: 't2', sessionId: 's1', cwd: '/w', ok: true, text: 'ok', badge: null, errorText: null });
+    fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: 'next' } });
+    fireEvent.click(screen.getByText('보내기'));
+    expect(sends()[2]).toMatchObject({ text: 'next', fast: true });
   });
 
   it('credits used up (fastOff): the session\'s switch is turned off by itself, the ↯ chip goes', async () => {

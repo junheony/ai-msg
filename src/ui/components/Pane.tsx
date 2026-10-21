@@ -606,6 +606,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
           onSendText={(text) => sendFromPane(pane, text, [], dispatch, send, app.defaultPermMode ?? null, false, undefined, { keepAttachments: true })}
+          onSendStandard={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null, false, undefined, { noFast: true })}
           {...(has('tasks') && s.cwd && !grokBot ? { onStartTask: (text: string) => startTaskFromPane(pane, text, dispatch, send) } : {})}
           tasks={tasksForPane(app.tasks ?? [], s.sessionId, s.cwd)}
           taskCap={app.taskCap ?? null}
@@ -665,7 +666,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
               const ids = pane.attachments.map((a) => a.id);
               dispatch({ type: 'queue_add', text, paneId: pane.id, steerId });
               // Never left (socket down): an ordinary queue item at once.
-              if (send({ type: 'steer', turnId: pane.activeTurnId, steerId, text: body, ...(ids.length ? { attachments: ids } : {}) }) === false) dispatch({ type: 'steer_lost', steerId, paneId: pane.id, unsent: true });
+              // ⚡ ↯ rides along: the server refuses a steer whose ↯ differs from the running process's (steer_rejected) —
+              // it then waits here as a queue item and goes out after the turn as a send, with the switch as it is then.
+              const fast = s.sessionId && s.engine === 'claude' && isFast(s.sessionId) ? { fast: true } : {};
+              if (send({ type: 'steer', turnId: pane.activeTurnId, steerId, text: body, ...(ids.length ? { attachments: ids } : {}), ...fast }) === false) dispatch({ type: 'steer_lost', steerId, paneId: pane.id, unsent: true });
               return;
             }
             dispatch({ type: 'queue_add', text, paneId: pane.id });

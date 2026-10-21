@@ -17,7 +17,7 @@ import type { GrokTurnRequest } from '../engine/GrokEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetAtMs, limitResetHint } from '../engine/limitDetect';
-import { fastModeKind, type FastModeKind } from '../engine/claudeCli/texts';
+import { fastFailureKind, type FastModeKind } from '../engine/claudeCli/texts';
 import { FAST_FELL_BACK_NOTE, FAST_NOTE } from '../../shared/models';
 import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
 import { NO_ROTATION, chooseAccount, fixedAccount, onlyAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
@@ -122,9 +122,9 @@ export { FAST_FELL_BACK_NOTE, FAST_NOTE };
 /** ⚡ Said with the turn_result whose `fastOff` turns the session's switch off (credits used up). */
 export const FAST_OFF_NOTICE = '⚡ 사용 크레딧이 떨어져 이 세션의 ↯ 빠르게를 껐습니다';
 const FAST_SAID_MAX = 500;
-/** ⚡ A fast turn's failure that is about fast mode itself (claudeCli/texts fastModeKind): never a plan limit. */
-function fastFailureOf(p: TurnParams, ev: { ok: boolean; errorText: string | null; stderr?: string | null }, aborted: boolean): FastModeKind | null {
-  return fastTurn(p) && !ev.ok && !aborted ? fastModeKind(`${ev.errorText ?? ''}\n${ev.stderr ?? ''}`, true) : null;
+/** ⚡ A fast turn's failure that is about fast mode itself (claudeCli/texts fastFailureKind): never a plan limit. */
+function fastFailureOf(p: TurnParams, ev: { ok: boolean; errorText: string | null; errorKind: string | null }, aborted: boolean): FastModeKind | null {
+  return fastTurn(p) && !ev.ok && !aborted ? fastFailureKind(ev.errorText, ev.errorKind) : null;
 }
 
 /** A commanderHop turn on a Codex/Gemini/Grok session (총사령탑 v1 = Claude only): refused, never run ungated. */

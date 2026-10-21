@@ -5,7 +5,7 @@ import { parseLine, type CliMessage } from './messages';
 import { mapCliMessage, isActivity, BackgroundTracker } from './stream';
 import { ToolTracker, toolAudit as mkAudit } from './stream';
 import { toUserMessage } from './prompt';
-import { fastModeKind, fastModeText } from './texts';
+import { fastFailureKind, fastModeKind, fastModeText } from './texts';
 import { fakeClaudeCli, cli, argValue } from './fakeClaudeCli';
 
 const fixture = (name: string): CliMessage[] =>
@@ -164,5 +164,13 @@ describe('fastModeKind', () => {
     expect(fastModeKind('Fast mode hiccup', true)).toBe('off');
     expect(fastModeKind('API Error: 500', true)).toBeNull();
     for (const k of ['org', 'exhausted', 'off', 'cooldown'] as const) expect(fastModeText(k, true)).not.toContain('다시 시도');
+  });
+  it('fastFailureKind: an auth failure or plan-limit line keeps its own handling', () => {
+    expect(fastFailureKind('Fast mode usage credits exhausted', null)).toBe('exhausted');
+    expect(fastFailureKind('API Error: 429 Fast mode rate limit exceeded', null)).toBeNull();
+    expect(fastFailureKind('Failed to authenticate (fast mode)', null)).toBeNull();
+    expect(fastFailureKind('Fast mode unavailable', 'authentication_failed')).toBeNull();
+    expect(fastFailureKind('Fast mode unavailable', 'rate_limit')).toBeNull();
+    expect(fastFailureKind(null, null)).toBeNull();
   });
 });

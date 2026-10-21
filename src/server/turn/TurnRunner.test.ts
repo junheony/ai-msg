@@ -1738,8 +1738,7 @@ describe('TurnRunner — ⚡ 빠르게', () => {
     expect(fastTurn({ fast: true, retryHop: true as never })).toBe(false);
   });
   it('a fast turn refused for fast mode is not a limit: no cooldown, no move, no retry — shown with 표준으로 다시 보내기', async () => {
-    // Even wording that also matches a plan limit (429, rejected) counts as the fast refusal it names.
-    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fr1', model: 'm' }, { kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('API Error: 429 Fast mode rate limit exceeded', { sessionId: 'fr1' })]);
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fr1', model: 'm' }, failResult('Fast mode is temporarily unavailable (cooldown)', { sessionId: 'fr1' })]);
     const c = await ctx(eng);
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
     expect(eng.calls.length).toBe(1);
@@ -1747,14 +1746,28 @@ describe('TurnRunner — ⚡ 빠르게', () => {
     expect(msgsOf(c, 'turn_retry')).toEqual([]);
     expect(c.moves).toEqual([]);
     const r = msgsOf(c, 'turn_result')[0] as Extract<ServerMessage, { type: 'turn_result' }>;
-    expect(r).toMatchObject({ ok: false, errorCode: 'fast_refused', errorText: expect.stringContaining('Fast mode rate limit') });
+    expect(r).toMatchObject({ ok: false, errorCode: 'fast_refused', errorText: expect.stringContaining('Fast mode is temporarily unavailable') });
     expect(r.fastOff).toBeUndefined();
     expect(c.deps.store.get('fr1')?.pendingRetry).toBeUndefined();
-    // The same text on a standard turn is a limit as before.
-    const eng2 = new StubEngine((_r, call) => (call === 0 ? [{ kind: 'init', sessionId: 'fr2', model: 'm' }, failResult('API Error: 429 Fast mode rate limit exceeded', { sessionId: 'fr2' })] : ok('fr2')));
-    const c2 = await ctx(eng2);
-    await new TurnRunner(c2.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, c2.sink);
-    expect(eng2.calls.length).toBe(2);
+  });
+  it.each([
+    ['a plan-limit line', 'API Error: 429 Fast mode rate limit exceeded'],
+    ['an auth failure', 'Failed to authenticate (fast mode)'],
+  ])('a fast turn failing on %s keeps the usual handling (moves account), never fast_refused', async (_what, text) => {
+    const eng = new StubEngine((_r, call) => (call === 0 ? [{ kind: 'init', sessionId: 'fl1', model: 'm' }, failResult(text, { sessionId: 'fl1' })] : ok('fl1')));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    expect(eng.calls.length).toBe(2);
+    expect(msgsOf(c, 'turn_result').some((m) => (m as { errorCode?: string }).errorCode === 'fast_refused')).toBe(false);
+  });
+  it('stderr naming fast mode does not make a fast refusal: only the error text counts', async () => {
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fs1', model: 'm' }, failResult('API Error: 500 internal', { sessionId: 'fs1', stderr: 'warn: fast mode usage credits exhausted' })]);
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    const r = msgsOf(c, 'turn_result')[0] as Extract<ServerMessage, { type: 'turn_result' }>;
+    expect(r.ok).toBe(false);
+    expect(r.errorCode).toBeUndefined();
+    expect(r.fastOff).toBeUndefined();
   });
   it('credits used up on a fast turn: the switch is turned off (fastOff) and the notice says so', async () => {
     const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fx1', model: 'm' }, failResult('Fast mode usage credits exhausted', { sessionId: 'fx1' })]);

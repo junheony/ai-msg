@@ -79,6 +79,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     steerId: z.string().min(1).max(CLIENT_REF_MAX),
     text: z.string().min(1).max(200_000),
     attachments: z.array(z.string().regex(ATTACHMENT_ID)).max(MAX_ATTACHMENTS_PER_TURN).optional(),
+    /** ⚡ The session's ↯ switch on the device: refused (steer_rejected) when it differs from the running process's. */
+    fast: z.boolean().optional(),
   }),
   z.object({ type: z.literal('interrupt'), turnId: z.string().min(1) }),
   /**

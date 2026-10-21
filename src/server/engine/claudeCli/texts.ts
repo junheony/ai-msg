@@ -1,4 +1,5 @@
 // src/server/engine/claudeCli/texts.ts
+import { classifyFailure } from '../limitDetect';
 import { MIN_CLAUDE_VERSION } from './version';
 /** The handoff-note turn (TurnRequest.noTools): what a denied tool call tells the model. */
 export const NO_TOOLS_MESSAGE = '인계 메모 작성 중에는 도구를 쓸 수 없습니다 — 지금까지의 대화만으로 메모를 써 주세요';
@@ -44,6 +45,15 @@ export function fastModeKind(text: string, failed = false): FastModeKind | null 
   if (t.includes('cooldown') || t.includes('rate limit') || t.includes('overloaded') || t.includes('temporarily unavailable')) return 'cooldown';
   if (failed || t.includes('requires usage credits') || t.includes('not available') || t.includes('turned off') || t.includes('disabled')) return 'off';
   return null;
+}
+
+/**
+ * ⚡ 빠르게: the fast-mode kind of a failed fast turn, read from its error text only (never stderr). An auth failure or a
+ * plan-limit line (limitDetect) keeps its own handling (failover, cooldown): null then, as for any other error.
+ */
+export function fastFailureKind(errorText: string | null, errorKind: string | null): FastModeKind | null {
+  if (classifyFailure({ ok: false, errorText, errorKind, rateLimitStatus: null }) !== 'other') return null;
+  return fastModeKind(errorText ?? '', true);
 }
 
 /** What a fast-mode line means for the person: `failed` = the turn failed on it (nothing is retried by itself), else the CLI went on at standard speed. */
