@@ -538,7 +538,7 @@ export function Chat(p: ChatProps) {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f' && canFind) { e.preventDefault(); openFind(); }
     }} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
-      <SessionChipHead key={p.sessionId ?? 'new'} title={p.title} engine={!p.isNew ? p.sessionEngine : null} cwd={p.cwd} slot={p.headSlot ?? null} phone={phone} paneId={p.headPaneId}
+      <SessionChipHead key={p.sessionId ?? 'new'} title={p.title} sessionKey={p.sessionId ?? null} engine={!p.isNew ? p.sessionEngine : null} cwd={p.cwd} slot={p.headSlot ?? null} phone={phone} paneId={p.headPaneId}
         grip={p.headGrip} gripTitle={p.headGripTitle} {...(tm?.onRename ? { onRename: tm.onRename } : {})} groups={headGroups} toast={share.done}
         chips={(p.headChips || (p.onPermMode && permSupported && permMode === 'bypassPermissions')) ? <>
           {/* 모두 자동 승인 stays on the head as a warning; the other modes live in the composer's session chip. */}

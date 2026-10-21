@@ -429,3 +429,40 @@ describe('startTaskFromPane', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'task_sent', paneId: 'p1', clientRef: ref, text: '로그 정리' });
   });
 });
+
+describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
+  afterEach(cleanup);
+  const withPhone = (phone: boolean, fn: () => void) => {
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: phone && q.includes('max-width: 720px'), media: q, addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof window.matchMedia;
+    try { fn(); } finally { window.matchMedia = mm; }
+  };
+
+  it('보기 › 명령 팔레트… opens the palette, also from a new session (no session yet)', () => {
+    const onPalette = vi.fn();
+    render(<Pane pane={{ ...newPane('p1') }} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} onPalette={onPalette} />);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '명령 팔레트…' }));
+    expect(onPalette).toHaveBeenCalledTimes(1);
+  });
+
+  it('a phone menu has no 카드 배치… ; the desktop one does, with Ctrl+Shift hints off a Mac', () => {
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } };
+    const props = { pane, app: { pending: [], questions: [], codexAvailable: false }, active: true, closable: true, dispatch: () => {}, send: () => {}, onClose: () => {}, onLayouts: () => {}, onPalette: () => {} };
+    withPhone(true, () => {
+      render(<Pane {...props} />);
+      fireEvent.click(screen.getByTestId('session-chip-head'));
+      expect(screen.getByRole('menuitem', { name: '명령 팔레트…' })).toBeTruthy();
+      expect(screen.queryByRole('menuitem', { name: '카드 배치…' })).toBeNull();
+      cleanup();
+    });
+    withPhone(false, () => {
+      render(<Pane {...props} />);
+      fireEvent.click(screen.getByTestId('session-chip-head'));
+      expect(screen.getByRole('menuitem', { name: '카드 배치…' })).toBeTruthy();
+      // jsdom is not a Mac: the close row's hint is spelled out.
+      expect(screen.getByRole('menuitem', { name: '이 창 닫기' }).querySelector('kbd')!.textContent).toBe('Ctrl+Shift+X');
+      expect(screen.getByRole('menuitem', { name: '명령 팔레트…' }).querySelector('kbd')!.textContent).toBe('Ctrl+K');
+    });
+  });
+});

@@ -372,3 +372,17 @@ describe('활동 점 shapes (styles.css)', () => {
     expect(reduced).toMatch(/prefers-reduced-motion: reduce\) \{[^@]*\.lvl-running::before \{ animation: none;/);
   });
 });
+
+describe('활동 시트 · body 포털', () => {
+  it('renders straight under <body> (out of the top bar), Esc closes it and focus goes back to the dot', () => {
+    render(<header className="topbar"><ActivityButton {...base({ serverUpdate: false })} /></header>);
+    const btn = screen.getByTestId('activity-btn');
+    btn.focus();
+    const dialog = openSheet();
+    expect(dialog.closest('.topbar')).toBeNull();
+    expect(dialog.closest('.sheet-backdrop')!.parentElement).toBe(document.body);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
+    expect(document.activeElement).toBe(btn);
+  });
+});

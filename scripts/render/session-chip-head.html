@@ -2,7 +2,8 @@
 <!-- 세션 칩 머리 fixture for scripts/render-check.sh (keep in step with SessionChipHead.tsx / Pane.tsx / App.tsx):
      1 pane (the chip in the top bar's middle, folder line under it, its menu open), split 2, split 3 with the three
      conditional chips (갈라짐 · 총사령탑 · 모두 자동 승인 ⚠) and a split pane's menu open, a floating card's head (– ✕).
-     Phone (≤720px): the top bar with ☰ · chip · usage · activity, the 2-pane strip and the menu as a bottom sheet.
+     Phone (≤720px): the top bar with ☰ · chip · usage · activity, the 2-pane strip and the menu as a bottom sheet
+     (a dialog in <body>, outside the top bar — as SessionChipHead portals it).
      Tall: RENDER_HEIGHT=2400. 412px needs an iframe (headless Chrome will not go below 500). -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
 <style>
@@ -40,6 +41,7 @@
               <button type="button" role="menuitem">Desktop에서 열기</button>
               <div class="menu-sep" role="separator"></div>
               <button type="button" role="menuitem">대화에서 찾기<kbd class="menu-hint">⌘F</kbd></button>
+              <button type="button" role="menuitem">명령 팔레트…<kbd class="menu-hint">⌘K</kbd></button>
               <button type="button" role="menuitem">파일 열기<kbd class="menu-hint">⌘⇧E</kbd></button>
               <button type="button" role="menuitem">새 세션으로 이어가기</button>
               <div class="menu-sep" role="separator"></div>
@@ -99,15 +101,16 @@
             <button type="button" role="menuitem">고정 해제</button>
             <div class="menu-sep" role="separator"></div>
             <button type="button" role="menuitem">대화에서 찾기<kbd class="menu-hint">⌘F</kbd></button>
+            <button type="button" role="menuitem">명령 팔레트…<kbd class="menu-hint">⌘K</kbd></button>
             <button type="button" role="menuitem">파일 열기<kbd class="menu-hint">⌘⇧E</kbd></button>
             <div class="menu-sep" role="separator"></div>
             <button type="button" role="menuitem">링크 복사</button>
             <div class="menu-sep" role="separator"></div>
             <button type="button" role="menuitem">새 분할<kbd class="menu-hint">⌘⇧O</kbd></button>
-            <button type="button" role="menuitem">왼쪽으로 이동<kbd class="menu-hint">⌘⌥[</kbd></button>
-            <button type="button" role="menuitem">오른쪽으로 이동<kbd class="menu-hint">⌘⌥]</kbd></button>
+            <button type="button" role="menuitem">왼쪽으로 이동<kbd class="menu-hint">⌘⌥⇧[</kbd></button>
+            <button type="button" role="menuitem">오른쪽으로 이동<kbd class="menu-hint">⌘⌥⇧]</kbd></button>
             <button type="button" role="menuitem">떠 있는 카드로 떼기</button>
-            <button type="button" role="menuitem">패널 최대화<kbd class="menu-hint">⌘⇧↩</kbd></button>
+            <button type="button" role="menuitem">패널 최대화<kbd class="menu-hint">⌘⇧Enter</kbd></button>
             <button type="button" role="menuitem">카드 배치…</button>
             <button type="button" role="menuitem">새 탭으로 떼어내기</button>
             <button type="button" role="menuitem">이 창 닫기<kbd class="menu-hint">⌘⇧X</kbd></button>
@@ -141,22 +144,6 @@
       <div class="pane-head in-topbar" data-pane-head="p0">
         <div class="pane-head-main"><span class="head-chip-wrap">
           <button type="button" class="head-chip" aria-haspopup="menu" aria-expanded="true"><span class="head-chip-title"><span class="engine-mark claude" role="img" aria-label="Claude">✳</span>deck UI 개편 — 2c 세션 칩</span><span class="caret">▾</span></button>
-          <div class="head-menu-scrim" aria-hidden="true"></div>
-          <div class="session-menu head-menu as-sheet" role="menu" aria-label="채팅 메뉴">
-            <button type="button" role="menuitem" class="menu-folder" aria-haspopup="menu">폴더: deck <span aria-hidden="true">›</span></button>
-            <button type="button" role="menuitem">이름 바꾸기</button>
-            <button type="button" role="menuitem">맨 위에 고정</button>
-            <button type="button" role="menuitem">보관</button>
-            <div class="menu-sep" role="separator"></div>
-            <button type="button" role="menuitem">대화에서 찾기<kbd class="menu-hint">⌘F</kbd></button>
-            <div class="menu-sep" role="separator"></div>
-            <button type="button" role="menuitem">링크 복사</button>
-            <div class="menu-sep" role="separator"></div>
-            <button type="button" role="menuitem">새 분할</button>
-            <button type="button" role="menuitem">이 창 닫기</button>
-            <div class="menu-sep" role="separator"></div>
-            <button type="button" role="menuitem" class="danger">삭제…</button>
-          </div>
         </span></div>
       </div>
     </div>
@@ -166,6 +153,26 @@
   <div class="panes" data-count="1" style="--cols: 1">
     <div class="pane-switch"><button type="button" class="on">deck UI 개편</button><button type="button">GPT 리뷰</button><button type="button" class="add" aria-label="새 분할">+</button></div>
     <section class="pane active"><main class="chat"><div class="chat-body"></div></main></section>
+  </div>
+  <!-- In the app these two are children of <body> (createPortal). -->
+  <div class="head-menu-scrim" aria-hidden="true"></div>
+  <div class="session-menu head-menu as-sheet" role="dialog" aria-modal="true" aria-label="세션 메뉴">
+    <div class="head-menu-list" role="menu" aria-label="채팅 메뉴">
+      <button type="button" role="menuitem" class="menu-folder" aria-haspopup="menu">폴더: deck <span aria-hidden="true">›</span></button>
+      <button type="button" role="menuitem">이름 바꾸기</button>
+      <button type="button" role="menuitem">맨 위에 고정</button>
+      <button type="button" role="menuitem">보관</button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" role="menuitem">대화에서 찾기<kbd class="menu-hint">⌘F</kbd></button>
+      <button type="button" role="menuitem">명령 팔레트…<kbd class="menu-hint">⌘K</kbd></button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" role="menuitem">링크 복사</button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" role="menuitem">새 분할</button>
+      <button type="button" role="menuitem">이 창 닫기</button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" role="menuitem" class="danger">삭제…</button>
+    </div>
   </div>
 </div>
 </body></html>

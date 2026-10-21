@@ -1420,7 +1420,7 @@ export function App() {
               hidden={!!maxed && p.id !== maxed}
               {...(!phone && (docked.length > 1 || floats.length > 0) ? { grip: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => startPaneDrag(e, p.id), onKeyDown: (e: ReactKeyboardEvent<HTMLButtonElement>) => gripKey(e, p.id) } } : {})}
               {...(!phone && docked.length > 1 ? { onMaxPane: () => toggleMaxDocked(p.id), paneMaxed: maxed === p.id, onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
-              onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />
+              onLayouts={() => setLayouts({ list: listLayouts(), error: null })} onPalette={() => onShortcut.current('palette')} />
             </Fragment>
           ))}
         </div>
@@ -1433,7 +1433,7 @@ export function App() {
                   onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
                   floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})}
                   onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore}
-                  collapsed={!!p.floatCollapsed} onToggleCollapse={() => toggleCollapseCard(p.id)} onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />
+                  collapsed={!!p.floatCollapsed} onToggleCollapse={() => toggleCollapseCard(p.id)} onLayouts={() => setLayouts({ list: listLayouts(), error: null })} onPalette={() => onShortcut.current('palette')} />
                 {!p.floatCollapsed && <div className="float-resize" role="separator" tabIndex={0} aria-label="카드 크기 조절" aria-valuetext={`${p.float!.w} × ${p.float!.h}`} title="드래그: 카드 크기 · 키보드: ←→ 너비, ↑↓ 높이 (Shift: 크게)"
                   onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />}
               </div>

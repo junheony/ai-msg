@@ -32,6 +32,11 @@ const BINDINGS: { id: ShortcutId; code: string; shift: boolean; alt?: boolean; t
 /** `code` fallback from `key` for synthetic events / old browsers. */
 const KEY_TO_CODE: Record<string, string> = { k: 'KeyK', n: 'KeyN', o: 'KeyO', x: 'KeyX', g: 'KeyG', e: 'KeyE', enter: 'Enter', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '/': 'Slash', ',': 'Comma' };
 
+/** A ⌘-shortcut's label: ⌘⌥⇧[ on a Mac, Ctrl+Alt+Shift+[ elsewhere (⌥ ⇧ ↩ spelled out as Alt / Shift / Enter). */
+export function modKeys(keys: string, mac: boolean): string {
+  return mac ? `⌘${keys}` : `Ctrl+${keys.replace(/⌥/g, 'Alt+').replace(/⇧/g, 'Shift+').replace(/↩/g, 'Enter')}`;
+}
+
 export function isMacPlatform(nav: { platform?: string; userAgent?: string } | undefined = typeof navigator === 'undefined' ? undefined : navigator): boolean {
   return /Mac|iPhone|iPad|iPod/i.test(nav?.platform || nav?.userAgent || '');
 }

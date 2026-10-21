@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { SessionActivity } from '../../shared/protocol';
 import type { TaskInfo } from '../../shared/tasks';
 import type { PendingPermission, PendingQuestion } from '../state';
@@ -210,14 +211,16 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
         {summary.level === 'server' && <span className="activity-ring" aria-hidden="true">↻</span>}
         {summary.waiting > 0 && <span className="activity-badge" data-testid="activity-badge" aria-hidden="true">{summary.waiting > 99 ? '99+' : summary.waiting}</span>}
       </button>
-      {open && (
+      {/* Into <body>: inside the top bar the sheet would share its stacking context (under the sidebar's peek). */}
+      {open && createPortal(
         <ActivitySheet
           {...sheet} tasks={tasks} fetchFn={fetchFn} onClose={() => setOpen(false)} lastWorkAt={lastWorkAt}
           {...(highlights ? { highlights: hlCount } : {})}
           // 하이라이트 opens as this sheet closes: its opener is the dot, so closing it lands back here.
           {...(sheet.onOpenHighlights ? { onOpenHighlights: () => { btn.current?.focus(); sheet.onOpenHighlights!(); } } : {})}
           server={{ ...sheet.server, update }}
-        />
+        />,
+        document.body,
       )}
     </>
   );

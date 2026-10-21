@@ -44,18 +44,20 @@ const ITEMS = '[role="menuitem"]';
 /**
  * A row / title menu (the sidebar ⋯, the chat title ⌄): the first item takes focus, ↑/↓ (Home/End) move it, Enter
  * activates (a button), Esc or Tab closes and Esc puts focus back on the button that opened it (the sibling with
- * aria-haspopup="menu"). A click outside closes it too.
+ * aria-haspopup="menu", or `opener`). A click outside closes it too. `modal` (the phone's bottom sheet, a dialog around
+ * the list): Tab / Shift+Tab wrap over the items instead of closing, and a press anywhere in the dialog stays inside.
  */
-export function MenuList({ className = 'session-menu', label, onClose, children }: { className?: string; label?: string; onClose: () => void; children: ReactNode }) {
+export function MenuList({ className = 'session-menu', label, onClose, opener, modal = false, children }: { className?: string; label?: string; onClose: () => void; opener?: () => HTMLElement | null; modal?: boolean; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
-  const trigger = () => ref.current?.parentElement?.querySelector<HTMLElement>('[aria-haspopup="menu"]') ?? null;
+  const trigger = () => (opener ? opener() : ref.current?.parentElement?.querySelector<HTMLElement>('[aria-haspopup="menu"]') ?? null);
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>(ITEMS)?.focus({ preventScroll: true });
     const outside = (e: PointerEvent) => {
       const t = e.target as Node;
-      if (!ref.current?.contains(t) && !trigger()?.contains(t)) closeRef.current();
+      const inside = modal ? ref.current?.parentElement : ref.current;
+      if (!inside?.contains(t) && !trigger()?.contains(t)) closeRef.current();
     };
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
@@ -70,8 +72,14 @@ export function MenuList({ className = 'session-menu', label, onClose, children 
       t?.focus();
       return;
     }
-    if (e.key === 'Tab') { onClose(); return; }
     const items = Array.from(ref.current?.querySelectorAll<HTMLElement>(ITEMS) ?? []);
+    if (e.key === 'Tab') {
+      if (!modal) { onClose(); return; }
+      const next = menuStep(items.indexOf(document.activeElement as HTMLElement), e.shiftKey ? 'ArrowUp' : 'ArrowDown', items.length);
+      e.preventDefault();
+      if (next !== null) items[next]?.focus();
+      return;
+    }
     const next = menuStep(items.indexOf(document.activeElement as HTMLElement), e.key, items.length);
     if (next === null) return;
     e.preventDefault();

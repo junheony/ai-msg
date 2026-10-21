@@ -28,7 +28,7 @@ import { CommanderSheet } from './CommanderSheet';
 import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
 import { NO_TABS, activeTab, carriesTabs, closeTab, openTab, readSideWidth, recallSideTabs, rememberSideTabs, saveSideWidth, selectTab, type SideTabs } from '../sideTabs';
 import { hasOpenPopup } from '../composerFocus';
-import { isMacPlatform, isTypingTarget } from '../shortcuts';
+import { isMacPlatform, isTypingTarget, modKeys } from '../shortcuts';
 import { PHONE_QUERY, useIsPhone } from '../useIsPhone';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
@@ -205,7 +205,7 @@ export type SessionActions = {
 /** ⌘⇧E: `detail` is the pane id whose side panel opens (the file picker) or closes, as its ⋯ 파일 열기 / 파일 패널 닫기. */
 export const TOGGLE_SIDE_EVENT = 'deck:toggle-side';
 
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts, onAddPane, onMaxPane, paneMaxed, headSlot }: {
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts, onAddPane, onMaxPane, paneMaxed, headSlot, onPalette }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap'>>;
   active: boolean;
@@ -228,6 +228,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   /** ⋯ 카드 접기 / 펼치기 and the – / ▭ head button (desktop, floating); `collapsed` picks the label. */
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  /** 보기 › 명령 팔레트… : opens the ⌘K palette (App's own handler). */
+  onPalette?: () => void;
   /** ⋯ 카드 배치… (desktop): the saved-layouts dialog. */
   onLayouts?: () => void;
   /** 창 › 새 분할. */
@@ -396,29 +398,32 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
   // The session chip's menu rows from the pane, by group (Chat adds the session's own: 이름 바꾸기 … 공유 … 삭제).
-  const mod = isMacPlatform() ? '⌘' : 'Ctrl+';
+  const mod = (keys: string) => modKeys(keys, isMacPlatform());
   const phone = useIsPhone();
   const fileMenu: HeadMenuItem[] = [];
   const desktopOpen = useOpenInDesktop(s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
   if (desktopOpen) fileMenu.push({ label: 'Desktop에서 열기', run: desktopOpen, group: 'session' });
-  if (s) fileMenu.push({ label: side ? '파일 패널 닫기' : '파일 열기', hint: `${mod}⇧E`, run: () => (side ? closeSide() : openSide({ kind: 'pick' })), group: 'view' });
+  // 보기 › 명령 팔레트… : the phone's only way to ⌘K (and the new-session screen's too).
+  if (onPalette) fileMenu.push({ label: '명령 팔레트…', hint: mod('K'), run: onPalette, group: 'view' });
+  if (s) fileMenu.push({ label: side ? '파일 패널 닫기' : '파일 열기', hint: mod('⇧E'), run: () => (side ? closeSide() : openSide({ kind: 'pick' })), group: 'view' });
   // 창: split, move, card ⇄ pane (the chip's drag does the same), size, layouts, a new tab, close.
-  if (onAddPane) fileMenu.push({ label: '새 분할', hint: `${mod}⇧O`, run: onAddPane, group: 'window' });
-  if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', hint: `${mod}⌥⇧[`, run: onShift.left, group: 'window' });
-  if (onShift?.right) fileMenu.push({ label: '오른쪽으로 이동', hint: `${mod}⌥⇧]`, run: onShift.right, group: 'window' });
+  if (onAddPane) fileMenu.push({ label: '새 분할', hint: mod('⇧O'), run: onAddPane, group: 'window' });
+  if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', hint: mod('⌥⇧['), run: onShift.left, group: 'window' });
+  if (onShift?.right) fileMenu.push({ label: '오른쪽으로 이동', hint: mod('⌥⇧]'), run: onShift.right, group: 'window' });
   if (floating && onDock) fileMenu.push({ label: '패널에 다시 붙이기', run: onDock, group: 'window' });
-  else if (!floating && onFloat) fileMenu.push({ label: '떠 있는 카드로 떼기', run: onFloat, group: 'window' });
-  if (floating && onToggleMax) fileMenu.push({ label: maximized ? '카드 원래 크기로' : '카드 최대화', hint: `${mod}⇧Enter`, run: onToggleMax, group: 'window' });
-  else if (!floating && onMaxPane) fileMenu.push({ label: paneMaxed ? '패널 배치 되돌리기' : '패널 최대화', hint: `${mod}⇧Enter`, run: onMaxPane, group: 'window' });
+  else if (!floating && onFloat && !phone) fileMenu.push({ label: '떠 있는 카드로 떼기', run: onFloat, group: 'window' });
+  if (floating && onToggleMax) fileMenu.push({ label: maximized ? '카드 원래 크기로' : '카드 최대화', hint: mod('⇧Enter'), run: onToggleMax, group: 'window' });
+  else if (!floating && onMaxPane) fileMenu.push({ label: paneMaxed ? '패널 배치 되돌리기' : '패널 최대화', hint: mod('⇧Enter'), run: onMaxPane, group: 'window' });
   if (floating && onToggleCollapse) fileMenu.push({ label: collapsed ? '카드 펼치기' : '카드 접기', run: onToggleCollapse, group: 'window' });
-  if (floating && onArrange) fileMenu.push({ label: '떠 있는 카드 정렬', hint: `${mod}⇧G`, run: onArrange, group: 'window' });
-  if (onLayouts) fileMenu.push({ label: '카드 배치…', run: onLayouts, group: 'window' });
+  if (floating && onArrange) fileMenu.push({ label: '떠 있는 카드 정렬', hint: mod('⇧G'), run: onArrange, group: 'window' });
+  // Cards are desktop only: a phone's menu has no 카드 배치… (nor any card row above).
+  if (onLayouts && !phone) fileMenu.push({ label: '카드 배치…', run: onLayouts, group: 'window' });
   // 새 탭으로 떼어내기 (split view only): the session in a new browser tab, this pane closed. A lone pane has no such item.
   if (closable && s?.sessionId) {
     const detached = s.sessionId;
     fileMenu.push({ label: '새 탭으로 떼어내기', run: () => { openInNewTab(detached); onClose(); }, group: 'window' });
   }
-  if (closable) fileMenu.push({ label: '이 창 닫기', hint: `${mod}⇧X`, run: onClose, group: 'window' });
+  if (closable) fileMenu.push({ label: '이 창 닫기', hint: mod('⇧X'), run: onClose, group: 'window' });
   // 총사령탑 (servers with 'commander', Claude sessions with an id): 걸기… opens the sheet, or 정지 while one is on. All of it
   // is what the server last said (the `commander` view, restored on reconnect from history/catchup) — nothing kept here.
   const commandSid = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && has('commander') ? s.sessionId : null;
@@ -438,7 +443,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
     else if (commanderOn) { setCommanderAsked(false); setCommanderSheet(false); }
   }, [commanderAsked, commanderRefusal, commanderOn]);
   // A floating card keeps – / ▭ and ✕ on its head; a docked pane closes from the menu (창 › 이 창 닫기, ⌘⇧X).
-  const close = floating && closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title={`패널 닫기 (${mod}⇧X)`} onClick={onClose}>✕</button>;
+  const close = floating && closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title={`패널 닫기 (${mod('⇧X')})`} onClick={onClose}>✕</button>;
   const fold = floating && onToggleCollapse && (
     <button type="button" className="icon-btn pane-fold" aria-label={collapsed ? '카드 펼치기' : '카드 접기'} title={collapsed ? '카드 펼치기 (헤더 더블클릭도 됨)' : '카드 접기: 헤더만 남김'} onClick={onToggleCollapse}>{collapsed ? '▭' : '–'}</button>
   );
