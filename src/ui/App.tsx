@@ -513,7 +513,7 @@ export function App() {
         (document.activeElement as HTMLElement | null)?.blur?.();
         setTimeout(go, 0);
       };
-      // ⌘1 … ⌘9: the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
+      // ⌘1 … ⌘9 (⌃1 … ⌃9 too on a Mac — Safari keeps ⌘-digits for its menus): the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
       // repeats are taken too (not reopened), or the browser would switch tabs on them.
       const pin = matchPinShortcut(e, MAC);
       if (pin !== null) {

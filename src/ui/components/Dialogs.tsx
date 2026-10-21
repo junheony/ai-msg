@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from 'react';
-import { shortcutList } from '../shortcuts';
+import { digitMod, isSafariBrowser, shortcutList } from '../shortcuts';
 import { POPUP } from '../composerFocus';
 
 function useEscape(onClose: () => void) {
@@ -82,8 +82,10 @@ export function SheetHead({ title, onClose, autoFocus = true, closeRef, excerpt 
 }
 
 /** ⌘/ cheat sheet. */
-export function ShortcutHelp({ mac, onClose }: { mac: boolean; onClose: () => void }) {
+export function ShortcutHelp({ mac, safari = isSafariBrowser(), onClose }: { mac: boolean; safari?: boolean; onClose: () => void }) {
   useEscape(onClose);
+  // Number keys on a Mac take ⌘ and ⌃ both; the one that works in this browser first (Safari keeps ⌘1 … ⌘9 for its menus).
+  const digits = (alt: string) => (mac ? `${digitMod(mac, safari)}${alt}1–9 · ${safari ? '⌘' : '⌃'}${alt}1–9` : `Ctrl+${alt ? 'Alt+' : ''}1–9`);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal shortcut-help" role="dialog" aria-modal="true" aria-label="단축키">
@@ -92,8 +94,8 @@ export function ShortcutHelp({ mac, onClose }: { mac: boolean; onClose: () => vo
           {shortcutList(mac).map((s) => (
             <div key={s.id} className="shortcut-row"><dt><kbd>{s.keys}</kbd></dt><dd>{s.label}</dd></div>
           ))}
-          <div className="shortcut-row"><dt><kbd>{mac ? '⌘⌥' : 'Ctrl+Alt+'}1–9</kbd></dt><dd>N번째 분할 패널로 이동 (왼쪽부터)</dd></div>
-          <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}1–9</kbd></dt><dd>N번째 고정 세션 열기</dd></div>
+          <div className="shortcut-row"><dt><kbd>{digits('⌥')}</kbd></dt><dd>N번째 분할 패널로 이동 (왼쪽부터)</dd></div>
+          <div className="shortcut-row"><dt><kbd>{digits('')}</kbd></dt><dd>N번째 고정 세션 열기</dd></div>
           <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}Enter</kbd></dt><dd>메시지 보내기 · 새 대화 화면에서는 새 분할 패널로 시작 (보내기 키가 Enter 일 때)</dd></div>
           <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}Enter · ⇧Enter</kbd></dt><dd>명령 팔레트의 세션: 새 분할 패널로 · 떠 있는 카드로 열기</dd></div>
           <div className="shortcut-row"><dt><kbd>⇧Tab</kbd></dt><dd>권한 모드 바꾸기 (입력창에서)</dd></div>

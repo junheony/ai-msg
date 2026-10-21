@@ -10,7 +10,7 @@ import { EngineMark, GeminiMark, GrokMark, OpenAIMark, engineOf } from './Engine
 import { usePinReorder } from '../pinOrder';
 import { BlockedDeleteItem, MenuList, deleteBlockedReason, isGrokBotEntry } from './SessionMenu';
 import { openInNewTab } from './ShareMenu';
-import { isMacPlatform, isPlainMod, pinKeyLabel } from '../shortcuts';
+import { isMacPlatform, isPinMod, isSafariBrowser, pinKeyLabel } from '../shortcuts';
 import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
 import { DeckMark } from './DeckMark';
@@ -145,13 +145,13 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   }, [revealed]);
   useEffect(() => { setRevealed(null); }, [projects, desktop]);
   const open = (sessionId: string, cwd: string, title: string) => { setRevealed(null); onOpen(sessionId, cwd, title); };
-  // ⌘/Ctrl held (alone, no dialog open): the 고정됨 rows show ⌘1 … ⌘9. Cleared on blur / hide, where the keyup never arrives.
+  // ⌘/⌃ (Ctrl off a Mac) held alone, no dialog open: the 고정됨 rows show ⌘1 … ⌘9 (⌃1 … ⌃9 in Safari). Cleared on blur / hide, where the keyup never arrives.
   const [modHeld, setModHeld] = useState(false);
   const pinKeys = !!pinShortcut;
   useEffect(() => {
     if (!pinKeys) return;
     const mac = isMacPlatform();
-    const onKey = (e: KeyboardEvent) => setModHeld(isPlainMod(e, mac) && !hasOpenModal());
+    const onKey = (e: KeyboardEvent) => setModHeld(isPinMod(e, mac) && !hasOpenModal());
     const clear = () => setModHeld(false);
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
@@ -233,7 +233,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   }
   // Gone with the sidebar (signed out): the key listener outlives it and must not open into a hidden pane.
   useEffect(() => () => { if (pinShortcut) pinShortcut.current = () => false; }, [pinShortcut]);
-  const pinKey = (index: number) => (modHeld ? pinKeyLabel(index, isMacPlatform()) : null);
+  const pinKey = (index: number) => (modHeld ? pinKeyLabel(index, isMacPlatform(), isSafariBrowser()) : null);
 
   const actById = new Map(activity.map((a) => [a.sessionId, a]));
   const unreadSet = new Set(unread);
