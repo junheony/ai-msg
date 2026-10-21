@@ -1,6 +1,6 @@
 import type { Account, AccountNames } from '../../shared/accounts';
 import { AUTO_EFFORT, MODEL_INFO, type ClaudeModel, type Effort } from '../../shared/models';
-import { usageOf, type UsageSnapshot } from '../../shared/usage-types';
+import { leftPct, usageOf, type UsageSnapshot } from '../../shared/usage-types';
 import { WEEKLY_SWITCH_PCT, isLax, noFableWhy, rankCandidates } from './AccountRouter';
 
 /**
@@ -97,14 +97,14 @@ export function chooseAutoModel(i: AutoModelInput): AutoModelDecision {
       if (fableUnknown) notes.push('Fable 잔여량 모름');
     } else {
       model = 'opus';
-      notes.push(why === 'Fable 여유 계정 없음' ? 'Fable 80%↑ → Opus' : fableUnknown ? `${why} → Opus` : 'Fable 로 쓸 수 있는 계정 없음 → Opus');
+      notes.push(why === 'Fable 여유 계정 없음' ? 'Fable 20% 이하 남음 → Opus' : fableUnknown ? `${why} → Opus` : 'Fable 로 쓸 수 있는 계정 없음 → Opus');
     }
   }
   const { candidates } = rankCandidates({ ...base, needFable: false });
   const best = candidates.length ? Math.min(...candidates.map((x) => x.weeklyPct)) : null;
   if (best !== null && best >= WEEKLY_SWITCH_PCT && model !== 'sonnet') {
     const down: ClaudeModel = model === 'fable' ? 'opus' : 'sonnet';
-    notes.push(`주간 ${best}% → ${MODEL_INFO[down].name}`);
+    notes.push(`주간 ${leftPct(best)}% 남음 → ${MODEL_INFO[down].name}`);
     model = down;
   }
   return { model, effort: AUTO_EFFORT[model], reason: `자동 → ${MODEL_INFO[model].name} · ${notes.join(' · ')}` };

@@ -43,9 +43,9 @@ describe('buildEngineLimits', () => {
     const low = buildEngineLimits(input({ grokSeats: seat(1, NOW + 86_400_000) }));
     expect(low.grok.periodUsedPct).toBe(1);
     expect(low.grok.periodResetsAtMs).toBe(NOW + 86_400_000);
-    expect(engineState('grok', 'grok-4.7', low, NOW)).toMatchObject({ state: 'ok', why: 'Grok 구독 1% 사용' });
+    expect(engineState('grok', 'grok-4.7', low, NOW)).toMatchObject({ state: 'ok', why: 'Grok 구독 99% 남음' });
     const high = buildEngineLimits(input({ grokSeats: seat(90, NOW + 86_400_000) }));
-    expect(engineState('grok', 'grok-4.7', high, NOW)).toMatchObject({ state: 'blocked', why: 'Grok 구독 90% 사용' });
+    expect(engineState('grok', 'grok-4.7', high, NOW)).toMatchObject({ state: 'blocked', why: 'Grok 구독 10% 남음' });
     // The period ended since the reading: a new period, not judged on the old number.
     const ended = buildEngineLimits(input({ grokSeats: seat(90, NOW - 1) }));
     expect(ended.grok.periodUsedPct).toBeNull();
@@ -89,7 +89,7 @@ describe('buildEngineLimits', () => {
       { name: 'Gemini · 주간', usedPct: 5 }, { name: 'Claude · 주간', usedPct: 99 },
     ]) }));
     expect(l.gemini.seats[0]!.remainingPct).toEqual({ pro: 30, flash: 95 });
-    expect(engineState('gemini', 'gemini-pro', l, NOW)).toMatchObject({ state: 'ok', why: 'Gemini Pro 남은 30%' });
+    expect(engineState('gemini', 'gemini-pro', l, NOW)).toMatchObject({ state: 'ok', why: 'Gemini Pro 30% 남음' });
   });
 
   it('review #7: Pro remaining = min(Argon bucket, the shared "Gemini" (agy\'s Gemini Models) bucket) — the big bucket can be the tighter cap', () => {

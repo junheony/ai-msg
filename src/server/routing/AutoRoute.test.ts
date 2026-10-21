@@ -46,7 +46,7 @@ function limits(o: LimitOpts = {}): EngineLimits {
 
 // Blocked presets. Claude is blocked only when every account is out (EXCLUDE_PCT 95): 85–94 % steps the model down instead.
 const CLAUDE_BLOCKED: ClaudeOpts = { weekly: 95 };
-const CB = 'Claude 쓸 계정 없음(주간 95%)';
+const CB = 'Claude 쓸 계정 없음(주간 5% 남음)';
 const GPT_BLOCKED: Partial<EngineLimits['codex']> = { weeklyUsedPct: 90 };
 const GEMINI_BLOCKED: Partial<EngineLimits['gemini']> = { seats: [{ seat: 'g1', enabled: true, remainingPct: { pro: 5, flash: 5 } }] };
 const GROK_BLOCKED: Partial<EngineLimits['grok']> = { cooldownUntilMs: NOW + H };
@@ -215,7 +215,7 @@ describe('engineState', () => {
     expect(st('codex', 'gpt-6-sol', { gpt: { observedAtMs: null } })).toBe('unknown');
     expect(st('codex', 'gpt-6-sol', { gpt: { weeklyUsedPct: null } })).toBe('unknown');
     expect(st('codex', 'gpt-6-sol', { gpt: { installed: false } })).toBe('blocked');
-    expect(engineState('codex', 'gpt-6-sol', limits({ gpt: { weeklyUsedPct: 30 } }), NOW)).toMatchObject({ weeklyRemainingPct: 70, why: 'GPT 주간 30%' });
+    expect(engineState('codex', 'gpt-6-sol', limits({ gpt: { weeklyUsedPct: 30 } }), NOW)).toMatchObject({ weeklyRemainingPct: 70, why: 'GPT 주간 70% 남음' });
   });
 
   it('Gemini: per group, best enabled seat, < 15 % blocks, login, observation age', () => {
@@ -256,11 +256,11 @@ describe('engineState', () => {
     expect(st('claude', 'sonnet', { claude: { weekly: 94 } })).toBe('ok');
     expect(engineState('claude', 'opus', limits({ claude: { weekly: 88 } }), NOW)).toMatchObject({ state: 'ok', weeklyRemainingPct: 12 });
     expect(engineState('claude', 'opus', limits({ claude: { weekly: 95 } }), NOW)).toMatchObject({ state: 'blocked', why: CB });
-    expect(engineState('claude', 'opus', limits({ claude: { fiveHour: 95 } }), NOW)).toMatchObject({ state: 'blocked', why: 'Claude 쓸 계정 없음(5h 95%)' });
+    expect(engineState('claude', 'opus', limits({ claude: { fiveHour: 95 } }), NOW)).toMatchObject({ state: 'blocked', why: 'Claude 쓸 계정 없음(5h 5% 남음)' });
     expect(st('claude', 'fable', { claude: { fable: 79 } })).toBe('ok');
     expect(st('claude', 'fable', { claude: { fable: 80 } })).toBe('blocked');
     expect(st('claude', 'opus', { claude: { fable: 80 } })).toBe('ok');
-    expect(engineState('claude', 'fable', limits({ claude: { fable: 90 } }), NOW).why).toBe('Fable 80%↑');
+    expect(engineState('claude', 'fable', limits({ claude: { fable: 90 } }), NOW).why).toBe('Fable 20% 이하 남음');
     // the best account decides: one account with room is enough
     const mixed: UsageSnapshot = { ...claudeUsage({ weekly: 90 }), accounts: { a: acct({ weekly: 90 }), b: acct({ weekly: 30 }), c: acct({ weekly: 90 }) } };
     expect(engineState('claude', 'opus', limits({ claudeUsage: mixed }), NOW)).toMatchObject({ state: 'ok', weeklyRemainingPct: 70 });
@@ -343,7 +343,7 @@ describe('chooseRoute — table (§4 + §10)', () => {
 
   it('build never goes to Gemini (no shell)', () => {
     const d = route(P.buildMedium, {}, { claude: CLAUDE_BLOCKED, gpt: GPT_BLOCKED, grok: GROK_BLOCKED });
-    expect(d).toEqual({ kind: 'no_route', reasons: { claude: CB, codex: 'GPT 주간 90%', gemini: '셸 필요', grok: 'Grok 쿨다운 중' } });
+    expect(d).toEqual({ kind: 'no_route', reasons: { claude: CB, codex: 'GPT 주간 10% 남음', gemini: '셸 필요', grok: 'Grok 쿨다운 중' } });
     // a question with a shell cue is build too: Gemini is left out
     expect(picked(route('테스트 왜 실패해?', {}, { claude: CLAUDE_BLOCKED }))).toBe('codex/gpt-6-sol/low');
   });
@@ -357,14 +357,14 @@ describe('chooseRoute — table (§4 + §10)', () => {
   });
 
   it('badge: Claude 88 % → GPT by the balance; Claude kept → its step-down is named', () => {
-    expect(route(P.buildMedium, {}, { claude: { weekly: 88 } })).toMatchObject({ kind: 'route', reason: '자동 · 구현 · Claude 여유 12% · GPT 60% → GPT Sol' });
-    expect(route(P.buildMedium, {}, { claude: { weekly: 88 }, gpt: { weeklyUsedPct: 80 } })).toMatchObject({ engine: 'claude', model: 'sonnet', effort: 'medium', reason: '자동 · 구현 · Claude 주간 88% → Claude Sonnet' });
+    expect(route(P.buildMedium, {}, { claude: { weekly: 88 } })).toMatchObject({ kind: 'route', reason: '자동 · 구현 · Claude 12% 남음 · GPT 60% 남음 → GPT Sol' });
+    expect(route(P.buildMedium, {}, { claude: { weekly: 88 }, gpt: { weeklyUsedPct: 80 } })).toMatchObject({ engine: 'claude', model: 'sonnet', effort: 'medium', reason: '자동 · 구현 · Claude 주간 12% 남음 → Claude Sonnet' });
     expect(route(P.buildMedium)).toMatchObject({ reason: '자동 · 구현 → Claude Opus' });
   });
 
   it('hard: Fable out → GPT Astra before a lower Claude (the one exception), with the cause in the badge', () => {
-    expect(route(P.designHard, {}, { claude: { fable: 85 } })).toMatchObject({ engine: 'codex', model: 'gpt-6-astra', effort: 'high', reason: '자동 · 설계 · Fable 80%↑ → GPT Astra' });
-    expect(route(P.designHard, {}, { claude: { weekly: 88 } })).toMatchObject({ engine: 'codex', model: 'gpt-6-astra', reason: '자동 · 설계 · Claude 주간 88% → GPT Astra' });
+    expect(route(P.designHard, {}, { claude: { fable: 85 } })).toMatchObject({ engine: 'codex', model: 'gpt-6-astra', effort: 'high', reason: '자동 · 설계 · Fable 20% 이하 남음 → GPT Astra' });
+    expect(route(P.designHard, {}, { claude: { weekly: 88 } })).toMatchObject({ engine: 'codex', model: 'gpt-6-astra', reason: '자동 · 설계 · Claude 주간 12% 남음 → GPT Astra' });
     expect(route(P.designHard, {}, { claude: { weekly: 88 }, gpt: GPT_BLOCKED })).toMatchObject({ engine: 'claude', model: 'opus', effort: 'high' });
   });
 
@@ -447,7 +447,7 @@ describe('chooseRoute — Claude↔GPT balance (§10-7, the existing chooseEngin
   });
 
   it('badge names both sides', () => {
-    expect(route(P.buildMedium, {}, { claude: { weekly: 75 }, gpt: { weeklyUsedPct: 40 } })).toMatchObject({ reason: '자동 · 구현 · Claude 여유 25% · GPT 60% → GPT Sol' });
+    expect(route(P.buildMedium, {}, { claude: { weekly: 75 }, gpt: { weeklyUsedPct: 40 } })).toMatchObject({ reason: '자동 · 구현 · Claude 25% 남음 · GPT 60% 남음 → GPT Sol' });
   });
 
   it('never on hard (quality first)', () => {
@@ -567,7 +567,7 @@ describe('chooseRoute — engine and model, direct or 자동 (§7, §10-11)', ()
   });
 
   it('engine Claude + model 자동 on hard: Fable at its cap → Opus inside the column', () => {
-    expect(route(P.designHard, { engine: 'claude' }, { claude: { fable: 85 } })).toMatchObject({ model: 'opus', reason: '자동 · 설계 · Claude 지정 · Fable 80%↑ → Claude Opus' });
+    expect(route(P.designHard, { engine: 'claude' }, { claude: { fable: 85 } })).toMatchObject({ model: 'opus', reason: '자동 · 설계 · Claude 지정 · Fable 20% 이하 남음 → Claude Opus' });
   });
 
   it('a picked model is used as it is, engine 자동 or not', () => {
@@ -604,7 +604,7 @@ describe('chooseRoute — commander (§1, §10-10)', () => {
     expect(picked(route(P.buildMedium, { commander: true, excludeEngines: ['claude'] }))).toBe('claude/opus/high');
   });
   it('Claude 85–94 %: not blocked — the model steps down (chooseAutoModel)', () => {
-    expect(route(P.buildMedium, { commander: true }, { claude: { weekly: 88 } })).toMatchObject({ engine: 'claude', model: 'sonnet', effort: 'medium', reason: '자동 · 구현 · 총사령탑 · Claude 주간 88% → Claude Sonnet' });
+    expect(route(P.buildMedium, { commander: true }, { claude: { weekly: 88 } })).toMatchObject({ engine: 'claude', model: 'sonnet', effort: 'medium', reason: '자동 · 구현 · 총사령탑 · Claude 주간 12% 남음 → Claude Sonnet' });
     expect(picked(route(P.designHard, { commander: true }, { claude: { weekly: 88 } }))).toBe('claude/opus/high');
   });
   it('a non-Claude model picked is ignored (said in why) and Claude goes 자동; a Claude model is kept', () => {
@@ -654,12 +654,12 @@ describe('chooseRoute — determinism and no_route', () => {
 
   it('everything blocked → no_route with a reason per engine', () => {
     const d = route(P.explainEasy, {}, { claude: CLAUDE_BLOCKED, gpt: GPT_BLOCKED, gemini: GEMINI_BLOCKED, grok: GROK_BLOCKED });
-    expect(d).toEqual({ kind: 'no_route', reasons: { claude: CB, codex: 'GPT 주간 90%', gemini: 'Gemini Flash 남은 5%', grok: 'Grok 쿨다운 중' } });
+    expect(d).toEqual({ kind: 'no_route', reasons: { claude: CB, codex: 'GPT 주간 10% 남음', gemini: 'Gemini Flash 5% 남음', grok: 'Grok 쿨다운 중' } });
   });
 
   it('hard: Claude reasons name both Fable and Opus causes', () => {
     const d = route(P.designHard, {}, { claude: { fable: 85, weekly: 95 }, gpt: GPT_BLOCKED });
-    expect(d).toEqual({ kind: 'no_route', reasons: { claude: `Fable 80%↑ · ${CB}`, codex: 'GPT 주간 90%', gemini: '어려운 작업은 설명만', grok: '어려운 작업 후보 아님' } });
+    expect(d).toEqual({ kind: 'no_route', reasons: { claude: `Fable 20% 이하 남음 · ${CB}`, codex: 'GPT 주간 10% 남음', gemini: '어려운 작업은 설명만', grok: '어려운 작업 후보 아님' } });
   });
 
   it('no_route: Gemini\'s reason names the real cause', () => {

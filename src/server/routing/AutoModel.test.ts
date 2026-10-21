@@ -75,7 +75,7 @@ describe('chooseAutoModel', () => {
   it('Fable 80% subcap: no Fable-eligible account → Opus', () => {
     const r = auto('보안 취약점 검토해줘', usage(acct(30, 85)));
     expect(r.model).toBe('opus');
-    expect(r.reason).toContain('Fable 80%↑ → Opus');
+    expect(r.reason).toContain('Fable 20% 이하 남음 → Opus');
     // One eligible account is enough.
     expect(auto('보안 취약점 검토해줘', usage(acct(30, 85), acct(30, 20))).model).toBe('fable');
   });
@@ -83,7 +83,7 @@ describe('chooseAutoModel', () => {
   it('steps one tier down when even the best account is at the weekly switch line', () => {
     const high = usage(acct(90));
     expect(auto('버그 고쳐줘', high)).toMatchObject({ model: 'sonnet', effort: 'medium' });
-    expect(auto('버그 고쳐줘', high).reason).toContain('주간 90%');
+    expect(auto('버그 고쳐줘', high).reason).toContain('주간 10% 남음');
     expect(auto('보안 취약점 검토해줘', high).model).toBe('opus');
     expect(auto('이 함수 이름 뭐야?', high).model).toBe('sonnet');
     // One roomy account keeps the tier.
@@ -114,7 +114,7 @@ describe("chooseAutoModel — usage-deck 을 본 적 없는 설치 (usageSource:
   it('a known Fable ≥ 80% everywhere still falls back to Opus', () => {
     const r = auto('보안 취약점 검토해줘', lax(usage(acct(30, 85))));
     expect(r.model).toBe('opus');
-    expect(r.reason).toContain('Fable 80%↑ → Opus');
+    expect(r.reason).toContain('Fable 20% 이하 남음 → Opus');
   });
 
   it('every account cooling down: still Fable — a cooldown is no reason to change the model', () => {
@@ -126,11 +126,11 @@ describe("chooseAutoModel — usage-deck 을 본 적 없는 설치 (usageSource:
     expect(chooseAutoModel({ text: '보안 취약점 검토해줘', attachmentCount: 0, usage: usage(down), nowMs: NOW, cooldownUntilMs, protectedAccount: null, accounts: testRegistry() }).model).toBe('opus');
   });
 
-  it("with usage-deck: unknown Fable → Opus, and the reason says it is unknown (not '80%↑')", () => {
+  it("with usage-deck: unknown Fable → Opus, and the reason says it is unknown (not '20% 이하 남음')", () => {
     const r = auto('보안 취약점 검토해줘', usage(down));
     expect(r.model).toBe('opus');
     expect(r.reason).toContain('Fable 잔여량 모름(usage-deck 값 없음) → Opus');
-    expect(r.reason).not.toContain('80%↑');
+    expect(r.reason).not.toContain('20% 이하 남음');
   });
 });
 

@@ -118,6 +118,18 @@ export function remainingPct(w: UsageWindow | null): number | null {
   return Math.max(0, Math.min(100, 100 - w.usedPct));
 }
 
+/**
+ * A used % said as what is left, for reason texts ("주간 78% 남음"): whole numbers like the UI's shownPct (a sliver
+ * above 0 still reads 1). Display only — every rule compares the used % itself.
+ */
+export function leftPct(usedPct: number): number;
+export function leftPct(usedPct: number | null): number | null;
+export function leftPct(usedPct: number | null): number | null {
+  if (usedPct === null) return null;
+  const r = Math.max(0, Math.min(100, 100 - usedPct));
+  return r > 0 && r < 1 ? 1 : Math.floor(r);
+}
+
 export function emptyAccountUsage(): AccountUsage {
   return { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null };
 }
