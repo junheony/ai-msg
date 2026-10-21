@@ -4,8 +4,9 @@
 // The `ws` client is the installed package's own dependency. Expected (fake-claude.mjs answers):
 //   approve → "allow …", deny → "deny …", no answer → "timeout …" (deck's fail-closed hook relay denied at its deadline,
 //   and the unanswered permission call is cancelled; the tool never runs).
-// Each result line also names the hook / MCP child scripts the CLI was given: they must be the bundled .js files
-// inside the installed package. Prints one line per turn; exit 1 on anything unexpected.
+// Each result line also names the hook / MCP child scripts the CLI was given: they must be the run-time copies (S7) of
+// the installed package's bundled .js files, under <config dir>/run/<version>-<hash8>/ with the same content.
+// Prints one line per turn; exit 1 on anything unexpected.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -41,6 +42,7 @@ async function next(pred, what) {
 }
 
 const realPkg = fs.realpathSync(pkgDir);
+const runDir = path.join(fs.realpathSync(path.dirname(tokenFile)), 'run');
 let sessionId = null;
 for (const [i, kind] of ['approve', 'deny', 'timeout'].entries()) {
   const clientRef = `smoke-${i}`;
@@ -55,7 +57,10 @@ for (const [i, kind] of ['approve', 'deny', 'timeout'].entries()) {
   if (!res.ok || !m) fail(`${kind}: 결과 ${JSON.stringify({ ok: res.ok, text: res.text, errorText: res.errorText })}`);
   if (m[1] !== want) fail(`${kind}: ${want} 를 기대했으나 ${m[1]}`);
   for (const [name, script] of [['hookRelay', m[2]], ['permissionMcp', m[3]]]) {
-    if (script !== path.join(realPkg, 'dist', 'server', `${name}.js`)) fail(`${kind}: ${name} 가 설치본의 번들 .js 가 아님: ${script}`);
+    const bundled = path.join(realPkg, 'dist', 'server', `${name}.js`);
+    const snapDir = path.dirname(script);
+    const isSnapshot = path.dirname(snapDir) === runDir && /^[0-9A-Za-z._+-]+-[0-9a-f]{8}$/.test(path.basename(snapDir)) && path.basename(script) === `${name}.js`;
+    if (!isSnapshot || !fs.readFileSync(script).equals(fs.readFileSync(bundled))) fail(`${kind}: ${name} 가 설치본 번들 .js 의 실행 시점 사본이 아님: ${script}`);
   }
   sessionId = started.sessionId ?? (inbox.find((x) => x.turnId === started.turnId && x.sessionId)?.sessionId) ?? res.sessionId ?? sessionId;
   console.log(`turn ${kind}: ${m[1]}`);

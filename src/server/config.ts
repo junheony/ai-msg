@@ -67,7 +67,13 @@ export type DeckConfig = {
   drainMaxMs: number;
   /** The deck source root (src/server, src/shared): scanned for code edited since start (serverUpdate.ts). */
   repoRoot: string;
-  /** `DECK_SUPERVISED=1` (set by relaunch.sh / run.sh under the loop): required before 지금 재시작 is offered; the live check is serverUpdate.ts supervisionCheck. */
+  /**
+   * Who claims to restart this server: `DECK_SUPERVISOR` (`systemd` | `launchd`, set by the package's unit / LaunchAgent),
+   * else `relaunch` when `DECK_SUPERVISED=1` (relaunch.sh / run.sh under the loop), else null. A claim only: the live
+   * check is serverUpdate.ts supervisionCheck, the start-time one startSupervisor.
+   */
+  supervisor: 'relaunch' | 'systemd' | 'launchd' | null;
+  /** `supervisor !== null`: required before 지금 재시작 is offered. */
   supervised: boolean;
   /** How long a CLI process is held open for background tasks after its turn (`DECK_BG_MAX_MIN`; default, 0 or empty: Infinity — held until the work ends. Long analyses and multi-hour subagents are normal; a cut loses their results, and the model only hears of it through TurnRunner.continueAfterCap). */
   bgMaxMs: number;
@@ -193,6 +199,11 @@ export function resolveGrokBin(env: NodeJS.ProcessEnv, home: string, existsFn: (
 }
 
 /** Throws `AccountsFileError` when `<configDir>/accounts.json` is there and cannot be used. `log`: startup notes (skipped profile dirs, an unknown protected account). */
+export function supervisorOf(env: NodeJS.ProcessEnv): DeckConfig['supervisor'] {
+  if (env.DECK_SUPERVISOR === 'systemd' || env.DECK_SUPERVISOR === 'launchd') return env.DECK_SUPERVISOR;
+  return env.DECK_SUPERVISED === '1' ? 'relaunch' : null;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), repoRoot: string = repoRootDefault(), log: (line: string) => void = (l) => console.error(l)): DeckConfig {
   const configDir = resolveConfigDir(env, home);
   const legacy = legacyIntegrations(env, home, configDir);
@@ -240,7 +251,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
     drainMaxMs: limitMinutes(env.DECK_DRAIN_MAX_MIN),
     repoRoot,
-    supervised: env.DECK_SUPERVISED === '1',
+    supervisor: supervisorOf(env),
+    supervised: supervisorOf(env) !== null,
     bgMaxMs: limitMinutes(env.DECK_BG_MAX_MIN),
     steer: env.DECK_STEER !== '0',
     devCommanderGate: env.DECK_DEV_COMMANDER_GATE === '1',

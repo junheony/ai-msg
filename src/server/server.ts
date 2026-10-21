@@ -10,10 +10,12 @@ import { loadOrCreateToken } from './auth';
 import { bindAddresses, tailscaleDnsName, tailscaleIPv4s } from './bind';
 import { loadConfig, repoRootDefault, type DeckConfig } from './config';
 import { acquireInstanceLock, commandOfPid } from './instanceLock';
+import { ChildRegistry, groupAlive, killGroup } from './childRegistry';
 import { TEXTS } from './setup/texts';
 import { SetupService } from './setup/SetupService';
 import { SetupStore, existingInstall } from './setup/SetupStore';
 import { ClaudeEngine } from './engine/ClaudeEngine';
+import { childScript, snapshotChildScripts } from './engine/claudeCli/childScripts';
 import { MIN_CLAUDE_VERSION, RECOMMENDED_CLAUDE_VERSION, type ClaudeBin } from './engine/claudeCli/version';
 import { CodexEngine } from './engine/CodexEngine';
 import { SlashCommandCache } from './engine/slashCommands';
@@ -27,7 +29,7 @@ import { sweepShadowHomes } from './engine/shadowHome';
 import { grokEnv } from './engine/grokEnv';
 import { execFile } from 'node:child_process';
 import { createRequestHandler, type ServerUpdateDeps } from './http';
-import { RELAUNCH_LOOP_RE, ServerUpdateWatch, supervisionCheck } from './serverUpdate';
+import { ServerUpdateWatch, startSupervisor, supervisionCheck } from './serverUpdate';
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
 import { EventLog } from './highlights';
 import { BottleneckWatch, type RetryRequest } from './push/BottleneckWatch';
@@ -105,9 +107,10 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
   const startedAt = Date.now() - Math.round(process.uptime() * 1000);
   const cfg = o.cfg ?? loadConfig();
   const addresses = bindAddresses(os.networkInterfaces(), { loopbackOnly: cfg.loopbackOnly, tailscaleIps: tailscaleIPv4s() });
-  // DECK_SUPERVISED can be inherited by anything the server's tree starts: the relaunch loop must also be the real parent.
-  const supervised = cfg.supervised && process.ppid > 1 && RELAUNCH_LOOP_RE.test(commandOfPid(process.ppid) ?? '');
-  const lock = await acquireInstanceLock(cfg.configDir, { pid: process.pid, port: cfg.port, version: packageVersion(), supervisor: supervised ? 'relaunch' : null });
+  // DECK_SUPERVISED / DECK_SUPERVISOR can be inherited by anything the server's tree starts: the manager's own markers and
+  // the real parent must agree too (relaunch loop, systemd unit, our launchd label).
+  const supervisor = startSupervisor({ supervisor: cfg.supervisor, env: process.env, commandOf: commandOfPid });
+  const lock = await acquireInstanceLock(cfg.configDir, { pid: process.pid, port: cfg.port, version: packageVersion(), supervisor });
   // Placeholder until everything below is ready; swapped for the real handler at the end.
   let handler: http.RequestListener = (_req, res) => {
     res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '2', 'cache-control': 'no-store' });
@@ -125,6 +128,16 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
   const cleanup: Array<() => void> = [];
   try {
     await lock.update({ addresses, port });
+    // S5: detached children (grok) are recorded; after a crash (stale lock taken over) the previous server's are reaped.
+    const runDir = path.join(cfg.configDir, 'run');
+    const children = ChildRegistry.open(path.join(runDir, 'children.json'));
+    if (lock.tookOverStale) await children.reapStale({ isAlive: groupAlive, commandOf: commandOfPid, kill: killGroup, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+    else children.clear();
+    // S7: a bundled run's Claude child scripts run from a copy, so an upgrade in place does not swap them under a live child.
+    let claudeScripts: ReturnType<typeof snapshotChildScripts> | undefined;
+    try { claudeScripts = snapshotChildScripts({ src: path.dirname(childScript('hookRelay')), runDir, version: packageVersion() }); } catch (err) {
+      console.error('deck: 자식 스크립트 사본을 만들지 못해 원본을 씁니다', err instanceof Error ? err.message : err);
+    }
     // Before any store writes its file: was this config dir in use already (no wizard for it)?
     const setupStore = await SetupStore.open(path.join(cfg.configDir, 'setup.json'), { existingInstall: existingInstall(cfg.configDir) });
     const transcriptCacheDir = path.join(cfg.configDir, 'transcript-cache');
@@ -207,7 +220,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     if (grokBin) await sweepShadowHomes(grokHomesDir).catch((err: unknown) => console.error('deck: sweeping Grok shadow homes failed', err instanceof Error ? err.message : err));
     const grokDeps = grokBin ? {
       bin: grokBin, grokHome: cfg.grokHome, homesDir: grokHomesDir, realHome: cfg.home,
-      inspect: (env: Record<string, string>, cwd: string) => runGrokInspect(grokBin, env, cwd),
+      inspect: (env: Record<string, string>, cwd: string) => runGrokInspect(grokBin, env, cwd), children,
     } : null;
     const grok = grokDeps ? { run: (req: Parameters<typeof runGrokTurn>[0]) => runGrokTurn(req, grokDeps) } : null;
     // Grok usage card (usage header design §4/§7-4): deck's own Grok turns, plus the subscription's usage (`_x.ai/billing`)
@@ -230,7 +243,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) or by a fork reach it through this.
     let notifyIndex = () => {};
     let notifyPermissionMode: (sessionId: string, mode: PermMode) => void = () => {};
-    const claude = new ClaudeEngine({ bin: cfg.claudeBin, accounts, bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) });
+    const claude = new ClaudeEngine({ bin: cfg.claudeBin, accounts, ...(claudeScripts ? { scripts: claudeScripts } : {}), bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) });
     cleanup.push(() => void claude.close().catch(() => undefined));
     const runner = new TurnRunner({
       engine: claude,
@@ -321,11 +334,11 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     });
     cleanup.push(() => commander.dispose());
     await events.load();
-    const updates = new ServerUpdateWatch({ root: cfg.repoRoot, startedAt });
+    const updates = new ServerUpdateWatch({ root: cfg.repoRoot, startedAt, version: packageVersion() });
     await updates.start();
     // Bound once installGracefulShutdown has run (after listening).
     let restartCtl: ReturnType<typeof installGracefulShutdown> = { draining: () => false, request: () => {}, force: () => false };
-    const serverUpdate: ServerUpdateDeps = { check: () => updates.check(), supervised: supervisionCheck({ env: cfg.supervised, pidFile: path.join(cfg.configDir, 'relaunch.pid') }), draining: () => restartCtl.draining(), activeTurns: () => ws.activeTurns(), restart: () => restartCtl.request('UI 재시작'), forceRestart: () => restartCtl.force('UI 강제 재시작') };
+    const serverUpdate: ServerUpdateDeps = { check: () => updates.check(), supervised: supervisionCheck({ supervisor: cfg.supervisor, pidFile: path.join(cfg.configDir, 'relaunch.pid') }), draining: () => restartCtl.draining(), activeTurns: () => ws.activeTurns(), restart: () => restartCtl.request('UI 재시작'), forceRestart: () => restartCtl.force('UI 강제 재시작') };
     const setup = new SetupService({ cfg, accounts, store: setupStore, supervised: serverUpdate.supervised, addresses: [...addresses.map((a) => `http://${a.includes(':') ? `[${a}]` : a}:${port}`), ...(dnsName ? [`https://${dnsName}/`] : [])] });
     const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup });
     const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });

@@ -1,5 +1,9 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
+import readline from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AccountsFileError } from '../accounts';
@@ -12,6 +16,7 @@ import { probeEngines, type ProbeExec } from '../setup/detect';
 import { TEXTS } from '../setup/texts';
 import { parseCli } from './args';
 import { formatDoctor } from './doctor';
+import { serviceAction, type RunResult, type ServiceDeps } from './service/index';
 
 export type CliIo = { out: (s: string) => void; err: (s: string) => void; isTTY: boolean; env: NodeJS.ProcessEnv; ask?: (q: string) => Promise<boolean> };
 
@@ -34,7 +39,53 @@ export function startErrorLine(err: unknown): string {
 }
 
 /** The `quarterdeck` command. Resolves with the exit code; `start` resolves once the server is up (it keeps running). */
-export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { start?: typeof startServer; probeExec?: ProbeExec } = {}): Promise<number> {
+/** `service`'s real side: commands run without a shell, a y/N question on the terminal, loopback-only port/HTTP probes. */
+function serviceDeps(io: CliIo, home: string): ServiceDeps {
+  const run = (cmd: string, args: string[]): Promise<RunResult> => new Promise((resolve) => {
+    execFile(cmd, args, { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const code = err ? (typeof (err as NodeJS.ErrnoException & { code?: unknown }).code === 'number' ? (err as unknown as { code: number }).code : 127) : 0;
+      resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
+    });
+  });
+  return {
+    platform: process.platform, home, env: io.env, configDir: resolveConfigDir(io.env, home), execPath: process.execPath,
+    bin: (() => { try { return fs.realpathSync(process.argv[1] ?? ''); } catch { return path.resolve(process.argv[1] ?? ''); } })(),
+    uid: process.getuid?.() ?? 0, port: Number(io.env.DECK_PORT) || 9320, isTTY: io.isTTY,
+    ask: io.ask ?? ((q) => new Promise((resolve) => {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl.question(`${q} [y/N] `, (a) => { rl.close(); resolve(/^y(es)?$/i.test(a.trim())); });
+    })),
+    run,
+    portBusy: (port) => new Promise((resolve) => {
+      const sock = net.connect({ host: '127.0.0.1', port });
+      const done = (busy: boolean) => { sock.destroy(); resolve(busy); };
+      sock.setTimeout(1000, () => done(false));
+      sock.once('connect', () => done(true));
+      sock.once('error', () => done(false));
+    }),
+    httpProbe: (port) => new Promise((resolve) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/api/me', timeout: 2000 }, (res) => { res.resume(); resolve(res.statusCode ?? null); });
+      req.once('timeout', () => req.destroy());
+      req.once('error', () => resolve(null));
+    }),
+    out: io.out, err: io.err,
+    nodeVersion: async (bin) => { const r = await run(bin, ['--version']); return r.code === 0 ? r.stdout.trim() : null; },
+    cliBins: () => {
+      try {
+        const cfg = loadConfig(io.env, home, undefined, () => {});
+        const bins: ReturnType<NonNullable<ServiceDeps['cliBins']>> = {};
+        if (cfg.claudeBin.ok) bins.DECK_CLAUDE_BIN = cfg.claudeBin.bin;
+        if (cfg.codexBin) bins.DECK_CODEX_BIN = cfg.codexBin;
+        if (cfg.geminiBin) bins.DECK_GEMINI_BIN = cfg.geminiBin;
+        if (cfg.grokBin) bins.DECK_GROK_BIN = cfg.grokBin;
+        return bins;
+      } catch { return {}; }
+    },
+    packageVersion,
+  };
+}
+
+export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { start?: typeof startServer; probeExec?: ProbeExec; service?: Partial<ServiceDeps> } = {}): Promise<number> {
   const cmd = parseCli(argv);
   const home = io.env.HOME || os.homedir();
   switch (cmd.kind) {
@@ -55,7 +106,7 @@ export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { st
       }
       return 0;
     }
-    case 'service': io.err(TEXTS.notYet('service')); return 2;
+    case 'service': return serviceAction(cmd, { ...serviceDeps(io, home), ...deps.service });
     case 'login-url': {
       const configDir = resolveConfigDir(io.env, home);
       const running = readInstanceLock(configDir);

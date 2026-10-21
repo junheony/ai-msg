@@ -106,7 +106,15 @@ Q="$G/bin/quarterdeck"
 [[ "$("${E[@]}" "$Q" --version)" == "$PKG_VERSION" ]] || die "--version 이 $PKG_VERSION 아님"
 INSTALLED="$G/lib/node_modules/$PKG_NAME"
 [[ -f "$INSTALLED/dist/server/bin.js" ]] || die "설치본 없음: $INSTALLED"
-echo "pack-smoke: service install --dry-run 단계는 Task 7(quarterdeck service) 전까지 건너뜀"
+free_port() { node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'; }
+
+step 'service install --dry-run (아무것도 쓰거나 실행하지 않음)'
+"${E[@]}" "$Q" service install --dry-run --port "$(free_port)" >"$T/service-dry.log" 2>&1 || { cat "$T/service-dry.log" >&2; die 'service install --dry-run 실패'; }
+case "$(uname -s)" in
+  Darwin) grep -q 'local.quarterdeck.server' "$T/service-dry.log" && grep -q 'AbandonProcessGroup' "$T/service-dry.log" || { cat "$T/service-dry.log" >&2; die 'dry-run 에 LaunchAgent plist 가 없음'; } ;;
+  Linux) grep -q 'quarterdeck.service' "$T/service-dry.log" && grep -q 'KillMode=mixed' "$T/service-dry.log" || { cat "$T/service-dry.log" >&2; die 'dry-run 에 systemd 유닛이 없음'; } ;;
+esac
+grep -q "$INSTALLED/dist/server/bin.js" "$T/service-dry.log" || { cat "$T/service-dry.log" >&2; die 'dry-run 의 실행 경로가 설치본이 아님'; }
 [[ ! -e "$T/home/Library" && ! -e "$T/home/.config/systemd" ]] || die '서비스 파일이 쓰였음'
 
 step 'bin 충돌 (EEXIST)'
@@ -134,7 +142,6 @@ else
   grep -q '.grok/bin/grok' <<<"$out" || die 'doctor 가 ~/.grok/bin/grok 을 찾지 못함'
 fi
 
-free_port() { node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'; }
 
 step '서버 시작'
 guard_path

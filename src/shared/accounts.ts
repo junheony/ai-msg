@@ -77,8 +77,12 @@ const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_A
 /** Inherited from a parent Claude Code / proxy setup, these would send the turn elsewhere or mislabel it. */
 const ROUTING_VARS = ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_ENTRYPOINT'] as const;
 
-/** deck's own supervision markers: a CLI child (and whatever it starts) must not look like the supervised server. */
-const SUPERVISOR_VARS = ['DECK_SUPERVISED', 'DECK_SUPERVISOR'] as const;
+/**
+ * Service-manager and deck supervision markers (plan ② Global Constraints): a CLI child (and whatever it starts) must not
+ * look like the supervised server. The server side uses these through src/server/supervisorEnv.ts.
+ */
+export const SUPERVISOR_ENV_KEYS = ['XPC_SERVICE_NAME', 'INVOCATION_ID', 'JOURNAL_STREAM', 'SYSTEMD_EXEC_PID', 'MANAGERPID', 'NOTIFY_SOCKET', 'LISTEN_PID', 'LISTEN_FDS', 'DECK_SUPERVISOR', 'DECK_SUPERVISED'] as const;
+const SUPERVISOR_VARS = SUPERVISOR_ENV_KEYS;
 
 /** `~` → the home dir, then what `path.resolve` does to an absolute path (`.`, `..`, `//`, trailing `/`); a relative path is returned as it is. */
 function expandDir(dir: string, homeDir: string): string {

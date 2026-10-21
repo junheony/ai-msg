@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadConfig, readDeckSeen, readDeckUrl, readProtect, resolveGrokBin, usageModeOf } from './config';
+import { loadConfig, readDeckSeen, readDeckUrl, readProtect, resolveGrokBin, supervisorOf, usageModeOf } from './config';
 import { writeCooldown } from './routing/cooldown';
 import { testRegistry } from '../shared/accounts.testkit';
 
@@ -47,6 +47,14 @@ describe('config', () => {
     fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
     expect(loadConfig({ DECK_CONFIG_DIR: '/cfg' }, home, '/repo')).toMatchObject({ supervised: false, repoRoot: '/repo' });
     expect(loadConfig({ DECK_CONFIG_DIR: '/cfg', DECK_SUPERVISED: '1' }, home, '/repo').supervised).toBe(true);
+  });
+
+  it('supervisor: DECK_SUPERVISOR systemd|launchd, else relaunch for DECK_SUPERVISED=1, else null', () => {
+    expect(supervisorOf({})).toBeNull();
+    expect(supervisorOf({ DECK_SUPERVISED: '1' })).toBe('relaunch');
+    expect(supervisorOf({ DECK_SUPERVISOR: 'systemd' })).toBe('systemd');
+    expect(supervisorOf({ DECK_SUPERVISOR: 'launchd', DECK_SUPERVISED: '1' })).toBe('launchd');
+    expect(supervisorOf({ DECK_SUPERVISOR: 'cron' })).toBeNull();
   });
 
   it('deckUrlConfigured: true only when the address was set (DECK_URL or the claude-pick file), not for the default', () => {

@@ -52,6 +52,8 @@ export type ClaudeEngineOptions = {
   owned?: OwnedEntries;
   node?: string;
   tmpRoot?: string;
+  /** The child scripts' run-time copies (S7 `snapshotChildScripts`); default: next to this code. */
+  scripts?: { hookRelay: string; permissionMcp: string };
 };
 
 export class ClaudeEngine implements Engine {
@@ -114,11 +116,11 @@ export class ClaudeEngine implements Engine {
     let capTimer: NodeJS.Timeout | null = null;
     let graceTimer: NodeJS.Timeout | null = null;
     try {
-      const relay = { node: this.o.node ?? process.execPath, script: HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
+      const relay = { node: this.o.node ?? process.execPath, script: this.o.scripts?.hookRelay ?? HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
       const settingsPath = path.join(procDir, 'settings.json');
       const mcpConfigPath = path.join(procDir, 'mcp.json');
       await fs.writeFile(settingsPath, JSON.stringify(buildSettings({ ...(req.allowRules?.length ? { allowRules: req.allowRules } : {}), ...(req.noTools ? { noTools: true } : {}), ...(req.systemNote ? { systemNote: req.systemNote } : {}), ...(req.commanderHop ? { commander: true } : {}), ...(req.fast ? { fast: true } : {}), relay })), { mode: 0o600 });
-      await fs.writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: relay.node, script: PERMISSION_MCP, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
+      await fs.writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: relay.node, script: this.o.scripts?.permissionMcp ?? PERMISSION_MCP, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
 
       let resume = req.resumeSessionId ?? undefined;
       let forkSession = false;

@@ -8,6 +8,7 @@ import type { ClaudeProfileProbe, EngineId, EngineProbe, LoginState } from '../.
 import type { DeckConfig } from '../config';
 import { MIN_CLAUDE_VERSION } from '../engine/claudeCli/version';
 import { grokEnv } from '../engine/grokEnv';
+import { stripSupervisorEnv } from '../supervisorEnv';
 import { PROBE_TEXTS, loginCommandFor, missingBinNote } from './texts';
 
 export type ProbeResult = { code: number | null; stdout: string; timedOut: boolean; spawnError?: 'ENOENT' | 'EACCES' | 'OTHER' };
@@ -16,14 +17,6 @@ export type ProbeExec = (bin: string, args: string[], env: NodeJS.ProcessEnv, ti
 const OUTPUT_CAP = 64 * 1024;
 const KILL_GRACE_MS = 2000;
 const DEFAULT_TIMEOUT_MS = 15_000;
-/** Supervisor markers (plan Global Constraints). Task 7 moves this list to supervisorEnv.ts. */
-const SUPERVISOR_ENV_KEYS = ['XPC_SERVICE_NAME', 'INVOCATION_ID', 'JOURNAL_STREAM', 'SYSTEMD_EXEC_PID', 'MANAGERPID', 'NOTIFY_SOCKET', 'LISTEN_PID', 'LISTEN_FDS', 'DECK_SUPERVISOR', 'DECK_SUPERVISED'];
-
-function withoutSupervisor(env: Record<string, string | undefined>): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...env };
-  for (const k of SUPERVISOR_ENV_KEYS) delete out[k];
-  return out;
-}
 
 const spawnErrorKind = (e: unknown): 'ENOENT' | 'EACCES' | 'OTHER' => {
   const code = (e as { code?: unknown }).code;
@@ -118,7 +111,7 @@ export async function probeEngines(o: {
 }): Promise<{ engines: EngineProbe[]; claudeProfiles: ClaudeProfileProbe[] }> {
   const exec = o.exec ?? defaultExec;
   const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const run = (bin: string, args: string[], env: Record<string, string | undefined>) => exec(bin, args, withoutSupervisor(env), timeoutMs);
+  const run = (bin: string, args: string[], env: Record<string, string | undefined>) => exec(bin, args, stripSupervisorEnv(env), timeoutMs);
   const { cfg } = o;
 
   const missing = (engine: EngineId): EngineProbe => ({ engine, bin: null, version: null, login: 'unknown', loginCommand: loginCommandFor(engine), note: missingBinNote(engine) });

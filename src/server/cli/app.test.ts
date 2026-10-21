@@ -90,7 +90,7 @@ describe('runCli', () => {
     expect(io2.errText()).toMatch(/실행 중이 아닙니다/);
   });
 
-  it('--version, --help, bad args, not-yet commands', async () => {
+  it('--version, --help, bad args', async () => {
     const v = fakeIo(env);
     expect(await runCli(['--version'], v)).toBe(0);
     expect(v.outText()).toBe(JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8')).version);
@@ -100,7 +100,19 @@ describe('runCli', () => {
     const b = fakeIo(env);
     expect(await runCli(['bogus'], b)).toBe(2);
     expect(b.errText()).not.toBe('');
-    expect(await runCli(['service', 'status'], fakeIo(env))).toBe(2);
+  });
+
+  it('service: dispatched to serviceAction; only the injected runner is used (never the real launchctl/systemctl)', async () => {
+    const calls: string[] = [];
+    const run = async (cmd: string, args: string[]) => { calls.push([cmd, ...args].join(' ')); return { code: 3, stdout: 'inactive\n', stderr: '' }; };
+    const io = fakeIo(env);
+    expect(await runCli(['service', 'status'], io, { service: { run } })).toBe(0);
+    expect(io.outText()).not.toBe('');
+    expect(calls.every((c) => c.startsWith('launchctl ') || c.startsWith('systemctl '))).toBe(true);
+    const d = fakeIo(env);
+    expect(await runCli(['service', 'install', '--dry-run', '--port', '9555'], d, { service: { run, cliBins: () => ({}), execPath: '/usr/bin/node', bin: '/g/q/dist/server/bin.js' } })).toBe(process.platform === 'win32' ? 1 : 0);
+    if (process.platform !== 'win32') expect(d.outText()).toMatch(/quarterdeck/);
+    expect(calls.filter((c) => /bootstrap|enable|daemon-reload/.test(c))).toEqual([]);
   });
 
   it('doctor: probes only through the injected runner, exit 0, --json is the same report', async () => {
