@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { codexEnv } from './accounts';
+import { codexEnv, geminiEnv } from './accounts';
 import { testRegistry } from './accounts.testkit';
 
 const reg = testRegistry('/Users/x');
@@ -61,5 +61,13 @@ describe('accounts', () => {
 
   it('account labels', () => {
     expect(reg.list().map((a) => reg.label(a))).toEqual(['A', 'B', 'C']);
+  });
+  it('CLI child envs never inherit the supervision markers', () => {
+    const base = { PATH: '/bin', DECK_SUPERVISED: '1', DECK_SUPERVISOR: 'launchd' };
+    for (const env of [accountEnv('a', base), accountEnv('b', base), codexEnv(base), geminiEnv(base)]) {
+      expect(env.PATH).toBe('/bin');
+      expect(env.DECK_SUPERVISED).toBeUndefined();
+      expect(env.DECK_SUPERVISOR).toBeUndefined();
+    }
   });
 });

@@ -61,7 +61,7 @@ beforeAll(async () => {
   meta = new SessionMetaStore(path.join(base, 'session-meta.json'));
   index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), meta });
   await index.refresh();
-  const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
+  const usage = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
   await usage.pollOnce();
   store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
@@ -793,6 +793,22 @@ describe('ws', () => {
       const hello = await new Promise<Extract<ServerMessage, { type: 'hello' }>>((resolve) => ws.on('message', (d) => { const m = JSON.parse(String(d)) as ServerMessage; if (m.type === 'hello') resolve(m); }));
       expect(hello.grok).toEqual(grokStatus);
       expect(hello.features?.includes('grok')).toBe(feature);
+      ws.close();
+      api.close();
+      srv.close();
+    }
+  });
+
+  it('hello carries setup.needed and the setup feature', async () => {
+    for (const [setup, feature] of [[{ needed: () => true }, true], [{ needed: () => false }, true], [undefined, false]] as const) {
+      const srv = http.createServer();
+      const api = attachWebSocket([srv], { ...wsDeps, ...(setup ? { setup } : {}) });
+      await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+      const { port } = srv.address() as { port: number };
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { Origin: `http://127.0.0.1:${port}`, Cookie: COOKIE } });
+      const hello = await new Promise<Extract<ServerMessage, { type: 'hello' }>>((resolve) => ws.on('message', (d) => { const m = JSON.parse(String(d)) as ServerMessage; if (m.type === 'hello') resolve(m); }));
+      expect(hello.setup).toEqual(setup ? { needed: setup.needed() } : undefined);
+      expect(hello.features?.includes('setup')).toBe(feature);
       ws.close();
       api.close();
       srv.close();

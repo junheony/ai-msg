@@ -194,6 +194,8 @@ export type WsDeps = {
   activityFile?: string;
   /** When this server process started (ms); rides every `activity` message. Default: when this module loaded. */
   serverStartedAt?: number;
+  /** 첫 실행 마법사: `hello.setup.needed` and the 'setup' feature. Absent = neither. */
+  setup?: { needed: () => boolean };
   /** 총사령탑(Commander): the `commander_*` messages, SessionFacts.commander and the idle hook. Absent = no commander. */
   commander?: WsCommander;
   /**
@@ -1200,7 +1202,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
   /** hello.features: 'commander' only while the settings turn it on; 'grok' only with a grok binary. */
   const grokStatusNow = (): GrokStatus | undefined => (typeof deps.grokStatus === 'function' ? deps.grokStatus() : deps.grokStatus);
-  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true) && (f !== 'tasks' || !!deps.tasks));
+  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true) && (f !== 'tasks' || !!deps.tasks) && (f !== 'setup' || !!deps.setup));
   const runningOf = (sid: string) => {
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;
@@ -1377,7 +1379,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.grokStatus ? { grok: grokStatusNow() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.grokStatus ? { grok: grokStatusNow() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}), ...(deps.setup ? { setup: { needed: deps.setup.needed() } } : {}) });
     // hello's `activity` is the session list only: whether the server is draining, and since when it runs, come here.
     send(ws, activityMsg());
     for (const m of broker.pending()) send(ws, m);

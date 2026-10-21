@@ -36,7 +36,7 @@ function card(id: string, s: number, w: number, f: number, resetH: number) {
 
 async function usageWith(a: [number, number, number], b: [number, number, number], c: [number, number, number]) {
   const state = { cards: [card('claude:main', ...a, 154), card('claude:second', ...b, 84), card('claude:third', ...c, 36)] };
-  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
+  const u = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }
@@ -118,7 +118,7 @@ describe('TurnRunner', () => {
     await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, d.sink);
     expect(eng2.calls[0]).toMatchObject({ account: 'b' });
     // setup_needed card for b (down) — deck's own successful turn on b lifts it for routing.
-    const down = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main', 13, 7, 0, 154), { ...card('claude:second', 2, 3, 4, 84), status: 'setup_needed' }, card('claude:third', 0, 91, 27, 36)] }) }), now: () => new Date(NOW) });
+    const down = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main', 13, 7, 0, 154), { ...card('claude:second', 2, 3, 4, 84), status: 'setup_needed' }, card('claude:third', 0, 91, 27, 36)] }) }), now: () => new Date(NOW) });
     await down.pollOnce();
     expect(down.snapshot().accounts.b!.status).toBe('down');
     // Pinned to b, so the turn runs there even though routing would skip a down card.
@@ -735,7 +735,7 @@ const codexOk = (tid: string, text = 'ok'): EngineEvent[] => [
 async function usageWithGpt(gptWeekly: number | null) {
   const cards: unknown[] = [card('claude:main', 13, 70, 0, 154), card('claude:second', 2, 60, 4, 84), card('claude:third', 0, 91, 27, 36)];
   if (gptWeekly !== null) cards.push({ id: 'codex', status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Weekly (7d)', used: gptWeekly }] });
-  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) });
+  const u = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }
@@ -1538,7 +1538,7 @@ describe('TurnRunner · 같은 벤더 계정 자동 순환 꺼짐', () => {
     // a (home) weekly 80, b weekly 10, GPT weekly 40: with rotation on b's room keeps the session on Claude; off → GPT.
     const resetsAt = new Date(NOW + 100 * 3_600_000).toISOString();
     const cards = [card('claude:main', 10, 80, 0, 100), card('claude:second', 10, 10, 0, 100), card('claude:third', 10, 10, 0, 100), { id: 'codex', status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Weekly (7d)', used: 40, resetsAt }] }];
-    const mk = async () => { const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) }); await u.pollOnce(); return u; };
+    const mk = async () => { const u = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) }); await u.pollOnce(); return u; };
     const on = fakeCodex(codexOk('tid-on'));
     const c1 = await ctx(new StubEngine(() => ok('n1')), { codex: on.engine, findRollout: async () => null, sameVendorRotation: () => true }, await mk());
     await new TurnRunner(c1.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'x', engine: 'auto' }, c1.sink);

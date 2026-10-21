@@ -194,6 +194,8 @@ export type GrokDeps = {
   billingSkip?: GrokBillingSkipState;
   /** Clock for the turn-end billing read's skip bookkeeping (tests); default Date.now. */
   now?: () => number;
+  /** S5 record of detached groups (`run/children.json`): the agent's group is added at spawn, removed when it ends. */
+  children?: { add: (e: { pgid: number; bin: string; engine: string; startedAt: string }) => void; remove: (pgid: number) => void };
 };
 
 export type GrokProcEntry = { pid: number; ppid: number; pgid: number };
@@ -666,6 +668,7 @@ class GrokTurn {
       child.once('error', (err: Error) => { this.exited = true; this.spawnError = err.message; resolve(); });
     });
     if (child.pid !== undefined) {
+      this.deps.children?.add({ pgid: child.pid, bin: this.deps.bin, engine: 'grok', startedAt: new Date().toISOString() });
       void this.sample();
       this.sampler = setInterval(() => { void this.sample(); }, this.t.sampleMs);
       this.sampler.unref?.();
@@ -915,6 +918,7 @@ class GrokTurn {
       }
       await this.reap(pid);
     } finally {
+      if (pid !== undefined) this.deps.children?.remove(pid);
       this.conn?.close('turn ended');
     }
   }

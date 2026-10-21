@@ -31,7 +31,7 @@ async function setup(accounts: AccountSpec[], protectedAccount: Account | null =
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
   const index = new SessionIndex({ roots, pinnedFile: path.join(base, 'p.json') });
-  const usage = new UsageService({ deckUrl: 'http://x', fetchFn: o.fetchFn ?? (async () => { throw new Error('ECONNREFUSED'); }), now: () => new Date(NOW), accounts: reg, ...(o.strict === undefined ? {} : { strict: o.strict }) });
+  const usage = new UsageService({ mode: 'usage-deck', deckUrl: 'http://x', fetchFn: o.fetchFn ?? (async () => { throw new Error('ECONNREFUSED'); }), now: () => new Date(NOW), accounts: reg, ...(o.strict === undefined ? {} : { strict: o.strict }) });
   await usage.pollOnce();
   const engine = o.engine ?? new StubEngine((call) => ok(call.resumeSessionId ?? NEW));
   const logs: string[] = [];

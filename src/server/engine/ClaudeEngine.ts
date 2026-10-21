@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { AccountRegistry } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage } from '../../shared/turn-types';
@@ -17,6 +16,7 @@ import { SessionGrants, permissionHandler, type ModeGate } from './claudeCli/per
 import { ClaudeProcess, exitFailureText } from './claudeCli/process';
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
 import type { ClaudeSpawnFn } from './claudeCli/spawnTypes';
+import { childScript } from './claudeCli/childScripts';
 import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
 import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, fastFailureKind, fastModeText, invalidResumeText } from './claudeCli/texts';
 import type { ClaudeBin } from './claudeCli/version';
@@ -34,9 +34,8 @@ export const BG_MAX_MS = Infinity;
 const MAX_TIMER_MS = 2_147_483_647;
 export const BG_GRACE_MS = 60_000;
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HOOK_RELAY = path.join(HERE, 'claudeCli', 'hookRelay.ts');
-const PERMISSION_MCP = path.join(HERE, 'claudeCli', 'permissionMcp.ts');
+const HOOK_RELAY = childScript('hookRelay');
+const PERMISSION_MCP = childScript('permissionMcp');
 
 export type ClaudeEngineOptions = {
   bin: ClaudeBin | string;
@@ -53,6 +52,8 @@ export type ClaudeEngineOptions = {
   owned?: OwnedEntries;
   node?: string;
   tmpRoot?: string;
+  /** The child scripts' run-time copies (S7 `snapshotChildScripts`); default: next to this code. */
+  scripts?: { hookRelay: string; permissionMcp: string };
 };
 
 export class ClaudeEngine implements Engine {
@@ -115,11 +116,11 @@ export class ClaudeEngine implements Engine {
     let capTimer: NodeJS.Timeout | null = null;
     let graceTimer: NodeJS.Timeout | null = null;
     try {
-      const relay = { node: this.o.node ?? process.execPath, script: HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
+      const relay = { node: this.o.node ?? process.execPath, script: this.o.scripts?.hookRelay ?? HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
       const settingsPath = path.join(procDir, 'settings.json');
       const mcpConfigPath = path.join(procDir, 'mcp.json');
       await fs.writeFile(settingsPath, JSON.stringify(buildSettings({ ...(req.allowRules?.length ? { allowRules: req.allowRules } : {}), ...(req.noTools ? { noTools: true } : {}), ...(req.systemNote ? { systemNote: req.systemNote } : {}), ...(req.commanderHop ? { commander: true } : {}), ...(req.fast ? { fast: true } : {}), relay })), { mode: 0o600 });
-      await fs.writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: relay.node, script: PERMISSION_MCP, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
+      await fs.writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: relay.node, script: this.o.scripts?.permissionMcp ?? PERMISSION_MCP, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
 
       let resume = req.resumeSessionId ?? undefined;
       let forkSession = false;

@@ -94,8 +94,8 @@ describe('createShadowHome', () => {
 });
 
 describe('sweepShadowHomes', () => {
-  it('main.ts waits for the start-up sweep before any Grok turn can make a folder (no sweep racing a live turn)', async () => {
-    const main = await fs.readFile(path.join(__dirname, '..', 'main.ts'), 'utf8');
+  it('server.ts (startServer) waits for the start-up sweep before any Grok turn can make a folder (no sweep racing a live turn)', async () => {
+    const main = await fs.readFile(path.join(__dirname, '..', 'server.ts'), 'utf8');
     expect(main).toMatch(/await sweepShadowHomes\(grokHomesDir\)/);
     expect(main).not.toMatch(/void sweepShadowHomes\(/);
   });

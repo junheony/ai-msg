@@ -233,8 +233,10 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - grok: a `grok` binary was found — `send.engine: 'grok'` can open a Grok session. Advertised only then (`hello.grok.bin`).
  * - commander: `commander_set|stop|pause|resume` are answered and `commander` is broadcast (총사령탑). Advertised only while
  *   the settings turn it on (`commanderEnabled`); a `settings` broadcast that changes it carries the new list.
+ * - setup: `hello.setup.needed` says whether the first-run wizard is still to be shown; GET /api/setup, POST
+ *   /api/setup/refresh|profiles|done answer (설치 점검).
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**
@@ -265,7 +267,7 @@ export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
   | { type: 'grok_status'; grok: GrokStatus }
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null }
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null; /** 'setup' servers: the first-run wizard is still to be shown. */ setup?: { needed: boolean } }
   /** `features`: the server's list again when a setting changed it (총사령탑 켜기·끄기 → 'commander'); absent = unchanged. */
   | { type: 'settings'; settings: DeckSettings; features?: string[] }
   /** 백그라운드 작업 ('tasks' servers): the whole list (newest last) and the soft cap, after hello and on every change. */

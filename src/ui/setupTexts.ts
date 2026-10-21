@@ -1,0 +1,48 @@
+import type { EngineId, LoginState } from '../shared/setup-types';
+
+// User strings of the first-run wizard (설치 점검) and the token login screen. Kept in one file for i18n (plan ③).
+
+export const ENGINE_NAME: Record<EngineId, string> = { claude: 'Claude', codex: 'GPT (Codex)', gemini: 'Gemini', grok: 'Grok' };
+export const LOGIN_LABEL: Record<LoginState, string> = { yes: '로그인됨', no: '로그인 안 됨', unknown: '확인 못 함' };
+
+export const SETUP_TEXTS = {
+  title: '설치 점검',
+  settingsRow: '엔진 · 로그인 · 계정 추가',
+  intro: '엔진 CLI 와 계정을 확인합니다. 지금 다 갖추지 않아도 되고, 설정 › 계정 › 설치 점검에서 언제든 다시 열 수 있습니다.',
+  loading: '확인 중…',
+  loadFailed: '상태를 불러오지 못했습니다 — 다시 확인을 눌러 주세요',
+  enginesHead: '엔진',
+  notInstalled: '설치 안 됨',
+  noVersion: '버전 모름',
+  loginHow: '터미널에서 실행한 뒤 다시 확인을 누르세요',
+  recheck: '다시 확인',
+  checking: '확인 중…',
+  checkedAt: (hhmm: string) => `${hhmm} 확인`,
+  profilesHead: 'Claude 계정',
+  profileHome: '기본',
+  profileNext: '다음 시작부터',
+  profileOff: '사용 안 함',
+  fixNotice: '처음 추가하면 지금 계정 목록이 설정 폴더의 accounts.json 으로 고정됩니다 — 이후 새 ~/.claude-x 폴더는 자동으로 잡히지 않으니 이 화면에서 추가하세요',
+  addId: '계정 id',
+  addIdHint: '소문자·숫자 1~16자 (예: d) — ~/.claude-<id> 폴더를 씁니다',
+  addLabel: '이름 (선택)',
+  add: '계정 추가',
+  adding: '추가 중…',
+  restartNotice: '서버를 다시 시작하면 계정이 추가됩니다',
+  restartNow: '지금 재시작',
+  restartConfirm: '재시작',
+  restartCancel: '취소',
+  restarting: '재시작 요청함 — 잠시 뒤 다시 연결됩니다',
+  restartManual: '터미널에서 quarterdeck 을 다시 실행하세요',
+  addressesHead: '접속 주소',
+  addressesNote: '같은 네트워크의 기기에서 열 수 있습니다. 처음 여는 기기는 로그인 토큰을 물어봅니다.',
+  pairingLater: '폰에서 QR 로 바로 연결하는 기능은 다음 버전에 들어갑니다.',
+  noAddresses: '알려진 주소가 없습니다',
+  done: '완료',
+  later: '나중에',
+  doneFailed: '완료를 기록하지 못했습니다 — 다시 눌러 주세요',
+  unreachable: '서버에 닿지 못했어요 — 연결되면 다시 눌러 주세요',
+  requestFailed: (status: number) => `요청 실패 (${status})`,
+  copy: (what: string) => `${what} 복사`,
+  loginHint: '터미널에서 `quarterdeck login-url` 을 실행해 나온 주소를 열거나, 설정 폴더의 token 파일 내용을 입력하세요.',
+} as const;

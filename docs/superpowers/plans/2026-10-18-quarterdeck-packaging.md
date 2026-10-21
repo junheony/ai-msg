@@ -461,7 +461,7 @@ expect(formatDoctor(sample)).toMatch(/claude .*2\.1\.283.*로그인 안 됨.*cla
     8. 같은 폴더 임시 파일(0600) → `fsync` → rename.
     9. 실패하면(어느 단계든) 4단계에서 **이번에 만든 폴더가 아직 비어 있을 때만** 지우고, 임시 파일·락을 지운다. 백업은 남긴다.
   - `class SetupStore { static open(file: string, o: { existingInstall: boolean }): Promise<SetupStore>; needed(): boolean; markDone(): Promise<void> }` — 파일 없음: `existingInstall` 이면 `{ state: 'done', doneAt, migrated: true }`, 아니면 **바로** `{ state: 'pending', createdAt }` 를 쓴다(마법사 전에 재시작해도 다시 뜸). `needed()` = `state === 'pending'`. 깨진 파일은 `pending` 으로 취급하고 덮어쓰지 않는다(다음 `markDone` 때 교체).
-  - `existingInstall(configDir: string): boolean` — **실제 데이터**로 판정: `session-meta.json`·`session-state.json`·`activity.json`·`pins.json`·`projects.json`·`push-subscriptions.json`·`accounts.json` 중 하나라도 비지 않은 파일로 있음. 토큰 존재는 쓰지 않는다. `startServer` 가 락·listen 직후, **다른 스토어가 파일을 만들기 전에** 한 번 계산한다.
+  - `existingInstall(configDir: string): boolean` — 이전 실행의 흔적으로 판정: `token`·`settings.json`·`vapid.json`·`session-meta.json`·`session-state.json`·`activity.json`·`pins.json`·`projects.json`·`push-subscriptions.json`·`accounts.json` 중 하나라도 비지 않은 파일로 있음(토큰 포함 — 아래 구현 메모). `startServer` 가 락·listen 직후, **다른 스토어가 파일을 만들기 전에** 한 번 계산한다.
   - `class SetupService { constructor(o: { cfg: DeckConfig; accounts: AccountRegistry; store: SetupStore; supervised: () => Promise<boolean>; addresses: string[]; exec?: ProbeExec; ttlMs?: number }); status(force?: boolean): Promise<SetupStatus>; addProfile(id: string, label?: string): Promise<{ profile: ClaudeProfileProbe; restartNeeded: true }> }` — 캐시 30s, 동시 요청은 한 번만 프로브. 프로필 목록은 매번 `accounts.json` 을 새로 읽어(없으면 실행 중 레지스트리) 만들고, 실행 중 레지스트리에 없는 id 는 `active: false`. `restartNeeded` = 파일의 id 집합 ≠ 실행 중 레지스트리의 id 집합.
   - HTTP(로그인 필요, 변경 요청은 기존 출처 검사 적용): `GET /api/setup` → `SetupStatus`; `POST /api/setup/refresh` → `status(true)`; `POST /api/setup/profiles` `{ id, label? }` → 200 `{ ok: true, profile, restartNeeded: true }` / 400·409 `{ error: <한국어> }`; `POST /api/setup/done` → 200.
 
@@ -502,7 +502,7 @@ it('SetupStore: a fresh install writes pending at once and survives a restart', 
   const again = await SetupStore.open(file, { existingInstall: true }); // 재시작 때는 다른 데이터가 생겼어도
   expect(again.needed()).toBe(true);
 });
-it('existingInstall: token alone is not an install; session data is', () => { /* token 만 → false; session-meta.json 비지 않음 → true */ });
+it('a previous-version install (token only, no setup.json) is marked done', () => { /* token 만 → existingInstall true → done(migrated) */ });
 
 it('SetupService caches the probe for 30s and single-flights', async () => { /* exec 호출 수 */ });
 it('restartNeeded after addProfile; new profile listed as inactive with its login command', async () => { /* … */ });
@@ -755,7 +755,7 @@ it('package mode: a newer package.json on disk means restartNeeded', async () =>
 | 3 | 서비스 종료·드레인 계약(KillMode=mixed, AbandonProcessGroup=true+KeepAlive 고아, TimeoutStopSec 상한) | 반영 — 새 절 "서비스 생존·종료 계약" S1~S7, Task 7 `systemdUnit`(KillMode=mixed 유지 이유 명시, `TimeoutStopSec` ≤1800), `launchAgentPlist`(`AbandonProcessGroup=false`, `ExitTimeOut`), `childRegistry`(detached grok), D11, Task 8 Step 3 (a)~(c)·Step 4 실기 확인 |
 | 4 | 서비스 env 저장 주체 없음·launchd 대응 없음·login-url 포트 재현 | 반영 — Task 7 `record.ts`(`service.json`+`service.env`, 해석된 절대 경로·허용 env, plist 는 같은 기록에서 생성, `EnvironmentFile` 의 `-` 제거), 설치 후 락·MainPID·HTTP 401 검증, `status` 대조. login-url 은 Task 2 `readInstanceLock` 의 실행 인스턴스 포트 |
 | 5 | `process.execPath` 버전 경로·업그레이드·실행 중 파일 교체 | 반영 — Task 7 `nodePath.ts`(Cellar → opt/bin 심링크, 버전 관리자 경로 거부, `--node`), `service restart`, S7 자식 스크립트 사본·패키지 버전 감지 "재시작 필요", Task 3 `splitting: false`, README 업그레이드 절, Task 8 Step 3 (e)·Step 4(TCC) |
-| 6 | 토큰 존재로 기존 설치 판정 → 마법사 전 재시작 시 완료 처리 | 반영 — Task 5 `SetupStore` 첫 실행 즉시 `pending`, `existingInstall` 은 세션·activity 등 실제 데이터로, 다른 스토어가 쓰기 전에 계산 |
+| 6 | 토큰 존재로 기존 설치 판정 → 마법사 전 재시작 시 완료 처리 | 반영 — Task 5 `SetupStore` 첫 실행 즉시 `pending`, `existingInstall` 은 토큰·설정·세션 등 이전 실행 흔적으로, 토큰·다른 스토어가 쓰기 전에 계산(구현 메모 참고) |
 | 7 | `ppid===1` 판정은 고아도 참 | 반영 — Task 7 `supervisionCheck`: launchd `XPC_SERVICE_NAME === LAUNCHD_LABEL` + launchd pid 대조, systemd `INVOCATION_ID` + MainPID 대조. `supervisorEnv.ts` 로 CLI 자식·프로브 env 에서 제거(Global Constraints, Task 4 프로브) |
 | 8 | 서비스 등록 소유권·롤백(표식, 남의 파일 비접촉, dry-run+TTY 확인, 종료 코드, 복원, 종료 확인 후 삭제, bootout 후 재등록, SSH gui 도메인, uninstall 데이터 비접촉, com.deck.server plist 존재) | 반영 — Task 7 `MANAGED_MARKER`, `serviceAction` 의 공통 거부·미리보기·확인·명령 실행 규칙·롤백·설치 후 검증·linux/darwin 절차, 각 항목 테스트. relaunch 루프 생존도 거부 조건에 추가 |
 | 9 | 계정 파일 쓰기(백업, mutex/잠금, 최신본 재검증, symlink·소유권, 실패 시 빈 폴더만 정리, 추가 시점 재발견, 자동 발견 종료 고지) | 반영 — Task 5 `addClaudeProfile` 9단계 + 테스트 6개, Task 4 `SetupStatus.accountsFile`, Task 6 마법사 고지 |
@@ -768,3 +768,11 @@ it('package mode: a newer package.json on disk means restartNeeded', async () =>
 | 13d | `npm i -g` bin 이름 충돌(EEXIST) 사전 확인 | 반영 — Task 3 스모크 8, D1 확인 항목(`npm view quarterdeck bin`), Task 8 README 경고 |
 | 13e | D1 조직 확보를 Task 8 전에 | 반영 — Global Constraints, Task 8 선행 조건, D1, 사용자 몫 |
 | 추가 | Grok 감지 규칙(`DECK_GROK_BIN` → PATH → `~/.grok/bin/grok`, `grok models` 첫 줄) | 확인 — 원래도 `cfg.grokBin`(=`resolveGrokBin`)·`parseGrokModels` 로 들어 있었음. 보강: Task 4 에 Grok 프로브 절(감지가 따로 찾지 않음, `grokEnv` 로 `GROK_HOME` 고정, 첫 비지 않은 줄, 종료 코드 무시), `missingBinNote` 에 세 후보, 테스트, 스모크 6·10 에서 grok 을 `~/.grok/bin/grok` 에만 두고 찾는지 확인 |
+
+## 구현 메모 (실행 중 기록)
+
+- **`private: true` 유지(Task 3).** 계획은 `private` 삭제를 적었지만 D1(패키지 이름)이 미정이라 실수로 `npm publish` 되지 않게 남겨 두었다. `npm pack`·전역 설치·`npx --package <tgz>` 는 `private` 와 무관하게 돈다. Task 8 이 D1 이름을 넣을 때 `private` 를 지우고, 그때 Task 3 테스트의 `pkg.private` 기대도 함께 바꾼다.
+- **스모크의 시간 초과 턴(Task 3 Step 6·12)이 검증하는 것과 한계.** 보통 턴의 훅은 `--fail open|deny` 라 deck 의 닫힘 실패(`--fail closed`, `( … ) || exit 2`, `DECK_HOOK_RELAY_DEADLINE_MS`)는 총사령탑 자동 턴에서만 쓰인다. 스모크는 서버를 `DECK_HOOK_RELAY_DEADLINE_MS=1` 로 띄우고, 시간 초과 턴에서 가짜 claude 가 deck 이 만든 훅 명령을 닫힘 형태로 바꿔 실행해 **설치본 `hookRelay.js` 가 deck 이 넘긴 env 의 기한으로 거부(JSON deny + 종료 2)하는지** 확인한다. 이어서 권한 카드에 답하지 않은 채 MCP 호출을 취소한다. 한계: ① 어떤 턴에 `--fail closed` 를 붙일지는 `ClaudeEngine`·`args.ts` 단위 테스트가 맡고 스모크는 보지 않는다(총사령탑 턴을 스모크로 띄우려면 판정기까지 가짜가 필요). ② 브리지가 실제로 응답하지 않아 기한이 지나는 경우가 아니라 기한(1ms)이 응답보다 먼저 오는 경우만 본다. ③ MCP 쪽 취소는 가짜 claude 가 정한 대기(3초) 뒤에 보낸다.
+- **Task 4.** `setup/texts.ts` 는 Task 2 에서 이미 생겨 새로 만들지 않고 넓혔다. `doctor --json` 은 프로브 결과 전체(`engines`·`claudeProfiles`)를 낸다. 감독자 env 키 목록은 Task 7(`supervisorEnv.ts`) 전까지 `detect.ts` 에 둔다. Step 5 수동 확인은 실제 CLI 대신 격리 PATH 의 가짜 CLI 로 했다(테스트·스모크는 실제 사용자 CLI 를 실행하지 않는다).
+- **리뷰 반영(Task 1~3).** 감독 여부는 `DECK_SUPERVISED=1` 만이 아니라 부모 프로세스가 relaunch 루프인지까지 보고 락에 기록한다. `relaunch.pid` 가 살아 있는 루프를 가리키면 그 루프의 자식만 시작할 수 있다. CLI 자식 env(Claude·Codex·agy, Grok 은 원래 허용 목록)에서 `DECK_SUPERVISED`·`DECK_SUPERVISOR` 를 뺀다. 낡은 락 인계는 rename 으로 옮겨 놓고 비교한다. 종료 때 락은 기록을 다 쓴 뒤 푼다. pack-smoke 는 claude·codex·agy·grok 가 PATH 에서 임시 폴더 밖으로 잡히면 바로 실패한다.
+- **리뷰 반영(Task 4~6) — `existingInstall` 에 토큰을 다시 넣음.** 처음엔 "새 서버가 마법사 전에 토큰을 써 버린다"는 이유로 토큰을 뺐지만, `startServer` 는 `existingInstall` 을 `loadOrCreateToken`·설정·VAPID 생성 **전에** 계산하고, 새 설치는 같은 첫 시작에서 setup.json(pending)을 바로 쓴다. 그래서 마법사 전 재시작은 파일의 pending 을 읽고 이 판정에 다시 오지 않는다. 반대로 토큰을 빼면 세션을 한 번도 안 만든 이전 버전 설치(토큰·설정만 있음)가 업데이트 뒤 마법사를 보게 된다. 그래서 `token`·`settings.json`·`vapid.json` 도 센다.

@@ -1,13 +1,6 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { Account } from '../../shared/accounts';
-
-export function defaultCooldownDir(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string {
-  if (env.CLAUDE_PICK_COOLDOWN_DIR) return env.CLAUDE_PICK_COOLDOWN_DIR;
-  const cache = env.XDG_CACHE_HOME || path.join(home, '.cache');
-  return path.join(cache, 'offload', 'cooldown');
-}
 
 export function readCooldownUntilMs(dir: string, account: Account, nowMs: number): number | null {
   let text: string;

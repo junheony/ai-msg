@@ -77,6 +77,13 @@ const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_A
 /** Inherited from a parent Claude Code / proxy setup, these would send the turn elsewhere or mislabel it. */
 const ROUTING_VARS = ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_ENTRYPOINT'] as const;
 
+/**
+ * Service-manager and deck supervision markers (plan ② Global Constraints): a CLI child (and whatever it starts) must not
+ * look like the supervised server. The server side uses these through src/server/supervisorEnv.ts.
+ */
+export const SUPERVISOR_ENV_KEYS = ['XPC_SERVICE_NAME', 'INVOCATION_ID', 'JOURNAL_STREAM', 'SYSTEMD_EXEC_PID', 'MANAGERPID', 'NOTIFY_SOCKET', 'LISTEN_PID', 'LISTEN_FDS', 'DECK_SUPERVISOR', 'DECK_SUPERVISED'] as const;
+const SUPERVISOR_VARS = SUPERVISOR_ENV_KEYS;
+
 /** `~` → the home dir, then what `path.resolve` does to an absolute path (`.`, `..`, `//`, trailing `/`); a relative path is returned as it is. */
 function expandDir(dir: string, homeDir: string): string {
   const d = dir === '~' ? homeDir : dir.startsWith('~/') ? `${homeDir}/${dir.slice(2)}` : dir;
@@ -151,7 +158,7 @@ export function buildRegistry(config: AccountsConfig, opts: { homeDir: string; c
     env: (id, base) => {
       const dir = known(id).dir;
       const env: Record<string, string | undefined> = { ...base };
-      for (const v of [...TOKEN_VARS, ...ROUTING_VARS]) delete env[v];
+      for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...SUPERVISOR_VARS]) delete env[v];
       if (dir === defaultDir) delete env.CLAUDE_CONFIG_DIR;
       else env.CLAUDE_CONFIG_DIR = dir;
       return env;
@@ -233,7 +240,7 @@ const OPENAI_VARS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL'] as const;
  */
 export function codexEnv(base: NodeJS.ProcessEnv): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...base };
-  for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...OPENAI_VARS]) delete env[v];
+  for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...SUPERVISOR_VARS, ...OPENAI_VARS]) delete env[v];
   return env;
 }
 
@@ -251,6 +258,6 @@ const GEMINI_VARS = [
  */
 export function geminiEnv(base: NodeJS.ProcessEnv): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...base };
-  for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...OPENAI_VARS, ...GEMINI_VARS]) delete env[v];
+  for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...SUPERVISOR_VARS, ...OPENAI_VARS, ...GEMINI_VARS]) delete env[v];
   return env;
 }
