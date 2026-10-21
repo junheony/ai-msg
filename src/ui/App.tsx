@@ -9,7 +9,6 @@ import { SessionCwdDialog } from './components/SessionCwdDialog';
 import { LayoutsDialog } from './components/LayoutsDialog';
 import { deleteLayout, layoutPanes, listLayouts, saveLayout, type SavedLayout } from './layouts';
 import { Login } from './components/Login';
-import { NotifyMenu } from './components/NotifyMenu';
 import { SettingsView } from './components/SettingsView';
 import { Toasts, type ToastItem } from './components/Toasts';
 import { postPin, postPinOrder } from './pins';
@@ -22,7 +21,8 @@ import { Sidebar, type SidebarView } from './components/Sidebar';
 import { UsageChip } from './components/UsageChip';
 import { UsageSheet } from './components/UsageSheet';
 import { Highlights } from './components/Highlights';
-import { HighlightsBadge, ServerChip, ServerUpdateChip, WorkStatus, type WorkRow } from './components/WorkStatus';
+import { ActivityButton, type ActivityAlert } from './components/ActivityButton';
+import type { WorkRow } from './components/ActivitySheet';
 import { isGeminiAccount, isGrokAccount } from '../shared/accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
@@ -1232,15 +1232,18 @@ export function App() {
   const footAccount = active.session?.account ?? null;
   const orphanPerms = orphanCards(state.panes, state.pending);
   const orphanQs = orphanCards(state.panes, state.questions);
-  const waitingCards = [...state.pending, ...state.questions].map((c) => ({ sessionId: c.sessionId, cwd: c.cwd, turnId: c.turnId }));
   /** A session's name for the 작업 현황 list: its title, else its folder, else its id's first 8 characters. */
   const titleOf = (sessionId: string, cwd: string | null) => paletteSessions.find((x) => x.sessionId === sessionId)?.title
     ?? state.panes.find((p) => p.session?.sessionId === sessionId)?.session?.title
     ?? (cwd ? cwd.split('/').filter(Boolean).pop() : undefined)
     ?? sessionId.slice(0, 8);
   const preview = previewKey && state.routePreview && state.routePreview.sessionId === previewKey.sessionId ? state.routePreview : null;
-  const busySessions = state.activity.filter((a) => a.running || a.bg > 0).length;
-  /** A 작업 현황 / 재시작 대기 row: opens its session. */
+  /** 활동 점: a new 승인 대기 elsewhere (8 s toast with 열기) or 재시작됨, also read out in the cards' live line. */
+  const onActivityAlert = (a: ActivityAlert) => {
+    announce(a.text);
+    setToasts((t) => [...t, { id: ++toastSeq.current, text: a.text, kind: 'info', ms: 8_000, ...(a.open ? { action: { label: '열기', run: a.open } } : {}) }]);
+  };
+  /** An 활동 sheet row (승인 대기 · 실행 중 · 재시작 대기): opens its session. */
   const openWorkRow = (r: WorkRow) => {
     if (r.sessionId) { if (!openById.current(r.sessionId) && r.cwd) openIn(active.id, r.sessionId, r.cwd, r.title); return; }
     // 새 대화: the pane whose turn the card belongs to.
@@ -1262,15 +1265,24 @@ export function App() {
         </button>
         <UsageChip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} compact={phone} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
         <div className="topbar-end">
-          {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onNewChat={() => newChat()} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={openWorkRow} />}
-          {!phone && has('highlights') && <HighlightsBadge ready={state.ready} running={state.activity.filter((a) => a.running).length} onOpen={() => setHighlightsOpen(true)} />}
-          {has('serverUpdate') && <ServerUpdateChip ready={state.ready} draining={state.draining} activity={state.activity} />}
-          {!phone && <ServerChip startedAt={state.serverStartedAt} restartedAt={state.restartedAt} draining={state.draining} busy={busySessions} activity={state.activity} titleOf={titleOf} onOpen={openWorkRow} onDismissRestart={() => dispatch({ type: 'dismiss_restart' })} />}
           {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (⋮⋮ 를 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
-          <NotifyMenu />
-          {state.connected
-            ? <span className="conn on" title="연결됨">연결됨</span>
-            : <button type="button" className="conn off" onClick={retryNow} title={downSince !== null ? `서버 응답 없음 · ${hhmm(downSince)}부터 — 눌러서 다시 시도` : '재연결 중… — 눌러서 지금 다시 시도'}>{downSince !== null ? '서버 응답 없음' : '재연결 중…'}</button>}
+          <ActivityButton
+            ready={state.ready} connected={state.connected} downSince={downSince} onRetry={retryNow}
+            pending={state.pending} questions={state.questions}
+            onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
+            onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
+            activity={state.activity} tasks={has('tasks') ? (state.tasks ?? []) : []}
+            onOpenTask={(t) => { if (t.sessionId && !openById.current(t.sessionId)) openIn(active.id, t.sessionId, t.cwd, t.title); }}
+            onCancelTask={(taskId) => { send({ type: 'cancel_task', taskId }); }}
+            paneBg={state.panes.flatMap((p) => (p.bg ? [p.bg] : []))}
+            onStopTask={(turnId, taskId) => { send({ type: 'stop_task', turnId, taskId }); }}
+            onInterrupt={(turnId) => { send({ type: 'interrupt', turnId }); }}
+            titleOf={titleOf} onOpen={openWorkRow} onNewChat={() => newChat()}
+            serverUpdate={has('serverUpdate')} highlights={has('highlights')} onOpenHighlights={() => setHighlightsOpen(true)}
+            server={{ startedAt: state.serverStartedAt, restartedAt: state.restartedAt, draining: state.draining, onDismissRestart: () => dispatch({ type: 'dismiss_restart' }) }}
+            visibleSessions={phone ? [active.session?.sessionId ?? null] : state.panes.map((p) => p.session?.sessionId ?? null)}
+            onAlert={onActivityAlert}
+          />
         </div>
       </header>
       {downSince !== null && (

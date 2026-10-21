@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { disablePush, enablePush, isIos, pushBlocker, pushEnabled, testPush } from '../push';
 
-const BLOCKER_TEXT = {
+export const BLOCKER_TEXT = {
   insecure: '알림은 HTTPS 주소에서만 됩니다. https://<맥 이름>.ts.net 으로 여세요.',
   'ios-install': 'iPhone·iPad 는 공유 → "홈 화면에 추가" 로 설치한 앱에서만 알림이 됩니다 (iOS 16.4 이상).',
   unsupported: '이 브라우저는 웹 푸시 알림을 지원하지 않습니다.',

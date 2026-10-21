@@ -7,18 +7,19 @@ export const ERROR_TOAST_MS = 12_000;
 /** Visible at once; older ones are hidden (not dropped) until newer ones go, so a burst never covers the screen. */
 export const MAX_TOASTS = 4;
 
-export type ToastItem = { id: number; text: string; kind?: 'error' | 'info' };
+export type ToastItem = { id: number; text: string; kind?: 'error' | 'info'; /** A button next to the text (열기): runs, then closes the toast. */ action?: { label: string; run: () => void }; /** Life (ms) instead of the kind's default. */ ms?: number };
 
 function Toast({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: number) => void }) {
   const kind = toast.kind ?? 'error';
   useEffect(() => {
-    const t = setTimeout(() => onDismiss(toast.id), kind === 'info' ? INFO_TOAST_MS : ERROR_TOAST_MS);
+    const t = setTimeout(() => onDismiss(toast.id), toast.ms ?? (kind === 'info' ? INFO_TOAST_MS : ERROR_TOAST_MS));
     return () => clearTimeout(t);
     // onDismiss is a fresh closure each render; the timer belongs to the toast, so it must not restart.
   }, [toast.id, kind]);
   return (
     <div className={`toast-item ${kind}`} role={kind === 'info' ? 'status' : 'alert'}>
       <span>{toast.text}</span>
+      {toast.action && <button type="button" className="text-btn" onClick={() => { toast.action!.run(); onDismiss(toast.id); }}>{toast.action.label}</button>}
       <button type="button" className="icon-btn" aria-label="닫기" onClick={() => onDismiss(toast.id)}>✕</button>
     </div>
   );

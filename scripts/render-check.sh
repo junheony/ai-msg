@@ -5,6 +5,7 @@
 #   scripts/render-check.sh                       # every fixture in scripts/render/, widths 1250 1000 720 390
 #   scripts/render-check.sh usage-chip-states 1250 412  # one fixture, your widths
 #
+# RENDER_HEIGHT sets the window height (default 160) for taller fixtures.
 # PNGs land in ${RENDER_OUT:-/tmp/deck-render}/<fixture>-<width>.png (2x scale). Read them with an image viewer
 # or the Read tool. Fixtures link the real stylesheet relatively, so they render whatever is in the working tree.
 set -euo pipefail
@@ -29,7 +30,7 @@ for f in "${files[@]}"; do
   for w in "${widths[@]}"; do
     png="$out/$name-$w.png"
     "$chrome" --headless=new --disable-gpu --hide-scrollbars --no-first-run --user-data-dir="$profile" \
-      --force-device-scale-factor=2 --window-size="$w,160" --screenshot="$png" "file://$f" >/dev/null 2>&1
+      --force-device-scale-factor=2 --window-size="$w,${RENDER_HEIGHT:-160}" --screenshot="$png" "file://$f" >/dev/null 2>&1
     echo "$png"
   done
 done
