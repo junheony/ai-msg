@@ -59,7 +59,7 @@ describe('App split view (D6)', () => {
   it('ux-state: a reload restores the split, each pane\'s session/picker, and re-opens the sessions', async () => {
     await boot();
     openSession('one');
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two');
     const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { session: { sessionId: string } }[]; active: number; collapsed: string[] };
     expect(stored.panes.map((p) => p.session.sessionId)).toEqual(['s1', 's2']);
@@ -82,14 +82,13 @@ describe('App split view (D6)', () => {
 
   it('splits into equal columns with no fixed ceiling ("+ 분할" stays enabled past 5); closing re-flows', async () => {
     await boot();
-    const split = screen.getByText(/^\+ 분할/) as HTMLButtonElement;
+    const split = screen.getByRole('button', { name: '새 분할' }) as HTMLButtonElement;
     for (let i = 0; i < 4; i++) fireEvent.click(split);
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(5);
     const panes = document.querySelector('.panes') as HTMLElement;
     expect(panes.dataset.count).toBe('5');
     expect(panes.style.getPropertyValue('--cols')).toBe('5');
     expect(split.disabled).toBe(false);
-    expect(split.textContent).toBe('+ 분할 5');
     fireEvent.click(split);
     fireEvent.click(split);
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(7);
@@ -97,14 +96,13 @@ describe('App split view (D6)', () => {
     closePane(lastPane());
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(6);
     expect(panes.style.getPropertyValue('--cols')).toBe('6');
-    expect(split.textContent).toBe('+ 분할 6');
   });
 
   it('⋮⋮ grip: ⋯ 떠 있는 카드로 떼기 turns a pane into a floating card over the grid, 패널에 다시 붙이기 docks it; the card survives a reload', async () => {
     await boot();
     expect(document.querySelector('[data-grip]')).toBeNull(); // one pane: nothing to drag
     openSession('one');
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two');
     expect(document.querySelectorAll('[data-grip]')).toHaveLength(2);
     const menu = () => within(screen.getByTestId('pane-p1')).getByTestId('session-chip-head');
@@ -138,7 +136,7 @@ describe('App split view (D6)', () => {
 
   it('⋮⋮ grip drag: along the rail it reorders the docked panes; below the rail it pulls the pane off as a card; Escape cancels', async () => {
     await boot();
-    const split = screen.getByText(/^\+ 분할/);
+    const split = screen.getByRole('button', { name: '새 분할' });
     fireEvent.click(split);
     fireEvent.click(split); // p0 p1 p2
     const ids = () => Array.from(document.querySelectorAll('.panes .pane')).map((el) => (el as HTMLElement).dataset.pane);
@@ -213,7 +211,7 @@ describe('App split view (D6)', () => {
   it('keyboard on the ⋮⋮ grip: ←→ reorder, Enter floats the pane; ⋯ has 왼쪽으로/오른쪽으로 이동 for panes with a neighbour there', async () => {
     await boot();
     openSession('one');
-    const split = screen.getByText(/^\+ 분할/);
+    const split = screen.getByRole('button', { name: '새 분할' });
     fireEvent.click(split);
     openSession('two');
     fireEvent.click(split); // p0 p1 p2
@@ -260,7 +258,7 @@ describe('App split view (D6)', () => {
     try {
       await boot();
       openSession('one');
-      const split = screen.getByText(/^\+ 분할/);
+      const split = screen.getByRole('button', { name: '새 분할' });
       fireEvent.click(split);
       openSession('two');
       fireEvent.click(split); // p0 p1 p2
@@ -303,7 +301,7 @@ describe('App split view (D6)', () => {
   const threePanes = async () => {
     await boot();
     openSession('one');
-    const split = screen.getByText(/^\+ 분할/);
+    const split = screen.getByRole('button', { name: '새 분할' });
     fireEvent.click(split);
     openSession('two');
     fireEvent.click(split); // p0 p1 p2
@@ -486,8 +484,8 @@ describe('App split view (D6)', () => {
       expect((JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: StoredPane[] }).panes.map((p) => p.session?.sessionId ?? null)).toEqual(['s1', 's2', null]);
       expect(live()).toBe('배치 "작업" 을 불러왔습니다');
       // New panes after a load never reuse an id.
-      fireEvent.click(screen.getByText(/^\+ 분할/));
-      fireEvent.click(screen.getByText(/^\+ 분할/));
+      fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
+      fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
       const ids = screen.getAllByTestId(/^pane-/).map((el) => el.dataset.pane);
       expect(ids).toHaveLength(5);
       expect(new Set(ids).size).toBe(5);
@@ -570,7 +568,7 @@ describe('App split view (D6)', () => {
   it('a splitter between each pair of panes: dragging trades width between its two neighbours, double-click evens them out, the widths survive a reload', async () => {
     await boot();
     expect(screen.queryAllByRole('separator', { name: '패널 폭 조절' })).toHaveLength(0);
-    const split = screen.getByText(/^\+ 분할/);
+    const split = screen.getByRole('button', { name: '새 분할' });
     fireEvent.click(split);
     fireEvent.click(split);
     const bars = screen.getAllByRole('separator', { name: '패널 폭 조절' });
@@ -597,12 +595,14 @@ describe('App split view (D6)', () => {
     expect(again.style.gridTemplateColumns).toBe('minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr)');
   });
 
-  it('"+ 분할" shows no counter with one pane, then the pane count (no maximum)', async () => {
+  it('the split button is an icon with a name and a tooltip, no counter text', async () => {
     await boot();
-    const split = screen.getByText(/^\+ 분할/) as HTMLButtonElement;
-    expect(split.textContent).toBe('+ 분할');
+    const split = screen.getByRole('button', { name: '새 분할' }) as HTMLButtonElement;
+    expect(split.textContent).toBe('');
+    expect(split.querySelector('svg')).not.toBeNull();
+    expect(split.title).toMatch(/^새 분할 \(Ctrl\+⇧O\)/);
     fireEvent.click(split);
-    expect(split.textContent).toBe('+ 분할 2');
+    expect(split.textContent).toBe('');
   });
 
   it('⋯ 분할 보기로 열기: a new pane opens the session — also one another pane already shows', async () => {
@@ -627,7 +627,7 @@ describe('App split view (D6)', () => {
       fireEvent.click(chipOf(lastPane()));
       expect(screen.queryByRole('menuitem', { name: '새 탭으로 떼어내기' })).toBeNull();
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-      fireEvent.click(screen.getByText(/^\+ 분할/));
+      fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
       openSession('two');
       expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
       fireEvent.click(chipOf(lastPane()));
@@ -644,7 +644,7 @@ describe('App split view (D6)', () => {
     await boot();
     openSession('one');
     expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's1' });
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two'); // p1 (active) → s2
     expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
     expect(closes()).toEqual([]);
@@ -655,7 +655,7 @@ describe('App split view (D6)', () => {
     expect(closes()).toEqual(['s2']);
     closePane(screen.getByTestId('pane-p2')); // p0 still shows s1
     expect(closes()).toEqual(['s2']);
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two');
     closePane(lastPane());
     expect(closes()).toEqual(['s2', 's2']);
@@ -665,7 +665,7 @@ describe('App split view (D6)', () => {
   it('a sidebar row already open in another pane brings that pane forward (no second copy); a row open nowhere loads into the focused pane', async () => {
     await boot();
     openSession('one'); // p0 → s1
-    fireEvent.click(screen.getByText(/^\+ 분할/)); // p1 (blank) active
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' })); // p1 (blank) active
     const opens = () => frames().filter((f) => f.type === 'open_session').length;
     const before = opens();
     const side = document.querySelector('.sidebar') as HTMLElement;
@@ -686,11 +686,11 @@ describe('App split view (D6)', () => {
 
   it('T9 (b): a pane closed while its open_session reply is in flight never gets its history into a blank pane', async () => {
     await boot();
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two'); // p1 → s2, history not yet arrived
     closePane(screen.getByTestId('pane-p1'));
     expect(closes()).toEqual(['s2']);
-    fireEvent.click(screen.getByText(/^\+ 분할/)); // blank active pane (ids are reused: max remaining + 1)
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' })); // blank active pane (ids are reused: max remaining + 1)
     server({ type: 'history', sessionId: 's2', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [{ kind: 'user', text: 'stale-history', ts: null }] });
     expect(screen.queryByText('stale-history')).toBeNull();
     expect(within(lastPane()).getByLabelText('첫 메시지')).toBeTruthy(); // the new-chat screen
@@ -704,7 +704,7 @@ describe('App split view (D6)', () => {
     fireEvent.click(screen.getByText('보내기'));
     const send = frames().find((f) => f.type === 'send') as { clientRef?: string };
     expect(send.clientRef).toMatch(/.+/);
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('one');
     sock.frames = [];
     server({ type: 'hello', usage, projects: [], running: [], codex: { available: false } } as unknown as ServerMessage);
@@ -818,7 +818,7 @@ describe('App phone layout (D10)', () => {
     const mm = mockMatchMedia(false);
     await boot();
     openSession('one'); // p0 -> s1
-    fireEvent.click(screen.getByText(/^\+ 분할/)); // adds p1, active
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' })); // adds p1, active
     openSession('two'); // p1 -> s2
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
 
@@ -851,7 +851,7 @@ describe('App phone layout (D10)', () => {
     await boot();
     const labels = () => Array.from(screen.getByTestId('split-tabs').querySelectorAll('button[data-tab]')).map((b) => b.textContent);
     // The float landed at the end: one, two, (blank) → two, blank, one.
-    await waitFor(() => expect(labels()).toEqual(['1 · two', '2', '3 · one']));
+    await waitFor(() => expect(labels()).toEqual(['1 · two', '2 · 새 세션', '3 · one']));
     const stored = () => JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: unknown; parkedFloat?: unknown }[] };
     expect(stored().panes.some((p) => p.float)).toBe(false);
     expect(stored().panes[2]!.parkedFloat).toEqual({ x: 10, y: 10, w: 400, h: 300 });
@@ -869,7 +869,7 @@ describe('App phone layout (D10)', () => {
       expect(strip.classList.contains('tabs-reordering')).toBe(true);
       fireEvent.pointerUp(window, { clientX: 20, clientY: 15, pointerId: 1 });
     } finally { rect.mockRestore(); }
-    expect(labels()).toEqual(['1 · one', '2 · two', '3']);
+    expect(labels()).toEqual(['1 · one', '2 · two', '3 · 새 세션']);
     // Back on a wide screen: the parked pane floats again where it was (it travelled to the front meanwhile).
     mm.setPhone(false);
     const card = document.querySelector('.float-card[data-float]') as HTMLElement;
@@ -880,7 +880,7 @@ describe('App phone layout (D10)', () => {
     // And a phone again parks it (no card, a tab at the end).
     mm.setPhone(true);
     expect(document.querySelector('.float-card')).toBeNull();
-    expect(labels()).toEqual(['1 · two', '2', '3 · one']);
+    expect(labels()).toEqual(['1 · two', '2 · 새 세션', '3 · one']);
   });
 
   it('Escape closes the open phone drawer', async () => {

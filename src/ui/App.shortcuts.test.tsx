@@ -258,8 +258,8 @@ describe('desktop-like navigation', () => {
 
   it('Ctrl+Alt+[ / ] step the active pane (wrapping); Ctrl+⇧X closes it, never the last one', async () => {
     await boot();
-    fireEvent.click(screen.getByText(/^\+ 분할/));
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     const panes = () => screen.getAllByTestId(/^pane-/);
     const activeIndex = () => panes().findIndex((p) => p.classList.contains('active'));
     expect(panes()).toHaveLength(3);
@@ -317,8 +317,8 @@ describe('desktop-like navigation', () => {
 
   it('Ctrl+Alt+1…9 focus the nth split pane (missing numbers ignored); Ctrl+⇧Enter shows the active pane alone and back', async () => {
     await boot();
-    fireEvent.click(screen.getByText(/^\+ 분할/));
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     const panes = () => screen.getAllByTestId(/^pane-/);
     const activeIndex = () => panes().findIndex((p) => p.classList.contains('active'));
     expect(activeIndex()).toBe(2);
@@ -350,8 +350,8 @@ describe('desktop-like navigation', () => {
 
   it('Ctrl+Alt+⇧[ / ] move the active pane left / right, as ⋯ 왼쪽으로 / 오른쪽으로 이동', async () => {
     await boot();
-    fireEvent.click(screen.getByText(/^\+ 분할/));
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     const ids = () => screen.getAllByTestId(/^pane-/).map((p) => p.dataset.testid);
     const [a, b, c] = ids();
     press('BracketLeft', { altKey: true, shiftKey: true });

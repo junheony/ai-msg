@@ -10,12 +10,11 @@ import { deleteLayout, layoutPanes, listLayouts, saveLayout, type SavedLayout } 
 import { Login } from './components/Login';
 import { SettingsView } from './components/SettingsView';
 import { Toasts, type ToastItem } from './components/Toasts';
+import { SplitIcon } from './components/icons';
 import { postPin, postPinOrder } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
 import { Pane, sendFromPane, TOGGLE_SIDE_EVENT, useQueueRunner } from './components/Pane';
-import { PermissionCard } from './components/PermissionCard';
-import { QuestionCard } from './components/QuestionCard';
 import { Sidebar } from './components/Sidebar';
 import { UsageChip } from './components/UsageChip';
 import { UsageSheet } from './components/UsageSheet';
@@ -28,7 +27,7 @@ import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload }
 import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
-import { dockedPanes, initialState, openPanes, orphanCards, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
+import { dockedPanes, initialState, openPanes, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
@@ -1229,9 +1228,6 @@ export function App() {
   const setCwd = has('sessionOps') ? (s: SessionEntry) => setCwdFor(s) : undefined;
   const duplicate = has('sessionOps') ? (sessionId: string) => { send({ type: 'duplicate_session', sessionId }); } : undefined;
   const sessionActions = { pins: state.pins, onRename: renameSession, onTogglePin: togglePin, onArchive: archiveSession, onDelete: (s: SessionEntry) => askDelete(s), ...(setCwd ? { onSetCwd: setCwd } : {}), ...(duplicate ? { onDuplicate: duplicate } : {}) };
-  const footAccount = active.session?.account ?? null;
-  const orphanPerms = orphanCards(state.panes, state.pending);
-  const orphanQs = orphanCards(state.panes, state.questions);
   /** A session's name for the 작업 현황 list: its title, else its folder, else its id's first 8 characters. */
   const titleOf = (sessionId: string, cwd: string | null) => paletteSessions.find((x) => x.sessionId === sessionId)?.title
     ?? state.panes.find((p) => p.session?.sessionId === sessionId)?.session?.title
@@ -1259,9 +1255,9 @@ export function App() {
         {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <div className="topbar-head" ref={setHeadSlot} />
-        <UsageChip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} compact={phone} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
+        <UsageChip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} compact={phone} tight={phone && state.pending.length + state.questions.length > 0} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
         <div className="topbar-end">
-          {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
+          {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
           <ActivityButton
             ready={state.ready} connected={state.connected} downSince={downSince} onRetry={retryNow}
             pending={state.pending} questions={state.questions}
@@ -1316,13 +1312,7 @@ export function App() {
         </div>
       )}
       {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
-      <Toasts toasts={toasts} onDismiss={dismissToast} />
-      {(orphanPerms.length > 0 || orphanQs.length > 0) && (
-        <div className="global-cards">
-          {orphanPerms.map((p) => <PermissionCard key={p.requestId} req={p} onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })} />)}
-          {orphanQs.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })} />)}
-        </div>
-      )}
+      <Toasts toasts={toasts} onDismiss={dismissToast} aboveComposer />
       <div ref={bodyRef} className="body">
         <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" data-testid="cards-live" />
         {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
@@ -1382,8 +1372,10 @@ export function App() {
             unread={state.unread}
             waiting={[...state.pending, ...state.questions].map((c) => c.sessionId).filter((id): id is string => !!id)}
             onOpenSettings={() => setSettingsOpen(true)}
-            avatar={footAccount ? ([...accounts.label(footAccount)][0] ?? '').toUpperCase() : 'D'}
-            avatarTitle={footAccount ? `deck · ${footAccount === 'gpt' ? 'GPT' : `계정 ${accounts.label(footAccount)}`}` : 'deck'}
+            // The avatar is the person using deck, not the shown session's account (that one is the usage chip's): the
+            // same letter on the new-session screen and in any chat.
+            avatar="D"
+            avatarTitle="deck"
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
               { label: '사용량 기록', run: () => setUsageOpen('history') },
@@ -1399,7 +1391,7 @@ export function App() {
           {phone && state.panes.length > 1 && (
             // 36px strip, 44px presses: "1 · 제목…" (the title cut by CSS), + at the end; press-and-drag reorders.
             <div className="pane-switch" data-testid="split-tabs" role="group" aria-label="분할" {...tabs.stripProps}>
-              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} aria-pressed={p.id === active.id} {...(p.session ? { title: p.session.title } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}><span className="tab-pill">{i + 1}{p.session ? ` · ${p.session.title}` : ''}</span></button>)}
+              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} aria-pressed={p.id === active.id} {...(p.session ? { title: p.session.title } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}><span className="tab-pill">{i + 1} · {p.session?.title ?? '새 세션'}</span></button>)}
               <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}><span className="tab-pill">+</span></button>
             </div>
           )}

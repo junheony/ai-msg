@@ -112,10 +112,12 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
 }
 
 /** The one usage chip in the top bar; it opens the usage sheet (UsageSheet). */
-export function UsageChip({ usage, current, next = null, grok = null, compact = false, open = false, onToggle, now: fixedNow }: {
+export function UsageChip({ usage, current, next = null, grok = null, compact = false, tight = false, open = false, onToggle, now: fixedNow }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
   /** Phone: the value shrinks to "42%" / "A→B" / "✕". */
   compact?: boolean;
+  /** Phone with an 승인 대기 badge next to it (§3.5): shorter still, "A42" (the activity dot gets the room). */
+  tight?: boolean;
   open?: boolean; onToggle: () => void; now?: number;
 }) {
   const now = useClock(fixedNow);
@@ -124,11 +126,12 @@ export function UsageChip({ usage, current, next = null, grok = null, compact = 
   const seats = buildSeats(usage, active, grok, now);
   const st = chipState({ seats, current, next, stale: usage.usageMode !== 'cli' && !usage.deckReachable, now, label });
   if (!st) return null;
-  const value = compact ? st.compactText : st.text;
+  const short = compact && tight;
+  const value = compact ? (short ? st.compactText.replace(/%$/, '') : st.compactText) : st.text;
   return (
     <button
       type="button"
-      className={`usage-chip ${st.kind}${st.stale && st.kind !== 'stale' ? ' stale' : ''}${compact ? ' compact' : ''}`}
+      className={`usage-chip ${st.kind}${st.stale && st.kind !== 'stale' ? ' stale' : ''}${compact ? ' compact' : ''}${short ? ' tight' : ''}`}
       data-testid="usage-chip"
       aria-label={st.aria}
       aria-haspopup="dialog"
