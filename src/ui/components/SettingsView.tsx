@@ -250,7 +250,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
                 {onGrokUnlock && <button type="button" className="btn" onClick={onGrokUnlock}>잠금 해제</button>}
               </div>
             )}
-            <Hint short="계정별 5시간·주간 한도는 상단 사용량 칩의 시트에서 봅니다." />
+            <Hint short="계정별 5시간·주간 한도는 상단 사용량 띠를 눌러 시트에서 봅니다." />
           </section>
         </div>
       </div>

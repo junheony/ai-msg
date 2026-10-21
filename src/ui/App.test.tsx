@@ -883,6 +883,27 @@ describe('App phone layout (D10)', () => {
     expect(labels()).toEqual(['1 · two', '2 · 새 세션', '3 · one']);
   });
 
+  it('usage strip: in the top bar on a desktop, a line of its own under the top bar on a phone', async () => {
+    const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 42, resetsAt: null } } } };
+    mockMatchMedia(false);
+    await boot();
+    server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
+    expect(screen.getByTestId('usage-strip').closest('.topbar')).not.toBeNull();
+    cleanup();
+    mockMatchMedia(true);
+    await boot();
+    server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
+    const strip = screen.getByTestId('usage-strip');
+    expect(strip.closest('.topbar')).toBeNull();
+    const row = strip.closest('.usage-strip-row')!;
+    // Portalled into the slot right after the top bar; the bar keeps no usage element of its own.
+    expect(row.parentElement?.classList.contains('usage-strip-slot')).toBe(true);
+    expect(row.parentElement?.previousElementSibling?.classList.contains('topbar')).toBe(true);
+    expect(document.querySelector('.topbar [data-testid="usage-strip"], .topbar [data-testid="usage-chip"]')).toBeNull();
+    // Phone: the mid stage (no bars).
+    expect(strip.querySelector('.usage-seg-bar')).toBeNull();
+  });
+
   it('Escape closes the open phone drawer', async () => {
     mockMatchMedia(true);
     await boot();
@@ -1169,10 +1190,10 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
 
   const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 42, resetsAt: null } } } };
 
-  it('the usage chip toggles the usage sheet; ✕ hands focus back to the chip', async () => {
+  it('the usage strip toggles the usage sheet; ✕ hands focus back to the strip', async () => {
     await boot();
     server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
-    const btn = screen.getByTestId('usage-chip');
+    const btn = screen.getByTestId('usage-strip');
     expect(btn.getAttribute('aria-expanded')).toBe('false');
     btn.focus();
     fireEvent.click(btn);
@@ -1189,7 +1210,7 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(document.activeElement).toBe(btn);
   });
 
-  it('아바타 메뉴 → 사용량 기록 (설정 has no row for it): the sheet opens with the history; closing it lands focus on the top bar usage chip', async () => {
+  it('아바타 메뉴 → 사용량 기록 (설정 has no row for it): the sheet opens with the history; closing it lands focus on the top bar usage strip', async () => {
     await boot();
     server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
     act(() => { window.dispatchEvent(new Event('deck:open-settings')); });
@@ -1200,7 +1221,7 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     const sheet = screen.getByRole('dialog', { name: '사용량' });
     expect(within(sheet).getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
-    expect(document.activeElement).toBe(screen.getByTestId('usage-chip'));
+    expect(document.activeElement).toBe(screen.getByTestId('usage-strip'));
   });
 
   const dot = () => screen.getByTestId('activity-btn');
@@ -1519,12 +1540,13 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     openSession('one');
     expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
     server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: '5h 여유', asOpus: true } as ServerMessage);
-    // The usage chip says where the next turn goes (→C until the session's own account is known), on a phone too;
-    // the reason is in its title.
+    // The usage strip marks where the next turn goes (→ before C until the session's own account is known); the
+    // reason is in its title.
     const tag = screen.getByTestId('next-c');
-    expect(tag.textContent).toBe('→C');
-    expect(screen.getByTestId('usage-chip').title).toContain('5h 여유');
-    expect(screen.getByTestId('usage-chip').getAttribute('aria-label')).toContain('다음 턴 C(Opus) 계정');
+    expect(tag.textContent).toBe('→');
+    expect(screen.getByTestId('seg-c').contains(tag)).toBe(true);
+    expect(screen.getByTestId('usage-strip').title).toContain('5h 여유');
+    expect(screen.getByTestId('usage-strip').getAttribute('aria-label')).toContain('다음 턴 C(Opus)');
     server({ type: 'route_preview', sessionId: 'other', account: 'a', reason: 'x' } as ServerMessage);
     expect(screen.queryByTestId(/^next-/)).toBeNull(); // an answer for another session is not shown
   });
