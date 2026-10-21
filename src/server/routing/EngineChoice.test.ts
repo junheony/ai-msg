@@ -34,7 +34,7 @@ describe('chooseEngine (D3)', () => {
     expect(chooseEngine(input({ usage: usage([40, 50, 60], 35) }))).toMatchObject({ engine: 'claude', reason: expect.stringContaining('A') });
     expect(chooseEngine(input({ usage: usage([40, 50, 60], null) }))).toEqual({ engine: 'claude', reason: '자동 · GPT 잔여량 불명 → Claude' });
     expect(chooseEngine(input({ usage: usage([40, 50, 60], 20, 'down') })).engine).toBe('claude');
-    expect(chooseEngine(input({ usage: usage([40, 50, 60], 86) })).reason).toContain('GPT 주간 86%');
+    expect(chooseEngine(input({ usage: usage([40, 50, 60], 86) })).reason).toContain('GPT 주간 14% 남음');
     expect(chooseEngine(input({ gptCooldownUntilMs: NOW + 60_000 })).reason).toContain('쿨다운');
     expect(chooseEngine(input({ gptCooldownUntilMs: NOW - 1 })).engine).toBe('codex');
     // every Claude account excluded (≥95 %) → any known GPT headroom wins
@@ -48,7 +48,7 @@ describe('chooseEngine (D3)', () => {
     const u = withCredits(usage([40, 50, 60], 100));
     expect(chooseEngine(input({ choice: 'codex', usage: u }))).toEqual({ engine: 'codex', reason: 'GPT 지정' });
     // credits cost money: auto never opens on GPT because of them, even with every Claude account spent
-    expect(chooseEngine(input({ usage: u }))).toEqual({ engine: 'claude', reason: '자동 · GPT 주간 100% → Claude' });
+    expect(chooseEngine(input({ usage: u }))).toEqual({ engine: 'claude', reason: '자동 · GPT 주간 0% 남음 → Claude' });
     expect(chooseEngine(input({ usage: withCredits(usage([96, 97, 98], 100)) })).engine).toBe('claude');
   });
 });

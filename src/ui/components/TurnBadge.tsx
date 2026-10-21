@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { modelLabelOf } from '../../shared/models';
+import { FAST_FELL_BACK_NOTE, FAST_NOTE, modelLabelOf } from '../../shared/models';
 import type { TurnBadge as Badge } from '../../shared/protocol';
 import { useAccounts } from '../accounts';
 import { has } from '../features';
@@ -68,6 +68,8 @@ export function TurnBadge({ badge, model, stopped = false, failed = false, cache
     return () => document.removeEventListener('pointerdown', outside);
   }, [open]);
   const cold = isCacheCold(at, now) ? COLD_HINT : null;
+  // ⚡ Only a turn that really ran fast carries ↯ (a standard turn of a session with the switch on shows none).
+  const fast = badge.modelNote?.startsWith(FAST_NOTE) ? 'on' : badge.modelNote === FAST_FELL_BACK_NOTE ? 'fell' : null;
   const status = stopped ? (failed ? '실패' : '중단됨') : null;
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
   const onKeyDown = (e: KeyboardEvent<HTMLDetailsElement>) => {
@@ -82,6 +84,7 @@ export function TurnBadge({ badge, model, stopped = false, failed = false, cache
       <summary className="tb-pill">
         <span className="tb-model">{modelLabelOf(model ?? badge.model)}</span>
         <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={`계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`}><span className="acct-name">{label}</span></span>
+        {fast && <span className={`tb-fast${fast === 'fell' ? ' fell' : ''}`} data-testid="badge-fast" title={badge.modelNote!}><span aria-hidden="true">{fast === 'on' ? '↯' : '↯→표준'}</span><span className="sr-only">{badge.modelNote}</span></span>}
         {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
         {status && <span className="tb-stopped" title={tokens}>{status}</span>}
         {(cacheNote || cold) && <span className="tb-dot" data-testid="badge-dot"><span className="sr-only">캐시 알림</span></span>}

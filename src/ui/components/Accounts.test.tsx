@@ -46,8 +46,8 @@ describe('usage sheet with any number of accounts', () => {
     render(<With list={SIX}>{sheet('d')}</With>);
     expect(cards()).toEqual(['Main', 'Work', 'D', 'Team-2', 'Personal', 'GPT']);
     expect(screen.queryByTestId('account-old')).toBeNull();
-    expect(screen.getByTestId('a-fiveHour').textContent).toBe('5h10%');
-    expect(screen.getByTestId('d-weekly').textContent).toBe('주간5%');
+    expect(screen.getByTestId('a-fiveHour').textContent).toBe('5h90% 남음');
+    expect(screen.getByTestId('d-weekly').textContent).toBe('주간95% 남음');
     expect(screen.getByTestId('b-fiveHour').textContent).toContain('—');
     expect(screen.getByTestId('team-2-weekly').textContent).toContain('—');
     expect(screen.getByTestId('account-d').className).toContain('current');
@@ -79,7 +79,7 @@ describe('AccountPicker with the configured accounts', () => {
     expect(screen.getByTestId('account-picker').textContent).toContain('자동 · Team-2');
     expect(names()).toEqual(['자동', 'Main', 'Work (Desktop)', 'D', 'Team-2', 'Personal']);
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
-    expect(items[1]!.textContent).toContain('5h 10% · 주간 20%');
+    expect(items[1]!.textContent).toContain('5h 90% 남음 · 주간 80% 남음');
     expect(items[2]!.querySelector('.mp-desc')).toBeNull();
     fireEvent.click(items[4]!);
     expect(onPin).toHaveBeenCalledWith('team-2');

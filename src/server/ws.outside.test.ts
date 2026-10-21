@@ -19,7 +19,7 @@ import { SettingsStore } from './settings';
 import { SessionStateStore } from './turn/SessionState';
 import { SHUTDOWN_ABORTED, TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
-import { attachWebSocket, recycleNotice } from './ws';
+import { FAST_STEER_REJECTED, FAST_WAIT_BEHIND, attachWebSocket, fastWaitNotice, recycleNotice } from './ws';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'e'.repeat(64);
@@ -295,14 +295,14 @@ describe('ws: a running turn\'s own writes', () => {
 
 describe('ws: deck follows a conversation that went on outside it', () => {
   /** Starts a turn that leaves the process held open with one background task. */
-  async function heldOpen(S: string, name: string) {
+  async function heldOpen(S: string, name: string, fast = false) {
     const cwd = await seed(S, name);
     fake = fakeClaudeCli();
     const a = await client();
     await a.next('hello');
-    a.send({ type: 'open_session', sessionId: S });
+    a.send({ type: 'open_session', sessionId: S, accepts: ['turn_queued'] });
     await a.next('history');
-    a.send({ type: 'send', sessionId: S, cwd, text: 'go' });
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', ...(fast ? { fast: true } : {}) });
     const first = await a.next('turn_started');
     fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'explore' }]), cli.result('launched', S));
     await a.next('turn_result', (m) => m.turnId === first.turnId);
@@ -326,6 +326,96 @@ describe('ws: deck follows a conversation that went on outside it', () => {
     expect(old.inputs.length).toBe(1);
     expect(fake.state.calls).toBe(1);
     expect(a.got.filter((m) => m.type === 'turn_result' && !m.ok)).toEqual([]);
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+  });
+
+  // ⚡ 빠르게 is a launch setting: a send asking otherwise than the held-open process never joins it (billing as chosen).
+  // Its background work is not cut: the send waits (told so) until the process ends by itself, then a new one answers.
+  it.each([[false, true], [true, false]])('⚡ fast switched (process fast=%s, send fast=%s): waits for the background work, then a new process answers as asked', async (was, now) => {
+    const S = was ? '5f5f5f5f-5f5f-4f5f-8f5f-5f5f5f5f5f51' : '5f5f5f5f-5f5f-4f5f-8f5f-5f5f5f5f5f50';
+    const { a, cwd } = await heldOpen(S, `fastswap${was ? 1 : 0}`, was);
+    const old = fake;
+    expect(old.spawns[0]!.files.settings?.fastMode === true).toBe(was);
+    fake = fakeClaudeCli();
+    a.send({ type: 'send', sessionId: S, cwd, text: 'next', clientRef: 'ref-f', ...(now ? { fast: true } : {}) });
+    expect(await a.next('turn_queued')).toMatchObject({ sessionId: S, clientRef: 'ref-f', behind: FAST_WAIT_BEHIND });
+    expect(await a.next('turn_notice', (m) => m.turnId === '')).toMatchObject({ sessionId: S, message: fastWaitNotice(1) });
+    // Held as going in: a resent copy (a stalled socket's reconnect) is refused, never run twice.
+    a.send({ type: 'send', sessionId: S, cwd, text: 'next', clientRef: 'ref-f', ...(now ? { fast: true } : {}) });
+    expect(await a.next('error', (m) => m.clientRef === 'ref-f')).toMatchObject({ code: 'in_flight' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fake.state.calls).toBe(0);
+    expect(old.inputs.length).toBe(1);
+    // The background work finishes; the old process ends by itself and the send starts the new one.
+    old.push(cli.bgLevel([]));
+    old.end();
+    const next = await a.next('turn_started', (m) => m.clientRef === 'ref-f');
+    expect(next.reason).not.toBe('백그라운드 대기 중 이어 보냄');
+    fake.push(cli.init(S), cli.result('fresh', S));
+    expect(await a.next('turn_result', (m) => m.turnId === next.turnId)).toMatchObject({ ok: true });
+    expect(old.inputs.length).toBe(1);
+    expect(fake.state.calls).toBe(1);
+    expect(fake.spawns[0]!.files.settings?.fastMode === true).toBe(now);
+    expect(a.got.filter((m) => m.type === 'turn_result' && !m.ok)).toEqual([]);
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+  });
+
+  it('⚡ 취소 on a send waiting for that background work takes it out: nothing is sent once the process ends', async () => {
+    const S = '5f5f5f5f-5f5f-4f5f-8f5f-5f5f5f5f5f53';
+    const { a, cwd } = await heldOpen(S, 'fastcancel', false);
+    const old = fake;
+    fake = fakeClaudeCli();
+    a.send({ type: 'send', sessionId: S, cwd, text: 'next', clientRef: 'ref-c', fast: true });
+    await a.next('turn_queued');
+    a.send({ type: 'cancel_queued', sessionId: S, clientRef: 'ref-c' });
+    await new Promise((r) => setTimeout(r, 30));
+    old.push(cli.bgLevel([]));
+    old.end();
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    expect(fake.state.calls).toBe(0);
+    expect(a.got.some((m) => m.type === 'turn_started' && m.clientRef === 'ref-c')).toBe(false);
+    a.close();
+  });
+
+  it.each([[true, false], [false, true]])('⚡ a steer whose ↯ (%s→%s) differs from the running process is refused — sent after the turn instead', async (was, now) => {
+    const S = was ? '5f5f5f5f-5f5f-4f5f-8f5f-5f5f5f5f5f54' : '5f5f5f5f-5f5f-4f5f-8f5f-5f5f5f5f5f55';
+    const cwd = await seed(S, `faststeer${was ? 1 : 0}`);
+    fake = fakeClaudeCli();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'open_session', sessionId: S });
+    await a.next('history');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', ...(was ? { fast: true } : {}) });
+    const t = await a.next('turn_started');
+    fake.push(cli.init(S));
+    await vi.waitFor(() => expect(fake.inputs).toHaveLength(1));
+    a.send({ type: 'steer', turnId: t.turnId, steerId: 'st-1', text: 'also this', ...(now ? { fast: true } : {}) });
+    expect(await a.next('steer_rejected', (m) => m.steerId === 'st-1')).toMatchObject({ message: FAST_STEER_REJECTED });
+    expect(a.got.some((m) => m.type === 'steer_delivered')).toBe(false);
+    // The same ↯ as the process still goes in.
+    a.send({ type: 'steer', turnId: t.turnId, steerId: 'st-2', text: 'and this', ...(was ? { fast: true } : {}) });
+    await vi.waitFor(() => expect(fake.inputs).toHaveLength(2));
+    expect(a.got.filter((m) => m.type === 'steer_rejected' && m.steerId === 'st-2')).toEqual([]);
+    fake.push(cli.result('done', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    fake.end();
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+  });
+
+  it('⚡ the same fast setting as the held-open process: the send joins it as before', async () => {
+    const S = '5f5f5f5f-5f5f-4f5f-8f5f-5f5f5f5f5f52';
+    const { a, cwd } = await heldOpen(S, 'fastsame', true);
+    a.send({ type: 'send', sessionId: S, cwd, text: 'status?', clientRef: 'ref-s', fast: true });
+    const fu = await a.next('turn_started', (m) => m.clientRef === 'ref-s');
+    expect(fu.reason).toBe('백그라운드 대기 중 이어 보냄');
+    fake.push(cli.result('still going', S));
+    await a.next('turn_result', (m) => m.turnId === fu.turnId);
+    expect(fake.state.calls).toBe(1);
+    fake.push(cli.bgLevel([]));
+    fake.end();
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
   });

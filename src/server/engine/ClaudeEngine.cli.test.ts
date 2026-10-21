@@ -220,3 +220,58 @@ describe('ClaudeEngine over the claude CLI', () => {
     expect(evs.find((e) => e.kind === 'result')).toMatchObject({ ok: true, sessionId: 'child' });
   });
 });
+
+describe('ClaudeEngine — ⚡ 빠르게 (fast mode)', () => {
+  it('fast: --model is Opus whatever was routed, fastMode merged into the one --settings file (hooks kept)', async () => {
+    const { f, engine } = await setup();
+    f.push(cli.init('s1'), cli.result('a', 's1'));
+    await drain(engine.runTurn(req({ model: 'fable', fast: true, allowRules: ['Bash(npm test:*)'] })));
+    const s = f.spawns[0]!;
+    expect(argValue(s.args, '--model')).toBe('claude-opus-5-5');
+    expect(s.args.filter((a) => a === '--settings' || a.startsWith('--settings=')).length).toBe(1);
+    const settings = s.files.settings as { fastMode?: boolean; hooks: Record<string, unknown>; permissions: unknown };
+    expect(settings.fastMode).toBe(true);
+    expect(settings.hooks.PreToolUse).toBeTruthy();
+    expect(settings.permissions).toEqual({ allow: ['Bash(npm test:*)'] });
+  });
+
+  it('no fast: the arguments and settings are what they were', async () => {
+    const a = await setup();
+    a.f.push(cli.init('s1'), cli.result('a', 's1'));
+    await drain(a.engine.runTurn(req({ model: 'fable' })));
+    const s = a.f.spawns[0]!;
+    expect(argValue(s.args, '--model')).toBe('claude-fable-5-1');
+    expect((s.files.settings as { fastMode?: boolean }).fastMode).toBeUndefined();
+    expect(JSON.stringify(s.files.settings)).not.toContain('fastMode');
+  });
+
+  it('a fast turn refused for usage credits gets deck’s explanation as a notice before the failed result', async () => {
+    const { f, engine } = await setup();
+    f.push(cli.init('s1'), { type: 'result', subtype: 'success', is_error: true, result: 'Fast mode requires usage credits', session_id: 's1', usage: { input_tokens: 0, output_tokens: 0 } });
+    const evs = await drain(engine.runTurn(req({ fast: true })));
+    const i = evs.findIndex((e) => e.kind === 'notice' && e.message.startsWith('⚡') && e.message.includes('사용 크레딧'));
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(evs[i]).toMatchObject({ fast: 'off' });
+    // Nothing is retried by itself: the words never promise one.
+    expect((evs[i] as { message: string }).message).not.toContain('다시 시도');
+    expect(evs.findIndex((e) => e.kind === 'result')).toBeGreaterThan(i);
+  });
+
+  it('the same failure without fast adds no notice', async () => {
+    const { f, engine } = await setup();
+    f.push(cli.init('s1'), { type: 'result', subtype: 'success', is_error: true, result: 'Fast mode requires usage credits', session_id: 's1', usage: { input_tokens: 0, output_tokens: 0 } });
+    const evs = await drain(engine.runTurn(req()));
+    expect(evs.some((e) => e.kind === 'notice')).toBe(false);
+  });
+
+  it('a CLI system/notification reaches the turn as a notice (fast ones with deck’s words)', async () => {
+    const { f, engine } = await setup();
+    f.push(cli.init('s1'), { type: 'system', subtype: 'notification', key: 'fast', text: 'Fast mode disabled · usage credits exhausted', priority: 'high', session_id: 's1' }, cli.result('a', 's1'));
+    const evs = await drain(engine.runTurn(req({ fast: true })));
+    const n = evs.find((e) => e.kind === 'notice');
+    expect(n).toMatchObject({ kind: 'notice', fast: 'exhausted' });
+    expect((n as { message: string }).message).toContain('usage credits exhausted');
+    expect((n as { message: string }).message).toContain('표준 속도로 돕니다');
+    expect((n as { message: string }).message).not.toContain('다시 시도');
+  });
+});

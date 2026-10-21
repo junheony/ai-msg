@@ -76,24 +76,31 @@ export function isPlainMod(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'shift
 
 /**
  * ⌘1 … ⌘9 (Ctrl elsewhere): the index of the 고정됨 row this keydown opens, or null. By physical key, top row only;
- * never with Shift / Alt or during IME composition. A repeat matches too, so the caller can keep the browser's own ⌘N off it.
+ * never with Shift / Alt. A repeat matches too, so the caller can keep the browser's own ⌘N off it.
+ *
+ * Also mid-IME: a Hangul syllable stays in composition in the composer until the next key commits it, so ⌘1 right after
+ * typing Korean arrives with isComposing true — skipping it left the key to the browser (its own tab switch). A ⌘-digit
+ * is never part of a composition; then only `code` counts (the IME may have rewritten `key`).
  */
 export function matchPinShortcut(e: ShortcutKey, mac: boolean): number | null {
-  if (e.isComposing || e.keyCode === 229 || !isPlainMod(e, mac)) return null;
-  const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code ? null : /^([1-9])$/.exec(e.key));
+  if (!isPlainMod(e, mac)) return null;
+  const composing = e.isComposing || e.keyCode === 229;
+  const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code || composing ? null : /^([1-9])$/.exec(e.key));
   return digit ? Number(digit[1]) - 1 : null;
 }
 
 /**
  * ⌘⌥1 … ⌘⌥9 (Ctrl+Alt elsewhere): the index of the split pane to focus (left to right), or null. By physical key, so a
- * Korean input source (or ⌥ turning the digit into a symbol on a Mac) still matches; never with Shift or mid-IME.
+ * Korean input source (or ⌥ turning the digit into a symbol on a Mac) still matches (mid-IME too, by code); never with Shift.
  * Ctrl+Alt off a Mac in a text field is AltGr there, so it stays the field's.
  */
 export function matchPaneShortcut(e: ShortcutKey, opts: { mac: boolean; typing: boolean }): number | null {
-  if (e.isComposing || e.keyCode === 229 || e.shiftKey || !e.altKey) return null;
+  if (e.shiftKey || !e.altKey) return null;
   if (!(opts.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return null;
   if (!opts.mac && opts.typing) return null;
-  const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code ? null : /^([1-9])$/.exec(e.key));
+  // Mid-IME by code only, as matchPinShortcut (the caller commits the composition before acting).
+  const composing = e.isComposing || e.keyCode === 229;
+  const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code || composing ? null : /^([1-9])$/.exec(e.key));
   return digit ? Number(digit[1]) - 1 : null;
 }
 

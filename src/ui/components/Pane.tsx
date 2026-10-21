@@ -30,6 +30,7 @@ import { NO_TABS, activeTab, carriesTabs, closeTab, openTab, readSideWidth, reca
 import { hasOpenPopup } from '../composerFocus';
 import { isMacPlatform, isTypingTarget, modKeys } from '../shortcuts';
 import { PHONE_QUERY, useIsPhone } from '../useIsPhone';
+import { isFast } from '../fastMode';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -73,7 +74,7 @@ export type SendFn = (m: ClientMessage) => unknown;
  * A send that never left (socket down) becomes a held queue item at once (`send_failed`), dispatched in the same tick as
  * `sent` so React renders neither a bubble nor 시작하는 중… for it.
  */
-export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: SendFn, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string, opts: { keepAttachments?: boolean; ignoreFit?: boolean } = {}): void {
+export function sendFromPane(pane: PaneState, text: string, attachments: UploadedAttachment[], dispatch: (a: Action) => void, send: SendFn, defaultMode: AppState['defaultPermMode'] = null, keepPaused = false, ref?: string, opts: { keepAttachments?: boolean; ignoreFit?: boolean; noFast?: boolean } = {}): void {
   const s = pane.session;
   if (!s) return;
   const model = paneModel(pane);
@@ -89,6 +90,8 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
     ...(s.sessionId === null && pane.handoffFrom ? { handoffFrom: pane.handoffFrom.sessionId } : {}),
     ...(s.sessionId === null && s.newTitle ? { title: s.newTitle } : {}),
     ...(opts.ignoreFit ? { ignoreFit: true } : {}),
+    // ⚡ 빠르게: an existing Claude session's switch, never on a retry that names its model (it would turn into Opus).
+    ...(!opts.noFast && s.sessionId && (s.engine ?? 'claude') === 'claude' && isFast(s.sessionId) ? { fast: true } : {}),
     clientRef,
   });
   if (sent === false) dispatch({ type: 'send_failed', clientRef, paneId: pane.id });
@@ -534,7 +537,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       const { pane: p, send: out, defaultMode } = latest.current;
       const prompt = ([...p.items].reverse().find((it) => it.kind === 'user') as { text: string } | undefined)?.text;
       if (!prompt || prompt === HANDOFF_PROMPT) return;
-      sendFromPane({ ...p, model: m, modelPicked: true }, prompt, [], dispatch, out, defaultMode, false, undefined, { keepAttachments: true });
+      sendFromPane({ ...p, model: m, modelPicked: true }, prompt, [], dispatch, out, defaultMode, false, undefined, { keepAttachments: true, noFast: true });
     };
     return { turnOf: (item) => replyTurn(latest.current.pane.items, item), ...(regenBranch ? { branch } : {}), ...(regenRetry ? { retryWith } : {}), models: regenModels, current: model };
   }, [sid, regenBranch, regenRetry, regenModels, model]);
@@ -603,6 +606,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
           onSendText={(text) => sendFromPane(pane, text, [], dispatch, send, app.defaultPermMode ?? null, false, undefined, { keepAttachments: true })}
+          onSendStandard={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null, false, undefined, { noFast: true })}
           {...(has('tasks') && s.cwd && !grokBot ? { onStartTask: (text: string) => startTaskFromPane(pane, text, dispatch, send) } : {})}
           tasks={tasksForPane(app.tasks ?? [], s.sessionId, s.cwd)}
           taskCap={app.taskCap ?? null}
@@ -662,7 +666,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
               const ids = pane.attachments.map((a) => a.id);
               dispatch({ type: 'queue_add', text, paneId: pane.id, steerId });
               // Never left (socket down): an ordinary queue item at once.
-              if (send({ type: 'steer', turnId: pane.activeTurnId, steerId, text: body, ...(ids.length ? { attachments: ids } : {}) }) === false) dispatch({ type: 'steer_lost', steerId, paneId: pane.id, unsent: true });
+              // ⚡ ↯ rides along: the server refuses a steer whose ↯ differs from the running process's (steer_rejected) —
+              // it then waits here as a queue item and goes out after the turn as a send, with the switch as it is then.
+              const fast = s.sessionId && (s.engine ?? 'claude') === 'claude' && isFast(s.sessionId) ? { fast: true } : {};
+              if (send({ type: 'steer', turnId: pane.activeTurnId, steerId, text: body, ...(ids.length ? { attachments: ids } : {}), ...fast }) === false) dispatch({ type: 'steer_lost', steerId, paneId: pane.id, unsent: true });
               return;
             }
             dispatch({ type: 'queue_add', text, paneId: pane.id });

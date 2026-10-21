@@ -108,7 +108,7 @@ describe('shortcuts', () => {
     expect(shortcutList(true).find((s) => s.id === 'palette')?.keys).toBe('⌘K');
     expect(shortcutList(false).find((s) => s.id === 'new-pane')?.keys).toBe('Ctrl+⇧O');
   });
-  it('⌘1 … ⌘9 → the 고정됨 row index: plain modifier only, never mid-IME', () => {
+  it('⌘1 … ⌘9 → the 고정됨 row index: plain modifier only, also mid-IME (by code)', () => {
     const m = (code: string, extra: Partial<ShortcutKey> & { repeat?: boolean } = {}, isMac = true) => matchPinShortcut(key(code, { metaKey: true, ...extra }), isMac);
     expect(m('Digit1')).toBe(0);
     expect(m('Digit9')).toBe(8);
@@ -119,8 +119,10 @@ describe('shortcuts', () => {
     expect(m('Digit1', { altKey: true })).toBeNull();
     expect(m('Digit1', { ctrlKey: true })).toBeNull();
     expect(m('Digit1', { repeat: true })).toBe(0);
-    expect(m('Digit1', { isComposing: true })).toBeNull();
-    expect(m('Digit1', { keyCode: 229 })).toBeNull();
+    // A Hangul syllable still composing in the composer: ⌘1 comes with isComposing true and must still open the row.
+    expect(m('Digit1', { isComposing: true, key: '1' })).toBe(0);
+    expect(m('Digit3', { keyCode: 229 })).toBe(2);
+    expect(matchPinShortcut({ ...key(''), key: '3', metaKey: true, isComposing: true }, true)).toBeNull(); // mid-IME: by code only
     expect(matchPinShortcut(key('Digit2'), true)).toBeNull();
     expect(m('Digit2', {}, false)).toBeNull(); // ⌘ off Mac
     expect(matchPinShortcut(key('Digit2', { ctrlKey: true }), false)).toBe(1);
@@ -146,15 +148,16 @@ describe('shortcuts', () => {
     expect(shortcutList(false).find((s) => s.id === 'move-pane-right')?.keys).toBe('Ctrl+Alt+⇧]');
     expect(shortcutList(true).find((s) => s.id === 'toggle-side')?.keys).toBe('⌘⇧E');
   });
-  it('⌘⌥1 … ⌘⌥9 → the split pane index: by physical key (⌥ symbols, Korean input), never mid-IME / with Shift', () => {
+  it('⌘⌥1 … ⌘⌥9 → the split pane index: by physical key (⌥ symbols, Korean input, mid-IME by code), never with Shift', () => {
     const m = (code: string, extra: Partial<ShortcutKey> = {}, opts = { mac: true, typing: true }) => matchPaneShortcut(key(code, { metaKey: true, altKey: true, ...extra }), opts);
     expect(m('Digit1', { key: '¡' })).toBe(0);
     expect(m('Digit9', { key: 'ª' })).toBe(8);
     expect(m('Digit0')).toBeNull();
     expect(m('Digit1', { altKey: false })).toBeNull(); // ⌘1 is the 고정됨 row
     expect(m('Digit1', { shiftKey: true })).toBeNull();
-    expect(m('Digit1', { isComposing: true })).toBeNull();
-    expect(m('Digit1', { keyCode: 229 })).toBeNull();
+    expect(m('Digit1', { isComposing: true })).toBe(0);
+    expect(m('Digit1', { keyCode: 229 })).toBe(0);
+    expect(m('', { key: '2', isComposing: true })).toBeNull(); // mid-IME: by code only
     expect(m('Digit1', { ctrlKey: true })).toBeNull();
     expect(m('', { key: '2' })).toBe(1);
     expect(matchPaneShortcut(key('Digit3', { ctrlKey: true, altKey: true }), { mac: false, typing: false })).toBe(2);

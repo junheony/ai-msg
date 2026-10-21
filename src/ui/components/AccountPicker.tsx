@@ -1,7 +1,8 @@
 import { isGeminiAccount, isGrokAccount, type Account, type Seat } from '../../shared/accounts';
 import { useAccounts } from '../accounts';
 import { usageOf } from '../../shared/usage-types';
-import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
+import type { AccountUsage, UsageSnapshot, UsageWindow } from '../../shared/usage-types';
+import { shownPct, useClock, windowPassed } from './usageSeats';
 
 /** Small pin glyph: the session chip's account when pinned, and a turn badge whose account came from the pin. */
 export function PinIcon({ title }: { title?: string }) {
@@ -14,10 +15,13 @@ export function PinIcon({ title }: { title?: string }) {
 }
 
 /** 5h · 주간 · Fable — the Fable value is shown so a pin on an account at the Fable cap is visible where the pin is set. */
-/** Only the windows with a value ("5h 40% · 주간 60%"): an unknown one is left out, never "Fable —%". '' with none. */
-function pct(u: AccountUsage | undefined): string {
-  const parts: [string, number | null | undefined][] = [['5h', u?.fiveHour?.usedPct], ['주간', u?.weekly?.usedPct], ['Fable', u?.fable?.usedPct]];
-  return parts.filter(([, v]) => v != null).map(([k, v]) => `${k} ${v}%`).join(' · ');
+/**
+ * Only the windows with a value, as the share LEFT like the usage strip ("5h 60% 남음 · 주간 40% 남음"); a window whose
+ * reset time has passed since it was read says "리셋됨". An unknown one is left out, never "Fable —%". '' with none.
+ */
+function pct(u: AccountUsage | undefined, now: number): string {
+  const parts: [string, UsageWindow | null | undefined][] = [['5h', u?.fiveHour], ['주간', u?.weekly], ['Fable', u?.fable]];
+  return parts.filter(([, w]) => w?.usedPct != null).map(([k, w]) => `${k} ${windowPassed(w!, now) ? '리셋됨' : `${shownPct(w!)}% 남음`}`).join(' · ');
 }
 
 /**
@@ -63,6 +67,7 @@ export function AccountMenu({ pin, usage, onPin }: {
   onPin: (pin: Account | null) => void;
 }) {
   const names = useAccounts();
+  const now = useClock(undefined);
   const choose = (p: Account | null) => { if (p !== pin) onPin(p); };
   const item = (value: Account | null, name: string, desc: string) => (
     <button key={value ?? 'auto'} type="button" role="menuitemradio" aria-checked={value === pin} className={`mp-item ${value === pin ? 'on' : ''}`} onClick={() => choose(value)}>
@@ -77,7 +82,7 @@ export function AccountMenu({ pin, usage, onPin }: {
     <div className="mp-list" role="menu" aria-label="계정" data-testid="account-menu">
       <div className="mp-section" role="group" aria-label="계정">
         {item(null, '자동', '턴마다 잔여량과 캐시를 보고 고름')}
-        {names.active.map((a) => item(a.id, `${a.label}${a.home ? ' (Desktop)' : ''}`, pct(usage ? usageOf(usage, a.id) : undefined)))}
+        {names.active.map((a) => item(a.id, `${a.label}${a.home ? ' (Desktop)' : ''}`, pct(usage ? usageOf(usage, a.id) : undefined, now)))}
       </div>
     </div>
   );

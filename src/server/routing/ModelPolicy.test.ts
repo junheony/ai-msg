@@ -20,7 +20,7 @@ describe('resolveModel', () => {
 
   it('downgrades fable to opus when the account Fable window is ≥80 or unknown', () => {
     expect(resolveModel('fable', 'opus', 79)).toEqual({ model: 'fable', downgraded: false, note: null });
-    expect(resolveModel('fable', 'opus', 80)).toEqual({ model: 'opus', downgraded: true, note: 'Fable 80% 이상 → Opus 로 대체' });
+    expect(resolveModel('fable', 'opus', 80)).toEqual({ model: 'opus', downgraded: true, note: 'Fable 20% 남음 → Opus 로 대체' });
     expect(resolveModel('fable', 'opus', null)).toEqual({ model: 'opus', downgraded: true, note: 'Fable 잔여량 불명 → Opus 로 대체' });
     expect(resolveModel('fable', 'opus', null, 'deck')).toEqual({ model: 'opus', downgraded: true, note: 'Fable 잔여량 불명 → Opus 로 대체' });
     // An install that never saw usage-deck: unknown is no reason to change the model; a known value still is.

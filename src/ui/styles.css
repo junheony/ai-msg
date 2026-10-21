@@ -50,6 +50,7 @@
   --t-fast: 120ms; --t-base: 200ms; --t-sheet: 280ms;
   --avatar-1: #bc5638; --avatar-2: #667c49; --avatar-3: #407f76; --avatar-4: #3d77b8;
   --avatar-5: #7968c1; --avatar-6: #c14c75; --avatar-7: #8e7125; --avatar-8: #6a7684;
+  --avatar-glyph: #ffffff;
   font-family: var(--font);
   font-size: calc(15px * var(--font-scale, 1));
   line-height: 1.55;
@@ -520,8 +521,18 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seg.warn .usage-seg-bar > i { background: var(--warn); }
 .usage-seg:is(.danger, .spent, .cooldown) :is(.usage-seg-num, .usage-seg-reset) { color: var(--danger); font-weight: 600; }
 .usage-seg:is(.danger, .spent, .cooldown) .usage-seg-bar > i { background: var(--danger); }
-.usage-seg:is(.stale, .unknown) .usage-seg-bar > i { background: var(--muted); }
-.usage-seg.stale { outline: 1px dashed color-mix(in srgb, var(--muted) 75%, transparent); outline-offset: -1px; }
+/* Past the reset ("리셋됨": kind stale, no level class): grey label and an empty grey track. */
+.usage-seg:is(.stale:not(.ok, .warn, .danger, .spent, .estimated, .cooldown), .unknown) .usage-seg-bar > i { background: var(--muted); }
+.usage-seg.stale:not(.ok, .warn, .danger, .spent, .estimated, .cooldown) .usage-seg-who { color: var(--muted); font-weight: 500; }
+/* Old numbers before the reset: only the 12px clock and the age dim to --muted. Label, number and bar keep their level's
+   colour (nothing can have been given back since, so the old % left is an upper bound — the danger may be greater now). */
+.usage-seg.stale .usage-seg-reset.usage-seg-age { color: var(--muted); font-weight: 500; }
+.usage-seg-num, .usage-seg-age { display: inline-flex; align-items: center; gap: 3px; }
+.usage-seg-icon { flex-shrink: 0; }
+/* The numbers and bars say what is LEFT: one small word up front (full / mid) so "78%" is not read as used. */
+.usage-strip-head { padding: 0 1px 0 6px; font-size: var(--fs-meta); color: var(--muted); }
+/* Spent = an empty battery: no fill, the track itself turns red. */
+.usage-seg.spent .usage-seg-bar { background: color-mix(in srgb, var(--danger) 35%, var(--track)); }
 .usage-seg.estimated .usage-seg-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
 /* Off-screen copies of the three stages, measured for pickStage (fixed: they never widen a scroll area, and as a child of
    the top bar they are no flex item of it). */
@@ -555,12 +566,21 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seats { display: flex; flex-direction: column; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
 .usage-seat { display: flex; flex-direction: column; gap: 2px; padding: 10px var(--s3); border-radius: var(--r-sm); font-size: var(--fs-label); background: color-mix(in srgb, var(--fg) 2.5%, transparent); box-shadow: inset 0 0 0 1px var(--line); }
 .usage-seat.current { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
-.usage-seat.dim .usage-row, .usage-seat.down .usage-row, .usage-seat.unknown .usage-row { opacity: .7; }
+/* An old seat (cli stale, usage-deck out of reach, down / unknown with values): the same language as the strip — a clock
+   on its status tag, a line saying one turn reads it anew; green rows dim to --muted, amber / red / spent keep their colour
+   (an upper bound of what is left); a row past its reset is grey with a refresh. */
+.usage-seat.old .usage-seat-name { color: var(--fg); }
+.usage-row.old:not(.warn, .danger) .usage-value, .usage-row.old .usage-value small { color: var(--muted); }
+.usage-row.old:not(.warn, .danger) .usage-bar > i { --lvl: color-mix(in srgb, var(--muted) 70%, var(--track)); }
+.usage-row.passed .usage-value { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-meta); font-weight: 500; }
+.usage-icon { flex-shrink: 0; vertical-align: -1px; }
+.usage-tag.status:has(.usage-icon) { display: inline-flex; align-items: center; gap: 3px; }
+.usage-seat .usage-refresh-hint { display: flex; align-items: center; gap: 5px; margin-top: 2px; font-size: var(--fs-meta); color: var(--muted); }
 .usage-seat-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 2px; }
 .usage-seat-name { font-size: var(--fs-label); font-weight: 650; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 16ch; }
 .usage-tag { padding: 0 6px; border-radius: var(--r-full); font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 500; white-space: nowrap; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .usage-tag.current, .usage-tag.next { color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
-.usage-tag.status.stale, .usage-tag.status.kept { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+.usage-tag.status.kept { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
 .usage-tag.status.cooldown { color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent); }
 .usage-seat .usage-row { min-width: 0; height: auto; min-height: 22px; grid-template-columns: minmax(44px, max-content) minmax(0, 1fr) max-content minmax(0, max-content); }
 .usage-seat .usage-pop-row.hint { max-width: none; }
@@ -814,6 +834,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .mp-desc { font-size: calc(12.5px * var(--font-scale, 1)); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pin-icon { flex-shrink: 0; vertical-align: -1px; }
 .turn-badge .tb-pin { display: inline-flex; align-items: center; margin-left: -4px; color: var(--accent); }
+/* ⚡ A turn that ran fast (↯), or fell back to standard (muted). */
+.turn-badge .tb-fast { color: var(--warn); font-weight: 600; }
+.turn-badge .tb-fast.fell { color: var(--muted); font-weight: 400; }
 .mp-check { width: 16px; flex-shrink: 0; text-align: center; color: var(--accent); font-size: calc(14px * var(--font-scale, 1)); }
 .mp-effort { display: flex; gap: 2px; margin: 2px 4px 4px; padding: 2px; border-radius: 9px; background: var(--track); }
 .mp-effort button { flex: 1 1 0; min-width: 0; height: 28px; padding: 0 4px; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--muted); font: inherit; font-size: calc(13px * var(--font-scale, 1)); cursor: pointer; white-space: nowrap; }
@@ -1826,6 +1849,21 @@ button.hl-row-main:hover { background: var(--hover); }
   .session-chip::after { content: ""; position: absolute; left: 0; right: 0; top: -6px; bottom: -6px; }
 }
 @media (prefers-reduced-motion: reduce) { .session-chip { transition: none; } }
+/* ⚡ 빠르게 on: a ↯ next to the composer's session chip (warn text: >= 4.5 on bg/panel); presses to turn it off. Its
+   44px touch area is in the shared touch hit-area block below. */
+.fast-chip { position: relative; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-full); background: transparent; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 55%, transparent); font: inherit; font-size: var(--fs-meta); line-height: 1; font-weight: 700; cursor: pointer; }
+.fast-chip:hover { background: var(--hover); }
+.fast-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sheet.fast-consent { width: min(480px, 100%); padding: 0 var(--sheet-pad) var(--sheet-pad); }
+.fast-consent-body { font-size: var(--fs-body); line-height: 1.6; }
+.fast-consent-body p { margin: 0 0 var(--s2); }
+.fast-consent-body ul { margin: 0 0 var(--s3); padding-left: 1.2em; display: flex; flex-direction: column; gap: var(--s1); }
+.fast-consent-body .modal-actions { margin-top: var(--s3); }
+@media (max-width: 720px) {
+  .sheet-backdrop:has(> .fast-consent) { align-items: flex-end; }
+  .sheet.fast-consent { max-height: 92%; height: auto; border-radius: var(--r-md) var(--r-md) 0 0; }
+  .fast-consent-body .modal-actions .btn { min-height: var(--phone-tap); }
+}
 
 /* The session sheet. Desktop: a 320px panel on the right edge; phone: a bottom sheet. */
 .sheet-backdrop:has(> .session-sheet) { justify-content: flex-end; align-items: stretch; padding: 0; }
@@ -1895,8 +1933,10 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) :is(.session-meta, .row-time) { color: var(--muted); }
 @media (hover: hover) { .sidebar li.session-item:hover :is(.session-meta, .row-time) { color: var(--muted); } }
 .session-rename { min-width: 0; height: 24px; padding: 0 6px; border-radius: var(--r-xs); border: 1px solid var(--accent); background: var(--bg); color: var(--fg); font: inherit; font-size: calc(var(--fs-body) * var(--font-scale, 1)); outline: none; }
-/* Avatar: 40px, the palette colour behind a bold white letter (decorative; the meta names the project). */
-.row-avatar { position: relative; flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: #fff; font-size: 16px; font-weight: 700; line-height: 1; }
+/* Avatar: 40px, the project's palette colour behind the session's line glyph (SessionIcon, --avatar-glyph; decorative —
+   the row's title and meta name the session and project). */
+.row-avatar { position: relative; flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
+.row-avatar-icon { display: block; width: 20px; height: 20px; }
 /* Status dot, top left: 승인 대기 warn (pulsing), 실행 중 accent (a ring pulsing out), 백그라운드 muted, 새 응답 fg.
    Without motion the colours still differ and 승인 대기 keeps a ring of its own; the meta line says the status in words. */
 .row-avatar .row-dot { position: absolute; top: -1px; left: -1px; width: 12px; height: 12px; border-radius: var(--r-full); outline: 2px solid var(--sidebar); }
@@ -2148,7 +2188,7 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
 /* Touch: 44px hit areas for the small controls without changing their look — an invisible box centred on each. */
 @media (hover: none), (max-width: 720px) {
   .act-line .text-btn, .toast-item .text-btn, .usage-history-toggle, .usage-strip-wrap > .usage-strip { position: relative; }
-  .usage-strip-wrap > .usage-strip::before, .act-line .text-btn::before, .toast-item .text-btn::before, .usage-history-toggle::before {
+  .usage-strip-wrap > .usage-strip::before, .act-line .text-btn::before, .toast-item .text-btn::before, .usage-history-toggle::before, .fast-chip::before {
     content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, var(--phone-tap)); height: max(100%, var(--phone-tap)); transform: translate(-50%, -50%);
   }
 }

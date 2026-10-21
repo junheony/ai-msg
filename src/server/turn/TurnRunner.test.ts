@@ -22,7 +22,7 @@ import { projectSlug } from '../sessions/slug';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore, type ClaudeSessionState, type GrokSessionState } from './SessionState';
 import { DEFAULT_EFFORT, DEFAULT_GROK_MODEL, GROK_CLI_ALIAS, type Effort, type GrokModel } from '../../shared/models';
-import { GROK_MODE_NEXT_TURN_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type AutoRouteSettings, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { FAST_FELL_BACK_NOTE, FAST_NOTE, FAST_OFF_NOTICE, fastTurn, GROK_MODE_NEXT_TURN_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type AutoRouteSettings, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -110,9 +110,9 @@ describe('TurnRunner', () => {
     const c = await ctx(eng, { routeLog: (l) => lines.push(l) }, usage);
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
     expect(eng.calls[0]).toMatchObject({ account: 'c' });
-    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ reason: '새 세션 · 분산: 5h C 0% < A 13%' });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ reason: '새 세션 · 분산: 5h C 100% 남음 > A 87% 남음' });
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/^deck: route 새 세션 → C \(새 세션 · 분산: 5h C 0% < A 13%\) · 후보 /);
+    expect(lines[0]).toMatch(/^deck: route 새 세션 → C \(새 세션 · 분산: 5h C 100% 남음 > A 87% 남음\) · 후보 /);
     const eng2 = new StubEngine(() => ok('new2'));
     const d = await ctx(eng2, { routingPolicy: () => 'drain' }, usage);
     await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, d.sink);
@@ -142,8 +142,8 @@ describe('TurnRunner', () => {
     const c = await ctx(eng, {}, roomy);
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', accountPin: 'a' }, c.sink);
     expect(eng.calls[0]).toMatchObject({ account: 'b', model: 'fable' });
-    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ account: 'b', reason: expect.stringMatching(/^고정 A Fable 85% → /) });
-    expect(msgsOf(c, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 Fable 85%(상한 80%) — 이번 턴은 B 로 (고정은 유지 · 계정 칩에서 풀면 매 턴 자동으로 고릅니다)']);
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ account: 'b', reason: expect.stringMatching(/^고정 A Fable 15% 남음 → /) });
+    expect(msgsOf(c, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 Fable 15% 남음 · 20% 이하 제외 — 이번 턴은 B 로 (고정은 유지 · 계정 칩에서 풀면 매 턴 자동으로 고릅니다)']);
     expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ badge: { account: 'b' } });
     expect((msgsOf(c, 'turn_result')[0] as { badge: { pinned?: boolean } }).badge.pinned).toBeUndefined();
     expect(c.deps.store.get('pinned1')).toMatchObject({ account: 'b', accountPin: 'a' });
@@ -154,8 +154,8 @@ describe('TurnRunner', () => {
     const d = await ctx(eng2, {}, capped);
     await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi', accountPin: 'a' }, d.sink);
     expect(eng2.calls[0]).toMatchObject({ account: 'a', model: 'opus' });
-    expect(msgsOf(d, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 고정 · Fable 85%(상한 80%) — 대신 쓸 계정이 없어 그대로 A 로']);
-    expect(msgsOf(d, 'turn_result')[0]).toMatchObject({ badge: { account: 'a', pinned: true, model: 'opus', modelNote: 'Fable 85% 이상 → Opus 로 대체' } });
+    expect(msgsOf(d, 'turn_notice').map((m) => (m as { message: string }).message)).toEqual(['A 계정 고정 · Fable 15% 남음 · 20% 이하 제외 — 대신 쓸 계정이 없어 그대로 A 로']);
+    expect(msgsOf(d, 'turn_result')[0]).toMatchObject({ badge: { account: 'a', pinned: true, model: 'opus', modelNote: 'Fable 15% 남음 → Opus 로 대체' } });
   });
 
   it('new session in a symlinked cwd: projectDir comes from the CLI-reported (real) cwd', async () => {
@@ -1709,5 +1709,96 @@ describe('TurnRunner: 자동 분배 (chooseRoute)', () => {
     c.msgs.length = 0;
     await runner.run({ turnId: 't4', cwd: c.base, sessionId: null, text: '기능 구현해줘', engine: 'auto' }, c.sink);
     expect(started(c)).toMatchObject({ engine: 'grok' });
+  });
+});
+
+describe('TurnRunner — ⚡ 빠르게', () => {
+  const msgsOf = (c: Ctx, t: ServerMessage['type']) => c.msgs.filter((m) => m.type === t);
+  it('a fast Claude turn runs on Opus with fast set; the badge says so', async () => {
+    const eng = new StubEngine(() => ok('fast1'));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ model: 'opus', fast: true });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ model: 'opus' });
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ badge: { model: 'opus', modelNote: `${FAST_NOTE} → Opus` } });
+  });
+  it('without fast nothing changes', async () => {
+    const eng = new StubEngine(() => ok('slow1'));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls[0]!.fast).toBeUndefined();
+    expect(eng.calls[0]).toMatchObject({ model: 'fable' });
+  });
+  it('only user turns: handoff, commander, cap and retry hops never carry it', () => {
+    expect(fastTurn({ fast: true })).toBe(true);
+    expect(fastTurn({})).toBe(false);
+    expect(fastTurn({ fast: true, handoff: { fromSessionId: 's' } as never })).toBe(false);
+    expect(fastTurn({ fast: true, commanderHop: 0 })).toBe(false);
+    expect(fastTurn({ fast: true, bgCapHop: true as never })).toBe(false);
+    expect(fastTurn({ fast: true, retryHop: true as never })).toBe(false);
+  });
+  it('a fast turn refused for fast mode is not a limit: no cooldown, no move, no retry — shown with 표준으로 다시 보내기', async () => {
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fr1', model: 'm' }, failResult('Fast mode is temporarily unavailable (cooldown)', { sessionId: 'fr1' })]);
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    expect(eng.calls.length).toBe(1);
+    expect(readCooldownUntilMs(c.deps.cooldownDir, eng.calls[0]!.account, NOW)).toBeNull();
+    expect(msgsOf(c, 'turn_retry')).toEqual([]);
+    expect(c.moves).toEqual([]);
+    const r = msgsOf(c, 'turn_result')[0] as Extract<ServerMessage, { type: 'turn_result' }>;
+    expect(r).toMatchObject({ ok: false, errorCode: 'fast_refused', errorText: expect.stringContaining('Fast mode is temporarily unavailable') });
+    expect(r.fastOff).toBeUndefined();
+    expect(c.deps.store.get('fr1')?.pendingRetry).toBeUndefined();
+  });
+  it.each([
+    ['a plan-limit line naming fast mode', [failResult('API Error: 429 Fast mode rate limit exceeded', { sessionId: 'fl1' })]],
+    ['a plain plan-limit line', [failResult('API Error: 429 usage limit reached', { sessionId: 'fl1' })]],
+    ['a rejected rate limit', [{ kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('Request failed', { sessionId: 'fl1' })]],
+  ] as [string, EngineEvent[]][])('a fast turn failing on %s: no cooldown, no other account, no retry — 표준으로 다시 보내기', async (_what, tail) => {
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fl1', model: 'm' }, ...tail]);
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    // No second call — and none that could carry fast onto another account's credits.
+    expect(eng.calls.length).toBe(1);
+    expect(eng.calls.slice(1).every((call) => !call.fast)).toBe(true);
+    expect(readCooldownUntilMs(c.deps.cooldownDir, eng.calls[0]!.account, NOW)).toBeNull();
+    expect(msgsOf(c, 'turn_retry')).toEqual([]);
+    expect(c.moves).toEqual([]);
+    expect(c.deps.store.get('fl1')?.pendingRetry).toBeUndefined();
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: false, errorCode: 'fast_refused' });
+  });
+  it('a fast turn failing on auth keeps the usual handling (moves account), never fast_refused', async () => {
+    const eng = new StubEngine((_r, call) => (call === 0 ? [{ kind: 'init', sessionId: 'fa1', model: 'm' }, failResult('Failed to authenticate (fast mode)', { sessionId: 'fa1' })] : ok('fa1')));
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    expect(eng.calls.length).toBe(2);
+    expect(msgsOf(c, 'turn_result').some((m) => (m as { errorCode?: string }).errorCode === 'fast_refused')).toBe(false);
+  });
+  it('stderr naming fast mode does not make a fast refusal: only the error text counts', async () => {
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fs1', model: 'm' }, failResult('API Error: 500 internal', { sessionId: 'fs1', stderr: 'warn: fast mode usage credits exhausted' })]);
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    const r = msgsOf(c, 'turn_result')[0] as Extract<ServerMessage, { type: 'turn_result' }>;
+    expect(r.ok).toBe(false);
+    expect(r.errorCode).toBeUndefined();
+    expect(r.fastOff).toBeUndefined();
+  });
+  it('credits used up on a fast turn: the switch is turned off (fastOff) and the notice says so', async () => {
+    const eng = new StubEngine(() => [{ kind: 'init', sessionId: 'fx1', model: 'm' }, failResult('Fast mode usage credits exhausted', { sessionId: 'fx1' })]);
+    const c = await ctx(eng);
+    await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    expect(msgsOf(c, 'turn_notice').map((m) => (m as { message: string }).message)).toContain(FAST_OFF_NOTICE);
+    expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: false, errorCode: 'fast_refused', fastOff: true });
+  });
+  it('the CLI fell back to standard: the badge says 빠르게 → 표준으로 돎, the fast notice is said once per session and kind', async () => {
+    const fell: EngineEvent = { kind: 'notice', message: '⚡ Fast mode cooldown — 쿨다운', fast: 'cooldown' };
+    const eng = new StubEngine((req) => ok(req.resumeSessionId ?? 'fb1', [fell]));
+    const c = await ctx(eng);
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi', fast: true }, c.sink);
+    await runner.run({ turnId: 't2', cwd: '/w/new', sessionId: 'fb1', text: 'again', fast: true }, c.sink);
+    expect(msgsOf(c, 'turn_result').map((m) => (m as { badge: { modelNote: string | null } }).badge.modelNote)).toEqual([FAST_FELL_BACK_NOTE, FAST_FELL_BACK_NOTE]);
+    expect(msgsOf(c, 'turn_notice').filter((m) => (m as { message: string }).message.startsWith('⚡ Fast mode')).length).toBe(1);
+    expect(msgsOf(c, 'turn_result').every((m) => !(m as { fastOff?: boolean }).fastOff)).toBe(true);
   });
 });

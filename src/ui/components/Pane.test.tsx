@@ -494,12 +494,12 @@ describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
     render(<Pane pane={pane} app={app} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} onPalette={() => {}} onAddPane={() => {}} />);
     fireEvent.click(screen.getByTestId('session-chip-head'));
     const groups: string[][] = [[]];
-    for (const el of Array.from(screen.getByRole('menu').querySelectorAll('[role="menuitem"], [role="separator"]'))) {
+    for (const el of Array.from(screen.getByRole('menu').querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"], [role="separator"]'))) {
       if (el.getAttribute('role') === 'separator') groups.push([]);
       else groups.at(-1)!.push(el.textContent!.replace(/(⌘|Ctrl\+).*$/, ''));
     }
     expect(groups).toEqual([
-      ['폴더: w ›', '이름 바꾸기', '맨 위에 고정', '보관'],
+      ['폴더: w ›', '이름 바꾸기', '맨 위에 고정', '보관', '빠르게 (Opus fast)'],
       ['대화에서 찾기', '파일 열기', '새 세션으로 이어가기'],
       ['대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기'],
       ['새 탭으로 떼어내기', '이 창 닫기'],

@@ -1,6 +1,6 @@
 import type { Account, AccountNames } from '../../shared/accounts';
 import type { EngineChoice, EngineKind } from '../../shared/models';
-import type { UsageSnapshot } from '../../shared/usage-types';
+import { leftPct, type UsageSnapshot } from '../../shared/usage-types';
 import { WEEKLY_SWITCH_PCT, isLax, rankCandidates } from './AccountRouter';
 
 /** D3: GPT must have this many more remaining weekly points than the best Claude candidate before 'auto' opens on GPT. */
@@ -32,7 +32,7 @@ export function chooseEngine(i: EngineInput): { engine: EngineKind; reason: stri
   const gpt = i.usage.gpt;
   const gw = gpt && gpt.status !== 'down' ? (gpt.weekly?.usedPct ?? null) : null;
   if (gw === null) return { engine: 'claude', reason: '자동 · GPT 잔여량 불명 → Claude' };
-  if (gw >= WEEKLY_SWITCH_PCT) return { engine: 'claude', reason: `자동 · GPT 주간 ${gw}% → Claude` };
+  if (gw >= WEEKLY_SWITCH_PCT) return { engine: 'claude', reason: `자동 · GPT 주간 ${leftPct(gw)}% 남음 → Claude` };
   const { candidates, unknown } = rankCandidates({ current: null, usage: i.usage, nowMs: i.nowMs, lastTurnAtMs: null, justCompacted: false, cooldownUntilMs: i.cooldownUntilMs, protectedAccount: i.protectedAccount, needFable: false, accounts: i.accounts });
   // Best by weekly remaining, protected included: this is a capacity comparison, not the routing order.
   const best = candidates.length ? candidates.reduce((x, y) => (y.weeklyPct < x.weeklyPct ? y : x)) : null;
@@ -40,6 +40,6 @@ export function chooseEngine(i: EngineInput): { engine: EngineKind; reason: stri
   if (!best && unknown.length > 0 && isLax(i.usage)) return { engine: 'claude', reason: '자동 · Claude 잔여량 불명 → Claude' };
   const claudeRem = best ? 100 - best.weeklyPct : 0;
   const gptRem = 100 - gw;
-  if (gptRem >= claudeRem + GPT_MARGIN_PCT) return { engine: 'codex', reason: `자동 · GPT 여유 ${gptRem}% ≥ Claude 최선 ${claudeRem}%+${GPT_MARGIN_PCT} → GPT` };
-  return { engine: 'claude', reason: best ? `자동 · Claude ${i.accounts.label(best.account)} 여유 ${claudeRem}% → Claude` : '자동 · Claude' };
+  if (gptRem >= claudeRem + GPT_MARGIN_PCT) return { engine: 'codex', reason: `자동 · GPT ${leftPct(gw)}% 남음 ≥ Claude 최선 ${best ? leftPct(best.weeklyPct) : 0}% 남음+${GPT_MARGIN_PCT} → GPT` };
+  return { engine: 'claude', reason: best ? `자동 · Claude ${i.accounts.label(best.account)} ${leftPct(best.weeklyPct)}% 남음 → Claude` : '자동 · Claude' };
 }

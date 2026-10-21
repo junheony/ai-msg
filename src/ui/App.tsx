@@ -4,6 +4,8 @@ import type { SessionEntry } from '../shared/session-types';
 import { CommandPalette, type PaletteAction, type PaletteSession } from './components/CommandPalette';
 import { engineOf } from './components/EngineMark';
 import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
+import { FastConsentSheet } from './components/FastConsentSheet';
+import { isFast, requestFast, setFast, useFast } from './fastMode';
 import { SessionCwdDialog } from './components/SessionCwdDialog';
 import { LayoutsDialog } from './components/LayoutsDialog';
 import { deleteLayout, layoutPanes, listLayouts, saveLayout, type SavedLayout } from './layouts';
@@ -294,7 +296,7 @@ export function App() {
   const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const onShortcut = useRef<(id: ShortcutId) => void>(() => {});
   /** ⌘⌥1 … ⌘⌥9: focuses the nth split pane (left to right; on a phone the nth tab); false when there is none. */
-  const focusPaneAt = useRef<(index: number) => boolean>(() => false);
+  const focusPaneAt = useRef<(index: number, peek?: boolean) => boolean>(() => false);
   /** ⌘1 … ⌘9: set by the sidebar — opens the nth 고정됨 row it shows, as a click on it would; false when there is none. */
   const openPinned = useRef<(index: number, peek?: boolean) => boolean>(() => false);
   const lastSaved = useRef<string | null>(null);
@@ -386,6 +388,8 @@ export function App() {
       if (!tracker.accept(msg)) return;
       dispatch(msg.type === 'history' ? { type: 'server', msg, sentFiles: loadSent(msg.sessionId) } : { type: 'server', msg });
       if (msg.type === 'turn_result') refreshIndex.current?.afterTurn();
+      // ⚡ Usage credits ran out: the session's switch goes off here too (the turn's notice says so).
+      if (msg.type === 'turn_result' && msg.fastOff && msg.sessionId) setFast(msg.sessionId, false);
       if (msg.type === 'index') refreshIndex.current?.indexSeen();
       // 복제 opened the copy in the focused pane: the phone drawer gets out of the way.
       if (msg.type === 'session_duplicate') setDrawer(false);
@@ -502,17 +506,28 @@ export function App() {
       if (e.defaultPrevented) return;
       // The attachment image editor owns the keyboard: no ⌘K / ⌘/ / settings / type-to-compose over it.
       if (document.querySelector('.img-editor')) return;
+      // Mid-IME (a Hangul syllable still composing): blur first, so the composition commits into the draft it belongs to,
+      // then switch on the next tick — switching at once would hand the composer the next draft with the syllable pending.
+      const afterIme = (go: () => void) => {
+        if (!(e.isComposing || e.keyCode === 229)) return void go();
+        (document.activeElement as HTMLElement | null)?.blur?.();
+        setTimeout(go, 0);
+      };
       // ⌘1 … ⌘9: the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
       // repeats are taken too (not reopened), or the browser would switch tabs on them.
       const pin = matchPinShortcut(e, MAC);
       if (pin !== null) {
-        if (!hasOpenModal() && openPinned.current(pin, e.repeat)) e.preventDefault();
+        if (hasOpenModal() || !openPinned.current(pin, true)) return;
+        e.preventDefault();
+        if (!e.repeat) afterIme(() => openPinned.current(pin));
         return;
       }
       const typing = isTypingTarget(e.target);
       const paneAt = matchPaneShortcut(e, { mac: MAC, typing });
       if (paneAt !== null) {
-        if (!hasOpenModal() && focusPaneAt.current(paneAt)) e.preventDefault();
+        if (hasOpenModal() || !focusPaneAt.current(paneAt, true)) return;
+        e.preventDefault();
+        afterIme(() => focusPaneAt.current(paneAt));
         return;
       }
       const id = matchShortcut(e, { mac: MAC, typing });
@@ -657,6 +672,12 @@ export function App() {
   }, [phone, authed, floatCount]);
   // Phone tabs: hold (touch) or press-and-drag (mouse) a tab to put it elsewhere in the row.
   const tabs = useTabReorder(state.panes.length, (from, to) => { const id = state.panes[from]?.id; if (id) dispatch({ type: 'move_pane', paneId: id, to }); });
+  // ⚡ 빠르게: the active pane's Claude session, as Chat offers it — not a new (id-less) one, not a read-only one (an
+  // imported session whose folder is gone; the other read-only kinds are not Claude). Before the boot / login returns (a hook).
+  const fastPane = (state.panes.find((p) => p.id === state.activePaneId) ?? state.panes[0])?.session;
+  const fastEntry = fastPane?.sessionId ? state.projects.flatMap((p) => p.sessions).find((x) => x.sessionId === fastPane.sessionId) : undefined;
+  const fastSession = fastPane?.sessionId && (fastPane.engine ?? 'claude') === 'claude' && !(fastEntry?.imported && fastEntry.cwdMissing) ? fastPane.sessionId : null;
+  const fastOn = useFast(fastSession);
   if (authed === null) {
     if (bootFails < BOOT_NOTICE_FAILS) return <div className="center">확인 중…</div>;
     return (
@@ -1145,9 +1166,10 @@ export function App() {
     apply({ type: 'close_pane', paneId: active.id });
     requestFocus();
   };
-  focusPaneAt.current = (index) => {
+  focusPaneAt.current = (index, peek) => {
     const target = (phone ? state.panes : docked)[index];
     if (!target) return false;
+    if (peek) return true;
     dispatch({ type: 'focus_pane', paneId: target.id });
     requestFocus(target.id);
     return true;
@@ -1201,6 +1223,7 @@ export function App() {
     { id: 'sidebar', label: phone ? '사이드바 열기' : sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기', hint: `${mod}\\`, run: toggleSidebar },
     { id: 'help', label: '단축키 보기', hint: `${mod}/`, run: () => setHelpOpen(true) },
     { id: 'layouts', label: '카드 배치 저장/불러오기', run: () => setLayouts({ list: listLayouts(), error: null }) },
+    ...(fastSession ? [{ id: 'fast', label: fastOn ? '빠르게 끄기 (Opus fast · 이 세션)' : '빠르게 켜기 (Opus fast · 이 세션)', run: () => requestFast(fastSession, !isFast(fastSession)) }] : []),
   ];
   const paletteSessions: PaletteSession[] = [
     ...recent.map((s) => ({ sessionId: s.sessionId, title: s.title, cwd: s.cwd, project: s.project, lastModified: s.lastModified, engine: engineOf(s) })),
@@ -1295,6 +1318,7 @@ export function App() {
         onOpenSessionFloat={phone ? undefined : (s) => { const before = latest.current.panes.length; openSplit(s.sessionId, s.cwd, s.title); if (latest.current.panes.length > before) floatPane(latest.current.activePaneId); }}
         onOpenHit={openHit} searchFn={searchTranscripts} />}
       {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
+      <FastConsentSheet />
       {layouts && <LayoutsDialog layouts={layouts.list} error={layouts.error} onClose={() => setLayouts(null)} onSave={saveCurrentLayout} onLoad={loadLayout} onDelete={(name) => setLayouts({ list: deleteLayout(name), error: null })} />}
       {cwdFor && <SessionCwdDialog title={cwdFor.title} cwd={cwdFor.cwd} onClose={() => setCwdFor(null)} onPick={(cwd) => { setCwdFor(null); send({ type: 'set_cwd', sessionId: cwdFor.sessionId, cwd }); }} />}
       {confirmDelete && (
