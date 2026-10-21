@@ -53,7 +53,7 @@ export type SessionEntry = {
   readOnly?: boolean;
   /** Grok Bot roster facts (source 'grokbot'). */
   grokBot?: { description?: string; awaitingUserResponse: boolean; unreadCount: number; isGroup: boolean };
-  /** A short preview of the last / first message (Gemini `preview`, Grok Bot roster `lastEntry.text`). */
+  /** A short preview of the last / first message (Claude: the last reply in the transcript tail; Gemini `preview`, Grok Bot roster `lastEntry.text`). */
   preview?: string;
 };
 

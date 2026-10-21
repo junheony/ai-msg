@@ -207,7 +207,7 @@ describe('메시지 편집 갈래 · sidebar', () => {
     const rows = [...document.querySelectorAll('.project li')];
     expect(rows.map((r) => r.querySelector('.session-title')?.textContent)).toEqual(['원본', '다른 세션']);
     expect(rows[0]!.className).toContain('active');
-    expect(rows[0]!.textContent).toContain('갈래 3');
+    expect(rows[0]!.getAttribute('title')).toContain('갈래 3'); // the row itself stays two lines; the count is in its tooltip
     fireEvent.click(rows[0]!.querySelector('.row-open')!);
     expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
   });
@@ -244,7 +244,7 @@ describe('메시지 편집 갈래 · sidebar', () => {
     render(<Sidebar projects={left} currentSessionId={null} onOpen={onOpen} onNew={() => {}} onRefresh={() => {}} />);
     const rows = [...document.querySelectorAll('.project li')];
     expect(rows.map((r) => r.querySelector('.session-title')?.textContent)).toEqual(['원본', '다른 세션']);
-    expect(rows[0]!.textContent).toContain('갈래 2');
+    expect(rows[0]!.getAttribute('title')).toContain('갈래 2');
     fireEvent.click(rows[0]!.querySelector('.row-open')!);
     expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
     cleanup();
