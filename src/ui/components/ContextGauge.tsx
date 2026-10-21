@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LONG_HINT, contextHint, contextPct, contextTokens, isLongContext, type ContextInfo } from '../context';
+import { COLD_HINT, LONG_HINT, contextHint, contextPct, contextTokens, isLongContext, type ContextInfo } from '../context';
 
 /** Re-renders every `ms` so time-based hints (cache expiry) appear without new server messages. */
 function useNow(ms: number): number {
@@ -41,10 +41,15 @@ export function HandoffButton({ onHandoff }: { onHandoff: () => void }) {
   );
 }
 
-/** One muted line above the composer: cache expired (next turn re-reads everything) or the session is long. Never blocks. */
-export function ContextHint({ info, onHandoff }: { info: ContextInfo | null; onHandoff?: () => void }) {
+/**
+ * One muted line above the composer: cache expired (next turn re-reads everything) or the session is long. Never blocks.
+ * `cold = false`: the last reply's pill shows the expiry as its dot, so only the long-session line is left here.
+ */
+export function ContextHint({ info, onHandoff, cold = true }: { info: ContextInfo | null; onHandoff?: () => void; cold?: boolean }) {
   const now = useNow(60_000);
-  const hint = contextHint(info, now);
+  const first = contextHint(info, now);
+  // Without the expiry (at: null) the only hint left is the long-session one.
+  const hint = first === COLD_HINT && !cold && info ? contextHint({ ...info, at: null }, now) : first;
   if (!hint) return null;
   return (
     <div className="ctx-hint" data-testid="context-hint">
