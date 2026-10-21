@@ -161,8 +161,8 @@ describe('usage seats in the sheet', () => {
     // The colours keep their used-% thresholds (82 % used → amber, 96 % → red), said as what is left.
     expect(screen.getByTestId('b-fiveHour').title).toBe('5h · 18% 남음 · 노랑: 20% 이하 남음');
     expect(screen.getByTestId('c-weekly').title).toBe('주간 · 4% 남음 · 빨강: 5% 이하 남음');
-    // A's numbers are old (stale): dimmed, no colour note, and said so.
-    expect(screen.getByTestId('a-weekly').title).toBe('주간 · 93% 남음 · 마지막 턴 기준 값, 지금은 더 남았을 수 있음');
+    // A's numbers are old (stale): marked old and said so (an upper bound of what is left).
+    expect(screen.getByTestId('a-weekly').title).toBe('주간 · 93% 남음 · 마지막 턴 기준 값, 지금은 이보다 적게 남았을 수 있음');
     expect(screen.getByTestId('a-weekly').className).toContain('old');
     expect(screen.getByTestId('b-fiveHour').className).not.toContain('old');
   });
@@ -234,7 +234,7 @@ describe('usage sheet · old numbers per window', () => {
     // The status tag keeps its word with a clock; the card says how to refresh it.
     expect(screen.getByTestId('a-status').textContent).toBe('오래됨');
     expect(screen.getByTestId('a-status').querySelector('svg')).not.toBeNull();
-    expect(screen.getByTestId('a-refresh').textContent).toBe('3일 전 마지막 턴 기준 값 · 이 계정으로 한 턴 돌리면 갱신돼요');
+    expect(screen.getByTestId('a-refresh').textContent).toBe('3일 전 마지막 턴 기준 값 · 지금은 이보다 적게 남았을 수 있어요 · 이 계정으로 한 턴 돌리면 갱신돼요');
     cleanup();
     // Fresh numbers: the row is as read (the server judges resets on its side), no refresh line.
     sheet({ ...old, deckReachable: true, accounts: { a: { ...old.accounts.a!, status: 'ok' } } }, 'a');

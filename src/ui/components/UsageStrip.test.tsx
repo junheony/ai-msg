@@ -118,7 +118,7 @@ describe('UsageStrip', () => {
     expect(seg('a').textContent).toBe('A3%오래됨');
     expect(seg('b').className).toBe('usage-seg stale');
     expect(seg('a').querySelector('.usage-seg-age svg')).not.toBeNull();
-    expect(el().getAttribute('aria-label')).toContain('A 3퍼센트 남음, 2시간 뒤 초기화, 마지막 턴 기준의 오래된 값, 그 뒤 쓰지 않아 지금은 더 남았을 수 있음');
+    expect(el().getAttribute('aria-label')).toContain('A 3퍼센트 남음, 2시간 뒤 초기화, 마지막 턴 기준의 오래된 값, 지금은 이보다 적게 남았을 수 있음');
     expect(el().getAttribute('aria-label')).toContain('B 70퍼센트 남음, 2시간 뒤 초기화, 마지막 턴 기준의 오래된 값');
     cleanup();
     strip(snap({ accounts: { a: acct(42, 10), c: acct(100, 10, { status: 'stale', fiveHour: { usedPct: 100, resetsAt: at(12 * 60_000) } }) } }), 'a');
@@ -151,8 +151,8 @@ describe('UsageStrip', () => {
     expect(seg('c').className).toBe('usage-seg warn stale');
     expect(seg('c').textContent).toBe('C10%3일 전');
     expect(seg('c').querySelector('.usage-seg-age svg')).not.toBeNull();
-    expect(el().getAttribute('aria-label')).toContain('C 10퍼센트 남음, 2일 뒤 초기화, 3일 전 마지막 턴 기준 값, 그 뒤 쓰지 않아 지금은 더 남았을 수 있음');
-    expect(el().title).toContain('C 10% — 3일 전 마지막 턴 기준 값. 그 뒤 쓰지 않아 지금은 더 남았을 수 있음');
+    expect(el().getAttribute('aria-label')).toContain('C 10퍼센트 남음, 2일 뒤 초기화, 3일 전 마지막 턴 기준 값, 지금은 이보다 적게 남았을 수 있음');
+    expect(el().title).toContain('C 10% — 3일 전 마지막 턴 기준 값. 지금은 이보다 적게 남았을 수 있음');
     cleanup();
     // The same reading, the weekly reset an hour ago: the 90 % says nothing any more.
     const gone = { ...c, weekly: { usedPct: 90, resetsAt: at(-3_600_000) } };

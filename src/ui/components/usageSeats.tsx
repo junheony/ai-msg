@@ -260,12 +260,15 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
 /** A window past its reset since its last reading, in words (titles; the aria says it with a comma). */
 export const RESET_PASSED_NOTE = '리셋 시각이 지나 지금 값은 모름. 이 계정으로 한 턴 돌리면 갱신됨';
 export const RESET_PASSED_SAID = RESET_PASSED_NOTE.replace('. ', ', ');
-/** Old numbers not reset yet, in words: when they were read, and that only more can be left since (no turn ran there). */
+/**
+ * Old numbers not reset yet, in words: when they were read, and that less can be left now (nothing is given back before
+ * the reset, while the account may have been used since): the old % left is an upper bound.
+ */
 export function staleNote(ago: string): string {
-  return `${ago ? `${ago} 마지막 턴 기준 값` : '마지막 턴 기준의 오래된 값'}. 그 뒤 쓰지 않아 지금은 더 남았을 수 있음`;
+  return `${ago ? `${ago} 마지막 턴 기준 값` : '마지막 턴 기준의 오래된 값'}. 지금은 이보다 적게 남았을 수 있음`;
 }
 /** The sheet's one line on an old seat. */
-export const REFRESH_HINT = '이 계정으로 한 턴 돌리면 갱신돼요';
+export const REFRESH_HINT = '지금은 이보다 적게 남았을 수 있어요 · 이 계정으로 한 턴 돌리면 갱신돼요';
 
 /** Remaining % as shown: whole numbers (Gemini buckets report "98.5"); a sliver above 0 still reads 1, not 소진. */
 export function shownPct(w: UsageWindow | null): number | null {
@@ -289,7 +292,7 @@ export function PopRow({ seat, name, k, w, now, empty, stale }: { seat: Seat; na
   }
   const rem = shownPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
-  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${stale ? '' : LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '') + (stale && rem !== null ? ' · 마지막 턴 기준 값, 지금은 더 남았을 수 있음' : '');
+  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '') + (stale && rem !== null ? ' · 마지막 턴 기준 값, 지금은 이보다 적게 남았을 수 있음' : '');
   if (rem === 0) {
     const at = resetStamp(w?.resetsAt ?? null);
     return (

@@ -521,17 +521,18 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seg:is(.danger, .spent, .cooldown) :is(.usage-seg-num, .usage-seg-reset) { color: var(--danger); font-weight: 600; }
 .usage-seg:is(.danger, .spent, .cooldown) .usage-seg-bar > i { background: var(--danger); }
 .usage-seg:is(.stale, .unknown) .usage-seg-bar > i { background: var(--muted); }
-/* Old numbers: the whole seat a step dimmer — label, number, age and bar in --muted (amber / red let go: an old reading
-   can only have more left now), a 12px clock before the age, a refresh in place of the number once the reset has passed. */
-.usage-seg.stale :is(.usage-seg-who, .usage-seg-num, .usage-seg-reset) { color: var(--muted); font-weight: 500; }
-.usage-seg.stale .usage-seg-bar > i { background: color-mix(in srgb, var(--muted) 70%, var(--track)); }
+/* Old numbers: the label a step dimmer, a 12px clock and the age in --muted. Before the reset the number and bar keep
+   their level's colour (amber / red: nothing can have been given back since, so the old % left is an upper bound — the
+   danger may be greater now); a green one dims to --muted. Past the reset ("리셋됨", kind stale): grey, an empty track. */
+.usage-seg.stale .usage-seg-who { color: var(--muted); font-weight: 500; }
+.usage-seg.stale .usage-seg-reset.usage-seg-age { color: var(--muted); font-weight: 500; }
+.usage-seg.stale:not(.warn, .danger, .spent) .usage-seg-bar > i { background: color-mix(in srgb, var(--muted) 70%, var(--track)); }
 .usage-seg-num, .usage-seg-age { display: inline-flex; align-items: center; gap: 3px; }
 .usage-seg-icon { flex-shrink: 0; }
 /* The numbers and bars say what is LEFT: one small word up front (full / mid) so "78%" is not read as used. */
 .usage-strip-head { padding: 0 1px 0 6px; font-size: var(--fs-meta); color: var(--muted); }
 /* Spent = an empty battery: no fill, the track itself turns red. */
 .usage-seg.spent .usage-seg-bar { background: color-mix(in srgb, var(--danger) 35%, var(--track)); }
-.usage-seg.stale.spent .usage-seg-bar { background: var(--track); }
 .usage-seg.estimated .usage-seg-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
 /* Off-screen copies of the three stages, measured for pickStage (fixed: they never widen a scroll area, and as a child of
    the top bar they are no flex item of it). */
@@ -565,12 +566,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seats { display: flex; flex-direction: column; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
 .usage-seat { display: flex; flex-direction: column; gap: 2px; padding: 10px var(--s3); border-radius: var(--r-sm); font-size: var(--fs-label); background: color-mix(in srgb, var(--fg) 2.5%, transparent); box-shadow: inset 0 0 0 1px var(--line); }
 .usage-seat.current { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
-/* An old seat (cli stale, usage-deck out of reach, down / unknown with values): a step dimmer, the same language as the
-   strip — muted numbers and bars, a clock on its status tag, a refresh line saying one turn reads it anew. */
+/* An old seat (cli stale, usage-deck out of reach, down / unknown with values): the same language as the strip — a clock
+   on its status tag, a line saying one turn reads it anew; green rows dim to --muted, amber / red / spent keep their colour
+   (an upper bound of what is left); a row past its reset is grey with a refresh. */
 .usage-seat.old .usage-seat-name { color: var(--fg); }
-.usage-row.old .usage-value, .usage-row.old .usage-value small { color: var(--muted); }
-.usage-row.old .usage-bar > i { --lvl: color-mix(in srgb, var(--muted) 70%, var(--track)); }
-.usage-row.old.spent .usage-pill { color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.usage-row.old:not(.warn, .danger) .usage-value, .usage-row.old .usage-value small { color: var(--muted); }
+.usage-row.old:not(.warn, .danger) .usage-bar > i { --lvl: color-mix(in srgb, var(--muted) 70%, var(--track)); }
 .usage-row.passed .usage-value { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-meta); font-weight: 500; }
 .usage-icon { flex-shrink: 0; vertical-align: -1px; }
 .usage-tag.status:has(.usage-icon) { display: inline-flex; align-items: center; gap: 3px; }
