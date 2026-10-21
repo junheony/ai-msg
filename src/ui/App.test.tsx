@@ -999,6 +999,15 @@ describe('App ⌘1 … ⌘9 (고정됨)', () => {
     expect(document.querySelector('.sidebar li.active .session-title')?.textContent).toBe('one');
   });
 
+  it('opens from the composer while a Hangul syllable is still composing (the last one typed stays so until committed)', async () => {
+    await bootPinned();
+    press(1);
+    const ta = within(lastPane()).getByLabelText('메시지');
+    // What Chromium sends for ⌘2 right after typing "안녕하" (seen in a real browser): isComposing true, a real keyCode.
+    expect(press(2, { isComposing: true, keyCode: 50 }, ta)).toBe(false);
+    expect(opened()).toEqual(['s2', 's1']);
+  });
+
   it('follows the order the sidebar shows: a reorder and the 세션 검색 filter both renumber', async () => {
     await bootPinned();
     server({ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two'), entry('s3', 'three')] }], pins: ['s1', 's2'] } as unknown as ServerMessage);
