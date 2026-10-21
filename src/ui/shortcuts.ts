@@ -37,6 +37,15 @@ export function modKeys(keys: string, mac: boolean): string {
   return mac ? `⌘${keys}` : `Ctrl+${keys.replace(/⌥/g, 'Alt+').replace(/⇧/g, 'Shift+').replace(/↩/g, 'Enter')}`;
 }
 
+/**
+ * Safari (a tab, or a "Dock 에 추가" web app): WebKit, and none of the other browsers that also say "AppleWebKit"
+ * (Chrome / Edge / Firefox / Opera, on iOS too). There ⌘1 … ⌘9 never reach the page, so the hints show ⌃1 instead.
+ */
+export function isSafariBrowser(nav: { userAgent?: string } | undefined = typeof navigator === 'undefined' ? undefined : navigator): boolean {
+  const ua = nav?.userAgent || '';
+  return /AppleWebKit/.test(ua) && !/Chrome|Chromium|CriOS|Edg|EdgiOS|Firefox|FxiOS|OPR|OPiOS/.test(ua);
+}
+
 export function isMacPlatform(nav: { platform?: string; userAgent?: string } | undefined = typeof navigator === 'undefined' ? undefined : navigator): boolean {
   return /Mac|iPhone|iPad|iPod/i.test(nav?.platform || nav?.userAgent || '');
 }
@@ -66,16 +75,27 @@ export function matchShortcut(e: ShortcutKey, opts: { mac: boolean; typing: bool
   return b.id;
 }
 
+/**
+ * ⌘ and ⌃ for the number keys on a Mac. Safari takes ⌘1 … ⌘9 as menu key equivalents (tab / 즐겨찾기 switching):
+ * NSApplication offers a ⌘-key to the menus around the web view, so the page never gets the keydown and its
+ * preventDefault cannot help. ⌃1 … ⌃9 is no Safari menu key, so it reaches the page there (and types nothing in a text
+ * field, so it is taken while typing too). Note macOS may bind ⌃1 … ⌃9 to "Switch to Desktop N" (Mission Control,
+ * off by default); when on, the system takes the key first and the page does not see it either.
+ */
+function isMacDigitMod(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey'>, mac: boolean): boolean {
+  return mac ? e.metaKey !== e.ctrlKey : e.ctrlKey && !e.metaKey;
+}
+
 /** 고정됨 rows with a number shortcut: ⌘1 … ⌘9. */
 export const PIN_KEYS = 9;
 
-/** ⌘/Ctrl alone — no Shift or Alt, and not the other platform's modifier. */
-export function isPlainMod(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>, mac: boolean): boolean {
-  return (mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.shiftKey && !e.altKey;
+/** The 고정됨 number keys' modifier alone: ⌘ or ⌃ on a Mac (see isMacDigitMod), Ctrl elsewhere; no Shift / Alt. */
+export function isPinMod(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>, mac: boolean): boolean {
+  return isMacDigitMod(e, mac) && !e.shiftKey && !e.altKey;
 }
 
 /**
- * ⌘1 … ⌘9 (Ctrl elsewhere): the index of the 고정됨 row this keydown opens, or null. By physical key, top row only;
+ * ⌘1 … ⌘9 or ⌃1 … ⌃9 on a Mac (Ctrl elsewhere): the index of the 고정됨 row this keydown opens, or null. By physical key, top row only;
  * never with Shift / Alt. A repeat matches too, so the caller can keep the browser's own ⌘N off it.
  *
  * Also mid-IME: a Hangul syllable stays in composition in the composer until the next key commits it, so ⌘1 right after
@@ -83,20 +103,20 @@ export function isPlainMod(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'shift
  * is never part of a composition; then only `code` counts (the IME may have rewritten `key`).
  */
 export function matchPinShortcut(e: ShortcutKey, mac: boolean): number | null {
-  if (!isPlainMod(e, mac)) return null;
+  if (!isPinMod(e, mac)) return null;
   const composing = e.isComposing || e.keyCode === 229;
   const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code || composing ? null : /^([1-9])$/.exec(e.key));
   return digit ? Number(digit[1]) - 1 : null;
 }
 
 /**
- * ⌘⌥1 … ⌘⌥9 (Ctrl+Alt elsewhere): the index of the split pane to focus (left to right), or null. By physical key, so a
+ * ⌘⌥1 … ⌘⌥9 or ⌃⌥1 … ⌃⌥9 on a Mac (Ctrl+Alt elsewhere): the index of the split pane to focus (left to right), or null. By physical key, so a
  * Korean input source (or ⌥ turning the digit into a symbol on a Mac) still matches (mid-IME too, by code); never with Shift.
  * Ctrl+Alt off a Mac in a text field is AltGr there, so it stays the field's.
  */
 export function matchPaneShortcut(e: ShortcutKey, opts: { mac: boolean; typing: boolean }): number | null {
   if (e.shiftKey || !e.altKey) return null;
-  if (!(opts.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return null;
+  if (!isMacDigitMod(e, opts.mac)) return null;
   if (!opts.mac && opts.typing) return null;
   // Mid-IME by code only, as matchPinShortcut (the caller commits the composition before acting).
   const composing = e.isComposing || e.keyCode === 229;
@@ -104,9 +124,14 @@ export function matchPaneShortcut(e: ShortcutKey, opts: { mac: boolean; typing: 
   return digit ? Number(digit[1]) - 1 : null;
 }
 
-/** The hint on the nth 고정됨 row ("⌘1"), or null past the ninth. */
-export function pinKeyLabel(index: number, mac: boolean): string | null {
-  return index < PIN_KEYS ? `${mac ? '⌘' : 'Ctrl+'}${index + 1}` : null;
+/** The number keys' modifier label: ⌃ in Safari (its menus keep ⌘1 … ⌘9), ⌘ on other Mac browsers, Ctrl+ elsewhere. */
+export function digitMod(mac: boolean, safari: boolean): string {
+  return mac ? (safari ? '⌃' : '⌘') : 'Ctrl+';
+}
+
+/** The hint on the nth 고정됨 row ("⌘1", "⌃1" in Safari), or null past the ninth. */
+export function pinKeyLabel(index: number, mac: boolean, safari = false): string | null {
+  return index < PIN_KEYS ? `${digitMod(mac, safari)}${index + 1}` : null;
 }
 
 /** Cheat-sheet rows: key label with the platform's modifier. */
