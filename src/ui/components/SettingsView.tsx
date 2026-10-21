@@ -7,7 +7,7 @@ import { ENGINE_KINDS, type RoutingPolicy } from '../../shared/protocol';
 import type { EngineKind } from '../../shared/models';
 import { NotifyMenu } from './NotifyMenu';
 import { describeShell } from '../shellFit';
-import { Sheet } from './Dialogs';
+import { Sheet, SheetHead } from './Dialogs';
 import { TASK_SOFT_CAP_MAX, TASK_SOFT_CAP_MIN } from '../../shared/tasks';
 import { MemoryEditor } from './MemoryEditor';
 
@@ -123,10 +123,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
 
   return (
     <Sheet className="settings" label="설정" onClose={onClose}>
-      <div className="settings-head">
-        <h2>설정</h2>
-        <button type="button" className="btn ghost" onClick={onClose} autoFocus>닫기</button>
-      </div>
+      <SheetHead title="설정" onClose={onClose} />
       <div className="settings-body">
         <nav className="settings-nav" aria-label="설정 그룹">
           {SETTINGS_GROUPS.map(([id, name]) => <button type="button" key={id} aria-current={current === id ? 'true' : undefined} onClick={() => jump(id)}>{name}</button>)}

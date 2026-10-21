@@ -12,7 +12,7 @@ import { codeFileName, useCodeWrap } from '../codeWrap';
 import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
 import { has } from '../features';
 import { rawFileUrl } from '../sessionApi';
-import { Sheet, trapTab } from './Dialogs';
+import { Sheet, SheetHead } from './Dialogs';
 import { baseName, useFileActions, useFileMenu, useLongPress } from './FileMenu';
 import type { ChatItem, SentFile } from '../state';
 import { MODEL_INFO, modelLabelOf, type ModelChoice } from '../../shared/models';
@@ -121,14 +121,21 @@ function MdImage({ src, alt }: { src?: unknown; alt?: string }) {
   return <FileLink path={path} fallback={link}>🖼 {alt || path}</FileLink>;
 }
 
+/** `a/b/c` → a/<wbr>b/<wbr>c. */
+function breakAfterSlash(text: string): ReactNode[] {
+  return text.split('/').flatMap((part, i, all) => (i < all.length - 1 ? [part, '/', <wbr key={i} />] : [part]));
+}
+
 const MD_COMPONENTS: Components = {
   img: ({ src, alt }) => <MdImage src={src} alt={alt} />,
   a: ({ href, children }) => <FileLink path={href && !/^[a-z][\w+.-]*:/i.test(href) && !href.startsWith('#') ? filePathIn(decodeSafe(href)) : null} fallback={<a href={href} title={href} rel="noreferrer noopener" target="_blank">{children}</a>}>{children}</FileLink>,
   // Inline code naming a file opens it in the pane's side panel (fenced code ends with a newline, so it never matches).
   code: ({ className, children }) => {
     const text = typeof children === 'string' ? children : null;
-    const plain = <code className={className}>{children}</code>;
-    return <FileLink path={text && !className ? filePathIn(text) : null} fallback={plain}><code>{children}</code></FileLink>;
+    // A long inline path wraps after a `/` (a <wbr>) before it would break mid-name; copying the text is unchanged.
+    const shown = text && !className && text.includes('/') && !text.includes('\n') ? breakAfterSlash(text) : children;
+    const plain = <code className={className}>{shown}</code>;
+    return <FileLink path={text && !className ? filePathIn(text) : null} fallback={plain}><code>{shown}</code></FileLink>;
   },
   // GFM tables scroll sideways inside the message instead of widening the chat (phone).
   table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
@@ -409,6 +416,12 @@ function selectAll(body: Element | null | undefined) {
   sel.addRange(range);
 }
 
+/** A message's first non-empty line, markdown marks dropped: the long-press sheet's head (CSS cuts it to one line). */
+function excerptOf(text: string): string {
+  const line = text.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  return line.replace(/^(#+|[-*>]|\d+\.)\s+/, '').replace(/[*_`~]/g, '').slice(0, 200);
+}
+
 /** Touch: a press this long on a message opens its menu (§7.2); moving past FileMenu's slop cancels it (a scroll). */
 export const MSG_PRESS_MS = 350;
 /** A press starting on a control inside the message keeps its own tap / long press (file chips, code buttons, tool rows). */
@@ -421,20 +434,25 @@ type RegenPick = { models: readonly ModelChoice[]; current: ModelChoice; sticky:
  * same set the hover row offers. A modal dialog (Sheet: Esc yields to popups over it, focus goes back to the message);
  * Tab stays inside. A portal so a transformed message never clips it, its events kept from the message's long press.
  */
-function MessageSheet({ copy, select, edit, retry, again, pick, versions, onClose }: {
+function MessageSheet({ excerpt, copy, select, edit, retry, again, pick, versions, onClose }: {
+  /** The message's first line: the sheet's one-line head (which message the menu is for). */
+  excerpt: string;
   copy: (() => void) | null; select: (() => void) | null; edit: (() => void) | null; retry: (() => void) | undefined; again: (() => void) | undefined;
   pick: RegenPick | null; versions: Versions | null; onClose: () => void;
 }) {
   const [models, setModels] = useState(false);
+  // Opened by a long press: the first item takes focus without a ring; the ring comes once a key is pressed.
+  const [keyed, setKeyed] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => { ref.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true }); }, []);
+  useEffect(() => { ref.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true, focusVisible: false } as FocusOptions); }, []);
   // The sheet closes (focus back on the message) before the action runs, so an action that moves focus keeps it.
   const run = (f: () => void) => () => { flushSync(onClose); f(); };
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
   return createPortal(
-    <div className="msg-sheet-root" onPointerDown={stop} onClick={stop} onContextMenu={stop}>
-      <Sheet className="msg-sheet" label="메시지 메뉴" onClose={onClose}>
-        <div ref={ref} className="msg-sheet-list" data-testid="msg-sheet" onKeyDown={trapTab}>
+    <div className="msg-sheet-root" onPointerDown={stop} onClick={stop} onContextMenu={stop} onKeyDownCapture={keyed ? undefined : () => setKeyed(true)}>
+      <Sheet className={`msg-sheet${keyed ? '' : ' by-touch'}`} label="메시지 메뉴" onClose={onClose}>
+        <SheetHead title={excerpt} onClose={onClose} autoFocus={false} excerpt />
+        <div ref={ref} className="msg-sheet-list" data-testid="msg-sheet">
           {copy && <button type="button" className="msg-sheet-item" onClick={run(copy)}><CopyIcon />복사</button>}
           {select && <button type="button" className="msg-sheet-item" onClick={run(select)}><SelectIcon />텍스트 선택</button>}
           {edit && <button type="button" className="msg-sheet-item" onClick={run(edit)}><EditIcon />편집</button>}
@@ -461,7 +479,6 @@ function MessageSheet({ copy, select, edit, retry, again, pick, versions, onClos
               <button type="button" className="msg-sheet-item" aria-label="다음 버전" disabled={versions.index >= versions.count - 1} onClick={run(() => versions.go(versions.index + 1))}>›</button>
             </div>
           )}
-          <button type="button" className="msg-sheet-item close" onClick={onClose}>닫기</button>
         </div>
       </Sheet>
     </div>,
@@ -589,7 +606,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
             </div>
           )}
         </div>
-        {menu && text && <MessageSheet copy={() => feedback.copy(text, '복사했어요')} select={() => selectAll(msgRef.current?.querySelector('pre'))} edit={edit} retry={undefined} again={undefined} pick={null} versions={versions} onClose={closeMenu} />}
+        {menu && text && <MessageSheet excerpt={excerptOf(text)} copy={() => feedback.copy(text, '복사했어요')} select={() => selectAll(msgRef.current?.querySelector('pre'))} edit={edit} retry={undefined} again={undefined} pick={null} versions={versions} onClose={closeMenu} />}
         {feedback.node}
       </>
     );
@@ -652,6 +669,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
     </div>
     {menu && hasActions && (
       <MessageSheet
+        excerpt={excerptOf(shownText || item.text)}
         copy={item.text ? () => feedback.copy(shownText || item.text, '복사했어요') : null}
         select={shownText ? () => selectAll(msgRef.current?.querySelector('.markdown:not(.failed-attempt)')) : null}
         edit={null} retry={retry} again={again} pick={regenPick} versions={null} onClose={closeMenu}

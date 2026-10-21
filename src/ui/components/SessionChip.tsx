@@ -8,7 +8,7 @@ import { contextLabel, type ContextInfo } from '../context';
 import { has } from '../features';
 import { AccountChipName, AccountMenu, useAccountWords } from './AccountPicker';
 import { ContextRing, HandoffButton, contextLevel } from './ContextGauge';
-import { Sheet } from './Dialogs';
+import { Sheet, SheetHead } from './Dialogs';
 import { ModelMenu, modelLabel } from './ModelPicker';
 import { menuStep } from './SessionMenu';
 
@@ -172,10 +172,7 @@ export function SessionChip(p: SessionChipProps) {
       {open && (
         <Sheet className="session-sheet" label="세션 설정" onClose={() => setOpen(false)}>
           <div className="session-sheet-inner" onKeyDown={trapTab}>
-            <header className="session-sheet-head">
-              <h2>세션 설정</h2>
-              <button type="button" className="icon-btn sheet-btn" onClick={() => setOpen(false)} aria-label="닫기" title="닫기 (Esc)" autoFocus>✕</button>
-            </header>
+            <SheetHead title="세션 설정" onClose={() => setOpen(false)} />
             {ctx && (
               <section className="ss-section ss-ctx" aria-label="컨텍스트">
                 <p className="ss-ctx-line" data-testid="context-line">{ctx.label}</p>

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from 'react';
 import { shortcutList } from '../shortcuts';
 import { POPUP } from '../composerFocus';
 
@@ -63,6 +63,21 @@ export function Sheet({ label, className, onClose, children }: { label: string; 
     <div className="sheet-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div ref={ref} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-label={label} onKeyDown={trapTab}>{children}</div>
     </div>
+  );
+}
+
+/**
+ * Every sheet's head row (사용량 · 세션 설정 · 활동 · 설정 · 메시지 메뉴): the title left, a ✕ icon button right — 32px seen
+ * on a desktop with a 44px press area (44px seen on a phone), the same padding and title size everywhere. `excerpt`: a
+ * one-line quote instead of a heading (the message menu names its message, not itself). The ✕ takes the first focus
+ * unless `autoFocus` is off (a sheet that focuses its first item itself).
+ */
+export function SheetHead({ title, onClose, autoFocus = true, closeRef, excerpt = false }: { title: ReactNode; onClose: () => void; autoFocus?: boolean; closeRef?: Ref<HTMLButtonElement>; excerpt?: boolean }) {
+  return (
+    <header className={`sheet-head${excerpt ? ' excerpt' : ''}`}>
+      {excerpt ? <p className="sheet-title">{title}</p> : <h2 className="sheet-title">{title}</h2>}
+      <button ref={closeRef} type="button" className="icon-btn sheet-btn sheet-close" onClick={onClose} aria-label="닫기" title="닫기 (Esc)" autoFocus={autoFocus}>✕</button>
+    </header>
   );
 }
 

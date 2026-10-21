@@ -3,7 +3,7 @@ import type { Seat } from '../../shared/accounts';
 import type { GrokStatus } from '../../shared/protocol';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
-import { Sheet } from './Dialogs';
+import { Sheet, SheetHead } from './Dialogs';
 import { UsageHistoryView } from './UsageView';
 import { buildSeats, LEGEND, PopRow, seatTitle, statusLabel, useClock, type RouteNext } from './usageSeats';
 
@@ -38,10 +38,7 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
   return (
     <Sheet className={`usage-sheet${history ? ' with-history' : ''}`} label="사용량" onClose={onClose}>
       <div className="usage-sheet-inner" onKeyDown={trapTab}>
-        <header className="usage-sheet-head">
-          <h2>사용량</h2>
-          <button type="button" className="icon-btn sheet-btn" onClick={onClose} aria-label="닫기" title="닫기 (Esc)" autoFocus>✕</button>
-        </header>
+        <SheetHead title="사용량" onClose={onClose} />
         <p className="usage-sheet-legend">{LEGEND}</p>
         {!usage && <p className="usage-sheet-note">사용량 불러오는 중…</p>}
         {/* `cli` never asks usage-deck: deckReachable is always false there and says nothing. */}

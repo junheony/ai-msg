@@ -37,7 +37,11 @@ describe('message long press (touch)', () => {
     act(() => { vi.advanceTimersByTime(1); });
     const sheet = screen.getByRole('dialog', { name: '메시지 메뉴' });
     expect(sheet.getAttribute('aria-modal')).toBe('true');
-    expect(within(sheet).getAllByRole('button').map((b) => b.textContent)).toEqual(['복사', '텍스트 선택', '편집', '닫기']);
+    expect(within(sheet).getAllByRole('button').map((b) => b.textContent)).toEqual(['✕', '복사', '텍스트 선택', '편집']);
+    // The head quotes the message; the first item (not the ✕) takes focus, with no ring after a touch.
+    expect(within(sheet).getByText('원래 질문').closest('.sheet-head')).not.toBeNull();
+    expect(document.activeElement?.textContent).toBe('복사');
+    expect(sheet.classList.contains('by-touch')).toBe(true);
   });
 
   it('a finger that moves (a scroll), a mouse, or a press on a control inside opens nothing', () => {
@@ -62,7 +66,8 @@ describe('message long press (touch)', () => {
     touchDown(msg.querySelector('pre')!);
     act(() => { vi.advanceTimersByTime(MSG_PRESS_MS); });
     const items = within(screen.getByRole('dialog')).getAllByRole('button');
-    expect(document.activeElement).toBe(items[0]);
+    // items[0] is the head's ✕; the first action takes focus.
+    expect(document.activeElement).toBe(items[1]);
     items[items.length - 1]!.focus();
     fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
     expect(document.activeElement).toBe(items[0]);
@@ -98,7 +103,7 @@ describe('message long press (touch)', () => {
     touchDown(msg.querySelector('p')!);
     act(() => { vi.advanceTimersByTime(MSG_PRESS_MS); });
     let sheet = screen.getByRole('dialog');
-    expect(within(sheet).getAllByRole('button').map((b) => b.textContent)).toEqual(['복사', '텍스트 선택', '다시 생성', '다른 모델로 다시 생성', '닫기']);
+    expect(within(sheet).getAllByRole('button').map((b) => b.textContent)).toEqual(['✕', '복사', '텍스트 선택', '다시 생성', '다른 모델로 다시 생성']);
     fireEvent.click(within(sheet).getByRole('button', { name: '다시 생성' }));
     expect(branch).toHaveBeenCalledWith({ n: 0, text: '질문' });
     touchDown(msg.querySelector('p')!);

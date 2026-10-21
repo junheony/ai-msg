@@ -4,7 +4,7 @@ import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-type
 import type { TaskInfo } from '../../shared/tasks';
 import type { PaneBackground, PendingPermission, PendingQuestion } from '../state';
 import { pushBlocker } from '../push';
-import { FOCUSABLE, Sheet, trapTab } from './Dialogs';
+import { FOCUSABLE, Sheet, SheetHead, trapTab } from './Dialogs';
 import { BLOCKER_TEXT, NotifyMenu } from './NotifyMenu';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
@@ -223,10 +223,7 @@ export function ActivitySheet(p: ActivitySheetProps) {
   return (
     <Sheet className="activity-sheet" label="활동" onClose={p.onClose}>
       <div ref={inner} className="act-inner" onKeyDown={trapTab} onFocus={noteFocus}>
-        <header className="act-head">
-          <h2>활동</h2>
-          <button ref={closeBtn} type="button" className="icon-btn sheet-btn" onClick={p.onClose} aria-label="닫기" title="닫기 (Esc)" autoFocus>✕</button>
-        </header>
+        <SheetHead title="활동" onClose={p.onClose} closeRef={closeBtn} />
         {blocker && <p className="act-banner warn" data-testid="act-notify-blocked">알림이 꺼져 있어요 — {BLOCKER_TEXT[blocker]}</p>}
         {!p.connected && (
           <div className="act-banner danger" data-testid="act-conn">
