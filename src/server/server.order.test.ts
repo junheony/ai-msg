@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -8,6 +8,10 @@ import type { AddressInfo } from 'node:net';
 import { loadConfig } from './config';
 import { acquireInstanceLock } from './instanceLock';
 import { startServer } from './server';
+import { AttachmentStore } from './attachments/AttachmentStore';
+import { CodexUsagePoller } from './usage/CodexUsagePoller';
+import { UsageIndex } from './usage/UsageIndex';
+import { UsageService } from './usage/UsageService';
 
 describe('startServer write order', () => {
   let root: string;
@@ -45,5 +49,24 @@ describe('startServer write order', () => {
     } finally {
       held.release();
     }
+  });
+  it('a failure after listening stops what started, frees the port and releases the lock', async () => {
+    // vapid.json is created late (after the usage pollers start): a non-empty directory there makes startup fail.
+    fs.mkdirSync(path.join(cfgDir, 'vapid.json', 'x'), { recursive: true });
+    const stops = [UsageService, CodexUsagePoller, UsageIndex, AttachmentStore].map((C) => vi.spyOn(C.prototype, 'stop'));
+    const probe = http.createServer().listen(0, '127.0.0.1');
+    await once(probe, 'listening');
+    const port = (probe.address() as AddressInfo).port;
+    await new Promise<void>((r) => probe.close(() => r()));
+    try {
+      await expect(startServer({ cfg: tmpCfg(port) })).rejects.toThrow(/EISDIR|ENOTEMPTY|EEXIST/);
+      for (const s of stops) expect(s).toHaveBeenCalledTimes(1);
+    } finally {
+      for (const s of stops) s.mockRestore();
+    }
+    expect(fs.existsSync(path.join(cfgDir, 'server.lock'))).toBe(false);
+    const again = http.createServer().listen(port, '127.0.0.1');
+    await once(again, 'listening');
+    await new Promise<void>((r) => again.close(() => r()));
   });
 });

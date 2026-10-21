@@ -768,3 +768,10 @@ it('package mode: a newer package.json on disk means restartNeeded', async () =>
 | 13d | `npm i -g` bin 이름 충돌(EEXIST) 사전 확인 | 반영 — Task 3 스모크 8, D1 확인 항목(`npm view quarterdeck bin`), Task 8 README 경고 |
 | 13e | D1 조직 확보를 Task 8 전에 | 반영 — Global Constraints, Task 8 선행 조건, D1, 사용자 몫 |
 | 추가 | Grok 감지 규칙(`DECK_GROK_BIN` → PATH → `~/.grok/bin/grok`, `grok models` 첫 줄) | 확인 — 원래도 `cfg.grokBin`(=`resolveGrokBin`)·`parseGrokModels` 로 들어 있었음. 보강: Task 4 에 Grok 프로브 절(감지가 따로 찾지 않음, `grokEnv` 로 `GROK_HOME` 고정, 첫 비지 않은 줄, 종료 코드 무시), `missingBinNote` 에 세 후보, 테스트, 스모크 6·10 에서 grok 을 `~/.grok/bin/grok` 에만 두고 찾는지 확인 |
+
+## 구현 메모 (실행 중 기록)
+
+- **`private: true` 유지(Task 3).** 계획은 `private` 삭제를 적었지만 D1(패키지 이름)이 미정이라 실수로 `npm publish` 되지 않게 남겨 두었다. `npm pack`·전역 설치·`npx --package <tgz>` 는 `private` 와 무관하게 돈다. Task 8 이 D1 이름을 넣을 때 `private` 를 지우고, 그때 Task 3 테스트의 `pkg.private` 기대도 함께 바꾼다.
+- **스모크의 시간 초과 턴(Task 3 Step 6·12)이 검증하는 것과 한계.** 보통 턴의 훅은 `--fail open|deny` 라 deck 의 닫힘 실패(`--fail closed`, `( … ) || exit 2`, `DECK_HOOK_RELAY_DEADLINE_MS`)는 총사령탑 자동 턴에서만 쓰인다. 스모크는 서버를 `DECK_HOOK_RELAY_DEADLINE_MS=1` 로 띄우고, 시간 초과 턴에서 가짜 claude 가 deck 이 만든 훅 명령을 닫힘 형태로 바꿔 실행해 **설치본 `hookRelay.js` 가 deck 이 넘긴 env 의 기한으로 거부(JSON deny + 종료 2)하는지** 확인한다. 이어서 권한 카드에 답하지 않은 채 MCP 호출을 취소한다. 한계: ① 어떤 턴에 `--fail closed` 를 붙일지는 `ClaudeEngine`·`args.ts` 단위 테스트가 맡고 스모크는 보지 않는다(총사령탑 턴을 스모크로 띄우려면 판정기까지 가짜가 필요). ② 브리지가 실제로 응답하지 않아 기한이 지나는 경우가 아니라 기한(1ms)이 응답보다 먼저 오는 경우만 본다. ③ MCP 쪽 취소는 가짜 claude 가 정한 대기(3초) 뒤에 보낸다.
+- **Task 4.** `setup/texts.ts` 는 Task 2 에서 이미 생겨 새로 만들지 않고 넓혔다. `doctor --json` 은 프로브 결과 전체(`engines`·`claudeProfiles`)를 낸다. 감독자 env 키 목록은 Task 7(`supervisorEnv.ts`) 전까지 `detect.ts` 에 둔다. Step 5 수동 확인은 실제 CLI 대신 격리 PATH 의 가짜 CLI 로 했다(테스트·스모크는 실제 사용자 CLI 를 실행하지 않는다).
+- **리뷰 반영(Task 1~3).** 감독 여부는 `DECK_SUPERVISED=1` 만이 아니라 부모 프로세스가 relaunch 루프인지까지 보고 락에 기록한다. `relaunch.pid` 가 살아 있는 루프를 가리키면 그 루프의 자식만 시작할 수 있다. CLI 자식 env(Claude·Codex·agy, Grok 은 원래 허용 목록)에서 `DECK_SUPERVISED`·`DECK_SUPERVISOR` 를 뺀다. 낡은 락 인계는 rename 으로 옮겨 놓고 비교한다. 종료 때 락은 기록을 다 쓴 뒤 푼다. pack-smoke 는 claude·codex·agy·grok 가 PATH 에서 임시 폴더 밖으로 잡히면 바로 실패한다.

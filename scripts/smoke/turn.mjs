@@ -2,7 +2,8 @@
 // pack-smoke: three Claude turns against an installed server, each ending in one permission card.
 //   node turn.mjs <installed package dir> <port> <token file> <work dir>
 // The `ws` client is the installed package's own dependency. Expected (fake-claude.mjs answers):
-//   approve → "allow …", deny → "deny …", no answer → "timeout …" (the call is cancelled; the tool never runs).
+//   approve → "allow …", deny → "deny …", no answer → "timeout …" (deck's fail-closed hook relay denied at its deadline,
+//   and the unanswered permission call is cancelled; the tool never runs).
 // Each result line also names the hook / MCP child scripts the CLI was given: they must be the bundled .js files
 // inside the installed package. Prints one line per turn; exit 1 on anything unexpected.
 import fs from 'node:fs';

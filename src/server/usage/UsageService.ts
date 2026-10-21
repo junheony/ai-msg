@@ -452,6 +452,7 @@ export class UsageService {
     if (this.timer) return;
     void this.pollOnce();
     this.timer = setInterval(() => void this.pollOnce(), this.intervalMs);
+    this.timer.unref?.();
   }
 
   stop(): void {

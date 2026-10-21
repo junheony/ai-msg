@@ -5,8 +5,10 @@
 //   turn mode (-p … --settings=<f> --mcp-config=<f>): reads the files deck wrote and drives deck's own children the way
 //   the real CLI does — ① runs the PreToolUse hook `command` with `sh -c` (hook JSON on stdin → hookRelay round trip),
 //   ② spawns the permission MCP server from mcp-config (`initialize` → `tools/call` round trip). The prompt picks the
-//   case: a prompt containing "timeout" gives up on the permission call after FAKE_PERMISSION_WAIT_MS (default 3 s) and
-//   cancels it (fail closed: the tool never runs). The answer goes out as a stream-json `result`:
+//   case: a prompt containing "timeout" ① runs the hook in deck's fail-closed form (`--fail closed`, `( … ) || exit 2`, as
+//   a 총사령탑 turn would get it) and requires deck's own relay to deny with exit 2 — pack-smoke starts the server with
+//   DECK_HOOK_RELAY_DEADLINE_MS=1, so the relay's deadline fires before the bridge can answer; ② gives up on the
+//   permission call after FAKE_PERMISSION_WAIT_MS (default 3 s) and cancels it. The answer goes out as a stream-json `result`:
 //   `allow|deny|timeout hook=<hook script> mcp=<mcp script>`. Any failure: reason on stderr, exit 2.
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -38,9 +40,14 @@ try {
 const sid = argValue('--resume') ?? argValue('--session-id') ?? randomUUID();
 const emit = (m) => process.stdout.write(JSON.stringify(m) + '\n');
 
-function runHook(cwd) {
-  const command = settings?.hooks?.PreToolUse?.[0]?.hooks?.[0]?.command;
+function runHook(cwd, closed) {
+  let command = settings?.hooks?.PreToolUse?.[0]?.hooks?.[0]?.command;
   if (typeof command !== 'string') die('PreToolUse 훅 command 가 없음');
+  if (closed) {
+    const swapped = command.replace(/(--fail'?\s+'?)(?:open|deny)\b/, '$1closed');
+    if (swapped === command) die(`훅 command 에 --fail 이 없음: ${command}`);
+    command = `( ${swapped} ) || exit 2`;
+  }
   const script = (command.match(/'([^']*hookRelay\.[jt]s)'/) ?? [])[1] ?? '?';
   return new Promise((resolve) => {
     const c = spawn('sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -48,6 +55,13 @@ function runHook(cwd) {
     c.stdout.on('data', (d) => { out += d; });
     c.stderr.on('data', (d) => { err += d; });
     c.on('close', (code) => {
+      if (closed) {
+        let decision;
+        try { decision = JSON.parse(out).hookSpecificOutput?.permissionDecision; } catch { /* checked below */ }
+        if (code !== 2 || decision !== 'deny') die(`닫힘 실패가 동작하지 않음: 종료 ${code}, 출력 ${out.trim()}`);
+        resolve(script);
+        return;
+      }
       if (code !== 0) die(`훅 종료 ${code}: ${err.trim()}`);
       try { JSON.parse(out || '{}'); } catch { die(`훅 출력이 JSON 아님: ${out}`); }
       resolve(script);
@@ -107,8 +121,9 @@ input.on('line', (line) => {
   const prompt = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => b.text ?? '').join('') : '';
   (async () => {
     emit({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-sonnet-5', cwd: process.cwd(), tools: ['Bash', 'Write'] });
-    const hookScript = await runHook(process.cwd());
-    const { decision, script } = await askPermission(/timeout/.test(prompt));
+    const timeoutCase = /timeout/.test(prompt);
+    const hookScript = await runHook(process.cwd(), timeoutCase);
+    const { decision, script } = await askPermission(timeoutCase);
     const text = `${decision} hook=${hookScript} mcp=${script}`;
     emit({ type: 'stream_event', parent_tool_use_id: null, session_id: sid, event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
     emit({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: sid, num_turns: 1, usage: { input_tokens: 1, output_tokens: 1 } });

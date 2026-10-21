@@ -315,14 +315,22 @@ export function App() {
   // A 대화 내용 검색 hit being opened: once its pane has loaded the transcript, scroll to the message containing it.
   const [scrollTo, setScrollTo] = useState<{ paneId: string; sessionId: string; snippet: string; match: string; until: number } | null>(null);
 
-  // An unreachable server (a phone that just woke up, no network yet) is retried, not left at 확인 중… for good.
+  // An unreachable or still-starting server (a phone that just woke up, no network yet; a restart) is retried, not left at 확인 중… for good.
   // After BOOT_NOTICE_FAILS misses the screen says so (the server is down, not the app hanging) and offers a reload.
   const [bootFails, setBootFails] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const check = () => {
-      fetch('/api/me').then((r) => { if (!cancelled) setAuthed(r.ok); }, () => { if (!cancelled) { setBootFails((n) => n + 1); timer = setTimeout(check, 3000); } });
+      const retry = () => { if (!cancelled) { setBootFails((n) => n + 1); timer = setTimeout(check, 3000); } };
+      // Only 401/403 mean logged out. A server still starting (503) or any other error is retried like no answer:
+      // a restart must not drop a PWA with a valid cookie onto the token screen.
+      fetch('/api/me').then((r) => {
+        if (cancelled) return;
+        if (r.ok) setAuthed(true);
+        else if (r.status === 401 || r.status === 403) setAuthed(false);
+        else retry();
+      }, retry);
     };
     check();
     return () => { cancelled = true; clearTimeout(timer); };

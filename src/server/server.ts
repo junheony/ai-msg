@@ -9,7 +9,7 @@ import { AttachmentStore } from './attachments/AttachmentStore';
 import { loadOrCreateToken } from './auth';
 import { bindAddresses, tailscaleDnsName, tailscaleIPv4s } from './bind';
 import { loadConfig, repoRootDefault, type DeckConfig } from './config';
-import { acquireInstanceLock } from './instanceLock';
+import { acquireInstanceLock, commandOfPid } from './instanceLock';
 import { TEXTS } from './setup/texts';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { MIN_CLAUDE_VERSION, RECOMMENDED_CLAUDE_VERSION, type ClaudeBin } from './engine/claudeCli/version';
@@ -25,7 +25,7 @@ import { sweepShadowHomes } from './engine/shadowHome';
 import { grokEnv } from './engine/grokEnv';
 import { execFile } from 'node:child_process';
 import { createRequestHandler, type ServerUpdateDeps } from './http';
-import { ServerUpdateWatch, supervisionCheck } from './serverUpdate';
+import { RELAUNCH_LOOP_RE, ServerUpdateWatch, supervisionCheck } from './serverUpdate';
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
 import { EventLog } from './highlights';
 import { BottleneckWatch, type RetryRequest } from './push/BottleneckWatch';
@@ -103,7 +103,9 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
   const startedAt = Date.now() - Math.round(process.uptime() * 1000);
   const cfg = o.cfg ?? loadConfig();
   const addresses = bindAddresses(os.networkInterfaces(), { loopbackOnly: cfg.loopbackOnly, tailscaleIps: tailscaleIPv4s() });
-  const lock = await acquireInstanceLock(cfg.configDir, { pid: process.pid, port: cfg.port, version: packageVersion(), supervisor: cfg.supervised ? 'relaunch' : null });
+  // DECK_SUPERVISED can be inherited by anything the server's tree starts: the relaunch loop must also be the real parent.
+  const supervised = cfg.supervised && process.ppid > 1 && RELAUNCH_LOOP_RE.test(commandOfPid(process.ppid) ?? '');
+  const lock = await acquireInstanceLock(cfg.configDir, { pid: process.pid, port: cfg.port, version: packageVersion(), supervisor: supervised ? 'relaunch' : null });
   // Placeholder until everything below is ready; swapped for the real handler at the end.
   let handler: http.RequestListener = (_req, res) => {
     res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '2', 'cache-control': 'no-store' });
@@ -162,17 +164,22 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // /api/file never previews deck's own config (token, VAPID key, push subscriptions), even with the cwd at ~.
     const files = new FileLister({ home: cfg.home, roots: cfg.cwdRoots, denyRoots: [await fs.realpath(cfg.configDir).catch(() => cfg.configDir)] });
     usage.start();
+    cleanup.push(() => usage.stop());
     // F3: GPT usage from the newest Codex rollouts (Desktop/CLI too), at start and every 60 s.
     const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
     codexUsage.start();
+    cleanup.push(() => codexUsage.stop());
     // 사용량 view: incremental token usage index over every transcript/rollout; first scan runs in the background.
     const usageHistory = new UsageIndex({ projectsRoots: cfg.projectsRoots, codexSessionsRoot: cfg.codexSessionsRoot, indexFile: cfg.usageIndexFile, legacyIndexFile: cfg.usageIndexV1File });
     usageHistory.start();
+    cleanup.push(() => usageHistory.stop());
     const attachments = new AttachmentStore(cfg.attachmentsDir);
     await attachments.init();
     attachments.startPurgeTimer();
+    cleanup.push(() => attachments.stop());
     // Fork backups (SessionFork) and the 삭제 trash (SessionTrash) live in each profile's config dir; only deck-named, expired entries go.
     const stopBackupPruning = startBackupPruning(accounts.all().flatMap((a) => pruneRootsOf(accounts.profileDir(a))), cfg.backupRetentionDays);
+    cleanup.push(stopBackupPruning);
     // D11: Codex is optional; without the binary the UI hides the GPT option and 'auto' means Claude.
     const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
     // Gemini (agy): explicit engine only; logged in = an `agy models` probe exited 0 (cached 5 min, checked in the background).
@@ -182,6 +189,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // Gemini quota for the usage card: `agy -p=/usage` at start, every 5 min, and after each Gemini turn — only while logged in.
     const geminiUsage = cfg.geminiBin && geminiLogin ? new GeminiUsagePoller({ bin: cfg.geminiBin, usage, login: geminiLogin }) : null;
     geminiUsage?.start();
+    cleanup.push(() => geminiUsage?.stop());
     const geminiStatus = () => {
       geminiLogin?.ensureFresh();
       return { available: gemini !== null, loggedIn: Object.fromEntries(GEMINI_ACCOUNTS.map((a) => [a, geminiLogin?.get(a) ?? false])) as Record<GeminiAccount, boolean> };
@@ -205,6 +213,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       ? new GrokBillingPoller({ probe: (signal) => probeGrokBilling(grokDeps, undefined, signal), tracker: grokUsage, busy: () => grokLock.size > 0, log: (line) => console.error(line) })
       : null;
     grokBilling?.start();
+    cleanup.push(() => void grokBilling?.stop());
     const grokStatusBase: GrokStatus = { bin: grok !== null };
     const grokStatus = (): GrokStatus => ({ ...grokStatusBase, locked: grokEngineLock.reason });
     if (grokBin) {
@@ -218,6 +227,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     let notifyIndex = () => {};
     let notifyPermissionMode: (sessionId: string, mode: PermMode) => void = () => {};
     const claude = new ClaudeEngine({ bin: cfg.claudeBin, accounts, bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) });
+    cleanup.push(() => void claude.close().catch(() => undefined));
     const runner = new TurnRunner({
       engine: claude,
       memory: () => memory.get(),
@@ -277,6 +287,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       // 총사령탑이 맡은 세션의 실패는 사령탑이 사람 필요로 푸시한다(설계 §5 중복 푸시).
       quiet: (sessionId) => commander.quiet(sessionId),
     });
+    cleanup.push(() => watch.stop());
     // 총사령탑: ws 가 생긴 뒤 묶이는 전송·busy·방송.
     let serverSend: (r: ServerSend) => boolean = () => false;
     let sessionBusy: (sessionId: string) => boolean = () => true;
@@ -304,6 +315,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       limits: () => ({ maxTurns: settings.get().commanderMaxTurns ?? 20, tokenCap: settings.get().commanderTokenCap ?? 2_000_000 }),
       titleOf,
     });
+    cleanup.push(() => commander.dispose());
     await events.load();
     const updates = new ServerUpdateWatch({ root: cfg.repoRoot, startedAt });
     await updates.start();
@@ -312,6 +324,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const serverUpdate: ServerUpdateDeps = { check: () => updates.check(), supervised: supervisionCheck({ env: cfg.supervised, pidFile: path.join(cfg.configDir, 'relaunch.pid') }), draining: () => restartCtl.draining(), activeTurns: () => ws.activeTurns(), restart: () => restartCtl.request('UI 재시작'), forceRestart: () => restartCtl.force('UI 강제 재시작') };
     const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate });
     const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); } });
+    cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();
     submitRetry = (r) => ws.submitRetry(r);
     serverSend = (r) => ws.submitServerSend(r);
@@ -324,6 +337,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     notifyPermissionMode = (sessionId, mode) => ws.broadcast({ type: 'permission_mode', sessionId, mode });
     // §14.9-3: a tripped (or unlocked) Grok engine is shown in settings at once.
     const stopGrokLockWatch = grokEngineLock.onChange(() => ws.broadcast({ type: 'grok_status', grok: grokStatus() }));
+    cleanup.push(stopGrokLockWatch);
     handler = realHandler;
 
     console.log(`deck: 세션 ${index.sessions().length}개 · 계정 ${accounts.all().map((a) => `${a}${accounts.isRetired(a) ? '(retired)' : ''}${accounts.isHome(a) ? '(home)' : ''}`).join(' ')} · 보호 계정 ${cfg.protectedAccount ?? '없음'} · 사용량 ${cfg.usageMode === 'cli' ? 'cli(턴 관측)' : `usage-deck ${cfg.deckUrl}`} · claude ${claudeLabel(cfg.claudeBin)} · codex ${cfg.codexBin ?? '없음'} · agy ${cfg.geminiBin ?? '없음'} · grok ${cfg.grokBin ?? '없음'}`);
@@ -339,13 +353,16 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
       // grokBilling.stop() aborts an in-progress billing probe; awaited below so shutdown does not race it (review item 5).
       // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
-      lock.release();
-      void flushThenExit(() => Promise.all([events.flush(), claude.close(), grokBilling?.stop() ?? Promise.resolve()]).then(() => {}), () => process.exit(0));
+      // The lock goes last: a new server may take the config dir only once this one has written everything.
+      void flushThenExit(() => Promise.all([events.flush(), claude.close(), grokBilling?.stop() ?? Promise.resolve()]).then(() => {}), () => { lock.release(); process.exit(0); });
     };
     restartCtl = installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });
     o.onListening?.({ port, addresses, tokenFile: cfg.tokenFile, tokenCreated, lockFile: lock.file });
   } catch (err) {
-    for (const stop of cleanup) stop();
+    // Whatever started is stopped in reverse order, so nothing keeps the process alive after the error.
+    for (const stop of cleanup.reverse()) {
+      try { stop(); } catch (e) { console.error('deck: 시작 실패 후 정리 중 오류', e instanceof Error ? e.message : e); }
+    }
     await Promise.all(servers.map((s) => new Promise<void>((resolve) => { if (!s.listening) resolve(); else s.close(() => resolve()); })));
     lock.release();
     throw err;

@@ -24,6 +24,14 @@ trap cleanup EXIT
 trap 'echo "pack-smoke: 실패 — $STEP" >&2; exit 1' ERR
 step() { STEP="$1"; echo "pack-smoke: $1"; }
 die() { echo "pack-smoke: 실패 — $STEP: $1" >&2; exit 1; }
+# Every engine CLI the server or doctor could find on PATH must be one of ours under $T: anything else is this machine's real CLI.
+guard_path() {
+  local n p
+  for n in claude codex agy grok; do
+    p=$("${E[@]}" sh -c 'command -v "$1" || true' _ "$n")
+    [[ -z "$p" || "$p" == "$T/"* ]] || die "PATH 에서 임시 폴더 밖의 $n 이 잡힘: $p"
+  done
+}
 
 mkdir -p "$T/src" "$T/out" "$T/x" "$T/bin" "$T/nodebin" "$T/home" "$T/npm-cache"
 # Only node/npm/npx on PATH: the folder `node` lives in may also hold this machine's real claude/codex/grok.
@@ -89,6 +97,7 @@ case "$1" in
 esac
 EOF
 chmod 755 "$T/bin/claude" "$T/bin/codex" "$T/bin/agy" "$T/home/.grok/bin/grok"
+guard_path
 
 step '전역 설치 (공백·한글 접두사)'
 G="$T/g 공백 한글"
@@ -118,6 +127,7 @@ if [[ "${SKIP_DOCTOR:-}" == 1 ]]; then
   echo 'pack-smoke: doctor 단계 건너뜀 (SKIP_DOCTOR=1)'
 else
   step 'doctor'
+  guard_path
   out="$("${E[@]}" "$Q" doctor)" || die 'doctor 종료 코드 0 아님'
   [[ "$(grep -cE '^(claude|codex|gemini|grok) ' <<<"$out")" == 4 ]] || { echo "$out" >&2; die 'doctor 출력에 엔진 넷이 없음'; }
   grep -q '로그인 안 됨' <<<"$out" || die 'doctor 출력에 "로그인 안 됨" 없음'
@@ -127,9 +137,11 @@ fi
 free_port() { node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'; }
 
 step '서버 시작'
+guard_path
 PORT="$(free_port)"
 CONF="$T/home/.config/deck"
-"${E[@]}" "DECK_CLAUDE_BIN=$T/bin/claude" perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!"' "$Q" start --port "$PORT" >"$T/server.log" 2>&1 &
+# DECK_HOOK_RELAY_DEADLINE_MS=1: a fail-closed hook relay (only the timeout turn runs one) gives up at once → deny, exit 2.
+"${E[@]}" "DECK_CLAUDE_BIN=$T/bin/claude" DECK_HOOK_RELAY_DEADLINE_MS=1 perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!"' "$Q" start --port "$PORT" >"$T/server.log" 2>&1 &
 SERVER_PGID=$!
 ok=''
 for _ in $(seq 60); do

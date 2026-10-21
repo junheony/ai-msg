@@ -1125,6 +1125,31 @@ describe('App boot', () => {
     expect(fetchFn.mock.calls.filter((c) => c[0] === '/api/me').length).toBe(2);
   });
 
+  it('boot: a server still starting (503) is retried, not taken for logged out', async () => {
+    const fetchFn = vi.fn()
+      .mockImplementationOnce(async () => new Response('시작 중', { status: 503, headers: { 'retry-after': '2' } }))
+      .mockImplementation(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchFn);
+    render(<App />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(screen.getByText('확인 중…')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '로그인' })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    await waitFor(() => expect(screen.queryByText('확인 중…')).toBeNull());
+    expect(fetchFn.mock.calls.filter((c) => c[0] === '/api/me').length).toBe(2);
+    expect(screen.queryByRole('button', { name: '로그인' })).toBeNull();
+  });
+
+  it('boot: 401 is logged out at once (the token screen), without retrying', async () => {
+    const fetchFn = vi.fn(async () => new Response('', { status: 401 }));
+    vi.stubGlobal('fetch', fetchFn);
+    render(<App />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(screen.getByRole('button', { name: '로그인' })).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(fetchFn.mock.calls.filter((c) => (c as unknown[])[0] === '/api/me').length).toBe(1);
+  });
+
   it('boot: a server that keeps not answering is named as the cause (서버 응답 없음), with a retry button', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
     render(<App />);

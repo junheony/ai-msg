@@ -20,7 +20,7 @@ export type InstanceLock = {
   release(): void;
 };
 
-type Probes = { isAlive?: (pid: number) => boolean; commandOf?: (pid: number) => string | null };
+type Probes = { isAlive?: (pid: number) => boolean; commandOf?: (pid: number) => string | null; ppid?: number };
 
 export function pidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -71,17 +71,17 @@ function createExclusive(file: string, text: string): boolean {
 
 /**
  * Take the config dir's lock before anything else is written there. A live holder → `InstanceLockedError('lock')`; a dead
- * or reused pid, or a corrupt file, is a stale lock: removed only if unchanged since read, then one more try. An
- * unsupervised start (`supervisor !== 'relaunch'`) is refused while `relaunch.pid` names a live relaunch loop.
+ * or reused pid, or a corrupt file, is a stale lock: taken over by renaming it aside (so only one taker wins), then one
+ * more try. While `relaunch.pid` names a live relaunch loop, only that loop's own child may start: `supervisor ===
+ * 'relaunch'` and the loop is this process's parent (an inherited DECK_SUPERVISED alone is not enough).
  */
 export async function acquireInstanceLock(configDir: string, o: { pid: number; port: number; version: string; supervisor: string | null } & Probes): Promise<InstanceLock> {
   const isAlive = o.isAlive ?? pidAlive;
   const commandOf = o.commandOf ?? commandOfPid;
-  if (o.supervisor !== 'relaunch') {
-    const loopPid = Number((readText(path.join(configDir, 'relaunch.pid')) ?? '').trim());
-    if (Number.isInteger(loopPid) && loopPid > 0 && isAlive(loopPid) && RELAUNCH_LOOP_RE.test(commandOf(loopPid) ?? '')) {
-      throw new InstanceLockedError(configDir, null, 'relaunch-loop');
-    }
+  const loopPid = Number((readText(path.join(configDir, 'relaunch.pid')) ?? '').trim());
+  const ownLoop = o.supervisor === 'relaunch' && loopPid === (o.ppid ?? process.ppid);
+  if (!ownLoop && Number.isInteger(loopPid) && loopPid > 0 && isAlive(loopPid) && RELAUNCH_LOOP_RE.test(commandOf(loopPid) ?? '')) {
+    throw new InstanceLockedError(configDir, null, 'relaunch-loop');
   }
   const createdDir = !fs.existsSync(configDir);
   fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
@@ -96,8 +96,18 @@ export async function acquireInstanceLock(configDir: string, o: { pid: number; p
     const text = readText(file);
     const holder = text === null ? null : parseLock(text);
     if (holderLive(holder, isAlive, commandOf)) throw new InstanceLockedError(configDir, holder, 'lock');
-    // Stale: remove it only if nobody replaced it meanwhile, then race once more.
-    if (text !== null && readText(file) === text) fs.rmSync(file, { force: true });
+    // Stale: move it aside (atomic: of two takers only one rename succeeds) and drop it only if it is the file judged
+    // stale; a fresh lock that slipped in meanwhile is put back. Then race once more.
+    const aside = `${file}.${o.pid}.${Date.now()}.stale`;
+    let moved = false;
+    try { fs.renameSync(file, aside); moved = true; } catch { /* another taker moved it first, or it is gone */ }
+    if (moved) {
+      if (readText(aside) === text) fs.rmSync(aside, { force: true });
+      else {
+        try { fs.linkSync(aside, file); } catch { /* a newer lock is already in place */ }
+        fs.rmSync(aside, { force: true });
+      }
+    }
     if (!createExclusive(file, JSON.stringify(info))) {
       const now = readText(file);
       throw new InstanceLockedError(configDir, now === null ? null : parseLock(now), 'lock');

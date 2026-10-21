@@ -55,7 +55,9 @@ describe('instanceLock', () => {
     const probes = { isAlive: (p: number) => p === 777, commandOf: (p: number) => (p === 777 ? '/bin/sh /x/relaunch.sh' : null) };
     await expect(acquireInstanceLock(dir, { pid: process.pid, port: 6, version: 't', supervisor: null, ...probes })).rejects.toMatchObject({ reason: 'relaunch-loop' });
     expect(fs.existsSync(lockPath())).toBe(false);
-    const l = await acquireInstanceLock(dir, { pid: process.pid, port: 6, version: 't', supervisor: 'relaunch', ...probes });
+    // DECK_SUPERVISED inherited by some other process: claims the loop, but the loop is not its parent.
+    await expect(acquireInstanceLock(dir, { pid: process.pid, port: 6, version: 't', supervisor: 'relaunch', ppid: 778, ...probes })).rejects.toMatchObject({ reason: 'relaunch-loop' });
+    const l = await acquireInstanceLock(dir, { pid: process.pid, port: 6, version: 't', supervisor: 'relaunch', ppid: 777, ...probes });
     l.release();
     // A dead loop pid does not block.
     const l2 = await acquireInstanceLock(dir, { pid: process.pid, port: 6, version: 't', supervisor: null, isAlive: () => false });
@@ -94,5 +96,14 @@ describe('instanceLock', () => {
     writeLock({ pid: process.pid, port: 5 });
     expect(readInstanceLock(dir)?.port).toBe(5);
     expect(readInstanceLock(path.join(root, 'missing'))).toBeNull();
+  });
+  it('stale takeover never removes a lock that replaced the stale one meanwhile', async () => {
+    writeLock({ pid: 4242, port: 5 });
+    const fresh = JSON.stringify({ pid: 5555, port: 9 });
+    // pid 4242 now runs something else (stale); while it is being judged, a new server writes its lock.
+    const commandOf = (p: number) => { if (p === 4242) { fs.writeFileSync(lockPath(), fresh); return '/bin/sleep 100'; } return 'node /x/bin.js start'; };
+    await expect(acquireInstanceLock(dir, { pid: process.pid, port: 6, version: 't', supervisor: null, isAlive: () => true, commandOf })).rejects.toMatchObject({ reason: 'lock', holder: { pid: 5555 } });
+    expect(fs.readFileSync(lockPath(), 'utf8')).toBe(fresh);
+    expect(fs.readdirSync(dir).filter((f) => f !== 'server.lock')).toEqual([]);
   });
 });
