@@ -212,6 +212,14 @@ describe('메시지 편집 갈래 · sidebar', () => {
     expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
   });
 
+  it('a branch row\'s line 2 previews the version it opens (the newest), not the root', () => {
+    const withPreviews = [{ ...projects[0]!, sessions: projects[0]!.sessions.map((x) => ({ ...x, preview: x.sessionId === 'B' ? 'newest reply' : x.sessionId === 'R' ? 'root reply' : undefined })) }];
+    render(<Sidebar projects={withPreviews} currentSessionId={null} onOpen={() => {}} onNew={() => {}} onRefresh={() => {}} />);
+    const row = [...document.querySelectorAll('.project li')][0]!;
+    expect(row.querySelector('.meta-text')?.textContent).toBe('newest reply');
+    expect(row.querySelector('.row-open')?.textContent).toContain('갈래 3'); // screen readers hear the count too
+  });
+
   it('the row menu acts on the version a click opens (the newest) and names it', () => {
     const onArchive = vi.fn();
     const onDelete = vi.fn();

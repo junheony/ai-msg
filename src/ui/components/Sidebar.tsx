@@ -241,15 +241,18 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /**
    * The row's one status mark (its end), by priority: 승인 대기 (warn dot: it needs the user) → 응답 중 / 백그라운드 (a
    * turning ring) → 안 읽음 (accent dot). `label` names every fact that holds, for the mark's aria-label and tooltip —
-   * the row no longer says them in words. A 갈래 row: any member. `extraUnread`: a Grok Bot roster's own unread count.
+   * the row no longer says them in words. A 갈래 row: any member. `extra`: a Grok Bot roster's own unread count, and its
+   * 답장 대기 (the bot waits on the user: the same warn mark as 승인 대기).
    */
-  const status = (ids: string[], extraUnread = 0): { kind: 'waiting' | 'running' | 'bg' | 'unread'; label: string } | null => {
+  const status = (ids: string[], extra: RowExtra = {}): { kind: 'waiting' | 'running' | 'bg' | 'unread'; label: string } | null => {
+    const extraUnread = extra.unread ?? 0;
     const acts = ids.map((id) => actById.get(id)).filter((a): a is SessionActivity => !!a);
-    const waits = ids.some((id) => waitingSet.has(id));
+    const approvals = ids.some((id) => waitingSet.has(id));
+    const waits = approvals || !!extra.awaiting;
     const runs = acts.some((a) => a.running);
     const bg = acts.reduce((n, a) => n + a.bg, 0);
     const unreadN = ids.filter((id) => unreadSet.has(id)).length + extraUnread;
-    const facts = [waits && '승인 대기', runs && '응답 중', bg > 0 && `백그라운드 ${bg}개`, unreadN > 0 && (unreadN > 1 ? `안 읽음 ${unreadN}` : '안 읽음')].filter((x): x is string => !!x);
+    const facts = [approvals && '승인 대기', extra.awaiting && '답장 대기', runs && '응답 중', bg > 0 && `백그라운드 ${bg}개`, unreadN > 0 && (unreadN > 1 ? `안 읽음 ${unreadN}` : '안 읽음')].filter((x): x is string => !!x);
     if (!facts.length) return null;
     return { kind: waits ? 'waiting' : runs ? 'running' : bg > 0 ? 'bg' : 'unread', label: facts.join(' · ') };
   };
@@ -263,8 +266,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
    * The row's end: one quiet mark, or nothing (Grok Bot's list). A status wins; with none, a session open in a pane shows
    * its split number (◱ a card) in the faint text colour. Whatever the mark leaves out is in its aria-label / tooltip.
    */
-  const statusMark = (ids: string[], marked: boolean, extraUnread = 0) => {
-    const st = status(ids, extraUnread);
+  const statusMark = (ids: string[], marked: boolean, extra: RowExtra = {}) => {
+    const st = status(ids, extra);
     const open = marked ? openAt(ids) : null;
     if (st) {
       const label = open ? `${st.label} · ${open.label}` : st.label;
@@ -323,10 +326,15 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const more = canEdit && !edit;
     const current = !!currentSessionId && members.includes(currentSessionId);
     const engine = engineOf(target);
-    const meta = metaLine({ engine, tag: rowTag(s), text: oneLine(s.preview) || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
+    // A 갈래 row shows its newest version (`target`): title and preview both come from it.
+    const preview = oneLine(target.preview);
+    const meta = metaLine({ engine, tag: rowTag(s), text: preview || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
     const avatarEl = avatarOf(slug, s.sessionId);
     // The row's tooltip keeps what the row stopped showing: folder, engine, run kind, 갈래, the time.
     const facts = [slug, engine !== 'claude' ? ENGINE_NAME[engine] ?? engine : null, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s).filter((t) => !t.startsWith('안 읽음')), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(target.lastModified, now)];
+    // Screen readers get the same facts in the button (the li title is mouse-only), less what the row already says:
+    // the folder when line 2 shows it, the tag, and the statuses the end mark's label names.
+    const spoken = facts.filter((f): f is string => !!f && !(f === slug && !preview) && f !== rowTag(s) && f !== '답장 대기');
     return (
       <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} title={`${target.title}\n${facts.filter(Boolean).join(' · ')}`}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
@@ -357,7 +365,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
                 <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}>{target.title}</span>
                 {meta}
               </span>
-              {statusMark(members, true, s.grokBot?.unreadCount ?? 0)}
+              {statusMark(members, true, { unread: s.grokBot?.unreadCount ?? 0, awaiting: !!s.grokBot?.awaitingUserResponse })}
+              <span className="sr-only">{`, ${spoken.join(', ')}`}</span>
             </>
           ),
         })}
@@ -403,6 +412,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
                 {metaLine({ engine: 'claude', text: d.project })}
               </span>
               {statusMark([d.sessionId], true)}
+              <span className="sr-only">{`, Desktop, ${ago(d.lastModified, now)}`}</span>
             </>
           ),
         })}
@@ -626,6 +636,8 @@ function MetaEngine({ engine }: { engine: EngineKind }) {
 }
 
 /** Grok Bot row tags: the app name, reply-awaited / unread / group markers, read-only. */
+type RowExtra = { unread?: number; awaiting?: boolean };
+
 export function grokBotTags(s: SessionEntry): string[] {
   if (s.source !== 'grokbot') return [];
   const b = s.grokBot;

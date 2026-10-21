@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AVATAR_COLORS, DECK_VERSION_LINE, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex } from './Sidebar';
 import { SESSION_ICONS, assignSessionIcons, sessionIconBase } from './SessionIcon';
@@ -609,7 +611,7 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
       expect(open.getAttribute('aria-haspopup')).toBeNull(); // the ⋯ menu's trigger is ⋯, not the row
       const kids = Array.from(open.children).map((el) => el.className.split(' ')[0]);
       expect(kids.slice(0, 2)).toEqual(['row-avatar', 'row-text']);
-      expect(kids.slice(2).every((k) => k === 'row-status')).toBe(true);
+      expect(kids.slice(2).every((k) => k === 'row-status' || k === 'sr-only')).toBe(true);
       const text = open.querySelector('.row-text')!;
       expect(Array.from(text.children).map((el) => el.className.split(' ')[0])).toEqual(['session-title', 'session-meta']);
       expect(Array.from(open.querySelectorAll('.row-avatar > *')).map((el) => el.tagName.toLowerCase())).toEqual(['svg']);
@@ -635,6 +637,29 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     render(<Sidebar projects={[{ cwd: '/w/one', name: 'one', pinned: false, sessions: [withPreview, s('p2', '/w/one', 'plain')] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     expect(screen.getByText('chat').closest('li')!.querySelector('.meta-text')?.textContent).toBe('Tests pass, ready to merge');
     expect(screen.getByText('plain').closest('li')!.querySelector('.meta-text')?.textContent).toBe('one');
+  });
+
+  it('screen readers get what the tooltip says: folder (when a preview hides it), engine, 자동 실행, time — in the button', () => {
+    const e = { sessionId: 'x1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w/one', projectDir: '/r', file: '/r/f', title: 'lane', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true, codexExec: true, preview: 'all done' };
+    render(<Sidebar projects={[{ cwd: '/w/one', name: 'one', pinned: false, sessions: [e, s('p2', '/w/one', 'plain')] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    const spoken = screen.getByText('lane').closest('li')!.querySelector('.row-open > .sr-only')!.textContent!;
+    for (const f of ['one', 'Codex (GPT)', '자동 실행', '2분 전']) expect(spoken).toContain(f);
+    // Without a preview line 2 already says the folder: not repeated.
+    expect(screen.getByText('plain').closest('li')!.querySelector('.row-open > .sr-only')!.textContent).not.toContain('one');
+  });
+
+  it('a Grok Bot roster waiting on the user shows the warn mark, labelled 답장 대기', () => {
+    const bot = { ...s('g1', '/w/one', 'bot chat'), source: 'grokbot' as const, grokBot: { awaitingUserResponse: true, unreadCount: 2, isGroup: false } };
+    render(<Sidebar projects={[{ cwd: '/w/one', name: 'one', pinned: false, sessions: [bot] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    const mark = screen.getByText('bot chat').closest('li')!.querySelector('.row-status')!;
+    expect(mark.className).toBe('row-status waiting');
+    expect(mark.getAttribute('aria-label')).toBe('답장 대기 · 안 읽음 2');
+  });
+
+  it('the status mark steps aside for ⋯ by opacity only: hidden by visibility it would drop out of the button\'s name', () => {
+    const css = readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
+    const rules = css.split('}').filter((r) => r.includes('.row-status') && /visibility:\s*hidden/.test(r));
+    expect(rules).toEqual([]);
   });
 
   it('avatar colour: the same slug always gets the same palette slot, in 1 … AVATAR_COLORS, on every row of that project', () => {
