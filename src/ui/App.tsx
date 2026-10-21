@@ -11,6 +11,8 @@ import { LayoutsDialog } from './components/LayoutsDialog';
 import { deleteLayout, layoutPanes, listLayouts, saveLayout, type SavedLayout } from './layouts';
 import { Login } from './components/Login';
 import { SettingsView } from './components/SettingsView';
+import { SetupWizard } from './components/SetupWizard';
+import { readHashToken } from './loginHash';
 import { Toasts, type ToastItem } from './components/Toasts';
 import { SplitIcon } from './components/icons';
 import { postPin, postPinOrder } from './pins';
@@ -178,6 +180,9 @@ export function App() {
   const [usageOpen, setUsageOpen] = useState<null | 'limits' | 'history'>(null);
   const [highlightsOpen, setHighlightsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 설치 점검: opened by itself once per page when the server says the first-run wizard is still to be shown. */
+  const [setupOpen, setSetupOpen] = useState(false);
+  const setupAsked = useRef(false);
   const [buildId, setBuildId] = useState<string | null>(null);
   const [prefs, setPref] = usePrefs();
   const themeRef = useRef(prefs.theme);
@@ -315,16 +320,31 @@ export function App() {
   // A 대화 내용 검색 hit being opened: once its pane has loaded the transcript, scroll to the message containing it.
   const [scrollTo, setScrollTo] = useState<{ paneId: string; sessionId: string; snippet: string; match: string; until: number } | null>(null);
 
-  // An unreachable server (a phone that just woke up, no network yet) is retried, not left at 확인 중… for good.
+  // An unreachable or still-starting server (a phone that just woke up, no network yet; a restart) is retried, not left at 확인 중… for good.
   // After BOOT_NOTICE_FAILS misses the screen says so (the server is down, not the app hanging) and offers a reload.
   const [bootFails, setBootFails] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const check = () => {
-      fetch('/api/me').then((r) => { if (!cancelled) setAuthed(r.ok); }, () => { if (!cancelled) { setBootFails((n) => n + 1); timer = setTimeout(check, 3000); } });
+      const retry = () => { if (!cancelled) { setBootFails((n) => n + 1); timer = setTimeout(check, 3000); } };
+      // Only 401/403 mean logged out. A server still starting (503) or any other error is retried like no answer:
+      // a restart must not drop a PWA with a valid cookie onto the token screen.
+      fetch('/api/me').then((r) => {
+        if (cancelled) return;
+        if (r.ok) setAuthed(true);
+        else if (r.status === 401 || r.status === 403) setAuthed(false);
+        else retry();
+      }, retry);
     };
-    check();
+    // A login address (`quarterdeck login-url`: …/#token=…) logs in first; the token leaves the address bar either way.
+    const token = readHashToken(window.location.hash);
+    if (token) {
+      const strip = () => window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) })
+        .then(strip, strip)
+        .then(() => { if (!cancelled) check(); });
+    } else check();
     return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
@@ -382,6 +402,7 @@ export function App() {
     catchup.current = tracker;
     sock.current = createSocket((msg) => {
       if (msg.type === 'hello') setFeatures(msg.features);
+      if (msg.type === 'hello' && has('setup') && msg.setup?.needed && !setupAsked.current) { setupAsked.current = true; setSetupOpen(true); }
       // 총사령탑 켜기·끄기 changed what the server does (before the dispatch, so the render that follows sees it).
       if (msg.type === 'settings' && msg.features) setFeatures(msg.features);
       // A repeat of an event already applied, one ahead of a gap (what is missing was just asked for), or a retry's same failure: not applied.
@@ -513,7 +534,7 @@ export function App() {
         (document.activeElement as HTMLElement | null)?.blur?.();
         setTimeout(go, 0);
       };
-      // ⌘1 … ⌘9: the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
+      // ⌘1 … ⌘9 (⌃1 … ⌃9 too on a Mac — Safari keeps ⌘-digits for its menus): the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
       // repeats are taken too (not reopened), or the browser would switch tabs on them.
       const pin = matchPinShortcut(e, MAC);
       if (pin !== null) {
@@ -1312,7 +1333,8 @@ export function App() {
       )}
       {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
-      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onSetup={has('setup') ? () => { setSettingsOpen(false); setSetupOpen(true); } : undefined} onClose={() => setSettingsOpen(false)} />}
+      {setupOpen && <SetupWizard activity={state.activity} onDone={() => setSetupOpen(false)} onClose={() => setSetupOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)}
         onOpenSessionSplit={(s) => openSplit(s.sessionId, s.cwd, s.title)}
         onOpenSessionFloat={phone ? undefined : (s) => { const before = latest.current.panes.length; openSplit(s.sessionId, s.cwd, s.title); if (latest.current.panes.length > before) floatPane(latest.current.activePaneId); }}

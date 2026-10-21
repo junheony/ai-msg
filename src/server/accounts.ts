@@ -96,14 +96,15 @@ function discoverRegistry(homeDir: string, log: (line: string) => void): Account
  * (`~/.claude`, `~/.claude-<one letter>`).
  * A file that is there but cannot be used (unreadable, broken JSON, schema, duplicate id / dir / card, unknown home, …)
  * throws `AccountsFileError`: falling back to discovery would bring back accounts the file had removed or retired and
- * move `home`. Only a missing file means discovery, and discovery never throws.
+ * move `home`. Only a missing file means discovery, and discovery never throws. `text`: the file's content already read
+ * (validated as is, so a caller checks exactly what it then uses).
  */
-export function loadAccountRegistry(opts: { configDir: string; homeDir: string; log?: (line: string) => void }): AccountRegistry {
+export function loadAccountRegistry(opts: { configDir: string; homeDir: string; log?: (line: string) => void; text?: string }): AccountRegistry {
   const file = path.join(opts.configDir, 'accounts.json');
   const refuse = (reason: string) => new AccountsFileError(`deck: ${file} 을 쓸 수 없어 시작하지 않습니다 — ${reason}\n      파일을 고친 뒤 다시 시작하세요. (파일이 없을 때만 ~/.claude, ~/.claude-<한 글자> 를 자동으로 찾습니다.)`);
   let text: string;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = opts.text ?? fs.readFileSync(file, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return discoverRegistry(opts.homeDir, opts.log ?? console.error);
     throw refuse(`읽지 못함 (${(err as NodeJS.ErrnoException).code ?? String(err)})`);

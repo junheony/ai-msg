@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dateGroupOf, groupByDate } from './dateGroups';
 import { fuzzyFilter, fuzzyScore } from './fuzzy';
-import { isMacPlatform, matchPaneShortcut, modKeys, matchPinShortcut, matchShortcut, pinKeyLabel, shortcutList, type ShortcutKey } from './shortcuts';
+import { isMacPlatform, isSafariBrowser, matchPaneShortcut, modKeys, matchPinShortcut, matchShortcut, pinKeyLabel, shortcutList, type ShortcutKey } from './shortcuts';
 
 describe('fuzzyScore / fuzzyFilter', () => {
   it('matches substrings and in-order subsequences, case-insensitively; misses are null', () => {
@@ -163,5 +163,34 @@ describe('shortcuts', () => {
     expect(matchPaneShortcut(key('Digit3', { ctrlKey: true, altKey: true }), { mac: false, typing: false })).toBe(2);
     expect(matchPaneShortcut(key('Digit3', { ctrlKey: true, altKey: true }), { mac: false, typing: true })).toBeNull(); // AltGr
     expect(matchPinShortcut(key('Digit1', { metaKey: true, altKey: true }), true)).toBeNull();
+  });
+  it('Mac ⌃1 … ⌃9 / ⌃⌥1 … ⌃⌥9 match as ⌘ does (Safari keeps ⌘-digits): by code, mid-IME too; never ⌘⌃ together; off a Mac Ctrl only', () => {
+    const ctrl = (code: string, extra: Partial<ShortcutKey> = {}) => key(code, { ctrlKey: true, ...extra });
+    expect(matchPinShortcut(ctrl('Digit1'), true)).toBe(0);
+    expect(matchPinShortcut(ctrl('Digit9', { key: '9' }), true)).toBe(8);
+    expect(matchPinShortcut(ctrl('Digit1', { isComposing: true, key: 'Process' }), true)).toBe(0);
+    expect(matchPinShortcut(ctrl('Digit2', { keyCode: 229 }), true)).toBe(1);
+    expect(matchPinShortcut({ ...ctrl(''), key: '3', isComposing: true }, true)).toBeNull();
+    expect(matchPinShortcut(ctrl('Digit1', { metaKey: true }), true)).toBeNull();
+    expect(matchPinShortcut(ctrl('Digit1', { shiftKey: true }), true)).toBeNull();
+    expect(matchPinShortcut(ctrl('Digit1', { altKey: true }), true)).toBeNull();
+    expect(matchPaneShortcut(ctrl('Digit1', { altKey: true, key: '¡' }), { mac: true, typing: true })).toBe(0);
+    expect(matchPaneShortcut(ctrl('Digit3', { altKey: true, isComposing: true }), { mac: true, typing: false })).toBe(2);
+    expect(matchPaneShortcut(ctrl('Digit1', { altKey: true, metaKey: true }), { mac: true, typing: false })).toBeNull();
+    // Off a Mac: Ctrl as before, ⌘ (Windows key) is not added.
+    expect(matchPinShortcut(ctrl('Digit4'), false)).toBe(3);
+    expect(matchPinShortcut(key('Digit4', { metaKey: true }), false)).toBeNull();
+    expect(matchPinShortcut(ctrl('Digit4', { metaKey: true }), false)).toBeNull();
+    expect(matchPaneShortcut(ctrl('Digit2', { altKey: true }), { mac: false, typing: false })).toBe(1);
+    expect(matchPaneShortcut(key('Digit2', { metaKey: true, altKey: true }), { mac: false, typing: false })).toBeNull();
+  });
+  it('Safari (tab or Dock web app) shows ⌃1 on the 고정됨 rows; other Mac browsers ⌘1', () => {
+    const SAFARI = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
+    const CHROME = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+    const EDGE = `${CHROME} Edg/141.0.0.0`;
+    const FIREFOX = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0';
+    expect([SAFARI, CHROME, EDGE, FIREFOX].map((userAgent) => isSafariBrowser({ userAgent }))).toEqual([true, false, false, false]);
+    expect(isSafariBrowser({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1' })).toBe(false);
+    expect([pinKeyLabel(0, true, true), pinKeyLabel(8, true, false), pinKeyLabel(2, false, true), pinKeyLabel(9, true, true)]).toEqual(['⌃1', '⌘9', 'Ctrl+3', null]);
   });
 });

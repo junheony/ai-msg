@@ -33,7 +33,7 @@ async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' 
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
   const store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
-  const usage = over.usage ?? new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
+  const usage = over.usage ?? new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: false, json: async () => ({}) }), now: () => new Date(NOW) });
   /**
    * Per process started: its argv, and what its UserPromptSubmit hook adds to the first prompt (undefined: no hook or
    * nothing added). Like the real CLI, the child's output waits until that hook has answered.
@@ -81,7 +81,7 @@ async function usageCards(): Promise<UsageService> {
   const card = (id: string, s: number, w: number, fb: number) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [
     { label: 'Session (5h)', used: s, resetsAt }, { label: 'Weekly (7d)', used: w, resetsAt }, { label: 'Fable (7d)', used: fb, resetsAt }] });
   const state = { cards: [card('claude:main', 13, 7, 0), card('claude:second', 2, 3, 4), card('claude:third', 0, 91, 27)] };
-  const u = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
+  const u = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW) });
   await u.pollOnce();
   return u;
 }

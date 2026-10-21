@@ -49,7 +49,7 @@ describe('CodexUsagePoller (F3)', () => {
 
   it('feeds UsageService so the GPT seat is known without a deck GPT turn', async () => {
     const { root } = await rolloutRoot();
-    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date('2026-10-01T03:00:00Z') });
+    const usage = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date('2026-10-01T03:00:00Z') });
     await new CodexUsagePoller({ sessionsRoot: root, usage }).pollOnce();
     expect(usage.snapshot().gpt).toMatchObject({ status: 'ok', weekly: { usedPct: 40 }, fiveHour: { usedPct: 7 }, fetchedAt: '2026-10-01T02:00:00.000Z' });
   });
@@ -81,7 +81,7 @@ describe('CodexUsagePoller (F3)', () => {
       payload: { type: 'token_count', rate_limits: { limit_id: 'codex', primary: { used_percent: 100, window_minutes: 10080, resets_at: 1791353807 }, secondary: null, credits: { has_credits: true, unlimited: false, balance: '49563.3205070000' } } },
     }) + '\n');
     const card = { id: 'codex', status: 'ok', fetchedAt: '2026-10-01T02:30:00Z', rows: [{ label: 'Weekly (7d)', used: 100, resetsAt: null }] };
-    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date('2026-10-01T03:00:00Z'), fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card] }) }) });
+    const usage = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date('2026-10-01T03:00:00Z'), fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card] }) }) });
     await new CodexUsagePoller({ sessionsRoot: root, usage }).pollOnce();
     expect(usage.snapshot().gpt).toMatchObject({ weekly: { usedPct: 100 }, credits: { hasCredits: true, unlimited: false, balance: 49563.320507 } });
     await usage.pollOnce();

@@ -23,6 +23,14 @@ describe('account registry loader', () => {
     logs = [];
   });
 
+  it('text given: that content is validated, not a second read of the file', () => {
+    const good = JSON.stringify({ version: 1, accounts: [{ id: 'a' }] });
+    writeConfig('{ broken');
+    expect(loadAccountRegistry({ configDir, homeDir: home, log: () => {}, text: good }).list()).toEqual(['a']);
+    writeConfig(good);
+    expect(() => loadAccountRegistry({ configDir, homeDir: home, log: () => {}, text: '{ broken' })).toThrow(AccountsFileError);
+  });
+
   it('no accounts.json: discovers ~/.claude, ~/.claude-b, ~/.claude-c exactly like the old constants', () => {
     profile('.claude', null);
     profile('.claude-c');

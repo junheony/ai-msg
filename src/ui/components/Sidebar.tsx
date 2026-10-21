@@ -6,11 +6,11 @@ import { groupByDate } from '../dateGroups';
 import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
-import { EngineMark, engineOf } from './EngineMark';
+import { EngineMark, GeminiMark, GrokMark, OpenAIMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
 import { BlockedDeleteItem, MenuList, deleteBlockedReason, isGrokBotEntry } from './SessionMenu';
 import { openInNewTab } from './ShareMenu';
-import { isMacPlatform, isPlainMod, pinKeyLabel } from '../shortcuts';
+import { isMacPlatform, isPinMod, isSafariBrowser, pinKeyLabel } from '../shortcuts';
 import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
 import { DeckMark } from './DeckMark';
@@ -21,7 +21,7 @@ export const SEARCH_MIN_CHARS = 2;
 const SEARCH_DEBOUNCE_MS = 300;
 /** 최근 view: newest sessions across all projects, split by day. */
 const MAX_RECENT = 150;
-/** How often the rows' "N분 전" is recomputed. */
+/** How often the rows' "N분 전" (their tooltip, the 갈래 menu line, search hits) is recomputed. */
 export const META_TICK_MS = 60_000;
 
 /** Touch: holding a row this long shows its ⋯ button (design §7.2: 350ms). */
@@ -92,11 +92,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   /** Enables 대화 내용 검색 (full-text over all transcripts); a clicked hit lands here. */
   onOpenHit?: (hit: SearchHit) => void;
   searchFn?: (q: string) => Promise<{ hits: SearchHit[]; truncated: boolean }>;
-  /** Sessions with a running turn or background work (any device): spinner / pulsing dot before the title. */
+  /** Sessions with a running turn or background work (any device): a turning ring at the row's end. */
   activity?: SessionActivity[];
-  /** Sessions that finished while not shown: unread dot until opened. */
+  /** Sessions that finished while not shown: an accent dot at the row's end until opened. */
   unread?: string[];
-  /** Sessions with a permission card or question waiting for the user: 승인 대기 in place of the row's time. */
+  /** Sessions with a permission card or question waiting for the user: a warn dot at the row's end (승인 대기). */
   waiting?: string[];
   /** 삭제 (Claude sessions): the app confirms, moves it to the trash and offers undo. `which` names the branch of a 갈래 row. */
   onDelete?: (s: SessionEntry, which?: string) => void;
@@ -115,7 +115,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onOpenPalette?: () => void;
 }) {
   const [picking, setPicking] = useState(false);
-  // "N분 전" moves on by itself: the rows re-render every minute even when no index arrives.
+  // "N분 전" (row tooltips, the 갈래 menu line) moves on by itself: the rows re-render every minute even when no index arrives.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), META_TICK_MS); return () => clearInterval(t); }, []);
   const [footOpen, setFootOpen] = useState(false);
@@ -145,13 +145,13 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   }, [revealed]);
   useEffect(() => { setRevealed(null); }, [projects, desktop]);
   const open = (sessionId: string, cwd: string, title: string) => { setRevealed(null); onOpen(sessionId, cwd, title); };
-  // ⌘/Ctrl held (alone, no dialog open): the 고정됨 rows show ⌘1 … ⌘9. Cleared on blur / hide, where the keyup never arrives.
+  // ⌘/⌃ (Ctrl off a Mac) held alone, no dialog open: the 고정됨 rows show ⌘1 … ⌘9 (⌃1 … ⌃9 in Safari). Cleared on blur / hide, where the keyup never arrives.
   const [modHeld, setModHeld] = useState(false);
   const pinKeys = !!pinShortcut;
   useEffect(() => {
     if (!pinKeys) return;
     const mac = isMacPlatform();
-    const onKey = (e: KeyboardEvent) => setModHeld(isPlainMod(e, mac) && !hasOpenModal());
+    const onKey = (e: KeyboardEvent) => setModHeld(isPinMod(e, mac) && !hasOpenModal());
     const clear = () => setModHeld(false);
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
@@ -233,51 +233,72 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   }
   // Gone with the sidebar (signed out): the key listener outlives it and must not open into a hidden pane.
   useEffect(() => () => { if (pinShortcut) pinShortcut.current = () => false; }, [pinShortcut]);
-  const pinKey = (index: number) => (modHeld ? pinKeyLabel(index, isMacPlatform()) : null);
+  const pinKey = (index: number) => (modHeld ? pinKeyLabel(index, isMacPlatform(), isSafariBrowser()) : null);
 
   const actById = new Map(activity.map((a) => [a.sessionId, a]));
   const unreadSet = new Set(unread);
   const waitingSet = new Set(waiting);
-  /** What the row says on its meta line, same order as the dot (승인 대기 first: it needs the user). A 갈래 row: any member. */
-  const status = (ids: string[]): { kind: 'waiting' | 'running' | 'bg' | 'unread'; label: string } | null => {
-    if (ids.some((id) => waitingSet.has(id))) return { kind: 'waiting', label: '승인 대기' };
+  /**
+   * The row's one status mark (its end), by priority: 승인 대기 (warn dot: it needs the user) → 응답 중 / 백그라운드 (a
+   * turning ring) → 안 읽음 (accent dot). `label` names every fact that holds, for the mark's aria-label and tooltip —
+   * the row no longer says them in words. A 갈래 row: any member. `extra`: a Grok Bot roster's own unread count, and its
+   * 답장 대기 (the bot waits on the user: the same warn mark as 승인 대기).
+   */
+  const status = (ids: string[], extra: RowExtra = {}): { kind: 'waiting' | 'running' | 'bg' | 'unread'; label: string } | null => {
+    const extraUnread = extra.unread ?? 0;
     const acts = ids.map((id) => actById.get(id)).filter((a): a is SessionActivity => !!a);
-    if (acts.some((a) => a.running)) return { kind: 'running', label: '실행 중' };
+    const approvals = ids.some((id) => waitingSet.has(id));
+    const waits = approvals || !!extra.awaiting;
+    const runs = acts.some((a) => a.running);
     const bg = acts.reduce((n, a) => n + a.bg, 0);
-    if (bg > 0) return { kind: 'bg', label: `백그라운드 ${bg}개` };
-    if (ids.some((id) => unreadSet.has(id))) return { kind: 'unread', label: '새 응답' };
-    return null;
+    const unreadN = ids.filter((id) => unreadSet.has(id)).length + extraUnread;
+    const facts = [approvals && '승인 대기', extra.awaiting && '답장 대기', runs && '응답 중', bg > 0 && `백그라운드 ${bg}개`, unreadN > 0 && (unreadN > 1 ? `안 읽음 ${unreadN}` : '안 읽음')].filter((x): x is string => !!x);
+    if (!facts.length) return null;
+    return { kind: waits ? 'waiting' : runs ? 'running' : bg > 0 ? 'bg' : 'unread', label: facts.join(' · ') };
   };
-  /** 분할 N / ◱ (a floating card), on the avatar's lower right: the session is open already. A 갈래 row: any member. */
-  const openMark = (ids: string[]) => {
+  /** 분할 N / 떠 있는 카드: the session is open already. A 갈래 row: any member. */
+  const openAt = (ids: string[]) => {
     const at = ids.map((id) => openPanes?.get(id)).find((x) => x !== undefined);
     if (at === undefined) return null;
-    const label = at === 'float' ? '떠 있는 카드에 열림' : `분할 ${at}번 패널에 열림`;
-    return <span className="open-mark" role="img" aria-label={label} title={label}>{at === 'float' ? '◱' : at}</span>;
+    return { at, label: at === 'float' ? '떠 있는 카드에 열림' : `분할 ${at}번 패널에 열림` };
   };
   /**
-   * The row's round avatar (§3.2): project colour + the session's glyph (SessionIcon: one per session, so a project's
-   * rows tell apart), the status dot top left, the engine mark bottom left, the open mark bottom right. The glyph, dot and
-   * engine mark are decoration — the row's title and meta line name the session and project and say the status.
+   * The row's end: one quiet mark, or nothing (Grok Bot's list). A status wins; with none, a session open in a pane shows
+   * its split number (◱ a card) in the faint text colour. Whatever the mark leaves out is in its aria-label / tooltip.
    */
-  const avatarOf = (slug: string, ids: string[], engine: EngineKind, marked = true, sessionId = ids[0]!) => {
-    const st = status(ids);
-    return (
-      <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties}>
-        <SessionGlyph index={icons.get(sessionId) ?? sessionIconBase(sessionId)} />
-        {st && <span className={`row-dot ${st.kind}`} aria-hidden="true" title={st.label} />}
-        {engine === 'claude' || engine === 'codex' || engine === 'grok' ? <span className="row-engine"><EngineMark engine={engine} decorative /></span> : null}
-        {marked && openMark(ids)}
-      </span>
-    );
+  const statusMark = (ids: string[], marked: boolean, extra: RowExtra = {}) => {
+    const st = status(ids, extra);
+    const open = marked ? openAt(ids) : null;
+    if (st) {
+      const label = open ? `${st.label} · ${open.label}` : st.label;
+      return <span className={`row-status ${st.kind}`} role="img" aria-label={label} title={label} />;
+    }
+    if (open) return <span className="row-status open open-mark" role="img" aria-label={open.label} title={open.label}>{open.at === 'float' ? '◱' : open.at}</span>;
+    return null;
   };
+  /**
+   * The row's avatar (§3.2): project colour + the session's glyph (SessionIcon: one per session, so a project's rows tell
+   * apart). Nothing on its edge — status, engine and open marks live at the row's end and on the second line.
+   */
+  const avatarOf = (slug: string, sessionId: string) => (
+    <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties}>
+      <SessionGlyph index={icons.get(sessionId) ?? sessionIconBase(sessionId)} />
+    </span>
+  );
+  /**
+   * Line 2: the last reply's preview when there is one, else the project folder. Only a non-Claude engine gets a mark (a
+   * 12px muted glyph up front); a row deck cannot continue gets a one-word tag. Statuses are the row end's job.
+   */
+  const metaLine = (p: { engine: EngineKind; tag?: string | null; text: string; title?: string }) => (
+    <span className="session-meta" {...(p.title ? { title: p.title } : {})}>
+      {p.engine !== 'claude' && <MetaEngine engine={p.engine} />}
+      {p.tag && <span className="meta-tag">{p.tag}</span>}
+      <span className="meta-text">{p.text}</span>
+    </span>
+  );
   const rowClass = (active: boolean) => (active ? 'session-item active' : 'session-item');
   // An attribute, not a class: a re-render must not wipe the 고정됨 drag's own classes (pin-dragging) on the same press.
   const rowProps = (key: string) => ({ 'data-row': key, ...(revealed === key ? { 'data-revealed': '' } : {}) });
-  /** Line 1: the title and, top right, the time (⋯ takes its place when shown). */
-  const titleLine = (title: ReactNode, time: number) => (
-    <span className="row-line">{title}<span className="row-time">{ago(time, now)}</span></span>
-  );
   /** The row's open button: Tab reaches it, Enter / Space open it; the current session says so (aria-current). */
   const openButton = (p: { current: boolean; keys?: string; onOpen: (detail: number) => void; children: ReactNode }) => (
     <button type="button" className="row-open" aria-current={p.current ? 'page' : undefined} aria-keyshortcuts={p.keys}
@@ -304,10 +325,18 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const slug = projectName.get(s.sessionId) ?? baseName(s.cwd);
     const more = canEdit && !edit;
     const current = !!currentSessionId && members.includes(currentSessionId);
-    const meta = <span className="session-meta" {...(s.imported ? { title: importTitle(s) } : {})}>{[slug, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, status(members)?.label].filter(Boolean).join(' · ')}</span>;
-    const avatarEl = avatarOf(slug, members, engineOf(target), !edit, s.sessionId);
+    const engine = engineOf(target);
+    // A 갈래 row shows its newest version (`target`): title and preview both come from it.
+    const preview = oneLine(target.preview);
+    const meta = metaLine({ engine, tag: rowTag(s), text: preview || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
+    const avatarEl = avatarOf(slug, s.sessionId);
+    // The row's tooltip keeps what the row stopped showing: folder, engine, run kind, 갈래, the time.
+    const facts = [slug, engine !== 'claude' ? ENGINE_NAME[engine] ?? engine : null, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s).filter((t) => !t.startsWith('안 읽음')), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(target.lastModified, now)];
+    // Screen readers get the same facts in the button (the li title is mouse-only), less what the row already says:
+    // the folder when line 2 shows it, the tag, and the statuses the end mark's label names.
+    const spoken = facts.filter((f): f is string => !!f && !(f === slug && !preview) && f !== rowTag(s) && f !== '답장 대기');
     return (
-      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} title={`${target.title} · ${slug}`}
+      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} title={`${target.title}\n${facts.filter(Boolean).join(' · ')}`}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
         {edit ? (
           // Renaming: an input cannot sit inside a button, so the row is plain for the while.
@@ -333,9 +362,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             <>
               {avatarEl}
               <span className="row-text">
-                {titleLine(<span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}>{target.title}</span>, s.lastModified)}
+                <span className="session-title" onDoubleClick={onRename ? (e) => { e.stopPropagation(); startEdit(target, key); } : undefined}>{target.title}</span>
                 {meta}
               </span>
+              {statusMark(members, true, { unread: s.grokBot?.unreadCount ?? 0, awaiting: !!s.grokBot?.awaitingUserResponse })}
+              <span className="sr-only">{`, ${spoken.join(', ')}`}</span>
             </>
           ),
         })}
@@ -369,17 +400,19 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const key = `${group}:${d.sessionId}`;
     const more = !!(onTogglePin || onOpenSplit);
     return (
-      <li key={d.sessionId} {...rowProps(key)} className={rowClass(d.sessionId === currentSessionId)} title={`${d.title} · ${d.project}\n${d.cwd}`}>
+      <li key={d.sessionId} {...rowProps(key)} className={rowClass(d.sessionId === currentSessionId)} title={`${d.title}\n${d.project} · Desktop · ${ago(d.lastModified, now)}\n${d.cwd}`}>
         {openButton({
           current: d.sessionId === currentSessionId, keys: onTogglePin ? reorderKeys(group) : undefined,
           onOpen: () => open(d.sessionId, d.cwd, d.title),
           children: (
             <>
-              {avatarOf(d.project, [d.sessionId], 'claude')}
+              {avatarOf(d.project, d.sessionId)}
               <span className="row-text">
-                {titleLine(<span className="session-title">{d.title}</span>, d.lastModified)}
-                <span className="session-meta">{[d.project, 'Desktop', status([d.sessionId])?.label].filter(Boolean).join(' · ')}</span>
+                <span className="session-title">{d.title}</span>
+                {metaLine({ engine: 'claude', text: d.project })}
               </span>
+              {statusMark([d.sessionId], true)}
+              <span className="sr-only">{`, Desktop, ${ago(d.lastModified, now)}`}</span>
             </>
           ),
         })}
@@ -581,7 +614,30 @@ export function importTitle(s: SessionEntry): string {
   return s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다';
 }
 
+/** A non-Claude engine's name, for the row's tooltip. */
+const ENGINE_NAME: Partial<Record<EngineKind, string>> = { codex: 'Codex (GPT)', grok: 'Grok', gemini: 'Gemini' };
+
+/** The one-word tag a row deck cannot continue carries on its second line (the tooltip says why). */
+export function rowTag(s: SessionEntry): string | null {
+  if (s.source === 'grokbot' || s.codexArchived) return '읽기 전용';
+  if (s.cwdMissing) return '폴더 없음';
+  return null;
+}
+
+/** A preview as one line (the row truncates it with an ellipsis). */
+const oneLine = (t: string | undefined) => (t ? t.replace(/\s+/g, ' ').trim() : '');
+
+/** Line 2's engine glyph (non-Claude only): 12px, single colour (the line's muted grey), decorative — the tooltip names it. */
+function MetaEngine({ engine }: { engine: EngineKind }) {
+  const cls = 'meta-engine-svg';
+  const mark = engine === 'codex' ? <OpenAIMark className={cls} /> : engine === 'grok' ? <GrokMark className={cls} /> : engine === 'gemini' ? <GeminiMark className={cls} /> : null;
+  if (!mark) return null;
+  return <span className={`meta-engine ${engine}`} aria-hidden="true">{mark}</span>;
+}
+
 /** Grok Bot row tags: the app name, reply-awaited / unread / group markers, read-only. */
+type RowExtra = { unread?: number; awaiting?: boolean };
+
 export function grokBotTags(s: SessionEntry): string[] {
   if (s.source !== 'grokbot') return [];
   const b = s.grokBot;

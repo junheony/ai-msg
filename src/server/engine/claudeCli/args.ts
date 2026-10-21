@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { ClaudeModel, Effort } from '../../../shared/models';
 import { MODEL_ARG } from '../../routing/ModelPolicy';
+import { stripSupervisorEnv } from '../../supervisorEnv';
 
 export const BRIDGE_SERVER = 'deck_bridge';
 export const PERMISSION_TOOL = `mcp__${BRIDGE_SERVER}__permission`;
@@ -141,11 +142,11 @@ export function buildMcpConfig(m: { node: string; script: string; socketPath: st
 
 /**
  * Env for the claude child: the account env (`AccountRegistry.env`, already stripped of token and
- * routing vars, CLAUDE_CONFIG_DIR set) plus the MCP tool timeout so a permission card can wait for
+ * routing vars, CLAUDE_CONFIG_DIR set) minus service-manager markers, plus the MCP tool timeout so a permission card can wait for
  * the user. deck never sets CLAUDE_CODE_ENTRYPOINT / CLAUDE_AGENT_SDK_VERSION.
  */
 export function claudeEnv(base: NodeJS.ProcessEnv, toolTimeoutMs: number): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base, MCP_TOOL_TIMEOUT: String(toolTimeoutMs) };
+  const env: NodeJS.ProcessEnv = { ...stripSupervisorEnv(base), MCP_TOOL_TIMEOUT: String(toolTimeoutMs) };
   delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.CLAUDE_AGENT_SDK_VERSION;
   return env;

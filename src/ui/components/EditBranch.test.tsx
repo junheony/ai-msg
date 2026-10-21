@@ -207,9 +207,17 @@ describe('메시지 편집 갈래 · sidebar', () => {
     const rows = [...document.querySelectorAll('.project li')];
     expect(rows.map((r) => r.querySelector('.session-title')?.textContent)).toEqual(['원본', '다른 세션']);
     expect(rows[0]!.className).toContain('active');
-    expect(rows[0]!.textContent).toContain('갈래 3');
+    expect(rows[0]!.getAttribute('title')).toContain('갈래 3'); // the row itself stays two lines; the count is in its tooltip
     fireEvent.click(rows[0]!.querySelector('.row-open')!);
     expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
+  });
+
+  it('a branch row\'s line 2 previews the version it opens (the newest), not the root', () => {
+    const withPreviews = [{ ...projects[0]!, sessions: projects[0]!.sessions.map((x) => ({ ...x, preview: x.sessionId === 'B' ? 'newest reply' : x.sessionId === 'R' ? 'root reply' : undefined })) }];
+    render(<Sidebar projects={withPreviews} currentSessionId={null} onOpen={() => {}} onNew={() => {}} onRefresh={() => {}} />);
+    const row = [...document.querySelectorAll('.project li')][0]!;
+    expect(row.querySelector('.meta-text')?.textContent).toBe('newest reply');
+    expect(row.querySelector('.row-open')?.textContent).toContain('갈래 3'); // screen readers hear the count too
   });
 
   it('the row menu acts on the version a click opens (the newest) and names it', () => {
@@ -244,7 +252,7 @@ describe('메시지 편집 갈래 · sidebar', () => {
     render(<Sidebar projects={left} currentSessionId={null} onOpen={onOpen} onNew={() => {}} onRefresh={() => {}} />);
     const rows = [...document.querySelectorAll('.project li')];
     expect(rows.map((r) => r.querySelector('.session-title')?.textContent)).toEqual(['원본', '다른 세션']);
-    expect(rows[0]!.textContent).toContain('갈래 2');
+    expect(rows[0]!.getAttribute('title')).toContain('갈래 2');
     fireEvent.click(rows[0]!.querySelector('.row-open')!);
     expect(onOpen).toHaveBeenCalledWith('B', '/w', '원본');
     cleanup();

@@ -121,6 +121,15 @@ describe('runGrokTurn: lifecycle and mapping', () => {
     expect(result).toMatchObject({ ok: true, sessionId: SID, terminalReason: 'completed', usage: { inputTokens: 400, outputTokens: 50, cacheReadTokens: 600, cacheCreationTokens: 0 } });
   });
 
+  it('S5: the detached agent group is recorded at spawn and removed when the turn ends', async () => {
+    const calls: string[] = [];
+    let pgid = 0;
+    const children = { add: (e: { pgid: number; bin: string; engine: string }) => { pgid = e.pgid; calls.push(`add ${e.engine} ${e.bin}`); }, remove: (p: number) => calls.push(`remove ${p === pgid}`) };
+    await turn('', { deps: { children } });
+    expect(pgid).toBeGreaterThan(1);
+    expect(calls).toEqual(['add grok grok', 'remove true']);
+  });
+
   it('deck context: a <system-reminder> text block before the prompt\'s own block; none without context', async () => {
     const { log } = await turn('', { req: { context: '[deck 메모] x' } });
     expect(paramsOf(log, 'session/prompt')[0]).toMatchObject({ prompt: [{ type: 'text', text: '<system-reminder>\n[deck 메모] x\n</system-reminder>' }, { type: 'text', text: 'hi' }] });

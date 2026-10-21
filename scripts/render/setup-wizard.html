@@ -1,0 +1,88 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- 설치 점검 fixture for scripts/render-check.sh (keep in step with SetupWizard.tsx / Login.tsx): the wizard sheet whole —
+     ① four engines (Claude logged out with its command + 복사, GPT logged in, Gemini not installed with its note, Grok
+     unknown), ② Claude accounts (기본 a, b logged out with its command, d added: 다음 시작부터), the accounts.json notice,
+     the add form, a server error and the restart notice with 지금 재시작, ③ two addresses + the pairing line, the sticky
+     완료 — then the token login screen. ?light = the light theme. 412px needs an iframe (headless Chrome will not go below 500):
+       RENDER_HEIGHT=2000 RENDER_OUT=/tmp/deck-render-wizard scripts/render-check.sh setup-wizard 412 1250 -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); }
+  .fx-name { margin: 14px 20px 6px; font-size: 12px; color: var(--muted); }
+  .fx .sheet-backdrop { position: relative; inset: auto; z-index: auto; }
+  .fx .sheet { max-height: none; }
+  .fx-login .login { margin: 40px auto; }
+  .fx-phones { display: none; }
+  .fx-phones iframe { display: block; width: 412px; border: 0; border-bottom: 1px solid var(--line); }
+  .fx-light { display: none; }
+  .fx-light iframe { display: block; width: 100%; height: 1720px; border: 0; }
+  .fx-top .fx-light { display: block; }
+  @media (max-width: 720px) { .fx-top .fx-desk, .fx-top .fx-light { display: none; } .fx-top .fx-phones { display: block; } }
+</style>
+<script>
+  if (location.search.includes('light')) document.documentElement.dataset.theme = 'light';
+  if (window === window.top) document.documentElement.classList.add('fx-top');
+</script>
+</head><body>
+
+<div class="fx-phones">
+  <div class="fx-name">폰 412 — 다크</div>
+  <iframe src="setup-wizard.html?dark" title="dark" style="height: 2300px"></iframe>
+  <div class="fx-name">폰 412 — 라이트</div>
+  <iframe src="setup-wizard.html?light" title="light" style="height: 2300px"></iframe>
+</div>
+
+<div class="fx-desk">
+  <div class="fx">
+  <div class="sheet-backdrop"><div class="sheet setup-wizard" role="dialog" aria-modal="true" aria-label="설치 점검">
+    <header class="sheet-head"><h2 class="sheet-title">설치 점검</h2><button type="button" class="icon-btn sheet-btn sheet-close" aria-label="닫기">✕</button></header>
+    <p class="setup-intro">엔진 CLI 와 계정을 확인합니다. 지금 다 갖추지 않아도 되고, 설정 › 계정 › 설치 점검에서 언제든 다시 열 수 있습니다.</p>
+    <section class="setup-step">
+      <div class="setup-step-head"><h3><span class="setup-num">1</span>엔진</h3><span class="setup-meta">10:02 확인</span><button type="button" class="btn ghost setup-recheck">다시 확인</button></div>
+      <ul class="setup-list">
+        <li class="setup-row"><div class="setup-row-main"><span class="setup-name">Claude</span><span class="setup-meta">2.1.42</span><span class="setup-state is-warn"><span class="setup-dot"></span>로그인 안 됨</span></div>
+          <div class="setup-cmd"><code>claude auth login</code><button type="button" class="btn ghost setup-copy">복사</button></div></li>
+        <li class="setup-row"><div class="setup-row-main"><span class="setup-name">GPT (Codex)</span><span class="setup-meta">0.50.0</span><span class="setup-state is-ok"><span class="setup-dot"></span>로그인됨</span></div></li>
+        <li class="setup-row"><div class="setup-row-main"><span class="setup-name">Gemini</span><span class="setup-state is-warn"><span class="setup-dot"></span>설치 안 됨</span></div>
+          <p class="setup-note">agy 를 찾지 못했습니다 — 설치 후 PATH 에 두거나 DECK_GEMINI_BIN 으로 지정하세요</p></li>
+        <li class="setup-row"><div class="setup-row-main"><span class="setup-name">Grok</span><span class="setup-meta">1.0.3</span><span class="setup-state is-muted"><span class="setup-dot"></span>확인 못 함</span></div>
+          <p class="setup-note">응답 없음(10초)</p></li>
+      </ul>
+      <p class="setup-note">터미널에서 실행한 뒤 다시 확인을 누르세요</p>
+    </section>
+    <section class="setup-step">
+      <div class="setup-step-head"><h3><span class="setup-num">2</span>Claude 계정</h3></div>
+      <ul class="setup-list">
+        <li class="setup-row"><div class="setup-row-main"><span class="setup-name">A</span><span class="setup-badge">기본</span><span class="setup-meta setup-dir">~/.claude</span><span class="setup-state is-ok"><span class="setup-dot"></span>로그인됨</span></div></li>
+        <li class="setup-row"><div class="setup-row-main"><span class="setup-name">B</span><span class="setup-meta setup-dir">~/.claude-b</span><span class="setup-state is-warn"><span class="setup-dot"></span>로그인 안 됨</span></div>
+          <div class="setup-cmd"><code>CLAUDE_CONFIG_DIR=~/.claude-b claude auth login</code><button type="button" class="btn ghost setup-copy">복사</button></div></li>
+        <li class="setup-row"><div class="setup-row-main"><span class="setup-name">사이드 프로젝트용</span><span class="setup-meta setup-dir">~/.claude-d</span><span class="setup-state is-muted"><span class="setup-dot"></span>다음 시작부터</span></div></li>
+      </ul>
+      <p class="setup-notice">처음 추가하면 지금 계정 목록이 설정 폴더의 accounts.json 으로 고정됩니다 — 이후 새 ~/.claude-x 폴더는 자동으로 잡히지 않으니 이 화면에서 추가하세요</p>
+      <form class="setup-add">
+        <label class="setup-field setup-field-id"><span>계정 id</span><input value="b" placeholder="d"></label>
+        <label class="setup-field"><span>이름 (선택)</span><input value=""></label>
+        <button type="submit" class="btn primary setup-add-btn">계정 추가</button>
+      </form>
+      <p class="setup-note">소문자·숫자 1~16자 (예: d) — ~/.claude-&lt;id&gt; 폴더를 씁니다</p>
+      <p class="setup-error">이미 있는 계정입니다: b</p>
+      <div class="setup-restart"><p>서버를 다시 시작하면 계정이 추가됩니다</p><button type="button" class="btn ghost">지금 재시작</button></div>
+    </section>
+    <section class="setup-step">
+      <div class="setup-step-head"><h3><span class="setup-num">3</span>접속 주소</h3></div>
+      <p class="setup-note">같은 네트워크의 기기에서 열 수 있습니다. 처음 여는 기기는 로그인 토큰을 물어봅니다.</p>
+      <ul class="setup-addrs">
+        <li><div class="setup-cmd"><code>http://192.168.0.12:9320/</code><button type="button" class="btn ghost setup-copy">복사</button></div></li>
+        <li><div class="setup-cmd"><code>https://macbook.tail1234.ts.net/</code><button type="button" class="btn ghost setup-copy">복사</button></div></li>
+      </ul>
+      <p class="setup-note">폰에서 QR 로 바로 연결하는 기능은 다음 버전에 들어갑니다.</p>
+    </section>
+    <footer class="setup-foot"><button type="button" class="btn primary setup-done">완료</button></footer>
+  </div></div>
+  <div class="fx-name">토큰 로그인 화면</div>
+  <div class="fx-login"><form class="login"><h1>deck</h1><p>터미널에서 <code>quarterdeck login-url</code> 을 실행해 나온 주소를 열거나, 설정 폴더의 token 파일 내용을 입력하세요.</p><input type="password" placeholder="로그인 토큰"><button type="submit" class="btn primary">로그인</button></form></div>
+  </div>
+</div>
+<div class="fx-light"><div class="fx-name">라이트</div><iframe src="setup-wizard.html?light" title="light"></iframe></div>
+</body></html>
