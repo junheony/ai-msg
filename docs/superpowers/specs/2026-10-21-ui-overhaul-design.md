@@ -1,6 +1,6 @@
 # deck UI 전면 정비 설계안 — 개정 2 (적대 검토 반영)
 
-기준 코드: `/Users/max/Documents/개발/deck` **`master`** (Grok 작업 병합됨 — 백그라운드 작업 취소·승인 대기 표시, `/bg` 입력 보존, deck-choices 선택지 카드 포함). React 19 + Vite, 순수 CSS 변수 `src/ui/styles.css` 2,280줄 단일 파일.
+기준 코드: **`master`** (Grok 작업 병합됨 — 백그라운드 작업 취소·승인 대기 표시, `/bg` 입력 보존, deck-choices 선택지 카드 포함). React 19 + Vite, 순수 CSS 변수 `src/ui/styles.css` 2,280줄 단일 파일.
 캡처: `/tmp/deck-design-shots/before/` (폭 360·412·820·1024·1440·1920, 가짜 홈·가짜 usage-deck, 실제 계정·엔진 호출 없음).
 사용자 실제 화면: `17.jpg`(폰) `18.jpg`(태블릿). 참고 앱 Grok Bot: `19.png` `20.png` `21.png`.
 목표 한 줄: **Grok Bot 처럼 "지금 대화 하나"만 보이게. 나머지는 전부 한 번 눌러야 나오게 — 단, 기능은 하나도 버리지 않는다.**
