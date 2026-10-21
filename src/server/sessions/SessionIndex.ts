@@ -336,7 +336,9 @@ export class SessionIndex {
     // Only the transcripts that moved (usually the one turn that just ended): their last 64 KB for the list preview.
     await Promise.all(grown.map(async (e) => {
       const preview = await readTailPreview(e.file).catch(() => undefined);
+      // As a rescan would have it: no reply in the tail means no preview (an unreadable file keeps the old one).
       if (preview) e.preview = preview;
+      else if (preview === null) delete e.preview;
     }));
     if (changed) this.grouped = this.group(this.entries);
     return changed;

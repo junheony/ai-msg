@@ -200,10 +200,15 @@ export function lastReplyOf(buf: Buffer): string | null {
     if (!line.includes('"assistant"')) continue;
     const r = parseLine(line);
     if (!r || r.type !== 'assistant' || r.isSidechain) continue;
+    // Claude Code's own stand-ins ("API Error: …", "No response requested."): not something the model said.
+    if (r.isApiErrorMessage || message(r)?.model === '<synthetic>') continue;
     const raw = textOfContent(message(r)?.content);
     if (!raw) continue;
     const one = redactSecrets(splitDeckChoices(stripSystemReminders(raw)).text).replace(/\s+/g, ' ').trim();
-    if (one) return one.length > PREVIEW_CHARS ? `${one.slice(0, PREVIEW_CHARS - 1)}…` : one;
+    if (!one) continue;
+    // Cut by code point: a slice through a surrogate pair (an emoji) would leave half a character.
+    const chars = Array.from(one);
+    return chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS - 1).join('')}…` : one;
   }
   return null;
 }
@@ -241,8 +246,11 @@ export async function readHead(file: string, maxBytes = 256 * 1024): Promise<Hea
       const r = await fh.read(tail, 0, tail.length, start);
       // The first tail line is usually cut mid-record; parseLines skips it.
       tailCustom = scan(tail.subarray(0, r.bytesRead).toString('utf8')).custom;
-      // The preview reads from bytes already in memory: no extra I/O for the list.
-      preview = lastReplyOf(tail.subarray(0, r.bytesRead));
+      // The preview reads from bytes already in memory: no extra I/O for the list. A file just over maxBytes has a
+      // short tail; the head's end runs straight into it (tail starts where the head stopped), so join them.
+      const tailBytes = tail.subarray(0, r.bytesRead);
+      const short = PREVIEW_TAIL_BYTES - tailBytes.length;
+      preview = lastReplyOf(short > 0 && start === bytesRead ? Buffer.concat([buf.subarray(Math.max(0, bytesRead - short), bytesRead), tailBytes]) : tailBytes);
     }
   } finally {
     await fh.close();

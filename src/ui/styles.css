@@ -226,7 +226,8 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 @keyframes pin-key-in { from { opacity: 0; } }
 /* The hint fades in over the title's tail like the ⋯ overlay, and replaces that overlay (and the status mark). */
 .pin-key { background: linear-gradient(to right, transparent, var(--row-tint) 26px), linear-gradient(to right, transparent, var(--sidebar) 26px); }
-.sidebar li:has(> .pin-key) :is(.row-end, .row-status) { visibility: hidden; }
+.sidebar li:has(> .pin-key) .row-end { visibility: hidden; }
+.sidebar li:has(> .pin-key) .row-status { opacity: 0; }
 .more-btn { margin: 1px 0 0 16px; height: 24px; padding: 0 6px; font-size: calc(13px * var(--font-scale, 1)); color: var(--faint); border-radius: var(--r-xs); align-self: flex-start; }
 .more-btn:hover { color: var(--fg); background: var(--hover); }
 .sidebar-empty { padding: 12px 8px; }
@@ -1963,9 +1964,10 @@ button.hl-row-main:hover { background: var(--hover); }
 @media (hover: hover) { .sidebar li.session-item:hover .row-end { opacity: 1; pointer-events: auto; } }
 .sidebar li.session-item:has(:focus-visible) .row-end, .row-end:focus-within, .sidebar li.session-item[data-revealed] .row-end, .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) .row-end { opacity: 1; pointer-events: auto; }
 .sidebar li.session-item[data-revealed], .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--hover); background: var(--hover); }
-/* ⋯ takes the mark's place: the mark steps aside whenever ⋯ shows. */
-@media (hover: hover) { .sidebar li.session-item:hover .row-status { visibility: hidden; } }
-.sidebar li.session-item:is(:has(:focus-visible), :has(.row-end:focus-within), [data-revealed], :has(.row-more-btn[aria-expanded="true"])) .row-status { visibility: hidden; }
+/* ⋯ takes the mark's place: the mark steps aside whenever ⋯ shows — by opacity only, so a focused row's button keeps
+   the status in its accessible name. */
+@media (hover: hover) { .sidebar li.session-item:hover .row-status { opacity: 0; } }
+.sidebar li.session-item:is(:has(:focus-visible), :has(.row-end:focus-within), [data-revealed], :has(.row-more-btn[aria-expanded="true"])) .row-status { opacity: 0; }
 .sidebar li.session-item.active:has(.row-more-btn[aria-expanded="true"]) { --row-tint: var(--selected); }
 .pinned-group ul.pin-reordering .row-end { opacity: 0 !important; }
 .sidebar li:has(.session-rename) .row-end { display: none; }

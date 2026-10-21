@@ -332,6 +332,28 @@ describe('list preview — the last reply', () => {
     expect(await readHead(await file([user('only a question')]))).toEqual({ cwd: CWD, title: 'only a question' });
   });
 
+  it('skips Claude Code\'s synthetic stand-ins (API errors, "No response requested.")', () => {
+    expect(lastReplyOf(buf([said('real answer'), said('API Error: 529 overloaded', { isApiErrorMessage: true }),
+      L({ type: 'assistant', message: { id: 's', model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: 'No response requested.' }] } })]))).toBe('real answer');
+  });
+
+  it('cuts by code point: an emoji at the cut is kept whole or dropped, never halved', () => {
+    const out = lastReplyOf(buf([said('a' + '😀'.repeat(200))]))!;
+    expect(Array.from(out)).toHaveLength(PREVIEW_CHARS);
+    expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+
+  it('a file just over 256 KB still gets a full 64 KB window (the head\'s end joins the short tail)', async () => {
+    const noisy = L({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u', content: 'y'.repeat(2000) }] } });
+    const f = await file([user('q'), ...Array(115).fill(noisy), said('near the end'), ...Array(15).fill(noisy)]);
+    const { size } = await fs.stat(f);
+    expect(size).toBeGreaterThan(256 * 1024);
+    expect(size).toBeLessThan(320 * 1024);
+    const text = await fs.readFile(f, 'utf8');
+    expect(Buffer.byteLength(text.slice(0, text.indexOf('near the end')))).toBeLessThan(256 * 1024); // the reply is in the head's bytes
+    expect((await readHead(f)).preview).toBe('near the end');
+  });
+
   it('only looks at the last 64 KB: an older reply past a long tool run is not dug up', async () => {
     const noisy = L({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u', content: 'y'.repeat(2000) }] } });
     const f = await file([user('q'), said('ancient reply'), ...Array(40).fill(noisy), tool]);
