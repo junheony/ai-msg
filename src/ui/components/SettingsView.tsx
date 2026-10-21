@@ -10,6 +10,7 @@ import { describeShell } from '../shellFit';
 import { Sheet, SheetHead } from './Dialogs';
 import { TASK_SOFT_CAP_MAX, TASK_SOFT_CAP_MIN } from '../../shared/tasks';
 import { MemoryEditor } from './MemoryEditor';
+import { SETUP_TEXTS } from '../setupTexts';
 
 /** What turning 같은 벤더 계정 자동 순환 on asks the user to agree to (spec: paid design §3 rule 3). */
 export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁니다. 계정 공유·재판매·한도 회피 목적의 계정 생성은 각 제공자 약관 위반입니다.';
@@ -61,7 +62,7 @@ function Hint({ short, children }: { short: string; children?: ReactNode }) {
 export const SETTINGS_GROUPS = [['screen', '화면'], ['input', '입력'], ['perm', '권한·알림'], ['account', '계정']] as const;
 type GroupId = (typeof SETTINGS_GROUPS)[number][0];
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onClose }: {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onSetup, onClose }: {
   build: string | null;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
@@ -86,6 +87,8 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   /** 백그라운드 작업 running at once before new ones wait (server setting; null = not known yet / an older server). */
   taskCap?: number | null;
   onTaskCap?: (n: number) => void;
+  /** 설치 점검 (a 'setup' server): opens the first-run wizard. */
+  onSetup?: () => void;
   onClose: () => void;
 }) {
   const [prefs, dispatch] = usePrefs();
@@ -215,6 +218,12 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           </section>
           <section {...section('account')}>
             {heading('account')}
+            {onSetup && (
+              <div className="settings-row">
+                <span>{SETUP_TEXTS.settingsRow}</span>
+                <button type="button" className="btn ghost" onClick={onSetup}>{SETUP_TEXTS.title}</button>
+              </div>
+            )}
             {onRoutingPolicy && routingPolicy !== null && (
               <>
                 <Seg<RoutingPolicy> label="자동 계정 선택" value={routingPolicy} onPick={onRoutingPolicy} options={[['balance', '고르게 분산'], ['drain', '리셋 임박 먼저 소진']]} />

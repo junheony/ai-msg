@@ -1635,3 +1635,68 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(screen.queryByTestId(/^next-/)).toBeNull();
   });
 });
+
+describe('App setup wizard · address token login', () => {
+  const status = { engines: [{ engine: 'claude', bin: '/b/claude', version: '2.1.0', login: 'yes', loginCommand: 'claude auth login' }], claudeProfiles: [], addresses: [], needed: true, supervised: false, restartNeeded: false, accountsFile: true, checkedAt: '2026-10-21T00:00:00.000Z' };
+  const fetchFn = vi.fn(async (url: unknown) => new Response(JSON.stringify(url === '/api/setup' ? status : {}), { status: 200 }));
+  beforeEach(() => { localStorage.clear(); sock.frames = []; sock.onMessage = null; fetchFn.mockClear(); vi.stubGlobal('fetch', fetchFn); });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
+
+  it('opens the wizard when hello says setup is needed', async () => {
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    server({ ...hello(['setup']), setup: { needed: true } } as ServerMessage);
+    expect(await screen.findByRole('dialog', { name: '설치 점검' })).toBeTruthy();
+    // Closed, a reconnect's hello does not bring it back.
+    fireEvent.click(within(screen.getByRole('dialog', { name: '설치 점검' })).getByRole('button', { name: '닫기' }));
+    server({ ...hello(['setup']), setup: { needed: true } } as ServerMessage);
+    expect(screen.queryByRole('dialog', { name: '설치 점검' })).toBeNull();
+  });
+
+  it('does not open it for a server without the setup feature, nor when it is done', async () => {
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    server({ ...hello([]), setup: { needed: true } } as ServerMessage);
+    server({ ...hello(['setup']), setup: { needed: false } } as ServerMessage);
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(screen.queryByRole('dialog', { name: '설치 점검' })).toBeNull();
+  });
+
+  it('설정 › 계정 › 설치 점검 opens it on a setup server', async () => {
+    await boot(['setup']);
+    act(() => { window.dispatchEvent(new Event('deck:open-settings')); });
+    fireEvent.click(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '설치 점검' }));
+    expect(await screen.findByRole('dialog', { name: '설치 점검' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: '설정' })).toBeNull();
+  });
+
+  it('settings has no 설치 점검 on a server without the feature', async () => {
+    await boot([]);
+    act(() => { window.dispatchEvent(new Event('deck:open-settings')); });
+    expect(within(screen.getByRole('dialog', { name: '설정' })).queryByRole('button', { name: '설치 점검' })).toBeNull();
+  });
+
+  it('logs in from #token= and strips the hash', async () => {
+    window.history.replaceState(null, '', '/?x=1#token=a%2Bb');
+    const replace = vi.spyOn(window.history, 'replaceState');
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    const urls = fetchFn.mock.calls.map((c) => c[0]);
+    expect(urls.indexOf('/api/login')).toBeGreaterThanOrEqual(0);
+    expect(urls.indexOf('/api/login')).toBeLessThan(urls.indexOf('/api/me'));
+    const login = fetchFn.mock.calls.find((c) => c[0] === '/api/login') as unknown as [string, RequestInit];
+    expect(JSON.parse(String(login[1].body))).toEqual({ token: 'a+b' });
+    expect(replace).toHaveBeenCalledWith(null, '', '/?x=1');
+    expect(window.location.hash).toBe('');
+    replace.mockRestore();
+  });
+
+  it('a wrong #token= is stripped too and the token screen shows', async () => {
+    window.history.replaceState(null, '', '/#token=bad');
+    fetchFn.mockImplementation(async () => new Response('{}', { status: 401 }));
+    render(<App />);
+    expect(await screen.findByRole('button', { name: '로그인' })).toBeTruthy();
+    expect(window.location.hash).toBe('');
+    fetchFn.mockImplementation(async (url: unknown) => new Response(JSON.stringify(url === '/api/setup' ? status : {}), { status: 200 }));
+  });
+});

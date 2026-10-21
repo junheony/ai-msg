@@ -84,6 +84,12 @@ function check(name, t) {
     ["muted / strip stale current", c("muted"), c("panel"), 4.5],
     ["muted / sheet old seat", c("muted"), mix(c("fg"), c("panel"), 0.025), 4.5],
     ["fg / sheet old seat name", c("fg"), mix(c("fg"), c("panel"), 0.025), 4.5],
+    // 설치 점검 (on --panel): commands and the 기본 badge on a pill, the state dots (graphics floor 3).
+    ["fg / pill on panel", c("fg"), pill(c("panel")), 4.5],
+    ["fg-strong / panel", c("fg-strong"), c("panel"), 4.5],
+    ["muted / pill on panel", c("muted"), pill(c("panel")), 4.5],
+    ["ok dot / panel", c("ok"), c("panel"), 3],
+    ["warn dot / panel", c("warn"), c("panel"), 3],
     // Sidebar row avatars: the session glyph (a 2px line icon, --avatar-glyph) on the project colour — graphics floor 3.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`glyph / avatar-${n}`, c("avatar-glyph"), c(`avatar-${n}`), 3]),
   ];

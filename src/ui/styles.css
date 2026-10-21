@@ -439,6 +439,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .login p { margin: 0 0 6px; color: var(--muted); font-size: calc(13.5px * var(--font-scale, 1)); }
 .login input { height: 36px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg-raised); }
 .login .btn { height: 36px; }
+.login code { font-family: var(--mono); font-size: .92em; color: var(--fg); overflow-wrap: anywhere; }
 
 /* ───────── Phone ───────── */
 @media (max-width: 720px) {
@@ -1458,6 +1459,50 @@ button.hl-row-main:hover { background: var(--hover); }
   .settings-hint .hint-more::after { inset: -14px -8px; }
 }
 @media (max-width: 720px) { .seg button { height: var(--phone-tap); } .sheet-backdrop { padding: 0; align-items: stretch; } .sheet { max-height: 100%; border-radius: 0; width: 100%; } }
+/* 설치 점검 (SetupWizard): one sheet, three numbered parts (engines · Claude accounts · addresses) and a sticky 완료.
+   Rows sit in a hairline box; state = a coloured dot + muted word; commands (and addresses) on a --pill-bg strip. */
+.sheet.setup-wizard { width: min(600px, 100%); padding: 0 var(--sheet-pad); display: flex; flex-direction: column; gap: var(--s5); }
+.setup-wizard .sheet-head { padding-bottom: 0; }
+.setup-intro { margin: calc(-1 * var(--s3)) 0 0; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: var(--lh-label); }
+.setup-step { display: flex; flex-direction: column; gap: var(--s2); }
+.setup-step-head { display: flex; align-items: center; gap: var(--s2); min-height: 32px; }
+.setup-step-head h3 { flex: 1; min-width: 0; margin: 0; display: flex; align-items: center; gap: var(--s2); font-size: calc(var(--fs-body) * var(--font-scale, 1)); line-height: var(--lh-body); font-weight: 600; color: var(--fg-strong); }
+.setup-num { display: inline-grid; place-items: center; flex-shrink: 0; width: 22px; height: 22px; border-radius: var(--r-full); background: var(--selected); color: var(--fg-strong); font-size: var(--fs-meta); font-weight: 600; font-variant-numeric: tabular-nums; }
+.setup-list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line); }
+.setup-row { display: flex; flex-direction: column; gap: var(--s2); padding: 10px var(--s3); min-width: 0; }
+.setup-row + .setup-row { border-top: 1px solid var(--line); }
+.setup-row-main { display: flex; align-items: center; flex-wrap: wrap; gap: 2px var(--s2); min-height: 24px; }
+.setup-name { font-weight: 500; color: var(--fg-strong); }
+.setup-meta { color: var(--muted); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); font-variant-numeric: tabular-nums; }
+.setup-dir { font-family: var(--mono); }
+.setup-badge { padding: 1px 7px; border-radius: var(--r-full); background: var(--pill-bg); color: var(--muted); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); }
+.setup-state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); white-space: nowrap; }
+.setup-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.setup-state.is-ok .setup-dot { background: var(--ok); }
+.setup-state.is-warn .setup-dot { background: var(--warn); }
+.setup-note { margin: 0; color: var(--muted); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); overflow-wrap: anywhere; }
+.setup-cmd { display: flex; align-items: center; gap: var(--s2); min-width: 0; padding: 4px 4px 4px var(--s3); border-radius: var(--r-xs); background: var(--pill-bg); }
+.setup-cmd code { flex: 1; min-width: 0; font-family: var(--mono); font-size: calc(var(--fs-mono) * var(--font-scale, 1)); line-height: var(--lh-mono); color: var(--fg); overflow-wrap: anywhere; }
+.setup-copy { flex-shrink: 0; height: 28px; }
+.setup-addrs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.setup-notice { margin: 0; padding: 10px var(--s3); border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: var(--lh-label); }
+.setup-add { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s1); }
+.setup-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 160px; min-width: 0; color: var(--muted); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); }
+.setup-field-id { flex: 0 1 120px; }
+.setup-field input { height: 32px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); font-size: calc(var(--fs-label) * var(--font-scale, 1)); }
+.setup-add-btn { height: 32px; }
+.setup-restart { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); padding: 10px var(--s3); border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.setup-restart > p:first-child { margin: 0; color: var(--fg-strong); }
+.setup-error { margin: 0; color: var(--danger); font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: var(--lh-label); overflow-wrap: anywhere; }
+.setup-foot { position: sticky; bottom: 0; z-index: 2; display: flex; flex-direction: column; align-items: flex-end; gap: var(--s2); margin-top: calc(-1 * var(--s3)); padding: var(--s3) 0 calc(var(--s3) + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: var(--panel); }
+.setup-done { height: 36px; min-width: 96px; }
+@media (max-width: 720px) {
+  .setup-field, .setup-field-id { flex: 1 1 100%; }
+  .setup-field input, .setup-add-btn, .setup-recheck, .setup-copy, .setup-restart .btn { min-height: var(--phone-tap); }
+  .setup-add-btn, .setup-done { width: 100%; }
+  .setup-foot { align-items: stretch; }
+  .setup-done { height: var(--phone-tap); }
+}
 .sidebar-foot { display: flex; align-items: center; gap: 4px; }
 /* Thinking disclosure (collapsed above the reply). */
 .thinking, .thinking-line { margin: 0 0 10px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
