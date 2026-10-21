@@ -1404,9 +1404,10 @@ export function App() {
         </div>
         <div ref={panesRef} className="panes" data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
           {phone && state.panes.length > 1 && (
-            <div className="pane-switch" {...tabs.stripProps}>
-              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} {...(p.session?.sessionId ? { title: `분할 ${i + 1}번 패널에 열림` } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}>{i + 1}{p.session ? ` · ${p.session.title.slice(0, 12)}` : ''}</button>)}
-              <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}>+</button>
+            // 36px strip, 44px presses: "1 · 제목…" (the title cut by CSS), + at the end; press-and-drag reorders.
+            <div className="pane-switch" data-testid="split-tabs" role="group" aria-label="분할" {...tabs.stripProps}>
+              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} aria-pressed={p.id === active.id} {...(p.session ? { title: p.session.title } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}><span className="tab-pill">{i + 1}{p.session ? ` · ${p.session.title}` : ''}</span></button>)}
+              <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}><span className="tab-pill">+</span></button>
             </div>
           )}
           {(phone ? [active] : docked).map((p, i, shown) => (

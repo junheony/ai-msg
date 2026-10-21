@@ -253,15 +253,23 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); position: relative; }
 /* ⌘⇧Enter: another pane is maximized — this one stays mounted but takes no column. */
 .pane[hidden] { display: none; }
-.pane-switch { display: flex; gap: 6px; padding: 6px 10px; background: var(--sidebar); border-bottom: 1px solid var(--line); }
-.pane-switch button { height: 30px; padding: 0 12px; border-radius: 15px; font-size: calc(13.5px * var(--font-scale, 1)); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); white-space: nowrap; }
-.pane-switch button.on { color: var(--fg-strong); background: var(--selected); }
-.pane-switch { overflow-x: auto; scrollbar-width: none; touch-action: pan-x; user-select: none; -webkit-user-select: none; }
+/* Phone, 2+ panes: a 36px tab strip under the top bar. Each tab presses 44px tall — the lower 8px hang over the pane
+   (the strip lets presses through between tabs); the bar's fill and line are painted in its top 36px. */
+.pane-switch { position: relative; z-index: 3; display: flex; gap: var(--s1); height: 44px; margin-bottom: -8px; padding: 0 var(--s2); pointer-events: none;
+  background: linear-gradient(var(--line), var(--line)) 0 35px / 100% 1px no-repeat, linear-gradient(var(--sidebar), var(--sidebar)) 0 0 / 100% 36px no-repeat;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; touch-action: pan-x; user-select: none; -webkit-user-select: none; }
 .pane-switch::-webkit-scrollbar { display: none; }
-.pane-switch button { flex-shrink: 0; }
-.pane-switch button.add { width: 30px; padding: 0; font-size: calc(17px * var(--font-scale, 1)); line-height: 1; }
-.pane-switch.tabs-reordering button { transition: transform .12s ease-out; }
-.pane-switch .tab-dragging { transition: none !important; z-index: 2; background: var(--bg); box-shadow: 0 2px 10px rgba(0, 0, 0, .18), inset 0 0 0 1px var(--accent); }
+.pane-switch button { pointer-events: auto; flex-shrink: 0; display: flex; align-items: flex-start; height: 44px; max-width: 168px; padding: 4px 0 12px; color: var(--muted); }
+.pane-switch button:focus-visible { box-shadow: none; }
+.pane-switch .tab-pill { display: block; box-sizing: border-box; max-width: 100%; height: 28px; padding: 0 var(--s3); border-radius: var(--r-full); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pane-switch button:focus-visible .tab-pill { box-shadow: var(--focus); }
+.pane-switch button.on { color: var(--fg-strong); }
+.pane-switch button.on .tab-pill { background: var(--selected); }
+.pane-switch button.add { width: 44px; justify-content: center; }
+.pane-switch button.add .tab-pill { width: 28px; padding: 0; text-align: center; font-size: calc(17px * var(--font-scale, 1)); }
+.pane-switch.tabs-reordering button { transition: transform var(--t-fast) ease-out; }
+.pane-switch .tab-dragging { transition: none !important; z-index: 2; }
+.pane-switch .tab-dragging .tab-pill { background: var(--bg); box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--accent); }
 /* Panes as cards: the ⋮⋮ grip in the header, the floating cards over the body, the drag's ghost and drop marker. */
 .pane.pane-drag-source { opacity: .55; }
 body.pane-dragging { cursor: grabbing; user-select: none; -webkit-user-select: none; }
@@ -450,8 +458,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .sidebar-search { height: 40px; }
   .panes { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: auto minmax(0, 1fr); min-height: 0; overflow-x: hidden; }
   .panes > .pane { grid-row: 2 / -1; min-height: 0; }
-  .pane-switch { overflow-x: auto; flex-wrap: nowrap; }
-  .pane-switch button { min-height: var(--phone-tap); border-radius: 22px; }
   .pane-head { min-height: 52px; padding: 0 var(--s1) 0 var(--s2); }
   .pane-head-end .icon-btn { width: var(--phone-tap); height: var(--phone-tap); }
   .msg.user pre { max-width: 92%; }
@@ -1342,26 +1348,51 @@ button.hl-row-main:hover { background: var(--hover); }
 /* Under .modal-backdrop (60) and toasts (55/56): the palette, help and confirm open over a sheet. */
 .sheet-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .sheet { width: min(560px, 100%); max-height: min(720px, 100%); overflow-y: auto; border-radius: 14px; background: var(--panel); color: var(--fg); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); }
-.settings { padding: 16px 18px 20px; display: flex; flex-direction: column; gap: 16px; }
+.settings { padding: var(--s4) var(--s5) var(--s5); display: flex; flex-direction: column; gap: var(--s4); }
+.sheet.settings { width: min(720px, 100%); }
 .settings-head { display: flex; align-items: center; justify-content: space-between; }
-.settings-head h2 { margin: 0; font-size: calc(18px * var(--font-scale, 1)); color: var(--fg-strong); }
-.settings section { display: flex; flex-direction: column; gap: 10px; }
-.settings h3 { margin: 0; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 600; letter-spacing: .3px; color: var(--muted); }
-.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.seg { display: inline-flex; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line-strong); overflow: hidden; }
-.seg button { height: 30px; padding: 0 11px; border-radius: 0; color: var(--muted); font-size: calc(13.5px * var(--font-scale, 1)); white-space: nowrap; }
+.settings-head h2 { margin: 0; font-size: calc(var(--fs-title) * var(--font-scale, 1)); color: var(--fg-strong); }
+/* Desktop: the four groups' names on the left (each jumps to its group), the groups scrolling on the right. */
+.settings-body { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--s5); align-items: start; }
+.settings-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings-nav button { height: 32px; padding: 0 var(--s3); border-radius: var(--r-sm); text-align: left; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); white-space: nowrap; }
+.settings-nav button:hover { background: var(--hover); color: var(--fg); }
+.settings-groups { display: flex; flex-direction: column; gap: var(--s5); min-width: 0; }
+.settings-group { display: flex; flex-direction: column; gap: var(--s3); scroll-margin-top: var(--s4); }
+.settings h3 { margin: 0; font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: var(--lh-label); font-weight: 600; letter-spacing: .3px; color: var(--muted); }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; }
+.settings-row > span:first-child { white-space: nowrap; }
+.settings-row select { max-width: 100%; }
+/* A row's note: one 12px line, the long text behind 자세히. Pulled up to its row. */
+.settings-hint { margin-top: calc(-1 * var(--s2)); color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); }
+.settings-hint p { margin: 0; }
+.settings-hint .hint-more { padding: 0; color: var(--link); font-size: inherit; }
+.settings-hint .hint-more:hover { text-decoration: underline; }
+.settings-hint-body { margin-top: var(--s1) !important; color: var(--muted); }
+.settings .link-btn { padding: 0; color: var(--link); font-size: calc(var(--fs-label) * var(--font-scale, 1)); white-space: nowrap; }
+.settings .link-btn:hover { text-decoration: underline; }
+.settings-foot { margin: 0; padding-top: var(--s3); border-top: 1px solid var(--line); color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.seg { display: inline-flex; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); overflow: hidden; }
+.seg button { height: 30px; padding: 0 11px; border-radius: 0; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); white-space: nowrap; }
 .seg button[aria-pressed="true"] { background: var(--selected); color: var(--fg-strong); }
 .seg button:disabled { opacity: .5; cursor: not-allowed; }
-.settings-consent { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.settings-consent { display: flex; flex-direction: column; gap: var(--s2); padding: 10px var(--s3); border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .settings-consent p { margin: 0; color: var(--fg-strong); }
 .settings-consent .settings-row { justify-content: flex-end; }
 .auto-engine-list { display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: flex-end; }
 .auto-engine { display: inline-flex; align-items: center; gap: 6px; }
-.settings-info { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: calc(13.5px * var(--font-scale, 1)); }
-.settings-info dt { color: var(--muted); } .settings-info dd { margin: 0; overflow-wrap: anywhere; }
 .settings .notify-pop { position: static; width: auto; box-shadow: none; }
 .dictate.on { color: var(--danger); animation: dictate-pulse 1.2s ease-in-out infinite; }
 @keyframes dictate-pulse { 50% { opacity: .45; } }
+@media (max-width: 720px) {
+  .settings { padding: var(--s4) var(--s4) var(--s5); }
+  .settings-body { display: block; }
+  .settings-nav { display: none; }
+  .settings .link-btn { min-height: var(--phone-tap); }
+  /* The press area grows to 44px without moving the line. */
+  .settings-hint .hint-more { position: relative; }
+  .settings-hint .hint-more::after { content: ""; position: absolute; inset: -14px -8px; }
+}
 @media (max-width: 720px) { .seg button { height: var(--phone-tap); } .sheet-backdrop { padding: 0; align-items: stretch; } .sheet { max-height: 100%; border-radius: 0; width: 100%; } }
 .sidebar-foot { display: flex; align-items: center; gap: 4px; }
 /* Thinking disclosure (collapsed above the reply). */
@@ -2155,6 +2186,12 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
 .topbar > .topbar-end { order: 3; }
 .pane-head { display: flex; align-items: center; gap: var(--s2); min-width: 0; min-height: 48px; padding: 0 var(--s2) 0 var(--s3); flex-shrink: 0; }
 .pane-head.in-topbar { min-height: 0; max-width: 100%; padding: 0; justify-content: center; }
+/* An empty split pane: its head (새 세션 ▾) shows nothing at rest — it comes up under the pointer or with focus in it.
+   Touch-only screens (no hover) keep it shown: there is no other way to its menu. */
+@media (hover: hover) {
+  .pane-head.idle { opacity: 0; transition: opacity var(--t-fast) var(--ease); }
+  .pane:hover > .pane-head.idle, .pane-head.idle:focus-within { opacity: 1; }
+}
 .pane-head-main { display: flex; flex-direction: column; align-items: flex-start; flex: 0 1 auto; min-width: 0; }
 .pane-head.in-topbar .pane-head-main { align-items: center; }
 .head-chip-wrap { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }

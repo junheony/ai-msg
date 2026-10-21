@@ -403,9 +403,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const fileMenu: HeadMenuItem[] = [];
   const desktopOpen = useOpenInDesktop(s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
   if (desktopOpen) fileMenu.push({ label: 'Desktop에서 열기', run: desktopOpen, group: 'session' });
-  // 보기 › 명령 팔레트… : the phone's only way to ⌘K (and the new-session screen's too).
-  if (onPalette) fileMenu.push({ label: '명령 팔레트…', hint: mod('K'), run: onPalette, group: 'view' });
+  // 보기: 파일 패널 right after 대화에서 찾기 (spec §3.8 order), then 명령 팔레트… — the phone's only way to ⌘K (and the
+  // new-session screen's too).
   if (s) fileMenu.push({ label: side ? '파일 패널 닫기' : '파일 열기', hint: mod('⇧E'), run: () => (side ? closeSide() : openSide({ kind: 'pick' })), group: 'view' });
+  if (onPalette) fileMenu.push({ label: '명령 팔레트…', hint: mod('K'), run: onPalette, group: 'view' });
   // 창: split, move, card ⇄ pane (the chip's drag does the same), size, layouts, a new tab, close.
   if (onAddPane) fileMenu.push({ label: '새 분할', hint: mod('⇧O'), run: onAddPane, group: 'window' });
   if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', hint: mod('⌥⇧['), run: onShift.left, group: 'window' });
@@ -713,7 +714,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
       ) : (
         <>
           {(headSlot || closable || grip || trail) && (
-            <SessionChipHead title="새 세션" slot={headSlot ?? null} phone={phone} paneId={pane.id} grip={headGrip} gripTitle={gripTitle} trail={trail}
+            // A docked empty pane in a split: its head shows no control at rest (spec §3.7 "머리 버튼 0"), the menu (창 ›
+            // 이 창 닫기…) and the drag still there under the pointer. The top bar's head and a card's head stay as they are.
+            <SessionChipHead title="새 세션" slot={headSlot ?? null} phone={phone} paneId={pane.id} grip={headGrip} gripTitle={gripTitle} trail={trail} idle={!headSlot && !floating}
               groups={(ctl) => [fileMenu.map((it) => <HeadItem key={it.label} label={it.label} hint={it.hint} run={it.run} ctl={ctl} />)]} />
           )}
           {onStartChat

@@ -31,7 +31,7 @@ export function HeadItem({ label, hint, run, ctl, className }: { label: string; 
  * double-click renames. The phone's sheet (a modal dialog around the menu) and its scrim render into <body>, out of the
  * top bar's stacking context.
  */
-export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, paneId, chips, trail, grip, gripTitle, onRename, groups, toast }: {
+export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, paneId, chips, trail, grip, gripTitle, onRename, groups, toast, idle }: {
   title: string;
   /** The session the head names: a rename started on one session is never saved onto another (or after a switch). */
   sessionKey?: string | null;
@@ -53,6 +53,8 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   groups: (ctl: HeadMenuCtl) => ReactNode[][];
   /** A short status under the chip (링크를 복사했습니다). */
   toast?: string | null;
+  /** An empty split pane's head: no control shows at rest (it appears while the pointer is over the pane). */
+  idle?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -126,7 +128,7 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   const label = <><span className="head-chip-title">{engine && <EngineMark engine={engine} />}{title}</span>{hasMenu && <span className="caret" aria-hidden="true">▾</span>}</>;
 
   const head = (
-    <div className={`pane-head${topbar ? ' in-topbar' : ''}`} data-pane-head={paneId}>
+    <div className={`pane-head${topbar ? ' in-topbar' : ''}${idle ? ' idle' : ''}`} data-pane-head={paneId}>
       <div className="pane-head-main">
         <span className="head-chip-wrap">
           {renaming !== null ? (

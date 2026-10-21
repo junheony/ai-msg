@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { AUTO_CONSENT_TEXT, ROTATION_CONSENT, SettingsView } from './SettingsView';
+import { AUTO_CONSENT_TEXT, ROTATION_CONSENT, SEG_MAX, SETTINGS_GROUPS, SettingsView } from './SettingsView';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 
 const noop = () => {};
@@ -120,8 +120,7 @@ describe('SettingsView 코드 줄바꿈', () => {
 
   it('the 코드 줄바꿈 row flips the same deck.codeWrap switch the code blocks use', () => {
     render(<SettingsView build={null} onOpenUsage={noop} onClose={noop} />);
-    const group = screen.getByText('코드 줄바꿈').closest('.settings-row') as HTMLElement;
-    const on = Array.from(group.querySelectorAll('button')).find((b) => b.textContent === '줄바꿈')!;
+    const on = within(screen.getByRole('group', { name: '코드 줄바꿈' })).getByRole('button', { name: '줄바꿈' });
     expect(on.getAttribute('aria-pressed')).toBe('false');
     fireEvent.click(on);
     expect(localStorage.getItem('deck.codeWrap')).toBe('1');
@@ -190,8 +189,65 @@ describe('SettingsView 간결 모드', () => {
   it('toggles conciseMode in prefs', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: true }));
     render(<SettingsView build={null} onOpenUsage={() => {}} onClose={() => {}} />);
-    const group = screen.getByText('간결 모드').closest('.settings-row') as HTMLElement;
-    fireEvent.click(within(group).getByRole('button', { name: '끄기' }));
+    fireEvent.click(within(screen.getByRole('group', { name: '간결 모드' })).getByRole('button', { name: '끄기' }));
     expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).conciseMode).toBe(false);
+  });
+});
+
+describe('SettingsView 4그룹', () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+  const full = () => render(<SettingsView build="b42" defaultPermMode="default" onDefaultPermMode={noop} routingPolicy="balance" onRoutingPolicy={noop} sameVendorRotation={false} onSameVendorRotation={noop} claudeAccounts={2}
+    commanderEnabled={false} onCommanderEnabled={noop} autoRoute={{ autoEngines: ['claude'], autoConsent: [], grokFast: false }} onAutoRoute={noop} grokLocked="tripwire" onGrokUnlock={noop} taskCap={2} onTaskCap={noop}
+    onOpenUsage={noop} onOpenHighlights={noop} onClose={noop} />);
+  const region = (name: string) => screen.getByRole('region', { name });
+
+  it('화면 · 입력 · 권한·알림 · 계정, in that order, each row in its group; no 정보 section, the build on one line at the end', () => {
+    full();
+    const dialog = screen.getByRole('dialog', { name: '설정' });
+    expect(within(dialog).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)!.textContent)).toEqual(['화면', '입력', '권한·알림', '계정']);
+    expect(SETTINGS_GROUPS.map(([, n]) => n)).toEqual(['화면', '입력', '권한·알림', '계정']);
+    for (const name of ['테마', '채팅 폭', '코드 줄바꿈', '간결 모드']) expect(within(region('화면')).getByRole('group', { name })).toBeTruthy();
+    expect(within(region('화면')).getByRole('combobox', { name: '글자 크기' })).toBeTruthy();
+    expect(within(region('입력')).getByRole('group', { name: 'Enter 동작' })).toBeTruthy();
+    const perm = region('권한·알림');
+    expect(within(perm).getByTestId('default-perm-select')).toBeTruthy();
+    expect(within(perm).getByTestId('auto-engine-claude')).toBeTruthy();
+    expect(within(perm).getByTestId('auto-grok-fast')).toBeTruthy();
+    expect(within(perm).getByTestId('task-cap-select')).toBeTruthy();
+    expect(within(perm).getByRole('group', { name: '총사령탑' })).toBeTruthy();
+    expect(within(perm).getByRole('button', { name: '알림' })).toBeTruthy();
+    const account = region('계정');
+    expect(within(account).getByRole('group', { name: '자동 계정 선택' })).toBeTruthy();
+    expect(within(account).getByRole('group', { name: '같은 벤더 계정 자동 순환' })).toBeTruthy();
+    expect(within(account).getByRole('button', { name: '잠금 해제' })).toBeTruthy();
+    expect(within(account).getByRole('button', { name: '사용량 보기' })).toBeTruthy();
+    expect(within(account).getByRole('button', { name: '하이라이트' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '정보' })).toBeNull();
+    expect(screen.getByTestId('settings-foot').textContent).toMatch(/^deck .* · 빌드 b42 · /);
+    // The left list names the same four groups.
+    expect(within(screen.getByRole('navigation', { name: '설정 그룹' })).getAllByRole('button').map((b) => b.textContent)).toEqual(['화면', '입력', '권한·알림', '계정']);
+  });
+
+  it('a long note is one short line until 자세히; 접기 folds it again', () => {
+    full();
+    const long = /생각·도구 본문은 접어둡니다/;
+    expect(screen.queryByText(long)).toBeNull();
+    const more = within(region('화면')).getByRole('button', { name: '자세히' });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(more);
+    expect(screen.getByText(long)).toBeTruthy();
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(region('화면')).getByRole('button', { name: '접기' }));
+    expect(screen.queryByText(long)).toBeNull();
+  });
+
+  it('segmented controls hold at most 3 choices: 글자 크기 (4) is a select that sets the pref', () => {
+    full();
+    for (const seg of Array.from(document.querySelectorAll('.seg'))) expect(seg.querySelectorAll('button').length).toBeLessThanOrEqual(SEG_MAX);
+    expect(screen.queryByRole('group', { name: '글자 크기' })).toBeNull();
+    const size = screen.getByRole('combobox', { name: '글자 크기' }) as HTMLSelectElement;
+    expect(Array.from(size.options).map((o) => o.textContent)).toEqual(['작게', '보통', '크게', '아주 크게']);
+    fireEvent.change(size, { target: { value: 'xlarge' } });
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).fontSize).toBe('xlarge');
   });
 });

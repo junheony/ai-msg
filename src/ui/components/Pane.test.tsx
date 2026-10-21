@@ -446,6 +446,34 @@ describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
     expect(onPalette).toHaveBeenCalledTimes(1);
   });
 
+  it('빈 pane 머리: a docked empty pane in a split shows no head control at rest (idle); a session or a card keeps its head', () => {
+    const app = { pending: [], questions: [], codexAvailable: false };
+    const base = { app, active: true, closable: true, dispatch: () => {}, send: () => {}, onClose: () => {} };
+    const { rerender } = render(<Pane {...base} pane={{ ...newPane('p1') }} />);
+    const head = () => screen.getByTestId('pane-p1').querySelector('.pane-head')!;
+    expect(head().classList.contains('idle')).toBe(true);
+    // Its menu stays reachable (창 › 이 창 닫기) for the pointer that brings the head up.
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    expect(screen.getByRole('menuitem', { name: '이 창 닫기' })).toBeTruthy();
+    rerender(<Pane {...base} pane={{ ...newPane('p1') }} floating onToggleCollapse={() => {}} />);
+    expect(head().classList.contains('idle')).toBe(false);
+    expect(screen.getByRole('button', { name: '카드 접기' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '패널 닫기' })).toBeTruthy();
+    rerender(<Pane {...base} pane={{ ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }} />);
+    expect(head().classList.contains('idle')).toBe(false);
+  });
+
+  it('보기 group order: 대화에서 찾기 → 파일 열기 → 명령 팔레트…', () => {
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null }, items: [{ kind: 'user', text: 'hi' } as PaneState['items'][number]] };
+    render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} onPalette={() => {}} />);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    const names = screen.getAllByRole('menuitem').map((m) => m.textContent!.replace(/(⌘|Ctrl\+).*$/, ''));
+    const at = (n: string) => names.indexOf(n);
+    expect(at('대화에서 찾기')).toBeGreaterThanOrEqual(0);
+    expect(at('대화에서 찾기')).toBeLessThan(at('파일 열기'));
+    expect(at('파일 열기')).toBeLessThan(at('명령 팔레트…'));
+  });
+
   it('a phone menu has no 카드 배치… ; the desktop one does, with Ctrl+Shift hints off a Mac', () => {
     const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } };
     const props = { pane, app: { pending: [], questions: [], codexAvailable: false }, active: true, closable: true, dispatch: () => {}, send: () => {}, onClose: () => {}, onLayouts: () => {}, onPalette: () => {} };
