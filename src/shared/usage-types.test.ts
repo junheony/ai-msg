@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyAccountUsage, parseIsoUtc, trusted } from './usage-types';
+import { emptyAccountUsage, leftPct, parseIsoUtc, trusted } from './usage-types';
 
 describe('parseIsoUtc', () => {
   it('treats a zone-less date-time as UTC, like claude-pick', () => {
@@ -22,5 +22,17 @@ describe('trusted', () => {
     expect(trusted({ ...u, trustUntil: new Date(now + 1000).toISOString() }, now)).toBe(true);
     expect(trusted({ ...u, trustUntil: new Date(now).toISOString() }, now)).toBe(false);
     expect(trusted({ ...u, trustUntil: 'junk' }, now)).toBe(false);
+  });
+});
+
+describe('leftPct', () => {
+  it('says the used % as whole % left: a sliver above 0 reads 1, never more than 100 or less than 0', () => {
+    expect(leftPct(100)).toBe(0);
+    expect(leftPct(99.6)).toBe(1);
+    expect(leftPct(0)).toBe(100);
+    expect(leftPct(79.5)).toBe(20);
+    expect(leftPct(120)).toBe(0);
+    expect(leftPct(-5)).toBe(100);
+    expect(leftPct(null)).toBeNull();
   });
 });

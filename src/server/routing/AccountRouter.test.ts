@@ -213,7 +213,7 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
     const d = chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: true, policy: 'balance', usage }));
     expect(d.account).toBe('b');
     expect(d.pinned).toBeUndefined();
-    expect(d.pinBlocked).toBe('Fable 15% 남음(하한 20%)');
+    expect(d.pinBlocked).toBe('Fable 15% 남음 · 20% 이하 제외');
     expect(d.pinWarn).toBeUndefined();
     expect(d.reason).toMatch(/^고정 A Fable 15% 남음 → /);
     expect(d.asOpus).toBeUndefined(); // B has Fable room: the turn stays a Fable turn
@@ -233,8 +233,8 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
     expect(d).toMatchObject({ account: 'a', pinned: true, switched: false });
     expect(d.pinBlocked).toBeUndefined();
     expect(d.asOpus).toBeUndefined(); // the model follows a's own Fable value in resolveModel, not a router decision
-    expect(d.pinWarn).toBe('Fable 15% 남음(하한 20%) — 대신 쓸 계정이 없어 그대로');
-    expect(d.reason).toBe('고정 A · Fable 15% 남음(하한 20%) · 대안 없음');
+    expect(d.pinWarn).toBe('Fable 15% 남음 · 20% 이하 제외 — 대신 쓸 계정이 없어 그대로');
+    expect(d.reason).toBe('고정 A · Fable 15% 남음 · 20% 이하 제외 · 대안 없음');
     // No warning when the pin is fine.
     expect(chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, usage: snap({ f: 10 }, { f: 88 }, { f: null }) })).pinWarn).toBeUndefined();
   });
@@ -244,20 +244,20 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
     // then holds as a pin (pinned, pinWarn), not as a silent "A 유지" from the recursion.
     const usage = snap({ s: 20, w: 15, f: 85 }, { s: 85, w: 2, f: 3 }, { s: 13, w: 13, f: 90 });
     const d = chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: true, policy: 'balance', usage }));
-    expect(d).toMatchObject({ account: 'a', pinned: true, switched: false, pinWarn: 'Fable 15% 남음(하한 20%) — 대신 쓸 계정이 없어 그대로' });
+    expect(d).toMatchObject({ account: 'a', pinned: true, switched: false, pinWarn: 'Fable 15% 남음 · 20% 이하 제외 — 대신 쓸 계정이 없어 그대로' });
     expect(d.pinBlocked).toBeUndefined();
-    expect(d.reason).toBe('고정 A · Fable 15% 남음(하한 20%) · 대안 없음');
+    expect(d.reason).toBe('고정 A · Fable 15% 남음 · 20% 이하 제외 · 대안 없음');
     // A new (current-less) pinned session has no "stay" to fall back on: b is the best candidate, so it yields.
     const fresh = chooseAccount(input({ current: null, pinned: 'a', needFable: true, policy: 'balance', usage }));
-    expect(fresh).toMatchObject({ account: 'b', pinBlocked: 'Fable 15% 남음(하한 20%)' });
+    expect(fresh).toMatchObject({ account: 'b', pinBlocked: 'Fable 15% 남음 · 20% 이하 제외' });
   });
 
   it('retry after a failure on the account the pin yielded to: the next alternative, or the pin when none is left', () => {
     const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
     const next = chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, policy: 'balance', usage, exclude: ['b'] }));
-    expect(next).toMatchObject({ account: 'c', pinBlocked: 'Fable 15% 남음(하한 20%)' });
+    expect(next).toMatchObject({ account: 'c', pinBlocked: 'Fable 15% 남음 · 20% 이하 제외' });
     const none = chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, policy: 'balance', usage, exclude: ['b', 'c'] }));
-    expect(none).toMatchObject({ account: 'a', pinned: true, pinWarn: 'Fable 15% 남음(하한 20%) — 대신 쓸 계정이 없어 그대로' });
+    expect(none).toMatchObject({ account: 'a', pinned: true, pinWarn: 'Fable 15% 남음 · 20% 이하 제외 — 대신 쓸 계정이 없어 그대로' });
   });
 
   it("an edit-fork's parent account (pinIsParent) is not a user pin: the Fable cap neither moves it nor warns", () => {
@@ -478,7 +478,7 @@ describe('chooseAccount · default policy (no policy given = balance)', () => {
     const d = chooseAccount(dflt({ protectedAccount: 'a', usage }));
     expect(d.account).toBe('b');
     expect(d.reason).toMatch(/C 5h 값 없음/);
-    expect(routeLogLine(null, d, testRegistry())).toMatch(/C 5h \? · 주간 10%/);
+    expect(routeLogLine(null, d, testRegistry())).toMatch(/C 5h \? · 주간 90% 남음/);
     // Unknown 5h but the only safe account: picked over the unsafe ones (the protected one among them).
     expect(chooseAccount(dflt({ protectedAccount: 'a', usage: snap({ s: 85, w: 0 }, { s: 85, w: 30 }, { s: null, w: 10 }) })).account).toBe('c');
     // A safe protected account with a known 5h comes before an unknown one.
@@ -491,7 +491,7 @@ describe('routeLogLine', () => {
     const d = chooseAccount(input({ policy: 'balance', protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ s: 0, w: 0 }, { s: 10, w: 22, resetH: 18 }, { s: 0, w: 0, resetH: 138 }) }));
     const line = routeLogLine('0123456789abcdef', d, testRegistry());
     expect(line).toMatch(/^deck: route 01234567 → C \(새 세션 · 분산: 5h C 100% 남음 > B 90% 남음\)/);
-    expect(line).toMatch(/후보 C 5h 0% · 주간 0%, B 5h 10% · 주간 22%/);
+    expect(line).toMatch(/후보 C 5h 100% 남음 · 주간 100% 남음, B 5h 90% 남음 · 주간 78% 남음/);
     expect(line).toMatch(/제외 A 쿨다운/);
     expect(line).not.toMatch(/\n/);
     expect(routeLogLine(null, d, testRegistry())).toMatch(/^deck: route 새 세션 → C/);
@@ -595,7 +595,7 @@ describe('chooseAccount — 잔여량을 모르는 계정 (usage-deck 없음 · 
   it('routeLogLine names the unknown accounts apart from the excluded ones', () => {
     const d = chooseAccount(dflt({ protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ w: 10 }, { s: 10, w: 20 }, DOWN) }));
     const line = routeLogLine(null, d, testRegistry());
-    expect(line).toMatch(/후보 B 5h 10% · 주간 20% · 잔여량 모름 C · 제외 A 쿨다운/);
+    expect(line).toMatch(/후보 B 5h 90% 남음 · 주간 80% 남음 · 잔여량 모름 C · 제외 A 쿨다운/);
     expect(line).not.toMatch(/제외[^·]*C/);
     expect(routeLogLine(null, chooseAccount(dflt({ protectedAccount: 'a', usage: noDeck })), testRegistry())).toMatch(/\(자격 있는 계정 없음 → 잔여량 모름 · B\) · 잔여량 모름 B, C, A$/);
   });

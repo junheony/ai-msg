@@ -3,7 +3,7 @@ import { GEMINI_ACCOUNTS, GROK_ACCOUNTS, type Account, type GeminiAccount, type 
 import type { GrokStatus } from '../../shared/protocol';
 import { ClaudeMark, GeminiMark, GrokMark, OpenAIMark } from './EngineMark';
 import { RefreshIcon } from './icons';
-import { emptyAccountUsage, grokBillingWindow, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, grokBillingWindow, leftPct, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export function countdown(resetsAt: string | null, now: number): string {
   if (!resetsAt) return '';
@@ -93,11 +93,12 @@ export function creditsText(c: GptCredits | null | undefined): string | null {
   return Math.floor(c.balance).toLocaleString('en-US');
 }
 
-/** Colour by what is used (the numbers on screen say what is LEFT): green, amber at ≥80% used (≤20% left), red at ≥95% used (≤5% left). */
+/** Colour by the number on screen (shownPct, what is LEFT): green, amber at ≤20% left, red at ≤5% left — so "5%" is never amber. */
 export function levelClass(w: UsageWindow | null): string {
-  if (!w) return 'none';
-  if (w.usedPct >= 95) return 'danger';
-  if (w.usedPct >= 80) return 'warn';
+  const left = shownPct(w);
+  if (left === null) return 'none';
+  if (left <= 5) return 'danger';
+  if (left <= 20) return 'warn';
   return 'ok';
 }
 
@@ -218,10 +219,9 @@ function grokPeriodName(type: string | null | undefined): string {
  */
 /** The Grok Bot app's own weekly plan reading (macOS, read from the app's cache): a secondary popover line. */
 export function grokBotLine(b: GrokBotUsage, now: number): string {
-  const pct = Math.round(b.percentUsed);
   const reset = b.nextResetMs !== null ? ` · 리셋 ${resetStamp(new Date(b.nextResetMs).toISOString())}` : '';
   const stale = now - b.readAtMs > 24 * 3600_000 ? ` (앱 동기화 ${Math.floor((now - b.readAtMs) / 3600_000)}시간 전)` : '';
-  return `${b.planLabel ?? '플랜'} ${Math.max(0, 100 - pct)}% 남음${reset}${stale}`;
+  return `${b.planLabel ?? '플랜'} ${leftPct(b.percentUsed)}% 남음${reset}${stale}`;
 }
 
 function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsage | null): SeatData {

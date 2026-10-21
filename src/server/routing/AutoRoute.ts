@@ -514,7 +514,7 @@ export function chooseRoute(i: RouteInput): RouteDecision {
     if (other && a !== null && b !== null && b >= a + GPT_MARGIN_PCT) {
       ok.splice(ok.indexOf(other), 1);
       ok.unshift(other);
-      note = `${ENGINE_LABEL[first.engine]} ${a}% 남음 · ${ENGINE_LABEL[other.engine]} ${b}% 남음`;
+      note = `${ENGINE_LABEL[first.engine]} ${Math.floor(a)}% 남음 · ${ENGINE_LABEL[other.engine]} ${Math.floor(b)}% 남음`;
       why.push(`균형: ${note} → ${ROUTE_LABEL[other.model]}`);
     }
   }

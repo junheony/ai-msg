@@ -15,7 +15,7 @@ function usage(): UsageSnapshot {
   const u = emptySnapshot(new Date('2026-10-02T00:00:00Z'), ['a', 'b', 'c']);
   const w = (usedPct: number) => ({ usedPct, resetsAt: null });
   u.accounts.a = { ...u.accounts.a!, status: 'ok', fiveHour: w(12), weekly: w(70), fable: w(85) };
-  // B's 5h reset is long past (read before it): 리셋됨?, not the old 40 %.
+  // B's 5h reset is long past (read before it): 리셋됨, not the old 40 %.
   u.accounts.b = { ...u.accounts.b!, status: 'ok', fiveHour: { usedPct: 40, resetsAt: '2020-01-01T00:00:00Z' }, weekly: w(60) };
   return u;
 }

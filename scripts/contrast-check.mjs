@@ -76,8 +76,8 @@ function check(name, t) {
       [`${k} / strip current`, c(k), c("panel"), floor],
     ]),
     ["fg-strong / strip current", c("fg-strong"), c("panel"), 4.5],
-    // Old numbers (a stale seat): label and age dimmed to --muted (a green number too; amber / red keep their colour,
-    // checked above) on the strip (bar / current) and in the sheet
+    // Old numbers (a stale seat): on the strip only the clock and age dim to --muted (a "리셋됨" seat's label too; the
+    // number keeps its level colour, checked above), on the bar / current; and in the sheet
     // (rows, the status tag, the refresh line: on --panel, a seat card's faint tint over it). The 12px clock / refresh
     // icons are currentColor in the same muted.
     ["muted / strip stale", c("muted"), bg, 4.5],

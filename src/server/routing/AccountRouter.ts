@@ -71,7 +71,7 @@ export type RouterDecision = {
   unknown?: Account[];
   /** The account is the session's pinned one, chosen because of the pin. */
   pinned?: boolean;
-  /** The pinned account was unusable this turn (e.g. '한도 도달', 'Fable 15% 남음(하한 20%)'); `account` is the router's own choice. */
+  /** The pinned account was unusable this turn (e.g. '한도 도달', 'Fable 15% 남음 · 20% 이하 제외'); `account` is the router's own choice. */
   pinBlocked?: string;
   /** The pin is honoured although the router would not pick it (Fable at the cap, nowhere else with room): shown to the user. */
   pinWarn?: string;
@@ -217,7 +217,7 @@ function balanceOrder(drainSorted: Candidate[], cli = false): Candidate[] {
 
 /** A candidate's 5h for reasons and logs: '?' when the card has no 5h row. */
 function pct5(c: Candidate): string {
-  return c.fiveHourKnown ? `${c.fiveHourPct}%` : '?';
+  return c.fiveHourKnown ? `${leftPct(c.fiveHourPct)}% 남음` : '?';
 }
 
 /** A candidate's 5h said as what is left, for reasons: '?' when the card has no 5h row. */
@@ -252,7 +252,7 @@ function bestWhy(input: RouterInput, cands: Candidate[]): string {
 /** The server log line for a routed turn: decision, candidates and exclusions (usage numbers only, no secrets). */
 export function routeLogLine(sessionId: string | null, d: RouterDecision, accounts: AccountNames): string {
   const LABEL = (a: Account) => accounts.label(a);
-  const cands = d.candidates.map((c) => `${LABEL(c.account)} 5h ${pct5(c)} · 주간 ${c.weeklyPct}%`).join(', ');
+  const cands = d.candidates.map((c) => `${LABEL(c.account)} 5h ${pct5(c)} · 주간 ${leftPct(c.weeklyPct)}% 남음`).join(', ');
   const unknown = (d.unknown ?? []).map(LABEL).join(', ');
   const ex = accounts.list().filter((a) => d.excluded[a] && !d.unknown?.includes(a)).map((a) => `${LABEL(a)} ${d.excluded[a]}`).join(', ');
   return `deck: route ${sessionId ? sessionId.slice(0, 8) : '새 세션'} → ${LABEL(d.account)} (${d.reason})${cands ? ` · 후보 ${cands}` : ''}${unknown ? ` · 잔여량 모름 ${unknown}` : ''}${ex ? ` · 제외 ${ex}` : ''}`;
@@ -343,12 +343,12 @@ export function chooseAccount(input: RouterInput): RouterDecision {
       const over = pinFableOver(input, pin);
       if (over !== null) {
         const d = chooseAccount({ ...input, pinned: null, exclude: [...(input.exclude ?? []), pin] });
-        if (d.account !== pin && !d.asOpus) return { ...d, pinBlocked: `Fable ${leftPct(over)}% 남음(하한 ${100 - FABLE_MAX_PCT}%)`, reason: `고정 ${LABEL(pin)} Fable ${leftPct(over)}% 남음 → ${d.reason}` };
+        if (d.account !== pin && !d.asOpus) return { ...d, pinBlocked: `Fable ${leftPct(over)}% 남음 · ${100 - FABLE_MAX_PCT}% 이하 제외`, reason: `고정 ${LABEL(pin)} Fable ${leftPct(over)}% 남음 → ${d.reason}` };
       }
       const ranked = rankCandidates(input);
       const switched = input.current !== null && input.current !== pin;
-      const warn = over === null ? undefined : `Fable ${leftPct(over)}% 남음(하한 ${100 - FABLE_MAX_PCT}%) — 대신 쓸 계정이 없어 그대로`;
-      const reason = warn && over !== null ? `고정 ${LABEL(pin)}${switched ? ' 전환' : ''} · Fable ${leftPct(over)}% 남음(하한 ${100 - FABLE_MAX_PCT}%) · 대안 없음` : `고정 ${LABEL(pin)}${switched ? ' 전환' : ''}`;
+      const warn = over === null ? undefined : `Fable ${leftPct(over)}% 남음 · ${100 - FABLE_MAX_PCT}% 이하 제외 — 대신 쓸 계정이 없어 그대로`;
+      const reason = warn && over !== null ? `고정 ${LABEL(pin)}${switched ? ' 전환' : ''} · Fable ${leftPct(over)}% 남음 · ${100 - FABLE_MAX_PCT}% 이하 제외 · 대안 없음` : `고정 ${LABEL(pin)}${switched ? ' 전환' : ''}`;
       return { ...ranked, account: pin, switched, pinned: true, reason, ...(warn ? { pinWarn: warn } : {}) };
     }
     // Unusable: the router's own choice for this turn only (the pin stays).

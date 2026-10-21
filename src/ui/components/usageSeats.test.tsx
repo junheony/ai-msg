@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
-import { agoText, bucketLabel, chipCountdown, countdown, creditsText, fullestWindow, geminiHint, observedText, resetStamp, shortCountdown, type RouteNext } from './usageSeats';
+import { agoText, bucketLabel, chipCountdown, countdown, creditsText, fullestWindow, geminiHint, grokBotLine, levelClass, observedText, resetStamp, shortCountdown, shownPct, type RouteNext } from './usageSeats';
 import { UsageSheet } from './UsageSheet';
 import { localDay, type GrokUsage, type UsageSnapshot } from '../../shared/usage-types';
 import type { GrokStatus } from '../../shared/protocol';
@@ -417,5 +417,27 @@ describe('chipCountdown', () => {
     expect(chipCountdown(at(-1), NOW)).toBe('');
     expect(chipCountdown(null, NOW)).toBe('');
     expect(chipCountdown('junk', NOW)).toBe('');
+  });
+});
+
+describe('levelClass follows the number on screen', () => {
+  const w = (usedPct: number) => ({ usedPct, resetsAt: null });
+  it('colours by shownPct (what is left, floored): "5%" is red, "20%" amber, "21%" green', () => {
+    expect([shownPct(w(94.5)), levelClass(w(94.5))]).toEqual([5, 'danger']);
+    expect([shownPct(w(79.5)), levelClass(w(79.5))]).toEqual([20, 'warn']);
+    expect([shownPct(w(94.9)), levelClass(w(94.9))]).toEqual([5, 'danger']);
+    expect([shownPct(w(94.0)), levelClass(w(94.0))]).toEqual([6, 'warn']);
+    expect([shownPct(w(79.0)), levelClass(w(79.0))]).toEqual([21, 'ok']);
+    expect([shownPct(w(99.6)), levelClass(w(99.6))]).toEqual([1, 'danger']);
+    expect(levelClass(null)).toBe('none');
+  });
+});
+
+describe('grokBotLine', () => {
+  const b = (percentUsed: number) => ({ percentUsed, nextResetMs: null, planLabel: 'SuperGrok', readAtMs: 0 });
+  it('a sliver left reads 1% (not 0% — that would be 소진), whole % floored like the rest', () => {
+    expect(grokBotLine(b(99.6), 0)).toBe('SuperGrok 1% 남음');
+    expect(grokBotLine(b(100), 0)).toBe('SuperGrok 0% 남음');
+    expect(grokBotLine(b(20.4), 0)).toBe('SuperGrok 79% 남음');
   });
 });

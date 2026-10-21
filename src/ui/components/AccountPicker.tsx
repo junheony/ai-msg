@@ -2,7 +2,7 @@ import { isGeminiAccount, isGrokAccount, type Account, type Seat } from '../../s
 import { useAccounts } from '../accounts';
 import { usageOf } from '../../shared/usage-types';
 import type { AccountUsage, UsageSnapshot, UsageWindow } from '../../shared/usage-types';
-import { shownPct, windowPassed } from './usageSeats';
+import { shownPct, useClock, windowPassed } from './usageSeats';
 
 /** Small pin glyph: the session chip's account when pinned, and a turn badge whose account came from the pin. */
 export function PinIcon({ title }: { title?: string }) {
@@ -67,7 +67,7 @@ export function AccountMenu({ pin, usage, onPin }: {
   onPin: (pin: Account | null) => void;
 }) {
   const names = useAccounts();
-  const now = Date.now();
+  const now = useClock(undefined);
   const choose = (p: Account | null) => { if (p !== pin) onPin(p); };
   const item = (value: Account | null, name: string, desc: string) => (
     <button key={value ?? 'auto'} type="button" role="menuitemradio" aria-checked={value === pin} className={`mp-item ${value === pin ? 'on' : ''}`} onClick={() => choose(value)}>

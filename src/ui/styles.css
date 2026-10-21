@@ -520,13 +520,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seg.warn .usage-seg-bar > i { background: var(--warn); }
 .usage-seg:is(.danger, .spent, .cooldown) :is(.usage-seg-num, .usage-seg-reset) { color: var(--danger); font-weight: 600; }
 .usage-seg:is(.danger, .spent, .cooldown) .usage-seg-bar > i { background: var(--danger); }
-.usage-seg:is(.stale, .unknown) .usage-seg-bar > i { background: var(--muted); }
-/* Old numbers: the label a step dimmer, a 12px clock and the age in --muted. Before the reset the number and bar keep
-   their level's colour (amber / red: nothing can have been given back since, so the old % left is an upper bound — the
-   danger may be greater now); a green one dims to --muted. Past the reset ("리셋됨", kind stale): grey, an empty track. */
-.usage-seg.stale .usage-seg-who { color: var(--muted); font-weight: 500; }
+/* Past the reset ("리셋됨": kind stale, no level class): grey label and an empty grey track. */
+.usage-seg:is(.stale:not(.ok, .warn, .danger, .spent, .estimated, .cooldown), .unknown) .usage-seg-bar > i { background: var(--muted); }
+.usage-seg.stale:not(.ok, .warn, .danger, .spent, .estimated, .cooldown) .usage-seg-who { color: var(--muted); font-weight: 500; }
+/* Old numbers before the reset: only the 12px clock and the age dim to --muted. Label, number and bar keep their level's
+   colour (nothing can have been given back since, so the old % left is an upper bound — the danger may be greater now). */
 .usage-seg.stale .usage-seg-reset.usage-seg-age { color: var(--muted); font-weight: 500; }
-.usage-seg.stale:not(.warn, .danger, .spent) .usage-seg-bar > i { background: color-mix(in srgb, var(--muted) 70%, var(--track)); }
 .usage-seg-num, .usage-seg-age { display: inline-flex; align-items: center; gap: 3px; }
 .usage-seg-icon { flex-shrink: 0; }
 /* The numbers and bars say what is LEFT: one small word up front (full / mid) so "78%" is not read as used. */
