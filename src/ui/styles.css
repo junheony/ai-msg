@@ -522,6 +522,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seg:is(.danger, .spent, .cooldown) .usage-seg-bar > i { background: var(--danger); }
 .usage-seg:is(.stale, .unknown) .usage-seg-bar > i { background: var(--muted); }
 .usage-seg.stale { outline: 1px dashed color-mix(in srgb, var(--muted) 75%, transparent); outline-offset: -1px; }
+/* The numbers and bars say what is LEFT: one small word up front (full / mid) so "78%" is not read as used. */
+.usage-strip-head { padding: 0 1px 0 6px; font-size: var(--fs-meta); color: var(--muted); }
+/* Spent = an empty battery: no fill, the track itself turns red. */
+.usage-seg.spent .usage-seg-bar { background: color-mix(in srgb, var(--danger) 35%, var(--track)); }
 .usage-seg.estimated .usage-seg-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
 /* Off-screen copies of the three stages, measured for pickStage (fixed: they never widen a scroll area, and as a child of
    the top bar they are no flex item of it). */

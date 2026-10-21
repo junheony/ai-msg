@@ -60,12 +60,17 @@ export type StripSeg = {
   kind: ChipKind;
   /** Old numbers (a dashed outline; the amber / red of kind kept). */
   stale: boolean;
-  /** The bar's fill in % (spent: full); null: no number (a cooldown included), an empty track. */
+  /** The bar's fill: the REMAINING % (a battery; spent: 0, on a red track); null: no number (a cooldown, numbers
+   *  whose window has reset since), an empty track. */
   bar: number | null;
-  /** "42%", "소진", "쿨다운", "가능", "?". */
+  /** The remaining "58%", "리셋됨?", "소진", "쿨다운", "가능", "?". */
   value: string;
-  /** "2h", "12m" (spent, a cooldown's end), "오래됨"; '' when none. */
+  /** "2h", "12m" (spent, a cooldown's end), "3일 전" (old numbers: when read), "오래됨"; '' when none. */
   reset: string;
+  /** `reset` is said with a "·" before it (spent, a cooldown's end, an old reading's age). */
+  dot: boolean;
+  /** For the strip's title: an old reading said in full ("C 10% — 마지막 턴 기준 3일 전 값"); '' when none. */
+  note: string;
   spoken: string;
   current: boolean;
   /** The next turn goes here (and not to the current seat). */
@@ -74,8 +79,8 @@ export type StripSeg = {
 
 /**
  * Every seat as a strip segment, in buildSeats order; the numbers and words come from chipState (one seat each). The
- * aria words follow the old chip's: "42퍼센트", the reset said when amber / red / spent, a cooldown only with what is
- * known (its end, when there is one).
+ * numbers are what is LEFT (ChatGPT's own "78% 남음"); the colours still follow levelClass (amber ≤20% left, red ≤5%).
+ * Aria: "GPT 78퍼센트 남음, 5일 뒤 초기화"; a cooldown only with what is known (its end, when there is one).
  */
 export function stripSegs({ seats, current, next, stale, now, label }: {
   seats: SeatData[]; current: Seat | null; next: RouteNext | null; stale: boolean; now: number; label: (s: Seat) => string;
@@ -85,19 +90,26 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
     const spent = st.kind === 'spent';
     const cooldown = st.kind === 'cooldown';
     const until = cooldown ? chipCountdown(d.until, now) : '';
-    const value = cooldown ? '쿨다운' : spent ? '소진' : st.used !== null ? `${st.used}%` : st.text;
-    const reset = cooldown ? until : spent ? st.reset : st.used !== null ? (st.stale ? '오래됨' : st.reset) : '';
+    const name = label(d.seat);
+    const value = cooldown ? '쿨다운' : st.resetPassed ? '리셋됨?' : spent ? '소진' : st.left !== null ? `${st.left}%` : st.text;
+    const reset = cooldown ? until : spent ? st.reset : st.left !== null ? (st.stale ? st.ago || '오래됨' : st.reset) : '';
     const said = cooldown ? `쿨다운${until ? ` ${spokenCountdown(until)} 뒤 해제` : ''}`
-      : spent ? '소진' : st.used !== null ? `${st.used}퍼센트` : st.text === '가능' ? '사용 가능' : '알 수 없음';
-    const resetSaid = (spent || st.kind === 'warn' || st.kind === 'danger') && st.reset ? ` ${spokenCountdown(st.reset)} 뒤 초기화` : '';
-    const spoken = `${label(d.seat)} ${said}${resetSaid}${st.stale ? ' 오래됨' : st.kind === 'estimated' ? ' 추정' : ''}`;
+      : st.resetPassed ? '마지막 값 이후 초기화 시각이 지남'
+      : spent ? '소진' : st.left !== null ? `${st.left}퍼센트 남음` : st.text === '가능' ? '사용 가능' : '알 수 없음';
+    const resetSaid = (spent || st.left !== null) && st.reset ? `, ${spokenCountdown(st.reset)} 뒤 초기화` : '';
+    const note = st.left !== null && st.ago ? `마지막 턴 기준 ${st.ago} 값` : '';
+    const spoken = `${name} ${said}${resetSaid}${note ? `, ${note}` : st.stale && !st.resetPassed ? ', 오래된 값' : st.kind === 'estimated' ? ', 추정' : ''}`;
     return {
-      seat: d.seat, label: label(d.seat), kind: st.kind, stale: st.stale || st.kind === 'stale',
-      bar: spent ? 100 : cooldown ? null : st.used, value, reset, spoken,
+      seat: d.seat, label: name, kind: st.kind, stale: st.stale || st.kind === 'stale',
+      bar: spent ? 0 : cooldown ? null : st.left, value, reset, dot: spent || cooldown || !!(st.left !== null && st.ago), spoken,
+      note: st.resetPassed ? `${name} — 마지막 값 이후 초기화 시각이 지남` : note ? `${name} ${st.left}% — ${note}` : '',
       current: d.seat === current, next: !!next && next.account === d.seat && next.account !== current,
     };
   });
 }
+
+/** The strip's hover title, first line: the numbers are what is left (they read the other way round before). */
+const STRIP_TITLE = '계정별 남은 사용량 — 숫자와 막대는 남은 양 · 노랑 20% 이하 · 빨강 5% 이하';
 
 /** The reset is said in mid only when it matters: amber, red, spent, a cooldown's end. */
 const loud = (k: ChipKind) => k === 'warn' || k === 'danger' || k === 'spent' || k === 'cooldown';
@@ -114,7 +126,7 @@ function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage
       <span className="usage-seg-who">{s.label}</span>
       {stage === 'full' && <span className="usage-seg-bar"><i style={{ width: `${s.bar ?? 0}%` }} /></span>}
       <span className="usage-seg-num">{s.value}</span>
-      {reset && <span className="usage-seg-reset">{s.kind === 'spent' || s.kind === 'cooldown' ? `· ${reset}` : reset}</span>}
+      {reset && <span className="usage-seg-reset">{s.dot ? `· ${reset}` : reset}</span>}
     </span>
   );
 }
@@ -191,9 +203,9 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
 
   if (!usage || !shown) return null;
   const segs = stripSegs({ seats, current, next, stale: usage.usageMode !== 'cli' && !usage.deckReachable, now, label });
-  const nextSays = next && (next.account !== current || next.asOpus) ? `, 다음 턴 ${label(next.account)}${next.asOpus ? '(Opus)' : ''}` : '';
-  const aria = `계정별 사용량: ${segs.map((s) => `${s.current ? '지금 ' : ''}${s.spoken}`).join(', ')}${nextSays}`;
-  const title = ['계정별 사용량', next ? `다음 턴: ${label(next.account)}${next.asOpus ? ' · Opus' : ''} — ${next.reason}` : ''].filter(Boolean).join(' · ');
+  const nextSays = next && (next.account !== current || next.asOpus) ? `; 다음 턴 ${label(next.account)}${next.asOpus ? '(Opus)' : ''}` : '';
+  const aria = `계정별 남은 사용량: ${segs.map((s) => `${s.current ? '지금 ' : ''}${s.spoken}`).join('; ')}${nextSays}`;
+  const title = [STRIP_TITLE, ...segs.map((s) => s.note), next ? `다음 턴: ${label(next.account)}${next.asOpus ? ' · Opus' : ''} — ${next.reason}` : ''].filter(Boolean).join('\n');
   const button = (st: Exclude<StripStage, 'row'>) => (
     <button
       type="button"
@@ -206,6 +218,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
       title={title}
       onClick={onToggle}
     >
+      {st !== 'min' && <span className="usage-strip-head" aria-hidden="true">남음</span>}
       {segs.map((s) => <Segment key={s.seat} s={s} stage={st} />)}
     </button>
   );
@@ -219,7 +232,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
       {/* Off-screen copies of the three stages (position: fixed: not a flex item of the bar, never in its gaps). */}
       {canMeasure && (
         <div ref={measureRef} className="usage-strip-measure" aria-hidden="true">
-          {STAGES.map((st) => <div key={st} className="usage-strip">{segs.map((s) => <Segment key={s.seat} s={s} stage={st} measure />)}</div>)}
+          {STAGES.map((st) => <div key={st} className="usage-strip">{st !== 'min' && <span className="usage-strip-head">남음</span>}{segs.map((s) => <Segment key={s.seat} s={s} stage={st} measure />)}</div>)}
         </div>
       )}
       {placedRow}

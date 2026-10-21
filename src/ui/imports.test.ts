@@ -110,7 +110,7 @@ describe('import rows', () => {
 
   it('Grok Bot usage line: plan, percent, reset, and the app sync age past a day', () => {
     const now = Date.UTC(2026, 9, 18, 12);
-    expect(grokBotLine({ percentUsed: 41.6, nextResetMs: null, planLabel: 'SuperGrok', readAtMs: now - 3600_000 }, now)).toBe('SuperGrok 42% 사용');
-    expect(grokBotLine({ percentUsed: 10, nextResetMs: now + 86_400_000, planLabel: null, readAtMs: now - 30 * 3600_000 }, now)).toMatch(/^플랜 10% 사용 · 리셋 \d+\/\d+ \d\d:\d\d \(앱 동기화 30시간 전\)$/);
+    expect(grokBotLine({ percentUsed: 41.6, nextResetMs: null, planLabel: 'SuperGrok', readAtMs: now - 3600_000 }, now)).toBe('SuperGrok 58% 남음');
+    expect(grokBotLine({ percentUsed: 10, nextResetMs: now + 86_400_000, planLabel: null, readAtMs: now - 30 * 3600_000 }, now)).toMatch(/^플랜 90% 남음 · 리셋 \d+\/\d+ \d\d:\d\d \(앱 동기화 30시간 전\)$/);
   });
 });
