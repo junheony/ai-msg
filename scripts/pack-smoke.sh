@@ -180,7 +180,7 @@ step '두 번째 서버는 락으로 거부'
 before="$(cat "$CONF/server.lock")"
 code=0
 "${E[@]}" "$Q" start --port "$(free_port)" >"$T/second.log" 2>&1 || code=$?
-[[ "$code" == 1 ]] || { cat "$T/second.log" >&2; die "종료 코드 $code (1 이어야 함)"; }
+[[ "$code" == 78 ]] || { cat "$T/second.log" >&2; die "종료 코드 $code (78 = 영구 오류여야 함)"; }
 grep -q "$CONF" "$T/second.log" || { cat "$T/second.log" >&2; die '락 문구 없음'; }
 [[ "$(cat "$CONF/server.lock")" == "$before" ]] || die 'server.lock 내용이 바뀜'
 

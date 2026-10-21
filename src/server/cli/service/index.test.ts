@@ -13,9 +13,9 @@ const uninstall: Svc = { kind: 'service', action: 'uninstall', dryRun: false, ye
 type Handler = number | Partial<RunResult> | ((args: string[]) => number | Partial<RunResult>);
 /** A fake runner: every call is recorded; the answer is looked up by `cmd args…` (longest matching prefix), default exit 0. */
 function recordRun(table: Record<string, Handler> = {}) {
-  const calls: Array<{ cmd: string; args: string[] }> = [];
-  const run = Object.assign(async (cmd: string, args: string[]): Promise<RunResult> => {
-    calls.push({ cmd, args });
+  const calls: Array<{ cmd: string; args: string[]; timeoutMs?: number }> = [];
+  const run = Object.assign(async (cmd: string, args: string[], o?: { timeoutMs?: number }): Promise<RunResult> => {
+    calls.push({ cmd, args, ...(o?.timeoutMs !== undefined ? { timeoutMs: o.timeoutMs } : {}) });
     const line = [cmd, ...args].join(' ');
     const key = Object.keys(table).filter((k) => line === k || line.startsWith(`${k} `)).sort((a, b) => b.length - a.length)[0];
     let h: Handler = key === undefined ? 0 : table[key]!;
@@ -95,7 +95,7 @@ describe('serviceAction (linux)', () => {
   it('linux install rolls back when the service does not come up with the recorded port', async () => {
     const run = recordRun({ 'systemctl --user show -p MainPID': { stdout: '4242\n' } });
     expect(await serviceAction(install, deps({ run }))).toBe(1);
-    expect(run.lines()).toContain('systemctl --user disable --now quarterdeck.service');
+    expect(run.lines()).toContain('systemctl --user disable --now --no-block quarterdeck.service');
     expect(fs.existsSync(unitFile())).toBe(false);
     expect(fs.existsSync(path.join(configDir, 'service.json'))).toBe(false);
     expect(err.join('\n')).toContain('journalctl');
@@ -116,16 +116,42 @@ describe('serviceAction (linux)', () => {
     expect(fs.readFileSync(path.join(configDir, 'service.json'), 'utf8')).toBe('{"old":true}');
     expect(fs.existsSync(path.join(configDir, 'service.env'))).toBe(false);
     expect(run.lines()).toContain('systemctl --user enable quarterdeck.service');
-    expect(run.lines()).not.toContain('systemctl --user disable --now quarterdeck.service');
+    expect(run.lines()).not.toContain('systemctl --user disable --now --no-block quarterdeck.service');
   });
 
-  it('reinstall of our own unit: enable + restart (drain), allowed while our service holds the lock', async () => {
+  it('reinstall of our own unit: enable + queued restart (drain); verified only once a new pid holds the lock', async () => {
     fs.mkdirSync(path.dirname(unitFile()), { recursive: true });
     fs.writeFileSync(unitFile(), `# ${MANAGED_MARKER}\n`);
     writeLock(4242, 9400, 'systemd');
-    const run = systemdUp();
-    expect(await serviceAction(install, deps({ run, portBusy: async () => true }))).toBe(0);
-    expect(run.lines().slice(1, 4)).toEqual(['systemctl --user daemon-reload', 'systemctl --user enable quarterdeck.service', 'systemctl --user restart quarterdeck.service']);
+    // The old server (4242) keeps the lock while it drains; the new one (777) takes over after a few polls.
+    let polls = 0;
+    const sleep = async () => { if (++polls === 5) writeLock(777, 9400, 'systemd'); };
+    const run = recordRun({ 'systemctl --user show -p MainPID': () => ({ stdout: polls >= 5 ? '777\n' : '4242\n' }) });
+    expect(await serviceAction(install, deps({ run, sleep, portBusy: async () => true }))).toBe(0);
+    expect(run.lines().slice(1, 4)).toEqual(['systemctl --user daemon-reload', 'systemctl --user enable quarterdeck.service', 'systemctl --user restart --no-block quarterdeck.service']);
+    expect(polls).toBe(5);
+  });
+
+  it('reinstall verify window covers the previous drain cap; a failed verify waits for the queued job before rolling back', async () => {
+    fs.mkdirSync(path.dirname(unitFile()), { recursive: true });
+    fs.writeFileSync(unitFile(), `# ${MANAGED_MARKER}\n`);
+    fs.writeFileSync(path.join(configDir, 'service.json'), JSON.stringify({ version: 1, node: 'n', bin: 'b', port: 9400, drainMaxMin: 1 }));
+    writeLock(4242, 9400, 'systemd');
+    let slept = 0;
+    let states = 0;
+    const run = recordRun({
+      'systemctl --user show -p MainPID': { stdout: '4242\n' }, // the old server never hands over
+      'systemctl --user is-active': () => (++states < 3 ? { stdout: 'deactivating\n' } : { stdout: 'active\n' }),
+    });
+    expect(await serviceAction(install, deps({ run, portBusy: async () => true, sleep: async (ms) => { slept += ms; } }))).toBe(1);
+    // 2 s verifyMs + 180 s (drainMaxMin 1) before giving up, then two polls while the job was still deactivating.
+    expect(slept).toBeGreaterThanOrEqual(182_000);
+    const lines = run.lines();
+    const firstState = lines.indexOf('systemctl --user is-active quarterdeck.service');
+    const restore = lines.lastIndexOf('systemctl --user daemon-reload');
+    expect(firstState).toBeGreaterThan(-1);
+    expect(restore).toBeGreaterThan(firstState + 2);
+    expect(lines.at(-1)).toBe('systemctl --user restart --no-block quarterdeck.service');
   });
 
   it('a unit without our marker is neither overwritten nor removed', async () => {
@@ -242,8 +268,8 @@ describe('serviceAction (linux)', () => {
     expect(await serviceAction(install, deps({ run, previousNames: ['old-q', 'other'] }))).toBe(0);
     expect(fs.existsSync(path.join(dir, 'old-q.service'))).toBe(false);
     expect(fs.existsSync(path.join(dir, 'other.service'))).toBe(true);
-    expect(run.lines()).toContain('systemctl --user disable --now old-q.service');
-    expect(run.lines()).not.toContain('systemctl --user disable --now other.service');
+    expect(run.lines()).toContain('systemctl --user disable --now --no-block old-q.service');
+    expect(run.lines()).not.toContain('systemctl --user disable --now --no-block other.service');
   });
 
   it('restart and status', async () => {
@@ -253,7 +279,7 @@ describe('serviceAction (linux)', () => {
     writeLock(4242, 9400, 'systemd');
     const run = recordRun({ 'systemctl --user is-active': { stdout: 'active\n' } });
     expect(await serviceAction({ ...install, action: 'restart' }, deps({ run }))).toBe(0);
-    expect(run.lines()).toContain('systemctl --user restart quarterdeck.service');
+    expect(run.lines()).toContain('systemctl --user restart --no-block quarterdeck.service');
     out = [];
     expect(await serviceAction({ ...install, action: 'status' }, deps({ run, packageVersion: () => '0.2.0' }))).toBe(0);
     const text = out.join('\n');
@@ -266,12 +292,14 @@ describe('serviceAction (linux)', () => {
 describe('serviceAction (darwin)', () => {
   const launchdUp = (o: { loaded?: boolean } = {}) => {
     let loaded = o.loaded ?? false;
+    let pid = 4242;
     return recordRun({
       'launchctl print gui/501': 0,
       'launchctl print gui/501/com.deck.server': 113,
-      [`launchctl print gui/501/${LAUNCHD_LABEL}`]: () => (loaded ? { code: 0, stdout: '\tstate = running\n\tpid = 4242\n' } : 113),
+      [`launchctl print gui/501/${LAUNCHD_LABEL}`]: () => (loaded ? { code: 0, stdout: `\tstate = running\n\tpid = ${pid}\n` } : 113),
       'launchctl bootout': () => { loaded = false; return 0; },
-      'launchctl bootstrap': () => { loaded = true; writeLock(4242, 9400, 'launchd'); return 0; },
+      // A fresh bootstrap is a new process: 4242 the first time, 777 after a bootout of the running one.
+      'launchctl bootstrap': () => { if (o.loaded) pid = 777; loaded = true; writeLock(pid, 9400, 'launchd'); return 0; },
     });
   };
 
@@ -326,6 +354,38 @@ describe('serviceAction (darwin)', () => {
     const boot = lines.indexOf(`launchctl bootstrap gui/501 ${plistFile()}`);
     expect(out_).toBeGreaterThan(-1);
     expect(boot).toBeGreaterThan(out_);
+    // bootout may block for the whole drain: its timeout is the stop cap + 1 min, not the 60 s default.
+    expect(run.calls.find((c) => c.args[0] === 'bootout')?.timeoutMs).toBe((1800 + 60) * 1000);
+  });
+
+  it('darwin restart: SIGTERM to the lock holder (drain, KeepAlive restarts), never kickstart -k on a live server', async () => {
+    fs.mkdirSync(path.dirname(plistFile()), { recursive: true });
+    fs.writeFileSync(plistFile(), `<?xml version="1.0"?>\n<!-- ${MANAGED_MARKER} -->\n`);
+    writeLock(4242, 9400, 'launchd');
+    const kills: string[] = [];
+    const run = launchdUp({ loaded: true });
+    const restart: Svc = { ...install, action: 'restart' };
+    expect(await serviceAction(restart, deps({ platform: 'darwin', run, kill: (p, s) => { kills.push(`${p}:${s}`); } }))).toBe(0);
+    expect(kills).toEqual(['4242:SIGTERM']);
+    expect(run.lines().some((l) => l.includes('kickstart'))).toBe(false);
+    // Loaded but not running (e.g. waiting out a fatal start): kickstart without -k.
+    fs.rmSync(path.join(configDir, 'server.lock'));
+    const idle = recordRun({ 'launchctl print gui/501': 0, [`launchctl print gui/501/${LAUNCHD_LABEL}`]: { stdout: 'state = waiting\n' } });
+    expect(await serviceAction(restart, deps({ platform: 'darwin', run: idle, kill: (p, s) => { kills.push(`${p}:${s}`); } }))).toBe(0);
+    expect(idle.lines()).toContain(`launchctl kickstart gui/501/${LAUNCHD_LABEL}`);
+    expect(kills).toHaveLength(1);
+  });
+
+  it('darwin uninstall without a plist still boots out our loaded label (and only ours)', async () => {
+    const run = launchdUp({ loaded: true });
+    expect(await serviceAction(uninstall, deps({ platform: 'darwin', run }))).toBe(0);
+    expect(run.lines()).toContain(`launchctl bootout gui/501/${LAUNCHD_LABEL}`);
+    expect(run.lines().filter((l) => l.startsWith('launchctl bootout'))).toEqual([`launchctl bootout gui/501/${LAUNCHD_LABEL}`]);
+    expect(out.join('\n')).toContain(LAUNCHD_LABEL);
+    // Nothing loaded: nothing booted out.
+    const idle = recordRun({ 'launchctl print gui/501': 0, [`launchctl print gui/501/${LAUNCHD_LABEL}`]: 113 });
+    expect(await serviceAction(uninstall, deps({ platform: 'darwin', run: idle }))).toBe(0);
+    expect(idle.lines().some((l) => l.includes('bootout'))).toBe(false);
   });
 
   it('darwin install rolls back (bootout, files removed) when the job does not come up', async () => {

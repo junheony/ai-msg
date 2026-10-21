@@ -10,7 +10,7 @@ import { loadOrCreateToken } from './auth';
 import { bindAddresses, tailscaleDnsName, tailscaleIPv4s } from './bind';
 import { loadConfig, repoRootDefault, type DeckConfig } from './config';
 import { acquireInstanceLock, commandOfPid } from './instanceLock';
-import { ChildRegistry, groupAlive, killGroup } from './childRegistry';
+import { ChildRegistry, groupAlive, killGroup, processStartMs } from './childRegistry';
 import { TEXTS } from './setup/texts';
 import { SetupService } from './setup/SetupService';
 import { SetupStore, existingInstall } from './setup/SetupStore';
@@ -131,7 +131,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // S5: detached children (grok) are recorded; after a crash (stale lock taken over) the previous server's are reaped.
     const runDir = path.join(cfg.configDir, 'run');
     const children = ChildRegistry.open(path.join(runDir, 'children.json'));
-    if (lock.tookOverStale) await children.reapStale({ isAlive: groupAlive, commandOf: commandOfPid, kill: killGroup, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+    if (lock.tookOverStale) await children.reapStale({ isAlive: groupAlive, commandOf: commandOfPid, kill: killGroup, startedAtOf: processStartMs, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
     else children.clear();
     // S7: a bundled run's Claude child scripts run from a copy, so an upgrade in place does not swap them under a live child.
     let claudeScripts: ReturnType<typeof snapshotChildScripts> | undefined;

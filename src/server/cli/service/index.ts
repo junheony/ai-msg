@@ -28,8 +28,10 @@ export type ServiceDeps = {
   port: number;
   isTTY: boolean;
   ask: (q: string) => Promise<boolean>;
-  /** launchctl / systemctl (no shell). Every exit code is checked. */
-  run: (cmd: string, args: string[]) => Promise<RunResult>;
+  /** launchctl / systemctl (no shell). Every exit code is checked. `timeoutMs` (default 60 s) is raised for commands that wait for a drain. */
+  run: (cmd: string, args: string[], o?: { timeoutMs?: number }) => Promise<RunResult>;
+  /** Signals the running server (launchd restart: SIGTERM → drain → KeepAlive starts the new one). */
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
   portBusy: (port: number) => Promise<boolean>;
   /** GET /api/me status on 127.0.0.1, null = no answer. */
   httpProbe: (port: number) => Promise<number | null>;
@@ -76,10 +78,12 @@ type Manager = {
   upSteps: (reinstall: boolean) => Cmd[];
   /** Waited for after `bootout` before `bootstrap` (launchd). */
   needsUnloadFirst: boolean;
+  /** Stop commands; they return before the drain ends (systemd --no-block) or are given the drain cap as timeout. */
   downSteps: (name: string) => Cmd[];
   stopped: (name: string) => Promise<boolean>;
+  /** No job in flight (systemd: not activating/deactivating/reloading), so a rollback does not race a queued restart. */
+  settled: (name: string) => Promise<boolean>;
   afterRemove: Cmd[];
-  restart: Cmd;
   mainPid: () => Promise<number | null>;
   state: () => Promise<string>;
 };
@@ -99,12 +103,13 @@ function systemdManager(d: ServiceDeps, previous: string[]): Manager {
     preflight: async () => ((await d.run('systemctl', ['--user', 'show-environment'])).code === 0 ? null : T.noUserBus),
     legacy: async () => null,
     loaded: async () => false,
-    upSteps: (reinstall) => [sc('daemon-reload'), ...(reinstall ? [sc('enable', unit(SERVICE_NAME)), sc('restart', unit(SERVICE_NAME))] : [sc('enable', '--now', unit(SERVICE_NAME))])],
+    // restart/stop are queued (--no-block): the old server may drain for up to TimeoutStopSec, longer than any exec timeout.
+    upSteps: (reinstall) => [sc('daemon-reload'), ...(reinstall ? [sc('enable', unit(SERVICE_NAME)), sc('restart', '--no-block', unit(SERVICE_NAME))] : [sc('enable', '--now', unit(SERVICE_NAME))])],
     needsUnloadFirst: false,
-    downSteps: (n) => [sc('disable', '--now', unit(n))],
+    downSteps: (n) => [sc('disable', '--now', '--no-block', unit(n))],
     stopped: async (n) => !['active', 'activating', 'deactivating', 'reloading'].includes((await d.run('systemctl', ['--user', 'is-active', unit(n)])).stdout.trim()),
+    settled: async (n) => !['activating', 'deactivating', 'reloading'].includes((await d.run('systemctl', ['--user', 'is-active', unit(n)])).stdout.trim()),
     afterRemove: [sc('daemon-reload')],
-    restart: sc('restart', unit(SERVICE_NAME)),
     mainPid: async () => {
       const r = await d.run('systemctl', ['--user', 'show', '-p', 'MainPID', '--value', unit(SERVICE_NAME)]);
       const n = Number(r.stdout.trim());
@@ -142,8 +147,8 @@ function launchdManager(d: ServiceDeps, previous: string[]): Manager {
     needsUnloadFirst: true,
     downSteps: (n) => [['launchctl', 'bootout', target(n)]],
     stopped: async (n) => (await d.run('launchctl', ['print', target(n)])).code !== 0,
+    settled: async () => true,
     afterRemove: [],
-    restart: ['launchctl', 'kickstart', '-k', target(LAUNCHD_LABEL)],
     mainPid: async () => {
       const r = await d.run('launchctl', ['print', target(LAUNCHD_LABEL)]);
       return r.code === 0 ? parseLaunchctlPid(r.stdout) : null;
@@ -166,23 +171,26 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
   const sleep = d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   /** Runs one command; a failure is reported (stderr's first line, ≤ 200 chars) and returned. */
-  const exec = async (c: Cmd): Promise<boolean> => {
-    const r = await d.run(c[0]!, c.slice(1));
+  const exec = async (c: Cmd, timeoutMs?: number): Promise<boolean> => {
+    const r = await (timeoutMs === undefined ? d.run(c[0]!, c.slice(1)) : d.run(c[0]!, c.slice(1), { timeoutMs }));
     if (r.code === 0) return true;
     d.err(T.commandFailed(show(c), r.code, (r.stderr.split('\n').find((l) => l.trim()) ?? '').trim().slice(0, 200)));
     return false;
   };
-  const execAll = async (cs: Cmd[]): Promise<boolean> => {
-    for (const c of cs) if (!(await exec(c))) return false;
+  const execAll = async (cs: Cmd[], timeoutMs?: number): Promise<boolean> => {
+    for (const c of cs) if (!(await exec(c, timeoutMs))) return false;
     return true;
   };
-  const waitStopped = async (name: string, limitSec: number): Promise<boolean> => {
+  /** A stop command may block until the drain ends (launchctl bootout): its timeout is the stop cap + 1 min. */
+  const stopTimeoutMs = (limitSec: number) => (limitSec + 60) * 1000;
+  const waitFor = async (check: () => Promise<boolean>, limitSec: number): Promise<boolean> => {
     for (let i = 0; i <= Math.ceil((limitSec * 1000) / POLL_MS); i++) {
-      if (await m.stopped(name)) return true;
+      if (await check()) return true;
       await sleep(POLL_MS);
     }
     return false;
   };
+  const waitStopped = (name: string, limitSec: number) => waitFor(() => m.stopped(name), limitSec);
   const confirm = async (q: string): Promise<boolean | null> => {
     if (cmd.yes) return true;
     if (!d.isTTY) { d.err(T.needConfirm); return null; }
@@ -197,7 +205,7 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       const text = readText(file);
       if (text === null || !hasMarker(text)) continue;
       if (m.kind === 'systemd' || (await m.loaded(name))) {
-        if (!(await execAll(m.downSteps(name)))) return false;
+        if (!(await execAll(m.downSteps(name), stopTimeoutMs(1800)))) return false;
         if (!(await waitStopped(name, 1800))) { d.err(T.notStopped(file)); return false; }
       }
       fs.rmSync(file, { force: true });
@@ -226,6 +234,7 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
     if (prevUnit !== null && !hasMarker(prevUnit)) { d.err(T.notOurs(file)); return 1; }
     const port = cmd.port ?? d.port;
     const holder = readInstanceLock(d.configDir, d.isAlive ?? pidAlive);
+    const prevRecord = readServiceRecord(d.configDir);
     if (holder && holder.supervisor !== m.kind) { d.err(T.lockHeld(holder.pid, holder.port)); return 1; }
     if (!holder && (await d.portBusy(port))) { d.err(T.portBusy(port)); return 1; }
 
@@ -234,6 +243,8 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       drainFlag: cmd.drainMaxMin, cliBins: d.cliBins?.() ?? {}, packageVersion: d.packageVersion?.() ?? '0.0.0', ...(d.now ? { now: d.now } : {}),
     });
     const reinstall = prevUnit !== null;
+    // How long the server running now may drain before it hands over (the previous install's cap).
+    const prevStopSec = stopTimeoutSec({ drainMaxMin: prevRecord?.drainMaxMin ?? 28 });
     const unitText = m.render(record);
     const files: Array<[string, string]> = [
       [recordFile(d.configDir), `${JSON.stringify(record, null, 2)}\n`],
@@ -257,8 +268,10 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
     const rollback = async (): Promise<number> => {
       const problems: string[] = [];
       const tryCmd = async (c: Cmd) => { if (!(await exec(c))) problems.push(show(c)); };
-      if (m.kind === 'systemd' && !reinstall) await tryCmd(['systemctl', '--user', 'disable', '--now', `${SERVICE_NAME}.service`]);
-      if (m.kind === 'launchd' && (await m.loaded(m.current))) {
+      // A queued systemd job (restart --no-block, a drain in progress) finishes first: never act on top of it.
+      const settled = await waitFor(() => m.settled(m.current), Math.max(prevStopSec, stopTimeoutSec(record)));
+      if (!settled) problems.push(T.notStopped(file));
+      if (settled && (m.kind === 'systemd' ? !reinstall : await m.loaded(m.current))) {
         for (const c of m.downSteps(m.current)) await tryCmd(c);
         if (!(await waitStopped(m.current, stopTimeoutSec(record)))) problems.push(T.notStopped(file));
       }
@@ -269,7 +282,7 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
         } catch (e) { problems.push(`${f}: ${e instanceof Error ? e.message : String(e)}`); }
       }
       for (const c of m.afterRemove) await tryCmd(c);
-      if (reinstall) for (const c of m.kind === 'systemd' ? [m.restart] : m.upSteps(true)) await tryCmd(c);
+      if (reinstall && settled) for (const c of m.kind === 'systemd' ? [['systemctl', '--user', 'restart', '--no-block', `${SERVICE_NAME}.service`]] : m.upSteps(true)) await tryCmd(c);
       d.err(problems.length ? T.rollbackFailed(problems.join('; ')) : T.rolledBack);
       return 1;
     };
@@ -286,16 +299,19 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       return rollback();
     }
     if (m.needsUnloadFirst && (await m.loaded(m.current))) {
-      if (!(await execAll(m.downSteps(m.current)))) return rollback();
-      if (!(await waitStopped(m.current, stopTimeoutSec(record)))) { d.err(T.notStopped(file)); return rollback(); }
+      if (!(await execAll(m.downSteps(m.current), stopTimeoutMs(prevStopSec)))) return rollback();
+      if (!(await waitStopped(m.current, prevStopSec))) { d.err(T.notStopped(file)); return rollback(); }
     }
     if (!(await execAll(m.upSteps(reinstall)))) return rollback();
 
-    // Up = the lock names the manager's main pid and the recorded port, and that port answers 401 (no token).
+    // Up = the lock names the manager's main pid and the recorded port, and that port answers 401 (no token). On a systemd
+    // reinstall the restart is queued and the old server drains first: it must be a new pid, and the wait covers the drain.
+    const oldPid = reinstall && holder?.supervisor === m.kind ? holder.pid : null;
+    const verifyMs = (d.verifyMs ?? 30_000) + (oldPid !== null && m.kind === 'systemd' ? prevStopSec * 1000 : 0);
     let verified = false;
-    for (let i = 0; i < Math.ceil((d.verifyMs ?? 30_000) / POLL_MS); i++) {
+    for (let i = 0; i < Math.ceil(verifyMs / POLL_MS); i++) {
       const lock = readInstanceLock(d.configDir, d.isAlive ?? pidAlive);
-      if (lock && lock.port === record.port) {
+      if (lock && lock.port === record.port && lock.pid !== oldPid) {
         const pid = await m.mainPid();
         if (pid === lock.pid && (await d.httpProbe(record.port)) === 401) { verified = true; break; }
       }
@@ -329,10 +345,16 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
     if (ok !== true) return 1;
     if (!(await cleanPrevious())) return 1;
     if (text !== null) {
-      if ((m.kind === 'systemd' || (await m.loaded(m.current))) && !(await execAll(m.downSteps(m.current)))) return 1;
+      if ((m.kind === 'systemd' || (await m.loaded(m.current))) && !(await execAll(m.downSteps(m.current), stopTimeoutMs(limit)))) return 1;
       if (!(await waitStopped(m.current, limit))) { d.err(T.notStopped(file)); return 1; }
     } else {
       d.out(T.notInstalled);
+      // The plist is gone but launchd still has our label loaded (deleted by hand): take it down, our label only.
+      if (m.kind === 'launchd' && (await m.loaded(m.current))) {
+        if (!(await execAll(m.downSteps(m.current), stopTimeoutMs(limit)))) return 1;
+        if (!(await waitStopped(m.current, limit))) { d.err(T.notStopped(file)); return 1; }
+        d.out(T.orphanUnloaded(m.current));
+      }
     }
     for (const f of targets) fs.rmSync(f, { force: true });
     if (text !== null && !(await execAll(m.afterRemove))) return 1;
@@ -345,10 +367,23 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
   if (cmd.action === 'restart') {
     if (text === null) { d.err(T.notInstalled); return 1; }
     if (!hasMarker(text)) { d.err(T.notOurs(file)); return 1; }
-    if (cmd.dryRun) { d.out(T.dryRunHead); d.out(T.commandsHead); d.out(`  ${show(m.restart)}`); return 0; }
+    const systemdRestart: Cmd = ['systemctl', '--user', 'restart', '--no-block', `${SERVICE_NAME}.service`];
+    if (cmd.dryRun) { d.out(T.dryRunHead); d.out(T.commandsHead); d.out(`  ${m.kind === 'systemd' ? show(systemdRestart) : T.launchdRestartPlan}`); return 0; }
     const pre = await m.preflight();
     if (pre) { d.err(pre); return 1; }
-    if (!(await exec(m.restart))) return 1;
+    if (m.kind === 'systemd') {
+      if (!(await exec(systemdRestart))) return 1;
+    } else {
+      // launchd: SIGTERM to the server itself (it drains, exits, KeepAlive starts the new one). `kickstart -k` may SIGKILL a
+      // draining server, so it is used only when the job runs no lock holder (nothing to drain) or nothing at all.
+      const pid = await m.mainPid();
+      const lock = readInstanceLock(d.configDir, d.isAlive ?? pidAlive);
+      if (pid !== null && lock?.pid === pid && lock.supervisor === 'launchd') {
+        try { (d.kill ?? process.kill.bind(process))(pid, 'SIGTERM'); } catch (e) { d.err(T.commandFailed(`kill -TERM ${pid}`, 1, e instanceof Error ? e.message : String(e))); return 1; }
+      } else if (!(await exec(['launchctl', 'kickstart', ...(pid !== null ? ['-k'] : []), `gui/${d.uid}/${LAUNCHD_LABEL}`]))) {
+        return 1;
+      }
+    }
     d.out(T.restarted);
     return 0;
   }

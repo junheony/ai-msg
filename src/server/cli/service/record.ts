@@ -14,6 +14,12 @@ export const LEGACY_LAUNCHD_LABEL = 'com.deck.server';
 export const MANAGED_MARKER = 'managed-by: quarterdeck service';
 export const MARKER_LINE = `${MANAGED_MARKER} (수정하지 마세요 — quarterdeck service install 이 다시 씁니다)`;
 
+/**
+ * `quarterdeck start`'s exit code for failures a restart cannot fix (port taken, config dir locked, broken accounts.json):
+ * systemd does not restart on it (RestartPreventExitStatus); under launchd the process waits FATAL_LAUNCHD_DELAY_SEC first.
+ */
+export const FATAL_EXIT_CODE = 78;
+export const FATAL_LAUNCHD_DELAY_SEC = 300;
 export const DRAIN_DEFAULT_MIN = 25;
 export const DRAIN_MAX_MIN = 28;
 
@@ -35,13 +41,20 @@ export function stopTimeoutSec(r: Pick<ServiceRecord, 'drainMaxMin'>): number {
   return Math.min(r.drainMaxMin * 60 + 120, 1800);
 }
 
-/** Never copied into the service env: the manager sets the supervisor itself, and an env file pointer is the shell's. */
-const EXCLUDED = new Set(['DECK_SUPERVISOR', 'DECK_SUPERVISED', 'DECK_ENV_FILE']);
+/**
+ * The DECK_* settings a service carries over from this shell (allow list — the plist is 0644). Not here: the supervisor
+ * markers (the manager sets them), the env-file pointer, dev/test knobs, bridge internals, and what the record sets itself
+ * (DECK_CONFIG_DIR, DECK_PORT, DECK_DRAIN_MAX_MIN) or resolves (DECK_*_BIN via `cliBins`).
+ */
+export const SERVICE_DECK_KEYS = [
+  'DECK_BACKUP_RETENTION_DAYS', 'DECK_BG_MAX_MIN', 'DECK_DESKTOP_SESSIONS_DIR', 'DECK_EXTRA_CWD_ROOTS', 'DECK_EXTRA_HOSTS',
+  'DECK_LOOPBACK_ONLY', 'DECK_STEER', 'DECK_UI_DIR', 'DECK_UPTIME_URL', 'DECK_URL', 'DECK_USAGE_SOURCE', 'DECK_USAGE_STRICT', 'DECK_VAPID_SUBJECT',
+] as const;
 const PASS_IF_SET = ['XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'CLAUDE_PICK_COOLDOWN_DIR'];
 
 /**
  * The record `service install` writes: resolved absolute paths and the allowed env of this shell (PATH, HOME, locale,
- * DECK_* but the supervisor markers, XDG dirs, the CLI paths found now). `drainFlag` (`--drain-max-min`, already 1~28)
+ * the allowed DECK_* settings, XDG dirs, the CLI paths found now). `drainFlag` (`--drain-max-min`, already 1~28)
  * → `DECK_DRAIN_MAX_MIN` when finite and ≤ 28 → 25; anything else falls back to 25 with a warning.
  */
 export function buildServiceRecord(o: {
@@ -66,7 +79,7 @@ export function buildServiceRecord(o: {
   put('PATH', o.env.PATH);
   put('HOME', o.home);
   for (const [k, v] of Object.entries(o.env)) if (k === 'LANG' || k.startsWith('LC_')) put(k, v);
-  for (const [k, v] of Object.entries(o.env)) if (k.startsWith('DECK_') && !EXCLUDED.has(k)) put(k, v);
+  for (const k of SERVICE_DECK_KEYS) put(k, o.env[k]);
   for (const k of PASS_IF_SET) put(k, o.env[k]);
   for (const [k, v] of Object.entries(o.cliBins)) put(k, v);
   env.DECK_CONFIG_DIR = path.resolve(o.configDir);

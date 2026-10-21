@@ -17,6 +17,8 @@ import { TEXTS } from '../setup/texts';
 import { parseCli } from './args';
 import { formatDoctor } from './doctor';
 import { serviceAction, type RunResult, type ServiceDeps } from './service/index';
+import { FATAL_EXIT_CODE, FATAL_LAUNCHD_DELAY_SEC } from './service/record';
+import { capServiceLog } from '../serviceLog';
 
 export type CliIo = { out: (s: string) => void; err: (s: string) => void; isTTY: boolean; env: NodeJS.ProcessEnv; ask?: (q: string) => Promise<boolean> };
 
@@ -38,11 +40,13 @@ export function startErrorLine(err: unknown): string {
   return TEXTS.startFailed(err instanceof Error ? err.message : String(err));
 }
 
-/** The `quarterdeck` command. Resolves with the exit code; `start` resolves once the server is up (it keeps running). */
+/** Start failures a restart cannot fix → FATAL_EXIT_CODE (the service manager stops retrying, or retries slowly). */
+const isFatalStart = (err: unknown) => err instanceof PortInUseError || err instanceof InstanceLockedError || err instanceof AccountsFileError;
+
 /** `service`'s real side: commands run without a shell, a y/N question on the terminal, loopback-only port/HTTP probes. */
 function serviceDeps(io: CliIo, home: string): ServiceDeps {
-  const run = (cmd: string, args: string[]): Promise<RunResult> => new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+  const run = (cmd: string, args: string[], o: { timeoutMs?: number } = {}): Promise<RunResult> => new Promise((resolve) => {
+    execFile(cmd, args, { timeout: o.timeoutMs ?? 60_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       const code = err ? (typeof (err as NodeJS.ErrnoException & { code?: unknown }).code === 'number' ? (err as unknown as { code: number }).code : 127) : 0;
       resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
     });
@@ -85,7 +89,8 @@ function serviceDeps(io: CliIo, home: string): ServiceDeps {
   };
 }
 
-export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { start?: typeof startServer; probeExec?: ProbeExec; service?: Partial<ServiceDeps> } = {}): Promise<number> {
+/** The `quarterdeck` command. Resolves with the exit code; `start` resolves once the server is up (it keeps running). */
+export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { start?: typeof startServer; probeExec?: ProbeExec; service?: Partial<ServiceDeps>; sleep?: (ms: number) => Promise<void> } = {}): Promise<number> {
   const cmd = parseCli(argv);
   const home = io.env.HOME || os.homedir();
   switch (cmd.kind) {
@@ -125,6 +130,13 @@ export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { st
       const env = cmd.port === undefined ? io.env : { ...io.env, DECK_PORT: String(cmd.port) };
       const start = deps.start ?? startServer;
       if (!deps.start) installCrashHandlers(process, { log: (line) => console.error(line), exit: (code) => process.exit(code) });
+      const launchd = env.DECK_SUPERVISOR === 'launchd';
+      if (launchd) {
+        // The LaunchAgent appends to this file forever otherwise: checked now and hourly.
+        const log = path.join(resolveConfigDir(env, home), 'quarterdeck.log');
+        capServiceLog(log);
+        if (!deps.start) setInterval(() => capServiceLog(log), 3_600_000).unref();
+      }
       try {
         const cfg = loadConfig(env, home);
         await start({
@@ -138,7 +150,13 @@ export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { st
         return 0;
       } catch (err) {
         io.err(startErrorLine(err));
-        return 1;
+        if (!isFatalStart(err)) return 1;
+        // launchd's KeepAlive cannot skip an exit code: waiting here stretches its 10 s restart loop to minutes.
+        if (launchd) {
+          io.err(TEXTS.fatalBackoff(FATAL_LAUNCHD_DELAY_SEC));
+          await (deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))))(FATAL_LAUNCHD_DELAY_SEC * 1000);
+        }
+        return FATAL_EXIT_CODE;
       }
     }
   }

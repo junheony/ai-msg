@@ -26,10 +26,10 @@ describe('runCli', () => {
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-  it('port in use: one Korean line, exit 1, no signal sent, mentions DECK_CONFIG_DIR', async () => {
+  it('port in use: one Korean line, fatal exit 78, no signal sent, mentions DECK_CONFIG_DIR', async () => {
     const io = fakeIo(env);
     const code = await runCli(['start'], io, { start: async () => { throw new PortInUseError(9320); } });
-    expect(code).toBe(1);
+    expect(code).toBe(78);
     expect(io.errText().split('\n')).toHaveLength(1);
     expect(io.errText()).toMatch(/9320/);
     expect(io.errText()).toMatch(/--port/);
@@ -40,13 +40,31 @@ describe('runCli', () => {
     const io = fakeIo(env);
     const holder = { pid: 4321, port: 9411, addresses: [], version: 't', configDir: '/c', startedAt: '', supervisor: null };
     const code = await runCli(['start'], io, { start: async () => { throw new InstanceLockedError('/c', holder, 'lock'); } });
-    expect(code).toBe(1);
+    expect(code).toBe(78);
     expect(io.errText()).toMatch(/9411/);
     expect(io.errText()).toMatch(/4321/);
     expect(io.errText()).toMatch(/DECK_CONFIG_DIR/);
     const io2 = fakeIo(env);
-    expect(await runCli(['start'], io2, { start: async () => { throw new InstanceLockedError('/c', null, 'relaunch-loop'); } })).toBe(1);
+    expect(await runCli(['start'], io2, { start: async () => { throw new InstanceLockedError('/c', null, 'relaunch-loop'); } })).toBe(78);
     expect(io2.errText()).toMatch(/relaunch/);
+  });
+
+  it('other start failures exit 1; under launchd a fatal failure waits 300 s first and the log file is capped', async () => {
+    const io = fakeIo(env);
+    expect(await runCli(['start'], io, { start: async () => { throw new Error('boom'); } })).toBe(1);
+    const slept: number[] = [];
+    const launchdEnv = { ...env, DECK_SUPERVISOR: 'launchd' };
+    expect(await runCli(['start'], fakeIo(launchdEnv), { start: async () => { throw new Error('boom'); }, sleep: async (ms) => { slept.push(ms); } })).toBe(1);
+    expect(slept).toEqual([]);
+    fs.mkdirSync(env.DECK_CONFIG_DIR!);
+    const log = path.join(env.DECK_CONFIG_DIR!, 'quarterdeck.log');
+    fs.writeFileSync(log, Buffer.alloc(10 * 1024 * 1024 + 1, 'x'));
+    const io2 = fakeIo(launchdEnv);
+    expect(await runCli(['start'], io2, { start: async () => { throw new PortInUseError(9320); }, sleep: async (ms) => { slept.push(ms); } })).toBe(78);
+    expect(slept).toEqual([300_000]);
+    expect(io2.errText()).toContain('300초');
+    expect(fs.statSync(log).size).toBe(0);
+    expect(fs.statSync(`${log}.1`).size).toBe(10 * 1024 * 1024 + 1);
   });
 
   it('prints the login URL on a TTY only', async () => {

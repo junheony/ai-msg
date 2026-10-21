@@ -21,6 +21,7 @@ describe('systemdUnit', () => {
     expect(u).toContain('TimeoutStopSec=1620');
     expect(u).toContain('Environment=DECK_SUPERVISOR=systemd');
     expect(u).toContain('Restart=always');
+    expect(u).toContain('RestartPreventExitStatus=78');
     expect(u).toContain('WantedBy=default.target');
   });
 

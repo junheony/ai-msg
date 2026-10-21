@@ -8,7 +8,7 @@ const base = { platform: 'linux' as const, home: '/h', configDir: '/h/.config/de
 
 describe('service record', () => {
   it('record: resolved absolute paths, no supervisor vars, drain clamped', () => {
-    const env = { PATH: '/usr/bin', LANG: 'ko_KR.UTF-8', LC_ALL: 'C', DECK_SUPERVISED: '1', DECK_SUPERVISOR: 'launchd', DECK_ENV_FILE: '/x', DECK_LOOPBACK_ONLY: '1', XDG_CONFIG_HOME: '/h/.xdg', SECRET: 's', DECK_DRAIN_MAX_MIN: 'Infinity' };
+    const env = { PATH: '/usr/bin', LANG: 'ko_KR.UTF-8', LC_ALL: 'C', DECK_SUPERVISED: '1', DECK_SUPERVISOR: 'launchd', DECK_ENV_FILE: '/x', DECK_LOOPBACK_ONLY: '1', DECK_DEV_ORIGIN: 'http://x', DECK_BRIDGE_TOKEN: 't', DECK_HOOK_RELAY_DEADLINE_MS: '1', DECK_SOMETHING_NEW: 'z', XDG_CONFIG_HOME: '/h/.xdg', SECRET: 's', DECK_DRAIN_MAX_MIN: 'Infinity' };
     const { record, warnings } = buildServiceRecord({ ...base, env });
     expect(record.configDir).toBe('/h/.config/deck');
     expect(record.env).toEqual({
