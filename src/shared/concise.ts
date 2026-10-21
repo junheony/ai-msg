@@ -87,10 +87,11 @@ export const CONCISE_STYLE_PROMPT = [
 
 /**
  * The style note for an engine: Claude asks decisions with its AskUserQuestion tool; GPT, Gemini and Grok have no such
- * tool, so their note leaves that line out (they get shared/choices DECK_CHOICES_PROMPT instead).
+ * tool, so their note leaves that line out (they get shared/choices DECK_CHOICES_PROMPT instead). A 백그라운드 작업 turn
+ * (`task`) leaves it out too: nobody watches that session, so a question card would only hold its slot.
  */
-export function conciseStylePrompt(engine: EngineKind): string {
-  if (engine === 'claude') return CONCISE_STYLE_PROMPT;
+export function conciseStylePrompt(engine: EngineKind, opts: { task?: boolean } = {}): string {
+  if (engine === 'claude' && !opts.task) return CONCISE_STYLE_PROMPT;
   return CONCISE_STYLE_PROMPT.split('\n').filter((l) => !l.includes('AskUserQuestion')).join('\n');
 }
 

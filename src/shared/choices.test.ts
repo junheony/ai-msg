@@ -16,8 +16,9 @@ describe('deck-choices', () => {
     expect(r.choices?.options[0]).toBe('A');
     expect(r.text).toBe('');
   });
-  it('fewer than two options: no cards, block still removed; the last valid block wins', () => {
-    expect(splitDeckChoices(`앞\n${block('- 하나')}`)).toEqual({ text: '앞', choices: null });
+  it('fewer than two options: no cards and the block kept as written; the last valid block wins', () => {
+    expect(splitDeckChoices(`앞\n${block('- 하나')}`)).toEqual({ text: `앞\n${block('- 하나')}`, choices: null });
+    expect(splitDeckChoices(`${block('? 질문만')}\n뒤`)).toEqual({ text: `${block('? 질문만')}\n뒤`, choices: null });
     expect(splitDeckChoices(`${block('- a\n- b')}\n중간\n${block('- c\n- d')}`)).toEqual({ text: '중간', choices: { question: null, options: ['c', 'd'] } });
   });
   it('text without a block is untouched (fast path); other fences stay', () => {

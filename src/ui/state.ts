@@ -255,6 +255,8 @@ export type PaneState = {
   handoffFrom: { sessionId: string; title: string; /** Grok Bot handoff only: the old entry's own (home) cwd, rejected again by `set_new_cwd` even if the projects list no longer tags it `source: 'grokbot'`. */ grokBotHome?: string } | null;
   /** Composer text to put in once (the new session's first message, sent only when the user presses Enter). */
   prefill: string | null;
+  /** 백그라운드 작업 sends not yet answered (`ref` = clientRef): a refusal echoing the ref puts the text back in the composer. */
+  taskRefs?: { ref: string; text: string }[];
   /** Notes / errors about the session no turn owns (e.g. written outside deck just now): dismissible bars in this pane (newest 3), dropped when the pane shows another session. */
   notices?: PaneNotice[];
   /** The opened session's history has not arrived yet (the pane shows a loading placeholder instead of a blank). */
@@ -495,6 +497,8 @@ export type Action =
   | { type: 'cancel_start'; paneId?: string }
   /** The `sent` under `clientRef` never left (socket down): held in the queue for the next reconnect instead. */
   | { type: 'send_failed'; clientRef: string; paneId?: string }
+  /** A `start_task` went out from this pane (its composer was emptied): kept until a refusal echoes `clientRef`. */
+  | { type: 'task_sent'; paneId: string; clientRef: string; text: string }
   /** A bar in the pane about its session (e.g. a stop that could not be sent). */
   | { type: 'pane_notice'; message: string; paneId?: string };
 
@@ -921,6 +925,9 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       return { ...pane, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, ...(pane.activeTurnId === null ? { runStartedAt: null, progress: null } : {}), queuePaused: pane.queuePaused || pane.queue.length > 0, routeFit: { engine: msg.engine, need: msg.need, text: back.text, attachments: back.attachments } };
     }
     case 'error': {
+      // A 백그라운드 작업 the server refused (draining, too many waiting, …): its text goes back into the composer.
+      const task = msg.clientRef !== undefined ? pane.taskRefs?.find((r) => r.ref === msg.clientRef) : undefined;
+      if (task) return { ...pane, taskRefs: pane.taskRefs!.filter((r) => r !== task), prefill: task.text };
       // This session's open_session failed while messages wait for its history: they stop waiting — ordinary queue items,
       // paused, so nothing hangs on a history that never comes. (Not the drain broadcast: the history still comes.)
       if (msg.turnId === null && msg.clientRef === undefined && msg.code !== 'draining' && msg.sessionId !== undefined && msg.sessionId === pane.session?.sessionId && pane.queue.some((q) => q.restart === 'hello')) {
@@ -1607,6 +1614,8 @@ export function reducer(state: AppState, action: Action): AppState {
       const restore = back ? { prefill: back.text || null, attachments: [...p.attachments, ...back.attachments.filter((f) => !p.attachments.some((a) => a.id === f.id)).map((f) => ({ ...f, size: 0 }))] } : {};
       return { ...p, items, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, handoff: null, ...restore, ...idle };
     });
+    // The newest few only: an answered task never echoes its ref again, so old entries just age out.
+    case 'task_sent': return updatePane(state, action.paneId, (p) => ({ ...p, taskRefs: [...(p.taskRefs ?? []), { ref: action.clientRef, text: action.text }].slice(-5) }));
     case 'send_failed': return updatePane(state, action.paneId, (p) => {
       if (!p.awaitingStart || p.awaitingRef !== action.clientRef) return p;
       const idle = p.activeTurnId === null ? { runStartedAt: null, progress: null } : {};

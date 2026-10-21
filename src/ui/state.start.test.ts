@@ -191,3 +191,15 @@ describe('pane_notice', () => {
     expect(pane(s).notices).toEqual([{ sessionId: 's1', message: 'x', level: 'notice' }]);
   });
 });
+
+describe('task_sent (백그라운드 작업, composer already emptied)', () => {
+  it('a refusal echoing the ref puts the text back in the composer; other errors leave it', () => {
+    let s = reducer(opened('s1'), { type: 'task_sent', paneId: 'p0', clientRef: 'k1', text: '로그 정리해줘' });
+    s = play([{ type: 'error', turnId: null, message: '다른 일', clientRef: 'other' } as ServerMessage], s);
+    expect(pane(s).prefill).toBeNull();
+    s = play([{ type: 'error', turnId: null, message: '대기 중인 작업이 20개라 더 받을 수 없습니다', clientRef: 'k1' } as ServerMessage], s);
+    expect(pane(s).prefill).toBe('로그 정리해줘');
+    expect(pane(s).taskRefs).toEqual([]);
+    expect(s.error).toBe('대기 중인 작업이 20개라 더 받을 수 없습니다');
+  });
+});

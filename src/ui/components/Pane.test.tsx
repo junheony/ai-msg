@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { useReducer } from 'react';
-import { Pane, useQueueRunner } from './Pane';
+import { Pane, startTaskFromPane, useQueueRunner } from './Pane';
 import type { ClientMessage, ServerMessage } from '../../shared/protocol';
 import { initialState, newPane, reducer, type Action, type AppState, type PaneState } from '../state';
 
@@ -403,5 +403,18 @@ describe('Pane: route_fit 그래도 보내기 double click (review #8)', () => {
     fireEvent.click(btn);
     fireEvent.click(btn);
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe('startTaskFromPane', () => {
+  it('offline: false and nothing recorded (the composer keeps the draft); sent: the ref is kept for a refusal', () => {
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null } };
+    const dispatch = vi.fn();
+    expect(startTaskFromPane(pane, '로그 정리', dispatch, () => false)).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+    const sent: ClientMessage[] = [];
+    expect(startTaskFromPane(pane, '로그 정리', dispatch, (m) => { sent.push(m); return true; })).toBe(true);
+    const ref = (sent[0] as Extract<ClientMessage, { type: 'start_task' }>).clientRef;
+    expect(dispatch).toHaveBeenCalledWith({ type: 'task_sent', paneId: 'p1', clientRef: ref, text: '로그 정리' });
   });
 });

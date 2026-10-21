@@ -36,14 +36,16 @@ function parseBody(body: string): DeckChoices | null {
 
 /**
  * The reply's last deck-choices block (null when there is none or it has fewer than two options) and the text without
- * any deck-choices block. While streaming, an unclosed block at the end is hidden too (it is still being written).
+ * the parsed deck-choices blocks (one that does not parse is kept as written). While streaming, an unclosed block at the end is hidden too (it is still being written).
  */
 export function splitDeckChoices(text: string, streaming = false): { text: string; choices: DeckChoices | null } {
   if (!text.includes('deck-choices')) return { text, choices: null };
   let choices: DeckChoices | null = null;
-  let rest = text.replace(FENCE, (_m, lead: string, body: string) => {
+  // A block that does not parse (fewer than two options, …) stays as the engine wrote it: nothing it said is lost.
+  let rest = text.replace(FENCE, (m: string, lead: string, body: string) => {
     const parsed = parseBody(body);
-    if (parsed) choices = parsed;
+    if (!parsed) return m;
+    choices = parsed;
     return lead;
   });
   if (streaming) rest = rest.replace(OPEN, '$1');

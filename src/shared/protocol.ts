@@ -140,6 +140,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('start_task'), cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }), text: z.string().trim().min(1).max(200_000), fromSessionId: z.string().min(1).max(200).nullable(), concise: z.boolean().optional(), clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional() }),
   /** 닫기 on an ended task's card. */
   z.object({ type: z.literal('dismiss_task'), taskId: z.string().min(1).max(64) }),
+  /** 백그라운드 작업 취소: a queued task leaves the list; a running one's turn is stopped (it ends as 취소됨). */
+  z.object({ type: z.literal('cancel_task'), taskId: z.string().min(1).max(64) }),
   z.object({ type: z.literal('commander_set'), sessionId: z.string().min(1).max(200), goal: z.string().trim().min(1).max(2000), done: z.string().trim().min(1).max(2000), maxTurns: z.number().int().min(1).max(50).optional() }),
   /** ■ 정지 / 일시 정지 / 재개 — `epoch` is the one the device last saw; another one is refused (`commander_stale_epoch`). */
   z.object({ type: z.literal('commander_stop'), sessionId: z.string().min(1).max(200), epoch: z.number().int().min(0) }),

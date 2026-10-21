@@ -2252,6 +2252,7 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
 .task-badge.queued::before { content: '⏸ '; }
 .task-badge.done::before { content: '✓ '; }
 .task-badge.failed::before { content: '✕ '; }
+.task-badge.waiting { color: var(--warn); font-weight: 600; }
 .task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-line { margin-top: 4px; color: var(--fg); }
 .task-line.muted { color: var(--muted); }

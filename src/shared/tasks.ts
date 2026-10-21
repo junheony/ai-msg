@@ -20,7 +20,11 @@ export type TaskInfo = {
   endedAt?: number;
   /** First line of the result (or of the error). */
   line?: string;
+  /** Running and stopped on a permission / question card in its session (승인 대기). */
+  waiting?: boolean;
 };
+
+export const TASK_CANCELED_LINE = '취소됨';
 
 /** Parallel tasks running at once before new ones wait (설정 `taskSoftCap`). */
 export const DEFAULT_TASK_SOFT_CAP = 3;

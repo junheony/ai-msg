@@ -35,6 +35,7 @@ let tasks: TaskRegistry;
 const pushed: PushPayload[] = [];
 const notified: ServerMessage[] = [];
 const calls: TurnRequest[] = [];
+const permDecisions: string[] = [];
 const gates = new Map<string, () => void>();
 const gate = (name: string) => new Promise<void>((r) => gates.set(name, r));
 
@@ -61,6 +62,13 @@ beforeAll(async () => {
     if (req.prompt.startsWith('slow')) {
       const g = gate(req.prompt);
       return (async function* () { yield { kind: 'init' as const, sessionId: sid, model: 'm' }; await g; yield okResult(sid, `## 결과\n${req.prompt} 끝났습니다.\n\n자세히…`); })();
+    }
+    if (req.prompt === 'ask-perm') {
+      return (async function* () {
+        yield { kind: 'init' as const, sessionId: sid, model: 'm' };
+        permDecisions.push(await req.onPermission({ toolName: 'Bash', input: { command: 'rm -rf build' }, toolUseId: 'tu-task' }));
+        yield okResult(sid, '권한 뒤 끝');
+      })();
     }
     if (req.prompt === 'boom') return [{ kind: 'init', sessionId: sid, model: 'm' }, { kind: 'result', sessionId: sid, ok: false, text: '', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: '엔진 오류', stderr: null, errorKind: null, terminalReason: null } as never];
     return [{ kind: 'init', sessionId: sid, model: 'm' }, okResult(sid, `${req.prompt} 완료`)];
@@ -142,7 +150,10 @@ describe('ws · 백그라운드 작업', () => {
     const b = await until(() => { const t = byTitle(msgs, 'quick-b'); return t?.status === 'done' ? t : null; });
     expect(b.line).toBe('quick-b 완료');
     expect(calls.find((c) => c.prompt === 'quick-b')?.appendSystemPrompt).toBeUndefined();
-    expect(wsApi.isTaskTurn((notified.find((m) => m.type === 'turn_result' && m.sessionId === a.sessionId) as { turnId: string }).turnId)).toBe(true);
+    const turnA = (notified.find((m) => m.type === 'turn_result' && m.sessionId === a.sessionId) as { turnId: string }).turnId;
+    expect(wsApi.isTaskTurn(turnA)).toBe(true);
+    expect(wsApi.isConciseTurn(turnA)).toBe(true);
+    expect(wsApi.isConciseTurn((notified.find((m) => m.type === 'turn_result' && m.sessionId === b.sessionId) as { turnId: string }).turnId)).toBe(false);
 
     ws.send(JSON.stringify({ type: 'dismiss_task', taskId: b.taskId }));
     await until(() => lastTasks(msgs)!.tasks.every((t) => t.taskId !== b.taskId));
@@ -175,6 +186,32 @@ describe('ws · 백그라운드 작업', () => {
     expect(tasks.list().some((t) => t.title === 'one-too-many')).toBe(false);
     gates.get('slow-hold')!();
     await until(() => byTitle(msgs, `wait-${TASKS_QUEUED_MAX - 1}`)?.status === 'done', 10_000);
+    ws.close();
+  });
+
+  it('승인 대기 shows on a task stopped on a card; 취소 drops a queued task and stops a running one (no push)', async () => {
+    const { ws, msgs } = await open();
+    timeoutState = () => ({ t: lastTasks(msgs), perm: permDecisions });
+    await until(() => lastTasks(msgs));
+    ws.send(JSON.stringify({ type: 'start_task', cwd: work, text: 'ask-perm', fromSessionId: 'from-c', concise: true }));
+    ws.send(JSON.stringify({ type: 'start_task', cwd: work, text: 'never-runs', fromSessionId: 'from-c' }));
+    const running = await until(() => { const t = byTitle(msgs, 'ask-perm'); return t?.status === 'running' && t.waiting ? t : null; });
+    // Nobody watches a task: its concise note asks no AskUserQuestion card.
+    const call = calls.find((c) => c.prompt === 'ask-perm')!;
+    expect(call.appendSystemPrompt).toContain('[deck 간결 모드]');
+    expect(call.appendSystemPrompt).not.toContain('AskUserQuestion');
+    const queued = await until(() => byTitle(msgs, 'never-runs')?.status === 'queued' && byTitle(msgs, 'never-runs'));
+    ws.send(JSON.stringify({ type: 'cancel_task', taskId: queued.taskId }));
+    await until(() => lastTasks(msgs)!.tasks.every((t) => t.taskId !== queued.taskId));
+    ws.send(JSON.stringify({ type: 'cancel_task', taskId: running.taskId }));
+    const ended = await until(() => { const t = byTitle(msgs, 'ask-perm'); return t?.status === 'failed' ? t : null; });
+    expect(ended.line).toBe('취소됨');
+    expect(ended.waiting).toBeUndefined();
+    await until(() => permDecisions.length === 1);
+    expect(permDecisions[0]).toBe('deny');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(pushed.some((p) => p.tag === `bgtask-${running.taskId}`)).toBe(false);
+    expect(calls.some((c) => c.prompt === 'never-runs')).toBe(false);
     ws.close();
   });
 

@@ -48,4 +48,14 @@ describe('deck-choices option cards', () => {
     render(<Chat {...props} items={[user, reply()]} busy />);
     for (const b of screen.getAllByTestId('choice') as HTMLButtonElement[]) expect(b.disabled).toBe(true);
   });
+
+  it('a click sends only the option: files waiting in the composer are not attached to it', () => {
+    const onSend = vi.fn();
+    const onSendText = vi.fn();
+    const props = { pending: [], questions: [], activeTurnId: null, title: 't', model: 'opus' as const, effort: 'high' as const, engine: 'codex' as const, sandbox: 'read-only' as const, sessionEngine: 'codex' as const, sessionSandbox: null, isNew: false, codexAvailable: true, attachments: [{ id: 'f1', name: 'a.png', size: 1, isImage: true }], onSend, onSendText, onInterrupt: () => {}, onDecide: () => {}, onAnswer: () => {}, onModel: () => {}, onEffort: () => {}, onEngine: () => {}, onSandbox: () => {}, onAttach: () => {}, onUnattach: () => {} };
+    render(<Chat {...props} items={[{ kind: 'user', text: '테스트 돌려줘' } as ChatItem, reply()]} busy={false} />);
+    fireEvent.click(screen.getAllByTestId('choice')[1]!);
+    expect(onSendText).toHaveBeenCalledWith('이슈만 남기기');
+    expect(onSend).not.toHaveBeenCalled();
+  });
 });

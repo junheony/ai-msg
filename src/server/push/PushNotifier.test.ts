@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ServerMessage } from '../../shared/protocol';
 import { AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
-import { LONG_TURN_MS, PushNotifier, firstLine, selectPush, turnNeedsAttention, type PushSender } from './PushNotifier';
+import { CONCISE_LONG_TURN_MS, LONG_TURN_MS, PushNotifier, firstLine, selectPush, turnNeedsAttention, type PushSender } from './PushNotifier';
 import { SubscriptionStore } from './SubscriptionStore';
 
 const scope = { turnId: 't1', sessionId: 's1', cwd: '/Users/alice/dev/proj' };
@@ -174,13 +174,13 @@ describe('turnNeedsAttention (which finished turns are pushed)', () => {
 });
 
 describe('PushNotifier.notify · turn results', () => {
-  const setup = async (o: { commanderQuiet?: (sessionId: string) => boolean } = {}) => {
+  const setup = async (o: { commanderQuiet?: (sessionId: string) => boolean; conciseTurn?: (turnId: string) => boolean } = {}) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-notifier-turn-'));
     const store = new SubscriptionStore(path.join(dir, 'subs.json'));
     await store.add({ endpoint: 'https://fcm.googleapis.com/fcm/send/live', keys: { p256dh: 'P', auth: 'A' } });
     const calls: { body: string }[] = [];
     let now = 1_000_000;
-    const n = new PushNotifier({ store, vapid: { publicKey: 'pub', privateKey: 'priv' }, subject: 's', titleOf, send: async (_s, payload) => { calls.push(JSON.parse(payload)); }, now: () => now, ...(o.commanderQuiet ? { commanderQuiet: o.commanderQuiet } : {}) });
+    const n = new PushNotifier({ store, vapid: { publicKey: 'pub', privateKey: 'priv' }, subject: 's', titleOf, send: async (_s, payload) => { calls.push(JSON.parse(payload)); }, now: () => now, ...(o.commanderQuiet ? { commanderQuiet: o.commanderQuiet } : {}), ...(o.conciseTurn ? { conciseTurn: o.conciseTurn } : {}) });
     return { n, calls, advance: (ms: number) => { now += ms; } };
   };
   const started = (turnId: string): ServerMessage => ({ type: 'turn_started', ...scope, turnId, account: 'a', model: 'opus', reason: 'r', attempt: 0 } as ServerMessage);
@@ -198,6 +198,18 @@ describe('PushNotifier.notify · turn results', () => {
     n.notify(result('t2', true));
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]!.body).toBe('완료 · 고쳤습니다.');
+  });
+
+  it('간결 모드 turns count as long from CONCISE_LONG_TURN_MS; others only from LONG_TURN_MS', async () => {
+    expect(LONG_TURN_MS).toBe(10 * 60_000);
+    const { n, calls, advance } = await setup({ conciseTurn: (id) => id === 'c1' });
+    n.notify(started('c1'));
+    n.notify(started('f1'));
+    advance(CONCISE_LONG_TURN_MS);
+    n.notify(result('f1', true));
+    n.notify(result('c1', true, '간결 끝.'));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.body).toBe('완료 · 간결 끝.');
   });
 
   it('a background segment only when it failed', async () => {

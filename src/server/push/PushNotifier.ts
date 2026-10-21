@@ -62,8 +62,10 @@ export function selectPush(msg: ServerMessage, titleOf: (sessionId: string | nul
   }
 }
 
-/** A turn this long is worth a push even when it ends quietly (간결 모드: notify on long turns by default). */
-export const LONG_TURN_MS = 90_000;
+/** A turn this long is worth a push even when it ends quietly. */
+export const LONG_TURN_MS = 10 * 60_000;
+/** 간결 모드 turns are pushed much sooner: the pane shows no stream, so a quiet minute and a half is already long. */
+export const CONCISE_LONG_TURN_MS = 90_000;
 /** turn_started times kept this long at most (a turn whose result never came). */
 const STARTED_KEEP_MS = 24 * 3600_000;
 /** Endings that ask the user to act (not 골라냈습니다 / 선택해서 적용했습니다 / 원하시면 언제든). */
@@ -74,14 +76,14 @@ const ENDS_ASKING = /[?？][*_"'」』)\]\s]*$/;
 const LIST_PARAGRAPH = /^(?:[-*+]|\d+[.)])\s/;
 
 /**
- * Whether a finished turn needs the user (pure): it failed; it ran LONG_TURN_MS or more; its last paragraph asks
+ * Whether a finished turn needs the user (pure): it failed; it ran `longMs` (LONG_TURN_MS; 간결 모드 CONCISE_LONG_TURN_MS) or more; its last paragraph asks
  * something (ends with ?, or asks to pick / confirm / tell) — a closing list is looked past to the paragraph before
  * it; or its last heading (#…###, a bold-only line) is a 남은 일 / 다음 단계 / 결정 필요 / 확인 필요 / TODO / 질문
  * section. Code fences are left out first. A quiet success is not pushed (it is still a highlight).
  */
-export function turnNeedsAttention(text: string, ok: boolean, durationMs: number | null): boolean {
+export function turnNeedsAttention(text: string, ok: boolean, durationMs: number | null, longMs = LONG_TURN_MS): boolean {
   if (!ok) return true;
-  if (durationMs !== null && durationMs >= LONG_TURN_MS) return true;
+  if (durationMs !== null && durationMs >= longMs) return true;
   const prose = text.replace(/```[\s\S]*?(?:```|$)/g, '');
   const paragraphs = prose.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
   for (let i = paragraphs.length - 1; i >= 0; i--) {
@@ -118,6 +120,8 @@ export class PushNotifier {
     commanderQuiet?: (sessionId: string) => boolean;
     /** 백그라운드 작업's first turn: the task pushes its own (always) result, so this one is skipped. */
     taskTurn?: (turnId: string) => boolean;
+    /** The turn was sent in 간결 모드 (pushed after CONCISE_LONG_TURN_MS instead of LONG_TURN_MS). */
+    conciseTurn?: (turnId: string) => boolean;
   }) {
     this.send = opts.send ?? ((sub, payload, o) => webpush.sendNotification(sub, payload, {
       ...o,
@@ -152,7 +156,7 @@ export class PushNotifier {
       if (this.opts.taskTurn?.(msg.turnId)) { this.autoRetried.delete(msg.turnId); return; }
       const auto = this.autoRetried.delete(msg.turnId);
       // A background segment (`<turnId>:bg<n>`) only when it failed.
-      if (!auto && (/:bg\d+$/.test(msg.turnId) ? msg.ok : !turnNeedsAttention(msg.text, msg.ok, at === undefined ? null : now - at))) return;
+      if (!auto && (/:bg\d+$/.test(msg.turnId) ? msg.ok : !turnNeedsAttention(msg.text, msg.ok, at === undefined ? null : now - at, this.opts.conciseTurn?.(msg.turnId) ? CONCISE_LONG_TURN_MS : LONG_TURN_MS))) return;
     }
     const payload = selectPush(msg, this.opts.titleOf);
     if (payload) void this.sendAll(payload);

@@ -77,13 +77,17 @@ export type ChatProps = {
   attachments: UploadedAttachment[];
   uploadFn?: UploadFn;
   onSend: (text: string) => void;
-  /** 백그라운드 작업 ('tasks' servers): `/bg <text>` or 작업으로 starts `text` as a new session in this folder. */
-  onStartTask?: (text: string) => void;
+  /** Sends `text` alone: the composer's attachments stay for the user's own next message (a 선택지 click). Absent: onSend. */
+  onSendText?: (text: string) => void;
+  /** 백그라운드 작업 ('tasks' servers): `/bg <text>` or 작업으로 starts `text` as a new session in this folder. False = not sent (the draft stays). */
+  onStartTask?: (text: string) => boolean | void;
   /** This chat's tasks (newest first) and the soft cap. */
   tasks?: TaskInfo[];
   taskCap?: number | null;
   onOpenTask?: (t: TaskInfo) => void;
   onDismissTask?: (taskId: string) => void;
+  /** 취소 on a waiting or running task card. */
+  onCancelTask?: (taskId: string) => void;
   onInterrupt: () => void;
   /** 취소 on 시작하는 중… (busy, no turn yet): stop waiting; the text goes back into the composer. */
   onCancelStart?: () => void;
@@ -358,6 +362,8 @@ export function Chat(p: ChatProps) {
   // Stable across keystrokes (refs) so the memoized transcript does not re-render while typing.
   const onSendRef = useRef(p.onSend);
   onSendRef.current = p.onSend;
+  const onSendTextRef = useRef(p.onSendText ?? p.onSend);
+  onSendTextRef.current = p.onSendText ?? p.onSend;
   const onBranchRef = useRef(p.onBranch);
   onBranchRef.current = p.onBranch;
   const canBranch = !!p.onBranch;
@@ -373,7 +379,7 @@ export function Chat(p: ChatProps) {
     editNote: p.editNote ?? null,
     ...(p.versions ? { versions: p.versions } : {}),
     coarse,
-    ...(canReply ? { onReply: (t: string) => { onSendRef.current(t); scroll.attach(); } } : {}),
+    ...(canReply ? { onReply: (t: string) => { onSendTextRef.current(t); scroll.attach(); } } : {}),
   }), [canRetry, retryable, scroll.attach, canBranch, p.editNote, p.versions, coarse, canReply]);
   // 다시 생성 / 다른 모델로 (Pane's context): the new turn is followed from the bottom, as after a send.
   const paneRegen = useContext(RegenerateContext);
@@ -394,8 +400,8 @@ export function Chat(p: ChatProps) {
   /** 작업으로 / `/bg`: the draft runs as its own new session; this chat stays free (even mid-turn). */
   const startTask = (body: string) => {
     if (!p.onStartTask || !body.trim() || p.attachments.length > 0) return false;
-    p.onStartTask(body.trim());
-    setText('');
+    // Offline: nothing went out, so the draft stays where it is.
+    if (p.onStartTask(body.trim()) !== false) setText('');
     return true;
   };
   const submit = () => {
@@ -641,7 +647,7 @@ export function Chat(p: ChatProps) {
         {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>deck 에서 새 GPT 세션으로 이어가기</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
-        {p.tasks && p.tasks.length > 0 && <TaskCards tasks={p.tasks} cap={p.taskCap ?? null} {...(p.onOpenTask ? { onOpen: p.onOpenTask } : {})} {...(p.onDismissTask ? { onDismiss: p.onDismissTask } : {})} />}
+        {p.tasks && p.tasks.length > 0 && <TaskCards tasks={p.tasks} cap={p.taskCap ?? null} {...(p.onOpenTask ? { onOpen: p.onOpenTask } : {})} {...(p.onDismissTask ? { onDismiss: p.onDismissTask } : {})} {...(p.onCancelTask ? { onCancel: p.onCancelTask } : {})} />}
         {p.nextSession && <button type="button" className="session-link next" data-testid="handoff-next" onClick={p.nextSession.open} title={p.nextSession.title}>→ 새 세션으로 이어감 · {p.nextSession.title}</button>}
       </div>
       {scroll.detached && (

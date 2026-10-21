@@ -49,4 +49,20 @@ describe('TaskRegistry', () => {
     expect(r.list()).toHaveLength(TASKS_KEEP);
     expect(r.get(first.taskId)?.status).toBe('running');
   });
+  it('removes only a queued task; 승인 대기 is set on a running one and dropped when it ends', () => {
+    const r = new TaskRegistry(null);
+    const a = r.create({ fromSessionId: null, cwd: '/w', text: 'a' }, 1);
+    const b = r.create({ fromSessionId: null, cwd: '/w', text: 'b' }, 1);
+    expect(r.removeQueued(a.taskId)).toBe(false);
+    expect(r.setWaiting(b.taskId, true)).toBe(false);
+    expect(r.removeQueued(b.taskId)).toBe(true);
+    expect(r.get(b.taskId)).toBeNull();
+    expect(r.setWaiting(a.taskId, true)).toBe(true);
+    expect(r.setWaiting(a.taskId, true)).toBe(false);
+    expect(r.get(a.taskId)?.waiting).toBe(true);
+    expect(r.setWaiting(a.taskId, false)).toBe(true);
+    expect(r.get(a.taskId)).not.toHaveProperty('waiting');
+    r.setWaiting(a.taskId, true);
+    expect(r.finish(a.taskId, { ok: false, text: '취소됨' })).not.toHaveProperty('waiting');
+  });
 });

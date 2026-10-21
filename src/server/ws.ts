@@ -40,7 +40,7 @@ import { DISABLED_MESSAGE, type CommanderResult, type CommanderSendRequest } fro
 import type { SegmentDigest } from './commander/types';
 import type { TaskRegistry } from './tasks/TaskRegistry';
 import type { PushPayload } from './push/PushNotifier';
-import { TASKS_QUEUED_MAX, clampTaskCap } from '../shared/tasks';
+import { TASKS_QUEUED_MAX, TASK_CANCELED_LINE, clampTaskCap } from '../shared/tasks';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
 
@@ -286,6 +286,8 @@ export type WsHandle = {
   isBusy(sessionId: string): boolean;
   /** The turn is a 백그라운드 작업's first turn (its result is pushed by the task, not by PushNotifier). */
   isTaskTurn(turnId: string): boolean;
+  /** The turn (or follow-up) was sent in 간결 모드: PushNotifier pushes it once it ran CONCISE_LONG_TURN_MS. */
+  isConciseTurn(turnId: string): boolean;
 };
 
 /** The sender of a server-made send (submitRetry): never open, so nothing is sent to it and it views nothing. */
@@ -299,6 +301,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const clients = new Set<WebSocket>();
   /** 백그라운드 작업 sockets → told the task's session id as soon as the engine names it (before any event carries it). */
   const taskSockets = new WeakMap<WebSocket, (sessionId: string) => void>();
+  /** Turn / follow-up ids sent in 간결 모드 (newest last, bounded): only PushNotifier asks (isConciseTurn). */
+  const conciseTurns = new Set<string>();
+  const markConcise = (id: string, m: { concise?: boolean; handoff?: boolean }) => {
+    if (!m.concise || m.handoff) return;
+    conciseTurns.add(id);
+    if (conciseTurns.size > 2000) conciseTurns.delete(conciseTurns.values().next().value!);
+  };
   const turns = new Map<string, Turn>();
   /** Turn ids a running turn's process produced after its own (background continuations, follow-ups) → that turn's id. */
   const aliases = new Map<string, string>();
@@ -349,8 +358,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const notify = (msg: ServerMessage) => { try { deps.notify?.(msg); } catch (err) { console.error('deck: push hook failed', errMsg(err)); } };
   const broadcastAndNotify = (msg: ServerMessage) => { broadcast(msg); notify(msg); };
   const userSent = (sessionId: string) => { try { deps.onUserSend?.(sessionId); } catch (err) { console.error('deck: user send hook failed', errMsg(err)); } };
-  const broker = new PermissionBroker(broadcastAndNotify);
-  const questions = new QuestionBroker(broadcastAndNotify);
+  /** Cards opening / closing also mark a running 백그라운드 작업 as 승인 대기 (or not). */
+  const askBroadcast = (msg: ServerMessage) => { broadcastAndNotify(msg); syncTaskWaiting(); };
+  const broker = new PermissionBroker(askBroadcast);
+  const questions = new QuestionBroker(askBroadcast);
   /** Each socket's last route_preview ask: answered again after a usage change, unless the answer is what it last got. */
   const routeAsk = new Map<WebSocket, { sessionId: string | null; model?: ClaudeModel | 'auto' }>();
   /** The last route_preview sent to each socket (JSON): a usage change that leaves it as it is sends nothing. */
@@ -793,6 +804,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         return;
       }
       const followId = randomUUID();
+      markConcise(followId, msg);
       if (base) aliases.set(followId, base.turnId);
       prompts.set(followId, promptOf(msg));
       const joined = base !== undefined && deps.runner.followUp(msg.sessionId, {
@@ -821,6 +833,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     // Draining refuses only a send that needs a new process: one joining a live process (follow-up above) still goes in.
     if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
     const turnId = commanderHop ? `${randomUUID()}:cmd${commanderHop}` : randomUUID();
+    markConcise(turnId, msg);
     const ac = new AbortController();
     const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, ...(msg.sessionId === null && msg.title ? { title: msg.title } : {}), afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
     prompts.set(turnId, promptOf(msg));
@@ -984,6 +997,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.handoff ? { handoff: true } : {}),
           ...(msg.ignoreFit ? { ignoreFit: true } : {}),
           ...(msg.concise && !msg.handoff ? { concise: true } : {}),
+          ...(taskSockets.has(ws) ? { bgTask: true } : {}),
           ...hop,
           ...(commanderHop ? { commanderHop } : {}),
           ...(commanderHop && commanderNote ? { commanderNote } : {}),
@@ -1082,10 +1096,27 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** What a queued task will send once it gets a slot (kept in memory only: a restart fails queued tasks). */
   const taskTexts = new Map<string, { text: string; concise: boolean }>();
   const taskRef = (taskId: string) => `task-${taskId}`;
-  const finishTask = (taskId: string, r: { ok: boolean; text: string | null; sessionId?: string | null }) => {
+  /** Each running task's first turn id (its process), while it runs. */
+  const taskBase = new Map<string, string>();
+  /** Running tasks canceled before their turn started: stopped as soon as it does. */
+  const taskCanceled = new Set<string>();
+  /** Stops a task's turn the way ■ 중지 (interrupt) stops one: the process, and any card it waits on. */
+  const stopTaskTurn = (base: string) => { turns.get(base)?.ac.abort(); broker.cancelTurn(base); questions.cancelTurn(base); };
+  const syncTaskWaiting = () => {
+    const reg = deps.tasks;
+    if (!reg || taskBase.size === 0) return;
+    const asking = new Set([...broker.pending(), ...questions.pending()].map((m) => baseOf(m.turnId)));
+    let changed = false;
+    for (const [taskId, base] of taskBase) if (reg.setWaiting(taskId, asking.has(base))) changed = true;
+    if (changed) broadcastTasks();
+  };
+  const finishTask = (taskId: string, r: { ok: boolean; text: string | null; sessionId?: string | null }, quiet = false) => {
+    taskBase.delete(taskId);
+    taskCanceled.delete(taskId);
     const t = deps.tasks?.finish(taskId, r);
     if (!t) return;
     broadcastTasks();
+    if (quiet) { pumpTasks(); return; }
     const title = `작업 ${t.status === 'done' ? '완료' : '실패'} · ${t.title}`;
     try { deps.pushTask?.({ kind: 'task', title: title.length > 60 ? `${title.slice(0, 59)}…` : title, body: (t.line ?? '').slice(0, 140), sessionId: t.sessionId, tag: `bgtask-${t.taskId}` }); } catch (err) { console.error('deck: task push failed', errMsg(err)); }
     pumpTasks();
@@ -1101,7 +1132,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const onEvent = (m: ServerMessage) => {
       const sid = 'sessionId' in m && typeof m.sessionId === 'string' ? m.sessionId : null;
       if (sid && reg.get(taskId)?.sessionId !== sid) { reg.sessionKnown(taskId, sid); broadcastTasks(); }
-      if (m.type === 'turn_started' && base === null && m.clientRef === ref) { base = m.turnId; reg.turnStarted(taskId, m.turnId); return; }
+      if (m.type === 'turn_started' && base === null && m.clientRef === ref) {
+        base = m.turnId;
+        reg.turnStarted(taskId, m.turnId);
+        if (taskCanceled.has(taskId)) { taskCanceled.delete(taskId); stopTaskTurn(m.turnId); } else if (reg.get(taskId)?.status === 'running') taskBase.set(taskId, m.turnId);
+        return;
+      }
       if (m.type === 'turn_result' && m.turnId === base) { finishTask(taskId, { ok: m.ok, text: m.ok ? m.text : (m.errorText ?? m.text), sessionId: m.sessionId }); return; }
       // Refused before it started (bad folder, draining, the engine cannot do it).
       if (base === null && (m.type === 'error' || m.type === 'route_fit') && m.clientRef === ref) finishTask(taskId, { ok: false, text: m.type === 'error' ? m.message : `이 작업에는 ${m.need} 이(가) 필요합니다` });
@@ -1539,6 +1575,18 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'dismiss_task':
           if (deps.tasks?.dismiss(msg.taskId)) broadcastTasks();
           break;
+        case 'cancel_task': {
+          const reg = deps.tasks;
+          if (!reg) break;
+          if (reg.removeQueued(msg.taskId)) { taskTexts.delete(msg.taskId); broadcastTasks(); break; }
+          if (reg.get(msg.taskId)?.status !== 'running') break;
+          const base = taskBase.get(msg.taskId);
+          // Not started yet: its turn is stopped once turn_started names it (the flag outlives finishTask's cleanup).
+          finishTask(msg.taskId, { ok: false, text: TASK_CANCELED_LINE }, true);
+          if (base) stopTaskTurn(base);
+          else taskCanceled.add(msg.taskId);
+          break;
+        }
         case 'commander_set':
         case 'commander_stop':
         case 'commander_pause':
@@ -1589,6 +1637,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     submitServerSend,
     isBusy,
     isTaskTurn: (turnId: string) => deps.tasks?.taskOfTurn(turnId) != null,
+    isConciseTurn: (turnId: string) => conciseTurns.has(turnId),
     /** Processes still up (running a prompt, or closing after `drain` ended them): the restart waits for these. */
     activeTurns: () => turns.size,
     abortAll() {

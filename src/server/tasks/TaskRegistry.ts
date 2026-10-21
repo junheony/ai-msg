@@ -93,8 +93,30 @@ export class TaskRegistry {
     if (!t || t.status === 'done' || t.status === 'failed') return null;
     // byTurn keeps the turn: PushNotifier asks about it after the result (isTaskTurn); bounded below.
     while (this.byTurn.size > TASKS_KEEP * 4) this.byTurn.delete(this.byTurn.keys().next().value!);
+    const { waiting: _w, ...rest } = t;
+    this.tasks = this.tasks.map((x) => (x.taskId === taskId ? rest : x));
     this.patch(taskId, { status: r.ok ? 'done' : 'failed', endedAt: this.now(), line: taskLine(r.text) || (r.ok ? '완료' : '실패'), ...(r.sessionId ? { sessionId: r.sessionId } : {}) });
     return this.get(taskId);
+  }
+
+  /** 취소 on a queued card: the task leaves the list (it never started). False when it is not queued. */
+  removeQueued(taskId: string): boolean {
+    const i = this.tasks.findIndex((x) => x.taskId === taskId && x.status === 'queued');
+    if (i < 0) return false;
+    this.tasks.splice(i, 1);
+    void this.save();
+    return true;
+  }
+
+  /** A running task's session waits on (or no longer waits on) a permission / question card. True when it changed. */
+  setWaiting(taskId: string, on: boolean): boolean {
+    const t = this.tasks.find((x) => x.taskId === taskId);
+    if (!t || t.status !== 'running' || (t.waiting === true) === on) return false;
+    if (on) { this.patch(taskId, { waiting: true }); return true; }
+    const { waiting: _w, ...rest } = t;
+    this.tasks = this.tasks.map((x) => (x.taskId === taskId ? rest : x));
+    void this.save();
+    return true;
   }
 
   /** 닫기 on a card: an ended task is forgotten (a running one stays). */

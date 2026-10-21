@@ -95,11 +95,17 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
   if (sent === false) dispatch({ type: 'send_failed', clientRef, paneId: pane.id });
 }
 
-/** 백그라운드 작업: `text` as a new session in the pane's folder (the server answers with `tasks`). */
-export function startTaskFromPane(pane: PaneState, text: string, send: SendFn): void {
+/**
+ * 백그라운드 작업: `text` as a new session in the pane's folder (the server answers with `tasks`). False = not sent
+ * (offline): the composer keeps the text. A refusal echoing the ref puts it back later (`task_sent`).
+ */
+export function startTaskFromPane(pane: PaneState, text: string, dispatch: (a: Action) => void, send: SendFn): boolean {
   const s = pane.session;
-  if (!s) return;
-  send({ type: 'start_task', cwd: s.cwd, text, fromSessionId: s.sessionId, clientRef: nextClientRef() });
+  if (!s) return false;
+  const clientRef = nextClientRef();
+  if (send({ type: 'start_task', cwd: s.cwd, text, fromSessionId: s.sessionId, clientRef }) === false) return false;
+  dispatch({ type: 'task_sent', paneId: pane.id, clientRef, text });
+  return true;
 }
 
 /** 새 세션으로 이어가기, step 1: the handoff-note turn in the current session (same account and model: warm cache). */
@@ -573,11 +579,13 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           attachments={pane.attachments}
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
-          {...(has('tasks') && s.cwd && !grokBot ? { onStartTask: (text: string) => startTaskFromPane(pane, text, send) } : {})}
+          onSendText={(text) => sendFromPane(pane, text, [], dispatch, send, app.defaultPermMode ?? null, false, undefined, { keepAttachments: true })}
+          {...(has('tasks') && s.cwd && !grokBot ? { onStartTask: (text: string) => startTaskFromPane(pane, text, dispatch, send) } : {})}
           tasks={tasksForPane(app.tasks ?? [], s.sessionId, s.cwd)}
           taskCap={app.taskCap ?? null}
           onOpenTask={(t) => { if (t.sessionId) onOpenSession?.(t.sessionId, t.cwd, t.title); }}
           onDismissTask={(taskId) => { send({ type: 'dismiss_task', taskId }); }}
+          onCancelTask={(taskId) => { send({ type: 'cancel_task', taskId }); }}
           onBranch={canBranch ? (n, text, original) => { branchUndo.current = { sessionId: s.sessionId!, cwd: s.cwd, title: s.title }; startBranch(pane, n, text, original, dispatch, send, names.all); } : undefined}
           editNote={editNote}
           versions={versions}

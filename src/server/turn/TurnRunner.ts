@@ -80,6 +80,8 @@ export type TurnParams = {
   fork?: { from: string; at: string };
   /** 간결 모드 (send.concise): the engine gets shared/concise CONCISE_STYLE_PROMPT as an appended system prompt (Claude). */
   concise?: boolean;
+  /** Server-internal: a 백그라운드 작업's turn (no one watches it: the style note asks no AskUserQuestion). */
+  bgTask?: boolean;
   /** Server-internal: how many times this turn already moved on to another account after a background segment hit a limit (failoverAfterBackground). */
   failoverHop?: number;
   /** Server-internal (failoverAfterBackground): a follow-up's send ref, carried on its turn_started so ws records the message as taken. */
@@ -1000,7 +1002,7 @@ export class TurnRunner {
    */
   private addendum(p: TurnParams, engine: EngineKind = 'claude'): string | null {
     if (p.handoff) return null;
-    const style = p.concise && p.commanderHop === undefined ? conciseStylePrompt(engine) : null;
+    const style = p.concise && p.commanderHop === undefined ? conciseStylePrompt(engine, { task: p.bgTask === true }) : null;
     let memory = '';
     try { memory = this.deps.memory?.() ?? ''; } catch { /* a broken store never blocks a turn */ }
     // GPT, Gemini and Grok have no question tool: they offer decisions as a deck-choices block (option cards in the pane).
@@ -1698,7 +1700,8 @@ export class TurnRunner {
       }
     }
     const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
-    this.contextDelivered(sessionId, context);
+    // Delivered only once a turn carrying it succeeded: a failed first turn sends it again next time.
+    if (res.ok) this.contextDelivered(sessionId, context);
     // Only an id the CLI reported (init) is stored, never a rejected resume id echoed back.
     if (sessionId) {
       await deps.store.set({
@@ -1798,7 +1801,8 @@ export class TurnRunner {
       this.steering.delete(p.turnId);
     }
     const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
-    this.contextDelivered(sessionId, context);
+    // Delivered only once a turn carrying it succeeded: a failed first turn sends it again next time.
+    if (res.ok) this.contextDelivered(sessionId, context);
     // Only an id Grok reported is stored, never a rejected resume id echoed back.
     if (sessionId) await record(sessionId, res.ok).catch((err: unknown) => console.error('deck: saving the Grok session failed', err instanceof Error ? err.message : err));
     if (!res.ok && res.errorKind === 'rate_limit') this.grokCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;

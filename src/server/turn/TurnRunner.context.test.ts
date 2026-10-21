@@ -21,11 +21,17 @@ let base: string;
 beforeEach(async () => { base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-tr-context-'))); });
 afterEach(async () => { await fs.rm(base, { recursive: true, force: true }); });
 
-const ok = (sid: string): EngineEvent[] => [
-  { kind: 'init', sessionId: sid, model: 'm' },
-  { kind: 'delta', text: 'ok' },
-  { kind: 'result', sessionId: sid, ok: true, text: 'ok', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' },
-];
+/** The next engine turn ends failed (then resets). */
+let failNext = false;
+const ok = (sid: string): EngineEvent[] => {
+  const pass = !failNext;
+  failNext = false;
+  return [
+    { kind: 'init', sessionId: sid, model: 'm' },
+    { kind: 'delta', text: 'ok' },
+    { kind: 'result', sessionId: sid, ok: pass, text: 'ok', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' },
+  ];
+};
 
 async function setup(memo: { text: string }) {
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
@@ -55,6 +61,8 @@ const work = () => base;
 describe('TurnRunner · deck context for GPT, Gemini and Grok', () => {
   it('style variants: Claude keeps AskUserQuestion; the others drop it and get the deck-choices note', () => {
     expect(conciseStylePrompt('claude')).toBe(CONCISE_STYLE_PROMPT);
+    // A 백그라운드 작업 turn: nobody answers a question card, so Claude's note drops the line too.
+    expect(conciseStylePrompt('claude', { task: true })).toBe(conciseStylePrompt('codex'));
     for (const e of ['codex', 'gemini', 'grok'] as const) {
       expect(conciseStylePrompt(e)).not.toContain('AskUserQuestion');
       expect(conciseStylePrompt(e).split('\n')).toHaveLength(CONCISE_STYLE_PROMPT.split('\n').length - 1);
@@ -101,5 +109,19 @@ describe('TurnRunner · deck context for GPT, Gemini and Grok', () => {
     expect(c.grokCalls[0]!.context).toBe(deckAddendum({ style: conciseStylePrompt('grok'), choices: DECK_CHOICES_PROMPT }));
     expect(c.grokCalls[1]!.context).toBeUndefined();
     expect(c.grokCalls[2]!.context).toBe(DECK_CHOICES_PROMPT); // 간결 모드 turned off: the context changed
+  });
+
+  it('Gemini and Grok: a turn that failed does not count as having delivered the context (sent again next turn)', async () => {
+    const c = await setup({ text: 'M' });
+    failNext = true;
+    await c.runner.run({ turnId: 'g1', cwd: work(), sessionId: null, text: '하나', engine: 'gemini' }, c.sink);
+    await c.runner.run({ turnId: 'g2', cwd: work(), sessionId: 'gm-new', text: '둘', engine: 'gemini' }, c.sink);
+    await c.runner.run({ turnId: 'g3', cwd: work(), sessionId: 'gm-new', text: '셋', engine: 'gemini' }, c.sink);
+    expect(c.geminiCalls.map((r) => r.prompt.startsWith('<system-reminder>'))).toEqual([true, true, false]);
+    failNext = true;
+    await c.runner.run({ turnId: 'k1', cwd: work(), sessionId: null, text: '하나', engine: 'grok' }, c.sink);
+    await c.runner.run({ turnId: 'k2', cwd: work(), sessionId: 'gk-new', text: '둘', engine: 'grok' }, c.sink);
+    await c.runner.run({ turnId: 'k3', cwd: work(), sessionId: 'gk-new', text: '셋', engine: 'grok' }, c.sink);
+    expect(c.grokCalls.map((r) => r.context !== undefined)).toEqual([true, true, false]);
   });
 });
