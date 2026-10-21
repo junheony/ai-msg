@@ -233,7 +233,7 @@ export function useFileMenu(path: string | null) {
 }
 
 /** The chat header's session-folder chip: name shown, full path on hover; a click opens the folder menu. */
-export function FolderChip({ cwd, name }: { cwd: string; name: string }) {
+export function FolderChip({ cwd, name, asMenuItem }: { cwd: string; name: string; /** A row of the session chip's menu ("폴더: name ›") instead of the head's second line. */ asMenuItem?: boolean }) {
   const open = useContext(SidePanelContext);
   const act = useFileActions();
   const ref = useRef<HTMLButtonElement>(null);
@@ -250,7 +250,9 @@ export function FolderChip({ cwd, name }: { cwd: string; name: string }) {
   ];
   return (
     <>
-      <button ref={ref} type="button" className="folder-chip chat-subtitle" title={cwd} aria-haspopup="menu" aria-expanded={at !== null} onClick={toggle}>{name}</button>
+      {asMenuItem
+        ? <button ref={ref} type="button" role="menuitem" className="menu-folder" title={cwd} aria-haspopup="menu" aria-expanded={at !== null} onClick={toggle}>폴더: {name} <span aria-hidden="true">›</span></button>
+        : <button ref={ref} type="button" className="folder-chip head-folder" title={cwd} aria-haspopup="menu" aria-expanded={at !== null} onClick={toggle}>{name}</button>}
       {at && <PointMenu x={at.x} y={at.y} label="폴더 메뉴" items={items} anchor={ref.current} onClose={() => setAt(null)} />}
       {act.node}
     </>

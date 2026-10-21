@@ -2,7 +2,6 @@ import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState
 import type { ClientMessage } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import { CommandPalette, type PaletteAction, type PaletteSession } from './components/CommandPalette';
-import { DeckMark } from './components/DeckMark';
 import { engineOf } from './components/EngineMark';
 import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
 import { SessionCwdDialog } from './components/SessionCwdDialog';
@@ -73,13 +72,12 @@ const SETTLE_MS = 250;
 /** A body size as a `floatBySize` key. */
 const sizeKey = (b: { w: number; h: number }) => `${Math.round(b.w)}x${Math.round(b.h)}`;
 /**
- * A double-click on a floating card's header (the ⋮⋮ grip, the bare strip, a plain title) — not on its other controls:
- * the title button opens the session menu, so it stays out too.
+ * A double-click on a floating card's header strip — not on its controls: the session chip renames on a double-click,
+ * the – / ✕ buttons and the menu keep theirs.
  */
 const onCardHead = (t: EventTarget | null): boolean => {
-  if (!(t instanceof Element) || !t.closest('.chat-head')) return false;
-  const control = t.closest('button, input, select, textarea, a, [role="menu"]');
-  return !control || control.matches('.pane-grip');
+  if (!(t instanceof Element) || !t.closest('.pane-head')) return false;
+  return !t.closest('button, input, select, textarea, a, [role="menu"]');
 };
 const THEME_LABEL: Record<Theme, string> = { system: '시스템', light: '라이트', dark: '다크' };
 
@@ -174,6 +172,7 @@ export function App() {
   /** 고정됨 reorder requests: only the newest one's answer is applied. */
   const pinOrderSeq = useRef(0);
   const phone = useIsPhone();
+  const [headSlot, setHeadSlot] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
   const [usageOpen, setUsageOpen] = useState<null | 'limits' | 'history'>(null);
   const [highlightsOpen, setHighlightsOpen] = useState(false);
@@ -1156,15 +1155,19 @@ export function App() {
     requestFocus(target.id);
     return true;
   };
+  /** A docked pane shown alone / with the rest (⌘⇧Enter, 창 › 패널 최대화). */
+  const toggleMaxDocked = (paneId: string) => {
+    if (docked.length < 2) return;
+    const on = maxed !== paneId;
+    setMaxPane(on ? paneId : null);
+    announce(on ? '패널을 최대화했습니다' : '패널 배치를 되돌렸습니다');
+    requestFocus(paneId);
+  };
   /** ⌘⇧Enter: a card maximizes / comes back as its header double-click does; a docked pane is shown alone / with the rest. */
   const toggleMaxPane = () => {
     if (phone) return;
     if (active.float) { toggleMaxCard(active.id); return; }
-    if (docked.length < 2) return;
-    const on = maxed !== active.id;
-    setMaxPane(on ? active.id : null);
-    announce(on ? '패널을 최대화했습니다' : '패널 배치를 되돌렸습니다');
-    requestFocus(active.id);
+    toggleMaxDocked(active.id);
   };
   /** ⌘⌥⇧[ / ⌘⌥⇧]: the active docked pane one place left / right, as ⋯ 왼쪽으로 / 오른쪽으로 이동. */
   const shiftActivePane = (dir: -1 | 1) => {
@@ -1257,14 +1260,11 @@ export function App() {
         {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
         {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
-        <span className="brand"><DeckMark className="spark" />deck</span>
-        <button type="button" className="text-btn palette-open" onClick={() => setPaletteOpen(true)} title={`세션 검색 · 명령 (${mod}K)`} aria-label="세션 검색 · 명령">
-          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="4.75" /><path d="m10.5 10.5 3.25 3.25" /></svg>
-          {!phone && <><span>검색</span><kbd>{mod}K</kbd></>}
-        </button>
+        {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
+        <div className="topbar-head" ref={setHeadSlot} />
         <UsageChip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} compact={phone} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
         <div className="topbar-end">
-          {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (⋮⋮ 를 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
+          {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
           <ActivityButton
             ready={state.ready} connected={state.connected} downSince={downSince} onRetry={retryNow}
             pending={state.pending} questions={state.questions}
@@ -1415,11 +1415,11 @@ export function App() {
                 onPointerDown={(e) => startPaneResize(e, shown[i - 1]!.id, p.id)}
                 onDoubleClick={() => dispatch({ type: 'resize_panes', sizes: Object.fromEntries(docked.map((x) => [x.id, 1])) })} />
             )}
-            <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+            <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} headSlot={(phone || state.panes.length === 1) ? headSlot : null} onAddPane={addPane} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
               onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
               hidden={!!maxed && p.id !== maxed}
               {...(!phone && (docked.length > 1 || floats.length > 0) ? { grip: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => startPaneDrag(e, p.id), onKeyDown: (e: ReactKeyboardEvent<HTMLButtonElement>) => gripKey(e, p.id) } } : {})}
-              {...(!phone && docked.length > 1 ? { onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
+              {...(!phone && docked.length > 1 ? { onMaxPane: () => toggleMaxDocked(p.id), paneMaxed: maxed === p.id, onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
               onLayouts={() => setLayouts({ list: listLayouts(), error: null })} />
             </Fragment>
           ))}
@@ -1429,7 +1429,7 @@ export function App() {
             {floats.map((p) => (
               <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}${p.floatCollapsed ? ' collapsed' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.floatCollapsed ? COLLAPSED_H : p.float!.h }}
                 onDoubleClick={(e) => { if (onCardHead(e.target)) { if (p.floatCollapsed) toggleCollapseCard(p.id); else toggleMaxCard(p.id); } }}>
-                <Pane pane={p} app={state} active={p.id === state.activePaneId} closable dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+                <Pane pane={p} app={state} active={p.id === state.activePaneId} closable onAddPane={addPane} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
                   onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
                   floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})}
                   onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore}

@@ -24,11 +24,14 @@ describe('Pane (D6)', () => {
     // T9 prerequisite (a): the frame carries the same clientRef the reducer waits for.
     const ref1 = (dispatch.mock.calls.find((c) => (c[0] as Action).type === 'sent')![0] as { clientRef: string }).clientRef;
     expect((send.mock.calls[0]![0] as { clientRef: string }).clientRef).toBe(ref1);
-    fireEvent.click(screen.getByLabelText('패널 닫기'));
+    fireEvent.click(screen.getByTestId('session-chip-head')); // 창 › 이 창 닫기 (a docked pane has no ✕)
+    fireEvent.click(screen.getByRole('menuitem', { name: '이 창 닫기' }));
     expect(onClose).toHaveBeenCalled();
     cleanup();
     render(<Pane pane={{ ...pane, session: { ...pane.session!, sessionId: 's1', engine: 'claude' } }} app={{ pending: [], questions: [], codexAvailable: true }} active={false} closable={false} dispatch={dispatch} send={send} onClose={onClose} />);
-    expect(screen.queryByLabelText('패널 닫기')).toBeNull();
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    expect(screen.queryByRole('menuitem', { name: '이 창 닫기' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: 'again' } });
     fireEvent.click(screen.getByText('보내기'));
     // PF13: a Claude session is never sent a GPT model; with none picked for it, it gets none (runs on its own default).
@@ -302,23 +305,26 @@ describe('Pane: chat title menu uses the sidebar actions', () => {
     const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null } };
     const app = { pending: [], questions: [], codexAvailable: false, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [entry] }] };
     const { rerender } = render(<Pane pane={pane} app={app} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     fireEvent.click(screen.getByText('고정 해제'));
     expect(actions.onTogglePin).toHaveBeenCalledWith('s1', false);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     fireEvent.click(screen.getByText('삭제…'));
     expect(actions.onDelete).toHaveBeenCalledWith(entry);
     const gpt = { ...entry, account: 'gpt' as const, engine: 'codex' as const };
     rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [gpt] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     expect(screen.getByRole('menuitem', { name: '삭제…' }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByText('보관')).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     // archived in Codex: only the Codex app can unarchive it, so no 보관 item (as in the sidebar)
     rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [{ ...gpt, codexArchived: true, archived: true }] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     expect(screen.queryByText('보관 해제')).toBeNull();
-    expect(screen.getAllByRole('menuitem').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['이름 바꾸기', '고정 해제', '삭제…']);
+    const names = screen.getAllByRole('menuitem').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+    expect(names.slice(0, 3)).toEqual(['폴더: w ›', '이름 바꾸기', '고정 해제']);
+    expect(names).not.toContain('보관');
+    expect(names.at(-1)).toBe('삭제…');
   });
 });
 
