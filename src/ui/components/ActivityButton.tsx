@@ -114,6 +114,12 @@ export function useHighlightCount(ready: boolean, enabled: boolean, running: num
 /** A one-time notice the app shows as a toast (and reads out): a new 승인 대기 elsewhere, or 재시작됨. */
 export type ActivityAlert = { text: string; open?: () => void };
 
+/**
+ * How long after this tab first connects arriving cards count as the snapshot of what already waited (a reload): shown
+ * on the dot and in the sheet, never alerted. The server sends them right behind hello, as separate messages.
+ */
+export const ALERT_SEED_MS = 1_000;
+
 const hhmm = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 /**
@@ -133,6 +139,7 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
   server: Omit<ActivitySheetProps['server'], 'update'>;
 }) {
   const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
   const update = useServerUpdate(ready, serverUpdate, fetchFn);
   const running = sheet.activity.filter((a) => a.running).length;
   const hlCount = useHighlightCount(ready, highlights, running, fetchFn);
@@ -151,8 +158,16 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
     if (busy === 0 && was > 0) setLastWorkAt(Date.now());
   }, [busy]);
 
-  // One alert per card, for a session that is not on screen (a new chat's card belongs to a pane: never).
+  // One alert per card, for a session that is not on screen (a new chat's card belongs to a pane: never). Cards that
+  // already waited when this tab first connected are only shown (see ALERT_SEED_MS); later ones alert.
   const alerted = useRef(new Set<string>());
+  const seeding = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!ready || seeding.current !== null) return;
+    seeding.current = true;
+    const t = setTimeout(() => { seeding.current = false; }, ALERT_SEED_MS);
+    return () => { clearTimeout(t); if (seeding.current) seeding.current = null; };
+  }, [ready]);
   const alert = useRef(onAlert);
   alert.current = onAlert;
   const titleOf = useRef(sheet.titleOf);
@@ -162,15 +177,20 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
   const shown = visibleSessions.join('\n');
   useEffect(() => {
     const visible = new Set(shown.split('\n'));
-    for (const c of [...sheet.pending, ...sheet.questions]) {
+    const cards = [...sheet.pending, ...sheet.questions];
+    // Answered / gone requests leave the set (request ids are never reused).
+    const live = new Set(cards.map((c) => c.requestId));
+    for (const id of alerted.current) if (!live.has(id)) alerted.current.delete(id);
+    for (const c of cards) {
       if (alerted.current.has(c.requestId)) continue;
       alerted.current.add(c.requestId);
+      if (seeding.current !== false) continue;
       const sid = c.sessionId;
       if (!sid || visible.has(sid)) continue;
       const title = titleOf.current(sid, c.cwd);
       alert.current({ text: `${title} · 승인 대기`, open: () => openRow.current({ key: sid, sessionId: sid, turnId: c.turnId, title, cwd: c.cwd, status: '승인 대기', waiting: true }) });
     }
-  }, [sheet.pending, sheet.questions, shown]);
+  }, [sheet.pending, sheet.questions, shown, ready]);
 
   // 재시작됨: one toast when this tab sees the server come back as a new process (not for one restored by a reload).
   const lastRestart = useRef(sheet.server.restartedAt);
@@ -183,7 +203,7 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
   return (
     <>
       <button
-        type="button" className={`activity-btn lvl-${summary.level}`} data-testid="activity-btn" aria-label={label} title={label}
+        ref={btn} type="button" className={`activity-btn lvl-${summary.level}`} data-testid="activity-btn" aria-label={label} title={label}
         aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((v) => !v)}
       >
         <span className="activity-dot" aria-hidden="true" />
@@ -194,6 +214,8 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
         <ActivitySheet
           {...sheet} tasks={tasks} fetchFn={fetchFn} onClose={() => setOpen(false)} lastWorkAt={lastWorkAt}
           {...(highlights ? { highlights: hlCount } : {})}
+          // 하이라이트 opens as this sheet closes: its opener is the dot, so closing it lands back here.
+          {...(sheet.onOpenHighlights ? { onOpenHighlights: () => { btn.current?.focus(); sheet.onOpenHighlights!(); } } : {})}
           server={{ ...sheet.server, update }}
         />
       )}

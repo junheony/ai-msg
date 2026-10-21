@@ -46,8 +46,8 @@ describe('usage sheet with any number of accounts', () => {
     render(<With list={SIX}>{sheet('d')}</With>);
     expect(cards()).toEqual(['Main', 'Work', 'D', 'Team-2', 'Personal', 'GPT']);
     expect(screen.queryByTestId('account-old')).toBeNull();
-    expect(screen.getByTestId('a-fiveHour').textContent).toContain('90%');
-    expect(screen.getByTestId('d-weekly').textContent).toContain('95%');
+    expect(screen.getByTestId('a-fiveHour').textContent).toBe('5h10%');
+    expect(screen.getByTestId('d-weekly').textContent).toBe('주간5%');
     expect(screen.getByTestId('b-fiveHour').textContent).toContain('—');
     expect(screen.getByTestId('team-2-weekly').textContent).toContain('—');
     expect(screen.getByTestId('account-d').className).toContain('current');

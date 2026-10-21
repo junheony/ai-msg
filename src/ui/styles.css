@@ -561,6 +561,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-chip.estimated .usage-chip-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
 .usage-chip-alert { position: absolute; top: 1px; right: 1px; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 2px var(--sidebar); }
 .usage-chip.compact { height: 32px; padding: 0 10px 0 var(--s2); }
+/* Old numbers near the limit: the hollow dot keeps the amber / red. */
+.usage-chip.stale.warn .usage-chip-dot { box-shadow: inset 0 0 0 1.5px var(--warn); }
+.usage-chip.stale.danger .usage-chip-dot { box-shadow: inset 0 0 0 1.5px var(--danger); }
 @media (prefers-reduced-motion: reduce) { .usage-chip-num { animation: none; } }
 
 /* The usage sheet. Desktop: a panel on the right edge, full height; wider while the history is open. */
@@ -1477,6 +1480,8 @@ button.hl-row-main:hover { background: var(--hover); }
 .toast-item > span { flex: 1; min-width: 0; overflow-wrap: anywhere; padding-top: 2px; }
 .toast-item.error { background: linear-gradient(var(--danger-soft), var(--danger-soft)), var(--panel); color: var(--danger); box-shadow: var(--shadow), inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
 .toast-item .icon-btn { flex: none; color: inherit; }
+/* 열기: the toast's action, in the link colour (>= 4.5:1 on the panel), not the muted text-btn grey. */
+.toast-item:not(.error) .text-btn { flex: none; color: var(--link); font-weight: 600; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
 /* Phone: bottom, above the composer (and the home-indicator safe area), full width. */
 @media (max-width: 720px) {
@@ -2171,6 +2176,13 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
 .act-notify { flex-wrap: wrap; padding-top: 8px; border-top: 1px solid var(--line); }
 .activity-sheet .notify-pop { position: static; width: auto; margin-top: 6px; box-shadow: none; }
 @media (max-width: 720px) { .act-row, .act-stop, .act-banner .text-btn { min-height: var(--phone-tap); } }
+/* Touch: 44px hit areas for the small controls without changing their look — an invisible box centred on each. */
+@media (hover: none), (max-width: 720px) {
+  .act-line .text-btn, .toast-item .text-btn, .usage-history-toggle { position: relative; }
+  .usage-chip::before, .act-line .text-btn::before, .toast-item .text-btn::before, .usage-history-toggle::before {
+    content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, var(--phone-tap)); height: max(100%, var(--phone-tap)); transform: translate(-50%, -50%);
+  }
+}
 .update-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .update-error { color: var(--danger); }
 @media (pointer: coarse) {

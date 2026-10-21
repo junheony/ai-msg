@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { SessionActivity } from '../../shared/protocol';
 import type { PermissionDecision, QuestionAnswers } from '../../shared/turn-types';
 import type { TaskInfo } from '../../shared/tasks';
@@ -8,6 +8,7 @@ import { Sheet } from './Dialogs';
 import { BLOCKER_TEXT, NotifyMenu } from './NotifyMenu';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
+import { useClock } from './usageSeats';
 
 /** A row that opens its session: a session id, else (a new chat's card) the turn the card belongs to. */
 export type WorkRow = { key: string; sessionId: string | null; turnId: string | null; title: string; cwd: string; status: string; waiting: boolean };
@@ -46,6 +47,9 @@ export function idleLabel(lastWorkAt: number | null): string {
 }
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** A sheet row that can go away under the user's hand (a card answered, a turn stopped, a task cancelled). */
+const ROW = '.act-card, .act-item';
 
 /** Tab / Shift+Tab wrap inside the sheet (a modal: focus never walks out behind it). */
 function trapTab(e: ReactKeyboardEvent<HTMLDivElement>) {
@@ -188,7 +192,30 @@ export type ActivitySheetProps = {
  * (restart flow), 알림 설정. A modal dialog: Esc closes (Sheet), Tab stays inside.
  */
 export function ActivitySheet(p: ActivitySheetProps) {
-  const now = p.now ?? Date.now();
+  // The server's uptime moves on while the sheet stays open.
+  const now = useClock(p.now, 60_000);
+  // The row focus was last in: when it goes away (허용/거부, 중단, 취소) focus moves to the row now in its place, else
+  // the one before, else ✕ — never left on the page behind the modal.
+  const inner = useRef<HTMLDivElement>(null);
+  const closeBtn = useRef<HTMLButtonElement>(null);
+  const lastRow = useRef<{ el: HTMLElement; index: number } | null>(null);
+  const noteFocus = (e: ReactFocusEvent<HTMLDivElement>) => {
+    const row = (e.target as HTMLElement).closest<HTMLElement>(ROW);
+    lastRow.current = row ? { el: row, index: Array.from(e.currentTarget.querySelectorAll<HTMLElement>(ROW)).indexOf(row) } : null;
+  };
+  useLayoutEffect(() => {
+    const last = lastRow.current;
+    const box = inner.current;
+    if (!last || !box) return;
+    const rows = Array.from(box.querySelectorAll<HTMLElement>(ROW));
+    // Still here: keep its place current (rows above it may have gone).
+    if (last.el.isConnected) { last.index = rows.indexOf(last.el); return; }
+    lastRow.current = null;
+    const at = document.activeElement;
+    if (at && at !== document.body) return;
+    const target = rows[last.index] ?? rows[last.index - 1];
+    (target?.querySelector<HTMLElement>(FOCUSABLE) ?? closeBtn.current)?.focus();
+  });
   const blocker = pushBlocker();
   const cardSessions = new Set([...p.pending, ...p.questions].map((c) => c.sessionId).filter(Boolean));
   const running = p.activity.filter((a) => a.running && !cardSessions.has(a.sessionId));
@@ -207,10 +234,10 @@ export function ActivitySheet(p: ActivitySheetProps) {
   };
   return (
     <Sheet className="activity-sheet" label="활동" onClose={p.onClose}>
-      <div className="act-inner" onKeyDown={trapTab}>
+      <div ref={inner} className="act-inner" onKeyDown={trapTab} onFocus={noteFocus}>
         <header className="act-head">
           <h2>활동</h2>
-          <button type="button" className="icon-btn sheet-btn" onClick={p.onClose} aria-label="닫기" title="닫기 (Esc)" autoFocus>✕</button>
+          <button ref={closeBtn} type="button" className="icon-btn sheet-btn" onClick={p.onClose} aria-label="닫기" title="닫기 (Esc)" autoFocus>✕</button>
         </header>
         {blocker && <p className="act-banner warn" data-testid="act-notify-blocked">알림이 꺼져 있어요 — {BLOCKER_TEXT[blocker]}</p>}
         {!p.connected && (

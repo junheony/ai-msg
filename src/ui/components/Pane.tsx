@@ -57,9 +57,8 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
 /** The side panel's open / close slide (styles.css side-in / side-out run a little shorter). */
 const SIDE_SLIDE_MS = 200;
 /**
- * Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the hidden sidebar's peek, the folder
- * picker. The usage popover stays in the DOM while closed (hidden via aria-hidden/display:none, not unmounted —
- * see SeatCard), so a hidden tooltip must not count as "owning" the Esc.
+ * Esc owners hasOpenPopup does not cover: a long-press touch tooltip (useTouchTooltip), the phone drawer, the hidden
+ * sidebar's peek, the folder picker. A tooltip marked aria-hidden is not showing, so it does not "own" the Esc.
  */
 const ESC_OWNERS = '[role="tooltip"]:not([aria-hidden="true"]), .sidebar-wrap.drawer.open, .sidebar-wrap.peek, .folder-picker';
 

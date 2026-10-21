@@ -4,8 +4,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
-import { ActivityButton, activityLabel, activitySummary, useHighlightCount } from './ActivityButton';
-import { FORCE_RESTART_WARNING, RESTART_WAIT_WARNING, idleLabel, restartConfirmText, uptimeLabel } from './ActivitySheet';
+import { ALERT_SEED_MS, ActivityButton, activityLabel, activitySummary, useHighlightCount } from './ActivityButton';
+import { ActivitySheet, FORCE_RESTART_WARNING, RESTART_WAIT_WARNING, idleLabel, restartConfirmText, uptimeLabel, type ActivitySheetProps } from './ActivitySheet';
 import type { SessionActivity } from '../../shared/protocol';
 
 const M = 60_000;
@@ -249,10 +249,12 @@ describe('활동 점 · 알림', () => {
   const card = (sessionId: string | null, n = 0) => ({ requestId: `r-${sessionId}-${n}`, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, turnId: `t-${sessionId}`, sessionId, cwd: '/w' });
 
   it('a card for a session not on screen alerts once (open → its row); visible sessions and new chats do not', () => {
+    vi.useFakeTimers();
     const onAlert = vi.fn();
     const onOpen = vi.fn();
     const props = (pending: ReturnType<typeof card>[]) => base({ pending: pending as unknown as Props['pending'], onAlert, onOpen, visibleSessions: ['s1'], serverUpdate: false });
     const { rerender } = render(<ActivityButton {...props([card('s1'), card(null)])} />);
+    act(() => { vi.advanceTimersByTime(ALERT_SEED_MS); });
     expect(onAlert).not.toHaveBeenCalled();
     rerender(<ActivityButton {...props([card('s1'), card(null), card('s2')])} />);
     expect(onAlert).toHaveBeenCalledOnce();
@@ -264,9 +266,91 @@ describe('활동 점 · 알림', () => {
     expect(screen.getByTestId('activity-badge').textContent).toBe('1');
   });
 
+  it('a reload: cards already waiting when the tab connects are shown, not alerted; later ones alert; gone ids are forgotten', () => {
+    vi.useFakeTimers();
+    const onAlert = vi.fn();
+    const props = (pending: ReturnType<typeof card>[], ready = true) => base({ ready, pending: pending as unknown as Props['pending'], onAlert, visibleSessions: [], serverUpdate: false });
+    const { rerender } = render(<ActivityButton {...props([], false)} />);
+    // hello, then the waiting cards one message each, right behind it.
+    rerender(<ActivityButton {...props([], true)} />);
+    rerender(<ActivityButton {...props([card('s2')])} />);
+    rerender(<ActivityButton {...props([card('s2'), card('s3')])} />);
+    expect(onAlert).not.toHaveBeenCalled();
+    expect(screen.getByTestId('activity-badge').textContent).toBe('2');
+    act(() => { vi.advanceTimersByTime(ALERT_SEED_MS); });
+    rerender(<ActivityButton {...props([card('s2'), card('s3'), card('s4')])} />);
+    expect(onAlert).toHaveBeenCalledOnce();
+    expect(onAlert.mock.calls[0]![0].text).toBe('s4 · 승인 대기');
+    // A short disconnect keeps what was alerted: the reconnect's replay is no news.
+    rerender(<ActivityButton {...props([card('s2'), card('s3'), card('s4')], false)} />);
+    rerender(<ActivityButton {...props([card('s2'), card('s3'), card('s4')], true)} />);
+    expect(onAlert).toHaveBeenCalledOnce();
+    // Answered ids leave the set (ids are never reused, so this only bounds its size).
+    rerender(<ActivityButton {...props([])} />);
+    rerender(<ActivityButton {...props([card('s4')])} />);
+    expect(onAlert).toHaveBeenCalledTimes(2);
+  });
+
   it('the badge caps at 99+', () => {
     render(<ActivityButton {...base({ pending: Array.from({ length: 120 }, (_, i) => card('s1', i)) as unknown as Props['pending'], visibleSessions: ['s1'], serverUpdate: false })} />);
     expect(screen.getByTestId('activity-badge').textContent).toBe('99+');
+  });
+});
+
+describe('활동 시트 · 포커스', () => {
+  const card = (sessionId: string, n = 0) => ({ requestId: `r-${sessionId}-${n}`, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, turnId: `t-${sessionId}`, sessionId, cwd: '/w' });
+  const sheetProps = (over: Partial<ActivitySheetProps> = {}): ActivitySheetProps => ({
+    onClose: () => {}, connected: true, downSince: null, onRetry: () => {}, pending: [], questions: [], onDecide: () => {}, onAnswer: () => {},
+    activity: [], tasks: [], paneBg: [], titleOf: (id) => id, onOpen: () => {}, lastWorkAt: null,
+    server: { startedAt: null, restartedAt: null, draining: false, update: null, onDismissRestart: () => {} }, now: 0, ...over,
+  });
+  const cards = (...ids: string[]) => ids.map((id) => card(id)) as unknown as ActivitySheetProps['pending'];
+
+  it('a card answered from the sheet: focus goes to the next card, else the one before, else ✕ — never to the page', () => {
+    const { rerender } = render(<ActivitySheet {...sheetProps({ pending: cards('s1', 's2', 's3') })} />);
+    const dialog = screen.getByRole('dialog', { name: '활동' });
+    const allow = () => within(dialog).getAllByRole('button', { name: '허용 1회' });
+    allow()[1]!.focus();
+    rerender(<ActivitySheet {...sheetProps({ pending: cards('s1', 's3') })} />);
+    expect(document.activeElement).not.toBe(document.body);
+    expect((document.activeElement as HTMLElement).closest('.act-card')!.textContent).toContain('s3');
+    // The last one goes: the one before it.
+    rerender(<ActivitySheet {...sheetProps({ pending: cards('s1') })} />);
+    expect((document.activeElement as HTMLElement).closest('.act-card')!.textContent).toContain('s1');
+    // Nothing left: ✕.
+    rerender(<ActivitySheet {...sheetProps({ pending: [] })} />);
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: '닫기' }));
+  });
+
+  it('a stopped turn (중단) moves focus to the row now in its place; focus elsewhere is left alone', () => {
+    const run = (...ids: string[]) => ids.map((id) => act1({ sessionId: id, turnId: `t-${id}`, running: true }));
+    const { rerender } = render(<ActivitySheet {...sheetProps({ activity: run('a', 'b'), onInterrupt: () => {} })} />);
+    screen.getByRole('button', { name: 'a 중단' }).focus();
+    rerender(<ActivitySheet {...sheetProps({ activity: run('b'), onInterrupt: () => {} })} />);
+    expect((document.activeElement as HTMLElement).closest('.act-item')!.textContent).toContain('b');
+    // The user moved on to ✕ before the row went: focus stays there.
+    const close = screen.getByRole('button', { name: '닫기' });
+    close.focus();
+    rerender(<ActivitySheet {...sheetProps({ activity: [], onInterrupt: () => {} })} />);
+    expect(document.activeElement).toBe(close);
+  });
+
+  it('the server uptime moves on every minute while the sheet stays open', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10 * M);
+    render(<ActivitySheet {...sheetProps({ now: undefined, server: { startedAt: 7 * M, restartedAt: null, draining: false, update: null, onDismissRestart: () => {} } })} />);
+    expect(screen.getByTestId('server-uptime').textContent).toBe('서버 · 3분째');
+    act(() => { vi.advanceTimersByTime(M); });
+    expect(screen.getByTestId('server-uptime').textContent).toBe('서버 · 4분째');
+  });
+
+  it('하이라이트 from the sheet: the dot is its opener, so closing it returns focus to the dot', () => {
+    const onOpenHighlights = vi.fn(() => { expect(document.activeElement).toBe(screen.getByTestId('activity-btn')); });
+    render(<ActivityButton {...base({ highlights: true, serverUpdate: false, onOpenHighlights, fetchFn: (async () => ok(2)) as unknown as typeof fetch })} />);
+    const sheet = openSheet();
+    fireEvent.click(within(sheet).getByTestId('act-highlights'));
+    expect(onOpenHighlights).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(screen.getByTestId('activity-btn'));
   });
 });
 

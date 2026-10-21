@@ -42,8 +42,8 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
           <h2>사용량</h2>
           <button type="button" className="icon-btn sheet-btn" onClick={onClose} aria-label="닫기" title="닫기 (Esc)" autoFocus>✕</button>
         </header>
-        <p className="usage-sheet-legend">{LEGEND} · 위 칩의 숫자는 사용한 양(%)</p>
-        {!usage && <p className="usage-sheet-note">잔여량 불러오는 중…</p>}
+        <p className="usage-sheet-legend">{LEGEND}</p>
+        {!usage && <p className="usage-sheet-note">사용량 불러오는 중…</p>}
         {/* `cli` never asks usage-deck: deckReachable is always false there and says nothing. */}
         {usage && !cli && !usage.deckReachable && <p className="usage-sheet-note stale" data-testid="usage-stale">오래된 값 — usage-deck 에 닿지 않아 마지막 값을 보여 줍니다</p>}
         <ul className="usage-seats">

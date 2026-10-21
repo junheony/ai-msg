@@ -16,6 +16,7 @@ vi.mock('./ws', () => ({
 }));
 
 import { App } from './App';
+import { ALERT_SEED_MS } from './components/ActivityButton';
 
 const usage = { generatedAt: 'x', deckReachable: true, accounts: { a: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null }, b: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null }, c: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null } } } as const;
 const entry = (sessionId: string, title: string) => ({ sessionId, account: 'b' as const, cwd: '/w', projectDir: '/p', title, lastModified: Date.now(), sizeBytes: 1 });
@@ -1466,9 +1467,11 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(frames()).toContainEqual({ route_preview: undefined, type: 'route_preview', sessionId: 's1', cwd: '/w' });
   });
 
-  it('폰: another session\'s approval → the dot\'s badge number, one toast (열기 opens it), a live line; answered from the sheet', async () => {
+  it('폰: another session\'s approval → the dot\'s badge number, one toast (열기 opens it, read out once); answered from the sheet', async () => {
     mockMatchMedia(true);
     await boot();
+    // Cards already waiting right after connecting are shown, not toasted: wait that window out.
+    await act(async () => { await new Promise((r) => setTimeout(r, ALERT_SEED_MS + 20)); });
     openSession('one');
     activity([act1('s1', true, 0)], { draining: true });
     expect(screen.queryByTestId('work-chip')).toBeNull();
@@ -1482,9 +1485,10 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(toasts()).toHaveLength(1);
     const toast = toasts()[0] as HTMLElement;
     expect(toast.textContent).toContain('two · 승인 대기');
-    await waitFor(() => expect(screen.getByTestId('cards-live').textContent).toBe('two · 승인 대기'));
+    // Read out by the toast's own live region only — not a second time in the cards' live line.
+    expect(toast.getAttribute('role')).toBe('status');
+    expect(screen.getByTestId('cards-live').textContent).not.toContain('승인 대기');
     // The same card again (a reconnect's snapshot) does not toast twice.
-    server({ type: 'permission_resolved', requestId: 'r-s2-0' } as ServerMessage);
     permission('s2');
     expect(toasts()).toHaveLength(1);
     sock.frames = [];

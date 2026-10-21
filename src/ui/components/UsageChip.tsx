@@ -32,6 +32,8 @@ export type ChipState = {
   /** The session's own seat is not known yet (no history): the chip is about the next turn alone ("→B"). */
   onlyNext: boolean;
   kind: ChipKind;
+  /** The numbers are old (a stale seat / usage-deck out of reach): a mark added on top, the amber / red of kind kept. */
+  stale: boolean;
   /** Used % of the fullest window (null without a number). */
   used: number | null;
   /** Short reset countdown of that window ("2h"; '' when unknown). */
@@ -70,7 +72,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   if (!d) {
     if (!seats.some((s) => pickMain(s.rows))) return null;
     return {
-      target: null, nextSeat: null, onlyNext: false, kind: otherDanger ? 'danger' : 'ok', used: null, reset: '', text: '', compactText: '', otherDanger,
+      target: null, nextSeat: null, onlyNext: false, kind: otherDanger ? 'danger' : 'ok', stale: false, used: null, reset: '', text: '', compactText: '', otherDanger,
       aria: `사용량 보기${dangerAria}`, title: '계정별 사용량',
     };
   }
@@ -92,7 +94,8 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
     spoken = `소진${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}`;
   } else if (main) {
     const lvl = levelClass(main.row.w);
-    kind = stale ? 'stale' : lvl === 'danger' ? 'danger' : lvl === 'warn' ? 'warn' : estimated ? 'estimated' : 'ok';
+    // Amber / red first: old numbers that were near the limit still warn (오래됨 is added, not swapped in).
+    kind = lvl === 'danger' ? 'danger' : lvl === 'warn' ? 'warn' : stale ? 'stale' : estimated ? 'estimated' : 'ok';
     text = `${used}%${stale ? ' · 오래됨' : reset ? ` · ${reset}` : ''}`;
     compactText = `${used}%`;
     spoken = `${used}퍼센트${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}${stale ? ', 오래된 값' : estimated ? ', 추정' : ''}`;
@@ -102,7 +105,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   }
   if (nextSeat) compactText = kind === 'spent' || kind === 'cooldown' ? compactText : '';
   return {
-    target: d.seat, nextSeat, onlyNext, kind, used, reset, text, compactText, otherDanger,
+    target: d.seat, nextSeat, onlyNext, kind, stale: stale && !!main && main.rem > 0 && d.status !== 'cooldown', used, reset, text, compactText, otherDanger,
     aria: `${onlyNext ? `다음 턴 ${name}${next!.asOpus ? '(Opus)' : ''}` : name} 계정 사용량 ${spoken}${nextAria}${dangerAria}`,
     title: [`${name} 계정${main ? ` · ${main.row.name} ${used}% 사용` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
   };
@@ -125,7 +128,7 @@ export function UsageChip({ usage, current, next = null, grok = null, compact = 
   return (
     <button
       type="button"
-      className={`usage-chip ${st.kind}${compact ? ' compact' : ''}`}
+      className={`usage-chip ${st.kind}${st.stale && st.kind !== 'stale' ? ' stale' : ''}${compact ? ' compact' : ''}`}
       data-testid="usage-chip"
       aria-label={st.aria}
       aria-haspopup="dialog"

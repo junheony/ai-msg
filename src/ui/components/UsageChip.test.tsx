@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UsageChip, chipCountdown } from './UsageChip';
@@ -106,6 +108,34 @@ describe('UsageChip states', () => {
     // cli mode never asks usage-deck: deckReachable false says nothing there.
     chip(snap(acct(42, 10), acct(10, 5), { deckReachable: false, usageMode: 'cli' }), 'a');
     expect(el().className).toContain('ok');
+  });
+
+  it('오래됨 + 위험 / 경고: the red / amber stays, 오래됨 is added (a hollow dot in the level colour)', () => {
+    chip(snap(acct(97, 10, { status: 'stale' })), 'a');
+    expect(el().className).toContain('danger');
+    expect(el().className).toContain('stale');
+    expect(el().textContent).toBe('A97% · 오래됨');
+    expect(el().getAttribute('aria-label')).toBe('A 계정 사용량 97퍼센트, 2시간 뒤 초기화, 오래된 값');
+    cleanup();
+    chip(snap(acct(85, 10), acct(10, 5), { deckReachable: false }), 'a', { compact: true });
+    expect(el().className).toContain('warn');
+    expect(el().className).toContain('stale');
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.usage-chip\.stale\.danger \.usage-chip-dot \{ box-shadow: inset 0 0 0 1\.5px var\(--danger\); \}/);
+    expect(css).toMatch(/\.usage-chip\.stale\.warn \.usage-chip-dot \{ box-shadow: inset 0 0 0 1\.5px var\(--warn\); \}/);
+    // Below the warn line it is still the plain stale chip.
+    cleanup();
+    chip(snap(acct(42, 10, { status: 'stale' })), 'a');
+    expect(el().className).toBe('usage-chip stale');
+  });
+
+  it('touch: the chip, 열기 on a toast, the sheets\' small buttons get a 44px hit area; 열기 is in the link colour', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const touch = css.slice(css.indexOf('@media (hover: none), (max-width: 720px) {'));
+    const hit = touch.slice(0, touch.indexOf('\n}\n'));
+    for (const sel of ['.usage-chip::before', '.act-line .text-btn::before', '.toast-item .text-btn::before', '.usage-history-toggle::before']) expect(hit).toContain(sel);
+    expect(hit).toMatch(/width: max\(100%, var\(--phone-tap\)\); height: max\(100%, var\(--phone-tap\)\)/);
+    expect(css).toMatch(/\.toast-item:not\(\.error\) \.text-btn \{[^}]*color: var\(--link\)/);
   });
 
   it('쿨다운: a Grok seat in a live cooldown', () => {

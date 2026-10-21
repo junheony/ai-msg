@@ -89,7 +89,7 @@ export function creditsText(c: GptCredits | null | undefined): string | null {
   return Math.floor(c.balance).toLocaleString('en-US');
 }
 
-/** Colour by what is left: green, amber at ≤20%, red at ≤5%. */
+/** Colour by what is used: green, amber at ≥80% used (≤20% left), red at ≥95% used (≤5% left). */
 export function levelClass(w: UsageWindow | null): string {
   if (!w) return 'none';
   if (w.usedPct >= 95) return 'danger';
@@ -97,11 +97,11 @@ export function levelClass(w: UsageWindow | null): string {
   return 'ok';
 }
 
-/** What the numbers and colours mean: the first line of the usage sheet. */
-export const LEGEND = '숫자는 각 한도의 남은 양(%) · 노랑 = 20% 이하 남음 · 빨강 = 5% 이하 남음';
+/** What the numbers and colours mean: the first line of the usage sheet (the chip says the same USED %). */
+export const LEGEND = '숫자는 사용한 양 · 노랑 80% 이상 · 빨강 95% 이상';
 
 /** What the amber / red of a row means, for its title ('' while green). */
-const LEVEL_NOTE: Record<string, string> = { warn: ' · 노랑: 20% 이하 남음', danger: ' · 빨강: 5% 이하 남음' };
+const LEVEL_NOTE: Record<string, string> = { warn: ' · 노랑: 80% 이상 사용', danger: ' · 빨강: 95% 이상 사용' };
 
 /** Review M9: the countdowns re-render every 30 s instead of freezing at the last snapshot. */
 export function useClock(fixed: number | undefined, periodMs = 30_000): number {
@@ -252,11 +252,15 @@ export function shownPct(w: UsageWindow | null): number | null {
   return r === null ? null : r > 0 && r < 1 ? 1 : Math.floor(r);
 }
 
-/** One window row in the sheet: label · bar (or spent pill) · remaining % · countdown. */
+/**
+ * One window row in the sheet: label · bar (or spent pill) · USED % · countdown. Every seat (Claude, GPT, Gemini
+ * buckets, Grok) says the used share, like the chip: the bar fills as the window is used up.
+ */
 export function PopRow({ seat, name, k, w, now, empty }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string }) {
   const rem = shownPct(w);
+  const used = rem === null ? null : 100 - rem;
   const reset = w ? countdown(w.resetsAt, now) : '';
-  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '');
+  const title = (used === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${used}% 사용${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '');
   if (rem === 0) {
     const at = resetStamp(w?.resetsAt ?? null);
     return (
@@ -269,8 +273,8 @@ export function PopRow({ seat, name, k, w, now, empty }: { seat: Seat; name: str
   return (
     <div data-testid={`${seat}-${k}`} className={`usage-row ${levelClass(w)}${w?.estimated ? ' estimated' : ''}`} title={title}>
       <span className="usage-label">{name}</span>
-      <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
-      <span className="usage-value">{rem === null ? (empty ? <span className="usage-na">{empty}</span> : '—') : <>{rem}<small>%</small></>}</span>
+      <span className="usage-bar" aria-hidden="true"><i style={{ width: `${used ?? 0}%` }} /></span>
+      <span className="usage-value">{used === null ? (empty ? <span className="usage-na">{empty}</span> : '—') : <>{used}<small>%</small></>}</span>
       {reset && <span className="usage-reset">{reset}</span>}
     </div>
   );
@@ -329,7 +333,7 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
     {
       seat: 'gpt', engine: 'gpt', mark: <OpenAIMark className="usage-mark gpt" />, rows: gptRows(gpt), status: gpt.status as SeatData['status'],
       credits: creditsText(gpt.credits),
-      ...(gpt.status === 'down' ? { hint: cli ? 'GPT 잔여량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다' : 'GPT 잔여량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {}),
+      ...(gpt.status === 'down' ? { hint: cli ? 'GPT 사용량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다' : 'GPT 사용량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {}),
     },
     ...GEMINI_ACCOUNTS.filter((a) => geminiOf(a) !== undefined).map((a): SeatData => {
       const g = geminiOf(a)!;
@@ -337,7 +341,7 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
       const rows = geminiRows(g);
       return {
         seat: a, engine: 'gemini', mark: <GeminiMark className="usage-mark gemini" />, rows, status: g.status as SeatData['status'],
-        hint, ...(rows.length === 0 ? { reasonLine: hint || '잔여량 알 수 없음' } : {}),
+        hint, ...(rows.length === 0 ? { reasonLine: hint || '사용량 알 수 없음' } : {}),
         ...(g.fetchedAt ? { observed: `확인 · ${resetStamp(g.fetchedAt)}` } : {}),
       };
     }),
