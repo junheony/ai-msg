@@ -32,11 +32,12 @@ export class MemoryStore {
   async set(text: string): Promise<string> {
     const next = normalizeMemory(text);
     if (memoryBytes(next) > this.max) throw new MemoryTooLarge();
-    this.text = next;
+    // Turns see the new note only once it is on disk: a failed save (500) leaves the old one in use.
     const write = this.writing.then(async () => {
       const tmp = `${this.file}.tmp-${process.pid}`;
       await fs.writeFile(tmp, next ? `${next}\n` : '', { mode: 0o600 });
       await fs.rename(tmp, this.file);
+      this.text = next;
     });
     this.writing = write.catch(() => {});
     await write;

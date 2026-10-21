@@ -40,7 +40,7 @@ import { DISABLED_MESSAGE, type CommanderResult, type CommanderSendRequest } fro
 import type { SegmentDigest } from './commander/types';
 import type { TaskRegistry } from './tasks/TaskRegistry';
 import type { PushPayload } from './push/PushNotifier';
-import { clampTaskCap } from '../shared/tasks';
+import { TASKS_QUEUED_MAX, clampTaskCap } from '../shared/tasks';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
 
@@ -1529,6 +1529,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
           if (!deps.tasks) { send(ws, { type: 'error', turnId: null, message: '이 서버는 백그라운드 작업을 지원하지 않습니다', ...ref }); break; }
           if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); break; }
+          if (deps.tasks.queued() >= TASKS_QUEUED_MAX) { send(ws, { type: 'error', turnId: null, message: `대기 중인 작업이 ${TASKS_QUEUED_MAX}개라 더 받을 수 없습니다`, ...ref }); break; }
           const t = deps.tasks.create({ fromSessionId: msg.fromSessionId, cwd: msg.cwd, text: msg.text }, taskCap());
           taskTexts.set(t.taskId, { text: msg.text, concise: msg.concise === true });
           broadcastTasks();

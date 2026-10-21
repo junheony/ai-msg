@@ -45,6 +45,10 @@ export class TaskRegistry {
     return this.tasks.filter((t) => t.status === 'running').length;
   }
 
+  queued(): number {
+    return this.tasks.filter((t) => t.status === 'queued').length;
+  }
+
   /** The oldest task waiting for a slot. */
   nextQueued(): TaskInfo | null {
     const t = this.tasks.find((x) => x.status === 'queued');

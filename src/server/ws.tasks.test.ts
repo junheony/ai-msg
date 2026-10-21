@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
-import type { TaskInfo } from '../shared/tasks';
+import { TASKS_QUEUED_MAX, type TaskInfo } from '../shared/tasks';
 import type { TurnRequest } from './engine/Engine';
 import { cookieValueFor } from './auth';
 import { StubEngine, okResult } from './engine/StubEngine';
@@ -159,6 +159,22 @@ describe('ws · 백그라운드 작업', () => {
     ws.send(JSON.stringify({ type: 'start_task', cwd: path.join(work, 'nope'), text: 'nowhere', fromSessionId: null }));
     const bad = await until(() => { const x = byTitle(msgs, 'nowhere'); return x?.status === 'failed' ? x : null; });
     expect(bad.line).toContain('작업 폴더가 없습니다');
+    ws.close();
+  });
+
+  it('refuses a task past TASKS_QUEUED_MAX waiting ones', async () => {
+    const { ws, msgs } = await open();
+    await until(() => lastTasks(msgs));
+    ws.send(JSON.stringify({ type: 'start_task', cwd: work, text: 'slow-hold', fromSessionId: null }));
+    await until(() => byTitle(msgs, 'slow-hold')?.status === 'running' && gates.has('slow-hold'));
+    for (let i = 0; i < TASKS_QUEUED_MAX; i++) ws.send(JSON.stringify({ type: 'start_task', cwd: work, text: `wait-${i}`, fromSessionId: null }));
+    await until(() => byTitle(msgs, `wait-${TASKS_QUEUED_MAX - 1}`)?.status === 'queued');
+    ws.send(JSON.stringify({ type: 'start_task', cwd: work, text: 'one-too-many', fromSessionId: null, clientRef: 'r-over' }));
+    const err = await until(() => msgs.find((m) => m.type === 'error' && 'clientRef' in m && m.clientRef === 'r-over'));
+    expect(err.type === 'error' && err.message).toContain(`${TASKS_QUEUED_MAX}개`);
+    expect(tasks.list().some((t) => t.title === 'one-too-many')).toBe(false);
+    gates.get('slow-hold')!();
+    await until(() => byTitle(msgs, `wait-${TASKS_QUEUED_MAX - 1}`)?.status === 'done', 10_000);
     ws.close();
   });
 

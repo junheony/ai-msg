@@ -28,6 +28,8 @@ export const TASK_SOFT_CAP_MIN = 1;
 export const TASK_SOFT_CAP_MAX = 10;
 /** Finished tasks kept (and shown) at most. */
 export const TASKS_KEEP = 50;
+/** Tasks waiting for a slot at most: each holds its full prompt in memory until it starts. */
+export const TASKS_QUEUED_MAX = 20;
 export const TASK_TITLE_MAX = 60;
 export const TASK_LINE_MAX = 200;
 

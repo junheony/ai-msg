@@ -31,6 +31,15 @@ describe('MemoryStore', () => {
     await expect(s.set('가나다라')).rejects.toBeInstanceOf(MemoryTooLarge); // 12 bytes
     expect(s.get()).toBe('짧음');
   });
+  it('a failed save keeps the old note in use', async () => {
+    const file = await tmp();
+    const s = new MemoryStore(file);
+    await s.load();
+    await s.set('이전 메모');
+    await fs.rm(path.dirname(file), { recursive: true, force: true });
+    await expect(s.set('새 메모')).rejects.toThrow();
+    expect(s.get()).toBe('이전 메모');
+  });
   it('a hand-edited file past the cap is cut on a character boundary', async () => {
     const file = await tmp();
     await fs.writeFile(file, '가나다라마');
