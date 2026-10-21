@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { useReducer } from 'react';
-import { Pane, useQueueRunner } from './Pane';
+import { Pane, startTaskFromPane, useQueueRunner } from './Pane';
 import type { ClientMessage, ServerMessage } from '../../shared/protocol';
 import { initialState, newPane, reducer, type Action, type AppState, type PaneState } from '../state';
 
@@ -24,11 +26,14 @@ describe('Pane (D6)', () => {
     // T9 prerequisite (a): the frame carries the same clientRef the reducer waits for.
     const ref1 = (dispatch.mock.calls.find((c) => (c[0] as Action).type === 'sent')![0] as { clientRef: string }).clientRef;
     expect((send.mock.calls[0]![0] as { clientRef: string }).clientRef).toBe(ref1);
-    fireEvent.click(screen.getByLabelText('패널 닫기'));
+    fireEvent.click(screen.getByTestId('session-chip-head')); // 창 › 이 창 닫기 (a docked pane has no ✕)
+    fireEvent.click(screen.getByRole('menuitem', { name: '이 창 닫기' }));
     expect(onClose).toHaveBeenCalled();
     cleanup();
     render(<Pane pane={{ ...pane, session: { ...pane.session!, sessionId: 's1', engine: 'claude' } }} app={{ pending: [], questions: [], codexAvailable: true }} active={false} closable={false} dispatch={dispatch} send={send} onClose={onClose} />);
-    expect(screen.queryByLabelText('패널 닫기')).toBeNull();
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    expect(screen.queryByRole('menuitem', { name: '이 창 닫기' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: 'again' } });
     fireEvent.click(screen.getByText('보내기'));
     // PF13: a Claude session is never sent a GPT model; with none picked for it, it gets none (runs on its own default).
@@ -48,6 +53,7 @@ describe('Pane (D6)', () => {
     const dispatch = vi.fn();
     const pane: PaneState = { ...newPane('p1') };
     render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: true, projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] }} active closable={false} dispatch={dispatch} send={() => {}} onClose={() => {}} onStartChat={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(dispatch).toHaveBeenCalledWith({ type: 'set_engine', engine: 'codex', paneId: 'p1' });
   });
@@ -60,14 +66,14 @@ describe('Pane (D6)', () => {
       return <Pane pane={state.panes[0]!} app={state} active closable={false} dispatch={dispatch} send={() => {}} onClose={() => {}} />;
     }
     render(<Harness />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     // A new pane starts on 자동 (it may land on GPT, so the sandbox picker shows); Claude hides it.
     expect((screen.getByTestId('engine-select') as HTMLSelectElement).value).toBe('auto');
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'claude' } });
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
-    fireEvent.click(screen.getByTestId('model-picker'));
+    expect((screen.getByRole('combobox', { name: '추론 수준' }) as HTMLSelectElement).value).toBe('medium');
     const items = within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio');
     expect(items.slice(0, 2).map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra')]);
     expect(items[0]!.getAttribute('aria-checked')).toBe('true');
@@ -87,14 +93,22 @@ describe('Pane (D6)', () => {
     }
     render(<Harness />);
     const p0 = within(screen.getByTestId('pane-p0'));
-    fireEvent.click(p0.getByTestId('model-picker'));
-    fireEvent.click(within(p0.getByTestId('model-menu')).getByText('엑스트라'));
-    expect(p0.getByTestId('model-picker').textContent).toContain('Fable 5.1 엑스트라');
+    const p1 = within(screen.getByTestId('pane-p1'));
+    // The model the pane's menu has checked and the effort its select shows (four levels: a select, not a segment).
+    const effortOf = (pane: typeof p0) => pane.getByRole('combobox', { name: '추론 수준' }) as HTMLSelectElement;
+    const checked = (pane: typeof p0) => [
+      ...within(pane.getByTestId('model-menu')).getAllByRole('menuitemradio').filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent),
+      effortOf(pane).selectedOptions[0]?.textContent,
+    ];
+    fireEvent.click(p0.getByTestId('session-chip'));
+    fireEvent.change(effortOf(p0), { target: { value: 'xhigh' } });
+    expect(checked(p0)).toEqual(['Fable 5.1', '엑스트라']);
     // The other pane keeps the default.
-    expect(within(screen.getByTestId('pane-p1')).getByTestId('model-picker').textContent).toContain('Fable 5.1 높음');
+    fireEvent.click(p1.getByTestId('session-chip'));
+    expect(checked(p1)).toEqual(['Fable 5.1', '높음']);
     // GPT has its own effort (default 중간); switching back to Claude restores 엑스트라.
     fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'codex' } });
-    expect(p0.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
+    expect(checked(p0)).toEqual(['GPT-6.1-Sol', '중간']);
     fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'claude' } });
     fireEvent.change(p0.getByPlaceholderText(/메시지/), { target: { value: 'go' } });
     fireEvent.click(p0.getByText('보내기'));
@@ -297,23 +311,26 @@ describe('Pane: chat title menu uses the sidebar actions', () => {
     const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null } };
     const app = { pending: [], questions: [], codexAvailable: false, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [entry] }] };
     const { rerender } = render(<Pane pane={pane} app={app} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     fireEvent.click(screen.getByText('고정 해제'));
     expect(actions.onTogglePin).toHaveBeenCalledWith('s1', false);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     fireEvent.click(screen.getByText('삭제…'));
     expect(actions.onDelete).toHaveBeenCalledWith(entry);
     const gpt = { ...entry, account: 'gpt' as const, engine: 'codex' as const };
     rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [gpt] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     expect(screen.getByRole('menuitem', { name: '삭제…' }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByText('보관')).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     // archived in Codex: only the Codex app can unarchive it, so no 보관 item (as in the sidebar)
     rerender(<Pane pane={pane} app={{ ...app, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [{ ...gpt, codexArchived: true, archived: true }] }] }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} />);
-    fireEvent.click(document.querySelector('button.chat-title')!);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     expect(screen.queryByText('보관 해제')).toBeNull();
-    expect(screen.getAllByRole('menuitem').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['이름 바꾸기', '고정 해제', '삭제…']);
+    const names = screen.getAllByRole('menuitem').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+    expect(names.slice(0, 3)).toEqual(['폴더: w ›', '이름 바꾸기', '고정 해제']);
+    expect(names).not.toContain('보관');
+    expect(names.at(-1)).toBe('삭제…');
   });
 });
 
@@ -403,5 +420,124 @@ describe('Pane: route_fit 그래도 보내기 double click (review #8)', () => {
     fireEvent.click(btn);
     fireEvent.click(btn);
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe('startTaskFromPane', () => {
+  it('offline: false and nothing recorded (the composer keeps the draft); sent: the ref is kept for a refusal', () => {
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null } };
+    const dispatch = vi.fn();
+    expect(startTaskFromPane(pane, '로그 정리', dispatch, () => false)).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+    const sent: ClientMessage[] = [];
+    expect(startTaskFromPane(pane, '로그 정리', dispatch, (m) => { sent.push(m); return true; })).toBe(true);
+    const ref = (sent[0] as Extract<ClientMessage, { type: 'start_task' }>).clientRef;
+    expect(dispatch).toHaveBeenCalledWith({ type: 'task_sent', paneId: 'p1', clientRef: ref, text: '로그 정리' });
+  });
+});
+
+describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
+  afterEach(cleanup);
+  const withPhone = (phone: boolean, fn: () => void) => {
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: phone && q.includes('max-width: 720px'), media: q, addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof window.matchMedia;
+    try { fn(); } finally { window.matchMedia = mm; }
+  };
+
+  it('phone: 보기 › 명령 팔레트… opens the palette, also from a new session (no session yet)', () => {
+    const onPalette = vi.fn();
+    withPhone(true, () => {
+      render(<Pane pane={{ ...newPane('p1') }} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} onPalette={onPalette} />);
+      fireEvent.click(screen.getByTestId('session-chip-head'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '명령 팔레트…' }));
+    });
+    expect(onPalette).toHaveBeenCalledTimes(1);
+  });
+
+  it('빈 pane 머리: a docked empty pane in a split shows no head control at rest (idle); a session or a card keeps its head', () => {
+    const app = { pending: [], questions: [], codexAvailable: false };
+    const base = { app, active: true, closable: true, dispatch: () => {}, send: () => {}, onClose: () => {} };
+    const { rerender } = render(<Pane {...base} pane={{ ...newPane('p1') }} />);
+    const head = () => screen.getByTestId('pane-p1').querySelector('.pane-head')!;
+    expect(head().classList.contains('idle')).toBe(true);
+    // Its menu stays reachable (창 › 이 창 닫기) for the pointer that brings the head up.
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    expect(screen.getByRole('menuitem', { name: '이 창 닫기' })).toBeTruthy();
+    rerender(<Pane {...base} pane={{ ...newPane('p1') }} floating onToggleCollapse={() => {}} />);
+    expect(head().classList.contains('idle')).toBe(false);
+    expect(screen.getByRole('button', { name: '카드 접기' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '패널 닫기' })).toBeTruthy();
+    rerender(<Pane {...base} pane={{ ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }} />);
+    expect(head().classList.contains('idle')).toBe(false);
+  });
+
+  it('빈 pane 머리 idle: hidden at rest only on a hover screen, shown again under the pointer and with focus inside', () => {
+    render(<Pane pane={{ ...newPane('p1') }} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} />);
+    const head = screen.getByTestId('pane-p1').querySelector<HTMLElement>('.pane-head')!;
+    expect(head.classList.contains('idle')).toBe(true);
+    // The head's parent is the .pane the :hover rule keys on.
+    expect(head.parentElement!.classList.contains('pane')).toBe(true);
+    act(() => { screen.getByTestId('session-chip-head').focus(); });
+    expect(head.matches(':focus-within')).toBe(true);
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const hover = css.match(/@media \(hover: hover\) \{\s*\.pane-head\.idle \{ opacity: 0;[^}]*\}\s*([^{]+)\{ opacity: 1; \}/);
+    expect(hover).not.toBeNull();
+    const shown = hover![1]!.split(',').map((x) => x.trim());
+    expect(shown).toEqual(expect.arrayContaining(['.pane:hover > .pane-head.idle', '.pane-head.idle:focus-within']));
+  });
+
+  it('칩 메뉴 (desktop): all five groups in order — 세션 · 보기 · 공유 · 창 · 위험; no 명령 팔레트… / 새 분할 (⌘K and the top bar have them)', () => {
+    const entry = { sessionId: 's1', account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 1 };
+    const actions = { pins: [], onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn() };
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null }, items: [{ kind: 'user', text: 'hi' } as PaneState['items'][number]] };
+    const app = { pending: [], questions: [], codexAvailable: false, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [entry] }] };
+    render(<Pane pane={pane} app={app} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} onPalette={() => {}} onAddPane={() => {}} />);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    const groups: string[][] = [[]];
+    for (const el of Array.from(screen.getByRole('menu').querySelectorAll('[role="menuitem"], [role="separator"]'))) {
+      if (el.getAttribute('role') === 'separator') groups.push([]);
+      else groups.at(-1)!.push(el.textContent!.replace(/(⌘|Ctrl\+).*$/, ''));
+    }
+    expect(groups).toEqual([
+      ['폴더: w ›', '이름 바꾸기', '맨 위에 고정', '보관'],
+      ['대화에서 찾기', '파일 열기', '새 세션으로 이어가기'],
+      ['대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기'],
+      ['새 탭으로 떼어내기', '이 창 닫기'],
+      ['삭제…'],
+    ]);
+  });
+
+  it('phone: 보기 group order: 대화에서 찾기 → 파일 열기 → 명령 팔레트…', () => {
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null }, items: [{ kind: 'user', text: 'hi' } as PaneState['items'][number]] };
+    let names: string[] = [];
+    withPhone(true, () => {
+      render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} onPalette={() => {}} />);
+      fireEvent.click(screen.getByTestId('session-chip-head'));
+      names = screen.getAllByRole('menuitem').map((m) => m.textContent!.replace(/(⌘|Ctrl\+).*$/, ''));
+    });
+    const at = (n: string) => names.indexOf(n);
+    expect(at('대화에서 찾기')).toBeGreaterThanOrEqual(0);
+    expect(at('대화에서 찾기')).toBeLessThan(at('파일 열기'));
+    expect(at('파일 열기')).toBeLessThan(at('명령 팔레트…'));
+  });
+
+  it('a phone menu has no 카드 배치… ; the desktop one does, with Ctrl+Shift hints off a Mac', () => {
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } };
+    const props = { pane, app: { pending: [], questions: [], codexAvailable: false }, active: true, closable: true, dispatch: () => {}, send: () => {}, onClose: () => {}, onLayouts: () => {}, onPalette: () => {} };
+    withPhone(true, () => {
+      render(<Pane {...props} />);
+      fireEvent.click(screen.getByTestId('session-chip-head'));
+      expect(screen.getByRole('menuitem', { name: '명령 팔레트…' })).toBeTruthy();
+      expect(screen.queryByRole('menuitem', { name: '카드 배치…' })).toBeNull();
+      cleanup();
+    });
+    withPhone(false, () => {
+      render(<Pane {...props} />);
+      fireEvent.click(screen.getByTestId('session-chip-head'));
+      expect(screen.getByRole('menuitem', { name: '카드 배치…' })).toBeTruthy();
+      // jsdom is not a Mac: the close row's hint is spelled out.
+      expect(screen.getByRole('menuitem', { name: '이 창 닫기' }).querySelector('kbd')!.textContent).toBe('Ctrl+Shift+X');
+      expect(screen.queryByRole('menuitem', { name: '명령 팔레트…' })).toBeNull();
+    });
   });
 });

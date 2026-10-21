@@ -121,6 +121,13 @@ describe('runGrokTurn: lifecycle and mapping', () => {
     expect(result).toMatchObject({ ok: true, sessionId: SID, terminalReason: 'completed', usage: { inputTokens: 400, outputTokens: 50, cacheReadTokens: 600, cacheCreationTokens: 0 } });
   });
 
+  it('deck context: a <system-reminder> text block before the prompt\'s own block; none without context', async () => {
+    const { log } = await turn('', { req: { context: '[deck 메모] x' } });
+    expect(paramsOf(log, 'session/prompt')[0]).toMatchObject({ prompt: [{ type: 'text', text: '<system-reminder>\n[deck 메모] x\n</system-reminder>' }, { type: 'text', text: 'hi' }] });
+    const plain = await turn('', { req: { context: '  ' } });
+    expect(paramsOf(plain.log, 'session/prompt')[0]).toMatchObject({ prompt: [{ type: 'text', text: 'hi' }] });
+  });
+
   it('after the prompt, `_x.ai/billing` on the same connection rides the result (grokBilling)', async () => {
     const { result, log } = await turn(String.raw`
       on('_x.ai/billing', (p, id) => respond(id, { config: { creditUsagePercent: 1.0, currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: '2026-10-18T07:54:33.561+00:00', end: '2026-10-25T07:54:33.561+00:00' }, prepaidBalance: { val: 0 }, isUnifiedBillingUser: true }, subscription_tier: 'SuperGrok Heavy' }));`);

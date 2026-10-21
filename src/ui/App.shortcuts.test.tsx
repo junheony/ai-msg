@@ -65,7 +65,7 @@ describe('desktop-like navigation', () => {
     press('KeyK');
     fireEvent.change(screen.getByLabelText('세션 검색 또는 명령'), { target: { value: '사용량' } });
     fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Enter' });
-    expect(screen.getByRole('dialog', { name: '토큰 사용량' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: '사용량' })).toBeTruthy();
   });
 
   it('palette actions dispatch the settings / theme events; Esc and Ctrl+K close it', async () => {
@@ -145,7 +145,11 @@ describe('desktop-like navigation', () => {
     fireEvent.click(within(sidebar()).getByText('one'));
     press('KeyN');
     const pane = screen.getAllByTestId(/^pane-/)[0]!;
-    expect((within(pane).getByLabelText('프로젝트') as HTMLSelectElement).value).toBe('/w');
+    // The project is in the session chip's sheet.
+    fireEvent.click(within(pane).getByTestId('session-chip'));
+    const sheet = within(pane).getByRole('dialog', { name: '세션 설정' });
+    expect((within(sheet).getByLabelText('프로젝트') as HTMLSelectElement).value).toBe('/w');
+    fireEvent.click(within(sheet).getByLabelText('닫기'));
     expect(within(pane).getByText('two')).toBeTruthy(); // recent card
     const box = within(pane).getByLabelText('첫 메시지');
     fireEvent.change(box, { target: { value: '안녕' } });
@@ -169,14 +173,14 @@ describe('desktop-like navigation', () => {
     expect(frames().find((f) => f.type === 'send')).toMatchObject({ type: 'send', sessionId: null, cwd: '/w', text: '봐줘', attachments: ['att-1'] });
   });
 
-  it('sidebar 최근 view groups by date; 삭제 asks, moves to trash, offers undo', async () => {
+  it('sidebar groups by date (no 프로젝트 view); 삭제 asks, moves to trash, offers undo', async () => {
     await boot();
     expect(within(sidebar()).getByTestId('date-group-오늘').textContent).toContain('two');
     expect(within(sidebar()).getByTestId('date-group-이전').textContent).toContain('ancient');
-    fireEvent.click(within(sidebar()).getByText('프로젝트'));
-    expect(within(sidebar()).queryByTestId('date-group-오늘')).toBeNull();
-    expect(localStorage.getItem('deck.sidebarView')).toBe('projects');
-    fireEvent.click(within(sidebar()).getByText('최근'));
+    // The + menu has no view switch any more.
+    fireEvent.click(within(sidebar()).getByRole('button', { name: '새 세션' }));
+    expect(within(sidebar()).queryByRole('menuitem', { name: '프로젝트별로 묶기' })).toBeNull();
+    fireEvent.keyDown(within(sidebar()).getByRole('menu'), { key: 'Escape' });
 
     const row = within(sidebar()).getByText('two').closest('li')!;
     fireEvent.click(within(row).getByLabelText('세션 메뉴'));
@@ -254,8 +258,8 @@ describe('desktop-like navigation', () => {
 
   it('Ctrl+Alt+[ / ] step the active pane (wrapping); Ctrl+⇧X closes it, never the last one', async () => {
     await boot();
-    fireEvent.click(screen.getByText(/^\+ 분할/));
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     const panes = () => screen.getAllByTestId(/^pane-/);
     const activeIndex = () => panes().findIndex((p) => p.classList.contains('active'));
     expect(panes()).toHaveLength(3);
@@ -313,8 +317,8 @@ describe('desktop-like navigation', () => {
 
   it('Ctrl+Alt+1…9 focus the nth split pane (missing numbers ignored); Ctrl+⇧Enter shows the active pane alone and back', async () => {
     await boot();
-    fireEvent.click(screen.getByText(/^\+ 분할/));
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     const panes = () => screen.getAllByTestId(/^pane-/);
     const activeIndex = () => panes().findIndex((p) => p.classList.contains('active'));
     expect(activeIndex()).toBe(2);
@@ -346,8 +350,8 @@ describe('desktop-like navigation', () => {
 
   it('Ctrl+Alt+⇧[ / ] move the active pane left / right, as ⋯ 왼쪽으로 / 오른쪽으로 이동', async () => {
     await boot();
-    fireEvent.click(screen.getByText(/^\+ 분할/));
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     const ids = () => screen.getAllByTestId(/^pane-/).map((p) => p.dataset.testid);
     const [a, b, c] = ids();
     press('BracketLeft', { altKey: true, shiftKey: true });

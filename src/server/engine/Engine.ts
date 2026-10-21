@@ -227,6 +227,8 @@ export type TurnRequest = {
   noTools?: boolean;
   /** deck 의 메모(모델만 본다): 이 프로세스의 첫 사용자 프롬프트에만 UserPromptSubmit 훅의 additionalContext 로 붙는다. */
   systemNote?: string;
+  /** 간결 모드: appended to the engine's system prompt for this process (Claude `--append-system-prompt`); not stored in the transcript. */
+  appendSystemPrompt?: string;
   /**
    * 총사령탑 자동 턴(TurnParams.commanderHop): Bash·`mcp__*` 도 PreToolUse 훅으로 가서 기본 ask, 허용 목록만 allow
    * (commander/rules.ts), 훅 실패는 deny. 없으면 기존 동작 그대로.

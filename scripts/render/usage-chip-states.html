@@ -1,0 +1,27 @@
+<!doctype html><html data-theme="light"><head><meta charset="utf-8">
+<!-- Usage chip states fixture for scripts/render-check.sh: the real stylesheet, hand-written markup
+     (keep in step with UsageChip.tsx). Nine states of design §3.5: 정상 · A→B (with the other-seat red dot) · 경고 ·
+     위험 · 소진 · 추정 · 오래됨 · 쿨다운 · 숨김. Light theme forced so the render is deterministic; the window is 160 CSS px tall. -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+body { margin: 0; padding: 8px; background: var(--sidebar); }
+.grid { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+figure { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+figcaption { font-size: 11px; color: var(--muted); }
+.grid .usage-chip { margin-left: 0; }
+.usage-chip-num { animation: none; }
+.hidden-note { height: 30px; line-height: 30px; font-size: 12px; color: var(--faint); }
+</style>
+</head><body>
+<div class="grid">
+<figure><figcaption>정상</figcaption><button type="button" class="usage-chip ok" aria-label="정상"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">42% · 2h</span></button></figure>
+<figure><figcaption>A→B</figcaption><button type="button" class="usage-chip ok" aria-label="A→B"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A<span class="usage-chip-next">→B</span></span><span class="usage-chip-num">42% · 2h</span><span class="usage-chip-alert" aria-hidden="true"></span></button></figure>
+<figure><figcaption>경고</figcaption><button type="button" class="usage-chip warn" aria-label="경고"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">82% · 40m</span></button></figure>
+<figure><figcaption>위험</figcaption><button type="button" class="usage-chip danger" aria-label="위험"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">97% · 12m</span></button></figure>
+<figure><figcaption>소진</figcaption><button type="button" class="usage-chip spent" aria-label="소진"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">소진 · 12m</span></button></figure>
+<figure><figcaption>추정</figcaption><button type="button" class="usage-chip estimated" aria-label="추정"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">30% · 3d</span></button></figure>
+<figure><figcaption>오래됨</figcaption><button type="button" class="usage-chip stale" aria-label="오래됨"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">A</span><span class="usage-chip-num">42% · 오래됨</span></button></figure>
+<figure><figcaption>쿨다운</figcaption><button type="button" class="usage-chip cooldown" aria-label="쿨다운"><span class="usage-chip-dot" aria-hidden="true"></span><span class="usage-chip-who">X1</span><span class="usage-chip-num">쿨다운</span></button></figure>
+<figure><figcaption>숨김</figcaption><span class="hidden-note">(칩 없음)</span></figure>
+</div>
+</body></html>

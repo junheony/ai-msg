@@ -16,6 +16,7 @@ vi.mock('./ws', () => ({
 }));
 
 import { App } from './App';
+import { ALERT_SEED_MS } from './components/ActivityButton';
 
 const usage = { generatedAt: 'x', deckReachable: true, accounts: { a: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null }, b: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null }, c: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: null, fable: null } } } as const;
 const entry = (sessionId: string, title: string) => ({ sessionId, account: 'b' as const, cwd: '/w', projectDir: '/p', title, lastModified: Date.now(), sizeBytes: 1 });
@@ -30,6 +31,20 @@ function server(msg: ServerMessage) { act(() => sock.onMessage!(msg)); }
 const frames = () => sock.frames as ClientMessage[];
 const closes = () => frames().filter((f) => f.type === 'close_session').map((f) => (f as { sessionId: string }).sessionId);
 const lastPane = () => screen.getAllByTestId(/^pane-/).at(-1)!;
+/** A pane's session chip (a lone pane's sits in the top bar, outside the pane). */
+const chipOf = (pane: HTMLElement) => document.querySelector<HTMLElement>(`[data-pane-head="${pane.dataset.pane}"] [data-testid="session-chip-head"]`)!;
+const pickFrom = (pane: HTMLElement, name: string | RegExp) => {
+  fireEvent.click(chipOf(pane));
+  fireEvent.click(screen.getByRole('menuitem', { name }));
+};
+/** 창 › 떠 있는 카드로 떼기 / 패널에 다시 붙이기 (Enter on the old ⋮⋮ grip). */
+const floatToggle = (id: string) => pickFrom(screen.getByTestId(`pane-${id}`), /^(떠 있는 카드로 떼기|패널에 다시 붙이기)$/);
+/** A card's ✕, or 창 › 이 창 닫기 for a docked pane. */
+const closePane = (pane: HTMLElement) => {
+  const x = pane.querySelector<HTMLElement>('.pane-close');
+  if (x) fireEvent.click(x);
+  else pickFrom(pane, '이 창 닫기');
+};
 const openSession = (title: string) => fireEvent.click(within(document.querySelector('.sidebar') as HTMLElement).getByText(title));
 
 describe('App split view (D6)', () => {
@@ -41,24 +56,20 @@ describe('App split view (D6)', () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-  it('ux-state: a reload restores the split, each pane\'s session/picker and folded groups, and re-opens the sessions', async () => {
-    localStorage.setItem('deck.sidebarView', 'projects'); // folding is a 프로젝트 view feature
+  it('ux-state: a reload restores the split, each pane\'s session/picker, and re-opens the sessions', async () => {
     await boot();
     openSession('one');
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two');
-    fireEvent.click(within(document.querySelector('.sidebar') as HTMLElement).getByTitle('/w')); // fold the project group
     const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { session: { sessionId: string } }[]; active: number; collapsed: string[] };
     expect(stored.panes.map((p) => p.session.sessionId)).toEqual(['s1', 's2']);
     expect(stored.active).toBe(1);
-    expect(stored.collapsed).toEqual(['/w']);
     cleanup();
     sock.frames = [];
     sock.onMessage = null;
     await boot();
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
     expect(frames().filter((f) => f.type === 'open_session').map((f) => (f as { sessionId: string }).sessionId)).toEqual(['s1', 's2']);
-    expect(document.querySelector('.project.collapsed')).not.toBeNull();
     server({ type: 'history', sessionId: 's2', cwd: '/w', account: 'b', messages: [{ kind: 'user', text: 'restored', ts: null }], runningTurnId: null } as ServerMessage);
     expect(within(lastPane()).getByText('restored')).toBeTruthy();
   });
@@ -71,32 +82,30 @@ describe('App split view (D6)', () => {
 
   it('splits into equal columns with no fixed ceiling ("+ 분할" stays enabled past 5); closing re-flows', async () => {
     await boot();
-    const split = screen.getByText(/^\+ 분할/) as HTMLButtonElement;
+    const split = screen.getByRole('button', { name: '새 분할' }) as HTMLButtonElement;
     for (let i = 0; i < 4; i++) fireEvent.click(split);
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(5);
     const panes = document.querySelector('.panes') as HTMLElement;
     expect(panes.dataset.count).toBe('5');
     expect(panes.style.getPropertyValue('--cols')).toBe('5');
     expect(split.disabled).toBe(false);
-    expect(split.textContent).toBe('+ 분할 5');
     fireEvent.click(split);
     fireEvent.click(split);
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(7);
     expect(panes.dataset.count).toBe('7');
-    fireEvent.click(within(lastPane()).getByLabelText('패널 닫기'));
+    closePane(lastPane());
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(6);
     expect(panes.style.getPropertyValue('--cols')).toBe('6');
-    expect(split.textContent).toBe('+ 분할 6');
   });
 
   it('⋮⋮ grip: ⋯ 떠 있는 카드로 떼기 turns a pane into a floating card over the grid, 패널에 다시 붙이기 docks it; the card survives a reload', async () => {
     await boot();
-    expect(screen.queryByLabelText('패널 끌기')).toBeNull(); // one pane: nothing to drag
+    expect(document.querySelector('[data-grip]')).toBeNull(); // one pane: nothing to drag
     openSession('one');
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two');
-    expect(screen.getAllByLabelText('패널 끌기')).toHaveLength(2);
-    const menu = () => within(screen.getByTestId('pane-p1')).getByLabelText('채팅 메뉴');
+    expect(document.querySelectorAll('[data-grip]')).toHaveLength(2);
+    const menu = () => within(screen.getByTestId('pane-p1')).getByTestId('session-chip-head');
     fireEvent.click(menu());
     fireEvent.click(screen.getByRole('menuitem', { name: '떠 있는 카드로 떼기' }));
     const card = document.querySelector('.float-card') as HTMLElement;
@@ -108,7 +117,7 @@ describe('App split view (D6)', () => {
     expect(grid.querySelectorAll('.pane')).toHaveLength(1);
     expect(screen.queryAllByRole('separator', { name: '패널 폭 조절' })).toHaveLength(0);
     // The lone docked pane cannot be pulled off: no 떼기 item, but it keeps its grip (a card may still dock next to it).
-    fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+    fireEvent.click(chipOf(screen.getByTestId('pane-p0')));
     expect(screen.queryByRole('menuitem', { name: '떠 있는 카드로 떼기' })).toBeNull();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: { w: number } }[] };
@@ -118,7 +127,7 @@ describe('App split view (D6)', () => {
     sock.onMessage = null;
     await boot();
     expect(document.querySelector('.float-card')).not.toBeNull();
-    fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('채팅 메뉴'));
+    fireEvent.click(chipOf(screen.getByTestId('pane-p1')));
     fireEvent.click(screen.getByRole('menuitem', { name: '패널에 다시 붙이기' }));
     expect(document.querySelector('.float-card')).toBeNull();
     expect((document.querySelector('.panes') as HTMLElement).dataset.count).toBe('2');
@@ -127,7 +136,7 @@ describe('App split view (D6)', () => {
 
   it('⋮⋮ grip drag: along the rail it reorders the docked panes; below the rail it pulls the pane off as a card; Escape cancels', async () => {
     await boot();
-    const split = screen.getByText(/^\+ 분할/);
+    const split = screen.getByRole('button', { name: '새 분할' });
     fireEvent.click(split);
     fireEvent.click(split); // p0 p1 p2
     const ids = () => Array.from(document.querySelectorAll('.panes .pane')).map((el) => (el as HTMLElement).dataset.pane);
@@ -140,7 +149,7 @@ describe('App split view (D6)', () => {
       return box(0, 1200);
     });
     try {
-      const grip = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
+      const grip = within(screen.getByTestId('pane-p0')).getByTestId('session-chip-head');
       // Reorder: p0 dragged along the rail (y < 72) to x = 1000 (past p2's centre at 1000? centre = 1000 → not past; use 1050).
       fireEvent.pointerDown(grip, { clientX: 10, clientY: 20, pointerId: 1, button: 0, pointerType: 'mouse' });
       fireEvent.pointerMove(grip, { clientX: 1050, clientY: 20, pointerId: 1, buttons: 1 });
@@ -151,14 +160,14 @@ describe('App split view (D6)', () => {
       expect(document.querySelector('.pane-ghost')).toBeNull();
       expect(ids()).toEqual(['p1', 'p2', 'p0']);
       // Escape mid-drag: nothing changes.
-      const grip2 = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
+      const grip2 = within(screen.getByTestId('pane-p0')).getByTestId('session-chip-head');
       fireEvent.pointerDown(grip2, { clientX: 810, clientY: 20, pointerId: 2, button: 0, pointerType: 'mouse' });
       fireEvent.pointerMove(grip2, { clientX: 100, clientY: 20, pointerId: 2, buttons: 1 });
       fireEvent.keyDown(window, { key: 'Escape' });
       fireEvent.pointerUp(grip2, { clientX: 100, clientY: 20, pointerId: 2 });
       expect(ids()).toEqual(['p1', 'p2', 'p0']);
       // Off the rail (y = 400): p0 floats as a card about its own width.
-      const grip3 = within(screen.getByTestId('pane-p0')).getByLabelText('패널 끌기');
+      const grip3 = within(screen.getByTestId('pane-p0')).getByTestId('session-chip-head');
       fireEvent.pointerDown(grip3, { clientX: 810, clientY: 20, pointerId: 3, button: 0, pointerType: 'mouse' });
       fireEvent.pointerMove(grip3, { clientX: 600, clientY: 400, pointerId: 3, buttons: 1 });
       expect(document.querySelector('.pane-ghost.card')).not.toBeNull();
@@ -202,13 +211,13 @@ describe('App split view (D6)', () => {
   it('keyboard on the ⋮⋮ grip: ←→ reorder, Enter floats the pane; ⋯ has 왼쪽으로/오른쪽으로 이동 for panes with a neighbour there', async () => {
     await boot();
     openSession('one');
-    const split = screen.getByText(/^\+ 분할/);
+    const split = screen.getByRole('button', { name: '새 분할' });
     fireEvent.click(split);
     openSession('two');
     fireEvent.click(split); // p0 p1 p2
     const order = () => Array.from(document.querySelectorAll<HTMLElement>('.panes .pane')).map((e) => e.dataset.pane);
     expect(order()).toEqual(['p0', 'p1', 'p2']);
-    const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByLabelText('패널 끌기');
+    const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByTestId('session-chip-head');
     const live = () => screen.getByTestId('cards-live').textContent;
     fireEvent.keyDown(grip('p0'), { key: 'ArrowRight' });
     expect(order()).toEqual(['p1', 'p0', 'p2']);
@@ -219,16 +228,16 @@ describe('App split view (D6)', () => {
     fireEvent.keyDown(grip('p0'), { key: 'ArrowLeft' }); // already first: nothing
     expect(order()).toEqual(['p0', 'p1', 'p2']);
     // The leftmost pane's ⋯ offers only 오른쇽으로 이동; the middle one both.
-    fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+    fireEvent.click(chipOf(screen.getByTestId('pane-p0')));
     expect(screen.queryByRole('menuitem', { name: '왼쪽으로 이동' })).toBeNull();
     fireEvent.click(screen.getByRole('menuitem', { name: '오른쪽으로 이동' }));
     expect(order()).toEqual(['p1', 'p0', 'p2']);
-    fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+    fireEvent.click(chipOf(screen.getByTestId('pane-p0')));
     expect(screen.getByRole('menuitem', { name: '왼쪽으로 이동' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '오른쪽으로 이동' })).toBeTruthy();
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     // Enter on a docked grip floats the pane; Enter on the card's grip docks it again (at the end).
-    fireEvent.keyDown(grip('p1'), { key: 'Enter' });
+    floatToggle('p1');
     expect(document.querySelector('.float-card[data-float="p1"]')).not.toBeNull();
     expect(order()).toEqual(['p0', 'p2']);
     expect(live()).toBe('카드로 뗐습니다');
@@ -236,7 +245,7 @@ describe('App split view (D6)', () => {
     fireEvent.keyDown(grip('p1'), { key: 'ArrowDown', shiftKey: true });
     const stored = JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: { x: number; y: number } }[] };
     expect(stored.panes.find((p) => p.float)!.float!.y).toBe(0);
-    fireEvent.keyDown(grip('p1'), { key: ' ' });
+    floatToggle('p1');
     expect(document.querySelector('.float-card')).toBeNull();
     expect(order()).toEqual(['p0', 'p2', 'p1']);
     expect(live()).toBe('패널에 붙였습니다');
@@ -249,16 +258,16 @@ describe('App split view (D6)', () => {
     try {
       await boot();
       openSession('one');
-      const split = screen.getByText(/^\+ 분할/);
+      const split = screen.getByRole('button', { name: '새 분할' });
       fireEvent.click(split);
       openSession('two');
       fireEvent.click(split); // p0 p1 p2
-      const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByLabelText('패널 끌기');
+      const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByTestId('session-chip-head');
       const floatOf = (id: string) => (JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { session: { sessionId: string } | null; float?: { x: number; y: number; w: number; h: number } }[] }).panes.find((p) => p.session?.sessionId === id)?.float;
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' }); // s1 → card, 480 wide
+      floatToggle('p0'); // s1 → card, 480 wide
       expect(floatOf('s1')).toMatchObject({ w: 480 });
       // One card: no 정렬 item.
-      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(chipOf(screen.getByTestId('pane-p0')));
       expect(screen.queryByRole('menuitem', { name: /^떠 있는 카드 정렬/ })).toBeNull();
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
       expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
@@ -273,9 +282,9 @@ describe('App split view (D6)', () => {
       expect(floatOf('s1')).toMatchObject({ w: 320 });
       expect(corner.getAttribute('aria-valuetext')).toBe(`320 × ${before.h + 96}`);
       // A second card: 정렬 lays both out side by side over the 1200 × 800 body.
-      fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // s2 → card
-      fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('채팅 메뉴'));
-      fireEvent.click(screen.getByRole('menuitem', { name: '떠 있는 카드 정렬 (Ctrl+Shift+G)' })); // jsdom is not a Mac
+      floatToggle('p1'); // s2 → card
+      fireEvent.click(chipOf(screen.getByTestId('pane-p1')));
+      fireEvent.click(screen.getByRole('menuitem', { name: '떠 있는 카드 정렬' })); // jsdom is not a Mac
       expect(floatOf('s1')).toEqual({ x: 12, y: 12, w: 582, h: 776 });
       expect(floatOf('s2')).toEqual({ x: 606, y: 12, w: 582, h: 776 });
       expect(screen.getByTestId('cards-live').textContent).toBe('카드 2장을 정렬했습니다');
@@ -292,24 +301,24 @@ describe('App split view (D6)', () => {
   const threePanes = async () => {
     await boot();
     openSession('one');
-    const split = screen.getByText(/^\+ 분할/);
+    const split = screen.getByRole('button', { name: '새 분할' });
     fireEvent.click(split);
     openSession('two');
     fireEvent.click(split); // p0 p1 p2
   };
-  const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByLabelText('패널 끌기');
+  const grip = (id: string) => within(screen.getByTestId(`pane-${id}`)).getByTestId('session-chip-head');
   const ctrlShiftG = () => fireEvent.keyDown(document.body, { key: 'G', code: 'KeyG', ctrlKey: true, shiftKey: true });
 
   it('Ctrl+⇧G arranges two or more floating cards; with one card the key stays the browser\'s', async () => {
     const restore = mockBody({ w: 1200, h: 800 });
     try {
       await threePanes();
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' }); // one card
+      floatToggle('p0'); // one card
       const before = storedPane('s1')!.float;
       expect(ctrlShiftG()).toBe(true); // not prevented: find-previous is the browser's
       expect(storedPane('s1')!.float).toEqual(before);
       expect(screen.getByTestId('cards-live').textContent).toBe('카드로 뗐습니다');
-      fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // two cards
+      floatToggle('p1'); // two cards
       expect(ctrlShiftG()).toBe(false);
       expect(storedPane('s1')!.float).toEqual({ x: 12, y: 12, w: 582, h: 776 });
       expect(storedPane('s2')!.float).toEqual({ x: 606, y: 12, w: 582, h: 776 });
@@ -321,29 +330,28 @@ describe('App split view (D6)', () => {
     const restore = mockBody({ w: 1200, h: 800 });
     try {
       await threePanes();
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      floatToggle('p0');
       const box = storedPane('s1')!.float!;
       const card = () => document.querySelector('.float-card[data-float="p0"]') as HTMLElement;
       const live = () => screen.getByTestId('cards-live').textContent;
-      fireEvent.doubleClick(grip('p0'));
+      fireEvent.doubleClick(card().querySelector('.pane-head') as HTMLElement);
       expect(storedPane('s1')!.float).toEqual({ x: 0, y: 0, w: 1200, h: 800 });
       expect(card().style.width).toBe('1200px');
       expect(live()).toBe('카드를 최대화했습니다');
-      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(chipOf(screen.getByTestId('pane-p0')));
       expect(screen.queryByRole('menuitem', { name: '카드 최대화' })).toBeNull();
       fireEvent.click(screen.getByRole('menuitem', { name: '카드 원래 크기로' }));
       expect(storedPane('s1')!.float).toEqual(box);
       expect(live()).toBe('카드를 원래 크기로 되돌렸습니다');
-      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(chipOf(screen.getByTestId('pane-p0')));
       fireEvent.click(screen.getByRole('menuitem', { name: '카드 최대화' }));
       expect(storedPane('s1')!.float).toEqual({ x: 0, y: 0, w: 1200, h: 800 });
-      // The bare header strip toggles too; its other buttons do not.
-      fireEvent.doubleClick(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      // The bare header strip toggles; a double-click on the chip renames instead.
+      fireEvent.doubleClick(grip('p0'));
       expect(storedPane('s1')!.float).toEqual({ x: 0, y: 0, w: 1200, h: 800 });
-      fireEvent.doubleClick(card().querySelector('button.chat-title') as HTMLElement); // the title button opens the session menu instead
-      expect(storedPane('s1')!.float).toEqual({ x: 0, y: 0, w: 1200, h: 800 });
-      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-      fireEvent.doubleClick(card().querySelector('.chat-head') as HTMLElement);
+      expect(within(card()).getByLabelText('채팅 이름')).toBeTruthy();
+      fireEvent.keyDown(within(card()).getByLabelText('채팅 이름'), { key: 'Escape' });
+      fireEvent.doubleClick(card().querySelector('.pane-head') as HTMLElement);
       expect(storedPane('s1')!.float).toEqual(box);
     } finally { restore(); }
   });
@@ -353,8 +361,8 @@ describe('App split view (D6)', () => {
     const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ width: 1200, height: 800, left: 0, right: 1200, top: 0, bottom: 800, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
     try {
       await threePanes();
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' }); // A
-      fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // B
+      floatToggle('p0'); // A
+      floatToggle('p1'); // B
       const a = storedPane('s1')!.float!;
       const b = storedPane('s2')!.float!;
       const right = a.x + a.w;
@@ -380,7 +388,7 @@ describe('App split view (D6)', () => {
     const restore = mockBody({ w: 1200, h: 800 });
     try {
       await threePanes();
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      floatToggle('p0');
       const box = storedPane('s1')!.float!;
       const card = () => document.querySelector('.float-card[data-float="p0"]') as HTMLElement;
       const live = () => screen.getByTestId('cards-live').textContent;
@@ -390,31 +398,31 @@ describe('App split view (D6)', () => {
       expect(card().classList.contains('collapsed')).toBe(true);
       expect(card().style.height).toBe('56px'); // the head's height (COLLAPSED_H); the body is hidden by .collapsed
       // The CSS hides everything under the pane but the head: the head's controls are outside what it hides.
-      const hiddenBy = '.float-card.collapsed > .pane > :not(.chat):not(.chat-head), .float-card.collapsed .chat > :not(.chat-head)';
-      for (const label of ['카드 펼치기', '패널 끌기', '채팅 메뉴']) expect(within(card()).getByLabelText(label).closest(hiddenBy)).toBeNull();
+      const hiddenBy = '.float-card.collapsed > .pane > :not(.chat):not(.pane-head), .float-card.collapsed .chat > :not(.pane-head)';
+      for (const el of [within(card()).getByLabelText('카드 펼치기'), grip('p0')]) expect(el.closest(hiddenBy)).toBeNull();
       expect(card().querySelector('.composer')?.closest(hiddenBy)).not.toBeNull();
       expect(within(card()).queryByLabelText('카드 크기 조절')).toBeNull();
       expect(live()).toBe('카드를 접었습니다');
       expect(storedPane('s1')!.float).toEqual(box);
       expect(within(card()).getByRole('button', { name: '카드 펼치기' }).textContent).toBe('▭');
-      fireEvent.doubleClick(card().querySelector('.chat-head') as HTMLElement);
+      fireEvent.doubleClick(card().querySelector('.pane-head') as HTMLElement);
       expect(card().classList.contains('collapsed')).toBe(false);
       expect(storedPane('s1')!.float).toEqual(box); // unfolded, not maximized
       expect(live()).toBe('카드를 펼쳤습니다');
       expect(within(card()).getByLabelText('카드 크기 조절')).toBeTruthy();
       // ⋯ offers the same, labelled by state.
-      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(chipOf(screen.getByTestId('pane-p0')));
       fireEvent.click(screen.getByRole('menuitem', { name: '카드 접기' }));
       expect(card().classList.contains('collapsed')).toBe(true);
-      fireEvent.click(within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(chipOf(screen.getByTestId('pane-p0')));
       expect(screen.getByRole('menuitem', { name: '카드 펼치기' })).toBeTruthy();
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
       // The new-chat screen (its own head, no chat): the head stays out of the hidden part too.
-      fireEvent.keyDown(grip('p2'), { key: 'Enter' });
+      floatToggle('p2');
       const blank = document.querySelector('.float-card[data-float="p2"]') as HTMLElement;
       fireEvent.click(within(blank).getByRole('button', { name: '카드 접기' }));
       expect(blank.classList.contains('collapsed')).toBe(true);
-      for (const label of ['카드 펼치기', '패널 끌기']) expect(within(blank).getByLabelText(label).closest(hiddenBy)).toBeNull();
+      for (const el of [within(blank).getByLabelText('카드 펼치기'), grip('p2')]) expect(el.closest(hiddenBy)).toBeNull();
       expect(blank.querySelector('.newchat')?.closest(hiddenBy)).not.toBeNull();
     } finally { restore(); }
   });
@@ -424,7 +432,7 @@ describe('App split view (D6)', () => {
     const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ width: 1200, height: 800, left: 0, right: 1200, top: 0, bottom: 800, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
     try {
       await threePanes();
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      floatToggle('p0');
       const card = document.querySelector('.float-card[data-float="p0"]') as HTMLElement;
       fireEvent.click(within(card).getByRole('button', { name: '카드 접기' }));
       const box = storedPane('s1')!.float!;
@@ -447,7 +455,7 @@ describe('App split view (D6)', () => {
       const dialog = () => screen.getByRole('dialog', { name: '카드 배치' });
       const live = () => screen.getByTestId('cards-live').textContent;
       const openDialog = (id: string) => {
-        fireEvent.click(within(screen.getByTestId(`pane-${id}`)).getByLabelText('채팅 메뉴'));
+        fireEvent.click(chipOf(screen.getByTestId(`pane-${id}`)));
         fireEvent.click(screen.getByRole('menuitem', { name: '카드 배치…' }));
       };
       openDialog('p0');
@@ -464,7 +472,7 @@ describe('App split view (D6)', () => {
       fireEvent.keyDown(window, { key: 'Escape' });
       expect(screen.queryByRole('dialog', { name: '카드 배치' })).toBeNull();
       // Change the layout: s1 becomes a card.
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      floatToggle('p0');
       expect(document.querySelector('.float-card')).not.toBeNull();
       sock.frames = [];
       openDialog('p1');
@@ -476,8 +484,8 @@ describe('App split view (D6)', () => {
       expect((JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: StoredPane[] }).panes.map((p) => p.session?.sessionId ?? null)).toEqual(['s1', 's2', null]);
       expect(live()).toBe('배치 "작업" 을 불러왔습니다');
       // New panes after a load never reuse an id.
-      fireEvent.click(screen.getByText(/^\+ 분할/));
-      fireEvent.click(screen.getByText(/^\+ 분할/));
+      fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
+      fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
       const ids = screen.getAllByTestId(/^pane-/).map((el) => el.dataset.pane);
       expect(ids).toHaveLength(5);
       expect(new Set(ids).size).toBe(5);
@@ -496,10 +504,10 @@ describe('App split view (D6)', () => {
     const restore = mockBody({ w: 1200, h: 800 });
     try {
       await threePanes();
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
-      fireEvent.keyDown(grip('p1'), { key: 'Enter' }); // two cards: Ctrl+⇧G would arrange them
+      floatToggle('p0');
+      floatToggle('p1'); // two cards: Ctrl+⇧G would arrange them
       const before = storedPane('s1')!.float;
-      fireEvent.click(within(screen.getByTestId('pane-p2')).queryByLabelText('채팅 메뉴') ?? within(screen.getByTestId('pane-p0')).getByLabelText('채팅 메뉴'));
+      fireEvent.click(within(screen.getByTestId('pane-p2')).queryByTestId('session-chip-head') ?? within(screen.getByTestId('pane-p0')).getByTestId('session-chip-head'));
       fireEvent.click(screen.getByRole('menuitem', { name: '카드 배치…' }));
       const dialog = () => screen.getByRole('dialog', { name: '카드 배치' });
       expect(ctrlShiftG()).toBe(true); // not taken: the dialog is modal
@@ -529,7 +537,7 @@ describe('App split view (D6)', () => {
     const restore = mockBody(size);
     try {
       await threePanes();
-      fireEvent.keyDown(grip('p0'), { key: 'Enter' });
+      floatToggle('p0');
       const start = storedPane('s1')!.float!;
       expect(storedPane('s1')!.floatBySize).toEqual({ '1200x800': start }); // where it was pulled off
       for (let i = 0; i < 9; i++) fireEvent.keyDown(grip('p0'), { key: 'ArrowRight', shiftKey: true });
@@ -560,7 +568,7 @@ describe('App split view (D6)', () => {
   it('a splitter between each pair of panes: dragging trades width between its two neighbours, double-click evens them out, the widths survive a reload', async () => {
     await boot();
     expect(screen.queryAllByRole('separator', { name: '패널 폭 조절' })).toHaveLength(0);
-    const split = screen.getByText(/^\+ 분할/);
+    const split = screen.getByRole('button', { name: '새 분할' });
     fireEvent.click(split);
     fireEvent.click(split);
     const bars = screen.getAllByRole('separator', { name: '패널 폭 조절' });
@@ -587,12 +595,14 @@ describe('App split view (D6)', () => {
     expect(again.style.gridTemplateColumns).toBe('minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr) 6px minmax(var(--pane-min), 1fr)');
   });
 
-  it('"+ 분할" shows no counter with one pane, then the pane count (no maximum)', async () => {
+  it('the split button is an icon with a name and a tooltip, no counter text', async () => {
     await boot();
-    const split = screen.getByText(/^\+ 분할/) as HTMLButtonElement;
-    expect(split.textContent).toBe('+ 분할');
+    const split = screen.getByRole('button', { name: '새 분할' }) as HTMLButtonElement;
+    expect(split.textContent).toBe('');
+    expect(split.querySelector('svg')).not.toBeNull();
+    expect(split.title).toMatch(/^새 분할 \(Ctrl\+⇧O\)/);
     fireEvent.click(split);
-    expect(split.textContent).toBe('+ 분할 2');
+    expect(split.textContent).toBe('');
   });
 
   it('⋯ 분할 보기로 열기: a new pane opens the session — also one another pane already shows', async () => {
@@ -604,8 +614,8 @@ describe('App split view (D6)', () => {
     const panes = screen.getAllByTestId(/^pane-/);
     expect(panes).toHaveLength(2);
     expect(panes[1]!.classList.contains('active')).toBe(true);
-    expect(within(panes[1]!).getByTitle('one')).toBeTruthy();
-    expect(within(panes[0]!).getByTitle('one')).toBeTruthy();
+    expect(within(panes[1]!).getByTitle(/^one(\s|$)/)).toBeTruthy();
+    expect(within(panes[0]!).getByTitle(/^one(\s|$)/)).toBeTruthy();
     expect(frames().filter((f) => f.type === 'open_session').map((f) => (f as { sessionId: string }).sessionId)).toEqual(['s1', 's1']);
   });
 
@@ -614,13 +624,13 @@ describe('App split view (D6)', () => {
     try {
       await boot();
       openSession('one');
-      fireEvent.click(within(lastPane()).getByLabelText('채팅 메뉴'));
+      fireEvent.click(chipOf(lastPane()));
       expect(screen.queryByRole('menuitem', { name: '새 탭으로 떼어내기' })).toBeNull();
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-      fireEvent.click(screen.getByText(/^\+ 분할/));
+      fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
       openSession('two');
       expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
-      fireEvent.click(within(lastPane()).getByLabelText('채팅 메뉴'));
+      fireEvent.click(chipOf(lastPane()));
       fireEvent.click(screen.getByRole('menuitem', { name: '새 탭으로 떼어내기' }));
       expect(open).toHaveBeenCalledWith(expect.stringContaining('?session=s2'), '_blank', 'noopener');
       expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
@@ -634,20 +644,20 @@ describe('App split view (D6)', () => {
     await boot();
     openSession('one');
     expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's1' });
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two'); // p1 (active) → s2
     expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
     expect(closes()).toEqual([]);
     // A second view of s1 (the sidebar row would only bring p0 forward): ⋯ 분할 보기로 열기 → p2.
     fireEvent.click(within(document.querySelector('.sidebar') as HTMLElement).getByText('one').closest('li')!.querySelector('[aria-label="세션 메뉴"]')!);
     fireEvent.click(screen.getByRole('menuitem', { name: '분할 보기로 열기' }));
-    fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('패널 닫기')); // s2 is released
+    closePane(screen.getByTestId('pane-p1')); // s2 is released
     expect(closes()).toEqual(['s2']);
-    fireEvent.click(within(screen.getByTestId('pane-p2')).getByLabelText('패널 닫기')); // p0 still shows s1
+    closePane(screen.getByTestId('pane-p2')); // p0 still shows s1
     expect(closes()).toEqual(['s2']);
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two');
-    fireEvent.click(within(lastPane()).getByLabelText('패널 닫기'));
+    closePane(lastPane());
     expect(closes()).toEqual(['s2', 's2']);
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(1);
   });
@@ -655,32 +665,32 @@ describe('App split view (D6)', () => {
   it('a sidebar row already open in another pane brings that pane forward (no second copy); a row open nowhere loads into the focused pane', async () => {
     await boot();
     openSession('one'); // p0 → s1
-    fireEvent.click(screen.getByText(/^\+ 분할/)); // p1 (blank) active
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' })); // p1 (blank) active
     const opens = () => frames().filter((f) => f.type === 'open_session').length;
     const before = opens();
     const side = document.querySelector('.sidebar') as HTMLElement;
     expect(within(side).getByRole('img', { name: '분할 1번 패널에 열림' })).toBeTruthy();
     openSession('one');
     expect(screen.getByTestId('pane-p0').classList.contains('active')).toBe(true);
-    expect(within(screen.getByTestId('pane-p1')).queryByTitle('one')).toBeNull();
+    expect(chipOf(screen.getByTestId('pane-p1')).textContent).not.toContain('one');
     expect(opens()).toBe(before);
     expect(closes()).toEqual([]);
     // Back to the blank p1: a session no pane shows opens there as before.
     fireEvent.mouseDown(screen.getByTestId('pane-p1'));
     expect(screen.getByTestId('pane-p1').classList.contains('active')).toBe(true);
     openSession('two');
-    expect(within(screen.getByTestId('pane-p1')).getByTitle('two')).toBeTruthy();
+    expect(chipOf(screen.getByTestId('pane-p1')).textContent).toContain('two');
     expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
     expect(within(side).getByRole('img', { name: '분할 2번 패널에 열림' })).toBeTruthy();
   });
 
   it('T9 (b): a pane closed while its open_session reply is in flight never gets its history into a blank pane', async () => {
     await boot();
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('two'); // p1 → s2, history not yet arrived
-    fireEvent.click(within(screen.getByTestId('pane-p1')).getByLabelText('패널 닫기'));
+    closePane(screen.getByTestId('pane-p1'));
     expect(closes()).toEqual(['s2']);
-    fireEvent.click(screen.getByText(/^\+ 분할/)); // blank active pane (ids are reused: max remaining + 1)
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' })); // blank active pane (ids are reused: max remaining + 1)
     server({ type: 'history', sessionId: 's2', cwd: '/w', account: 'b', engine: 'claude', sandbox: null, runningTurnId: null, messages: [{ kind: 'user', text: 'stale-history', ts: null }] });
     expect(screen.queryByText('stale-history')).toBeNull();
     expect(within(lastPane()).getByLabelText('첫 메시지')).toBeTruthy(); // the new-chat screen
@@ -694,7 +704,7 @@ describe('App split view (D6)', () => {
     fireEvent.click(screen.getByText('보내기'));
     const send = frames().find((f) => f.type === 'send') as { clientRef?: string };
     expect(send.clientRef).toMatch(/.+/);
-    fireEvent.click(screen.getByText(/^\+ 분할/));
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' }));
     openSession('one');
     sock.frames = [];
     server({ type: 'hello', usage, projects: [], running: [], codex: { available: false } } as unknown as ServerMessage);
@@ -808,7 +818,7 @@ describe('App phone layout (D10)', () => {
     const mm = mockMatchMedia(false);
     await boot();
     openSession('one'); // p0 -> s1
-    fireEvent.click(screen.getByText(/^\+ 분할/)); // adds p1, active
+    fireEvent.click(screen.getByRole('button', { name: '새 분할' })); // adds p1, active
     openSession('two'); // p1 -> s2
     expect(screen.getAllByTestId(/^pane-/)).toHaveLength(2);
 
@@ -824,11 +834,11 @@ describe('App phone layout (D10)', () => {
     expect(screen.getByTestId('pane-p0')).toBeTruthy();
     expect(screen.queryByTestId('pane-p1')).toBeNull();
     // The tab row ends in +: another pane (as a tab), no ceiling.
-    fireEvent.click(within(document.querySelector('.pane-switch') as HTMLElement).getByLabelText('새 분할'));
-    expect(document.querySelectorAll('.pane-switch button[data-tab]')).toHaveLength(3);
+    fireEvent.click(within(screen.getByTestId('split-tabs')).getByRole('button', { name: '새 분할' }));
+    expect(screen.getByTestId('split-tabs').querySelectorAll('button[data-tab]')).toHaveLength(3);
     expect(screen.getByTestId('pane-p2')).toBeTruthy();
     // No grip / card menu on a phone: a card means nothing on one screen.
-    expect(screen.queryByLabelText('패널 끌기')).toBeNull();
+    expect(document.querySelector('[data-grip]')).toBeNull();
   });
 
   it('phone: a floating card restored from a desktop save becomes a plain tab (its box kept); tabs reorder by press-and-drag; a wide screen floats it again', async () => {
@@ -839,27 +849,27 @@ describe('App phone layout (D10)', () => {
     ] }));
     const mm = mockMatchMedia(true);
     await boot();
-    const labels = () => Array.from(document.querySelectorAll('.pane-switch button[data-tab]')).map((b) => b.textContent);
+    const labels = () => Array.from(screen.getByTestId('split-tabs').querySelectorAll('button[data-tab]')).map((b) => b.textContent);
     // The float landed at the end: one, two, (blank) → two, blank, one.
-    await waitFor(() => expect(labels()).toEqual(['1 · two', '2', '3 · one']));
+    await waitFor(() => expect(labels()).toEqual(['1 · two', '2 · 새 세션', '3 · one']));
     const stored = () => JSON.parse(localStorage.getItem('deck.ui.v1')!) as { panes: { float?: unknown; parkedFloat?: unknown }[] };
     expect(stored().panes.some((p) => p.float)).toBe(false);
     expect(stored().panes[2]!.parkedFloat).toEqual({ x: 10, y: 10, w: 400, h: 300 });
     // Drag tab 3 (one) to the front: tabs 100 wide at 0 / 100 / 200.
-    const tabs = Array.from(document.querySelectorAll<HTMLElement>('.pane-switch button[data-tab]'));
+    const tabs = Array.from(screen.getByTestId('split-tabs').querySelectorAll<HTMLElement>('button[data-tab]'));
     const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
       const i = tabs.indexOf(this as HTMLElement);
       const x = i >= 0 ? i * 100 : 0;
       return { width: i >= 0 ? 100 : 400, height: 30, left: x, right: x + (i >= 0 ? 100 : 400), top: 0, bottom: 30, x, y: 0, toJSON: () => ({}) } as DOMRect;
     });
     try {
-      const strip = document.querySelector('.pane-switch') as HTMLElement;
+      const strip = screen.getByTestId('split-tabs');
       fireEvent.pointerDown(tabs[2]!, { clientX: 250, clientY: 15, pointerId: 1, button: 0, pointerType: 'mouse' });
       fireEvent.pointerMove(window, { clientX: 20, clientY: 15, pointerId: 1 });
       expect(strip.classList.contains('tabs-reordering')).toBe(true);
       fireEvent.pointerUp(window, { clientX: 20, clientY: 15, pointerId: 1 });
     } finally { rect.mockRestore(); }
-    expect(labels()).toEqual(['1 · one', '2 · two', '3']);
+    expect(labels()).toEqual(['1 · one', '2 · two', '3 · 새 세션']);
     // Back on a wide screen: the parked pane floats again where it was (it travelled to the front meanwhile).
     mm.setPhone(false);
     const card = document.querySelector('.float-card[data-float]') as HTMLElement;
@@ -870,7 +880,7 @@ describe('App phone layout (D10)', () => {
     // And a phone again parks it (no card, a tab at the end).
     mm.setPhone(true);
     expect(document.querySelector('.float-card')).toBeNull();
-    expect(labels()).toEqual(['1 · two', '2', '3 · one']);
+    expect(labels()).toEqual(['1 · two', '2 · 새 세션', '3 · one']);
   });
 
   it('Escape closes the open phone drawer', async () => {
@@ -973,6 +983,7 @@ describe('App ⌘1 … ⌘9 (고정됨)', () => {
     server({ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two'), entry('s3', 'three')] }], pins: ['s1', 's2'] } as unknown as ServerMessage);
     press(1);
     expect(opened()).toEqual(['s1']);
+    fireEvent.click(within(document.querySelector<HTMLElement>('.sidebar')!).getByRole('button', { name: '검색' }));
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'two' } });
     press(1);
     expect(opened()).toEqual(['s1', 's2']);
@@ -1034,12 +1045,15 @@ describe('App new build without a server restart', () => {
     await bootWithBuild('b1');
     fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
     const labels = screen.getAllByRole('menuitem').map((b) => b.textContent ?? '');
-    expect(labels).toHaveLength(5);
+    // 동작 항목은 새로고침으로 끝나고, 그 뒤엔 비활성 버전 줄만 온다
+    expect(labels).toHaveLength(6);
     expect(labels[0]).toMatch(/^설정/);
     expect(labels[1]).toBe('사용량 기록');
     expect(labels[2]).toMatch(/^테마: /);
     expect(labels[3]).toMatch(/^단축키/);
     expect(labels[4]).toBe('새로고침');
+    expect(labels[5]).toMatch(/^deck /);
+    expect(screen.getByTestId('foot-menu-version').getAttribute('aria-disabled')).toBe('true');
   });
 });
 
@@ -1078,20 +1092,30 @@ describe('App boot', () => {
     vi.setSystemTime(new Date(2026, 9, 11, 0, 25, 0));
     sock.retries = 0;
     await boot();
-    expect(screen.getByText('연결됨')).toBeTruthy();
+    const dot = screen.getByTestId('activity-btn');
+    expect(dot.getAttribute('aria-label')).toBe('활동');
+    expect(document.querySelector('.conn')).toBeNull(); // no 연결됨 text in the top bar any more
     act(() => sock.onStatus!(false));
-    // A short blip (a restart) stays at 재연결 중…
-    expect(screen.getByText('재연결 중…')).toBeTruthy();
+    // The dot turns danger; a short blip (a restart) says 재연결 중… in the sheet, no banner yet.
+    expect(dot.classList.contains('lvl-down')).toBe(true);
+    expect(dot.getAttribute('aria-label')).toBe('활동 · 연결 끊김');
+    fireEvent.click(dot);
+    expect(within(screen.getByTestId('act-conn')).getByText('재연결 중…')).toBeTruthy();
     expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(21_000); });
-    expect(screen.getByText(/서버 응답 없음 · 00:25부터/)).toBeTruthy();
-    // Both the bar's button and the header chip retry now.
+    expect(screen.getByText(/서버 응답 없음 · 00:25부터 — 연결되면/)).toBeTruthy();
+    // Both the banner's button and the sheet's retry now.
     fireEvent.click(screen.getByText('다시 시도'));
-    fireEvent.click(screen.getByTitle(/눌러서 다시 시도/));
+    fireEvent.click(dot);
+    expect(within(screen.getByTestId('act-conn')).getByText('서버 응답 없음 · 00:25부터')).toBeTruthy();
+    fireEvent.click(within(screen.getByTestId('act-conn')).getByRole('button', { name: '다시 시도' }));
     expect(sock.retries).toBe(2);
     act(() => sock.onStatus!(true));
     expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
-    expect(screen.getByText('연결됨')).toBeTruthy();
+    expect(screen.queryByTestId('act-conn')).toBeNull();
+    expect(dot.classList.contains('lvl-down')).toBe(false);
   });
 });
 
@@ -1141,89 +1165,170 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
   const act1 = (sessionId: string, running: boolean, bg: number) => ({ sessionId, cwd: '/w', turnId: `t-${sessionId}`, running, bg, forMs: 0 });
   const activity = (sessions: ReturnType<typeof act1>[], extra: Record<string, unknown> = {}) => server({ type: 'activity', sessions, serverStartedAt: 1, ...extra } as ServerMessage);
   const permission = (sessionId: string | null, n = 0, cwd = '/w') => server({ type: 'permission_request', requestId: `r-${sessionId}-${n}`, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, turnId: `t-${sessionId}`, sessionId, cwd } as ServerMessage);
-  const chipText = () => screen.getByTestId('work-chip').querySelector('.chip-long')!.textContent;
   const PREVIEW = ['routePreview'];
 
-  it('사용량 toggles the usage sheet; ✕ hands focus back to the button', async () => {
+  const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 42, resetsAt: null } } } };
+
+  it('the usage chip toggles the usage sheet; ✕ hands focus back to the chip', async () => {
     await boot();
-    const btn = screen.getByRole('button', { name: '사용량' });
+    server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
+    const btn = screen.getByTestId('usage-chip');
     expect(btn.getAttribute('aria-expanded')).toBe('false');
     btn.focus();
     fireEvent.click(btn);
-    expect(screen.getByRole('dialog', { name: '토큰 사용량' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: '사용량' })).toBeTruthy();
     expect(btn.getAttribute('aria-expanded')).toBe('true');
     expect(btn.getAttribute('aria-haspopup')).toBe('dialog');
     expect(document.activeElement?.getAttribute('aria-label')).toBe('닫기');
     fireEvent.click(btn);
-    expect(screen.queryByRole('dialog', { name: '토큰 사용량' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '사용량' })).toBeNull();
     expect(btn.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(btn);
-    fireEvent.click(within(screen.getByRole('dialog', { name: '토큰 사용량' })).getByRole('button', { name: '닫기' }));
-    expect(screen.queryByRole('dialog', { name: '토큰 사용량' })).toBeNull();
+    fireEvent.click(within(screen.getByRole('dialog', { name: '사용량' })).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('dialog', { name: '사용량' })).toBeNull();
     expect(document.activeElement).toBe(btn);
   });
 
-  it('설정 → 사용량 보기: closing the usage sheet lands focus on the top bar 사용량 button', async () => {
+  it('아바타 메뉴 → 사용량 기록 (설정 has no row for it): the sheet opens with the history; closing it lands focus on the top bar usage chip', async () => {
     await boot();
+    server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
     act(() => { window.dispatchEvent(new Event('deck:open-settings')); });
-    fireEvent.click(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '사용량 보기' }));
-    expect(screen.queryByRole('dialog', { name: '설정' })).toBeNull();
-    fireEvent.click(within(screen.getByRole('dialog', { name: '토큰 사용량' })).getByRole('button', { name: '닫기' }));
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '사용량' }));
+    expect(within(screen.getByRole('dialog', { name: '설정' })).queryByRole('button', { name: '사용량 보기' })).toBeNull();
+    fireEvent.click(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '닫기' }));
+    fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '사용량 기록' }));
+    const sheet = screen.getByRole('dialog', { name: '사용량' });
+    expect(within(sheet).getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
+    expect(document.activeElement).toBe(screen.getByTestId('usage-chip'));
   });
 
-  it('작업 현황: zeros are left out, nothing at all is 한가함, 승인 대기 is emphasised', async () => {
+  const dot = () => screen.getByTestId('activity-btn');
+  const openSheet = () => { fireEvent.click(dot()); return screen.getByRole('dialog', { name: '활동' }); };
+  const rowsOf = (sec: string) => within(screen.getByTestId(sec)).getAllByRole('button').filter((b) => b.classList.contains('act-row'));
+
+  it('활동 점: one state at a time; 승인 대기 counts cards in a badge and wins; the label lists the counts', async () => {
     await boot();
     activity([]);
-    expect(chipText()).toBe('한가함');
-    expect(screen.getByTestId('work-chip').classList.contains('idle')).toBe(true);
+    expect(dot().classList.contains('lvl-idle')).toBe(true);
+    expect(dot().getAttribute('aria-label')).toBe('활동');
+    expect(screen.queryByTestId('activity-badge')).toBeNull();
     activity([act1('s1', true, 0)]);
-    expect(chipText()).toBe('실행 중 1');
+    expect(dot().classList.contains('lvl-running')).toBe(true);
+    expect(dot().getAttribute('aria-label')).toBe('활동 · 실행 중 1');
+    activity([act1('s1', false, 2)]);
+    expect(dot().classList.contains('lvl-bg')).toBe(true);
     activity([act1('s1', true, 0), act1('s2', false, 2)]);
-    expect(chipText()).toBe('실행 중 1 · 백그라운드 1');
-    expect(screen.getByTestId('work-chip').querySelector('.chip-short')!.textContent).toBe('▶1 · ⏸1');
+    expect(dot().getAttribute('aria-label')).toBe('활동 · 실행 중 1 · 백그라운드 1');
     permission('s3');
-    const chip = screen.getByTestId('work-chip');
-    expect(chipText()).toBe('실행 중 1 · 백그라운드 1 · 승인 대기 1');
-    expect(chip.querySelector('.chip-long b.work-wait')!.textContent).toBe('승인 대기 1');
-    expect(chip.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(dot().classList.contains('lvl-waiting')).toBe(true);
+    expect(screen.getByTestId('activity-badge').textContent).toBe('1');
+    expect(dot().getAttribute('aria-label')).toBe('활동 · 승인 대기 1 · 실행 중 1 · 백그라운드 1');
+    expect(dot().getAttribute('aria-haspopup')).toBe('dialog');
+    permission('s3', 1);
+    expect(screen.getByTestId('activity-badge').textContent).toBe('2');
+    server({ type: 'permission_resolved', requestId: 'r-s3-0' } as ServerMessage);
+    server({ type: 'permission_resolved', requestId: 'r-s3-1' } as ServerMessage);
+    expect(screen.queryByTestId('activity-badge')).toBeNull();
   });
 
-  it('작업 현황: 승인 대기 counts sessions (two cards of one = 1) and wins over 실행 중 / 백그라운드', async () => {
+  it('시트: 승인 대기 cards are answered right in the sheet; the card head opens its session', async () => {
     await boot();
-    activity([act1('s1', true, 0), act1('s2', false, 1)]);
-    permission('s1', 0);
-    permission('s1', 1);
-    expect(chipText()).toBe('백그라운드 1 · 승인 대기 1');
     permission('s2');
-    expect(chipText()).toBe('승인 대기 2');
-    expect(screen.getByTestId('work-chip').title).toMatch(/승인 대기인 세션은 실행 중·백그라운드에 세지 않습니다/);
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button').filter((b) => b.classList.contains('work-row'));
-    expect(rows.map((r) => r.textContent)).toEqual(['one승인 대기', 'two승인 대기']);
+    const sheet = openSheet();
+    expect(within(sheet).getByTestId('act-waiting').querySelector('.act-sec-title')!.textContent).toBe('승인 대기 1');
+    sock.frames = [];
+    fireEvent.click(within(screen.getByTestId('act-waiting')).getByRole('button', { name: '허용 1회' }));
+    expect(frames()).toContainEqual({ type: 'permission_response', requestId: 'r-s2-0', decision: 'once' });
+    expect(screen.getByRole('dialog', { name: '활동' })).toBeTruthy(); // answered without leaving the sheet
+    fireEvent.click(rowsOf('act-waiting')[0]!);
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
   });
 
-  it('작업 현황: a click lists the sessions (승인 대기 first) and a row opens its session', async () => {
+  it('시트: 실행 중 rows open their session or 중단 its turn; a session with a card shows only under 승인 대기', async () => {
+    await boot();
+    activity([act1('s1', true, 0), act1('s2', true, 0)]);
+    permission('s2');
+    openSheet();
+    expect(rowsOf('act-running').map((r) => r.textContent)).toEqual(['one실행 중']);
+    sock.frames = [];
+    fireEvent.click(within(screen.getByTestId('act-running')).getByRole('button', { name: 'one 중단' }));
+    expect(frames()).toContainEqual({ type: 'interrupt', turnId: 't-s1' });
+    fireEvent.click(rowsOf('act-running')[0]!);
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's1' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
+  });
+
+  it('시트: 백그라운드 lists sessions with their task titles and /bg tasks with 승인 대기 and 취소', async () => {
+    await boot(['tasks']);
+    server({ type: 'activity', sessions: [{ ...act1('s1', false, 2), tasks: ['dev server', 'watch'] }], serverStartedAt: 1 } as ServerMessage);
+    server({ type: 'tasks', tasks: [{ taskId: 'k1', fromSessionId: 's1', cwd: '/w', title: '리팩터', status: 'running', sessionId: 's7', createdAt: 1, waiting: true }, { taskId: 'k2', fromSessionId: 's1', cwd: '/w', title: '끝난 일', status: 'done', sessionId: 's8', createdAt: 1 }], cap: 3 } as ServerMessage);
+    // A task stopped on a card counts as 승인 대기 even when its card is not here.
+    expect(screen.getByTestId('activity-badge').textContent).toBe('1');
+    openSheet();
+    const bg = screen.getByTestId('act-bg');
+    expect(rowsOf('act-bg').map((r) => r.textContent)).toEqual(['one백그라운드 2']);
+    expect(bg.textContent).toContain('· dev server');
+    const tasks = within(bg).getAllByTestId('act-task');
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]!.textContent).toContain('승인 대기');
+    sock.frames = [];
+    fireEvent.click(within(tasks[0]!).getByRole('button', { name: '취소' }));
+    expect(frames()).toContainEqual({ type: 'cancel_task', taskId: 'k1' });
+    fireEvent.click(within(tasks[0]!).getByRole('button', { name: '열어 보기' }));
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's7' });
+  });
+
+  it('시트: a card with no pane opens in its folder; a new chat\'s card (no id yet) heads as 새 대화', async () => {
+    await boot();
+    permission('s9', 0, '/w/other');
+    permission(null);
+    openSheet();
+    expect(rowsOf('act-waiting').map((r) => r.textContent)).toEqual(['other열기', '새 대화열기']);
+    sock.frames = [];
+    fireEvent.click(rowsOf('act-waiting')[0]!);
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's9' });
+  });
+
+  it('시트: a modal dialog — Escape closes it and gives focus back to the dot; Tab stays inside', async () => {
     await boot();
     activity([act1('s1', true, 0)]);
-    permission('s2');
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const pop = screen.getByRole('dialog', { name: '작업 현황' });
-    const rows = within(pop).getAllByRole('button').filter((b) => b.classList.contains('work-row'));
-    expect(rows.map((r) => r.textContent)).toEqual(['two승인 대기', 'one실행 중']);
-    sock.frames = [];
-    fireEvent.click(rows[0]!);
-    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+    dot().focus();
+    const sheet = openSheet();
+    expect(dot().getAttribute('aria-expanded')).toBe('true');
+    expect(sheet.getAttribute('aria-modal')).toBe('true');
+    const close = within(sheet).getByRole('button', { name: '닫기' });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).not.toBe(close);
+    expect(sheet.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
+    expect(document.activeElement).toBe(dot());
+    expect(dot().getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('하이라이트: the 작업 현황 link, the palette action and the Settings row show only when the server has the feature', async () => {
+  it('비어 있음: the sheet says nothing is running (with when work ended, once seen) and offers 새 대화', async () => {
+    await boot();
+    let sheet = openSheet();
+    expect(within(sheet).getByText('지금 실행 중인 작업이 없어요')).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole('button', { name: '새 대화' }));
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
+    activity([act1('s1', true, 0)]);
+    activity([]);
+    sheet = openSheet();
+    expect(within(sheet).getByText(/^지금 실행 중인 작업이 없어요 · \d\d:\d\d 까지 작업$/)).toBeTruthy();
+  });
+
+  it('하이라이트: the sheet row and the palette action show only when the server has the feature; 설정 never has a row', async () => {
     const press = () => fireEvent.keyDown(window, { code: 'KeyK', key: '', ctrlKey: true });
     await boot();
-    activity([act1('s1', true, 0)]);
-    fireEvent.click(screen.getByTestId('work-chip'));
-    expect(within(screen.getByRole('dialog', { name: '작업 현황' })).queryByRole('button', { name: '하이라이트 보기 →' })).toBeNull();
-    fireEvent.click(screen.getByTestId('work-chip'));
+    openSheet();
+    expect(screen.queryByTestId('act-highlights')).toBeNull();
+    fireEvent.keyDown(document, { key: 'Escape' });
     press();
     expect(screen.queryByText('하이라이트 보기')).toBeNull();
     fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Escape' });
@@ -1232,98 +1337,39 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     cleanup();
     sock.onMessage = null;
     await boot(['highlights']);
-    activity([act1('s1', true, 0)]);
-    fireEvent.click(screen.getByTestId('work-chip'));
-    fireEvent.click(within(screen.getByRole('dialog', { name: '작업 현황' })).getByRole('button', { name: '하이라이트 보기 →' }));
+    openSheet();
+    fireEvent.click(screen.getByTestId('act-highlights'));
     expect(screen.getByRole('dialog', { name: '하이라이트' })).toBeTruthy();
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
     fireEvent.keyDown(document, { key: 'Escape' });
     press();
     expect(screen.getByText('하이라이트 보기')).toBeTruthy();
     fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Escape' });
     act(() => { window.dispatchEvent(new CustomEvent('deck:open-settings')); });
-    expect(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '하이라이트' })).toBeTruthy();
+    expect(within(screen.getByRole('dialog', { name: '설정' })).queryByRole('button', { name: '하이라이트' })).toBeNull();
   });
 
-  it('작업 현황: a session that only waits for approval (not in the list) opens in its folder', async () => {
-    await boot();
-    permission('s9', 0, '/w/other');
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button').filter((b) => b.classList.contains('work-row'));
-    expect(rows.map((r) => r.textContent)).toEqual(['other승인 대기']);
-    sock.frames = [];
-    fireEvent.click(rows[0]!);
-    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's9' });
-  });
-
-  it('작업 현황: a card of a new chat (no session id yet) is a 새 대화 row', async () => {
-    await boot();
-    permission(null);
-    expect(chipText()).toBe('승인 대기 1');
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const rows = within(screen.getByRole('dialog', { name: '작업 현황' })).getAllByRole('button').filter((b) => b.classList.contains('work-row'));
-    expect(rows.map((r) => r.textContent)).toEqual(['새 대화승인 대기']);
-    fireEvent.click(rows[0]!);
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
-  });
-
-  it('작업 현황: Escape closes the list and gives focus back to the chip', async () => {
-    await boot();
-    activity([act1('s1', true, 0)]);
-    const chip = screen.getByTestId('work-chip');
-    fireEvent.click(chip);
-    expect(chip.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
-    expect(document.activeElement).toBe(chip);
-    expect(chip.getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('작업 현황: when everything finishes with the list open, the list is gone and does not come back with new work', async () => {
-    await boot();
-    activity([act1('s1', true, 0)]);
-    fireEvent.click(screen.getByTestId('work-chip'));
-    expect(screen.getByRole('dialog', { name: '작업 현황' })).toBeTruthy();
-    activity([]);
-    expect(chipText()).toMatch(/^한가함 · \d\d:\d\d 까지 작업$/);
-    activity([act1('s2', true, 0)]);
-    expect(screen.getByTestId('work-chip').getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
-  });
-
-  it('한가함: the popover says nothing is running and offers 새 대화', async () => {
-    await boot();
-    fireEvent.click(screen.getByTestId('work-chip'));
-    const pop = screen.getByRole('dialog', { name: '작업 현황' });
-    expect(within(pop).getByText('지금 실행 중인 작업이 없어요')).toBeTruthy();
-    fireEvent.click(within(pop).getByRole('button', { name: '새 대화' }));
-    expect(screen.queryByRole('dialog', { name: '작업 현황' })).toBeNull();
-  });
-
-  it('하이라이트 badge: only with the feature; asks once connected, shows the 24h count, a click opens the sheet', async () => {
-    await boot();
-    expect(screen.queryByTestId('hl-badge')).toBeNull();
-    cleanup();
-    sock.onMessage = null;
-    const list = { events: [{ at: 1, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }, { at: 2, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }] };
+  it('하이라이트: asks once connected (not without the feature), the sheet row shows the 24h count', async () => {
+    const list = { events: [{ at: 1, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }, { at: 2, kind: 'turn', sessionId: 's1', cwd: '/w', title: 'one', body: '완료', ok: true }, { at: 3, kind: 'task', sessionId: 's1', cwd: '/w', title: 'one', body: 'x', ok: true }] };
     const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(JSON.stringify(list), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
+    await boot();
+    expect(fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24')).toHaveLength(0);
+    cleanup();
+    sock.onMessage = null;
     await boot(['highlights']);
-    await waitFor(() => expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-long')!.textContent).toBe('하이라이트 2'));
-    expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-short')!.textContent).toBe('✦ 2');
-    expect(fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24')).toHaveLength(1);
-    fireEvent.click(screen.getByTestId('hl-badge'));
-    expect(screen.getByRole('dialog', { name: '하이라이트' })).toBeTruthy();
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24')).toHaveLength(1));
+    openSheet();
+    await waitFor(() => expect(screen.getByTestId('act-highlights').textContent).toBe('하이라이트 2보기 →'));
   });
 
-  it('하이라이트 badge: asks again 2s after a turn ends', async () => {
+  it('하이라이트: asks again 2s after a turn ends', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(JSON.stringify({ events: [] }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     await boot(['highlights']);
     const asks = () => fetchMock.mock.calls.filter(([u]) => String(u) === '/api/highlights?hours=24').length;
     await waitFor(() => expect(asks()).toBe(1));
-    expect(screen.getByTestId('hl-badge').querySelector('.hl-badge-long')!.textContent).toBe('하이라이트');
     activity([act1('s1', true, 0)]);
     activity([]);
     act(() => { vi.advanceTimersByTime(1_900); });
@@ -1332,65 +1378,64 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(asks()).toBe(2);
   });
 
-  it('서버 chip: uptime from serverStartedAt; draining and 재시작됨 take its place; none without a start time', async () => {
+  it('서버: uptime from serverStartedAt; draining and 재시작됨 take its place; no section without a start time', async () => {
     await boot();
-    expect(document.querySelector('.server-chip')).toBeNull();
+    openSheet();
+    expect(screen.queryByTestId('act-server')).toBeNull();
     activity([], { serverStartedAt: Date.now() - 3 * 3_600_000 - 60_000 });
-    const chip = screen.getByTestId('server-chip');
-    expect(chip.textContent).toBe('서버 · 3시간째');
-    expect(chip.classList.contains('server-uptime')).toBe(true);
-    expect(chip.title).toMatch(/^서버 시작 \d+\/\d+ \d\d:\d\d$/);
+    const up = screen.getByTestId('server-uptime');
+    expect(up.textContent).toBe('서버 · 3시간째');
+    expect(up.title).toMatch(/^서버 시작 \d+\/\d+ \d\d:\d\d$/);
     activity([act1('s1', true, 0)], { serverStartedAt: Date.now() - 3 * 3_600_000, draining: true });
-    expect(screen.queryByTestId('server-chip')).toBeNull();
-    expect(document.querySelectorAll('.server-chip')).toHaveLength(1);
-    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 대기 중 · 작업 1개 기다림');
+    expect(screen.queryByTestId('server-uptime')).toBeNull();
+    expect(screen.getByTestId('drain-status').textContent).toBe('재시작 대기 중 · 작업 1개 기다림');
+    expect(dot().classList.contains('lvl-running')).toBe(false);
+    expect(dot().classList.contains('lvl-server')).toBe(true);
+    expect(dot().querySelector('.activity-ring')!.textContent).toBe('↻');
+    // A row of what the restart waits for opens its session.
+    sock.frames = [];
+    fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: /^one/ }));
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's1' });
     activity([], { serverStartedAt: Date.now() - 60_000 });
+    openSheet();
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
-    expect(screen.queryByTestId('server-chip')).toBeNull();
-    fireEvent.click(screen.getByText(/^재시작됨/));
-    expect(screen.getByTestId('server-chip').textContent).toBe('서버 · 1분째');
+    fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByText(/^재시작됨/)).toBeNull();
+    expect(screen.getByTestId('server-uptime').textContent).toBe('서버 · 1분째');
   });
 
-  it('작업 현황 and server chips are desktop only', async () => {
-    mockMatchMedia(true);
-    await boot();
-    activity([act1('s1', true, 0)], { draining: true });
-    expect(screen.queryByTestId('work-chip')).toBeNull();
-    expect(screen.queryByText(/재시작 대기 중/)).toBeNull();
-    activity([], { serverStartedAt: Date.now() - 60_000 });
-    expect(document.querySelector('.server-chip')).toBeNull();
-    expect(screen.queryByTestId('hl-badge')).toBeNull();
-  });
-
-  it('draining: 재시작 대기 중 · 작업 N개 기다림 (short: 재시작 대기 · N), or 재시작 중… when nothing is left', async () => {
+  it('draining: 재시작 대기 중 · 작업 N개 기다림, or 재시작 중… when nothing is left', async () => {
     await boot();
     activity([act1('s1', true, 0), act1('s2', false, 1)], { draining: true });
-    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 대기 중 · 작업 2개 기다림');
-    expect(screen.getByRole('status').querySelector('.chip-short')!.textContent).toBe('재시작 대기 · 2');
+    openSheet();
+    expect(screen.getByTestId('drain-status').textContent).toBe('재시작 대기 중 · 작업 2개 기다림');
     activity([], { draining: true });
-    expect(screen.getByRole('status').querySelector('.chip-long')!.textContent).toBe('재시작 중…');
+    expect(screen.getByTestId('drain-status').textContent).toBe('재시작 중…');
     activity([]);
-    expect(screen.queryByText('재시작 중…')).toBeNull();
+    expect(screen.queryByTestId('drain-status')).toBeNull();
   });
 
-  it('재시작됨 HH:MM appears only when serverStartedAt changes, and goes on click or after 10 minutes', async () => {
+  it('재시작됨 HH:MM appears only when serverStartedAt changes (one toast), and goes on 닫기 or after 10 minutes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     await boot();
+    openSheet();
     activity([], { serverStartedAt: 100 });
     expect(screen.queryByText(/재시작됨/)).toBeNull();
     activity([], { serverStartedAt: 100 });
     expect(screen.queryByText(/재시작됨/)).toBeNull();
     activity([], { serverStartedAt: 200 });
-    fireEvent.click(screen.getByText(/^재시작됨 \d\d:\d\d$/));
-    expect(screen.queryByText(/재시작됨/)).toBeNull();
+    expect([...document.querySelectorAll('.toast-item')].filter((t) => /서버가 다시 시작됐어요 · \d\d:\d\d/.test(t.textContent ?? ''))).toHaveLength(1);
+    fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByText(/^재시작됨/)).toBeNull();
     activity([], { serverStartedAt: 300 });
-    expect(screen.getByText(/재시작됨/)).toBeTruthy();
+    expect(screen.getByText(/^재시작됨/)).toBeTruthy();
     act(() => { vi.advanceTimersByTime(10 * 60_000 + 1); });
-    expect(screen.queryByText(/재시작됨/)).toBeNull();
+    expect(screen.queryByText(/^재시작됨/)).toBeNull();
   });
 
-  it('an older server\'s activity without serverStartedAt shows no 재시작됨 chip (and no NaN:NaN)', async () => {
+  it('an older server\'s activity without serverStartedAt shows no 재시작됨 (and no NaN:NaN)', async () => {
     await boot();
+    openSheet();
     activity([], { serverStartedAt: 100 });
     activity([], { serverStartedAt: undefined });
     activity([], { serverStartedAt: undefined });
@@ -1407,16 +1452,20 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     sock.onMessage = null;
     await boot();
     activity([], { serverStartedAt: 200 });
+    openSheet();
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
-    cleanup(); // a second reload keeps the chip that was showing
+    cleanup(); // a second reload keeps what was showing, without a second toast
     sock.onMessage = null;
     await boot();
+    openSheet();
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
+    expect(screen.queryByText(/서버가 다시 시작됐어요/)).toBeNull();
     activity([], { serverStartedAt: 200 });
-    fireEvent.click(screen.getByText(/^재시작됨/));
+    fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: '닫기' }));
     cleanup();
     sock.onMessage = null;
     await boot();
+    openSheet();
     expect(screen.queryByText(/재시작됨/)).toBeNull();
   });
 
@@ -1428,8 +1477,41 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     act(() => sock.onStatus!(false));
     server(hello(PREVIEW));
     activity([], { serverStartedAt: 200 });
+    openSheet();
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
-    expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
+    expect(frames()).toContainEqual({ route_preview: undefined, type: 'route_preview', sessionId: 's1', cwd: '/w' });
+  });
+
+  it('폰: another session\'s approval → the dot\'s badge number, one toast (열기 opens it, read out once); answered from the sheet', async () => {
+    mockMatchMedia(true);
+    await boot();
+    // Cards already waiting right after connecting are shown, not toasted: wait that window out.
+    await act(async () => { await new Promise((r) => setTimeout(r, ALERT_SEED_MS + 20)); });
+    openSession('one');
+    activity([act1('s1', true, 0)], { draining: true });
+    expect(screen.queryByTestId('work-chip')).toBeNull();
+    // The open session's own card raises no toast (it is on screen).
+    server({ type: 'permission_request', requestId: 'own', toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, turnId: 't-s1', sessionId: 's1', cwd: '/w' } as ServerMessage);
+    const toasts = () => [...document.querySelectorAll('.toast-item')].filter((t) => (t.textContent ?? '').includes('승인 대기'));
+    expect(toasts()).toHaveLength(0);
+    permission('s2');
+    expect(screen.getByTestId('activity-badge').textContent).toBe('2');
+    expect(dot().getAttribute('aria-label')).toBe('활동 · 승인 대기 2 · 실행 중 1');
+    expect(toasts()).toHaveLength(1);
+    const toast = toasts()[0] as HTMLElement;
+    expect(toast.textContent).toContain('two · 승인 대기');
+    // Read out by the toast's own live region only — not a second time in the cards' live line.
+    expect(toast.getAttribute('role')).toBe('status');
+    expect(screen.getByTestId('cards-live').textContent).not.toContain('승인 대기');
+    // The same card again (a reconnect's snapshot) does not toast twice.
+    permission('s2');
+    expect(toasts()).toHaveLength(1);
+    sock.frames = [];
+    fireEvent.click(within(toast).getByRole('button', { name: '열기' }));
+    expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
+    expect(toasts()).toHaveLength(0);
+    const sheet = openSheet();
+    expect(within(sheet).getAllByRole('button', { name: '허용 1회' }).length).toBe(2);
   });
 
   it('다음 턴: an open Claude session asks route_preview and its answer tags that account', async () => {
@@ -1437,9 +1519,12 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     openSession('one');
     expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
     server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: '5h 여유', asOpus: true } as ServerMessage);
+    // The usage chip says where the next turn goes (→C until the session's own account is known), on a phone too;
+    // the reason is in its title.
     const tag = screen.getByTestId('next-c');
-    expect(tag.textContent).toBe('→ 다음 턴 · Opus');
-    expect(tag.title).toContain('5h 여유');
+    expect(tag.textContent).toBe('→C');
+    expect(screen.getByTestId('usage-chip').title).toContain('5h 여유');
+    expect(screen.getByTestId('usage-chip').getAttribute('aria-label')).toContain('다음 턴 C(Opus) 계정');
     server({ type: 'route_preview', sessionId: 'other', account: 'a', reason: 'x' } as ServerMessage);
     expect(screen.queryByTestId(/^next-/)).toBeNull(); // an answer for another session is not shown
   });

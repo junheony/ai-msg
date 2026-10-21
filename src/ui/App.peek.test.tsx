@@ -90,6 +90,7 @@ describe('hidden sidebar peek (desktop)', () => {
 
   it('stays out while a field inside has focus, then closes once it is left', async () => {
     await bootPeeked();
+    fireEvent.click(within(wrap()).getByRole('button', { name: '검색' }));
     const search = within(wrap()).getByLabelText('세션 검색');
     search.focus();
     fireEvent.mouseLeave(wrap());

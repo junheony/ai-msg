@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dateGroupOf, groupByDate } from './dateGroups';
 import { fuzzyFilter, fuzzyScore } from './fuzzy';
-import { isMacPlatform, matchPaneShortcut, matchPinShortcut, matchShortcut, pinKeyLabel, shortcutList, type ShortcutKey } from './shortcuts';
+import { isMacPlatform, matchPaneShortcut, modKeys, matchPinShortcut, matchShortcut, pinKeyLabel, shortcutList, type ShortcutKey } from './shortcuts';
 
 describe('fuzzyScore / fuzzyFilter', () => {
   it('matches substrings and in-order subsequences, case-insensitively; misses are null', () => {
@@ -99,6 +99,12 @@ describe('shortcuts', () => {
   it('platform detection and cheat-sheet labels', () => {
     expect(isMacPlatform({ platform: 'MacIntel' })).toBe(true);
     expect(isMacPlatform({ platform: 'Win32' })).toBe(false);
+    // Off a Mac the symbols are spelled out (Ctrl+Shift+E, never Ctrl+⇧E).
+    expect(modKeys('⇧E', true)).toBe('⌘⇧E');
+    expect(modKeys('⇧E', false)).toBe('Ctrl+Shift+E');
+    expect(modKeys('⌥⇧[', false)).toBe('Ctrl+Alt+Shift+[');
+    expect(modKeys('⇧Enter', false)).toBe('Ctrl+Shift+Enter');
+    expect(modKeys('↩', false)).toBe('Ctrl+Enter');
     expect(shortcutList(true).find((s) => s.id === 'palette')?.keys).toBe('⌘K');
     expect(shortcutList(false).find((s) => s.id === 'new-pane')?.keys).toBe('Ctrl+⇧O');
   });

@@ -5,17 +5,18 @@ export type Theme = 'system' | 'light' | 'dark';
 export type FontSize = 'small' | 'normal' | 'large' | 'xlarge';
 export type ChatWidth = 'narrow' | 'wide';
 export type SendKey = 'enter' | 'mod-enter';
-export type Prefs = { theme: Theme; fontSize: FontSize; chatWidth: ChatWidth; sendKey: SendKey };
+export type Prefs = { theme: Theme; fontSize: FontSize; chatWidth: ChatWidth; sendKey: SendKey; /** 간결 모드: results-first chat (default on). */ conciseMode: boolean };
 
 /** 작게 = the pre-settings size; the default (보통) is already larger. */
 export const FONT_SCALE: Record<FontSize, number> = { small: 1, normal: 1.1, large: 1.2, xlarge: 1.35 };
-export const DEFAULT_PREFS: Prefs = { theme: 'system', fontSize: 'normal', chatWidth: 'narrow', sendKey: 'enter' };
+export const DEFAULT_PREFS: Prefs = { theme: 'system', fontSize: 'normal', chatWidth: 'narrow', sendKey: 'enter', conciseMode: true };
 
 const ALLOWED: { [K in keyof Prefs]: readonly Prefs[K][] } = {
   theme: ['system', 'light', 'dark'],
   fontSize: ['small', 'normal', 'large', 'xlarge'],
   chatWidth: ['narrow', 'wide'],
   sendKey: ['enter', 'mod-enter'],
+  conciseMode: [true, false],
 };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
@@ -60,12 +61,13 @@ export function prefsReducer(state: Prefs, action: PrefsAction): Prefs {
 export function applyPrefs(prefs: Prefs, root: HTMLElement = document.documentElement): void {
   if (prefs.theme === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', prefs.theme);
   root.setAttribute('data-width', prefs.chatWidth);
+  root.setAttribute('data-concise', prefs.conciseMode ? 'on' : 'off');
   root.style.setProperty('--font-scale', String(FONT_SCALE[prefs.fontSize]));
   if (root.ownerDocument) applyThemeColor(prefs.theme, root.ownerDocument);
 }
 
 /** The top bar's colour (--sidebar) per theme: the browser chrome / status bar matches the bar under it. */
-export const THEME_COLOR = { dark: '#181817', light: '#f1efea' } as const;
+export const THEME_COLOR = { dark: '#121211', light: '#f1efea' } as const;
 
 /**
  * index.html carries one theme-color meta per colour scheme. A forced theme points both at its colour (the browser

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { ERROR_TOAST_MS, INFO_TOAST_MS, MAX_TOASTS, Toasts, type ToastItem } from './Toasts';
+import { ERROR_TOAST_MS, INFO_TOAST_MS, MAX_TOASTS, PHONE_TOAST_MS, Toasts, type ToastItem } from './Toasts';
 
 function Harness({ initial }: { initial: ToastItem[] }) {
   const [toasts, setToasts] = useState(initial);
@@ -38,6 +38,25 @@ describe('Toasts', () => {
     expect(screen.getByText('err')).toBeTruthy();
     act(() => { vi.advanceTimersByTime(ERROR_TOAST_MS - INFO_TOAST_MS); });
     expect(screen.queryByText('err')).toBeNull();
+  });
+
+  it('phone: stacks just above the composer and an info toast (even a longer one) goes after PHONE_TOAST_MS', () => {
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes('max-width: 720px'), media: q, addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof window.matchMedia;
+    const composer = document.body.appendChild(document.createElement('div'));
+    composer.className = 'composer-wrap';
+    composer.getBoundingClientRect = () => ({ top: window.innerHeight - 120, height: 120, bottom: window.innerHeight, left: 0, right: 0, width: 0, x: 0, y: 0, toJSON: () => ({}) });
+    try {
+      render(<Toasts toasts={[{ id: 1, text: 'note', kind: 'info', ms: 8_000 }]} onDismiss={() => {}} aboveComposer />);
+      expect((document.querySelector('.toasts') as HTMLElement).style.bottom).toBe('128px');
+      cleanup();
+      render(<Harness initial={[{ id: 1, text: 'note', kind: 'info', ms: 8_000 }]} />);
+      act(() => { vi.advanceTimersByTime(PHONE_TOAST_MS); });
+      expect(screen.queryByText('note')).toBeNull();
+    } finally {
+      composer.remove();
+      window.matchMedia = mm;
+    }
   });
 
   it('kind defaults to error', () => {

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
+import { stripSystemReminders } from '../../shared/choices';
 import { GROK_SESSION_ID_RE } from './GrokEngine';
 
 type Rec = Record<string, unknown>;
@@ -22,7 +23,8 @@ export function grokUserText(content: unknown): string | null {
     const m = QUERY.exec(p);
     if (m) { const t = m[1]!.trim(); return t || null; }
   }
-  const kept = parts.filter((p) => !INJECTED.test(p)).map((p) => p.trim()).filter(Boolean);
+  // A part that starts with injected context keeps what follows its closed reminder blocks (a prompt deck prefixed).
+  const kept = parts.map((p) => (INJECTED.test(p) ? stripSystemReminders(p) : p)).filter((p) => !INJECTED.test(p)).map((p) => p.trim()).filter(Boolean);
   return kept.length ? kept.join('\n\n') : null;
 }
 

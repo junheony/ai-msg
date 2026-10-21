@@ -6,6 +6,7 @@ import { isGeminiAccount, isGrokAccount } from '../../shared/accounts';
 import type { AccountInfo, ClientMessage } from '../../shared/protocol';
 import { LEGACY_ACCOUNT_LIST, activePin, useAccounts } from '../accounts';
 import { has } from '../features';
+import { tasksForPane } from '../../shared/tasks';
 import { newChatDraftKey } from '../drafts';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
@@ -14,10 +15,10 @@ import type { UploadFn } from '../upload';
 import { Chat, modelChoices, type ChatProps } from './Chat';
 import { RegenerateContext, type Regenerate } from './MessageView';
 import { replyTurn, type ReplyTurn } from '../replyTurn';
-import { ModelPicker } from './ModelPicker';
 import { ForkMenu } from './ForkMenu';
 import { NewChat } from './NewChat';
-import { OpenInDesktop } from './OpenInDesktop';
+import { useOpenInDesktop } from './OpenInDesktop';
+import { HeadItem, SessionChipHead, type HeadMenuItem } from './SessionChipHead';
 import { SidePanel } from './SidePanel';
 import { openInNewTab } from './ShareMenu';
 import { deleteBlockedReason } from './SessionMenu';
@@ -27,8 +28,8 @@ import { CommanderSheet } from './CommanderSheet';
 import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
 import { NO_TABS, activeTab, carriesTabs, closeTab, openTab, readSideWidth, recallSideTabs, rememberSideTabs, saveSideWidth, selectTab, type SideTabs } from '../sideTabs';
 import { hasOpenPopup } from '../composerFocus';
-import { isMacPlatform, isTypingTarget } from '../shortcuts';
-import { PHONE_QUERY } from '../useIsPhone';
+import { isMacPlatform, isTypingTarget, modKeys } from '../shortcuts';
+import { PHONE_QUERY, useIsPhone } from '../useIsPhone';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -56,9 +57,8 @@ function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
 /** The side panel's open / close slide (styles.css side-in / side-out run a little shorter). */
 const SIDE_SLIDE_MS = 200;
 /**
- * Esc owners hasOpenPopup does not cover: the usage popover, the phone drawer, the hidden sidebar's peek, the folder
- * picker. The usage popover stays in the DOM while closed (hidden via aria-hidden/display:none, not unmounted —
- * see SeatCard), so a hidden tooltip must not count as "owning" the Esc.
+ * Esc owners hasOpenPopup does not cover: a long-press touch tooltip (useTouchTooltip), the phone drawer, the hidden
+ * sidebar's peek, the folder picker. A tooltip marked aria-hidden is not showing, so it does not "own" the Esc.
  */
 const ESC_OWNERS = '[role="tooltip"]:not([aria-hidden="true"]), .sidebar-wrap.drawer.open, .sidebar-wrap.peek, .folder-picker';
 
@@ -92,6 +92,19 @@ export function sendFromPane(pane: PaneState, text: string, attachments: Uploade
     clientRef,
   });
   if (sent === false) dispatch({ type: 'send_failed', clientRef, paneId: pane.id });
+}
+
+/**
+ * 백그라운드 작업: `text` as a new session in the pane's folder (the server answers with `tasks`). False = not sent
+ * (offline): the composer keeps the text. A refusal echoing the ref puts it back later (`task_sent`).
+ */
+export function startTaskFromPane(pane: PaneState, text: string, dispatch: (a: Action) => void, send: SendFn): boolean {
+  const s = pane.session;
+  if (!s) return false;
+  const clientRef = nextClientRef();
+  if (send({ type: 'start_task', cwd: s.cwd, text, fromSessionId: s.sessionId, clientRef }) === false) return false;
+  dispatch({ type: 'task_sent', paneId: pane.id, clientRef, text });
+  return true;
 }
 
 /** 새 세션으로 이어가기, step 1: the handoff-note turn in the current session (same account and model: warm cache). */
@@ -192,9 +205,9 @@ export type SessionActions = {
 /** ⌘⇧E: `detail` is the pane id whose side panel opens (the file picker) or closes, as its ⋯ 파일 열기 / 파일 패널 닫기. */
 export const TOGGLE_SIDE_EVENT = 'deck:toggle-side';
 
-export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts }: {
+export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts, onAddPane, onMaxPane, paneMaxed, headSlot, onPalette }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
@@ -215,8 +228,17 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   /** ⋯ 카드 접기 / 펼치기 and the – / ▭ head button (desktop, floating); `collapsed` picks the label. */
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  /** 보기 › 명령 팔레트… : opens the ⌘K palette (App's own handler). */
+  onPalette?: () => void;
   /** ⋯ 카드 배치… (desktop): the saved-layouts dialog. */
   onLayouts?: () => void;
+  /** 창 › 새 분할. */
+  onAddPane?: () => void;
+  /** 창 › 패널 최대화 / 패널 배치 되돌리기 (desktop, docked, split view): ⌘⇧Enter from the menu. */
+  onMaxPane?: () => void;
+  paneMaxed?: boolean;
+  /** The top bar's slot: this pane's session chip renders there (the one pane, or the phone's shown pane). */
+  headSlot?: Element | null;
   dispatch: (a: Action) => void;
   /** `false`: not sent (socket down). */
   send: SendFn;
@@ -375,22 +397,34 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const isNew = s?.sessionId === null;
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
-  // 파일 (the session folder in the side panel) lives in the header's ⋯ menu, as Claude keeps its header bare.
-  const fileMenu = s ? [{ label: side ? '파일 패널 닫기' : '파일 열기', run: () => (side ? closeSide() : openSide({ kind: 'pick' })) }] : [];
-  // 떠 있는 카드로 떼기 / 패널에 다시 붙이기: the pane as a card over the split view and back (the grip does the same by drag).
-  if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', run: onShift.left });
-  if (onShift?.right) fileMenu.push({ label: '오른쪽으로 이동', run: onShift.right });
-  if (floating && onDock) fileMenu.push({ label: '패널에 다시 붙이기', run: onDock });
-  else if (!floating && onFloat) fileMenu.push({ label: '떠 있는 카드로 떼기', run: onFloat });
-  if (floating && onToggleMax) fileMenu.push({ label: maximized ? '카드 원래 크기로' : '카드 최대화', run: onToggleMax });
-  if (floating && onArrange) fileMenu.push({ label: `떠 있는 카드 정렬 (${isMacPlatform() ? '⌘⇧G' : 'Ctrl+Shift+G'})`, run: onArrange });
-  if (floating && onToggleCollapse) fileMenu.push({ label: collapsed ? '카드 펼치기' : '카드 접기', run: onToggleCollapse });
-  if (onLayouts) fileMenu.push({ label: '카드 배치…', run: onLayouts });
+  // The session chip's menu rows from the pane, by group (Chat adds the session's own: 이름 바꾸기 … 공유 … 삭제).
+  const mod = (keys: string) => modKeys(keys, isMacPlatform());
+  const phone = useIsPhone();
+  const fileMenu: HeadMenuItem[] = [];
+  const desktopOpen = useOpenInDesktop(s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
+  if (desktopOpen) fileMenu.push({ label: 'Desktop에서 열기', run: desktopOpen, group: 'session' });
+  // 보기: 파일 패널 right after 대화에서 찾기 (spec §3.8 order); 명령 팔레트… closes the group (after 새 세션으로 이어가기)
+  // — phone only: its only way to ⌘K. A desktop has ⌘K and the sidebar's search, and its menu must fit the window.
+  if (s) fileMenu.push({ label: side ? '파일 패널 닫기' : '파일 열기', hint: mod('⇧E'), run: () => (side ? closeSide() : openSide({ kind: 'pick' })), group: 'view' });
+  if (onPalette && phone) fileMenu.push({ label: '명령 팔레트…', hint: mod('K'), run: onPalette, group: 'viewEnd' });
+  // 창: split (phone only — a desktop has the top bar's split button and ⌘⇧O), move, card ⇄ pane (the chip's drag does the same), size, layouts, a new tab, close.
+  if (onAddPane && phone) fileMenu.push({ label: '새 분할', hint: mod('⇧O'), run: onAddPane, group: 'window' });
+  if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', hint: mod('⌥⇧['), run: onShift.left, group: 'window' });
+  if (onShift?.right) fileMenu.push({ label: '오른쪽으로 이동', hint: mod('⌥⇧]'), run: onShift.right, group: 'window' });
+  if (floating && onDock) fileMenu.push({ label: '패널에 다시 붙이기', run: onDock, group: 'window' });
+  else if (!floating && onFloat && !phone) fileMenu.push({ label: '떠 있는 카드로 떼기', run: onFloat, group: 'window' });
+  if (floating && onToggleMax) fileMenu.push({ label: maximized ? '카드 원래 크기로' : '카드 최대화', hint: mod('⇧Enter'), run: onToggleMax, group: 'window' });
+  else if (!floating && onMaxPane) fileMenu.push({ label: paneMaxed ? '패널 배치 되돌리기' : '패널 최대화', hint: mod('⇧Enter'), run: onMaxPane, group: 'window' });
+  if (floating && onToggleCollapse) fileMenu.push({ label: collapsed ? '카드 펼치기' : '카드 접기', run: onToggleCollapse, group: 'window' });
+  if (floating && onArrange) fileMenu.push({ label: '떠 있는 카드 정렬', hint: mod('⇧G'), run: onArrange, group: 'window' });
+  // Cards are desktop only: a phone's menu has no 카드 배치… (nor any card row above).
+  if (onLayouts && !phone) fileMenu.push({ label: '카드 배치…', run: onLayouts, group: 'window' });
   // 새 탭으로 떼어내기 (split view only): the session in a new browser tab, this pane closed. A lone pane has no such item.
   if (closable && s?.sessionId) {
     const detached = s.sessionId;
-    fileMenu.push({ label: '새 탭으로 떼어내기', run: () => { openInNewTab(detached); onClose(); } });
+    fileMenu.push({ label: '새 탭으로 떼어내기', run: () => { openInNewTab(detached); onClose(); }, group: 'window' });
   }
+  if (closable) fileMenu.push({ label: '이 창 닫기', hint: mod('⇧X'), run: onClose, group: 'window' });
   // 총사령탑 (servers with 'commander', Claude sessions with an id): 걸기… opens the sheet, or 정지 while one is on. All of it
   // is what the server last said (the `commander` view, restored on reconnect from history/catchup) — nothing kept here.
   const commandSid = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && has('commander') ? s.sessionId : null;
@@ -401,32 +435,28 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const commanderStop = (epoch: number) => { if (commandSid) { clearRefusal(); send({ type: 'commander_stop', sessionId: commandSid, epoch }); } };
   if (commandSid) {
     fileMenu.push(commanderOn && commander
-      ? { label: '총사령탑 정지', run: () => commanderStop(commander.state.epoch) }
-      : { label: '총사령탑 걸기…', run: () => { clearRefusal(); setCommanderAsked(false); setCommanderSheet(true); } });
+      ? { label: '총사령탑 정지', run: () => commanderStop(commander.state.epoch), group: 'commander' }
+      : { label: '총사령탑 걸기…', run: () => { clearRefusal(); setCommanderAsked(false); setCommanderSheet(true); }, group: 'commander' });
   }
   useEffect(() => {
     if (!commanderAsked) return;
     if (commanderRefusal) setCommanderAsked(false);
     else if (commanderOn) { setCommanderAsked(false); setCommanderSheet(false); }
   }, [commanderAsked, commanderRefusal, commanderOn]);
-  const close = closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title="패널 닫기" onClick={onClose}>✕</button>;
+  // A floating card keeps – / ▭ and ✕ on its head; a docked pane closes from the menu (창 › 이 창 닫기, ⌘⇧X).
+  const close = floating && closable && <button type="button" className="icon-btn pane-close" aria-label="패널 닫기" title={`패널 닫기 (${mod('⇧X')})`} onClick={onClose}>✕</button>;
   const fold = floating && onToggleCollapse && (
     <button type="button" className="icon-btn pane-fold" aria-label={collapsed ? '카드 펼치기' : '카드 접기'} title={collapsed ? '카드 펼치기 (헤더 더블클릭도 됨)' : '카드 접기: 헤더만 남김'} onClick={onToggleCollapse}>{collapsed ? '▭' : '–'}</button>
   );
-  const grip0 = grip && (
-    <button type="button" className="icon-btn pane-grip" aria-label="패널 끌기" title={floating ? '드래그: 카드 이동 · 위 가장자리에 놓기: 패널에 붙이기 · 더블클릭: 최대화/복원 · 키보드: ←→↑↓ 이동, Enter 붙이기' : '드래그: 순서 바꾸기 · 아래로 끌기: 카드로 떼기 · 키보드: ←→ 순서, Enter 떼기'} onPointerDown={grip.onPointerDown} onKeyDown={grip.onKeyDown} onClick={(e) => e.preventDefault()}>
-      <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true"><circle cx="2.5" cy="2" r="1.4" fill="currentColor" /><circle cx="7.5" cy="2" r="1.4" fill="currentColor" /><circle cx="2.5" cy="7" r="1.4" fill="currentColor" /><circle cx="7.5" cy="7" r="1.4" fill="currentColor" /><circle cx="2.5" cy="12" r="1.4" fill="currentColor" /><circle cx="7.5" cy="12" r="1.4" fill="currentColor" /></svg>
-    </button>
-  );
-  const handle = (fold || grip0) && <>{fold}{grip0}</>;
+  const trail = (fold || close) ? <>{fold}{close}</> : null;
+  // The session chip carries the drag (not in the top bar: the one pane has nowhere to go).
+  const headGrip = !headSlot ? grip : undefined;
+  const gripTitle = headGrip ? (floating ? '드래그: 카드 이동 · 위 가장자리에 놓기: 패널에 붙이기 · ←→↑↓: 이동' : '드래그: 순서 바꾸기 · 아래로 끌기: 카드로 떼기 · ←→: 순서') : undefined;
   const busy = pane.activeTurnId !== null || pane.awaitingStart;
   const onModel = (m: ModelChoice) => dispatch({ type: 'set_model', model: m, paneId: pane.id });
   const onEffort = (e: Effort | null) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id });
   const fork = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && (
     <ForkMenu sessionId={s.sessionId} busy={busy} onResolved={() => send({ type: 'open_session', sessionId: s.sessionId! })} onError={(message) => dispatch({ type: 'show_error', message })} />
-  );
-  const desktop = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && (
-    <OpenInDesktop sessionId={s.sessionId} onError={(message) => dispatch({ type: 'show_error', message })} />
   );
   // 새 세션으로 이어가기: Claude sessions with an id, nothing running.
   const canHandoff = !!s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && !busy;
@@ -546,12 +576,19 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           loading={!!pane.loading}
           cwd={s.cwd}
           sessionId={s.sessionId}
-          headActions={<>{desktop}{fork}{handle}{close}</>}
+          headActions={trail}
           headMenu={fileMenu}
-          headChips={commander && commandSid ? (
-            <CommanderChip view={commander} refusal={commanderSheet ? null : commanderRefusal} onStop={commanderStop} onClearRefusal={clearRefusal}
-              onResume={(epoch) => { clearRefusal(); send({ type: 'commander_resume', sessionId: commandSid, epoch }); }} />
-          ) : null}
+          headSlot={headSlot ?? null}
+          headGrip={headGrip}
+          headGripTitle={gripTitle}
+          headPaneId={pane.id}
+          headChips={(fork || (commander && commandSid)) ? <>
+            {fork}
+            {commander && commandSid && (
+              <CommanderChip view={commander} refusal={commanderSheet ? null : commanderRefusal} onStop={commanderStop} onClearRefusal={clearRefusal}
+                onResume={(epoch) => { clearRefusal(); send({ type: 'commander_resume', sessionId: commandSid, epoch }); }} />
+            )}
+          </> : null}
           model={model}
           effort={effort}
           engine={pane.engine}
@@ -565,6 +602,13 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           attachments={pane.attachments}
           uploadFn={uploadFn}
           onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
+          onSendText={(text) => sendFromPane(pane, text, [], dispatch, send, app.defaultPermMode ?? null, false, undefined, { keepAttachments: true })}
+          {...(has('tasks') && s.cwd && !grokBot ? { onStartTask: (text: string) => startTaskFromPane(pane, text, dispatch, send) } : {})}
+          tasks={tasksForPane(app.tasks ?? [], s.sessionId, s.cwd)}
+          taskCap={app.taskCap ?? null}
+          onOpenTask={(t) => { if (t.sessionId) onOpenSession?.(t.sessionId, t.cwd, t.title); }}
+          onDismissTask={(taskId) => { send({ type: 'dismiss_task', taskId }); }}
+          onCancelTask={(taskId) => { send({ type: 'cancel_task', taskId }); }}
           onBranch={canBranch ? (n, text, original) => { branchUndo.current = { sessionId: s.sessionId!, cwd: s.cwd, title: s.title }; startBranch(pane, n, text, original, dispatch, send, names.all); } : undefined}
           editNote={editNote}
           versions={versions}
@@ -604,6 +648,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           runStartedAt={pane.runStartedAt}
           awaitingBehind={pane.awaitingBehind}
           progress={pane.progress}
+          turnRoute={pane.turnRoute ?? null}
           agents={pane.agents}
           bg={pane.bg}
           queue={pane.queue}
@@ -668,11 +713,16 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         </RegenerateContext.Provider>
       ) : (
         <>
-          {(close || handle) && <div className="chat-head"><span className="spacer" />{handle}{close}</div>}
+          {(headSlot || closable || grip || trail) && (
+            // A docked empty pane in a split: its head shows no control at rest (spec §3.7 "머리 버튼 0"), the menu (창 ›
+            // 이 창 닫기…) and the drag still there under the pointer. The top bar's head and a card's head stay as they are.
+            <SessionChipHead title="새 세션" slot={headSlot ?? null} phone={phone} paneId={pane.id} grip={headGrip} gripTitle={gripTitle} trail={trail} idle={!headSlot && !floating}
+              groups={(ctl) => [fileMenu.map((it) => <HeadItem key={it.label} label={it.label} hint={it.hint} run={it.run} ctl={ctl} />)]} />
+          )}
           {onStartChat
             ? <NewChat projects={projects} pins={app.pins ?? []} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} {...(onStartChatSplit ? { onStartSplit: onStartChatSplit } : {})} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} gemini={app.gemini ?? null} grok={app.grok ?? null}
                 onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })} onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}
-                modelPicker={<ModelPicker models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} />} />
+                models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} defaultPerm={app.defaultPermMode ?? null} />
             : <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>}
         </>
       )}

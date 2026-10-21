@@ -92,7 +92,8 @@ export function usePinReorder(visible: string[], pins: string[], onReorder?: (or
     const { visible: ids, onReorder: commit } = latest.current;
     suppressClickUntil.current = 0; // a real press: its click is the user's
     if (!ul || !commit || ids.length < 2 || drag.current || e.button !== 0 || !(e.target instanceof Element)) return;
-    if (e.target.closest('button, input, textarea, a, [role="menu"]')) return;
+    // A row's own open button (.row-open) is the row: a press on it may still start the drag.
+    if (e.target.closest('button:not(.row-open), input, textarea, a, [role="menu"]')) return;
     const li = e.target.closest('li');
     const rows = Array.from(ul.children) as HTMLElement[];
     const from = li ? rows.indexOf(li) : -1;

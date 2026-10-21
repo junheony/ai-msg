@@ -82,7 +82,7 @@ describe('Pane side panel', () => {
     fireEvent.click(screen.getByText('미리보기'));
     expect(screen.getByTestId('html-preview')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('사이드 패널 닫기'));
-    fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' })); // 파일 lives in the header ⋯ menu
+    fireEvent.click(screen.getByTestId('session-chip-head')); // 파일 lives in the header ⋯ menu
     fireEvent.click(screen.getByRole('menuitem', { name: '파일 열기' }));
     expect(screen.getByLabelText('세션 폴더의 파일 경로')).toBeTruthy();
   });
@@ -203,7 +203,7 @@ describe('Pane side panel tabs', () => {
   it('a file picked in 파일 열기 replaces that tab', () => {
     mockFetch({ files: ['src/c.ts'] });
     render(ui());
-    fireEvent.click(screen.getByRole('button', { name: '채팅 메뉴' }));
+    fireEvent.click(screen.getByTestId('session-chip-head'));
     fireEvent.click(screen.getByRole('menuitem', { name: '파일 열기' }));
     expect(selected()).toBe('파일 열기');
     fireEvent.change(screen.getByLabelText('세션 폴더의 파일 경로'), { target: { value: 'src/c.ts' } });

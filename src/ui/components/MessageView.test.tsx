@@ -141,6 +141,15 @@ describe('MessageView code blocks and turn footer', () => {
     expect(container.querySelector('p > code')?.textContent).toBe('npm test');
   });
 
+  it('an inline path breaks after each / (a <wbr>); its text is unchanged; fenced code gets none', () => {
+    const text = 'see `src/ui/components/App.tsx` and\n\n```\na/b\n```';
+    const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    const code = container.querySelector('p code')!;
+    expect(code.textContent).toBe('src/ui/components/App.tsx');
+    expect(code.querySelectorAll('wbr')).toHaveLength(3);
+    expect(container.querySelector('pre code wbr')).toBeNull();
+  });
+
   it('copy button copies the code text and confirms', async () => {
     const exec = vi.fn(() => true);
     Object.defineProperty(document, 'execCommand', { value: exec, configurable: true });

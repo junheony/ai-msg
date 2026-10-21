@@ -4,7 +4,7 @@ import type { ServerMessage } from '../shared/protocol';
 import type { ProjectEntry, SessionEntry } from '../shared/session-types';
 import { deleteBlockedReason } from './components/SessionMenu';
 import { grokBotTags, importTitle } from './components/Sidebar';
-import { grokBotLine } from './components/UsagePanel';
+import { grokBotLine } from './components/usageSeats';
 import { grokBotHandoffCwd, initialState, reducer, type AppState } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
