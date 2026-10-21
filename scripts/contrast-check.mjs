@@ -50,6 +50,9 @@ function check(name, t) {
     ["bg / warn (badge)", bg, c("warn"), 4.5],
     ["fg / bubble", c("fg"), c("bubble"), 7],
     ["btn-primary", c("btn-primary-fg"), c("btn-primary-bg"), 4.5],
+    // Sidebar row avatars: a bold 16px white letter on the project colour. Large-text floor (3:1): the letter is
+    // decorative (aria-hidden; the meta line names the project), one glyph, 700 weight; every avatar sits below 4.5.
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`#fff / avatar-${n} (large)`, [255, 255, 255], c(`avatar-${n}`), 3]),
   ];
   console.log(`\n${name}`);
   let bad = 0;

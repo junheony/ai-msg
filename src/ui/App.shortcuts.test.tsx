@@ -177,10 +177,13 @@ describe('desktop-like navigation', () => {
     await boot();
     expect(within(sidebar()).getByTestId('date-group-오늘').textContent).toContain('two');
     expect(within(sidebar()).getByTestId('date-group-이전').textContent).toContain('ancient');
-    fireEvent.click(within(sidebar()).getByText('프로젝트'));
+    // The 최근 / 프로젝트 switch lives in the head's + menu.
+    fireEvent.click(within(sidebar()).getByRole('button', { name: '새 세션' }));
+    fireEvent.click(within(sidebar()).getByRole('menuitem', { name: '프로젝트별로 묶기' }));
     expect(within(sidebar()).queryByTestId('date-group-오늘')).toBeNull();
     expect(localStorage.getItem('deck.sidebarView')).toBe('projects');
-    fireEvent.click(within(sidebar()).getByText('최근'));
+    fireEvent.click(within(sidebar()).getByRole('button', { name: '새 세션' }));
+    fireEvent.click(within(sidebar()).getByRole('menuitem', { name: '날짜별로 보기' }));
 
     const row = within(sidebar()).getByText('two').closest('li')!;
     fireEvent.click(within(row).getByLabelText('세션 메뉴'));

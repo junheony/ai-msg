@@ -987,6 +987,7 @@ describe('App ⌘1 … ⌘9 (고정됨)', () => {
     server({ type: 'index', projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [entry('s1', 'one'), entry('s2', 'two'), entry('s3', 'three')] }], pins: ['s1', 's2'] } as unknown as ServerMessage);
     press(1);
     expect(opened()).toEqual(['s1']);
+    fireEvent.click(within(document.querySelector<HTMLElement>('.sidebar')!).getByRole('button', { name: '검색' }));
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'two' } });
     press(1);
     expect(opened()).toEqual(['s1', 's2']);

@@ -190,6 +190,7 @@ describe('Sidebar 고정됨 reorder', () => {
 
   it('a filtered 고정됨 list reorders within the full pin list', () => {
     const { onReorderPins } = setup();
+    fireEvent.click(screen.getByRole('button', { name: '검색' }));
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'o' } }); // one, two, four (three has no o)
     const btn = screen.getByTestId('pinned-group').querySelectorAll('li')[2]!.querySelector('button')!; // four
     fireEvent.keyDown(btn, { key: 'ArrowUp', altKey: true });

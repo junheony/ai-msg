@@ -1348,6 +1348,7 @@ export function App() {
               requestFocus(shown.id);
             }}
             openPanes={openPanes(state.panes)}
+            onOpenPalette={() => { setDrawer(false); setHelpOpen(false); setPaletteOpen(true); }}
             onOpenSplit={openSplit}
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
