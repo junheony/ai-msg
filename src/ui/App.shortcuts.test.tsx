@@ -328,7 +328,11 @@ describe('desktop-like navigation', () => {
     expect(activeIndex()).toBe(1);
     expect(press('Digit4', { altKey: true })).toBe(true); // no 4th pane: left to the browser
     expect(activeIndex()).toBe(1);
-    press('Digit3', { altKey: true, isComposing: true });
+    // Mid-IME: taken at once, the focus moves a tick later (after the blur commits the composition).
+    expect(press('Digit3', { altKey: true, isComposing: true })).toBe(false);
+    expect(activeIndex()).toBe(1);
+    await waitFor(() => expect(activeIndex()).toBe(2));
+    press('Digit2', { altKey: true });
     expect(activeIndex()).toBe(1);
 
     const hidden = () => panes().map((p) => p.hidden);

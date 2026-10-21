@@ -91,14 +91,16 @@ export function matchPinShortcut(e: ShortcutKey, mac: boolean): number | null {
 
 /**
  * ⌘⌥1 … ⌘⌥9 (Ctrl+Alt elsewhere): the index of the split pane to focus (left to right), or null. By physical key, so a
- * Korean input source (or ⌥ turning the digit into a symbol on a Mac) still matches; never with Shift or mid-IME.
+ * Korean input source (or ⌥ turning the digit into a symbol on a Mac) still matches (mid-IME too, by code); never with Shift.
  * Ctrl+Alt off a Mac in a text field is AltGr there, so it stays the field's.
  */
 export function matchPaneShortcut(e: ShortcutKey, opts: { mac: boolean; typing: boolean }): number | null {
-  if (e.isComposing || e.keyCode === 229 || e.shiftKey || !e.altKey) return null;
+  if (e.shiftKey || !e.altKey) return null;
   if (!(opts.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return null;
   if (!opts.mac && opts.typing) return null;
-  const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code ? null : /^([1-9])$/.exec(e.key));
+  // Mid-IME by code only, as matchPinShortcut (the caller commits the composition before acting).
+  const composing = e.isComposing || e.keyCode === 229;
+  const digit = /^Digit([1-9])$/.exec(e.code || '') ?? (e.code || composing ? null : /^([1-9])$/.exec(e.key));
   return digit ? Number(digit[1]) - 1 : null;
 }
 

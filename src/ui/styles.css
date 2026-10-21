@@ -1896,7 +1896,8 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) :is(.session-meta, .row-time) { color: var(--muted); }
 @media (hover: hover) { .sidebar li.session-item:hover :is(.session-meta, .row-time) { color: var(--muted); } }
 .session-rename { min-width: 0; height: 24px; padding: 0 6px; border-radius: var(--r-xs); border: 1px solid var(--accent); background: var(--bg); color: var(--fg); font: inherit; font-size: calc(var(--fs-body) * var(--font-scale, 1)); outline: none; }
-/* Avatar: 40px, the palette colour behind a bold white letter (decorative; the meta names the project). */
+/* Avatar: 40px, the project's palette colour behind the session's line glyph (SessionIcon, --avatar-glyph; decorative —
+   the row's title and meta name the session and project). */
 .row-avatar { position: relative; flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
 .row-avatar-icon { display: block; width: 20px; height: 20px; }
 /* Status dot, top left: 승인 대기 warn (pulsing), 실행 중 accent (a ring pulsing out), 백그라운드 muted, 새 응답 fg.

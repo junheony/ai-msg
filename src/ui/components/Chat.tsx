@@ -317,6 +317,8 @@ export function Chat(p: ChatProps) {
   const coarse = useCoarsePointer();
   // Set between compositionstart/end: some browsers report isComposing late or not at all.
   const composing = useRef(false);
+  // A session switch mid-composition may never deliver its compositionend here: start the next session clean.
+  useEffect(() => { composing.current = false; }, [p.sessionId]);
   const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
   const keys = useMemo(() => messageKeys(shown), [shown]);
   const dividers = useMemo(() => timeDividers(shown), [shown]);

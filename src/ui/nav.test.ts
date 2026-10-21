@@ -148,15 +148,16 @@ describe('shortcuts', () => {
     expect(shortcutList(false).find((s) => s.id === 'move-pane-right')?.keys).toBe('Ctrl+Alt+⇧]');
     expect(shortcutList(true).find((s) => s.id === 'toggle-side')?.keys).toBe('⌘⇧E');
   });
-  it('⌘⌥1 … ⌘⌥9 → the split pane index: by physical key (⌥ symbols, Korean input), never mid-IME / with Shift', () => {
+  it('⌘⌥1 … ⌘⌥9 → the split pane index: by physical key (⌥ symbols, Korean input, mid-IME by code), never with Shift', () => {
     const m = (code: string, extra: Partial<ShortcutKey> = {}, opts = { mac: true, typing: true }) => matchPaneShortcut(key(code, { metaKey: true, altKey: true, ...extra }), opts);
     expect(m('Digit1', { key: '¡' })).toBe(0);
     expect(m('Digit9', { key: 'ª' })).toBe(8);
     expect(m('Digit0')).toBeNull();
     expect(m('Digit1', { altKey: false })).toBeNull(); // ⌘1 is the 고정됨 row
     expect(m('Digit1', { shiftKey: true })).toBeNull();
-    expect(m('Digit1', { isComposing: true })).toBeNull();
-    expect(m('Digit1', { keyCode: 229 })).toBeNull();
+    expect(m('Digit1', { isComposing: true })).toBe(0);
+    expect(m('Digit1', { keyCode: 229 })).toBe(0);
+    expect(m('', { key: '2', isComposing: true })).toBeNull(); // mid-IME: by code only
     expect(m('Digit1', { ctrlKey: true })).toBeNull();
     expect(m('', { key: '2' })).toBe(1);
     expect(matchPaneShortcut(key('Digit3', { ctrlKey: true, altKey: true }), { mac: false, typing: false })).toBe(2);
