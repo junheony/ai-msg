@@ -1,6 +1,7 @@
 <!doctype html><html><head><meta charset="utf-8">
 <!-- 활동 점 states fixture for scripts/render-check.sh (keep in step with ActivityButton.tsx / ActivitySheet.tsx):
-     the top bar's dot in five states — 없음, 실행 중, 승인 대기 2, 서버 재시작 대기, 연결 끊김 (with the banner) —
+     the top bar's dot in six states — 없음 (빈 고리), 실행 중 (도는 호), 백그라운드, 승인 대기 2, 서버 재시작 대기,
+     연결 끊김 (빗금 친 빈 고리, with the banner) —
      and the sheet open on the 승인 대기 2 state. Taller than the default window: RENDER_HEIGHT=900. -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
 <style>
@@ -19,6 +20,9 @@
   </div></div>
   <div class="topbar"><span class="fx-name">실행 중 1</span><div class="topbar-end">
     <button type="button" class="activity-btn lvl-running" aria-label="활동 · 실행 중 1"><span class="activity-dot"></span></button>
+  </div></div>
+  <div class="topbar"><span class="fx-name">백그라운드 1</span><div class="topbar-end">
+    <button type="button" class="activity-btn lvl-bg" aria-label="활동 · 백그라운드 1"><span class="activity-dot"></span></button>
   </div></div>
   <div class="topbar"><span class="fx-name">승인 대기 2 · 실행 중 1</span><div class="topbar-end">
     <button type="button" class="activity-btn lvl-waiting" aria-label="활동 · 승인 대기 2 · 실행 중 1"><span class="activity-dot"></span><span class="activity-badge">2</span></button>

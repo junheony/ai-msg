@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
@@ -265,5 +267,24 @@ describe('활동 점 · 알림', () => {
   it('the badge caps at 99+', () => {
     render(<ActivityButton {...base({ pending: Array.from({ length: 120 }, (_, i) => card('s1', i)) as unknown as Props['pending'], visibleSessions: ['s1'], serverUpdate: false })} />);
     expect(screen.getByTestId('activity-badge').textContent).toBe('99+');
+  });
+});
+
+describe('활동 점 shapes (styles.css)', () => {
+  const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+  const rule = (sel: string) => css.match(new RegExp(`^\\s*${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`, 'm'))?.[1] ?? '';
+
+  it('끊김 is a struck-through hollow ring, not a solid dot (it shares a reddish hue with 실행 중 in the dark theme)', () => {
+    const down = rule('.lvl-down .activity-dot');
+    expect(down).toMatch(/box-shadow: inset 0 0 0 2px var\(--danger\)/);
+    expect(down).toMatch(/linear-gradient\(135deg/);
+    expect(down).not.toMatch(/background: var\(--danger\)/);
+  });
+
+  it('실행 중 adds a turning arc around the solid dot; reduced motion keeps it as a still ring', () => {
+    expect(rule('.lvl-running .activity-dot')).toMatch(/background: var\(--accent\)/);
+    expect(rule('.lvl-running::before')).toMatch(/animation: activity-spin/);
+    const reduced = css.slice(css.indexOf('@keyframes activity-spin'));
+    expect(reduced).toMatch(/prefers-reduced-motion: reduce\) \{[^@]*\.lvl-running::before \{ animation: none;/);
   });
 });
