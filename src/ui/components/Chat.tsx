@@ -1,6 +1,6 @@
 import { loadDraft, saveDraft } from '../autoReload';
-import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { CLAUDE_MODELS, CODEX_MODELS, CODEX_SANDBOXES, DEFAULT_SANDBOX, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, GROK_MODELS, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
+import { useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { CLAUDE_MODELS, CODEX_MODELS, DEFAULT_SANDBOX, GEMINI_MODELS, GEMINI_SANDBOX_LABEL, GROK_MODELS, SANDBOX_LABEL, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
 import type { UsageSnapshot } from '../../shared/usage-types';
@@ -15,24 +15,23 @@ import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePast
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
-import { AccountPicker } from './AccountPicker';
 import { useAccounts } from '../accounts';
 import { conciseFirstStep } from '../../shared/concise';
 import { parseBgCommand, type TaskInfo } from '../../shared/tasks';
 import { TaskCards } from './TaskCards';
-import { AttachMenu, AttachmentBar } from './AttachmentBar';
-import { ContextGauge, ContextHint } from './ContextGauge';
+import { AttachmentBar } from './AttachmentBar';
+import { Composer } from './Composer';
+import { SessionChip, PERM_MODE_SHORT } from './SessionChip';
+import { ContextHint } from './ContextGauge';
 import { useComposerSuggest } from './ComposerSuggest';
 import { HANDOFF_COMMAND, HANDOFF_PROMPT, isThreadLocked } from '../../shared/handoff';
-import { PERM_MODES, PERM_MODE_LABEL, nextPermMode, permModeHint, permModesFor, type PermMode } from '../../shared/permission';
+import { PERM_MODE_LABEL, nextPermMode, permModeHint, type PermMode } from '../../shared/permission';
 import type { CommandItem } from '../autocomplete';
 import { MessageActionsContext, MessageView, RegenerateContext, type MessageActions, type Regenerate } from './MessageView';
 import { FIND_EVENT, FindBar } from './FindBar';
 import type { ReplyTurn } from '../replyTurn';
-import { ModelPicker } from './ModelPicker';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
-import { DictationButton } from './DictationButton';
 import { QueueChips } from './QueueChips';
 import { useShareActions } from './ShareMenu';
 import { TodoPanel } from './TodoPanel';
@@ -273,23 +272,9 @@ export function messageKeys(items: ChatItem[]): string[] {
   });
 }
 
-/** The header badge's compact form when the pane is narrow (CSS swaps them; the badge never clips mid-glyph). */
-const PERM_MODE_SHORT: Record<PermMode, string> = { default: '묻기', acceptEdits: '편집 승인', plan: '계획', bypassPermissions: '자동 승인' };
 const WarnIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z" /><path d="M8 6.6v3M8 11.6v.1" /></svg>;
+const TaskIcon = () => <svg className="task-add-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h4v4M13 3 7.5 8.5" /><path d="M11.5 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1h2.5" /></svg>;
 const QueueIcon = () => <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4h8M2.5 8h5M2.5 12h4" /><path d="M12 6.5v6.5M9.75 10.75 12 13l2.25-2.25" /></svg>;
-
-/**
- * A composer picker over a native <select>: the visible label is a span (so it ellipsizes cleanly when the toolbar is
- * tight) and the transparent select on top keeps the native menu, keyboard and accessible name.
- */
-function Pick({ className, label, children, ...rest }: { className?: string; label: ReactNode } & Omit<ComponentProps<'select'>, 'className'>) {
-  return (
-    <span className={`pick ${className ?? ''}`} data-disabled={rest.disabled ? '' : undefined}>
-      <span className="pick-label" aria-hidden="true">{label}</span>
-      <select {...rest}>{children}</select>
-    </span>
-  );
-}
 
 export function Chat(p: ChatProps) {
   const accountNames = useAccounts();
@@ -341,11 +326,8 @@ export function Chat(p: ChatProps) {
   // 자동 is offered for Claude (and the engine 자동, which may open on Claude); on an existing session it keeps the session's model.
   // Gemini is explicit only: its models appear only when the Gemini engine is picked (never under 자동).
   const models = modelChoices(effectiveEngine);
-  const geminiReady = !!p.gemini && (p.gemini.loggedIn.g1 || p.gemini.loggedIn.g2);
-  const grokReady = has('grok');
-  const grokShown = grokReady || !!p.grok;
-  const engineSelect = p.isNew && (p.codexAvailable || !!p.gemini?.available || grokReady);
-  const sandboxLabel = effectiveEngine === 'gemini' ? GEMINI_SANDBOX_LABEL : SANDBOX_LABEL;
+  // A new session's sandbox row follows its engine picker (shown only when another engine than Claude is available).
+  const engineSelect = p.isNew && (p.codexAvailable || !!p.gemini?.available || has('grok'));
   const hasDraft = (text.trim().length > 0 || p.attachments.length > 0) && uploading === 0;
   const queueing = p.busy && !!p.onQueue;
   /** A running Claude / Grok turn takes a message mid-turn (Codex / Gemini: after the turn). */
@@ -578,13 +560,7 @@ export function Chat(p: ChatProps) {
           {folder && p.cwd && <FolderChip cwd={p.cwd} name={folder} />}
         </div>
         <div className="chat-head-chips">
-          {!p.isNew && p.sessionEngine === 'codex' && (p.onSessionSandbox
-            ? (
-              <Pick className="chip sandbox" label={`GPT · 샌드박스: ${SANDBOX_LABEL[p.sessionSandbox ?? DEFAULT_SANDBOX]}`} value={p.sessionSandbox ?? DEFAULT_SANDBOX} onChange={(e) => p.onSessionSandbox?.(e.target.value as CodexSandbox)} title="GPT 샌드박스 (승인 카드 없음 · 다음 턴부터 적용)" aria-label="샌드박스" data-testid="session-sandbox-select">
-                {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{SANDBOX_LABEL[s]}</option>)}
-              </Pick>
-            )
-            : <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? DEFAULT_SANDBOX]}</span>)}
+          {!p.isNew && p.sessionEngine === 'codex' && <span className="chip sandbox" title="D2: GPT 세션은 승인 카드 대신 샌드박스로 보호됩니다 (입력창 세션 칩에서 바꿈)">GPT · 샌드박스: {SANDBOX_LABEL[p.sessionSandbox ?? DEFAULT_SANDBOX]}</span>}
           {p.onPermMode && permSupported && permMode !== 'default' && <span className={`chip perm-badge perm-${permMode}`} title={`${PERM_MODE_LABEL[permMode]} — ${permModeHint(permMode, effectiveEngine)}`} data-testid="perm-badge">{permMode === 'bypassPermissions' && <WarnIcon />}<span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span><span className="perm-badge-short" aria-hidden="true">{PERM_MODE_SHORT[permMode]}</span></span>}
           {!p.isNew && p.sessionEngine === 'gemini' && <span className="chip sandbox" title="Gemini 세션은 승인 카드 대신 승인 모드와 샌드박스로 보호됩니다">Gemini · {GEMINI_SANDBOX_LABEL[p.sessionSandbox ?? 'read-only']}</span>}
           {p.headChips}
@@ -673,8 +649,50 @@ export function Chat(p: ChatProps) {
         {p.composerNote && <div className="pane-notice notice composer-note" role="status" data-testid="composer-note"><span className="pane-notice-text">{p.composerNote}</span></div>}
         {p.onPickCwd && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff-cwd" onClick={p.onPickCwd}>작업 폴더 바꾸기</button>}
         {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>deck Grok 새 세션으로 이어가기</button>}
-        <div className={`composer ${drag && !p.readOnly ? 'dragover' : ''}`}>
-          {suggest.popup}
+        <Composer
+          dragover={drag && !p.readOnly}
+          popup={suggest.popup}
+          chip={(
+            <SessionChip
+              isNew={p.isNew}
+              folder={folder}
+              engine={effectiveEngine}
+              engines={p.isNew ? { codexAvailable: p.codexAvailable, gemini: p.gemini ?? null, grok: p.grok ?? null, onEngine: p.onEngine } : null}
+              sandbox={p.isNew
+                ? (engineSelect ? { value: p.sandbox, onChange: p.onSandbox } : null)
+                : p.sessionEngine === 'codex' ? { value: p.sessionSandbox ?? DEFAULT_SANDBOX, ...(p.onSessionSandbox ? { onChange: p.onSessionSandbox, existing: true } : {}) }
+                : p.sessionEngine === 'gemini' ? { value: p.sessionSandbox ?? 'read-only' } : null}
+              models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort}
+              account={showAccount && p.onAccountPin ? { pin: p.accountPin ?? null, current: p.isNew ? null : (p.account ?? null), usage: p.usage ?? null, onPin: p.onAccountPin } : null}
+              perm={p.onPermMode ? { mode: permMode, supported: permSupported, onChange: p.onPermMode } : null}
+              ctx={ctx}
+              {...(p.onHandoff ? { onHandoff: p.onHandoff } : {})}
+              disabled={!!p.readOnly}
+            />
+          )}
+          files={(p.attachments.length > 0 || uploading > 0 || error) ? (
+            <AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} pastedTexts={pastedTexts}
+              {...(p.onReattach && !p.readOnly ? { onReplace: (old: UploadedAttachment, f: File) => replaceAttachment(old, f, uploadOne, () => attachmentsRef.current, (a) => p.onReattach!(old.id, a)) } : {})} />
+          ) : null}
+          onFiles={(f) => void addFiles(f)}
+          text={text}
+          onText={setText}
+          extra={<>
+            {p.activeTurnId && queueing && hasDraft && (
+              <button type="button" className="queue-add" onClick={submit} title={steering ? '대기열에 추가 (Enter) — 실행 중인 턴에 보내 다음 도구 실행 뒤 전달합니다' : '대기열에 추가 (Enter) — 지금 턴이 끝나면 보냅니다'}>
+                <QueueIcon /><span className="sr-only">대기열에 추가</span>
+              </button>
+            )}
+            {p.onStartTask && hasDraft && p.attachments.length === 0 && parseBgCommand(text) === null && (
+              <button type="button" className="task-add" data-testid="task-add" onClick={() => startTask(text)} aria-label="작업으로" title="작업으로 — 새 세션에서 따로 돌리고, 이 대화는 계속 씁니다. 끝나면 알림과 결과 카드가 옵니다 (/bg 로도 시작)">
+                <span className="task-add-text">작업으로</span><TaskIcon />
+              </button>
+            )}
+          </>}
+          action={p.activeTurnId
+            ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
+            : <button type="button" className="send" onClick={submit} disabled={!canSend} title="보내기 (Enter)"><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
+        >
           <textarea
             ref={taRef}
             value={text}
@@ -698,63 +716,7 @@ export function Chat(p: ChatProps) {
             data-lpignore="true"
             enterKeyHint={coarse ? 'enter' : 'send'}
           />
-          {(p.attachments.length > 0 || uploading > 0 || error) && (
-            <div className="composer-files"><AttachmentBar attachments={p.attachments} uploading={uploading} error={error} onRemove={p.onUnattach} pastedTexts={pastedTexts}
-              {...(p.onReattach && !p.readOnly ? { onReplace: (old: UploadedAttachment, f: File) => replaceAttachment(old, f, uploadOne, () => attachmentsRef.current, (a) => p.onReattach!(old.id, a)) } : {})} /></div>
-          )}
-          {/* One toolbar row, as in Claude: [+] · model pill · 계정/권한 pill (they truncate, never wrap) · mic · send/stop. */}
-          <div className="composer-row">
-            <AttachMenu onFiles={(f) => void addFiles(f)} />
-            <div className="composer-actions">
-              {engineSelect && (
-                <Pick label={p.engine === 'codex' ? 'GPT' : p.engine === 'gemini' ? 'Gemini' : p.engine === 'grok' ? 'Grok' : p.engine === 'auto' ? '자동' : 'Claude'} value={p.engine} onChange={(e) => p.onEngine(e.target.value as EngineChoice)} title="이 세션의 엔진 (세션 생성 후 변경 불가)" aria-label="엔진" data-testid="engine-select">
-                  <option value="claude">Claude</option>
-                  {p.codexAvailable && <option value="codex">GPT</option>}
-                  {p.gemini?.available && <option value="gemini" disabled={!geminiReady} title={geminiReady ? undefined : 'docs/gemini-spike.md 의 로그인 명령을 먼저 실행하세요'}>{geminiReady ? 'Gemini' : 'Gemini · 로그인 필요'}</option>}
-                  {grokShown && <option value="grok" disabled={!grokReady} title={grokReady ? undefined : 'grok CLI 가 없습니다 — README 의 설치 명령 후 grok login'}>{grokReady ? 'Grok' : 'Grok · 설치 필요'}</option>}
-                  {p.codexAvailable && <option value="auto">자동</option>}
-                </Pick>
-              )}
-              {engineSelect && effectiveEngine !== 'claude' && effectiveEngine !== 'grok' && (
-                <Pick className="sandbox" label={sandboxLabel[p.sandbox]} value={p.sandbox} onChange={(e) => p.onSandbox(e.target.value as CodexSandbox)} title={effectiveEngine === 'gemini' ? 'Gemini 승인 모드 (승인 카드 없음 · 세션 생성 후 변경 불가)' : 'GPT 샌드박스 (승인 카드 없음 · 세션을 만든 뒤에도 바꿀 수 있음)'} aria-label="샌드박스" data-testid="sandbox-select">
-                  {CODEX_SANDBOXES.map((s) => <option key={s} value={s}>{sandboxLabel[s]}</option>)}
-                </Pick>
-              )}
-              <ModelPicker models={models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
-              {/* 계정 · 권한: one compact secondary pill next to the model pill (Claude has no such controls; deck keeps them). */}
-              {(showAccount || p.onPermMode) && (
-                <div className="composer-sec" role="group" aria-label="계정 · 권한">
-                  {showAccount && p.onAccountPin && (
-                    <AccountPicker pin={p.accountPin ?? null} current={p.isNew ? null : (p.account ?? null)} usage={p.usage ?? null} onPin={p.onAccountPin} />
-                  )}
-                  {p.onPermMode && (
-                    <Pick className={`perm perm-${permSupported ? permMode : 'default'}`} label={<><span className="perm-full">{PERM_MODE_LABEL[permSupported ? permMode : 'default']}</span><span className="perm-short">{PERM_MODE_SHORT[permSupported ? permMode : 'default']}</span></>} value={permSupported ? permMode : 'default'} disabled={!permSupported} onChange={(e) => p.onPermMode?.(e.target.value as PermMode)} title={permSupported ? `${permModeHint(permMode, effectiveEngine)} (Shift+Tab 으로 전환)` : 'GPT/Gemini 세션은 샌드박스 선택으로 권한을 정합니다'} aria-label="권한 모드" data-testid="perm-select">
-                      {/* Grok has no plan mode yet (§14.2): hidden unless the session already has it. */}
-                      {PERM_MODES.filter((m) => m === permMode || permModesFor(effectiveEngine).includes(m)).map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
-                    </Pick>
-                  )}
-                </div>
-              )}
-            </div>
-            {/* Right end, as in Claude: context gauge, mic, then the round send/stop (never shrink); 대기열에 추가 is a round
-                secondary button of the same size, just left of stop. */}
-            <div className="composer-send">
-              <ContextGauge info={ctx} onHandoff={p.onHandoff} />
-              <DictationButton text={text} onText={setText} />
-              {p.activeTurnId && queueing && hasDraft && (
-                <button type="button" className="queue-add" onClick={submit} title={steering ? '대기열에 추가 (Enter) — 실행 중인 턴에 보내 다음 도구 실행 뒤 전달합니다' : '대기열에 추가 (Enter) — 지금 턴이 끝나면 보냅니다'}>
-                  <QueueIcon /><span className="sr-only">대기열에 추가</span>
-                </button>
-              )}
-              {p.onStartTask && hasDraft && p.attachments.length === 0 && parseBgCommand(text) === null && (
-                <button type="button" className="task-add" data-testid="task-add" onClick={() => startTask(text)} title="작업으로 — 새 세션에서 따로 돌리고, 이 대화는 계속 씁니다. 끝나면 알림과 결과 카드가 옵니다 (/bg 로도 시작)">작업으로</button>
-              )}
-              {p.activeTurnId
-                ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
-                : <button type="button" className="send" onClick={submit} disabled={!canSend} title="보내기 (Enter)"><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
-            </div>
-          </div>
-        </div>
+        </Composer>
       </div>
     </main>
   );

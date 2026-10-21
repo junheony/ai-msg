@@ -48,6 +48,7 @@ describe('Pane (D6)', () => {
     const dispatch = vi.fn();
     const pane: PaneState = { ...newPane('p1') };
     render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: true, projects: [{ cwd: '/w', name: 'w', pinned: true, sessions: [] }] }} active closable={false} dispatch={dispatch} send={() => {}} onClose={() => {}} onStartChat={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(dispatch).toHaveBeenCalledWith({ type: 'set_engine', engine: 'codex', paneId: 'p1' });
   });
@@ -60,14 +61,14 @@ describe('Pane (D6)', () => {
       return <Pane pane={state.panes[0]!} app={state} active closable={false} dispatch={dispatch} send={() => {}} onClose={() => {}} />;
     }
     render(<Harness />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     // A new pane starts on 자동 (it may land on GPT, so the sandbox picker shows); Claude hides it.
     expect((screen.getByTestId('engine-select') as HTMLSelectElement).value).toBe('auto');
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'claude' } });
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'codex' } });
     expect(screen.getByTestId('sandbox-select')).toBeTruthy();
-    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
-    fireEvent.click(screen.getByTestId('model-picker'));
+    expect(screen.getByRole('menuitemradio', { name: '중간' }).getAttribute('aria-checked')).toBe('true');
     const items = within(screen.getByTestId('model-menu')).getAllByRole('menuitemradio');
     expect(items.slice(0, 2).map((b) => b.textContent)).toEqual([expect.stringContaining('GPT-6.1-Sol'), expect.stringContaining('GPT-6-Astra')]);
     expect(items[0]!.getAttribute('aria-checked')).toBe('true');
@@ -87,14 +88,18 @@ describe('Pane (D6)', () => {
     }
     render(<Harness />);
     const p0 = within(screen.getByTestId('pane-p0'));
-    fireEvent.click(p0.getByTestId('model-picker'));
+    const p1 = within(screen.getByTestId('pane-p1'));
+    // The effort the pane's model menu has checked.
+    const checked = (pane: typeof p0) => within(pane.getByTestId('model-menu')).getAllByRole('menuitemradio').filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.querySelector('.mp-name')?.textContent ?? b.textContent);
+    fireEvent.click(p0.getByTestId('session-chip'));
     fireEvent.click(within(p0.getByTestId('model-menu')).getByText('엑스트라'));
-    expect(p0.getByTestId('model-picker').textContent).toContain('Fable 5.1 엑스트라');
+    expect(checked(p0)).toEqual(['Fable 5.1', '엑스트라']);
     // The other pane keeps the default.
-    expect(within(screen.getByTestId('pane-p1')).getByTestId('model-picker').textContent).toContain('Fable 5.1 높음');
+    fireEvent.click(p1.getByTestId('session-chip'));
+    expect(checked(p1)).toEqual(['Fable 5.1', '높음']);
     // GPT has its own effort (default 중간); switching back to Claude restores 엑스트라.
     fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'codex' } });
-    expect(p0.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
+    expect(checked(p0)).toEqual(['GPT-6.1-Sol', '중간']);
     fireEvent.change(p0.getByTestId('engine-select'), { target: { value: 'claude' } });
     fireEvent.change(p0.getByPlaceholderText(/메시지/), { target: { value: 'go' } });
     fireEvent.click(p0.getByText('보내기'));

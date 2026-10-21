@@ -2,29 +2,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { CLAUDE_MODELS, CODEX_MODELS, GROK_MODELS } from '../../shared/models';
-import { ModelPicker } from './ModelPicker';
+import { ModelMenu, modelLabel } from './ModelPicker';
 
-function setup(extra: Partial<Parameters<typeof ModelPicker>[0]> = {}) {
+function setup(extra: Partial<Parameters<typeof ModelMenu>[0]> = {}) {
   const onModel = vi.fn();
   const onEffort = vi.fn();
-  render(<ModelPicker models={CLAUDE_MODELS} model="opus" effort="high" onModel={onModel} onEffort={onEffort} {...extra} />);
+  render(<ModelMenu models={CLAUDE_MODELS} model="opus" effort="high" onModel={onModel} onEffort={onEffort} {...extra} />);
   return { onModel, onEffort };
 }
 
-describe('ModelPicker', () => {
+describe('ModelMenu (the session sheet\'s model section)', () => {
   afterEach(cleanup);
 
-  it('button reads "<exact version> <effort>" (aria-label keeps the ·); closed until clicked', () => {
-    setup();
-    expect(screen.getByTestId('model-picker').textContent).toContain('Opus 5.5 높음');
-    expect(screen.getByTestId('model-picker').getAttribute('aria-label')).toBe('모델: Opus 5.5 · 높음');
-    expect(screen.queryByTestId('model-menu')).toBeNull();
-    expect(screen.getByTestId('model-picker').getAttribute('aria-expanded')).toBe('false');
+  it('the chip label reads "<exact version>" + its effort (none while the effort is 자동 or unsupported)', () => {
+    expect(modelLabel('opus', 'high')).toEqual({ name: 'Opus 5.5', effort: '높음' });
+    expect(modelLabel('auto', null)).toEqual({ name: '자동', effort: null });
+    expect(modelLabel('grok-4.5', 'xhigh').effort).toBeNull();
   });
 
   it('lists exact versions with descriptions, checks the current model and effort, and reports picks', () => {
     const { onModel, onEffort } = setup();
-    fireEvent.click(screen.getByTestId('model-picker'));
     const menu = within(screen.getByTestId('model-menu'));
     const models = within(menu.getByRole('group', { name: 'Claude' })).getAllByRole('menuitemradio');
     expect(models.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['Sonnet 5.5', 'Opus 5.5', 'Fable 5.1']);
@@ -42,8 +39,6 @@ describe('ModelPicker', () => {
 
   it('auto engine: Claude and GPT sections with headers', () => {
     setup({ models: [...CLAUDE_MODELS, ...CODEX_MODELS], model: 'gpt-6-sol', effort: 'medium' });
-    expect(screen.getByTestId('model-picker').textContent).toContain('GPT-6.1-Sol 중간');
-    fireEvent.click(screen.getByTestId('model-picker'));
     const menu = within(screen.getByTestId('model-menu'));
     expect(menu.getByText('Claude')).toBeTruthy();
     expect(within(menu.getByRole('group', { name: 'GPT' })).getAllByRole('menuitemradio').map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['GPT-6.1-Sol', 'GPT-6-Astra']);
@@ -51,9 +46,6 @@ describe('ModelPicker', () => {
 
   it('자동: listed first, label without effort while effort is 자동, and an effort 자동 button reporting null', () => {
     const { onModel, onEffort } = setup({ models: ['auto', ...CLAUDE_MODELS], model: 'auto', effort: null });
-    expect(screen.getByTestId('model-picker').textContent).toContain('자동');
-    expect(screen.getByTestId('model-picker').textContent).not.toContain('·');
-    fireEvent.click(screen.getByTestId('model-picker'));
     const menu = within(screen.getByTestId('model-menu'));
     const models = within(menu.getByRole('group', { name: 'Claude' })).getAllByRole('menuitemradio');
     expect(models.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['자동', 'Sonnet 5.5', 'Opus 5.5', 'Fable 5.1']);
@@ -67,46 +59,8 @@ describe('ModelPicker', () => {
     expect(onModel).toHaveBeenCalledWith('opus');
   });
 
-  it('closes on Escape and on a pointer down outside, not on one inside', () => {
-    setup();
-    fireEvent.click(screen.getByTestId('model-picker'));
-    fireEvent.pointerDown(screen.getByTestId('model-menu'));
-    expect(screen.getByTestId('model-menu')).toBeTruthy();
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByTestId('model-menu')).toBeNull();
-    fireEvent.click(screen.getByTestId('model-picker'));
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByTestId('model-menu')).toBeNull();
-  });
-
-  it('keeps the popover inside the viewport (fixed position clamped to an 8px margin)', () => {
-    const w = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 });
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 640 });
-    const rect = HTMLElement.prototype.getBoundingClientRect;
-    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
-    // Button hugging the left edge (narrow leftmost pane), popover wider than the button's right offset.
-    HTMLElement.prototype.getBoundingClientRect = function () {
-      return { left: 10, right: 90, top: 600, bottom: 628, width: 80, height: 28, x: 10, y: 600, toJSON: () => ({}) } as DOMRect;
-    };
-    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 300 });
-    try {
-      setup();
-      fireEvent.click(screen.getByTestId('model-picker'));
-      const pop = screen.getByTestId('model-menu');
-      expect(pop.style.left).toBe('8px');
-      expect(pop.style.bottom).toBe(`${640 - 600 + 6}px`);
-      expect(pop.style.maxHeight).toBe(`${600 - 6 - 8}px`);
-    } finally {
-      HTMLElement.prototype.getBoundingClientRect = rect;
-      if (width) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', width);
-      Object.defineProperty(window, 'innerWidth', { configurable: true, value: w });
-    }
-  });
-
   it('Grok: Grok 4.7 / 4.7 Fast / 4.6 / 4.5 with descriptions; Grok 4.5 offers no 엑스트라', () => {
     setup({ models: GROK_MODELS, model: 'grok-4.5', effort: 'high' });
-    fireEvent.click(screen.getByTestId('model-picker'));
     const menu = within(screen.getByTestId('model-menu'));
     const models = within(menu.getByRole('group', { name: 'Grok' })).getAllByRole('menuitemradio');
     expect(models.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['Grok 4.7', 'Grok 4.7 Fast', 'Grok 4.6', 'Grok 4.5']);

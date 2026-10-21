@@ -127,6 +127,7 @@ describe('NewChat', () => {
 
   it('no engine picker when only Claude is available', () => {
     render(<NewChat projects={projects} onStart={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     expect(screen.queryByTestId('engine-select')).toBeNull();
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
   });
@@ -136,6 +137,7 @@ describe('NewChat', () => {
     const onEngine = vi.fn();
     const onSandbox = vi.fn();
     render(<NewChat projects={projects} onStart={onStart} codexAvailable onEngine={onEngine} onSandbox={onSandbox} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     const engine = screen.getByTestId('engine-select') as HTMLSelectElement;
     expect(engine.value).toBe('claude');
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
@@ -156,10 +158,12 @@ describe('NewChat', () => {
   it('starts from the pane engine/sandbox; Gemini shows its own sandbox labels and needs a login', () => {
     const gemini = { available: true, loggedIn: { g1: true, g2: false } };
     render(<NewChat projects={projects} onStart={vi.fn()} engine="gemini" sandbox="workspace-write" gemini={gemini} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     expect((screen.getByTestId('engine-select') as HTMLSelectElement).value).toBe('gemini');
     expect(screen.getByTestId('sandbox-select').parentElement!.querySelector('.pick-label')!.textContent).toBe('파일 편집 허용(셸 거부)');
     cleanup();
     render(<NewChat projects={projects} onStart={vi.fn()} gemini={{ available: true, loggedIn: { g1: false, g2: false } }} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     expect((screen.getByRole('option', { name: 'Gemini · 로그인 필요' }) as HTMLOptionElement).disabled).toBe(true);
   });
 
@@ -167,6 +171,7 @@ describe('NewChat', () => {
     const onStart = vi.fn();
     setFeatures(['grok']);
     render(<NewChat projects={projects} onStart={onStart} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'grok' } });
     expect(screen.queryByTestId('sandbox-select')).toBeNull();
     fireEvent.change(screen.getByLabelText('첫 메시지'), { target: { value: '봐줘' } });
@@ -175,10 +180,12 @@ describe('NewChat', () => {
     cleanup();
     setFeatures([]);
     render(<NewChat projects={projects} onStart={vi.fn()} codexAvailable grok={{ bin: false }} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     expect((screen.getByRole('option', { name: 'Grok · 설치 필요' }) as HTMLOptionElement).disabled).toBe(true);
     cleanup();
     // An older server (no hello.grok): no Grok option at all.
     render(<NewChat projects={projects} onStart={vi.fn()} codexAvailable />);
+    fireEvent.click(screen.getByTestId('session-chip'));
     expect(screen.queryByRole('option', { name: /Grok/ })).toBeNull();
     cleanup();
     const sessions = [{ sessionId: 'x', account: 'x1', engine: 'grok', cwd: '/w', projectDir: '', file: '', title: 'grok one', lastModified: 1, sizeBytes: 1 }];
@@ -202,6 +209,7 @@ describe('NewChat', () => {
     expect(loadDraft('k')).toBe('');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true, shiftKey: true }); // the global maximize's
     expect(onStartSplit).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('session-chip'));
     const picker = screen.getByLabelText('프로젝트');
     fireEvent.change(picker, { target: { value: '/v' } });
     fireEvent.keyDown(picker, { key: 'Enter' });

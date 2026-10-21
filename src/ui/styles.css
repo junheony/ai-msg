@@ -438,7 +438,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .composer textarea::placeholder { color: var(--faint); }
 .composer textarea:placeholder-shown { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; padding: 2px 6px 6px; min-width: 0; }
-.composer-actions { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 2px; flex: 1 1 auto; min-width: 0; }
 .composer-send { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: 2px; }
 .composer-files { display: flex; min-width: 0; padding: 4px 12px 2px; }
 .attachment-bar { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; font-size: calc(13px * var(--font-scale, 1)); }
@@ -458,8 +457,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .pick::after { content: "⌄"; position: absolute; right: 7px; top: 50%; transform: translateY(-62%); font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); pointer-events: none; }
 .pick select option { background: var(--panel); color: var(--fg); }
 .pick.sandbox { color: var(--warn); }
-/* An existing GPT session's sandbox chip as a picker: chip-sized, the ⌄ inside. */
-.chat-head-chips .pick.chip { height: 22px; max-width: 100%; padding-right: 18px; font-size: calc(12px * var(--font-scale, 1)); }
 .send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: calc(15px * var(--font-scale, 1)); font-weight: 700; flex-shrink: 0; transition: transform .1s ease, filter .15s ease; }
 .send:hover:not(:disabled) { filter: brightness(1.08); }
 .send:active:not(:disabled) { transform: scale(.94); }
@@ -825,11 +822,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 @media (prefers-reduced-motion: reduce) { .chat-body > .msg { animation: none; } }
 /* === model picker === */
-.model-picker { position: relative; display: inline-flex; min-width: 0; }
-.mp-button { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: calc(13.5px * var(--font-scale, 1)); cursor: pointer; min-width: 0; max-width: 190px; }
-.mp-button:hover, .mp-button.open { background: var(--hover); color: var(--fg); }
-.mp-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mp-caret { font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); transform: translateY(-2px); flex-shrink: 0; }
 .mp-pop { position: fixed; z-index: 40; width: 300px; max-width: calc(100vw - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); color: var(--fg); }
 .mp-section + .mp-section { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
 .mp-head { padding: 6px 10px 4px; font-size: calc(12px * var(--font-scale, 1)); font-weight: 600; color: var(--faint); letter-spacing: .01em; }
@@ -838,8 +830,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .mp-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mp-name { font-size: calc(14px * var(--font-scale, 1)); color: var(--fg-strong); }
 .mp-desc { font-size: calc(12.5px * var(--font-scale, 1)); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ap-pop { width: 240px; }
-.account-picker .mp-button.pinned { color: var(--accent); }
 .pin-icon { flex-shrink: 0; vertical-align: -1px; }
 .turn-badge .tb-pin { display: inline-flex; align-items: center; margin-left: -4px; color: var(--accent); }
 .mp-check { width: 16px; flex-shrink: 0; text-align: center; color: var(--accent); font-size: calc(14px * var(--font-scale, 1)); }
@@ -848,7 +838,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .mp-effort button:hover { color: var(--fg); }
 .mp-effort button.on { background: var(--bg-raised); color: var(--fg-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
 @media (max-width: 720px) {
-  .mp-button { min-height: var(--phone-tap); max-width: 150px; }
   .mp-item { min-height: var(--phone-tap); }
   .mp-effort button { height: 36px; }
 }
@@ -1158,22 +1147,14 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* === open-in-desktop === */
 .open-desktop-btn { white-space: nowrap; }
 
-/* Context gauge (next to the model picker) and its one-line cost hint above the composer */
-.ctx-gauge-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
-.ctx-gauge { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--faint); font-size: calc(12px * var(--font-scale, 1)); font-variant-numeric: tabular-nums; cursor: default; }
-.ctx-gauge:hover { background: var(--hover); color: var(--muted); }
-.ctx-gauge svg { flex-shrink: 0; }
-/* Narrow panes drop the token count; the % stays so the ring never reads as a loading spinner. */
-.ctx-pct { display: none; }
+/* Context ring (inside the session chip) and its one-line cost hint above the composer */
 .ctx-track, .ctx-arc { fill: none; stroke-width: 2.4; }
 .ctx-track { stroke: var(--track); }
 .ctx-arc { stroke: var(--muted); stroke-linecap: round; }
-.ctx-gauge.long .ctx-arc { stroke: var(--warn); }
-.ctx-gauge.high .ctx-arc { stroke: var(--danger); }
-.ctx-pop { position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 20; padding: 6px 9px; border-radius: 8px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line); color: var(--fg); font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; }
+.ctx-ring.long .ctx-arc { stroke: var(--warn); }
+.ctx-ring.high .ctx-arc { stroke: var(--danger); }
 .ctx-hint { padding: 0 6px 4px; color: var(--faint); font-size: calc(12px * var(--font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .handoff-btn { margin-left: 8px; padding: 2px 8px; border: 0; border-radius: 6px; background: var(--accent-soft); color: var(--fg); font: inherit; font-size: calc(12px * var(--font-scale, 1)); cursor: pointer; }
-.ctx-pop .handoff-btn { display: block; margin: 6px 0 0; }
 .handoff-status { padding: 0 6px 4px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
 .session-link { display: block; margin: 8px auto; padding: 4px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: calc(12px * var(--font-scale, 1)); cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-link:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
@@ -1181,9 +1162,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .tb-cold { text-decoration: underline dotted color-mix(in srgb, var(--warn) 70%, transparent); text-underline-offset: 3px; cursor: help; }
 .tb-cold b { color: color-mix(in srgb, var(--warn) 80%, var(--fg)); }
 @media (max-width: 720px) {
-  .ctx-gauge { min-height: var(--phone-tap); padding: 0 4px; }
   .ctx-hint { white-space: normal; }
-  .ctx-pop { white-space: normal; width: max-content; max-width: min(240px, 70vw); }
   .handoff-btn, .session-link { min-height: var(--phone-tap); }
 }
 
@@ -1496,25 +1475,14 @@ button.hl-row-main:hover { background: var(--hover); }
 .newchat { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; display: flex; justify-content: center; padding: 10vh 16px 24px; container: newchat / inline-size; }
 .newchat-inner { width: 100%; max-width: 680px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
 .newchat-greeting { margin: 0; display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; font-size: calc(30px * var(--font-scale, 1)); font-weight: 500; color: var(--fg-strong); font-family: Georgia, "Times New Roman", var(--font); }
-/* The composer card: text on top, [+] · project · (model) ↑ in the bottom row, as in Desktop's new-chat box. */
-.newchat-box { display: flex; flex-direction: column; min-width: 0; border-radius: 18px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong), 0 1px 3px rgba(0, 0, 0, .06); transition: box-shadow .15s ease; }
-.newchat-box:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 28%, transparent), 0 1px 3px rgba(0, 0, 0, .06); }
-.newchat-box.dragover { box-shadow: inset 0 0 0 1.5px var(--accent); }
-.newchat-box textarea { display: block; width: 100%; min-height: 64px; max-height: 40vh; overflow-y: auto; padding: 14px 16px 4px; border: 0; resize: none; background: transparent; outline: none; line-height: 1.5; font-size: calc(15.5px * var(--font-scale, 1)); }
+/* The new-chat form holds the same composer card as a chat (Composer.tsx); a roomier first-message field. */
+.newchat-box { display: block; min-width: 0; }
+.newchat-box .composer { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong), 0 1px 3px rgba(0, 0, 0, .06); }
+.newchat-box .composer:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 28%, transparent), 0 1px 3px rgba(0, 0, 0, .06); }
+.newchat-box .composer.dragover { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.newchat-box textarea { min-height: 64px; overflow-y: auto; font-size: calc(15.5px * var(--font-scale, 1)); }
 .newchat-box textarea::placeholder { color: var(--faint); }
 .newchat-box textarea:focus-visible { outline: none; }
-.newchat-row { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 4px 8px 8px; }
-.newchat-files { display: flex; min-width: 0; padding: 2px 14px 0; }
-.newchat-row > .attach { flex-shrink: 0; }
-.newchat-project { position: relative; display: inline-flex; align-items: center; flex: 0 3 auto; min-width: 4.5em; color: var(--muted); }
-.newchat-project svg { position: absolute; left: 8px; pointer-events: none; }
-.newchat-project::after { content: "⌄"; position: absolute; right: 7px; top: 50%; transform: translateY(-62%); font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); pointer-events: none; }
-.newchat-project select { appearance: none; -webkit-appearance: none; max-width: 240px; min-width: 0; height: 28px; padding: 0 22px 0 27px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); font-size: calc(13px * var(--font-scale, 1)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-.newchat-project select:hover { background: var(--hover); color: var(--fg); }
-.newchat-project select option { background: var(--panel); color: var(--fg); }
-.newchat-actions { display: flex; align-items: center; gap: 2px; flex: 0 1 auto; min-width: 0; margin-left: auto; }
-.newchat-actions .send { margin-left: 2px; }
-.newchat-actions .mp-button { min-width: 3.6em; }
 .newchat-recent h2 { margin: 0 0 6px; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; }
 .newchat-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 @container newchat (min-width: 560px) { .newchat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -1526,9 +1494,6 @@ button.hl-row-main:hover { background: var(--hover); }
 .newchat-card-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: calc(11.5px * var(--font-scale, 1)); color: var(--muted); }
 /* Narrow pane (split view, cover screen): the model label gives way first, then the card padding. */
 @container newchat (max-width: 420px) {
-  .newchat-row { padding: 2px 6px 6px; }
-  .newchat-actions .mp-button { padding: 0 6px; }
-  .newchat-actions .mp-label-extra { display: none; }
   .newchat-greeting { font-size: calc(24px * var(--font-scale, 1)); }
 }
 @media (max-width: 720px) {
@@ -1537,7 +1502,6 @@ button.hl-row-main:hover { background: var(--hover); }
   .palette-item, .view-toggle button { min-height: 36px; }
   .newchat { padding-top: 5vh; }
   .newchat-greeting { font-size: calc(24px * var(--font-scale, 1)); }
-  .newchat-project select { height: var(--phone-tap); }
   .newchat-box textarea { font-size: calc(16px * var(--font-scale, 1)); }
 }
 /* Side panel (artifacts / file preview), one per pane. */
@@ -1671,7 +1635,7 @@ button.hl-row-main:hover { background: var(--hover); }
   .row-more-btn, .pin-btn { width: 30px; height: 30px; }
   .project-head { height: 34px; }
   .chat-head .icon-btn { min-width: 36px; height: 36px; }
-  .attach, .mp-button, .ctx-gauge, .icon-btn.dictate { min-height: 36px; }
+  .attach, .icon-btn.dictate { min-height: 36px; }
   .pick { height: 36px; }
   .send, .queue-add { width: 36px; height: 36px; }
 }
@@ -1728,9 +1692,6 @@ button.hl-row-main:hover { background: var(--hover); }
   .chat-head-chips > .chip.perm-badge { padding: 0 6px; }
   .perm-badge-full { display: none; }
   .perm-badge-short { display: inline; }
-  .ctx-num { display: none; }
-  .ctx-pct { display: inline; }
-  .ctx-gauge { padding: 0 5px; }
   .queue-now-label { display: none; }
   .queue-now { padding: 0; width: 26px; justify-content: center; }
 }
@@ -1739,43 +1700,12 @@ button.hl-row-main:hover { background: var(--hover); }
   .open-desktop-btn { display: none; }
 }
 @container pane (max-width: 360px) {
-  .composer-send .icon-btn.dictate { display: none; }
   .chat-head-chips > .chip.perm-bypassPermissions .perm-badge-short { display: none; }
   .chat-head-chips > .chip.perm-bypassPermissions { padding: 0 5px; }
 }
 
-/* Composer toolbar: one row, never wraps. When it is tight the pickers truncate in priority order —
-   the model label first, then the account, then the permission mode (flex-shrink weights 100 / 10 / 1). */
-.composer-actions > * { flex-shrink: 0; }
-.composer-actions > .model-picker { flex: 0 100 auto; min-width: 2.8em; }
-.composer-actions > .composer-sec { flex: 0 10 auto; min-width: 0; }
-.composer-sec > .model-picker.account-picker { flex: 0 10 auto; min-width: 2.4em; }
-.composer-actions > .pick, .composer-sec > .pick { flex: 0 1 auto; min-width: 3.6em; }
-.composer-actions .mp-button { width: 100%; }
-.composer-actions > .model-picker:not(.account-picker) .mp-button { justify-content: flex-start; }
-/* Narrow composer (split column, cover screen): the account keeps its seat letter, the model drops its effort, the
-   pickers tighten their padding — so the labels that remain read whole instead of as "Op…". */
-@container pane (max-width: 480px) {
-  .composer-actions .mp-label-extra { display: none; }
-  .composer-sec > .model-picker.account-picker { min-width: 0; }
-  /* the queue button takes a seat: the mic yields it (dictation is still on the keyboard) */
-  .composer-row:has(.queue-add) .dictate { display: none; }
-  .composer-actions .pick .perm-full { display: none; }
-  .composer-actions .pick .perm-short { display: inline; }
-  .composer-actions .mp-button { padding: 0 6px; gap: 3px; }
-  .composer-actions .pick { padding: 0 17px 0 6px; }
-  .composer-actions .pick::after { right: 5px; }
-  .composer-actions { gap: 0; }
-}
-
-.pick .perm-short { display: none; }
-
-/* A third-of-a-Fold column (~320px): the carets go (the labels are the affordance), so 자동 승인 and the model read
-   whole; the background pill keeps its dot and count. */
+/* A third-of-a-Fold column (~320px): the background pill keeps its dot and count. */
 @container pane (max-width: 360px) {
-  .composer-actions .mp-caret, .composer-actions .pick::after { display: none; }
-  .composer-actions .pick, .composer-actions .mp-button { padding: 0 4px; }
-  .composer-send { margin-left: 0; }
   .bg-pill-word { display: none; }
   .activity-bar:has(.bg-pill) .status-tokens { display: none; }
 }
@@ -1798,7 +1728,7 @@ button.hl-row-main:hover { background: var(--hover); }
 /* On-screen keyboard up (Chat.tsx sets data-soft-kb): the keyboard covers the home indicator, so no inset gap above it. */
 :root[data-soft-kb] .composer-wrap { padding-bottom: 8px; }
 .composer { border-radius: 18px; }
-.composer textarea { padding: 13px 16px 4px; }
+.composer textarea { padding: var(--s2) 16px 4px; }
 .composer-row { padding: 2px 8px 8px; }
 
 /* Sidebar foot sits on the screen edge like Claude's: the list fades out under it (no rule line), its fade lets taps
@@ -1869,24 +1799,11 @@ button.hl-row-main:hover { background: var(--hover); }
 }
 
 /* === composer controls (Claude parity) ===
-   Round pills: [+] and the model pill (model + effort) on the left, deck's 계정 · 권한 as one quieter pill beside it,
-   the context gauge, mic and a round send/stop on the right. */
+   Round buttons: [+] on the left; mic, the conditional 대기열에 추가 / 작업으로 and a round send/stop on the right. */
 .composer-row { gap: 6px; padding: 4px 10px 10px; }
-.composer-actions { justify-content: flex-start; gap: 6px; }
 .attach { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: calc(20px * var(--font-scale, 1)); transition: background .15s, box-shadow .15s; }
 .attach:hover, .attach.open { background: var(--hover); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 28%, transparent); }
-.composer-actions > .model-picker:not(.account-picker) .mp-button { height: 34px; padding: 0 14px; border-radius: 999px; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.composer-actions > .model-picker:not(.account-picker) .mp-button:hover, .composer-actions > .model-picker:not(.account-picker) .mp-button.open { background: var(--hover); }
-.composer-actions .mp-label-extra { color: var(--muted); }
-.composer-actions > .model-picker:not(.account-picker) .mp-caret { display: none; }
-.composer-sec { display: inline-flex; align-items: center; gap: 0; height: 34px; padding: 0 2px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); }
-.composer-sec .mp-button, .composer-sec .pick { height: 30px; border-radius: 999px; font-size: calc(12.5px * var(--font-scale, 1)); }
-.composer-sec .mp-button { padding: 0 10px; }
-.composer-sec .pick { padding: 0 20px 0 10px; }
-.composer-sec > * + * { position: relative; }
-.composer-sec > * + *::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 1px; background: var(--line-strong); pointer-events: none; }
-.composer-sec:empty { display: none; }
-.composer-send { gap: 6px; }
+.composer-send { gap: 6px; margin-left: auto; }
 .composer-send .icon-btn.dictate { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); background: var(--hover); }
 .composer-send .icon-btn.dictate:hover { background: var(--selected); }
 .composer-send .icon-btn.dictate.on { color: var(--danger); background: var(--danger-soft); }
@@ -1894,60 +1811,94 @@ button.hl-row-main:hover { background: var(--hover); }
 .send:disabled { background: color-mix(in srgb, var(--accent) 38%, var(--bg)); color: color-mix(in srgb, #fff 70%, transparent); }
 :root[data-theme="light"] .send:disabled { background: color-mix(in srgb, var(--accent) 35%, var(--bg)); color: #fff; }
 @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .send:disabled { background: color-mix(in srgb, var(--accent) 35%, var(--bg)); color: #fff; } }
-.attach:focus-visible, .send:focus-visible, .composer-send .icon-btn.dictate:focus-visible, .composer-actions .mp-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.attach:focus-visible, .send:focus-visible, .composer-send .icon-btn.dictate:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (pointer: coarse) {
   .attach, .send, .queue-add, .composer-send .icon-btn.dictate { width: 40px; height: 40px; }
-  .composer-actions > .model-picker:not(.account-picker) .mp-button, .composer-sec { height: 40px; }
-  .composer-sec .mp-button, .composer-sec .pick { height: 36px; }
 }
 @media (max-width: 720px) {
   .attach, .send, .queue-add, .composer-send .icon-btn.dictate { width: var(--phone-tap); height: var(--phone-tap); }
-  .composer-actions > .model-picker:not(.account-picker) .mp-button, .composer-sec { height: var(--phone-tap); }
-  .composer-sec .mp-button, .composer-sec .pick { height: 40px; }
   .composer-row { padding: 2px 6px 6px; gap: 4px; }
-  .composer-actions { gap: 4px; }
-}
-@container pane (max-width: 480px) {
-  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 10px; }
-  .composer-sec .pick { padding: 0 16px 0 7px; }
-  .composer-sec .mp-button { padding: 0 7px; }
-  .composer-actions { gap: 4px; }
-}
-@container pane (max-width: 360px) {
-  .composer-sec .pick { padding: 0 6px; }
-  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 8px; }
-}
-/* The new-chat card's model picker is the same pill. */
-.newchat-actions .model-picker:not(.account-picker) .mp-button { height: 34px; padding: 0 14px; border-radius: 999px; color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.newchat-actions .model-picker:not(.account-picker) .mp-button:hover, .newchat-actions .model-picker:not(.account-picker) .mp-button.open { background: var(--hover); }
-.newchat-actions .mp-label-extra { color: var(--muted); }
-.newchat-actions .model-picker:not(.account-picker) .mp-caret { display: none; }
-@media (pointer: coarse) { .newchat-actions .model-picker:not(.account-picker) .mp-button { height: 40px; } }
-@media (max-width: 720px) { .newchat-actions .model-picker:not(.account-picker) .mp-button { height: var(--phone-tap); } }
-/* The model pill keeps its name and the 계정 · 권한 pill gives way first (it truncates, the model never reads "Opu…"). */
-.composer-actions > .model-picker:not(.account-picker) { flex: 0 1 auto; min-width: min-content; }
-.composer-actions > .model-picker:not(.account-picker) .mp-label { overflow: visible; }
-.composer-actions > .composer-sec { flex: 0 100 auto; overflow: hidden; }
-/* Inside the 계정 · 권한 pill the account keeps its seat letter; the permission label is what truncates. */
-.composer-sec { min-width: 0; }
-.composer-sec > .model-picker.account-picker { flex: 0 0 auto; min-width: min-content; }
-.composer-sec > .model-picker.account-picker .mp-label { overflow: visible; }
-.composer-sec > .pick { flex: 0 1 auto; min-width: 0; }
-@media (max-width: 720px) {
   .composer-send { gap: 3px; }
-  .composer-send .ctx-gauge { padding: 0 2px; }
 }
-@container pane (max-width: 480px) {
-  .composer-sec .pick { padding: 0 15px 0 7px; }
-  .composer-sec .pick::after { right: 5px; }
-  .composer-actions > .model-picker:not(.account-picker) .mp-button { padding: 0 11px; }
+
+/* === session chip (design §3.4) ===
+   One small chip above the text, top left: context ring · model · account · permission (a new session: folder ·
+   engine · permission). It never wraps; the parts give way right to left (the effort first), so 360px never clips it. */
+.composer-top { display: flex; align-items: center; gap: var(--s2); min-width: 0; padding: var(--s2) var(--s3) 0; }
+.session-chip-wrap { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; max-width: 100%; }
+.session-chip { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; max-width: 100%; height: 28px; padding: 0 var(--s2) 0 var(--s2); border: 0; border-radius: var(--r-full); background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); font: inherit; font-size: var(--fs-meta); line-height: var(--lh-meta); cursor: pointer; transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+.session-chip:hover, .session-chip[aria-expanded="true"] { background: var(--hover); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.session-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.session-chip:disabled { opacity: .5; cursor: not-allowed; }
+.session-chip.flash { background: var(--accent-soft); color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--accent); }
+.session-chip.bypass .sc-perm { color: var(--danger); }
+.session-chip svg { flex-shrink: 0; }
+.sc-label { display: inline-flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.sc-seg { display: inline-flex; align-items: center; min-width: 0; }
+.sc-seg:first-child { flex-shrink: 1; }
+.sc-seg + .sc-seg { flex-shrink: 0; }
+.sc-dot { margin: 0 var(--s1); color: var(--faint); }
+.sc-part { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-model, .sc-folder { display: block; overflow: hidden; text-overflow: ellipsis; }
+.sc-folder svg { vertical-align: -2px; margin-right: var(--s1); }
+.sc-extra { color: var(--faint); }
+.sc-acct { display: inline-flex; align-items: center; gap: 2px; }
+.sc-acct.pinned { color: var(--accent); }
+.sc-perm.perm-acceptEdits { color: var(--accent); }
+.sc-perm.perm-plan { color: #3b82f6; }
+.sc-perm.perm-bypassPermissions { color: var(--danger); }
+.sc-caret { flex-shrink: 0; color: var(--faint); font-size: calc(11px * var(--font-scale, 1)); transform: translateY(-2px); }
+.ctx-ring { display: block; }
+.ctx-out { flex-shrink: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); font-variant-numeric: tabular-nums; color: var(--warn); }
+.ctx-out.high { color: var(--danger); }
+@container pane (max-width: 480px) { .sc-extra { display: none; } }
+@media (max-width: 720px) {
+  .composer-top { padding: var(--s1) var(--s2) 0; }
+  /* The chip stays small to look at; its tap area is the phone's 44px. */
+  .session-chip { position: relative; height: 32px; }
+  .session-chip::after { content: ""; position: absolute; left: 0; right: 0; top: -6px; bottom: -6px; }
 }
-/* Phone-narrow: the pill outline already says "tap me", so the carets give their room to the labels. */
-@container pane (max-width: 420px) {
-  .composer-sec .pick { padding: 0 9px; }
-  .composer-sec .pick::after { display: none; }
-  .composer-sec .mp-caret { display: none; }
-  .composer-sec .mp-button { padding: 0 9px; }
+@media (prefers-reduced-motion: reduce) { .session-chip { transition: none; } }
+
+/* The session sheet. Desktop: a 320px panel on the right edge; phone: a bottom sheet. */
+.sheet-backdrop:has(> .session-sheet) { justify-content: flex-end; align-items: stretch; padding: 0; }
+.sheet.session-sheet { width: 320px; max-width: 100%; max-height: 100%; height: 100%; border-radius: 0; background: var(--bg-raised); box-shadow: var(--shadow-lg); animation: session-sheet-side var(--t-sheet) var(--ease); }
+@keyframes session-sheet-side { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.session-sheet-inner { display: flex; flex-direction: column; gap: var(--s3); padding: 0 var(--s4) var(--s5); }
+.session-sheet-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--s2); padding: var(--s3) 0 var(--s2); background: var(--bg-raised); }
+.session-sheet-head h2 { margin: 0 auto 0 0; font-size: var(--fs-title); line-height: var(--lh-title); color: var(--fg-strong); }
+.session-sheet-head .sheet-btn { width: 32px; height: 32px; }
+.ss-section { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+.ss-section + .ss-section { padding-top: var(--s3); border-top: 1px solid var(--line); }
+.ss-head { margin: 0; font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; color: var(--faint); }
+.ss-note, .ss-ctx-line { margin: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--muted); }
+.ss-ctx .handoff-btn { align-self: flex-start; margin: 0; }
+.session-sheet .pick, .ss-project { position: relative; display: flex; align-items: center; width: 100%; max-width: none; height: 36px; padding: 0 28px 0 var(--s3); border-radius: var(--r-sm); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: var(--fs-label); }
+.session-sheet .pick::after { right: var(--s3); }
+.session-sheet .pick.sandbox { color: var(--warn); }
+.ss-project::after { content: "⌄"; position: absolute; right: var(--s3); top: 50%; transform: translateY(-62%); font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); pointer-events: none; }
+.ss-project select { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0 28px 0 var(--s3); border: 0; border-radius: inherit; background: transparent; color: var(--fg); font: inherit; cursor: pointer; }
+.ss-project select option { background: var(--panel); color: var(--fg); }
+.ss-project:has(select:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
+.session-sheet .mp-list { margin: 0 calc(-1 * var(--s2)); }
+.session-sheet .mp-head { padding-top: var(--s1); }
+@media (max-width: 720px) {
+  .sheet-backdrop:has(> .session-sheet) { justify-content: center; align-items: flex-end; }
+  .sheet.session-sheet { width: 100%; height: auto; max-height: 86%; border-radius: var(--r-md) var(--r-md) 0 0; animation-name: session-sheet-up; }
+  .session-sheet-inner { padding: 0 var(--s3) calc(var(--s5) + env(safe-area-inset-bottom, 0px)); }
+  .session-sheet-head .sheet-btn, .session-sheet .pick, .ss-project { height: var(--phone-tap); }
+  .session-sheet-head .sheet-btn { width: var(--phone-tap); }
+}
+@keyframes session-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sheet.session-sheet { animation: none; } }
+
+/* 작업으로: a quiet pill with its word; a phone shows the ⇗ icon only (a round button like the others). */
+.task-add { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); }
+.task-add-icon { display: none; }
+@media (max-width: 720px) {
+  .task-add { width: var(--phone-tap); height: var(--phone-tap); padding: 0; }
+  .task-add-text { display: none; }
+  .task-add-icon { display: block; }
 }
 
 /* === sidebar rows (Claude parity) ===
@@ -1991,7 +1942,6 @@ button.hl-row-main:hover { background: var(--hover); }
 /* A narrow split column gets the phone's tighter spacing too. */
 @container pane (max-width: 420px) {
   .composer-send { gap: 3px; }
-  .composer-send .ctx-gauge { padding: 0 2px; }
   .composer-row { padding-left: 8px; padding-right: 8px; gap: 4px; }
 }
 
@@ -2018,14 +1968,9 @@ button.hl-row-main:hover { background: var(--hover); }
 /* An account taken out of the configuration (retired, shown by its label) or one the configuration no longer has (shown
    by its id): the muted text colour and a dashed edge — readable, and told apart without relying on colour. */
 .turn-badge .acct.acct-retired, .turn-badge .acct.acct-unknown { color: var(--muted); background: transparent; outline: 1px dashed var(--muted); outline-offset: -1px; font-weight: 600; }
-.mp-label .acct-retired, .mp-label .acct-unknown, .account-picker .mp-button.pinned .acct-retired, .account-picker .mp-button.pinned .acct-unknown { color: var(--muted); text-decoration: underline dashed; text-underline-offset: 3px; }
+.mp-acct.acct-retired, .mp-acct.acct-unknown { color: var(--muted); text-decoration: underline dashed; text-underline-offset: 3px; }
 /* (An unselected tab is the muted colour already; the picked one keeps its own.) */
 .uv-tabs button.acct-retired, .uv-tabs button.acct-unknown { outline: 1px dashed var(--muted); outline-offset: -1px; }
-
-@media (max-width: 720px) {
-  /* The picker's phone cap (150px) is a little short of "자동 · " and a 12-character label. */
-  .account-picker .mp-button { max-width: 172px; }
-}
 
 /* iOS Safari zooms in on a focused field smaller than 16px and stays zoomed. Touch devices: never smaller. */
 @media (pointer: coarse) {
@@ -2222,7 +2167,6 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
 /* ── 간결 모드 (prefs.conciseMode, default on): tuck chrome, keep results. Full mode unchanged when data-concise=off. ── */
 html[data-concise='on'] .turn-badge .reason.concise-reason { max-width: 1ch; opacity: 0.4; }
 html[data-concise='on'] .context-gauge-detail,
-html[data-concise='on'] .ctx-gauge .gauge-why,
 html[data-concise='on'] .route-preview-reason { display: none; }
 html[data-concise='on'] .concise-progress {
   font-size: calc(13px * var(--font-scale, 1));
