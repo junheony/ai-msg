@@ -4,7 +4,8 @@
 # port behind fake CLIs, three permission round trips through the bundled child scripts, the config-folder lock, and a
 # clean SIGTERM shutdown. Everything runs outside the repo under `env -i` with a temporary HOME — the real ~/.config/deck,
 # the running server and the repo's dist/ are never touched. Needs the network (npm ci).
-#   bash scripts/pack-smoke.sh           # SKIP_DOCTOR=1 skips the doctor step (until `quarterdeck doctor` exists)
+#   bash scripts/pack-smoke.sh           # SKIP_DOCTOR=1 skips the doctor step
+# Only fake CLIs and node/npm/npx are on PATH: no real claude/codex/agy/grok of this machine ever runs.
 # (prepack's build output shares stdout with `npm pack --json`: the JSON is the trailing array.)
 # Prints `pack-smoke: 완료`, or the failed step and exit 1. The package name is read from npm pack, never assumed.
 set -euo pipefail
@@ -118,6 +119,7 @@ if [[ "${SKIP_DOCTOR:-}" == 1 ]]; then
 else
   step 'doctor'
   out="$("${E[@]}" "$Q" doctor)" || die 'doctor 종료 코드 0 아님'
+  [[ "$(grep -cE '^(claude|codex|gemini|grok) ' <<<"$out")" == 4 ]] || { echo "$out" >&2; die 'doctor 출력에 엔진 넷이 없음'; }
   grep -q '로그인 안 됨' <<<"$out" || die 'doctor 출력에 "로그인 안 됨" 없음'
   grep -q '.grok/bin/grok' <<<"$out" || die 'doctor 가 ~/.grok/bin/grok 을 찾지 못함'
 fi

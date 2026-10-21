@@ -1,3 +1,5 @@
+import type { EngineId, LoginState } from '../../shared/setup-types';
+
 // Server-side user strings for packaging (CLI, lock, doctor, service, setup wizard). Kept in one file for i18n (plan ③).
 
 export const TEXTS = {
@@ -26,4 +28,40 @@ export const TEXTS = {
     '',
     '환경 변수: DECK_CONFIG_DIR(설정 폴더), DECK_PORT(포트, 기본 9320)',
   ].join('\n'),
+} as const;
+
+const CLI_NAME: Record<EngineId, string> = { claude: 'claude', codex: 'codex', gemini: 'agy', grok: 'grok' };
+const BIN_VAR: Record<EngineId, string> = { claude: 'DECK_CLAUDE_BIN', codex: 'DECK_CODEX_BIN', gemini: 'DECK_GEMINI_BIN', grok: 'DECK_GROK_BIN' };
+
+/** What the user runs in a terminal to log in. `profileDir` (`~/…`): a Claude profile other than the default `~/.claude`. */
+export function loginCommandFor(engine: EngineId, profileDir?: string): string {
+  switch (engine) {
+    case 'claude': return profileDir ? `CLAUDE_CONFIG_DIR=${profileDir} claude auth login` : 'claude auth login';
+    case 'codex': return 'codex login';
+    case 'gemini': return 'agy';
+    case 'grok': return 'grok login';
+  }
+}
+
+/** One sentence after the login command (Gemini's has no subcommand). */
+export function loginHint(engine: EngineId, command: string): string {
+  return engine === 'gemini' ? `터미널에서 ${command} 를 인자 없이 실행 → 브라우저에서 Google 로그인` : `터미널에서 ${command}`;
+}
+
+export function missingBinNote(engine: EngineId): string {
+  const cli = CLI_NAME[engine];
+  const where = engine === 'grok' ? ` (찾아본 곳: DECK_GROK_BIN, PATH, ~/.grok/bin/grok)` : '';
+  return `${cli} 를 찾지 못했습니다 — 설치 후 PATH 에 두거나 ${BIN_VAR[engine]} 으로 지정하세요${where}`;
+}
+
+export const PROBE_TEXTS = {
+  claudeTooOld: (version: string, min: string) => `claude ${version} 은 너무 오래됐습니다 — ${min} 이상으로 업데이트하세요`,
+  spawnFailed: (kind: string) => `실행하지 못했습니다(${kind})`,
+  timedOut: (sec: number) => `응답 없음(${sec}초)`,
+  login: { yes: '로그인됨', no: '로그인 안 됨', unknown: '확인 못 함' } satisfies Record<LoginState, string>,
+  missing: '찾지 못함',
+  noVersion: '버전 모름',
+  retired: '쉬는 계정',
+  homeProfile: '기본',
+  profile: '프로필',
 } as const;

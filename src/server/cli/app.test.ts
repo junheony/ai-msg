@@ -100,8 +100,29 @@ describe('runCli', () => {
     const b = fakeIo(env);
     expect(await runCli(['bogus'], b)).toBe(2);
     expect(b.errText()).not.toBe('');
-    expect(await runCli(['doctor'], fakeIo(env))).toBe(2);
     expect(await runCli(['service', 'status'], fakeIo(env))).toBe(2);
+  });
+
+  it('doctor: probes only through the injected runner, exit 0, --json is the same report', async () => {
+    const codex = path.join(root, 'codex');
+    fs.writeFileSync(codex, '#!/bin/sh\nexit 9\n', { mode: 0o755 });
+    const calls: string[] = [];
+    const probeExec = async (bin: string, args: string[]) => {
+      calls.push(`${path.basename(bin)} ${args.join(' ')}`);
+      return args[0] === 'login' ? { code: 1, stdout: 'Not logged in\n', timedOut: false } : { code: 0, stdout: 'codex-cli 0.159.2\n', timedOut: false };
+    };
+    const e = { ...env, DECK_CODEX_BIN: codex };
+    const io = fakeIo(e);
+    expect(await runCli(['doctor'], io, { probeExec })).toBe(0);
+    expect(calls.sort()).toEqual(['codex --version', 'codex login status']);
+    const lines = io.outText().split('\n');
+    expect(lines[0]).toMatch(/^claude .*찾지 못함/);
+    expect(lines[1]).toMatch(/codex .*0\.159\.2.*로그인 안 됨.*codex login/);
+    expect(fs.existsSync(path.join(root, 'cfg'))).toBe(false);
+    const j = fakeIo(e);
+    expect(await runCli(['doctor', '--json'], j, { probeExec })).toBe(0);
+    const report = JSON.parse(j.outText()) as { engines: { engine: string; login: string }[]; claudeProfiles: unknown[] };
+    expect(report.engines.map((x) => `${x.engine}:${x.login}`)).toEqual(['claude:unknown', 'codex:no', 'gemini:unknown', 'grok:unknown']);
   });
 
   it('loginUrl encodes the token', () => expect(loginUrl(9320, 'a+b')).toBe('http://127.0.0.1:9320/#token=a%2Bb'));
