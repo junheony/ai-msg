@@ -54,8 +54,12 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/** `<configDir>/accounts.json.lock` (O_EXCL) against other processes; one older than 30 s is a leftover and goes. */
-async function takeFileLock(file: string, waitMs: number): Promise<() => void> {
+/**
+ * `<configDir>/accounts.json.lock` (O_EXCL) against other processes. One older than 30 s is a leftover: taken over by
+ * renaming it aside (of two takers only one rename succeeds) and dropping it only if it is still the file judged stale;
+ * a fresh lock that slipped in meanwhile is put back. Then race once more. `afterStaleCheck` is for tests.
+ */
+export async function takeFileLock(file: string, waitMs: number, afterStaleCheck?: () => void | Promise<void>): Promise<() => void> {
   const until = Date.now() + waitMs;
   for (;;) {
     try {
@@ -67,7 +71,17 @@ async function takeFileLock(file: string, waitMs: number): Promise<() => void> {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
     }
     const st = await fsp.lstat(file).catch(() => null);
-    if (st && Date.now() - st.mtimeMs > LOCK_STALE_MS) { await fsp.rm(file, { force: true }); continue; }
+    if (st && Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+      await afterStaleCheck?.();
+      const aside = `${file}.${process.pid}.${Date.now()}.stale`;
+      const moved = await fsp.rename(file, aside).then(() => true, () => false); // lost to another taker, or gone
+      if (moved) {
+        const now = await fsp.lstat(aside).catch(() => null);
+        if (now && (now.ino !== st.ino || now.mtimeMs !== st.mtimeMs)) await fsp.link(aside, file).catch(() => { /* a newer lock is in place */ });
+        await fsp.rm(aside, { force: true });
+      }
+      continue;
+    }
     if (Date.now() >= until) throw new ProfileError(409, PROFILE_TEXTS.busy);
     await new Promise((r) => setTimeout(r, 25));
   }
@@ -130,7 +144,7 @@ export function addClaudeProfile(o: {
       if (text === null) {
         base = materializeAccountsConfig(loadAccountRegistry({ configDir: o.configDir, homeDir: home, log: () => {} }), home);
       } else {
-        try { loadAccountRegistry({ configDir: o.configDir, homeDir: home, log: () => {} }); } catch (err) {
+        try { loadAccountRegistry({ configDir: o.configDir, homeDir: home, log: () => {}, text }); } catch (err) {
           if (err instanceof AccountsFileError) throw new ProfileError(400, PROFILE_TEXTS.brokenFile(err.message));
           throw err;
         }

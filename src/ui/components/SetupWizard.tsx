@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { ClaudeProfileProbe, EngineProbe, LoginState, SetupStatus } from '../../shared/setup-types';
+import type { SessionActivity } from '../../shared/protocol';
 import { addProfile, getSetup, markSetupDone, refreshSetup, restartServer } from '../setupApi';
 import { ENGINE_NAME, LOGIN_LABEL, SETUP_TEXTS as T } from '../setupTexts';
+import { RESTART_WAIT_WARNING, restartConfirmText } from './ActivitySheet';
 import { CopyButton } from './CopyButton';
 import { Sheet, SheetHead } from './Dialogs';
 
@@ -60,11 +62,13 @@ function ProfileRow({ p, restartNeeded }: { p: ClaudeProfileProbe; restartNeeded
  * 설치 점검 — the first-run wizard, also opened from 설정 › 계정. One sheet, three numbered parts: ① the four engine CLIs
  * (installed · version · login, the login command to copy when logged out, 다시 확인 = fresh probes) ② Claude accounts
  * and the add form (applied at the next server start: 지금 재시작 under a supervisor, else run quarterdeck again)
+ * (confirmed like the activity sheet's: what the drain waits for, from `activity`)
  * ③ the addresses to open from another device. 완료 records the wizard done (it stops opening by itself), ✕ only closes.
  * While open the status is re-read every `pollMs` (a login done in a terminal shows up by itself).
  */
-export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone, onClose, onRestart, pollMs = 5000 }: {
+export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone, onClose, onRestart, activity = [], pollMs = 5000 }: {
   load?: () => Promise<SetupStatus>;
+  activity?: SessionActivity[];
   onAddProfile?: typeof addProfile;
   onDone: () => void;
   onClose: () => void;
@@ -80,6 +84,8 @@ export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone
   const [addError, setAddError] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
   const [restart, setRestart] = useState<'idle' | 'sent' | string>('idle');
+  const [confirmRestart, setConfirmRestart] = useState(false);
+  const [sendingRestart, setSendingRestart] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [doneError, setDoneError] = useState(false);
   const loadRef = useRef(load);
@@ -120,8 +126,11 @@ export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone
 
   const restartNow = async () => {
     if (onRestart) { onRestart(); setRestart('sent'); return; }
+    setSendingRestart(true);
     const r = await restartServer();
-    if (alive.current) setRestart(r.ok ? 'sent' : r.error);
+    if (!alive.current) return;
+    setSendingRestart(false);
+    setRestart(r.ok ? 'sent' : r.error);
   };
 
   const finish = async () => {
@@ -182,7 +191,16 @@ export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone
                 {status.supervised
                   ? restart === 'sent' ? <p className="setup-note">{T.restarting}</p> : (
                     <>
-                      <button type="button" className="btn ghost" onClick={() => void restartNow()}>{T.restartNow}</button>
+                      {confirmRestart && <p className="setup-note">{restartConfirmText(activity)}</p>}
+                      {confirmRestart && <p className="setup-note">{RESTART_WAIT_WARNING}</p>}
+                      {!confirmRestart
+                        ? <button type="button" className="btn ghost" onClick={() => { setRestart('idle'); setConfirmRestart(true); }}>{T.restartNow}</button>
+                        : (
+                          <div className="setup-actions">
+                            <button type="button" className="btn ghost" onClick={() => setConfirmRestart(false)}>{T.restartCancel}</button>
+                            <button type="button" className="btn primary" disabled={sendingRestart} onClick={() => void restartNow()}>{T.restartConfirm}</button>
+                          </div>
+                        )}
                       {restart !== 'idle' && <p className="setup-error">{restart}</p>}
                     </>
                   )

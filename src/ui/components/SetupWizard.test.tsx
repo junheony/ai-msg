@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({ markSetupDone: vi.fn(async () => {}), refreshSet
 vi.mock('../setupApi', async (orig) => ({ ...(await orig<typeof import('../setupApi')>()), ...api }));
 
 import { SetupWizard } from './SetupWizard';
+import { RESTART_WAIT_WARNING, restartConfirmText } from './ActivitySheet';
 
 const sample: SetupStatus = {
   engines: [
@@ -78,8 +79,27 @@ describe('SetupWizard', () => {
     expect(await screen.findByText(SETUP_TEXTS.restartNotice)).toBeTruthy();
     expect(onAddProfile).toHaveBeenCalledWith('d', 'Side');
     fireEvent.click(screen.getByRole('button', { name: SETUP_TEXTS.restartNow }));
+    expect(onRestart).not.toHaveBeenCalled(); // a confirm first
+    fireEvent.click(screen.getByRole('button', { name: SETUP_TEXTS.restartConfirm }));
     expect(onRestart).toHaveBeenCalled();
     expect(screen.queryByText(SETUP_TEXTS.restartManual)).toBeNull();
+  });
+
+  it('지금 재시작 asks first, saying what the drain waits for; 취소 sends nothing, 재시작 posts', async () => {
+    const onAddProfile = vi.fn(async () => ({ ok: true as const, restartNeeded: true as const }));
+    const activity = [{ sessionId: 's1', cwd: '/w', turnId: 't1', running: true, bg: 1, forMs: 1000 }];
+    render(<SetupWizard load={async () => ({ ...sample, supervised: true, restartNeeded: true })} onAddProfile={onAddProfile} activity={activity} onDone={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: SETUP_TEXTS.restartNow }));
+    expect(screen.getByText(restartConfirmText(activity))).toBeTruthy();
+    expect(screen.getByText('진행 중 작업 2개가 끝나면 재시작합니다')).toBeTruthy();
+    expect(screen.getByText(RESTART_WAIT_WARNING)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: SETUP_TEXTS.restartCancel }));
+    expect(api.restartServer).not.toHaveBeenCalled();
+    expect(screen.queryByText(RESTART_WAIT_WARNING)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: SETUP_TEXTS.restartNow }));
+    fireEvent.click(screen.getByRole('button', { name: SETUP_TEXTS.restartConfirm }));
+    await waitFor(() => expect(api.restartServer).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(SETUP_TEXTS.restarting)).toBeTruthy();
   });
 
   it('not supervised: the notice says to run quarterdeck again, no restart button', async () => {

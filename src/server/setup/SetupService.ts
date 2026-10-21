@@ -16,6 +16,8 @@ type Probe = { engines: EngineProbe[]; claudeProfiles: ClaudeProfileProbe[]; che
 
 export class SetupService {
   private cache: { at: number; value: Promise<Probe> } | null = null;
+  /** The probe still running, shared by every caller (a forced refresh too) so repeated clicks never pile up CLIs. */
+  private inflight: Promise<Probe> | null = null;
   private readonly now: () => number;
 
   constructor(private readonly o: {
@@ -62,12 +64,18 @@ export class SetupService {
 
   async status(force = false): Promise<SetupStatus> {
     const t = this.now();
-    if (force || !this.cache || t - this.cache.at >= (this.o.ttlMs ?? DEFAULT_TTL_MS)) {
-      const value = this.probe();
-      this.cache = { at: t, value };
-      value.catch(() => { if (this.cache?.value === value) this.cache = null; });
+    let value = this.inflight ?? this.cache?.value;
+    if (!this.inflight && (force || !this.cache || t - this.cache.at >= (this.o.ttlMs ?? DEFAULT_TTL_MS))) {
+      const started = this.probe();
+      value = started;
+      this.inflight = started;
+      this.cache = { at: t, value: started };
+      started.then(() => { if (this.inflight === started) this.inflight = null; }, () => {
+        if (this.inflight === started) this.inflight = null;
+        if (this.cache?.value === started) this.cache = null;
+      });
     }
-    const [probe, supervised] = await Promise.all([this.cache.value, this.o.supervised().catch(() => false)]);
+    const [probe, supervised] = await Promise.all([value as Promise<Probe>, this.o.supervised().catch(() => false)]);
     const { reg, file } = this.fileRegistry();
     const fileIds = new Set(reg.all());
     const runIds = new Set(this.o.accounts.all());
@@ -77,6 +85,8 @@ export class SetupService {
 
   async addProfile(id: string, label?: string): Promise<{ profile: ClaudeProfileProbe; restartNeeded: true }> {
     await addClaudeProfile({ configDir: this.o.cfg.configDir, home: this.o.cfg.home, id, ...(label !== undefined ? { label } : {}) });
+    // A probe started before the add does not know the new profile: let it finish, then probe afresh.
+    await this.inflight?.catch(() => {});
     const st = await this.status(true);
     const profile = st.claudeProfiles.find((p) => p.id === id);
     if (!profile) throw new Error(`added profile ${id} is not in accounts.json`);

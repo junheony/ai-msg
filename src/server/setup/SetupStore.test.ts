@@ -50,8 +50,8 @@ describe('SetupStore', () => {
 });
 
 describe('existingInstall', () => {
-  it('existingInstall: token alone is not an install; session data is', () => {
-    fs.writeFileSync(path.join(dir, 'token'), 'f'.repeat(64));
+  it('existingInstall: an empty file is nothing; data is an install', () => {
+    fs.writeFileSync(path.join(dir, 'token'), '');
     expect(existingInstall(dir)).toBe(false);
     fs.writeFileSync(path.join(dir, 'session-meta.json'), '');
     expect(existingInstall(dir)).toBe(false); // empty is nothing
@@ -63,8 +63,23 @@ describe('existingInstall', () => {
     expect(existingInstall(path.join(dir, 'nope'))).toBe(false);
   });
 
-  it.each(['session-state.json', 'activity.json', 'pins.json', 'projects.json', 'push-subscriptions.json', 'accounts.json'])('%s counts', (name) => {
+  it.each(['token', 'settings.json', 'vapid.json', 'session-state.json', 'activity.json', 'pins.json', 'projects.json', 'push-subscriptions.json', 'accounts.json'])('%s counts', (name) => {
     fs.writeFileSync(path.join(dir, name), '[]');
     expect(existingInstall(dir)).toBe(true);
+  });
+
+  it('a previous-version install (token only, no setup.json) is marked done, not shown the wizard', async () => {
+    fs.writeFileSync(path.join(dir, 'token'), 'f'.repeat(64));
+    const s = await SetupStore.open(file, { existingInstall: existingInstall(dir) });
+    expect(s.needed()).toBe(false);
+    expect(read()).toMatchObject({ state: 'done', migrated: true });
+  });
+
+  it('a fresh start writes pending before the token, so a restart before the wizard still shows it', async () => {
+    const first = await SetupStore.open(file, { existingInstall: existingInstall(dir) });
+    expect(first.needed()).toBe(true);
+    fs.writeFileSync(path.join(dir, 'token'), 'f'.repeat(64)); // created after setup.json on that first start
+    const again = await SetupStore.open(file, { existingInstall: existingInstall(dir) });
+    expect(again.needed()).toBe(true);
   });
 });

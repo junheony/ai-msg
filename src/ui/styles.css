@@ -1493,6 +1493,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .setup-add-btn { height: 32px; }
 .setup-restart { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); padding: 10px var(--s3); border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .setup-restart > p:first-child { margin: 0; color: var(--fg-strong); }
+.setup-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .setup-error { margin: 0; color: var(--danger); font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: var(--lh-label); overflow-wrap: anywhere; }
 .setup-foot { position: sticky; bottom: 0; z-index: 2; display: flex; flex-direction: column; align-items: flex-end; gap: var(--s2); margin-top: calc(-1 * var(--s3)); padding: var(--s3) 0 calc(var(--s3) + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: var(--panel); }
 .setup-done { height: 36px; min-width: 96px; }

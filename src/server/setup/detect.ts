@@ -16,6 +16,8 @@ export type ProbeExec = (bin: string, args: string[], env: NodeJS.ProcessEnv, ti
 
 const OUTPUT_CAP = 64 * 1024;
 const KILL_GRACE_MS = 2000;
+/** After the child exited (or was SIGKILLed): how long to wait for its pipes to close before closing them ourselves. */
+const CLOSE_GRACE_MS = 500;
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 const spawnErrorKind = (e: unknown): 'ENOENT' | 'EACCES' | 'OTHER' => {
@@ -25,7 +27,9 @@ const spawnErrorKind = (e: unknown): 'ENOENT' | 'EACCES' | 'OTHER' => {
 
 /**
  * No shell, own process group, stdin closed. stdout kept up to 64 KB (the rest is read and dropped), stderr dropped.
- * On timeout: SIGTERM to the group, SIGKILL 2 s later, and the result only once the child has closed.
+ * On timeout: SIGTERM to the group, SIGKILL 2 s later. The result comes once the child has closed; if a grandchild that
+ * left the group still holds the pipes, they are closed by force shortly after the child exited (or was SIGKILLed), so a
+ * result always comes.
  */
 export const defaultExec: ProbeExec = (bin, args, env, timeoutMs) => new Promise((resolve) => {
   let settled = false;
@@ -40,8 +44,17 @@ export const defaultExec: ProbeExec = (bin, args, env, timeoutMs) => new Promise
   let stdout = '';
   let timedOut = false;
   let hardKill: NodeJS.Timeout | undefined;
+  let forceClose: NodeJS.Timeout | undefined;
   const killGroup = (sig: NodeJS.Signals) => {
     try { if (child.pid) process.kill(-child.pid, sig); } catch { /* already gone */ }
+  };
+  const finish = (code: number | null) => {
+    clearTimeout(timer);
+    clearTimeout(hardKill);
+    clearTimeout(forceClose);
+    child.stdout!.destroy();
+    child.stderr!.destroy();
+    done({ code, stdout, timedOut });
   };
   child.stdout!.setEncoding('utf8');
   child.stdout!.on('data', (c: string) => { if (stdout.length < OUTPUT_CAP) stdout += c.slice(0, OUTPUT_CAP - stdout.length); });
@@ -49,17 +62,26 @@ export const defaultExec: ProbeExec = (bin, args, env, timeoutMs) => new Promise
   const timer = setTimeout(() => {
     timedOut = true;
     killGroup('SIGTERM');
-    hardKill = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS);
+    hardKill = setTimeout(() => {
+      killGroup('SIGKILL');
+      if (!forceClose) forceClose = setTimeout(() => finish(null), CLOSE_GRACE_MS);
+    }, KILL_GRACE_MS);
   }, timeoutMs);
   child.on('error', (e) => {
     if (child.pid !== undefined) return; // a running child's late error: 'close' still decides
     clearTimeout(timer);
     done({ code: null, stdout: '', timedOut: false, spawnError: spawnErrorKind(e) });
   });
+  child.on('exit', (code) => {
+    const exitCode = timedOut ? null : code;
+    clearTimeout(forceClose);
+    forceClose = setTimeout(() => {
+      killGroup('SIGKILL'); // leftovers still in the group
+      finish(exitCode);
+    }, CLOSE_GRACE_MS);
+  });
   child.on('close', (code) => {
-    clearTimeout(timer);
-    clearTimeout(hardKill);
-    done({ code: timedOut ? null : code, stdout, timedOut });
+    finish(timedOut ? null : code);
   });
 });
 

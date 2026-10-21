@@ -5,8 +5,12 @@ import path from 'node:path';
 
 type SetupFile = { state: 'pending'; createdAt: string } | { state: 'done'; doneAt: string; migrated?: true };
 
-/** Files only a used deck has (never the token: a fresh server writes it before anyone looked at the wizard). */
-const INSTALL_FILES = ['session-meta.json', 'session-state.json', 'activity.json', 'pins.json', 'projects.json', 'push-subscriptions.json', 'accounts.json'];
+/**
+ * Files a deck that ran before has. The token, settings and VAPID keys count too: `startServer` asks before it creates
+ * any of them, and a fresh install writes setup.json (pending) on that same first start, so a restart before the wizard
+ * reads pending from the file and never comes back here.
+ */
+const INSTALL_FILES = ['token', 'settings.json', 'vapid.json', 'session-meta.json', 'session-state.json', 'activity.json', 'pins.json', 'projects.json', 'push-subscriptions.json', 'accounts.json'];
 
 /**
  * An install that was in use before setup.json existed: one of its data files is there and not empty. `startServer`

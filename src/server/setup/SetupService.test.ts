@@ -57,6 +57,16 @@ describe('SetupService', () => {
     expect(calls.length).toBe(perProbe * 3);
   });
 
+  it('a forced refresh shares the probe still running instead of starting another', async () => {
+    const s = await service();
+    const first = s.status();
+    const forced = [s.status(true), s.status(true), s.status(true)];
+    await Promise.all([first, ...forced]);
+    expect(calls.length).toBe(2); // one probe: two Claude profiles
+    await s.status(true); // nothing running any more: a new probe
+    expect(calls.length).toBe(4);
+  });
+
   it('status carries needed, supervision, addresses and the profile list', async () => {
     const s = await service({ supervised: true });
     const st = await s.status();

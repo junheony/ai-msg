@@ -164,6 +164,43 @@ describe('defaultExec', () => {
     for (const id of ids) expect(alive(id), `pid ${id}`).toBe(false);
   }, 10_000);
 
+  it('a grandchild that left the group and holds the pipe does not hang the result', async () => {
+    const code = [
+      "const { spawn } = require('node:child_process');",
+      "const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });",
+      "process.stdout.write(g.pid + '\\n', () => process.exit(0));",
+    ].join('\n');
+    const t0 = Date.now();
+    const r = await defaultExec(process.execPath, ['-e', code], {}, 5000);
+    const grandchild = Number(r.stdout.trim());
+    try {
+      expect(r).toMatchObject({ code: 0, timedOut: false });
+      expect(grandchild).toBeGreaterThan(0);
+      expect(Date.now() - t0).toBeLessThan(3000);
+    } finally {
+      if (grandchild > 0) try { process.kill(grandchild, 'SIGKILL'); } catch { /* gone */ }
+    }
+  }, 10_000);
+
+  it('a timed-out child whose grandchild holds the pipe still returns', async () => {
+    const code = [
+      "const { spawn } = require('node:child_process');",
+      "const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });",
+      "process.stdout.write(g.pid + '\\n');",
+      "process.on('SIGTERM', () => {});",
+      "setInterval(() => {}, 1000);",
+    ].join('\n');
+    const t0 = Date.now();
+    const r = await defaultExec(process.execPath, ['-e', code], {}, 500);
+    const grandchild = Number(r.stdout.trim());
+    try {
+      expect(r).toMatchObject({ code: null, timedOut: true });
+      expect(Date.now() - t0).toBeLessThan(5000);
+    } finally {
+      if (grandchild > 0) try { process.kill(grandchild, 'SIGKILL'); } catch { /* gone */ }
+    }
+  }, 10_000);
+
   it('a missing binary is a spawn error, not a crash', async () => {
     const r = await defaultExec('/nonexistent/deck-no-such-cli', ['--version'], {}, 1000);
     expect(r).toMatchObject({ code: null, timedOut: false, spawnError: 'ENOENT' });

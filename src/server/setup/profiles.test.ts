@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadAccountRegistry } from '../accounts';
 import { buildRegistry } from '../../shared/accounts';
-import { ProfileError, addClaudeProfile, materializeAccountsConfig } from './profiles';
+import { ProfileError, addClaudeProfile, materializeAccountsConfig, takeFileLock } from './profiles';
 
 let home: string;
 let configDir: string;
@@ -181,6 +181,33 @@ describe('addClaudeProfile', () => {
     const e = await failure(add('e', { lockWaitMs: 50 }));
     expect(e.status).toBe(409);
     expect(fs.existsSync(lock)).toBe(true);
+  });
+
+  it('two takers of one stale lock: only one gets it (rename takeover, no double delete)', async () => {
+    const lock = path.join(configDir, 'accounts.json.lock');
+    fs.writeFileSync(lock, '');
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, old, old);
+    const results = await Promise.allSettled([takeFileLock(lock, 200), takeFileLock(lock, 200)]);
+    const won = results.filter((r) => r.status === 'fulfilled');
+    expect(won).toHaveLength(1);
+    expect((results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason).toBeInstanceOf(ProfileError);
+    expect(fs.existsSync(lock)).toBe(true);
+    expect(fs.readdirSync(configDir).filter((n) => n.endsWith('.stale'))).toEqual([]);
+    (won[0] as PromiseFulfilledResult<() => void>).value();
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  it('a fresh lock another taker put in after the stale check is not deleted, but put back and waited for', async () => {
+    const lock = path.join(configDir, 'accounts.json.lock');
+    fs.writeFileSync(lock, '');
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, old, old);
+    const otherTaker = () => { fs.rmSync(lock); fs.writeFileSync(lock, 'other'); };
+    const e = await failure(takeFileLock(lock, 100, otherTaker));
+    expect(e.status).toBe(409);
+    expect(fs.readFileSync(lock, 'utf8')).toBe('other');
+    expect(fs.readdirSync(configDir).filter((n) => n.endsWith('.stale'))).toEqual([]);
   });
 
   it('a failed write removes only the empty dir it created', async () => {

@@ -30,6 +30,8 @@ export const SETUP_TEXTS = {
   adding: '추가 중…',
   restartNotice: '서버를 다시 시작하면 계정이 추가됩니다',
   restartNow: '지금 재시작',
+  restartConfirm: '재시작',
+  restartCancel: '취소',
   restarting: '재시작 요청함 — 잠시 뒤 다시 연결됩니다',
   restartManual: '터미널에서 quarterdeck 을 다시 실행하세요',
   addressesHead: '접속 주소',
