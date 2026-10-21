@@ -296,7 +296,7 @@ export function App() {
   const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const onShortcut = useRef<(id: ShortcutId) => void>(() => {});
   /** ⌘⌥1 … ⌘⌥9: focuses the nth split pane (left to right; on a phone the nth tab); false when there is none. */
-  const focusPaneAt = useRef<(index: number) => boolean>(() => false);
+  const focusPaneAt = useRef<(index: number, peek?: boolean) => boolean>(() => false);
   /** ⌘1 … ⌘9: set by the sidebar — opens the nth 고정됨 row it shows, as a click on it would; false when there is none. */
   const openPinned = useRef<(index: number, peek?: boolean) => boolean>(() => false);
   const lastSaved = useRef<string | null>(null);
@@ -506,17 +506,28 @@ export function App() {
       if (e.defaultPrevented) return;
       // The attachment image editor owns the keyboard: no ⌘K / ⌘/ / settings / type-to-compose over it.
       if (document.querySelector('.img-editor')) return;
+      // Mid-IME (a Hangul syllable still composing): blur first, so the composition commits into the draft it belongs to,
+      // then switch on the next tick — switching at once would hand the composer the next draft with the syllable pending.
+      const afterIme = (go: () => void) => {
+        if (!(e.isComposing || e.keyCode === 229)) return void go();
+        (document.activeElement as HTMLElement | null)?.blur?.();
+        setTimeout(go, 0);
+      };
       // ⌘1 … ⌘9: the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
       // repeats are taken too (not reopened), or the browser would switch tabs on them.
       const pin = matchPinShortcut(e, MAC);
       if (pin !== null) {
-        if (!hasOpenModal() && openPinned.current(pin, e.repeat)) e.preventDefault();
+        if (hasOpenModal() || !openPinned.current(pin, true)) return;
+        e.preventDefault();
+        if (!e.repeat) afterIme(() => openPinned.current(pin));
         return;
       }
       const typing = isTypingTarget(e.target);
       const paneAt = matchPaneShortcut(e, { mac: MAC, typing });
       if (paneAt !== null) {
-        if (!hasOpenModal() && focusPaneAt.current(paneAt)) e.preventDefault();
+        if (hasOpenModal() || !focusPaneAt.current(paneAt, true)) return;
+        e.preventDefault();
+        afterIme(() => focusPaneAt.current(paneAt));
         return;
       }
       const id = matchShortcut(e, { mac: MAC, typing });
@@ -1155,9 +1166,10 @@ export function App() {
     apply({ type: 'close_pane', paneId: active.id });
     requestFocus();
   };
-  focusPaneAt.current = (index) => {
+  focusPaneAt.current = (index, peek) => {
     const target = (phone ? state.panes : docked)[index];
     if (!target) return false;
+    if (peek) return true;
     dispatch({ type: 'focus_pane', paneId: target.id });
     requestFocus(target.id);
     return true;

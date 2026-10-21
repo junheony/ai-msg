@@ -234,8 +234,6 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // Gone with the sidebar (signed out): the key listener outlives it and must not open into a hidden pane.
   useEffect(() => () => { if (pinShortcut) pinShortcut.current = () => false; }, [pinShortcut]);
   const pinKey = (index: number) => (modHeld ? pinKeyLabel(index, isMacPlatform()) : null);
-  // A Desktop session whose folder deck already lists shows there; the Desktop list only carries the rest.
-  const desktopShown = desktop.filter((d) => !byId.has(d.sessionId) && !pinSet.has(d.sessionId) && inView(d) && dMatch(d));
 
   const actById = new Map(activity.map((a) => [a.sessionId, a]));
   const unreadSet = new Set(unread);
@@ -405,24 +403,31 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const links = linksOf(byId.values());
   // deck sessions and Desktop-only sessions in one date-split list, minus what 고정됨 already shows.
   type RecentItem = { kind: 'session'; g: BranchGroup<SessionEntry>; lastModified: number } | { kind: 'desktop'; d: DesktopSession; lastModified: number };
-  const recentList: RecentItem[] = [
-    ...groupBranches([...byId.values()].filter(inView), links).filter((g) => match(g.entry) && !pinSet.has(g.entry.sessionId)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
-    ...desktopShown.map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified })),
-  ].sort((a, b) => b.lastModified - a.lastModified).slice(0, MAX_RECENT);
+  const itemMatch = (t: RecentItem) => (t.kind === 'session' ? match(t.g.entry) : dMatch(t.d));
+  // Before the 세션 검색 filter: the session glyphs step past neighbours here, so a search never changes a row's glyph.
+  // A Desktop session whose folder deck already lists shows there; the Desktop rows only carry the rest.
+  const recentAll: RecentItem[] = [
+    ...groupBranches([...byId.values()].filter(inView), links).filter((g) => !pinSet.has(g.entry.sessionId)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
+    ...desktop.filter((d) => !byId.has(d.sessionId) && !pinSet.has(d.sessionId) && inView(d)).map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified })),
+  ].sort((a, b) => b.lastModified - a.lastModified);
+  const recentList = recentAll.filter(itemMatch).slice(0, MAX_RECENT);
   // 보관됨 N: archived sessions (pinned or not) and archived Desktop-only ones, newest first, in one folded section at the end.
   // The count is all a folded row needs: the rows are only built (and sorted) once it is open; neither on every tick.
   const archived = useMemo(() => {
-    if (!onArchive) return { count: 0, list: [] as RecentItem[] };
+    if (!onArchive) return { count: 0, list: [] as RecentItem[], all: [] as RecentItem[] };
     const all = projects.flatMap((p) => p.sessions);
-    const groups = groupBranches(all.filter((s) => s.archived), linksOf(all)).filter((g) => match(g.entry));
-    const ds = desktop.filter((d) => d.archived && !all.some((s) => s.sessionId === d.sessionId) && dMatch(d));
-    const list = archivedOpen
-      ? [...groups.map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })), ...ds.map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified }))].sort((a, b) => b.lastModified - a.lastModified)
+    const groupsAll = groupBranches(all.filter((s) => s.archived), linksOf(all));
+    const dsAll = desktop.filter((d) => d.archived && !all.some((s) => s.sessionId === d.sessionId));
+    const groups = groupsAll.filter((g) => match(g.entry));
+    const ds = dsAll.filter(dMatch);
+    // `all`: the open list before the search filter (session glyphs, as recentAll).
+    const listAll = archivedOpen
+      ? [...groupsAll.map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })), ...dsAll.map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified }))].sort((a, b) => b.lastModified - a.lastModified)
       : [];
-    return { count: groups.length + ds.length, list };
+    return { count: groups.length + ds.length, list: listAll.filter(itemMatch), all: listAll };
     // match / dMatch read only `q`.
   }, [projects, desktop, q, archivedOpen, !!onArchive]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Session glyphs: the pins as a whole (not just those the search leaves), then the rows below in the order shown.
+  // Session glyphs: the pins as a whole, then the rows below in the order shown — both before the search filter.
   const iconRow = (id: string, cwd: string): IconRow => ({ id, project: projectName.get(id) ?? baseName(cwd) });
   const listRow = (t: RecentItem): IconRow => (t.kind === 'session' ? iconRow(t.g.entry.sessionId, t.g.entry.cwd) : { id: t.d.sessionId, project: t.d.project });
   const icons = assignSessionIcons(
@@ -432,7 +437,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       const d = desktopById.get(id);
       return d && inView(d) ? [{ id, project: d.project }] : [];
     }),
-    [...recentList, ...archived.list].map(listRow),
+    [...recentAll.slice(0, MAX_RECENT), ...archived.all].map(listRow),
   );
   // A full-text hit in an archived session shows once 보관됨 is open (as its row does).
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || !s.archived || archivedOpen; });
