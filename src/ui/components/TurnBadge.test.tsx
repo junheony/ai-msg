@@ -120,3 +120,20 @@ describe('TurnBadge cache rewrite note', () => {
     expect(render(<MessageView item={turn(mk(1200, 340), { text: 'ok' })} />).container.querySelector('.tb-cold')).toBeNull();
   });
 });
+
+describe('⚡ 빠르게 on the badge', () => {
+  afterEach(cleanup);
+  const withNote = (modelNote: string | null) => ({ ...(mk(10, 5) as object), modelNote }) as never;
+  it('↯ only on a turn that ran fast; a fallback says 표준; a standard turn shows none', () => {
+    const fast = render(<MessageView item={turn(withNote('빠르게 · 사용 크레딧 → Opus'), { text: 'a' })} />);
+    expect(fast.getByTestId('badge-fast').textContent).toContain('↯');
+    expect(fast.getByTestId('badge-fast').className).not.toContain('fell');
+    cleanup();
+    const fell = render(<MessageView item={turn(withNote('빠르게 → 표준으로 돎'), { text: 'a' })} />);
+    expect(fell.getByTestId('badge-fast').className).toContain('fell');
+    expect(fell.getByTestId('badge-fast').textContent).toContain('표준');
+    cleanup();
+    const plain = render(<MessageView item={turn(withNote(null), { text: 'a' })} />);
+    expect(plain.queryByTestId('badge-fast')).toBeNull();
+  });
+});

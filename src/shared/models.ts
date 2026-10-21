@@ -170,3 +170,8 @@ export function contextWindowOf(model: string | null | undefined): number {
   if (/opus|sonnet|fable|mythos/i.test(model)) return 1_000_000;
   return DEFAULT_CONTEXT_WINDOW;
 }
+
+/** ⚡ 빠르게: the badge note of a turn run in fast mode (usage credits) — the ↯ chip's name too. */
+export const FAST_NOTE = '빠르게 · 사용 크레딧';
+/** ⚡ The badge note of a fast turn the CLI ran at standard speed (cooldown, credits, organization). */
+export const FAST_FELL_BACK_NOTE = '빠르게 → 표준으로 돎';

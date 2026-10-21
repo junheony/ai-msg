@@ -14,10 +14,13 @@ export type HeadGrip = { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>
 /** Menu helpers handed to the caller's groups: `close` shuts the menu, `rename` swaps the chip for the name field. */
 export type HeadMenuCtl = { close: () => void; rename: () => void };
 
-/** A plain menu row (closes the menu first); `hint` is the shortcut on the right, kept out of the accessible name. */
-export function HeadItem({ label, hint, run, ctl, className }: { label: string; hint?: string; run: () => void; ctl: HeadMenuCtl; className?: string }) {
+/**
+ * A plain menu row (closes the menu first); `hint` is the shortcut on the right, kept out of the accessible name.
+ * `checked`: an on/off row (menuitemcheckbox).
+ */
+export function HeadItem({ label, hint, run, ctl, className, checked }: { label: string; hint?: string; run: () => void; ctl: HeadMenuCtl; className?: string; checked?: boolean }) {
   return (
-    <button type="button" role="menuitem" className={className} onClick={() => { ctl.close(); run(); }}>
+    <button type="button" role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'} {...(checked === undefined ? {} : { 'aria-checked': checked })} className={className} onClick={() => { ctl.close(); run(); }}>
       {label}{hint && <kbd className="menu-hint" aria-hidden="true">{hint}</kbd>}
     </button>
   );

@@ -45,6 +45,15 @@ import { TASKS_QUEUED_MAX, TASK_CANCELED_LINE, clampTaskCap } from '../shared/ta
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
 
 /** Following an outside write is silent; only background work the restarted process had to drop is worth a line (`n`: tasks stopped). */
+/** ⚡ 빠르게 switched while a process was held open: a new one answers, so its waiting background tasks end. */
+/** ⚡ The held process still runs background work when ↯ was switched: it is left to finish, then the send starts a new process. */
+export const fastWaitNotice = (n: number) => `↯ 빠르게 설정이 바뀌어, 백그라운드 작업 ${n}개가 끝나면 새 프로세스로 보냅니다`;
+/** turn_queued `behind` for a send waiting on that background work (the status row: "… 뒤에서 기다리는 중"). */
+export const FAST_WAIT_BEHIND = '백그라운드 작업(↯ 설정 바뀜)';
+/** steer_rejected when ↯ differs from the running process's: sent after the turn instead, as a send (new process). */
+export const FAST_STEER_REJECTED = '↯ 빠르게 설정이 바뀌어 이 턴이 끝난 뒤 새로 보냅니다';
+/** Whether a send asks for ⚡ 빠르게 (never on a handoff — TurnRunner.fastTurn). */
+const fastSend = (m: { fast?: boolean; handoff?: boolean }) => m.fast === true && !m.handoff;
 export const recycleNotice = (n: number) => `deck 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
 
 /** How often, while a browser is connected, deck looks for outside holders (one `ps`), outside writes to the open sessions and newer mtimes of the listed transcripts (a stat each). */
@@ -252,7 +261,7 @@ export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
 /** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
 export const CATCHUP_IDLE_MS = 10 * 60_000;
 
-type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null };
+type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null; /** ⚡ 빠르게: the process was started with fast mode (TurnRunner.fastTurn) — a send asking otherwise never joins it. */ fast: boolean };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -776,7 +785,33 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // The session's process may only be waiting for background work: then the message joins it (TurnRunner.followUp).
       const base = turns.get(busy.get(msg.sessionId)!);
       const sid = msg.sessionId;
-      if (base?.recycling) { base.afterRelease.push({ ws, msg, ...hop }); return; }
+      // ⚡ A send waiting for a ↯ switch's background work (recycling, not aborted): held as going in — the device shows
+      // what it waits behind, and a stalled-socket reconnect never sends it again (pendingRefs).
+      const holdBehindBg = (b: Turn) => {
+        if (!msg.clientRef) return;
+        b.pendingRefs.add(msg.clientRef);
+        if (queuedAware.has(ws)) send(ws, { type: 'turn_queued', turnId: b.turnId, sessionId: sid, cwd: b.cwd, clientRef: msg.clientRef, behind: FAST_WAIT_BEHIND });
+      };
+      if (base?.recycling) {
+        if (!base.ac.signal.aborted) holdBehindBg(base);
+        base.afterRelease.push({ ws, msg, ...hop });
+        return;
+      }
+      // ⚡ 빠르게 switched since this process started (fast is a launch setting): the send never joins it — billed as the
+      // person chose. Mid-turn it waits for the result; between turns the held process is ended and a new one answers —
+      // but background work it still runs is left to finish first (the process then ends by itself, release starts the send).
+      if (base && (base.engine === undefined || base.engine === 'claude') && base.fast !== fastSend(msg)) {
+        if (base.current !== null) { base.afterRelease.push({ ws, msg, ...hop }); return; }
+        if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
+        base.recycling = true;
+        base.afterRelease.push({ ws, msg, ...hop });
+        const running = base.bg?.msg.tasks.length ?? 0;
+        if (running === 0) { base.ac.abort(); return; }
+        holdBehindBg(base);
+        const notice: ServerMessage = { type: 'turn_notice', turnId: '', sessionId: sid, cwd: base.cwd, message: fastWaitNotice(running) };
+        for (const [c, v] of viewing) if (v.has(sid)) send(c, notice);
+        return;
+      }
       // deck follows the other side: a process held open for background work read the transcript when it started. If
       // Desktop / a CLI went on with the session since, a message written into it would be answered from before that —
       // the conversation forks. So that process is ended and the send starts a new one, which resumes from the newest
@@ -835,7 +870,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const turnId = commanderHop ? `${randomUUID()}:cmd${commanderHop}` : randomUUID();
     markConcise(turnId, msg);
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, ...(msg.sessionId === null && msg.title ? { title: msg.title } : {}), afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, ...(msg.sessionId === null && msg.title ? { title: msg.title } : {}), afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null, fast: fastSend(msg) && !retryHop && commanderHop === undefined };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -997,6 +1032,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           ...(msg.handoff ? { handoff: true } : {}),
           ...(msg.ignoreFit ? { ignoreFit: true } : {}),
           ...(msg.concise && !msg.handoff ? { concise: true } : {}),
+          ...(fastSend(msg) && !taskSockets.has(ws) ? { fast: true } : {}),
           ...(taskSockets.has(ws) ? { bgTask: true } : {}),
           ...hop,
           ...(commanderHop ? { commanderHop } : {}),
@@ -1389,6 +1425,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const dup = turn?.sessionId ? refusal(turn.sessionId, msg.steerId) : undefined;
           if (dup) { reject(dup.message, dup.code); break; }
           if (!turn || turn.current === null) { reject('실행 중인 턴이 없어 끝난 뒤 보냅니다'); break; }
+          // ⚡ ↯ differs from the process's launch setting: never folded into it — sent after the turn (a new process).
+          if ((turn.engine === undefined || turn.engine === 'claude') && turn.fast !== (msg.fast === true)) { reject(FAST_STEER_REJECTED); break; }
           // A person steering is a person sending (총사령탑: pause).
           if (turn.sessionId) userSent(turn.sessionId);
           void deps.runner.steer(turn.turnId, { steerId: msg.steerId, text: msg.text, ...(msg.attachments ? { attachments: msg.attachments } : {}), prompt: promptOf(msg) })
@@ -1407,6 +1445,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const base = viewing.get(ws)?.has(msg.sessionId) ? turns.get(busy.get(msg.sessionId) ?? '') : undefined;
           const withdrawn = base ? deps.runner.cancelQueued(msg.sessionId, msg.clientRef) : null;
           if (base && withdrawn) { base.pendingRefs.delete(msg.clientRef); aliases.delete(withdrawn); prompts.delete(withdrawn); endHeld(base); }
+          // ⚡ Or waiting in deck for a ↯ switch's background work (holdBehindBg): out of that wait.
+          const held = base && !withdrawn ? base.afterRelease.findIndex((d) => d.msg.clientRef === msg.clientRef) : -1;
+          if (base && held >= 0) { base.afterRelease.splice(held, 1); base.pendingRefs.delete(msg.clientRef); }
           break;
         }
         case 'interrupt': {

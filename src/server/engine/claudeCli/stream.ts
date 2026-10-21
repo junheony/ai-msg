@@ -3,6 +3,7 @@ import { systemRow, textOfContent } from '../../sessions/transcript';
 import type { BgTask, EngineEvent, EngineResult, RateLimitSignal, TurnRequest } from '../Engine';
 import type { SlashCommandInfo } from '../slashCommands';
 import type { CliMessage, Rec } from './messages';
+import { fastModeKind, fastModeText } from './texts';
 
 /**
  * Which background tasks are live. Prefers the CLI's level signal `background_tasks_changed`
@@ -309,6 +310,8 @@ function windowOf(w: unknown): RateLimitSignal['fiveHour'] {
 }
 
 /** `rateLimitType` values the SDK declares (sdk.d.ts SDKRateLimitInfo) — fixtures show five_hour; anything else is logged once. */
+/** A CLI notification's own text is cut to this many characters in its notice. */
+const NOTIFICATION_MAX = 300;
 const KNOWN_LIMIT_TYPES = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_overage_included', 'overage']);
 const loggedLimitTypes = new Set<string>();
 
@@ -349,6 +352,15 @@ export function mapCliMessage(m: CliMessage): EngineEvent[] {
     case 'system': {
       if (m.subtype === 'init') return [{ kind: 'init', sessionId: String(m.session_id ?? ''), model: String(m.model ?? ''), ...(typeof m.cwd === 'string' ? { cwd: m.cwd } : {}) }];
       if (m.subtype === 'compact_boundary') return [{ kind: 'compact' }];
+      // A CLI notification (fast-mode credits / cooldown, compaction errors, …): a turn note, a fast-mode one with deck's words.
+      if (m.subtype === 'notification') {
+        const text = (m as Rec).text;
+        if (typeof text !== 'string' || !text.trim()) return [];
+        // The CLI's own words are shown capped (NOTIFICATION_MAX): a notice is a line, not a log.
+        const said = text.trim().length > NOTIFICATION_MAX ? `${text.trim().slice(0, NOTIFICATION_MAX - 1)}…` : text.trim();
+        const kind = fastModeKind(text);
+        return [kind ? { kind: 'notice', message: `⚡ ${said} — ${fastModeText(kind, false)}`, fast: kind } : { kind: 'notice', message: said }];
+      }
       if (m.subtype === 'task_notification') {
         const r = m as Rec;
         const status = r.status === 'failed' || r.status === 'stopped' ? r.status : 'completed';

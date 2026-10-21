@@ -18,7 +18,7 @@ import { ClaudeProcess, exitFailureText } from './claudeCli/process';
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
 import type { ClaudeSpawnFn } from './claudeCli/spawnTypes';
 import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
-import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, invalidResumeText } from './claudeCli/texts';
+import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, fastFailureKind, fastModeText, invalidResumeText } from './claudeCli/texts';
 import type { ClaudeBin } from './claudeCli/version';
 
 export { BackgroundTracker, ProgressMeter, isActivity, isInjectedNoopResult, toolAudit, deniedCalls, noteCommands, mapCliMessage, type CommandsListener, type ToolAudit } from './claudeCli/stream';
@@ -118,7 +118,7 @@ export class ClaudeEngine implements Engine {
       const relay = { node: this.o.node ?? process.execPath, script: HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
       const settingsPath = path.join(procDir, 'settings.json');
       const mcpConfigPath = path.join(procDir, 'mcp.json');
-      await fs.writeFile(settingsPath, JSON.stringify(buildSettings({ ...(req.allowRules?.length ? { allowRules: req.allowRules } : {}), ...(req.noTools ? { noTools: true } : {}), ...(req.systemNote ? { systemNote: req.systemNote } : {}), ...(req.commanderHop ? { commander: true } : {}), relay })), { mode: 0o600 });
+      await fs.writeFile(settingsPath, JSON.stringify(buildSettings({ ...(req.allowRules?.length ? { allowRules: req.allowRules } : {}), ...(req.noTools ? { noTools: true } : {}), ...(req.systemNote ? { systemNote: req.systemNote } : {}), ...(req.commanderHop ? { commander: true } : {}), ...(req.fast ? { fast: true } : {}), relay })), { mode: 0o600 });
       await fs.writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: relay.node, script: PERMISSION_MCP, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
 
       let resume = req.resumeSessionId ?? undefined;
@@ -130,7 +130,7 @@ export class ClaudeEngine implements Engine {
         forkSession = true;
       }
       const args = claudeArgs({
-        model: req.model, ...(req.effort ? { effort: req.effort } : {}), permissionMode: startMode,
+        model: req.fast ? 'opus' : req.model, ...(req.effort ? { effort: req.effort } : {}), permissionMode: startMode,
         settingsPath, mcpConfigPath, ...(req.allowDirs?.length ? { addDirs: req.allowDirs } : {}),
         ...(resume !== undefined ? { resume, forkSession } : { sessionId: randomUUID() }),
         ...(req.appendSystemPrompt ? { appendSystemPrompt: req.appendSystemPrompt } : {}),
@@ -162,6 +162,12 @@ export class ClaudeEngine implements Engine {
         if (!idle || unanswered.length > 0 || bg.tasks().length > 0) return;
         graceTimer = setTimeout(() => finish('grace'), this.o.bgGraceMs ?? BG_GRACE_MS);
         graceTimer.unref?.();
+      };
+      // ⚡ 빠르게: a failed turn whose error names fast mode / usage credits gets deck's explanation as a note first.
+      const fastRefusal = (ev: { ok: boolean; errorText: string | null; errorKind?: string | null }): EngineEvent | null => {
+        if (!req.fast || ev.ok) return null;
+        const kind = fastFailureKind(ev.errorText, ev.errorKind ?? errorKind);
+        return kind ? { kind: 'notice', message: `⚡ ${fastModeText(kind, true)}`, fast: kind } : null;
       };
       const toolInputs = new Map<string, unknown>();
       const writeMsg = (m: CliUserMessage): boolean => { if (typeof m.uuid === 'string') this.owned.add(m.uuid); return p.write(m); }; // changed
@@ -262,6 +268,8 @@ export class ClaudeEngine implements Engine {
             answer([...unanswered.slice(0, 1), ...echoed]);
           }
           echoed = [];
+          const fastWhy = fastRefusal(ev);
+          if (fastWhy) yield fastWhy;
           yield { ...ev, ...(lastCtx ? { usage: { ...ev.usage, context: lastCtx } } : {}), errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : p.stderrTail || null }; // changed: stderr from the child
           errorKind = null;
           lastCtx = null;

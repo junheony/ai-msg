@@ -176,3 +176,13 @@ describe('claudeEnv', () => {
     expect(e.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
   });
 });
+
+describe('buildSettings — ⚡ 빠르게', () => {
+  it('fast adds fastMode next to the hooks; without it there is no fastMode key', () => {
+    const s = buildSettings({ allowRules: ['Bash'], fast: true, relay }) as any;
+    expect(s.fastMode).toBe(true);
+    expect(s.hooks.PreToolUse).toBeTruthy();
+    expect(s.permissions).toEqual({ allow: ['Bash'] });
+    expect('fastMode' in (buildSettings({ relay }) as any)).toBe(false);
+  });
+});
