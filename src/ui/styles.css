@@ -502,7 +502,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 .usage-chip:hover, .usage-chip[aria-expanded="true"] { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .usage-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.usage-chip + .topbar-end { margin-left: 0; }
 .usage-chip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--ok); }
 .usage-chip-who { color: var(--fg-strong); }
 .usage-chip-next { color: var(--accent); }
@@ -517,13 +516,56 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-chip.estimated .usage-chip-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
 .usage-chip-alert { position: absolute; top: 1px; right: 1px; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 2px var(--sidebar); }
 .usage-chip.compact { height: 32px; padding: 0 10px 0 var(--s2); }
-/* Phone with an 승인 대기 badge beside it: "A42", letter and number run together. */
-.usage-chip.tight { gap: 3px; padding: 0 var(--s2) 0 6px; }
-.usage-chip.tight .usage-chip-who + .usage-chip-num { margin-left: -3px; }
 /* Old numbers near the limit: the hollow dot keeps the amber / red. */
 .usage-chip.stale.warn .usage-chip-dot { box-shadow: inset 0 0 0 1.5px var(--warn); }
 .usage-chip.stale.danger .usage-chip-dot { box-shadow: inset 0 0 0 1.5px var(--danger); }
 @media (prefers-reduced-motion: reduce) { .usage-chip-num { animation: none; } }
+
+/* The usage strip: every seat at a glance, in the top bar (desktop / tablet) or a thin line under it (phone). One
+   button (it opens the usage sheet) holding a segment per seat: label · a 28px bar of the fullest window's USED % · the %
+   · its reset. As room runs out it steps down full → mid (no bar; the reset only when amber / red / spent) → min (label
+   and %), then hands over to the one-seat chip (UsageStrip.tsx pickStage). The strip sits on --bg and the session's seat
+   on --panel: the amber / red text keeps 4.5:1 there in the light theme (on --sidebar it does not). Same colours and marks as the chip: ≥80%
+   amber, ≥95% red, stale a dashed outline, estimated a dashed underline. The session's seat is lifted (data-current). */
+.usage-strip-wrap { order: 2; position: relative; display: flex; justify-content: flex-end; flex: 100 1 0; min-width: 0; }
+.usage-strip-wrap + .topbar-end { margin-left: 0; }
+.usage-strip {
+  display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; height: 32px; padding: 0 var(--s1); border: 0; border-radius: var(--r-full);
+  font: inherit; font-size: var(--fs-label); line-height: var(--lh-label); white-space: nowrap; font-variant-numeric: tabular-nums;
+  color: var(--fg); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+.usage-strip:hover, .usage-strip[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
+.usage-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.usage-seg { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: var(--r-full); }
+.usage-seg[data-current] { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
+.usage-seg-who { font-weight: 600; color: var(--fg); }
+.usage-seg[data-current] .usage-seg-who { color: var(--fg-strong); }
+.usage-seg-next { margin-right: -3px; font-weight: 700; color: var(--accent); }
+.usage-seg-bar { width: 28px; height: 4px; flex-shrink: 0; border-radius: var(--r-full); background: var(--track); overflow: hidden; }
+.usage-seg-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--ok); transition: width var(--t-base) var(--ease); }
+.usage-seg-num { font-weight: 500; color: var(--muted); }
+.usage-seg-reset { font-size: var(--fs-meta); color: var(--muted); }
+.usage-seg.warn .usage-seg-num, .usage-seg.warn .usage-seg-reset { color: var(--warn); font-weight: 600; }
+.usage-seg.warn .usage-seg-bar > i { background: var(--warn); }
+.usage-seg:is(.danger, .spent, .cooldown) :is(.usage-seg-num, .usage-seg-reset) { color: var(--danger); font-weight: 600; }
+.usage-seg:is(.danger, .spent, .cooldown) .usage-seg-bar > i { background: var(--danger); }
+.usage-seg:is(.stale, .unknown) .usage-seg-bar > i { background: var(--muted); }
+.usage-seg.stale { outline: 1px dashed color-mix(in srgb, var(--muted) 75%, transparent); outline-offset: -1px; }
+.usage-seg.estimated .usage-seg-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
+/* Off-screen copies of the three stages, measured for pickStage (fixed: they never widen a scroll area). */
+.usage-strip-measure { position: fixed; top: 0; left: 0; display: flex; flex-direction: column; align-items: flex-start; width: max-content; visibility: hidden; pointer-events: none; }
+/* Phone: a line of its own under the top bar, mid stage, scrolled sideways (no scrollbar) when the seats do not fit.
+   The whole line is the button: 32px tall (the segments 24) and as wide as the screen. */
+.usage-strip-row {
+  flex-shrink: 0; height: 32px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
+  border-bottom: 1px solid var(--line); background: var(--bg);
+}
+.usage-strip-row::-webkit-scrollbar { display: none; }
+.usage-strip-row .usage-strip { min-width: 100%; height: 32px; padding: 0 var(--s2); border-radius: 0; background: transparent; box-shadow: none; }
+.usage-strip-row .usage-strip:hover, .usage-strip-row .usage-strip[aria-expanded="true"] { box-shadow: none; }
+.usage-strip-row .usage-strip:focus-visible { outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .usage-seg-bar > i, .usage-strip { transition: none; } }
 
 /* The usage sheet. Desktop: a panel on the right edge, full height; wider while the history is open. */
 .sheet-backdrop:has(> .usage-sheet) { justify-content: flex-end; align-items: stretch; padding: 0; }
@@ -605,7 +647,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (max-width: 1099.98px) {
   .topbar { flex-wrap: wrap; height: auto; min-height: 54px; column-gap: 6px; row-gap: 0; padding: 0 12px 0 14px; }
   .topbar > .menu { order: 0; }
-  .topbar > .usage-chip { order: 2; }
+  .topbar > .usage-strip-wrap { order: 2; }
   .topbar > .topbar-end { order: 3; }
   /* The top row is shared with the logo and actions: the actions group may shrink. */
   .topbar-end { min-width: 0; flex-shrink: 1; }
@@ -2131,8 +2173,8 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
 @media (max-width: 720px) { .act-row, .act-stop, .act-banner .text-btn { min-height: var(--phone-tap); } }
 /* Touch: 44px hit areas for the small controls without changing their look — an invisible box centred on each. */
 @media (hover: none), (max-width: 720px) {
-  .act-line .text-btn, .toast-item .text-btn, .usage-history-toggle { position: relative; }
-  .usage-chip::before, .act-line .text-btn::before, .toast-item .text-btn::before, .usage-history-toggle::before {
+  .act-line .text-btn, .toast-item .text-btn, .usage-history-toggle, .usage-strip-wrap > .usage-strip { position: relative; }
+  .usage-chip::before, .usage-strip-wrap > .usage-strip::before, .act-line .text-btn::before, .toast-item .text-btn::before, .usage-history-toggle::before {
     content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, var(--phone-tap)); height: max(100%, var(--phone-tap)); transform: translate(-50%, -50%);
   }
 }
@@ -2229,7 +2271,9 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
    phone's chip menu) render into <body>, outside this stacking context. */
 .topbar { position: relative; z-index: 7; }
 .topbar-head { order: 1; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; }
-.topbar > .usage-chip { order: 2; }
+/* The usage strip next to it grows first (flex 100): the session chip keeps at least this much (desktop / tablet). */
+@media (min-width: 721px) { .topbar-head:not(:empty) { min-width: min(220px, 26vw); } }
+.topbar > .usage-strip-wrap { order: 2; }
 .topbar > .topbar-end { order: 3; }
 .pane-head { display: flex; align-items: center; gap: var(--s2); min-width: 0; min-height: 48px; padding: 0 var(--s2) 0 var(--s3); flex-shrink: 0; }
 .pane-head.in-topbar { min-height: 0; max-width: 100%; padding: 0; justify-content: center; }

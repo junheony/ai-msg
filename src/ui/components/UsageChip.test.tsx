@@ -80,17 +80,6 @@ describe('UsageChip states', () => {
     expect(el().textContent).toBe('A97%');
   });
 
-  it('tight (phone, an approval badge beside it): "A42" without the %, the aria-label unchanged', () => {
-    render(<UsageChip usage={snap(acct(42, 10))} current="a" next={null} compact tight grok={null} now={NOW} onToggle={() => {}} />);
-    expect(el().textContent).toBe('A42');
-    expect(el().className).toContain('tight');
-    expect(el().getAttribute('aria-label')).toBe('A 계정 사용량 42퍼센트, 2시간 뒤 초기화');
-    cleanup();
-    // Not compact (desktop): tight changes nothing.
-    render(<UsageChip usage={snap(acct(42, 10))} current="a" next={null} compact={false} tight grok={null} now={NOW} onToggle={() => {}} />);
-    expect(el().textContent).toBe('A42% · 2h');
-  });
-
   it('소진: a spent window reads 소진 with its reset (✕ on a phone)', () => {
     chip(snap(acct(100, 10, { fiveHour: { usedPct: 100, resetsAt: at(12 * 60_000) } })), 'a');
     expect(el().className).toContain('spent');

@@ -17,7 +17,7 @@ export function chipCountdown(resetsAt: string | null | undefined, now: number):
 }
 
 /** The same span spelled out for the aria-label ("40분" / "2시간" / "3일"). */
-function spokenCountdown(short: string): string {
+export function spokenCountdown(short: string): string {
   const n = short.slice(0, -1);
   return `${n}${short.endsWith('m') ? '분' : short.endsWith('h') ? '시간' : '일'}`;
 }
@@ -111,13 +111,11 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   };
 }
 
-/** The one usage chip in the top bar; it opens the usage sheet (UsageSheet). */
-export function UsageChip({ usage, current, next = null, grok = null, compact = false, tight = false, open = false, onToggle, now: fixedNow }: {
+/** The one-seat usage chip: UsageStrip's fallback when not even its narrowest stage fits; it opens the usage sheet (UsageSheet). */
+export function UsageChip({ usage, current, next = null, grok = null, compact = false, open = false, onToggle, now: fixedNow }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
   /** Phone: the value shrinks to "42%" / "A→B" / "✕". */
   compact?: boolean;
-  /** Phone with an 승인 대기 badge next to it (§3.5): shorter still, "A42" (the activity dot gets the room). */
-  tight?: boolean;
   open?: boolean; onToggle: () => void; now?: number;
 }) {
   const now = useClock(fixedNow);
@@ -126,12 +124,11 @@ export function UsageChip({ usage, current, next = null, grok = null, compact = 
   const seats = buildSeats(usage, active, grok, now);
   const st = chipState({ seats, current, next, stale: usage.usageMode !== 'cli' && !usage.deckReachable, now, label });
   if (!st) return null;
-  const short = compact && tight;
-  const value = compact ? (short ? st.compactText.replace(/%$/, '') : st.compactText) : st.text;
+  const value = compact ? st.compactText : st.text;
   return (
     <button
       type="button"
-      className={`usage-chip ${st.kind}${st.stale && st.kind !== 'stale' ? ' stale' : ''}${compact ? ' compact' : ''}${short ? ' tight' : ''}`}
+      className={`usage-chip ${st.kind}${st.stale && st.kind !== 'stale' ? ' stale' : ''}${compact ? ' compact' : ''}`}
       data-testid="usage-chip"
       aria-label={st.aria}
       aria-haspopup="dialog"

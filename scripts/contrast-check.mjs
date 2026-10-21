@@ -68,6 +68,13 @@ function check(name, t) {
     ["fg / panel+hover (seg)", c("fg"), over("hover", c("panel")), 4.5],
     ["muted / panel+hover", c("muted"), over("hover", c("panel")), 4.5],
     ["danger / panel", c("danger"), c("panel"), 4.5],
+    // Usage strip (top bar / phone line): segments on --bg, the session's segment on --panel; the "→" of the next turn
+    // is a glyph (graphics floor 3).
+    ...[["fg", 4.5], ["muted", 4.5], ["warn", 4.5], ["danger", 4.5], ["accent", 3]].flatMap(([k, floor]) => [
+      [`${k} / strip`, c(k), bg, floor],
+      [`${k} / strip current`, c(k), c("panel"), floor],
+    ]),
+    ["fg-strong / strip current", c("fg-strong"), c("panel"), 4.5],
     // Sidebar row avatars: a bold 16px white letter on the project colour, held to the body-text floor too.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`#fff / avatar-${n}`, [255, 255, 255], c(`avatar-${n}`), 4.5]),
   ];
