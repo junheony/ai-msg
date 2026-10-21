@@ -79,7 +79,7 @@ describe('AccountPicker with the configured accounts', () => {
     expect(screen.getByTestId('account-picker').textContent).toContain('자동 · Team-2');
     expect(names()).toEqual(['자동', 'Main', 'Work (Desktop)', 'D', 'Team-2', 'Personal']);
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
-    expect(items[1]!.textContent).toContain('5h 10% · 주간 20%');
+    expect(items[1]!.textContent).toContain('5h 90% 남음 · 주간 80% 남음');
     expect(items[2]!.querySelector('.mp-desc')).toBeNull();
     fireEvent.click(items[4]!);
     expect(onPin).toHaveBeenCalledWith('team-2');
