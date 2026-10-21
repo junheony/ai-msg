@@ -76,6 +76,13 @@ function check(name, t) {
       [`${k} / strip current`, c(k), c("panel"), floor],
     ]),
     ["fg-strong / strip current", c("fg-strong"), c("panel"), 4.5],
+    // Old numbers (a stale seat): label, number and age dimmed to --muted on the strip (bar / current) and in the sheet
+    // (rows, the status tag, the refresh line: on --panel, a seat card's faint tint over it). The 12px clock / refresh
+    // icons are currentColor in the same muted.
+    ["muted / strip stale", c("muted"), bg, 4.5],
+    ["muted / strip stale current", c("muted"), c("panel"), 4.5],
+    ["muted / sheet old seat", c("muted"), mix(c("fg"), c("panel"), 0.025), 4.5],
+    ["fg / sheet old seat name", c("fg"), mix(c("fg"), c("panel"), 0.025), 4.5],
     // Sidebar row avatars: a bold 16px white letter on the project colour, held to the body-text floor too.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`#fff / avatar-${n}`, [255, 255, 255], c(`avatar-${n}`), 4.5]),
   ];

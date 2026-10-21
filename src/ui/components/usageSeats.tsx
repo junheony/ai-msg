@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { GEMINI_ACCOUNTS, GROK_ACCOUNTS, type Account, type GeminiAccount, type GrokAccount, type Seat } from '../../shared/accounts';
 import type { GrokStatus } from '../../shared/protocol';
 import { ClaudeMark, GeminiMark, GrokMark, OpenAIMark } from './EngineMark';
+import { RefreshIcon } from './icons';
 import { emptyAccountUsage, grokBillingWindow, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export function countdown(resetsAt: string | null, now: number): string {
@@ -256,6 +257,16 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
   };
 }
 
+/** A window past its reset since its last reading, in words (titles; the aria says it with a comma). */
+export const RESET_PASSED_NOTE = '리셋 시각이 지나 지금 값은 모름. 이 계정으로 한 턴 돌리면 갱신됨';
+export const RESET_PASSED_SAID = RESET_PASSED_NOTE.replace('. ', ', ');
+/** Old numbers not reset yet, in words: when they were read, and that only more can be left since (no turn ran there). */
+export function staleNote(ago: string): string {
+  return `${ago ? `${ago} 마지막 턴 기준 값` : '마지막 턴 기준의 오래된 값'}. 그 뒤 쓰지 않아 지금은 더 남았을 수 있음`;
+}
+/** The sheet's one line on an old seat. */
+export const REFRESH_HINT = '이 계정으로 한 턴 돌리면 갱신돼요';
+
 /** Remaining % as shown: whole numbers (Gemini buckets report "98.5"); a sliver above 0 still reads 1, not 소진. */
 export function shownPct(w: UsageWindow | null): number | null {
   const r = remainingPct(w);
@@ -269,27 +280,27 @@ export function shownPct(w: UsageWindow | null): number | null {
 export function PopRow({ seat, name, k, w, now, empty, stale }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean }) {
   if (stale && windowPassed(w, now)) {
     return (
-      <div data-testid={`${seat}-${k}`} className="usage-row passed" title={`${name} · 마지막 값 이후 초기화 시각이 지남`}>
+      <div data-testid={`${seat}-${k}`} className="usage-row old passed" title={`${name} · ${RESET_PASSED_NOTE}`}>
         <span className="usage-label">{name}</span>
         <span className="usage-bar" aria-hidden="true"><i style={{ width: '0%' }} /></span>
-        <span className="usage-value"><span className="usage-na">리셋됨?</span></span>
+        <span className="usage-value"><RefreshIcon className="usage-icon" />리셋됨</span>
       </div>
     );
   }
   const rem = shownPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
-  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '');
+  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${stale ? '' : LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '') + (stale && rem !== null ? ' · 마지막 턴 기준 값, 지금은 더 남았을 수 있음' : '');
   if (rem === 0) {
     const at = resetStamp(w?.resetsAt ?? null);
     return (
-      <div data-testid={`${seat}-${k}`} className="usage-row spent danger" title={title}>
+      <div data-testid={`${seat}-${k}`} className={`usage-row spent danger${stale ? ' old' : ''}`} title={title}>
         <span className="usage-label">{name}</span>
         <span className="usage-pill">소진{at && <span className="usage-pill-at">{` · ${at}`}</span>}</span>
       </div>
     );
   }
   return (
-    <div data-testid={`${seat}-${k}`} className={`usage-row ${levelClass(w)}${w?.estimated ? ' estimated' : ''}`} title={title}>
+    <div data-testid={`${seat}-${k}`} className={`usage-row ${levelClass(w)}${w?.estimated ? ' estimated' : ''}${stale && rem !== null ? ' old' : ''}`} title={title}>
       <span className="usage-label">{name}</span>
       <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
       <span className="usage-value">{rem === null ? (empty ? <span className="usage-na">{empty}</span> : '—') : <>{rem}<small>% 남음</small></>}</span>
@@ -411,13 +422,13 @@ export type ChipState = {
   stale: boolean;
   /** Remaining % of the fullest window (null without a number, or once old numbers' window has reset). */
   left: number | null;
-  /** Old numbers whose window has reset since they were read (its reset time has passed): the % is dropped ("리셋됨?"). */
+  /** Old numbers whose window has reset since they were read (its reset time has passed): the % is dropped ("리셋됨"). */
   resetPassed: boolean;
   /** Old numbers, window not reset yet: how long ago they were read ("3일 전"; '' when unknown or no reset time is known). */
   ago: string;
   /** Short reset countdown of that window ("2h"; '' when unknown). */
   reset: string;
-  /** The value text after the label on desktop ("58% · 2h", "10% · 3일 전", "리셋됨?", "소진 · 12m", "쿨다운"). */
+  /** The value text after the label on desktop ("58% · 2h", "10% · 3일 전", "리셋됨", "소진 · 12m", "쿨다운"). */
   text: string;
   /** The value text on a phone ("58%", "✕", ''). */
   compactText: string;
@@ -460,7 +471,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   const stale = seatStale(d, snapshotStale);
   // Old numbers are judged window by window: one whose reset time has passed is dropped (its old % says nothing any
   // more); the least left among the rest is shown (a weekly window not reset yet is still a lower bound), with how long
-  // ago it was read. "리셋됨?" only once every known window has passed. No reset time: "오래됨" as before.
+  // ago it was read. "리셋됨" only once every known window has passed. No reset time: "오래됨" as before.
   const known = pickMain(d.rows);
   const judged = stale && d.status !== 'cooldown';
   const main = judged ? pickMain(d.rows.filter((r) => !windowPassed(r.w, now))) : known;
@@ -477,7 +488,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   if (d.status === 'cooldown') {
     kind = 'cooldown'; text = '쿨다운'; compactText = '쿨다운'; spoken = '쿨다운 중';
   } else if (resetPassed) {
-    kind = 'stale'; text = '리셋됨?'; compactText = text; spoken = '마지막 값 이후 초기화 시각이 지남';
+    kind = 'stale'; text = '리셋됨'; compactText = text; spoken = RESET_PASSED_SAID;
   } else if (main && main.rem === 0) {
     kind = 'spent'; text = reset ? `소진 · ${reset}` : '소진'; compactText = '✕';
     spoken = `소진${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}`;
@@ -487,7 +498,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
     kind = lvl === 'danger' ? 'danger' : lvl === 'warn' ? 'warn' : stale ? 'stale' : estimated ? 'estimated' : 'ok';
     text = `${left}%${stale ? ` · ${ago || '오래됨'}` : reset ? ` · ${reset}` : ''}`;
     compactText = `${left}%`;
-    spoken = `${left}퍼센트 남음${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}${stale ? (ago ? `, 마지막 턴 기준 ${ago} 값` : ', 오래된 값') : estimated ? ', 추정' : ''}`;
+    spoken = `${left}퍼센트 남음${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}${stale ? `, ${staleNote(ago).replace('. ', ', ')}` : estimated ? ', 추정' : ''}`;
   } else {
     const ok = d.engine === 'grok' && d.status === 'ok';
     kind = ok ? 'ok' : 'unknown'; text = ok ? '가능' : '?'; compactText = text; spoken = ok ? '사용 가능' : '알 수 없음';
@@ -496,6 +507,6 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   return {
     target: d.seat, nextSeat, onlyNext, kind, stale: stale && !!known && d.status !== 'cooldown', left, resetPassed, ago, reset: resetPassed ? '' : reset, text, compactText, otherDanger,
     aria: `${onlyNext ? `다음 턴 ${name}${next!.asOpus ? '(Opus)' : ''}` : name} 계정 사용량 ${spoken}${nextAria}${dangerAria}`,
-    title: [`${name} 계정${resetPassed ? ' · 마지막 값 이후 초기화 시각이 지남' : left !== null ? ` · ${main!.row.name} ${left}% 남음${ago ? ` (마지막 턴 기준 ${ago} 값)` : ''}` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
+    title: [`${name} 계정${resetPassed ? ` · ${RESET_PASSED_NOTE}` : left !== null ? ` · ${main!.row.name} ${left}% 남음${stale ? ` (${staleNote(ago)})` : ''}` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
   };
 }

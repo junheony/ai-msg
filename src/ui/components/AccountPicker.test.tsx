@@ -32,7 +32,7 @@ describe('AccountPicker', () => {
     expect(items.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['자동', 'A (Desktop)', 'B', 'C']);
     expect(items[0]!.getAttribute('aria-checked')).toBe('true');
     expect(items[1]!.textContent).toContain('5h 88% 남음 · 주간 30% 남음 · Fable 15% 남음');
-    expect(items[2]!.textContent).toContain('5h 리셋됨? · 주간 40% 남음');
+    expect(items[2]!.textContent).toContain('5h 리셋됨 · 주간 40% 남음');
     expect(items[2]!.textContent).not.toContain('Fable');
     // No known window: no desc line at all (not "5h —% · 주간 —% · Fable —%").
     expect(items[3]!.textContent).not.toContain('—');

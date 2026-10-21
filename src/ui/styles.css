@@ -521,11 +521,17 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seg:is(.danger, .spent, .cooldown) :is(.usage-seg-num, .usage-seg-reset) { color: var(--danger); font-weight: 600; }
 .usage-seg:is(.danger, .spent, .cooldown) .usage-seg-bar > i { background: var(--danger); }
 .usage-seg:is(.stale, .unknown) .usage-seg-bar > i { background: var(--muted); }
-.usage-seg.stale { outline: 1px dashed color-mix(in srgb, var(--muted) 75%, transparent); outline-offset: -1px; }
+/* Old numbers: the whole seat a step dimmer — label, number, age and bar in --muted (amber / red let go: an old reading
+   can only have more left now), a 12px clock before the age, a refresh in place of the number once the reset has passed. */
+.usage-seg.stale :is(.usage-seg-who, .usage-seg-num, .usage-seg-reset) { color: var(--muted); font-weight: 500; }
+.usage-seg.stale .usage-seg-bar > i { background: color-mix(in srgb, var(--muted) 70%, var(--track)); }
+.usage-seg-num, .usage-seg-age { display: inline-flex; align-items: center; gap: 3px; }
+.usage-seg-icon { flex-shrink: 0; }
 /* The numbers and bars say what is LEFT: one small word up front (full / mid) so "78%" is not read as used. */
 .usage-strip-head { padding: 0 1px 0 6px; font-size: var(--fs-meta); color: var(--muted); }
 /* Spent = an empty battery: no fill, the track itself turns red. */
 .usage-seg.spent .usage-seg-bar { background: color-mix(in srgb, var(--danger) 35%, var(--track)); }
+.usage-seg.stale.spent .usage-seg-bar { background: var(--track); }
 .usage-seg.estimated .usage-seg-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
 /* Off-screen copies of the three stages, measured for pickStage (fixed: they never widen a scroll area, and as a child of
    the top bar they are no flex item of it). */
@@ -559,12 +565,21 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seats { display: flex; flex-direction: column; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
 .usage-seat { display: flex; flex-direction: column; gap: 2px; padding: 10px var(--s3); border-radius: var(--r-sm); font-size: var(--fs-label); background: color-mix(in srgb, var(--fg) 2.5%, transparent); box-shadow: inset 0 0 0 1px var(--line); }
 .usage-seat.current { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
-.usage-seat.dim .usage-row, .usage-seat.down .usage-row, .usage-seat.unknown .usage-row { opacity: .7; }
+/* An old seat (cli stale, usage-deck out of reach, down / unknown with values): a step dimmer, the same language as the
+   strip — muted numbers and bars, a clock on its status tag, a refresh line saying one turn reads it anew. */
+.usage-seat.old .usage-seat-name { color: var(--fg); }
+.usage-row.old .usage-value, .usage-row.old .usage-value small { color: var(--muted); }
+.usage-row.old .usage-bar > i { --lvl: color-mix(in srgb, var(--muted) 70%, var(--track)); }
+.usage-row.old.spent .usage-pill { color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.usage-row.passed .usage-value { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-meta); font-weight: 500; }
+.usage-icon { flex-shrink: 0; vertical-align: -1px; }
+.usage-tag.status:has(.usage-icon) { display: inline-flex; align-items: center; gap: 3px; }
+.usage-seat .usage-refresh-hint { display: flex; align-items: center; gap: 5px; margin-top: 2px; font-size: var(--fs-meta); color: var(--muted); }
 .usage-seat-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 2px; }
 .usage-seat-name { font-size: var(--fs-label); font-weight: 650; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 16ch; }
 .usage-tag { padding: 0 6px; border-radius: var(--r-full); font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 500; white-space: nowrap; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .usage-tag.current, .usage-tag.next { color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
-.usage-tag.status.stale, .usage-tag.status.kept { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+.usage-tag.status.kept { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
 .usage-tag.status.cooldown { color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent); }
 .usage-seat .usage-row { min-width: 0; height: auto; min-height: 22px; grid-template-columns: minmax(44px, max-content) minmax(0, 1fr) max-content minmax(0, max-content); }
 .usage-seat .usage-pop-row.hint { max-width: none; }

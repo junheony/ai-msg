@@ -17,11 +17,11 @@ export function PinIcon({ title }: { title?: string }) {
 /** 5h · 주간 · Fable — the Fable value is shown so a pin on an account at the Fable cap is visible where the pin is set. */
 /**
  * Only the windows with a value, as the share LEFT like the usage strip ("5h 60% 남음 · 주간 40% 남음"); a window whose
- * reset time has passed since it was read says "리셋됨?". An unknown one is left out, never "Fable —%". '' with none.
+ * reset time has passed since it was read says "리셋됨". An unknown one is left out, never "Fable —%". '' with none.
  */
 function pct(u: AccountUsage | undefined, now: number): string {
   const parts: [string, UsageWindow | null | undefined][] = [['5h', u?.fiveHour], ['주간', u?.weekly], ['Fable', u?.fable]];
-  return parts.filter(([, w]) => w?.usedPct != null).map(([k, w]) => `${k} ${windowPassed(w!, now) ? '리셋됨?' : `${shownPct(w!)}% 남음`}`).join(' · ');
+  return parts.filter(([, w]) => w?.usedPct != null).map(([k, w]) => `${k} ${windowPassed(w!, now) ? '리셋됨' : `${shownPct(w!)}% 남음`}`).join(' · ');
 }
 
 /**
