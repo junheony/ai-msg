@@ -29,6 +29,10 @@ export const ROW_PRESS_MS = 350;
 export const AVATAR_COLORS = 8;
 /** The head's + menu: 지금 프로젝트 plus this many other recently used folders. */
 export const RECENT_FOLDERS = 3;
+/** Injected by vite.config.ts (package.json version); absent under vitest. */
+declare const __DECK_VERSION__: string | undefined;
+/** The avatar menu's last line (spec §3.2/§3.6: 정보 → "deck v…"), an information row that does nothing. */
+export const DECK_VERSION_LINE = `deck ${typeof __DECK_VERSION__ === 'string' ? `v${__DECK_VERSION__}` : '개발 모드'}`;
 /** One entry of the avatar (설정 및 계정) menu at the bottom left. */
 export type SidebarMenuItem = { label: string; hint?: string; run: () => void };
 
@@ -543,6 +547,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
                     <span>{it.label}</span>{it.hint && <kbd>{it.hint}</kbd>}
                   </button>
                 ))}
+                <button type="button" role="menuitem" aria-disabled="true" className="foot-menu-version" data-testid="foot-menu-version">{DECK_VERSION_LINE}</button>
               </MenuList>
             )}
           </span>

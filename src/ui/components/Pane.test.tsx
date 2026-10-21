@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { useReducer } from 'react';
 import { Pane, startTaskFromPane, useQueueRunner } from './Pane';
 import type { ClientMessage, ServerMessage } from '../../shared/protocol';
@@ -461,6 +463,42 @@ describe('Pane · 세션 칩 메뉴 (2c 리뷰)', () => {
     expect(screen.getByRole('button', { name: '패널 닫기' })).toBeTruthy();
     rerender(<Pane {...base} pane={{ ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: null, title: 't', engine: 'claude', sandbox: null } }} />);
     expect(head().classList.contains('idle')).toBe(false);
+  });
+
+  it('빈 pane 머리 idle: hidden at rest only on a hover screen, shown again under the pointer and with focus inside', () => {
+    render(<Pane pane={{ ...newPane('p1') }} app={{ pending: [], questions: [], codexAvailable: false }} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} />);
+    const head = screen.getByTestId('pane-p1').querySelector<HTMLElement>('.pane-head')!;
+    expect(head.classList.contains('idle')).toBe(true);
+    // The head's parent is the .pane the :hover rule keys on.
+    expect(head.parentElement!.classList.contains('pane')).toBe(true);
+    act(() => { screen.getByTestId('session-chip-head').focus(); });
+    expect(head.matches(':focus-within')).toBe(true);
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const hover = css.match(/@media \(hover: hover\) \{\s*\.pane-head\.idle \{ opacity: 0;[^}]*\}\s*([^{]+)\{ opacity: 1; \}/);
+    expect(hover).not.toBeNull();
+    const shown = hover![1]!.split(',').map((x) => x.trim());
+    expect(shown).toEqual(expect.arrayContaining(['.pane:hover > .pane-head.idle', '.pane-head.idle:focus-within']));
+  });
+
+  it('칩 메뉴: all five groups in order — 세션 · 보기 (명령 팔레트… last) · 공유 · 창 · 위험', () => {
+    const entry = { sessionId: 's1', account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 1 };
+    const actions = { pins: [], onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn() };
+    const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null }, items: [{ kind: 'user', text: 'hi' } as PaneState['items'][number]] };
+    const app = { pending: [], questions: [], codexAvailable: false, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [entry] }] };
+    render(<Pane pane={pane} app={app} active closable dispatch={() => {}} send={() => {}} onClose={() => {}} sessionActions={actions} onPalette={() => {}} onAddPane={() => {}} />);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    const groups: string[][] = [[]];
+    for (const el of Array.from(screen.getByRole('menu').querySelectorAll('[role="menuitem"], [role="separator"]'))) {
+      if (el.getAttribute('role') === 'separator') groups.push([]);
+      else groups.at(-1)!.push(el.textContent!.replace(/(⌘|Ctrl\+).*$/, ''));
+    }
+    expect(groups).toEqual([
+      ['폴더: w ›', '이름 바꾸기', '맨 위에 고정', '보관'],
+      ['대화에서 찾기', '파일 열기', '새 세션으로 이어가기', '명령 팔레트…'],
+      ['대화 복사 (마크다운)', '마크다운으로 내보내기', '링크 복사', '새 탭에서 열기'],
+      ['새 분할', '새 탭으로 떼어내기', '이 창 닫기'],
+      ['삭제…'],
+    ]);
   });
 
   it('보기 group order: 대화에서 찾기 → 파일 열기 → 명령 팔레트…', () => {

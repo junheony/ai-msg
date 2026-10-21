@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { usePrefs } from '../usePrefs';
 import { useCodeWrap } from '../codeWrap';
 import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
@@ -18,9 +18,6 @@ export const AUTO_CONSENT_TEXT = '자동 세션의 코드·대화가 Google(Gemi
 export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean };
 const AUTO_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
 const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
-
-/** Injected by vite.config.ts (package.json version); absent under vitest. */
-declare const __DECK_VERSION__: string | undefined;
 
 /** Segmented buttons for up to 3 choices; 4 or more become a select (a row of 4 does not fit a phone's line). */
 export const SEG_MAX = 3;
@@ -47,16 +44,15 @@ function Seg<T extends string>({ label, value, options, onPick }: { label: strin
   );
 }
 
-/** The line under a row: a short summary always shown, the long text behind 자세히. */
+/** The line under a row: a short summary, swapped for the long text by 자세히 (never both). */
 function Hint({ short, children }: { short: string; children?: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="settings-hint">
-      <p>
-        {short}
+      <p className={open ? 'settings-hint-body' : undefined}>
+        {open ? children : short}
         {children && <>{' '}<button type="button" className="hint-more" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? '접기' : '자세히'}</button></>}
       </p>
-      {open && <p className="settings-hint-body">{children}</p>}
     </div>
   );
 }
@@ -65,7 +61,7 @@ function Hint({ short, children }: { short: string; children?: ReactNode }) {
 export const SETTINGS_GROUPS = [['screen', '화면'], ['input', '입력'], ['perm', '권한·알림'], ['account', '계정']] as const;
 type GroupId = (typeof SETTINGS_GROUPS)[number][0];
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onOpenUsage, onOpenHighlights, onClose }: {
+export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onClose }: {
   build: string | null;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
@@ -90,8 +86,6 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   /** 백그라운드 작업 running at once before new ones wait (server setting; null = not known yet / an older server). */
   taskCap?: number | null;
   onTaskCap?: (n: number) => void;
-  onOpenUsage: () => void;
-  onOpenHighlights?: () => void;
   onClose: () => void;
 }) {
   const [prefs, dispatch] = usePrefs();
@@ -101,19 +95,41 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   const single = claudeAccounts <= 1;
   const [askAuto, setAskAuto] = useState<EngineKind | null>(null);
   const groupRefs = useRef<Partial<Record<GroupId, HTMLElement | null>>>({});
+  const [current, setCurrent] = useState<GroupId>(SETTINGS_GROUPS[0][0]);
   const section = (id: GroupId) => ({ ref: (el: HTMLElement | null) => { groupRefs.current[id] = el; }, 'aria-labelledby': `settings-${id}`, className: 'settings-group' });
-  const heading = (id: GroupId) => <h3 id={`settings-${id}`}>{SETTINGS_GROUPS.find(([g]) => g === id)![1]}</h3>;
-  const foot = `deck ${typeof __DECK_VERSION__ === 'string' ? __DECK_VERSION__ : '—'} · 빌드 ${build ?? '개발 모드'} · ${describeShell()}`;
+  const heading = (id: GroupId) => <h3 id={`settings-${id}`} tabIndex={-1}>{SETTINGS_GROUPS.find(([g]) => g === id)![1]}</h3>;
+  // The version lives in the avatar menu (deck v…); this line is for bug reports.
+  const foot = `빌드 ${build ?? '개발 모드'} · ${describeShell()}`;
+  // The left list marks the group at the top of the sheet's scroll (the last one whose top has reached it).
+  useEffect(() => {
+    const scroller = groupRefs.current.screen?.closest('.sheet');
+    if (!scroller) return;
+    const onScroll = () => {
+      const top = scroller.getBoundingClientRect().top + 24;
+      let at: GroupId = SETTINGS_GROUPS[0][0];
+      for (const [id] of SETTINGS_GROUPS) { const el = groupRefs.current[id]; if (el && el.getBoundingClientRect().top <= top) at = id; }
+      setCurrent(at);
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', onScroll);
+  }, []);
+  const jump = (id: GroupId) => {
+    setCurrent(id);
+    const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // jsdom has no scrollIntoView.
+    groupRefs.current[id]?.scrollIntoView?.({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    document.getElementById(`settings-${id}`)?.focus({ preventScroll: true });
+  };
 
   return (
     <Sheet className="settings" label="설정" onClose={onClose}>
       <div className="settings-head">
         <h2>설정</h2>
-        <button type="button" className="btn ghost" onClick={onClose}>닫기</button>
+        <button type="button" className="btn ghost" onClick={onClose} autoFocus>닫기</button>
       </div>
       <div className="settings-body">
         <nav className="settings-nav" aria-label="설정 그룹">
-          {SETTINGS_GROUPS.map(([id, name]) => <button type="button" key={id} onClick={() => groupRefs.current[id]?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>{name}</button>)}
+          {SETTINGS_GROUPS.map(([id, name]) => <button type="button" key={id} aria-current={current === id ? 'true' : undefined} onClick={() => jump(id)}>{name}</button>)}
         </nav>
         <div className="settings-groups">
           <section {...section('screen')}>
@@ -133,13 +149,11 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
           <section {...section('perm')}>
             {heading('perm')}
             {onDefaultPermMode && defaultPermMode !== null ? (
-              <label className="settings-row default-perm" title={`새 세션이 시작할 권한 모드 — ${PERM_MODE_HINT[defaultPermMode]}. 모두 자동 승인이면 새 GPT 세션은 작업폴더 쓰기`}>
+              <label className="settings-row" title={`새 세션이 시작할 권한 모드 — ${PERM_MODE_HINT[defaultPermMode]}. 모두 자동 승인이면 새 GPT 세션은 작업폴더 쓰기`}>
                 <span>새 세션 기본 권한</span>
-                <span className={`pick perm perm-${defaultPermMode}`}>
-                  <select value={defaultPermMode} onChange={(e) => onDefaultPermMode(e.target.value as PermMode)} aria-label="새 세션 기본 권한" data-testid="default-perm-select">
-                    {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
-                  </select>
-                </span>
+                <select className={`perm-select perm-${defaultPermMode}`} value={defaultPermMode} onChange={(e) => onDefaultPermMode(e.target.value as PermMode)} aria-label="새 세션 기본 권한" data-testid="default-perm-select">
+                  {PERM_MODES.map((m) => <option key={m} value={m}>{PERM_MODE_LABEL[m]}</option>)}
+                </select>
               </label>
             ) : <Hint short="서버 연결 후 표시됩니다." />}
             <Hint short="세션별 모드는 입력창의 권한 선택(Shift+Tab)으로 바꿉니다." />
@@ -152,7 +166,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
                       const pending = needsConsent(e) && !autoRoute.autoConsent.includes(e);
                       return (
                         <span key={e} className="auto-engine">
-                          <label>
+                          <label className="auto-engine-pick">
                             <input type="checkbox" checked={autoRoute.autoEngines.includes(e)} data-testid={`auto-engine-${e}`}
                               onChange={(ev) => onAutoRoute({ autoEngines: ev.target.checked ? [...autoRoute.autoEngines, e] : autoRoute.autoEngines.filter((x) => x !== e) })} />
                             {' '}{AUTO_ENGINE_LABEL[e]}
@@ -235,12 +249,10 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
             )}
             {grokLocked && (
               <div className="settings-row grok-locked" role="alert">
-                <span>Grok 엔진 잠김 — {grokLocked}</span>
+                <span className="grok-locked-why">Grok 엔진 잠김 — {grokLocked}</span>
                 {onGrokUnlock && <button type="button" className="btn" onClick={onGrokUnlock}>잠금 해제</button>}
               </div>
             )}
-            <div className="settings-row"><span>토큰 사용량 기록</span><button type="button" className="link-btn" onClick={() => { onClose(); onOpenUsage(); }}>사용량 보기</button></div>
-            {onOpenHighlights && <div className="settings-row"><span>세션 하이라이트</span><button type="button" className="link-btn" onClick={() => { onClose(); onOpenHighlights(); }}>하이라이트</button></div>}
             <Hint short="계정별 5시간·주간 한도는 상단 사용량 칩의 시트에서 봅니다." />
           </section>
         </div>

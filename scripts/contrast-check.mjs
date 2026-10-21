@@ -64,6 +64,10 @@ function check(name, t) {
     // open menu, current): faint there drops under 4.5 in the light theme.
     ["muted / sidebar+hover", c("muted"), over("hover", c("sidebar")), 4.5],
     ["muted / sidebar+selected", c("muted"), over("selected", c("sidebar")), 4.5],
+    // 설정 sheet (on --panel): a hovered segment button (.seg button:hover → --fg on --hover) and 모두 자동 승인 (--danger).
+    ["fg / panel+hover (seg)", c("fg"), over("hover", c("panel")), 4.5],
+    ["muted / panel+hover", c("muted"), over("hover", c("panel")), 4.5],
+    ["danger / panel", c("danger"), c("panel"), 4.5],
     // Sidebar row avatars: a bold 16px white letter on the project colour, held to the body-text floor too.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`#fff / avatar-${n}`, [255, 255, 255], c(`avatar-${n}`), 4.5]),
   ];

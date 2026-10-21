@@ -1350,30 +1350,41 @@ button.hl-row-main:hover { background: var(--hover); }
 .settings-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 2px; }
 .settings-nav button { height: 32px; padding: 0 var(--s3); border-radius: var(--r-sm); text-align: left; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); white-space: nowrap; }
 .settings-nav button:hover { background: var(--hover); color: var(--fg); }
+.settings-nav button[aria-current="true"] { background: var(--selected); color: var(--fg-strong); }
+.settings h3:focus:not(:focus-visible) { outline: none; }
 .settings-groups { display: flex; flex-direction: column; gap: var(--s5); min-width: 0; }
 .settings-group { display: flex; flex-direction: column; gap: var(--s3); scroll-margin-top: var(--s4); }
 .settings h3 { margin: 0; font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: var(--lh-label); font-weight: 600; letter-spacing: .3px; color: var(--muted); }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; }
 .settings-row > span:first-child { white-space: nowrap; }
+/* A long lock reason wraps instead of running off the sheet. */
+.settings-row.grok-locked > .grok-locked-why { flex: 1 1 0; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .settings-row select { max-width: 100%; }
 /* A row's note: one 12px line, the long text behind 자세히. Pulled up to its row. */
-.settings-hint { margin-top: calc(-1 * var(--s2)); color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); }
+.settings-hint { margin-top: calc(-1 * var(--s2)); margin-bottom: 0; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); }
 .settings-hint p { margin: 0; }
 .settings-hint .hint-more { padding: 0; color: var(--link); font-size: inherit; }
 .settings-hint .hint-more:hover { text-decoration: underline; }
-.settings-hint-body { margin-top: var(--s1) !important; color: var(--muted); }
+.settings-hint-body { color: var(--muted); }
+/* 새 세션 기본 권한: the value shows like the other selects; 모두 자동 승인 in the warning colour. */
+.settings-row .perm-select.perm-bypassPermissions { color: var(--danger); font-weight: 600; box-shadow: 0 0 0 1px var(--danger); border-radius: 4px; }
+.settings-row .perm-select option { color: var(--fg); font-weight: 400; }
 .settings .link-btn { padding: 0; color: var(--link); font-size: calc(var(--fs-label) * var(--font-scale, 1)); white-space: nowrap; }
 .settings .link-btn:hover { text-decoration: underline; }
 .settings-foot { margin: 0; padding-top: var(--s3); border-top: 1px solid var(--line); color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); line-height: var(--lh-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .seg { display: inline-flex; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); overflow: hidden; }
 .seg button { height: 30px; padding: 0 11px; border-radius: 0; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); white-space: nowrap; }
 .seg button[aria-pressed="true"] { background: var(--selected); color: var(--fg-strong); }
+.seg button:not([aria-pressed="true"]):not(:disabled):hover { background: var(--hover); color: var(--fg); }
 .seg button:disabled { opacity: .5; cursor: not-allowed; }
 .settings-consent { display: flex; flex-direction: column; gap: var(--s2); padding: 10px var(--s3); border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .settings-consent p { margin: 0; color: var(--fg-strong); }
 .settings-consent .settings-row { justify-content: flex-end; }
-.auto-engine-list { display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: flex-end; }
-.auto-engine { display: inline-flex; align-items: center; gap: 6px; }
+/* 자동 분배: the label on its own line, then one line per engine — checkbox + name left, 동의 필요 right. */
+.settings-row.auto-engines { flex-direction: column; align-items: stretch; gap: var(--s1); }
+.auto-engine-list { display: flex; flex-direction: column; }
+.auto-engine { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 32px; }
+.auto-engine-pick { display: inline-flex; align-items: center; gap: 6px; min-height: inherit; cursor: pointer; }
 .settings .notify-pop { position: static; width: auto; box-shadow: none; }
 .dictate.on { color: var(--danger); animation: dictate-pulse 1.2s ease-in-out infinite; }
 @keyframes dictate-pulse { 50% { opacity: .45; } }
@@ -1382,6 +1393,10 @@ button.hl-row-main:hover { background: var(--hover); }
   .settings-body { display: block; }
   .settings-nav { display: none; }
   .settings .link-btn { min-height: var(--phone-tap); }
+  .auto-engine, .auto-engine .btn { min-height: var(--phone-tap); }
+  .auto-engine-pick { flex: 1 1 auto; }
+  /* The build · screen line wraps on a phone (it is read for bug reports, not skimmed). */
+  .settings-foot { white-space: normal; overflow-wrap: anywhere; }
   /* The press area grows to 44px without moving the line. */
   .settings-hint .hint-more { position: relative; }
   .settings-hint .hint-more::after { content: ""; position: absolute; inset: -14px -8px; }
@@ -1429,7 +1444,6 @@ button.hl-row-main:hover { background: var(--hover); }
 .plan-card { border-color: rgba(59, 130, 246, .5); }
 .plan-card .dot { background: #3b82f6; }
 .plan-body { max-height: 50vh; overflow: auto; margin: 6px 0; }
-.default-perm { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 6px; font-size: calc(13.5px * var(--font-scale, 1)); color: var(--fg); }
 /* nav-palette: ⌘K palette, dialogs, undo toast, sidebar view toggle, new-chat screen. */
 /* Hidden sidebar peek (desktop): kept laid out off-screen so it can slide in over the panes from the left edge. */
 .body { position: relative; }
@@ -1709,6 +1723,8 @@ button.hl-row-main:hover { background: var(--hover); }
 .session-menu.foot-menu { left: 0; right: auto; top: auto; bottom: calc(100% + 8px); min-width: 210px; }
 .foot-menu button { display: flex; align-items: center; gap: 12px; }
 .foot-menu kbd { margin-left: auto; color: var(--faint); font: inherit; font-size: calc(11.5px * var(--font-scale, 1)); }
+.foot-menu button.foot-menu-version { margin-top: 3px; border-top: 1px solid var(--line); border-radius: 0; opacity: 1; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); font-variant-numeric: tabular-nums; cursor: default; }
+.foot-menu button.foot-menu-version:hover { background: transparent; }
 .foot-menu-head { padding: 6px 9px 7px; margin-bottom: 3px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; }
 @media (pointer: coarse) { .sidebar-avatar { width: var(--phone-tap); height: var(--phone-tap); } }
 
@@ -2176,7 +2192,8 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
 .task-add:hover { color: var(--fg); }
 
 /* deck 메모 (Settings → 일반) */
-.memory-editor { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.memory-editor { display: flex; flex-direction: column; gap: 6px; }
+.memory-editor .settings-hint { margin-top: -2px; }
 .memory-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 96px; font: inherit; color: var(--fg); background: var(--bg-raised); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .memory-foot { display: flex; align-items: center; gap: 10px; }
 .memory-count { color: var(--muted); font-size: .85em; font-variant-numeric: tabular-nums; }

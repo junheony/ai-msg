@@ -457,6 +457,7 @@ export function Chat(p: ChatProps) {
         canFind && <HeadItem key="find" label="대화에서 찾기" hint={isMacPlatform() ? '⌘F' : 'Ctrl+F'} run={() => openFind()} ctl={ctl} />,
         ...paneRows('view', ctl),
         p.onHandoff && <HeadItem key="handoff" label="새 세션으로 이어가기" run={p.onHandoff} ctl={ctl} />,
+        ...paneRows('viewEnd', ctl),
       ],
       shareActions.map((a) => <button key={a.key} type="button" role="menuitem" aria-disabled={a.disabled || undefined} onClick={a.disabled ? undefined : a.run}>{a.label}</button>),
       paneRows('window', ctl),

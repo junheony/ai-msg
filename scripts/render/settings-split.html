@@ -1,8 +1,11 @@
 <!doctype html><html><head><meta charset="utf-8">
 <!-- 설정 · 분할 fixture for scripts/render-check.sh (keep in step with SettingsView.tsx / App.tsx pane-switch):
      the settings sheet whole — 화면 · 입력 · 권한·알림 · 계정 (left list on desktop, one scroll on a phone), 글자 크기 as a
-     select (4 choices), 간결 모드's note opened (자세히 → 접기), the build on one line at the end — then the phone's split
-     strip with 2 tabs ("1 · 제목…" cut by CSS, + at the end, 36px bar, 44px presses).
+     select (4 choices), 간결 모드's note opened (자세히 → 접기: the long text in place of the summary), 새 세션 기본 권한 as a
+     visible select (모두 자동 승인 in the warning colour), 자동 분배 one engine per line, a long Grok lock reason, the
+     build · screen line at the end (no version: that is the avatar menu's) — then the phone's split strip with 2 tabs
+     ("1 · 제목…" cut by CSS, + at the end, 36px bar, 44px presses), and the same strip over an open 대화에서 찾기 bar
+     (?find: the tabs' press areas dashed — they must stop above the find field).
      Tall: RENDER_HEIGHT=2400. 412px needs an iframe (headless Chrome will not go below 500):
        RENDER_HEIGHT=2400 RENDER_OUT=/tmp/deck-render-6 scripts/render-check.sh settings-split 412 1440 -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
@@ -24,25 +27,32 @@
   // At the top level on a narrow window, show 412px frames of this page (the settings sheet, then the split strip).
   if (window === window.top) document.documentElement.classList.add('fx-top');
   else if (location.search === '?split') document.documentElement.classList.add('fx-only-split');
+  else if (location.search === '?find') document.documentElement.classList.add('fx-only-split', 'fx-find');
 </script>
 <style>
   .fx-only-split .fx-settings { display: none; }
   .fx-only-split .fx-split { display: block; }
+  .fx-find-bar { display: none; }
+  .fx-find .fx-find-bar { display: flex; }
+  /* Fixture only: the tabs' 44px press areas, dashed. */
+  .fx-find .pane-switch button { outline: 1px dashed var(--danger); outline-offset: -1px; }
 </style>
 </head><body>
 
 <div class="fx-phones">
   <div class="fx-name">폰 412 — 설정 시트 (세로 스크롤 · 간결 모드 설명 펼침)</div>
-  <iframe src="settings-split.html?settings" title="settings" style="height: 1900px"></iframe>
+  <iframe src="settings-split.html?settings" title="settings" style="height: 2000px"></iframe>
   <div class="fx-name">폰 412 — 분할 2: 36px 탭 스트립 · 44px 누름 영역 · 끝에 +</div>
   <iframe src="settings-split.html?split" title="split" style="height: 360px"></iframe>
+  <div class="fx-name">폰 412 — 분할 2 + 대화에서 찾기 열림: 탭 누름 영역(점선)이 찾기 칸을 가리지 않음</div>
+  <iframe src="settings-split.html?find" title="find" style="height: 360px"></iframe>
 </div>
 
 <div class="fx fx-settings">
 <div class="sheet-backdrop"><div class="sheet settings" role="dialog" aria-modal="true" aria-label="설정">
   <div class="settings-head"><h2>설정</h2><button type="button" class="btn ghost">닫기</button></div>
   <div class="settings-body">
-    <nav class="settings-nav" aria-label="설정 그룹"><button type="button">화면</button><button type="button">입력</button><button type="button">권한·알림</button><button type="button">계정</button></nav>
+    <nav class="settings-nav" aria-label="설정 그룹"><button type="button" aria-current="true">화면</button><button type="button">입력</button><button type="button">권한·알림</button><button type="button">계정</button></nav>
     <div class="settings-groups">
       <section class="settings-group" aria-labelledby="g-screen">
         <h3 id="g-screen">화면</h3>
@@ -51,28 +61,28 @@
         <div class="settings-row"><span>채팅 폭</span><div class="seg" role="group"><button type="button" aria-pressed="true">좁게</button><button type="button" aria-pressed="false">넓게</button></div></div>
         <div class="settings-row"><span>코드 줄바꿈</span><div class="seg" role="group"><button type="button" aria-pressed="true">가로 스크롤</button><button type="button" aria-pressed="false">줄바꿈</button></div></div>
         <div class="settings-row"><span>간결 모드</span><div class="seg" role="group"><button type="button" aria-pressed="true">켜기</button><button type="button" aria-pressed="false">끄기</button></div></div>
-        <div class="settings-hint"><p>짧은 확인 뒤 결과만 보여 줍니다 · 이 기기에만 저장 <button type="button" class="hint-more" aria-expanded="true">접기</button></p><p class="settings-hint-body">간결 모드(기본 켜짐): 짧은 확인 뒤 결과만 보여 주고, 생각·도구 본문은 접어둡니다. 끄면 답이 스트리밍으로 보이고 도구 호출도 하나씩 보입니다. 경로 이유·토큰은 어느 쪽이든 답장 끝 모델 알약을 눌러야 보입니다. 이 기기에만 저장됩니다 (폰과 맥이 따로).</p></div>
+        <div class="settings-hint"><p class="settings-hint-body">간결 모드(기본 켜짐): 짧은 확인 뒤 결과만 보여 주고, 생각·도구 본문은 접어둡니다. 끄면 답이 스트리밍으로 보이고 도구 호출도 하나씩 보입니다. 경로 이유·토큰은 어느 쪽이든 답장 끝 모델 알약을 눌러야 보입니다. 이 기기에만 저장됩니다 (폰과 맥이 따로). <button type="button" class="hint-more" aria-expanded="true">접기</button></p></div>
       </section>
       <section class="settings-group" aria-labelledby="g-input">
         <h3 id="g-input">입력</h3>
         <div class="settings-row"><span>Enter 동작</span><div class="seg" role="group"><button type="button" aria-pressed="true">Enter 전송</button><button type="button" aria-pressed="false">⌘Enter 전송</button></div></div>
         <div class="memory-editor">
           <label for="deck-memory"><span>deck 메모</span></label>
+          <p class="settings-hint">모든 엔진(Claude·GPT·Gemini·Grok)이 매 턴 참고하는 메모입니다. 대화 기록에는 남지 않고, 이 서버의 모든 기기가 같이 씁니다.</p>
           <textarea id="deck-memory" rows="6">답은 한국어로. 배포는 금요일에 하지 않음.</textarea>
           <div class="memory-foot"><span class="memory-count">52 / 4096바이트</span><button type="button" class="btn" disabled>저장</button></div>
-          <p class="muted">모든 엔진(Claude·GPT·Gemini·Grok)이 매 턴 참고하는 메모입니다. 대화 기록에는 남지 않고, 이 서버의 모든 기기가 같이 씁니다.</p>
         </div>
       </section>
       <section class="settings-group" aria-labelledby="g-perm">
         <h3 id="g-perm">권한·알림</h3>
-        <label class="settings-row default-perm"><span>새 세션 기본 권한</span><span class="pick perm perm-default"><select aria-label="새 세션 기본 권한"><option>묻기</option></select></span></label>
+        <label class="settings-row"><span>새 세션 기본 권한</span><select class="perm-select perm-bypassPermissions" aria-label="새 세션 기본 권한"><option>묻기</option><option>편집 자동 승인</option><option>계획</option><option selected>모두 자동 승인</option></select></label>
         <div class="settings-hint"><p>세션별 모드는 입력창의 권한 선택(Shift+Tab)으로 바꿉니다.</p></div>
         <div class="settings-row auto-engines"><span>자동 분배</span>
           <div class="auto-engine-list" role="group">
-            <span class="auto-engine"><label><input type="checkbox" checked> Claude</label></span>
-            <span class="auto-engine"><label><input type="checkbox" checked> GPT</label></span>
-            <span class="auto-engine"><label><input type="checkbox"> Gemini</label><button type="button" class="btn ghost">동의 필요</button></span>
-            <span class="auto-engine"><label><input type="checkbox"> Grok</label><button type="button" class="btn ghost">동의 필요</button></span>
+            <span class="auto-engine"><label class="auto-engine-pick"><input type="checkbox" checked> Claude</label></span>
+            <span class="auto-engine"><label class="auto-engine-pick"><input type="checkbox" checked> GPT</label></span>
+            <span class="auto-engine"><label class="auto-engine-pick"><input type="checkbox"> Gemini</label><button type="button" class="btn ghost">동의 필요</button></span>
+            <span class="auto-engine"><label class="auto-engine-pick"><input type="checkbox"> Grok</label><button type="button" class="btn ghost">동의 필요</button></span>
           </div>
         </div>
         <label class="settings-row"><span>Grok 빠른 모델 쓰기(2배 가격)</span><input type="checkbox"></label>
@@ -89,14 +99,12 @@
         <div class="settings-hint"><p>새 세션·오래 쉰 세션·한도 문턱을 넘을 때 적용됩니다. <button type="button" class="hint-more" aria-expanded="false">자세히</button></p></div>
         <div class="settings-row"><span>같은 벤더 계정 자동 순환</span><div class="seg" role="group"><button type="button" aria-pressed="true">끄기</button><button type="button" aria-pressed="false">켜기</button></div></div>
         <div class="settings-hint"><p>꺼 두면 세션은 고른 Claude 계정에만 머뭅니다. <button type="button" class="hint-more" aria-expanded="false">자세히</button></p></div>
-        <div class="settings-row grok-locked" role="alert"><span>Grok 엔진 잠김 — 안전 장치 작동</span><button type="button" class="btn">잠금 해제</button></div>
-        <div class="settings-row"><span>토큰 사용량 기록</span><button type="button" class="link-btn">사용량 보기</button></div>
-        <div class="settings-row"><span>세션 하이라이트</span><button type="button" class="link-btn">하이라이트</button></div>
+        <div class="settings-row grok-locked" role="alert"><span class="grok-locked-why">Grok 엔진 잠김 — 안전 장치 작동: 15분 동안 같은 파일을 40번 넘게 고쳐 쓰는 반복이 감지되어 src/ui/components/really/long/nested/path/SettingsView.tsx 에서 멈췄습니다</span><button type="button" class="btn">잠금 해제</button></div>
         <div class="settings-hint"><p>계정별 5시간·주간 한도는 상단 사용량 칩의 시트에서 봅니다.</p></div>
       </section>
     </div>
   </div>
-  <p class="settings-foot">deck 0.9.0 · 빌드 b1a2c3d · 412×915 · 창 915 · 화면 412×915 · 보이는 915 · 위 0</p>
+  <p class="settings-foot">빌드 b1a2c3d · 412×915 · 창 915 · 화면 412×915 · 보이는 915 · 위 0</p>
 </div></div>
 </div>
 
@@ -119,7 +127,9 @@
       <button type="button" data-tab="p1" aria-pressed="false"><span class="tab-pill">2 · GPT 리뷰</span></button>
       <button type="button" class="add" aria-label="새 분할"><span class="tab-pill">+</span></button>
     </div>
-    <section class="pane active"><main class="chat"><div class="chat-body"><div class="msg user"><pre>설정 4그룹으로 바꿔 줘</pre></div></div></main></section>
+    <section class="pane active"><main class="chat">
+      <div class="find-bar fx-find-bar" role="search"><input class="find-input" type="search" aria-label="대화에서 찾기" placeholder="대화에서 찾기" value="설정"><span class="find-count">1 / 3</span><button type="button" class="icon-btn find-step" aria-label="이전 찾기 결과">↑</button><button type="button" class="icon-btn find-step" aria-label="다음 찾기 결과">↓</button><button type="button" class="icon-btn find-close" aria-label="찾기 닫기">×</button></div>
+      <div class="chat-body"><div class="msg user"><pre>설정 4그룹으로 바꿔 줘</pre></div></div></main></section>
   </div>
 </div>
 

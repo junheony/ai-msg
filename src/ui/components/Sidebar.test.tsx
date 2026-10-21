@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { AVATAR_COLORS, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex, avatarLetter } from './Sidebar';
+import { AVATAR_COLORS, DECK_VERSION_LINE, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex, avatarLetter } from './Sidebar';
 
 const noop = () => {};
 /** The head's search icon opens the 세션 검색 box (it is not on screen until then). */
@@ -497,7 +497,7 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     const menu = screen.getByRole('menu', { name: '설정 및 계정' });
     expect(menu.querySelector('.foot-menu-head')?.textContent).toBe('deck · 계정 B');
     const items = screen.getAllByRole('menuitem');
-    expect(items.map((b) => b.textContent)).toEqual(['설정⌘,', '사용량 기록']);
+    expect(items.map((b) => b.textContent)).toEqual(['설정⌘,', '사용량 기록', DECK_VERSION_LINE]);
     expect(document.activeElement).toBe(items[0]);
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(items[1]);
@@ -509,6 +509,22 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     expect(usage).toHaveBeenCalledTimes(1);
     expect(settings).not.toHaveBeenCalled();
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('the avatar menu ends with "deck v…": an information row (aria-disabled) that closes nothing and runs nothing', () => {
+    const settings = vi.fn();
+    render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} footMenu={[{ label: '설정', run: settings }]} />);
+    fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
+    const items = screen.getAllByRole('menuitem');
+    const version = items.at(-1)!;
+    expect(version).toBe(screen.getByTestId('foot-menu-version'));
+    // Under vitest there is no __DECK_VERSION__; the build has `deck v<package.json version>`.
+    expect(DECK_VERSION_LINE).toMatch(/^deck (v\d+\.\d+\.\d+|개발 모드)$/);
+    expect(version.textContent).toBe(DECK_VERSION_LINE);
+    expect(version.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(version);
+    expect(screen.getByRole('menu', { name: '설정 및 계정' })).toBeTruthy();
+    expect(settings).not.toHaveBeenCalled();
   });
 
   it('without footMenu the avatar menu still offers 설정 (onOpenSettings)', () => {

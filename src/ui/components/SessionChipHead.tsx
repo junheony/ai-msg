@@ -5,8 +5,8 @@ import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
 import { MenuList } from './SessionMenu';
 
-/** Where a pane's ⋯ item sits in the session chip's menu (세션 → 보기 → 공유 → 창 → 총사령탑 → 위험). */
-export type HeadGroup = 'session' | 'view' | 'window' | 'commander';
+/** Where a pane's ⋯ item sits in the session chip's menu (세션 → 보기 → 공유 → 창 → 총사령탑 → 위험); `viewEnd` = 보기's last rows. */
+export type HeadGroup = 'session' | 'view' | 'viewEnd' | 'window' | 'commander';
 export type HeadMenuItem = { label: string; run: () => void; group?: HeadGroup; /** Shown on the right (a shortcut). */ hint?: string };
 
 export type HeadGrip = { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => void; onKeyDown?: (e: ReactKeyboardEvent<HTMLButtonElement>) => void };

@@ -14,7 +14,8 @@ export const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]),
 
 /** Tab / Shift+Tab wrap inside a sheet (a modal: focus never walks out behind it). */
 export function trapTab(e: ReactKeyboardEvent<HTMLElement>) {
-  if (e.key !== 'Tab') return;
+  // A sheet's own inner trap already wrapped it (the Sheet traps too).
+  if (e.key !== 'Tab' || e.defaultPrevented) return;
   const all = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
   if (!all.length) return;
   const first = all[0]!;
@@ -27,6 +28,8 @@ export function trapTab(e: ReactKeyboardEvent<HTMLElement>) {
  * starts on the backdrop. Esc yields to a popup opened over it (later in the DOM, not inside the card — its own menus do not count: palette, help,
  * confirm, another sheet), to an Esc someone already took and to a held key's repeats. Focus goes back where it was when
  * the sheet closes, or to the top bar's `[data-sheet-return]` button when that is gone (설정 → 사용량 보기) or was nowhere.
+ * Tab / Shift+Tab wrap inside it; on open, focus goes to its 닫기 button (`autoFocus` in the content) or, if nothing in it
+ * took focus, the first focusable control.
  */
 export function Sheet({ label, className, onClose, children }: { label: string; className: string; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -35,6 +38,10 @@ export function Sheet({ label, className, onClose, children }: { label: string; 
   const [opener] = useState(() => (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null));
   // Layout: runs before a sheet opened in the same commit (설정 → 사용량) focuses its own ✕.
   useLayoutEffect(() => () => { (opener?.isConnected && opener !== document.body ? opener : document.querySelector<HTMLElement>('[data-sheet-return]'))?.focus(); }, [opener]);
+  useEffect(() => {
+    const self = ref.current;
+    if (self && !self.contains(document.activeElement)) self.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     let owned = false;
     // Capture: decided before the popup's own Esc handler removes it.
@@ -54,7 +61,7 @@ export function Sheet({ label, className, onClose, children }: { label: string; 
   }, []);
   return (
     <div className="sheet-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={ref} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-label={label}>{children}</div>
+      <div ref={ref} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-label={label} onKeyDown={trapTab}>{children}</div>
     </div>
   );
 }

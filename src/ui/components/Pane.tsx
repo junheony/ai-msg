@@ -403,10 +403,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const fileMenu: HeadMenuItem[] = [];
   const desktopOpen = useOpenInDesktop(s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
   if (desktopOpen) fileMenu.push({ label: 'Desktop에서 열기', run: desktopOpen, group: 'session' });
-  // 보기: 파일 패널 right after 대화에서 찾기 (spec §3.8 order), then 명령 팔레트… — the phone's only way to ⌘K (and the
-  // new-session screen's too).
+  // 보기: 파일 패널 right after 대화에서 찾기 (spec §3.8 order); 명령 팔레트… closes the group (after 새 세션으로 이어가기)
+  // — the phone's only way to ⌘K (and the new-session screen's too).
   if (s) fileMenu.push({ label: side ? '파일 패널 닫기' : '파일 열기', hint: mod('⇧E'), run: () => (side ? closeSide() : openSide({ kind: 'pick' })), group: 'view' });
-  if (onPalette) fileMenu.push({ label: '명령 팔레트…', hint: mod('K'), run: onPalette, group: 'view' });
+  if (onPalette) fileMenu.push({ label: '명령 팔레트…', hint: mod('K'), run: onPalette, group: 'viewEnd' });
   // 창: split, move, card ⇄ pane (the chip's drag does the same), size, layouts, a new tab, close.
   if (onAddPane) fileMenu.push({ label: '새 분할', hint: mod('⇧O'), run: onAddPane, group: 'window' });
   if (onShift?.left) fileMenu.push({ label: '왼쪽으로 이동', hint: mod('⌥⇧['), run: onShift.left, group: 'window' });

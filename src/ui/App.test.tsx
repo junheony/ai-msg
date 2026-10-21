@@ -1045,12 +1045,15 @@ describe('App new build without a server restart', () => {
     await bootWithBuild('b1');
     fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
     const labels = screen.getAllByRole('menuitem').map((b) => b.textContent ?? '');
-    expect(labels).toHaveLength(5);
+    // 동작 항목은 새로고침으로 끝나고, 그 뒤엔 비활성 버전 줄만 온다
+    expect(labels).toHaveLength(6);
     expect(labels[0]).toMatch(/^설정/);
     expect(labels[1]).toBe('사용량 기록');
     expect(labels[2]).toMatch(/^테마: /);
     expect(labels[3]).toMatch(/^단축키/);
     expect(labels[4]).toBe('새로고침');
+    expect(labels[5]).toMatch(/^deck /);
+    expect(screen.getByTestId('foot-menu-version').getAttribute('aria-disabled')).toBe('true');
   });
 });
 
@@ -1186,12 +1189,14 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(document.activeElement).toBe(btn);
   });
 
-  it('설정 → 사용량 보기: the sheet opens with the history; closing it lands focus on the top bar usage chip', async () => {
+  it('아바타 메뉴 → 사용량 기록 (설정 has no row for it): the sheet opens with the history; closing it lands focus on the top bar usage chip', async () => {
     await boot();
     server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
     act(() => { window.dispatchEvent(new Event('deck:open-settings')); });
-    fireEvent.click(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '사용량 보기' }));
-    expect(screen.queryByRole('dialog', { name: '설정' })).toBeNull();
+    expect(within(screen.getByRole('dialog', { name: '설정' })).queryByRole('button', { name: '사용량 보기' })).toBeNull();
+    fireEvent.click(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '닫기' }));
+    fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '사용량 기록' }));
     const sheet = screen.getByRole('dialog', { name: '사용량' });
     expect(within(sheet).getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
@@ -1318,7 +1323,7 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(within(sheet).getByText(/^지금 실행 중인 작업이 없어요 · \d\d:\d\d 까지 작업$/)).toBeTruthy();
   });
 
-  it('하이라이트: the sheet row, the palette action and the Settings row show only when the server has the feature', async () => {
+  it('하이라이트: the sheet row and the palette action show only when the server has the feature; 설정 never has a row', async () => {
     const press = () => fireEvent.keyDown(window, { code: 'KeyK', key: '', ctrlKey: true });
     await boot();
     openSheet();
@@ -1341,7 +1346,7 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(screen.getByText('하이라이트 보기')).toBeTruthy();
     fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Escape' });
     act(() => { window.dispatchEvent(new CustomEvent('deck:open-settings')); });
-    expect(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '하이라이트' })).toBeTruthy();
+    expect(within(screen.getByRole('dialog', { name: '설정' })).queryByRole('button', { name: '하이라이트' })).toBeNull();
   });
 
   it('하이라이트: asks once connected (not without the feature), the sheet row shows the 24h count', async () => {
