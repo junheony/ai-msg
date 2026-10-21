@@ -27,6 +27,7 @@
 - `src/server/main.ts` 경로와 동작(직접 실행하면 서버 시작)은 유지한다 — 설치된 `relaunch.sh`→`scripts/launchd/run.sh` 가 `node --import tsx src/server/main.ts` 로 띄운다. `scripts/launchd/*`·`relaunch.sh`·`restart.sh`·`install-launchd.sh` 는 수정하지 않는다(이 맥 전용으로 남김, 패키지에는 안 들어감).
 - 설정 디렉터리 기본값은 이 맥과 같은 `~/.config/deck`. 기존 env 이름(`DECK_*`)·포트 기본값 9320 유지.
 - 새 사용자 문자열은 한국어로 쓰되 `src/server/setup/texts.ts`·`src/ui/setupTexts.ts` 두 파일에 모은다(계획 ③ i18n 이 그대로 키로 옮길 수 있게). 서비스·락 문구도 `setup/texts.ts` 에.
+- **UI 개편(2026-10-21) 기준을 따른다:** 마법사·로그인 화면은 `Dialogs.tsx` 의 시트(포커스 가두기·닫으면 여는 버튼으로 복귀)와 `SheetHead`(제목 + ✕, 데스크톱 32px·터치 44px)를 쓰고, 색·간격·반경은 `styles.css` 토큰만 쓴다. 선택지가 4개 이상이면 세그먼트 대신 select(`SEG_MAX = 3`). 터치 대상 44px, 글자 대비 4.5 이상 — 새 색 쌍은 `scripts/contrast-check.mjs` 에 넣는다. "설치 점검" 버튼은 설정의 **계정** 묶음(`SETTINGS_GROUPS`)에 둔다. 화면 확인은 `scripts/render/` 픽스처 + `scripts/render-check.sh`(500px 미만은 iframe).
 - Claude 자식 스크립트(`hookRelay.ts`·`permissionMcp.ts`)는 계속 `node:` 내장 모듈만 import 한다.
 - 공개 위생: 새 파일은 `src/hygiene.test.ts` 를 통과해야 한다(홈 경로·작업 폴더명·tailnet 이름 금지). pack 결과물도 같은 검사를 통과해야 한다.
 - 테스트 실행은 `--maxWorkers=2`.
