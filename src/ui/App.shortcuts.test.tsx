@@ -65,7 +65,7 @@ describe('desktop-like navigation', () => {
     press('KeyK');
     fireEvent.change(screen.getByLabelText('세션 검색 또는 명령'), { target: { value: '사용량' } });
     fireEvent.keyDown(screen.getByLabelText('세션 검색 또는 명령'), { key: 'Enter' });
-    expect(screen.getByRole('dialog', { name: '토큰 사용량' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: '사용량' })).toBeTruthy();
   });
 
   it('palette actions dispatch the settings / theme events; Esc and Ctrl+K close it', async () => {

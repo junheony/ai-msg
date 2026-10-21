@@ -3,7 +3,7 @@
 # (jsdom runs the tests but cannot lay anything out).
 #
 #   scripts/render-check.sh                       # every fixture in scripts/render/, widths 1250 1000 720 390
-#   scripts/render-check.sh usage-cards 1250 900  # one fixture, your widths
+#   scripts/render-check.sh usage-chip-states 1250 412  # one fixture, your widths
 #
 # PNGs land in ${RENDER_OUT:-/tmp/deck-render}/<fixture>-<width>.png (2x scale). Read them with an image viewer
 # or the Read tool. Fixtures link the real stylesheet relatively, so they render whatever is in the working tree.

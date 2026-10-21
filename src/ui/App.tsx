@@ -19,8 +19,8 @@ import { Pane, sendFromPane, TOGGLE_SIDE_EVENT, useQueueRunner } from './compone
 import { PermissionCard } from './components/PermissionCard';
 import { QuestionCard } from './components/QuestionCard';
 import { Sidebar, type SidebarView } from './components/Sidebar';
-import { UsagePanel } from './components/UsagePanel';
-import { UsageView } from './components/UsageView';
+import { UsageChip } from './components/UsageChip';
+import { UsageSheet } from './components/UsageSheet';
 import { Highlights } from './components/Highlights';
 import { HighlightsBadge, ServerChip, ServerUpdateChip, WorkStatus, type WorkRow } from './components/WorkStatus';
 import { isGeminiAccount, isGrokAccount } from '../shared/accounts';
@@ -175,7 +175,7 @@ export function App() {
   const pinOrderSeq = useRef(0);
   const phone = useIsPhone();
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
-  const [usageOpen, setUsageOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState<null | 'limits' | 'history'>(null);
   const [highlightsOpen, setHighlightsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [buildId, setBuildId] = useState<string | null>(null);
@@ -1195,7 +1195,7 @@ export function App() {
     { id: 'new-chat', label: '새 대화', hint: `${mod}N`, run: () => newChat() },
     { id: 'new-pane', label: '새 분할', hint: `${mod}⇧O`, run: addPane },
     { id: 'settings', label: '설정 열기', hint: `${mod},`, run: () => window.dispatchEvent(new CustomEvent('deck:open-settings')) },
-    { id: 'usage', label: '사용량 보기', run: () => setUsageOpen(true) },
+    { id: 'usage', label: '사용량 보기', run: () => setUsageOpen('limits') },
     ...(has('highlights') ? [{ id: 'highlights', label: '하이라이트 보기', run: () => setHighlightsOpen(true) }] : []),
     { id: 'theme', label: '테마 전환', run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
     { id: 'sidebar', label: phone ? '사이드바 열기' : sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기', hint: `${mod}\\`, run: toggleSidebar },
@@ -1260,13 +1260,12 @@ export function App() {
           <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="4.75" /><path d="m10.5 10.5 3.25 3.25" /></svg>
           {!phone && <><span>검색</span><kbd>{mod}K</kbd></>}
         </button>
-        <UsagePanel usage={state.usage} current={active.session?.account ?? null} onOpenHistory={() => setUsageOpen(true)} next={!phone ? preview : null} grok={state.grok ?? null} />
+        <UsageChip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} compact={phone} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
         <div className="topbar-end">
           {!phone && <WorkStatus activity={state.activity} waiting={waitingCards} titleOf={titleOf} onNewChat={() => newChat()} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onOpen={openWorkRow} />}
           {!phone && has('highlights') && <HighlightsBadge ready={state.ready} running={state.activity.filter((a) => a.running).length} onOpen={() => setHighlightsOpen(true)} />}
           {has('serverUpdate') && <ServerUpdateChip ready={state.ready} draining={state.draining} activity={state.activity} />}
           {!phone && <ServerChip startedAt={state.serverStartedAt} restartedAt={state.restartedAt} draining={state.draining} busy={busySessions} activity={state.activity} titleOf={titleOf} onOpen={openWorkRow} onDismissRestart={() => dispatch({ type: 'dismiss_restart' })} />}
-          <button type="button" className="text-btn uv-open" onClick={() => setUsageOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={usageOpen} data-sheet-return="" title="토큰 사용량 기록 (주별·일별)">사용량</button>
           {!phone && <button type="button" className="text-btn split" onClick={addPane} title="분할보기: 패널 하나 더 (⋮⋮ 를 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요)">{state.panes.length >= 2 ? `+ 분할 ${state.panes.length}` : '+ 분할'}</button>}
           <NotifyMenu />
           {state.connected
@@ -1280,9 +1279,9 @@ export function App() {
           <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
         </div>
       )}
-      {usageOpen && <UsageView onClose={() => setUsageOpen(false)} />}
+      {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
-      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onOpenUsage={() => setUsageOpen(true)} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onOpenUsage={() => setUsageOpen('history')} onOpenHighlights={has('highlights') ? () => setHighlightsOpen(true) : undefined} onClose={() => setSettingsOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)}
         onOpenSessionSplit={(s) => openSplit(s.sessionId, s.cwd, s.title)}
         onOpenSessionFloat={phone ? undefined : (s) => { const before = latest.current.panes.length; openSplit(s.sessionId, s.cwd, s.title); if (latest.current.panes.length > before) floatPane(latest.current.activePaneId); }}
@@ -1382,7 +1381,7 @@ export function App() {
             avatarTitle={footAccount ? `deck · ${footAccount === 'gpt' ? 'GPT' : `계정 ${accounts.label(footAccount)}`}` : 'deck'}
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
-              { label: '사용량 기록', run: () => setUsageOpen(true) },
+              { label: '사용량 기록', run: () => setUsageOpen('history') },
               { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
               { label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) },
               { label: '새로고침', run: () => location.reload() },

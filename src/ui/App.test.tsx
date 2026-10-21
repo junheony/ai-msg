@@ -1144,32 +1144,38 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
   const chipText = () => screen.getByTestId('work-chip').querySelector('.chip-long')!.textContent;
   const PREVIEW = ['routePreview'];
 
-  it('사용량 toggles the usage sheet; ✕ hands focus back to the button', async () => {
+  const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 42, resetsAt: null } } } };
+
+  it('the usage chip toggles the usage sheet; ✕ hands focus back to the chip', async () => {
     await boot();
-    const btn = screen.getByRole('button', { name: '사용량' });
+    server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
+    const btn = screen.getByTestId('usage-chip');
     expect(btn.getAttribute('aria-expanded')).toBe('false');
     btn.focus();
     fireEvent.click(btn);
-    expect(screen.getByRole('dialog', { name: '토큰 사용량' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: '사용량' })).toBeTruthy();
     expect(btn.getAttribute('aria-expanded')).toBe('true');
     expect(btn.getAttribute('aria-haspopup')).toBe('dialog');
     expect(document.activeElement?.getAttribute('aria-label')).toBe('닫기');
     fireEvent.click(btn);
-    expect(screen.queryByRole('dialog', { name: '토큰 사용량' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '사용량' })).toBeNull();
     expect(btn.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(btn);
-    fireEvent.click(within(screen.getByRole('dialog', { name: '토큰 사용량' })).getByRole('button', { name: '닫기' }));
-    expect(screen.queryByRole('dialog', { name: '토큰 사용량' })).toBeNull();
+    fireEvent.click(within(screen.getByRole('dialog', { name: '사용량' })).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('dialog', { name: '사용량' })).toBeNull();
     expect(document.activeElement).toBe(btn);
   });
 
-  it('설정 → 사용량 보기: closing the usage sheet lands focus on the top bar 사용량 button', async () => {
+  it('설정 → 사용량 보기: the sheet opens with the history; closing it lands focus on the top bar usage chip', async () => {
     await boot();
+    server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
     act(() => { window.dispatchEvent(new Event('deck:open-settings')); });
     fireEvent.click(within(screen.getByRole('dialog', { name: '설정' })).getByRole('button', { name: '사용량 보기' }));
     expect(screen.queryByRole('dialog', { name: '설정' })).toBeNull();
-    fireEvent.click(within(screen.getByRole('dialog', { name: '토큰 사용량' })).getByRole('button', { name: '닫기' }));
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '사용량' }));
+    const sheet = screen.getByRole('dialog', { name: '사용량' });
+    expect(within(sheet).getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
+    expect(document.activeElement).toBe(screen.getByTestId('usage-chip'));
   });
 
   it('작업 현황: zeros are left out, nothing at all is 한가함, 승인 대기 is emphasised', async () => {
@@ -1437,9 +1443,12 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     openSession('one');
     expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
     server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: '5h 여유', asOpus: true } as ServerMessage);
+    // The usage chip says where the next turn goes (→C until the session's own account is known), on a phone too;
+    // the reason is in its title.
     const tag = screen.getByTestId('next-c');
-    expect(tag.textContent).toBe('→ 다음 턴 · Opus');
-    expect(tag.title).toContain('5h 여유');
+    expect(tag.textContent).toBe('→C');
+    expect(screen.getByTestId('usage-chip').title).toContain('5h 여유');
+    expect(screen.getByTestId('usage-chip').getAttribute('aria-label')).toContain('다음 턴 C(Opus) 계정');
     server({ type: 'route_preview', sessionId: 'other', account: 'a', reason: 'x' } as ServerMessage);
     expect(screen.queryByTestId(/^next-/)).toBeNull(); // an answer for another session is not shown
   });

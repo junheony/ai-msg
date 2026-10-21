@@ -200,7 +200,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
         )}
         <div className="settings-row"><span>토큰 사용량 기록 (주별·일별)</span><button type="button" className="btn ghost" onClick={() => { onClose(); onOpenUsage(); }}>사용량 보기</button></div>
         {onOpenHighlights && <div className="settings-row"><span>세션 하이라이트 (지난 6·12·24시간)</span><button type="button" className="btn ghost" onClick={() => { onClose(); onOpenHighlights(); }}>하이라이트</button></div>}
-        <p className="muted">계정별 5시간·주간 한도는 화면 상단 사용량 표시에서 확인합니다 (읽기 전용).</p>
+        <p className="muted">계정별 5시간·주간 한도는 화면 상단 사용량 칩을 누르면 나오는 시트에서 확인합니다 (읽기 전용).</p>
       </section>
       <section aria-label="정보">
         <h3>정보</h3>

@@ -13,8 +13,8 @@ import { newPane, type PaneState } from '../state';
 import { Pane } from './Pane';
 import { AccountPicker } from './AccountPicker';
 import { TurnBadge } from './TurnBadge';
-import { UsagePanel } from './UsagePanel';
-import { UsageView, usageTabs } from './UsageView';
+import { UsageSheet } from './UsageSheet';
+import { UsageHistoryView, usageTabs } from './UsageView';
 
 const acct = (id: string, label = id.toUpperCase(), extra: Partial<AccountInfo> = {}): AccountInfo => ({ id, label, home: false, retired: false, ...extra });
 /** Five active accounts and a retired one. */
@@ -22,69 +22,47 @@ const SIX: AccountInfo[] = [acct('a', 'Main'), acct('b', 'Work', { home: true })
 const ONE: AccountInfo[] = [acct('solo', 'Solo', { home: true })];
 const With = ({ list, children }: { list: AccountInfo[]; children: ReactNode }) => <AccountsContext value={uiAccounts(list)}>{children}</AccountsContext>;
 const w = (usedPct: number) => ({ usedPct, resetsAt: null });
-/** A partial snapshot: only a and d have a card. */
+/** A partial snapshot: only a and d have numbers. */
 const usage: UsageSnapshot = {
   generatedAt: 'x', deckReachable: true,
   accounts: { a: { status: 'ok', fetchedAt: null, fiveHour: w(10), weekly: w(20), fable: null }, d: { status: 'ok', fetchedAt: null, fiveHour: w(60), weekly: w(5), fable: null }, old: { status: 'ok', fetchedAt: null, fiveHour: w(1), weekly: w(1), fable: null } },
 };
-const cards = () => [...document.querySelectorAll('.usage-card')].map((c) => c.querySelector('.usage-letter')!.textContent);
+const cards = () => [...document.querySelectorAll('.usage-seat')].map((c) => c.querySelector('.usage-seat-name')!.textContent);
 
 afterEach(() => { cleanup(); setFeatures(undefined); });
 
-describe('UsagePanel with any number of accounts', () => {
-  it('one account: its card and GPT, the full card (no compact layout), two grid columns', () => {
-    render(<With list={ONE}><UsagePanel usage={{ ...usage, accounts: {} }} current="solo" now={0} /></With>);
+describe('usage sheet with any number of accounts', () => {
+  const sheet = (current: string | null, u: UsageSnapshot = usage) => <UsageSheet usage={u} current={current} onClose={() => {}} now={0} />;
+
+  it('one account: its row and GPT', () => {
+    render(<With list={ONE}>{sheet('solo', { ...usage, accounts: {} })}</With>);
     expect(cards()).toEqual(['Solo', 'GPT']);
-    const panel = document.querySelector<HTMLElement>('.usage-panel')!;
-    expect(panel.style.getPropertyValue('--usage-cards')).toBe('2');
-    expect(panel.hasAttribute('data-dense')).toBe(false);
     expect(screen.getByTestId('account-solo').className).toContain('current');
-    // No card in the snapshot for it: empty values, not a crash.
+    // No numbers in the snapshot for it: empty values, not a crash.
     expect(screen.getByTestId('solo-fiveHour').textContent).toContain('—');
   });
 
-  it('five active accounts: a card each in configured order (the retired one has none) and GPT, compact, six columns', () => {
-    render(<With list={SIX}><UsagePanel usage={usage} current="d" now={0} /></With>);
+  it('five active accounts: a row each in configured order (the retired one has none) and GPT', () => {
+    render(<With list={SIX}>{sheet('d')}</With>);
     expect(cards()).toEqual(['Main', 'Work', 'D', 'Team-2', 'Personal', 'GPT']);
-    const panel = document.querySelector<HTMLElement>('.usage-panel')!;
-    expect(panel.style.getPropertyValue('--usage-cards')).toBe('6');
-    expect(panel.hasAttribute('data-dense')).toBe(true);
     expect(screen.queryByTestId('account-old')).toBeNull();
     expect(screen.getByTestId('a-fiveHour').textContent).toContain('90%');
     expect(screen.getByTestId('d-weekly').textContent).toContain('95%');
-    // Accounts the snapshot does not carry read as empty.
     expect(screen.getByTestId('b-fiveHour').textContent).toContain('—');
     expect(screen.getByTestId('team-2-weekly').textContent).toContain('—');
     expect(screen.getByTestId('account-d').className).toContain('current');
     expect(document.body.textContent).not.toContain('undefined');
   });
 
-  it('seven cards and more wrap into two rows on a phone: data-wrap and the columns of one row; up to six stay in one', () => {
+  it('eight accounts: all eight rows and GPT, in a scrolling list (nothing measured, nothing folded)', () => {
     const eight = Array.from({ length: 8 }, (_, i) => acct(`n${i}`));
-    render(<With list={eight}><UsagePanel usage={{ ...usage, accounts: {} }} current={null} now={0} /></With>);
-    let panel = document.querySelector<HTMLElement>('.usage-panel')!;
-    expect(panel.style.getPropertyValue('--usage-cards')).toBe('9');
-    expect(panel.hasAttribute('data-wrap')).toBe(true);
-    expect(panel.style.getPropertyValue('--usage-cols-wrap')).toBe('5');
-    cleanup();
-    render(<With list={eight.slice(0, 6)}><UsagePanel usage={{ ...usage, accounts: {} }} current={null} now={0} /></With>);
-    panel = document.querySelector<HTMLElement>('.usage-panel')!;
-    expect(panel.hasAttribute('data-wrap')).toBe(true);
-    expect(panel.style.getPropertyValue('--usage-cols-wrap')).toBe('4');
-    cleanup();
-    render(<With list={eight.slice(0, 5)}><UsagePanel usage={{ ...usage, accounts: {} }} current={null} now={0} /></With>);
-    panel = document.querySelector<HTMLElement>('.usage-panel')!;
-    expect(panel.hasAttribute('data-dense')).toBe(true);
-    expect(panel.hasAttribute('data-wrap')).toBe(false);
-    expect(panel.style.getPropertyValue('--usage-cols-wrap')).toBe('');
+    render(<With list={eight}>{sheet(null, { ...usage, accounts: {} })}</With>);
+    expect(cards()).toHaveLength(9);
   });
 
-  it('the default list (no provider): A, B, C, GPT as four columns in the full layout', () => {
-    render(<UsagePanel usage={usage} current={null} now={0} />);
+  it('the default list (no provider): A, B, C, GPT', () => {
+    render(sheet(null));
     expect(cards()).toEqual(['A', 'B', 'C', 'GPT']);
-    const panel = document.querySelector<HTMLElement>('.usage-panel')!;
-    expect(panel.style.getPropertyValue('--usage-cards')).toBe('4');
-    expect(panel.hasAttribute('data-dense')).toBe(false);
   });
 });
 
@@ -251,9 +229,8 @@ describe('account palette (styles.css)', () => {
     expect(tile).toMatch(/min-width: 20px/);
     expect(tile).toMatch(/padding: 0 4px/);
     expect(tile).not.toMatch(/[^-]width: 20px/);
-    // The unified card row is a flex strip now (min 120px, up to 220px per card), not a fixed-column CSS grid.
-    expect(css).toMatch(/\.usage-panel \{[^}]*display: flex;[^}]*\}/);
-    expect(css).toMatch(/\.usage-card \{[^}]*min-width: 120px;[^}]*\}/);
+    // The usage seat name in the sheet is not squeezed into a fixed width either.
+    expect(css).not.toMatch(/\.usage-seat-name \{[^}]*[^-]width:/);
   });
 
   it('a long label is cut at 12 characters in the badge and in the picker (the whole of it is in the title)', () => {
@@ -273,12 +250,9 @@ describe('account palette (styles.css)', () => {
     expect(rules.some((r) => /dashed/.test(r))).toBe(true);
   });
 
-  it('dense (letters-only) and wrap are the unified, measurement-based rules — no per-count compact-card generation left', () => {
-    expect(css).toMatch(/\.usage-panel\[data-dense\] \.usage-mark \{ display: none; \}/);
-    // wrap is two-row-layout only (the one-row bar has a fixed height): no unscoped flex-wrap on the panel.
-    expect(css).not.toMatch(/\.usage-panel\[data-wrap\] \{ flex-wrap: wrap; \}/);
-    expect(css).toMatch(/\.usage-panel\[data-wrap\] \.usage-card \{[^}]*--usage-cols-wrap/);
-    expect(part).not.toMatch(/@media \(max-width: 1100px\) \{\s*\.usage-card \{/);
+  it('no card-row measuring rules are left (the chip and sheet replaced dense / wrap / fold)', () => {
+    expect(css).not.toMatch(/\.usage-panel/);
+    expect(css).not.toMatch(/\.usage-card\b/);
     expect(css).not.toMatch(/\.usage-sum\b/);
   });
 });
@@ -310,10 +284,10 @@ describe('usageTabs', () => {
     expect(usageTabs(LEGACY_UI_ACCOUNTS, { rows: [row('all'), row('a')] })).toEqual(['all', 'a', 'b', 'c', 'codex']);
   });
 
-  it('UsageView draws them with the common labels: retired = label (dimmed), unknown = the id (grey), GPT last', async () => {
+  it('the history view draws them with the common labels: retired = label (dimmed), unknown = the id (grey), GPT last', async () => {
     const body: UsageHistory = { generatedAt: 'x', days: 84, lastScanAt: null, scanning: false, sources: ['a', 'b', 'c', 'codex'], rows: [row('all'), row('c'), row('old')] };
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
-    render(<AccountsContext value={names}><UsageView onClose={() => {}} fetchFn={fetchFn} now={new Date(2026, 9, 2, 12)} /></AccountsContext>);
+    render(<AccountsContext value={names}><UsageHistoryView fetchFn={fetchFn} now={new Date(2026, 9, 2, 12)} /></AccountsContext>);
     // Before the answer: the configured accounts.
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['합계', 'A', 'Work', 'D', 'GPT']);
     await waitFor(() => expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['합계', 'A', 'Work', 'Old', 'D', 'c', 'GPT']));
@@ -332,7 +306,7 @@ describe('usageTabs', () => {
     const body = (rows: UsageRow[]): UsageHistory => ({ generatedAt: 'x', days: 84, lastScanAt: null, scanning: false, sources: ['a', 'b', 'c', 'codex'], rows });
     const answers = [body([row('all'), row('c')]), body([row('all')]), body([row('all'), row('c')])];
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(answers.shift()), { status: 200 })) as unknown as typeof fetch;
-    render(<AccountsContext value={names}><UsageView onClose={() => {}} fetchFn={fetchFn} now={new Date(2026, 9, 2, 12)} /></AccountsContext>);
+    render(<AccountsContext value={names}><UsageHistoryView fetchFn={fetchFn} now={new Date(2026, 9, 2, 12)} /></AccountsContext>);
     const on = () => screen.getAllByRole('tab').filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => t.textContent);
     const tabs = () => screen.getAllByRole('tab').map((t) => t.textContent);
     await waitFor(() => expect(tabs()).toContain('c'));
