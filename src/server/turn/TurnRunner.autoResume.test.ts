@@ -14,6 +14,7 @@ import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
 import { AUTO_RETRY_NOTICE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
+import { sm } from '../i18n';
 
 // 한도가 풀리면 자동으로 이어가기 (autoResume): a limit with nowhere to hand the turn over books a resume
 // (SessionState.pendingRetry) at the earliest reset of an account / engine that could take it.
@@ -183,5 +184,23 @@ describe('TurnRunner · 한도가 풀리면 자동으로 이어가기', () => {
     ac.abort();
     await new TurnRunner(d.deps).run({ turnId: 't', cwd: '/w', sessionId: null, text: 'hi grok', engine: 'grok' }, { ...d.sink, signal: ac.signal });
     expect(d.deps.store.get('gk1')?.pendingRetry).toBeUndefined();
+  });
+
+  it('재시작으로 끊긴 작업 이어가기 (push/restartResume): its turn says so instead of the limit notice, on Claude and GPT', async () => {
+    const text = sm().turn.restartResume.prompt('sleep 600');
+    const codex = fakeCodex((req) => codexLimit(req.resumeThreadId ?? 'tid-1'));
+    const c = await ctx(claudeLimit, { codex: codex.engine }, await usage(FREE, [100, 45 * MIN]));
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 't', cwd: '/w', sessionId: null, text: 'hi gpt', engine: 'codex' }, c.sink);
+    await runner.run({ turnId: 't2', cwd: '/w', sessionId: 'tid-1', text, retryHop: 1 }, c.sink);
+    await runner.run({ turnId: 'c1', cwd: '/w', sessionId: null, text: 'hi' }, c.sink);
+    await runner.run({ turnId: 'c2', cwd: '/w', sessionId: 'n1', text, retryHop: 1 }, c.sink);
+    for (const id of ['t2', 'c2']) {
+      const notices = c.msgs.filter((m) => m.type === 'turn_notice' && m.turnId === id).map((m) => (m as { message: string }).message);
+      expect(notices).toContain(sm().turn.restartResume.notice);
+      expect(notices).not.toContain(AUTO_RETRY_NOTICE);
+    }
+    // A limit on that turn takes the auto-resume path as any retry: booked again with the next hop.
+    expect(c.deps.store.get('tid-1')?.pendingRetry).toMatchObject({ text, hops: 2 });
   });
 });

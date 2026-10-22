@@ -1,7 +1,7 @@
 import type { ServerMessage } from '../../shared/protocol';
 import { limitResetAtMs } from '../engine/limitDetect';
 import type { SessionState } from '../turn/SessionState';
-import { ABORTED, AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
+import { ABORTED, isAutoRetryNotice } from '../turn/TurnRunner';
 import { PERMISSION_TIMEOUT_MS } from '../ws';
 import { firstLine, type PushPayload } from './PushNotifier';
 
@@ -92,7 +92,7 @@ export class BottleneckWatch {
         if (msg.sessionId) this.settle(msg.sessionId);
         break;
       case 'turn_notice':
-        if (msg.message === AUTO_RETRY_NOTICE) this.retryTurns.add(msg.turnId);
+        if (isAutoRetryNotice(msg.message)) this.retryTurns.add(msg.turnId);
         break;
       case 'turn_result': {
         const retried = this.retryTurns.delete(msg.turnId);

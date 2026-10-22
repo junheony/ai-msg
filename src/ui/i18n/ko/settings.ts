@@ -8,7 +8,7 @@ export const settings: Widen<typeof en> = {
   crossEngineFailover: '한도가 차면 다른 AI 로 이어가기',
   crossEngineFailoverHint: '한도가 차면 다른 AI 로 자동으로 이어갑니다. Gemini·Grok 은 외부 전송에 동의한 경우에만',
   autoResume: '한도가 풀리면 자동으로 이어가기',
-  autoResumeHint: '넘길 곳 없이 한도로 멈춘 턴을 가장 이른 한도가 풀릴 때 다시 보냅니다. 엔진·권한은 그대로',
+  autoResumeHint: '넘길 곳 없이 한도로 멈춘 턴을 가장 이른 한도가 풀릴 때 다시 보냅니다. 서버 재시작으로 끊긴 작업도 재시작 직후 이어가게 합니다. 엔진·권한은 그대로',
   experimentalAppsTitle: '다른 앱 연동',
   experimentalBadge: '실험적 · 비공식',
   experimentalNotice: '공식 기능이 아니며 각 앱의 업데이트로 언제든 멈출 수 있어요. 켜면 해당 앱의 로컬 파일을 읽어요.',

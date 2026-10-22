@@ -9,7 +9,7 @@ export const settings = {
   crossEngineFailoverHint: 'When a limit is hit, deck continues with another AI by itself. Gemini and Grok only if you agreed to sending to them.',
   /** 자동 분배 › 한도가 풀리면 자동으로 이어가기 (autoResume): the switch and what it does. */
   autoResume: 'Continue automatically when the limit resets',
-  autoResumeHint: 'When a turn stops at a limit with nowhere to go, it is sent again when the earliest limit resets — same engine and permissions.',
+  autoResumeHint: 'When a turn stops at a limit with nowhere to go, it is sent again when the earliest limit resets; work a server restart cut is continued right after the restart — same engine and permissions.',
   /** 실험적 기능 › 다른 앱 연동: the sub-group's title and what it says before its switches (the owner's wording). */
   experimentalAppsTitle: 'Other apps',
   experimentalBadge: 'Experimental · unofficial',

@@ -1,6 +1,6 @@
 import webpush from 'web-push';
 import type { ServerMessage } from '../../shared/protocol';
-import { AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
+import { isAutoRetryNotice } from '../turn/TurnRunner';
 import type { PushSub, SubscriptionStore } from './SubscriptionStore';
 import type { VapidKeys } from './vapid';
 
@@ -146,7 +146,7 @@ export class PushNotifier {
       if (!this.started.has(msg.turnId)) this.started.set(msg.turnId, now);
       return;
     }
-    if (msg.type === 'turn_notice' && msg.message === AUTO_RETRY_NOTICE) { this.autoRetried.add(msg.turnId); return; }
+    if (msg.type === 'turn_notice' && isAutoRetryNotice(msg.message)) { this.autoRetried.add(msg.turnId); return; }
     if (msg.type === 'turn_result') {
       // 총사령탑 자동 턴의 결과는 사령탑이 판정 뒤 사람 필요·완료·정지일 때만 따로 푸시한다(설계 §7) — 사령탑이 돌고 있을 때만.
       // 사람이 끼어들어 멈춘(paused·stopped) 뒤 끝난 자동 턴은 여느 턴처럼 푸시한다.

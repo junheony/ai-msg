@@ -10,6 +10,8 @@ import { deckAddendum } from '../../shared/memory';
 import type { Locale } from '../../shared/locale';
 import { languageDirective } from './language';
 import { sm } from '../i18n';
+import { en as enMessages } from '../i18n/en';
+import { ko as koMessages } from '../i18n/ko';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -161,6 +163,10 @@ export const MAX_BG_CAP_HOPS = 2;
 /** 대안 계정 없음 → at most this many automatic retries of the same prompt (SessionState.pendingRetry). */
 export const MAX_RETRY_HOPS = 2;
 export const AUTO_RETRY_NOTICE = '한도가 풀려 자동으로 다시 시도합니다';
+/** The pane's notice on a turn deck started by itself: a 재시작으로 끊긴 작업 이어가기 (push/restartResume, told by its message) or a limit retry. */
+const retryNotice = (text: string): string => ([enMessages, koMessages].some((d) => text.startsWith(d.turn.restartResume.lead)) ? sm().turn.restartResume.notice : AUTO_RETRY_NOTICE);
+/** The notice of a turn deck started by itself (retryNotice), in any language: PushNotifier and BottleneckWatch tell such turns by it. */
+export const isAutoRetryNotice = (message: string): boolean => message === AUTO_RETRY_NOTICE || message === enMessages.turn.restartResume.notice || message === koMessages.turn.restartResume.notice;
 
 /** The pre-send `holders.refresh({ force: true })` waits at most this long: a hung `ps`/`lsof` never stalls a send — the last known answer stands. */
 export const FORCE_HOLDERS_SCAN_TIMEOUT_MS = 1000;
@@ -1388,7 +1394,7 @@ export class TurnRunner {
     const sendFollowUp = (f: FollowUpParams, attachments: Attachment[]) => {
       const note = isClaudeModel(f.model) && f.model !== model ? `${fastNote ? `${fastNote} · ` : ''}백그라운드 대기 중인 프로세스의 모델 유지` : fastNote;
       open(f.turnId, '백그라운드 대기 중 이어 보냄', note, f.clientRef, { f, attachments });
-      if (f.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: AUTO_RETRY_NOTICE });
+      if (f.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: retryNotice(f.text) });
       const turnId = f.turnId;
       // Its turn_started recorded the ref as accepted: an error carrying it takes that back (ws), so a resent copy goes in.
       const failed = (errorText: string) => {
@@ -1878,7 +1884,7 @@ export class TurnRunner {
     if (sink.signal.aborted) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: abortedText(sink.signal) }); return; }
     sink.emit({ type: 'turn_started', ...scope(), account: 'gpt', model, reason, attempt: 0, engine: 'codex', ...(p.clientRef ? { clientRef: p.clientRef } : {}) });
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
-    if (p.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: AUTO_RETRY_NOTICE });
+    if (p.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: retryNotice(p.text) });
     let result: EngineResult | null = null;
     let worked = false;
     const effort = effortFor(model, p.effort);
@@ -1961,7 +1967,7 @@ export class TurnRunner {
     if (sink.signal.aborted) { fail(account, abortedText(sink.signal)); return; }
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini', ...(p.clientRef ? { clientRef: p.clientRef } : {}) });
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
-    if (p.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: AUTO_RETRY_NOTICE });
+    if (p.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: retryNotice(p.text) });
     let result: EngineResult | null = null;
     let worked = false;
     // A picked effort Gemini does not have (xhigh) becomes the closest lower one (high).
@@ -2036,7 +2042,7 @@ export class TurnRunner {
     };
     sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'grok', ...(p.clientRef ? { clientRef: p.clientRef } : {}) });
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
-    if (p.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: AUTO_RETRY_NOTICE });
+    if (p.retryHop) sink.emit({ type: 'turn_notice', ...scope(), message: retryNotice(p.text) });
     let worked = false;
     const audit = (toolName: string, input: unknown, decision: ToolAuditEntry['decision'], source: ToolAuditEntry['source']) =>
       appendAudit(deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId, toolName, decision, source, inputSha256: hashInput(input) })
@@ -2302,7 +2308,7 @@ export class TurnRunner {
     }
     if (!state?.sessionId && !forkAt && !p.handoff) systemNote = systemNote ? `${systemNote}\n\n${DECK_INTRO_NOTE}` : DECK_INTRO_NOTE;
     if (p.commanderNote) systemNote = systemNote ? `${systemNote}\n\n${p.commanderNote}` : p.commanderNote;
-    if (p.retryHop) early.unshift(AUTO_RETRY_NOTICE);
+    if (p.retryHop) early.unshift(retryNotice(p.text));
     const pinMark = () => (byPin ? { pinned: true } : {});
 
     // 사람이 보낸 턴(자동 턴·deck 이 스스로 보낸 이어가기·재시도·failover 가 아님)이 시작되면 자동 턴의 편집 표시를 지운다 —

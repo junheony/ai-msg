@@ -8,4 +8,11 @@ export const turn: Widen<typeof en> = {
   crossContinue: '이어서 진행해 주세요.',
   crossCarried: '이전 대화는 요약 발췌만 넘어갑니다',
   crossNotCarried: '이전 대화를 넘기지 못했습니다',
+  restartResume: {
+    lead: '서버가 다시 시작되면서 이 세션에서 하던 작업이 끊겼습니다.',
+    prompt: (tasks: string) =>
+      `서버가 다시 시작되면서 이 세션에서 하던 작업이 끊겼습니다.${tasks ? ` 끊긴 백그라운드 작업: ${tasks}.` : ''} 어디까지 됐는지 확인하고, 필요하면 끊긴 작업(대기·잠자기·모니터 포함)을 다시 걸고 이어서 진행해 주세요. (AI-MSG 가 자동으로 보낸 메시지입니다)`,
+    notice: '서버 재시작으로 끊긴 작업을 자동으로 이어갑니다',
+    log: (n: number) => `deck: 재시작으로 끊긴 세션 ${n}개를 자동으로 이어가도록 예약했습니다`,
+  },
 };

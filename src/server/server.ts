@@ -13,7 +13,7 @@ import { acquireInstanceLock, commandOfPid } from './instanceLock';
 import { ChildRegistry, groupAlive, killGroup, processStartMs } from './childRegistry';
 import { texts } from './setup/texts';
 import { setLocale } from '../shared/locale';
-import { resolveServerLocale } from './i18n';
+import { resolveServerLocale, sm } from './i18n';
 import { SetupService } from './setup/SetupService';
 import { SetupStore, existingInstall } from './setup/SetupStore';
 import { ClaudeEngine } from './engine/ClaudeEngine';
@@ -35,6 +35,7 @@ import { ServerUpdateWatch, startSupervisor, supervisionCheck } from './serverUp
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
 import { EventLog } from './highlights';
 import { BottleneckWatch, type RetryRequest } from './push/BottleneckWatch';
+import { bookRestartResumes, cutSessions, readActivitySnapshot } from './push/restartResume';
 import { PushNotifier } from './push/PushNotifier';
 import { TaskRegistry } from './tasks/TaskRegistry';
 import { readAllCooldownsMs } from './routing/cooldown';
@@ -357,6 +358,9 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     });
     cleanup.push(() => commander.dispose());
     await events.load();
+    // 재시작으로 끊긴 세션 자동 이어가기: what the last server left, read before this one writes anything over it.
+    const activityFile = path.join(cfg.configDir, 'activity.json');
+    const lastActivity = await readActivitySnapshot(activityFile);
     const updates = new ServerUpdateWatch({ root: cfg.repoRoot, startedAt, version: packageVersion() });
     await updates.start();
     // Bound once installGracefulShutdown has run (after listening).
@@ -364,13 +368,24 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const serverUpdate: ServerUpdateDeps = { check: () => updates.check(), supervised: supervisionCheck({ supervisor: cfg.supervisor, pidFile: path.join(cfg.configDir, 'relaunch.pid') }), draining: () => restartCtl.draining(), activeTurns: () => ws.activeTurns(), restart: () => restartCtl.request('UI 재시작'), forceRestart: () => restartCtl.force('UI 강제 재시작') };
     const setup = new SetupService({ cfg, accounts, store: setupStore, supervised: serverUpdate.supervised, addresses: [...addresses.map((a) => `http://${a.includes(':') ? `[${a}]` : a}:${port}`), ...(dnsName ? [`https://${dnsName}/`] : [])] });
     const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup });
-    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), cancelRetry: (sessionId) => watch.cancelRetry(sessionId), cancelAllRetries: () => watch.cancelAllRetries(), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });
+    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), cancelRetry: (sessionId) => watch.cancelRetry(sessionId), cancelAllRetries: () => watch.cancelAllRetries(), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile, tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });
     cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();
     submitRetry = (r) => ws.submitRetry(r);
     serverSend = (r) => ws.submitServerSend(r);
     sessionBusy = (sessionId) => ws.isBusy(sessionId);
     broadcastAll = (m) => ws.broadcast(m);
+    // Sessions the last restart cut (a running turn, background work) are sent on by themselves: booked before the
+    // commander is restored (an active one is left to the person) and before rearm arms every booking.
+    const resumed = await bookRestartResumes({
+      cut: cutSessions({ activity: lastActivity, events: events.query(0), states: store.list(), pid: process.pid, now: Date.now() }),
+      store,
+      enabled: settings.get().autoResume,
+      exists: (st) => isOtherEngineState(st) || index.lookup(st.sessionId) !== null,
+      text: (tasks) => sm().turn.restartResume.prompt(tasks.join(', ')),
+      now: Date.now(),
+    }).catch((err: unknown) => { console.error('deck: restart resume booking failed', err instanceof Error ? err.message : err); return 0; });
+    if (resumed) console.log(sm().turn.restartResume.log(resumed));
     // 재시작 전 활성이던 사령탑은 재전송 없이 사람에게(§6) — 재시도 예약을 다시 걸기 전에.
     commander.restore(store.list());
     watch.rearm(store.list());
