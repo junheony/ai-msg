@@ -69,6 +69,8 @@ export type EngineEvent =
   | { kind: 'steer_delivered'; id: string }
   /** A hook's message to the model mid-turn (Claude Code injects it as a synthetic user message), e.g. a Stop hook sending it back to work. */
   | { kind: 'system'; source: string; label: string; text: string }
+  /** Claude `prompt_suggestion` (after a result): the CLI's guess at the next prompt, for the composer's ghost text. Never stored. */
+  | { kind: 'suggestion'; text: string }
   | EngineResult;
 
 /** A user message sent into a still-open Claude process (background work pending). */
@@ -231,6 +233,8 @@ export type TurnRequest = {
   systemNote?: string;
   /** ⚡ 빠르게: `fastMode: true` in this process's `--settings` and the model forced to Opus (fast mode is Opus-only). */
   fast?: boolean;
+  /** A person's turn: the CLI may be asked for its next-prompt suggestion (ClaudeEngine promptSuggestions). Never on automatic turns. */
+  suggest?: boolean;
   /** 간결 모드: appended to the engine's system prompt for this process (Claude `--append-system-prompt`); not stored in the transcript. */
   appendSystemPrompt?: string;
   /**

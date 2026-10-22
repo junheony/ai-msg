@@ -26,7 +26,7 @@ let tmpRoot = '';
 beforeAll(async () => { bridge = await PermissionBridge.open(); tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trbg-proc-')); });
 afterAll(async () => { await bridge.close(); await fs.rm(tmpRoot, { recursive: true, force: true }); });
 
-async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' | 'move' | 'sameVendorRotation'>> & { readFile?: (p: string) => Promise<Buffer>; /** The background wait limit (ClaudeEngine bgMaxMs); default: the engine's. */ bgMaxMs?: number } = {}) {
+async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' | 'move' | 'sameVendorRotation'>> & { readFile?: (p: string) => Promise<Buffer>; /** The background wait limit (ClaudeEngine bgMaxMs); default: the engine's. */ bgMaxMs?: number; /** ClaudeEngine prompt suggestions (and their wait). */ promptSuggestions?: boolean; suggestWaitMs?: number } = {}) {
   const f = fakeClaudeCli();
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trbg-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
@@ -52,7 +52,7 @@ async function setup(over: Partial<Pick<TurnRunnerDeps, 'attachments' | 'usage' 
   };
   const deps: TurnRunnerDeps = {
     accounts: testRegistry(),
-    engine: new ClaudeEngine({ bin: 'claude', spawnFn, bridge, tmpRoot, killGraceMs: 50, accounts: testRegistry(), baseEnv: {}, readFile: over.readFile ?? (async () => Buffer.from('')), ...(over.bgMaxMs !== undefined ? { bgMaxMs: over.bgMaxMs } : {}) }),
+    engine: new ClaudeEngine({ bin: 'claude', spawnFn, bridge, tmpRoot, killGraceMs: 50, accounts: testRegistry(), baseEnv: {}, readFile: over.readFile ?? (async () => Buffer.from('')), ...(over.bgMaxMs !== undefined ? { bgMaxMs: over.bgMaxMs } : {}), ...(over.promptSuggestions ? { promptSuggestions: true, suggestWaitMs: over.suggestWaitMs ?? 5_000 } : {}) }),
     usage,
     index: new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'projects.json') }),
     store,
@@ -598,5 +598,56 @@ describe('TurnRunner: background work after the turn result', () => {
       expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 'f1', ok: false, errorText: expect.stringContaining('대안 계정 없음') });
       expect(deps.store.get(SID)).not.toHaveProperty('pendingRetry');
     });
+  });
+});
+
+describe('TurnRunner: prompt suggestion after the turn result', () => {
+  it('forwards the CLI suggestion as prompt_suggestion, scoped to the turn, after turn_result', async () => {
+    const { f, msgs, sink, runner } = await setup({ promptSuggestions: true });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(cli.init(SID), cli.delta('ok'), cli.result('ok', SID), { type: 'prompt_suggestion', suggestion: '커밋해줘', uuid: 'u', session_id: SID });
+    await done;
+    const types = msgs.map((m) => m.type);
+    expect(types.indexOf('prompt_suggestion')).toBeGreaterThan(types.indexOf('turn_result'));
+    expect(of(msgs, 'prompt_suggestion')).toEqual([{ type: 'prompt_suggestion', turnId: 't1', sessionId: SID, cwd: '/w/new', text: '커밋해줘' }]);
+  });
+
+  it('a follow-up while the process only waits for its suggestion (after background work) goes in, no error', async () => {
+    const { f, msgs, sink, runner } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000 });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    // Background done, its continuation answers: nothing is left, so the engine now only waits for the suggestion.
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('built'), cli.result('built', SID));
+    await waitFor(() => of(msgs, 'turn_result').length === 2, 'continuation result');
+    await new Promise((r) => setTimeout(r, 20));
+    const users = () => (f.inputs as unknown as { type: string }[]).filter((m) => m.type === 'user').length;
+    expect(runner.followUp(SID, { turnId: 'f1', text: 'ship it' })).toEqual({ queuedBehind: null });
+    await waitFor(() => users() === 2, 'follow-up written');
+    f.push(cli.result('shipped', SID), { type: 'prompt_suggestion', suggestion: '배포 확인', uuid: 'u', session_id: SID });
+    await done;
+    expect(of(msgs, 'error')).toEqual([]);
+    expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.text])).toEqual([['t1', true, 'launched'], ['t1:bg1', true, 'built'], ['f1', true, 'shipped']]);
+    expect(of(msgs, 'prompt_suggestion')).toMatchObject([{ turnId: 'f1', text: '배포 확인' }]);
+  });
+
+  it('an automatic turn (commanderHop) asks for no suggestion', async () => {
+    const { f, msgs, sink, runner } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000 });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', commanderHop: 1 }, sink);
+    f.push(cli.init(SID), cli.result('ok', SID));
+    await done;
+    expect((f.inputs as unknown as { type: string }[]).map((m) => m.type)).toEqual(['user']);
+    expect(of(msgs, 'turn_result')).toHaveLength(1);
+  });
+
+  it('an aborted turn emits no suggestion', async () => {
+    const { f, msgs, sink, ac, runner } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000 });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(cli.init(SID), cli.result('ok', SID));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'result');
+    ac.abort();
+    f.push({ type: 'prompt_suggestion', suggestion: '늦음', uuid: 'u', session_id: SID });
+    await done;
+    expect(of(msgs, 'prompt_suggestion')).toEqual([]);
   });
 });

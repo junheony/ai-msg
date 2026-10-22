@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { STDERR_MAX } from '../redact';
-import { parseLine, type CliMessage, type CliUserMessage } from './messages';
+import { parseLine, type CliControlRequest, type CliMessage, type CliUserMessage } from './messages';
 import type { ClaudeChildLike, ClaudeSpawnFn } from './spawnTypes';
 
 export type ProcessExit = { code: number | null; signal: NodeJS.Signals | null; spawnError: string | null };
@@ -23,7 +23,7 @@ export function exitFailureText(e: ProcessExit): string {
 /**
  * One `claude -p --input-format stream-json` child. Abort is SIGINT (the CLI ends the turn and
  * still writes its result); stdin stays open so deck can keep the process for background tasks
- * and steers, and closing it is how a finished process is let go. No control protocol on stdin.
+ * and steers, and closing it is how a finished process is let go. The only control frame written is `initialize`.
  */
 export class ClaudeProcess {
   readonly exited: Promise<ProcessExit>;
@@ -75,7 +75,7 @@ export class ClaudeProcess {
     }
   }
 
-  write(m: CliUserMessage): boolean {
+  write(m: CliUserMessage | CliControlRequest): boolean {
     if (!this._inputOpen || !this.child || this._exit) return false;
     this.child.stdin.write(JSON.stringify(m) + '\n');
     return true;
