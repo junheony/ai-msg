@@ -13,7 +13,9 @@ import type { ClaudeSpawnFn } from './engine/claudeCli/spawnTypes';
 import { createRequestHandler } from './http';
 import { BottleneckWatch } from './push/BottleneckWatch';
 import type { PushPayload } from './push/PushNotifier';
+import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { SessionIndex } from './sessions/SessionIndex';
+import { SettingsStore } from './settings';
 import { SessionStateStore, type ClaudeSessionState } from './turn/SessionState';
 import { TurnRunner, type TurnParams, type TurnSink } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
@@ -26,6 +28,7 @@ let base: string;
 let wsApi: WsHandle;
 let runner: TurnRunner;
 let store: SessionStateStore;
+let accepted: AcceptedRefs;
 let watch: BottleneckWatch;
 let wsUrl: string;
 let origin: string;
@@ -56,8 +59,11 @@ beforeAll(async () => {
     onRetry: (sessionId, atMs) => wsApi.broadcast({ type: 'auto_resume', sessionId, atMs }),
     setTimer: (fn) => { const id = ++seq; timers.set(id, fn); return id; }, clearTimer: (t) => { timers.delete(t as number); },
   });
+  accepted = new AcceptedRefs(null);
+  const settings = new SettingsStore(path.join(base, 'settings.json'));
+  await settings.load();
   const server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [base], notify: (m) => watch.observe(m), onUserSend: (sid) => { sends.push(sid); watch.userSent(sid); }, cancelRetry: (sid) => watch.cancelRetry(sid) });
+  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [base], notify: (m) => watch.observe(m), onUserSend: (sid) => { sends.push(sid); watch.userSent(sid); }, cancelRetry: (sid) => watch.cancelRetry(sid), cancelAllRetries: () => watch.cancelAllRetries(), settings, acceptedRefs: accepted });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   wsUrl = `ws://127.0.0.1:${port}/ws`;
@@ -265,6 +271,114 @@ describe('ws: 자동 재시도 end to end', () => {
     a.send(JSON.stringify({ type: 'cancel_auto_resume', sessionId: S }));
     await vi.waitFor(() => expect(seen).toContainEqual({ type: 'auto_resume', sessionId: S, atMs: null }));
     a.close(); b.close();
+  });
+
+  it('a fired booking refused before it starts (its folder is gone) is dropped — not fired again at idle', async () => {
+    const S = '79797979-7979-4797-8797-797979797979';
+    const gone = path.join(base, 'gone');
+    await store.set(state(S, { cwd: gone, pendingRetry: { text: 'go', atMs: Date.now() - 1000, hops: 1 } }));
+    const run = vi.spyOn(runner, 'run');
+    const ws = await connect();
+    const seen: ServerMessage[] = [];
+    ws.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    watch.rearm([store.get(S)!]);
+    fire();
+    await vi.waitFor(() => expect(seen).toContainEqual({ type: 'auto_resume', sessionId: S, atMs: null }));
+    expect(store.get(S)).not.toHaveProperty('pendingRetry');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(timers.size).toBe(0);
+    expect(run).not.toHaveBeenCalled();
+    ws.close();
+  });
+
+  it('a duplicate send (already accepted clientRef) leaves the booking alone; a send that goes in drops it', async () => {
+    const S = '7a7a7a7a-7a7a-47a7-87a7-7a7a7a7a7a7a';
+    await store.set(state(S, { pendingRetry: { text: 'go', atMs: Date.now() + 60_000, hops: 1 } }));
+    watch.rearm([store.get(S)!]);
+    accepted.add(S, 'dup-ref');
+    vi.spyOn(runner, 'run').mockImplementation(async (p, sink) => { sink.emit(startedOf(p)); sink.emit(resultOf(p)); });
+    const ws = await connect();
+    const seen: ServerMessage[] = [];
+    ws.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: 'again', clientRef: 'dup-ref' }));
+    await vi.waitFor(() => expect(seen).toContainEqual(expect.objectContaining({ type: 'error', code: 'already_accepted' })));
+    expect(store.get(S)?.pendingRetry).toMatchObject({ text: 'go' });
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: 'new', clientRef: 'new-ref' }));
+    await vi.waitFor(() => expect(store.get(S)).not.toHaveProperty('pendingRetry'));
+    ws.close();
+  });
+
+  it('turning 자동으로 이어가기 off drops every booking and tells the devices', async () => {
+    const S1 = '7b7b7b7b-7b7b-47b7-87b7-7b7b7b7b7b7b';
+    const S2 = '7c7c7c7c-7c7c-47c7-87c7-7c7c7c7c7c7c';
+    await store.set(state(S1, { pendingRetry: { text: 'a', atMs: Date.now() + 60_000, hops: 1 } }));
+    await store.set(state(S2, { pendingRetry: { text: 'b', atMs: Date.now() + 90_000, hops: 1 } }));
+    watch.rearm([store.get(S1)!]);
+    const ws = await connect();
+    const seen: ServerMessage[] = [];
+    ws.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    ws.send(JSON.stringify({ type: 'set_settings', autoResume: false }));
+    await vi.waitFor(() => expect(seen).toContainEqual({ type: 'auto_resume', sessionId: S2, atMs: null }));
+    expect(seen).toContainEqual({ type: 'auto_resume', sessionId: S1, atMs: null });
+    expect(store.get(S1)).not.toHaveProperty('pendingRetry');
+    expect(store.get(S2)).not.toHaveProperty('pendingRetry');
+    ws.send(JSON.stringify({ type: 'set_settings', autoResume: true }));
+    await vi.waitFor(() => expect(seen.filter((m) => m.type === 'settings')).toHaveLength(2));
+    ws.close();
+  });
+
+  /** A run whose automatic (retryHop) turn sits before its turn_started until aborted; any other send answers at once. */
+  function departingRun() {
+    const calls: TurnParams[] = [];
+    const sinks: TurnSink[] = [];
+    const run = vi.spyOn(runner, 'run').mockImplementation(async (p, sink) => {
+      calls.push(p);
+      sinks.push(sink);
+      if (p.retryHop) {
+        await new Promise<void>((r) => { if (sink.signal.aborted) r(); else sink.signal.addEventListener('abort', () => r()); });
+        return;
+      }
+      sink.emit(startedOf(p));
+      sink.emit(resultOf(p));
+    });
+    return { run, calls, sinks };
+  }
+
+  it('취소 right after the booking fired (before turn_started) stops the automatic turn too', async () => {
+    const S = '7d7d7d7d-7d7d-47d7-87d7-7d7d7d7d7d7d';
+    await store.set(state(S, { pendingRetry: { text: 'go', atMs: Date.now() - 1000, hops: 1 } }));
+    const { calls, sinks } = departingRun();
+    const ws = await connect();
+    const seen: ServerMessage[] = [];
+    ws.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    watch.rearm([store.get(S)!]);
+    fire();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    ws.send(JSON.stringify({ type: 'cancel_auto_resume', sessionId: S }));
+    await vi.waitFor(() => expect(seen).toContainEqual({ type: 'auto_resume', sessionId: S, atMs: null }));
+    await vi.waitFor(() => expect(sinks[0]!.signal.aborted).toBe(true));
+    expect(store.get(S)).not.toHaveProperty('pendingRetry');
+    expect(seen.some((m) => m.type === 'turn_started')).toBe(false);
+    ws.close();
+  });
+
+  it('a user\'s send right after the booking fired (before turn_started) ends the automatic turn and runs instead', async () => {
+    const S = '7e7e7e7e-7e7e-47e7-87e7-7e7e7e7e7e7e';
+    await store.set(state(S, { pendingRetry: { text: 'go', atMs: Date.now() - 1000, hops: 1 } }));
+    const { calls } = departingRun();
+    const ws = await connect();
+    const seen: ServerMessage[] = [];
+    ws.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    watch.rearm([store.get(S)!]);
+    fire();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: '내가 할게' }));
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]).toMatchObject({ sessionId: S, text: '내가 할게' });
+    expect(calls[1]!.retryHop).toBeUndefined();
+    expect(seen.some((m) => m.type === 'error')).toBe(false);
+    expect(store.get(S)).not.toHaveProperty('pendingRetry');
+    ws.close();
   });
 
   // Last: drained stays drained.

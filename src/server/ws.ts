@@ -208,6 +208,8 @@ export type WsDeps = {
   retryDue?: (sessionId: string) => void;
   /** 취소 on the 자동으로 이어가기 line (BottleneckWatch.cancelRetry): false = nothing was booked. Absent = the booking is only unstored. */
   cancelRetry?: (sessionId: string) => boolean;
+  /** 자동으로 이어가기 turned off: every booking is dropped and every device told (BottleneckWatch.cancelAllRetries). */
+  cancelAllRetries?: () => void;
   /** 백그라운드 작업 (`start_task`): the list; absent = no tasks ('tasks' not advertised). */
   tasks?: TaskRegistry;
   /** A task ended: always pushed (PushNotifier.sendAll), whatever turnNeedsAttention says. */
@@ -355,6 +357,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    * `new:<turnId>` until the CLI reports its id, then by that id as well.
    */
   const busy = new Map<string, string>();
+  /**
+   * 자동으로 이어가기: the turn a fired booking started, until its turn_started (or release). A cancel or a user's send in
+   * that window ends it — after turn_started it is an ordinary running turn (the booking and its line are gone by then).
+   */
+  const departed = new Map<string, Turn>();
   /** 다른 AI 로 이어가기: a session a running turn moved away from → that turn (sends to the old session follow it). */
   const crossedTo = new Map<string, Turn>();
   // A `claude -p` transcript is deck's own while a deck turn runs it or once the state store has it; other scripts' runs stay out of the sidebar.
@@ -383,6 +390,16 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const notify = (msg: ServerMessage) => { try { deps.notify?.(msg); } catch (err) { console.error('deck: push hook failed', errMsg(err)); } };
   const broadcastAndNotify = (msg: ServerMessage) => { broadcast(msg); notify(msg); };
   const userSent = (sessionId: string) => { try { deps.onUserSend?.(sessionId); } catch (err) { console.error('deck: user send hook failed', errMsg(err)); } };
+  /** Drops the session's 자동으로 이어가기 booking and tells every device (the watch does, or ws when nothing was armed). */
+  const cancelBooking = (sessionId: string) => {
+    if (deps.cancelRetry?.(sessionId)) return;
+    const st = deps.store.get(sessionId);
+    if (st?.pendingRetry) {
+      const { pendingRetry: _off, ...rest } = st;
+      void deps.store.set(rest).catch((err: unknown) => console.error('deck: saving the auto-resume cancel failed', errMsg(err)));
+    }
+    broadcast({ type: 'auto_resume', sessionId, atMs: null });
+  };
   /** Cards opening / closing also mark a running 백그라운드 작업 as 승인 대기 (or not). */
   const askBroadcast = (msg: ServerMessage) => { broadcastAndNotify(msg); syncTaskWaiting(); };
   const broker = new PermissionBroker(askBroadcast);
@@ -927,6 +944,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     turns.set(turnId, turn);
     const release = () => {
       turns.delete(turnId);
+      for (const [k, v] of [...departed]) if (v === turn) departed.delete(k);
       if (turn.streamIdle) clearTimeout(turn.streamIdle);
       prompts.delete(turnId);
       for (const [k, v] of [...busy]) if (v === turnId) busy.delete(k);
@@ -986,6 +1004,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       sessionKnown: (sid) => { adopt(turn, sid); if (started) accepted(sid); taskSockets.get(ws)?.(sid); if (msg.lang && deps.store.get(sid)?.lang !== msg.lang) void deps.store.setLang(sid, msg.lang).catch((err: unknown) => console.error('deck: session language write failed', errMsg(err))); },
       emit: (m) => {
         if (m.type === 'turn_started') {
+          for (const [k, v] of [...departed]) if (v === turn) departed.delete(k);
           if (turn.current !== m.turnId) turn.since = Date.now();
           turn.current = m.turnId;
           if (m.engine) turn.engine = m.engine;
@@ -1106,7 +1125,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     void (async () => {
       try {
         // Review M8: the working directory must exist before a CLI is started in it (an existing session: same words as importBlockReason).
-        if (!(await isDirectory(msg.cwd))) { send(ws, { type: 'error', turnId: null, message: msg.sessionId ? `${CWD_MISSING_NOTICE}: ${msg.cwd}` : `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
+        if (!(await isDirectory(msg.cwd))) {
+          // A fired 자동으로 이어가기 refused before it started: the booking goes (it would only be fired again at idle).
+          if (retryHop && msg.sessionId) cancelBooking(msg.sessionId);
+          send(ws, { type: 'error', turnId: null, message: msg.sessionId ? `${CWD_MISSING_NOTICE}: ${msg.cwd}` : `작업 폴더가 없습니다: ${msg.cwd}`, ...ref }); return; }
         // F1: a new session may only start inside the home dir (realpath, so a symlink cannot escape it).
         // The checked real path is the one used (review fix 3): a symlink swapped after the check cannot redirect the run.
         let runCwd = msg.cwd;
@@ -1242,7 +1264,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
       if (!segments.has(sessionId)) segments.set(sessionId, new SegmentCollector(cwd));
     }
+    const was = busy.has(sessionId);
     startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, r.hop, r.commanderHop);
+    // A new turn (not a follow-up into a live process): until its turn_started a cancel or a user's send can still end it.
+    const fresh = was ? undefined : turns.get(busy.get(sessionId) ?? '');
+    if (fresh) departed.set(sessionId, fresh);
     return busy.has(sessionId);
   };
 
@@ -1560,10 +1586,19 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
       const msg = r.data;
       switch (msg.type) {
-        case 'send':
-          if (msg.sessionId) userSent(msg.sessionId);
+        case 'send': {
+          // Only a send that goes in stops the booking: not a duplicate copy, not one refused while draining.
+          const sid = msg.sessionId;
+          const refused = !!sid && ((!!msg.clientRef && !!refusal(sid, msg.clientRef)) || (draining && !busy.has(sid)));
+          if (sid && !refused) {
+            userSent(sid);
+            // The automatic turn fired but not started yet gives way: this send runs once it is gone (afterRelease).
+            const auto = departed.get(sid);
+            if (auto && turns.get(busy.get(sid) ?? '') === auto) { auto.recycling = true; auto.ac.abort(); }
+          }
           startTurn(ws, msg);
           break;
+        }
         case 'permission_response': {
           const sid = broker.pending().find((m) => m.requestId === msg.requestId)?.sessionId ?? null;
           if (!broker.resolve(msg.requestId, msg.decision)) send(ws, { type: 'error', turnId: null, message: '이미 처리된 권한 요청입니다', requestId: msg.requestId });
@@ -1645,13 +1680,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           break;
         case 'cancel_auto_resume': {
           // The watch tells every device (onRetry); with nothing booked (a stale line) or no watch, ws says it itself.
-          if (deps.cancelRetry?.(msg.sessionId)) break;
-          const st = deps.store.get(msg.sessionId);
-          if (st?.pendingRetry) {
-            const { pendingRetry: _off, ...rest } = st;
-            void deps.store.set(rest).catch((err: unknown) => console.error('deck: saving the auto-resume cancel failed', errMsg(err)));
-          }
-          broadcast({ type: 'auto_resume', sessionId: msg.sessionId, atMs: null });
+          cancelBooking(msg.sessionId);
+          // Fired but not started yet: the automatic turn is stopped too.
+          departed.get(msg.sessionId)?.ac.abort();
           break;
         }
         case 'set_account_pin': {
@@ -1769,6 +1800,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             .then((settings) => {
               // Off: no commander is left running unseen (devices drop the chip with the feature) or armed for a later on.
               if (msg.commanderEnabled === false) deps.commander?.disableAll();
+              // 자동으로 이어가기 off: nothing booked is left to fire later.
+              if (msg.autoResume === false) {
+                try { deps.cancelAllRetries?.(); } catch (err) { console.error('deck: dropping the auto-resume bookings failed', errMsg(err)); }
+              }
               broadcast({ type: 'settings', settings, ...(msg.commanderEnabled !== undefined ? { features: featureList() } : {}) });
               if (msg.taskSoftCap !== undefined) { broadcastTasks(); pumpTasks(); }
               // Server messages follow the last explicit pick from now on.
