@@ -167,6 +167,8 @@ export const FORCE_HOLDERS_SCAN_TIMEOUT_MS = 1000;
 
 export type TurnRunnerDeps = {
   engine: Engine;
+  /** 삭제 took a booked 자동으로 이어가기 with it: its timer and every device's line go now (BottleneckWatch). */
+  retryGone?: (sessionId: string) => void;
   /** deck 메모 (MemoryStore.get): appended to every turn's system prompt except a handoff note's; absent = none. */
   memory?: () => string;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
@@ -694,14 +696,28 @@ export class TurnRunner {
       const copies = await findCopies(this.deps.projectsRoots, sessionId, base.projectDir, base.account).catch(() => []);
       try {
         const r = await moveToTrash({ sessionId, projectDirs: copies.map((c) => c.projectDir), nowMs: this.now() });
-        // A booked 자동으로 이어가기 goes with the conversation (BottleneckWatch finds nothing to fire).
-        const cur = this.deps.store.get(sessionId);
-        if (cur?.pendingRetry) { const { pendingRetry: _gone, ...rest } = cur; await this.deps.store.set(rest as SessionState); }
+        await this.dropBookingOfTrashed(sessionId);
         return { ok: true as const, trashId: r.trashId };
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
       }
     });
+  }
+
+  /**
+   * A booked 자동으로 이어가기 goes with a trashed conversation. The conversation is in the trash already: a failure here is
+   * only logged (the delete still succeeded), and the watch finds nothing to fire either way.
+   */
+  private async dropBookingOfTrashed(sessionId: string): Promise<void> {
+    const cur = this.deps.store.get(sessionId);
+    if (!cur?.pendingRetry) return;
+    try {
+      const { pendingRetry: _gone, ...rest } = cur;
+      await this.deps.store.set(rest as SessionState);
+    } catch (err) {
+      console.error('deck: dropping the trashed session auto-resume failed', err instanceof Error ? err.message : err);
+    }
+    try { this.deps.retryGone?.(sessionId); } catch (err) { console.error('deck: auto-resume drop hook failed', err instanceof Error ? err.message : err); }
   }
 
   /** 되돌리기 for trashSession. */

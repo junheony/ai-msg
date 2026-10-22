@@ -261,6 +261,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     cleanup.push(() => void claude.close().catch(() => undefined));
     const runner = new TurnRunner({
       engine: claude,
+      // 삭제 took a booked 자동으로 이어가기 along: its timer goes and every device's line now.
+      retryGone: (sessionId) => { if (!watch.cancelRetry(sessionId)) broadcastAll({ type: 'auto_resume', sessionId, atMs: null }); },
       memory: () => memory.get(),
       holders,
       codex,
@@ -311,7 +313,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // 하이라이트: what push would announce (plus restart cuts and server start/drain), kept 7 days in events.jsonl.
     const events = new EventLog(path.join(cfg.configDir, 'events.jsonl'), { titleOf });
     // 병목 알림: unanswered cards and failed turns pushed again later; 대안 계정 없음 retries fired through the socket layer's send path.
-    let submitRetry: (r: RetryRequest) => void = () => {};
+    let submitRetry: (r: RetryRequest) => boolean | void = () => {};
     const watch = new BottleneckWatch({
       sendPush: (payload) => { void push.sendAll(payload); },
       titleOf,

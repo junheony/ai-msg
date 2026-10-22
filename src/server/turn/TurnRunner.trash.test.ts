@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +16,7 @@ const DIR = '-w-one';
 const line = JSON.stringify({ type: 'user', cwd: '/w/one', message: { role: 'user', content: 'hi' } }) + '\n';
 
 /** Profiles a/b/c share one config dir here (base), so their copies share one trash entry. */
-async function setup() {
+async function setup(retryGone?: (sessionId: string) => void) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-trash-runner-'));
   const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') } as Record<Account, string>;
   for (const r of Object.values(roots)) await fs.mkdir(r, { recursive: true });
@@ -26,7 +26,7 @@ async function setup() {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
   const runner = new TurnRunner({ accounts: testRegistry(),
     engine: new StubEngine(async () => []), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: 'a', auditFile: path.join(base, 'audit.log'),
-    projectsRoots: rootsOf(roots), codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), homeAccount: 'a', now: () => NOW,
+    projectsRoots: rootsOf(roots), codex: null, attachments: null, codexSessionsRoot: path.join(base, 'codex'), homeAccount: 'a', now: () => NOW, ...(retryGone ? { retryGone } : {}),
   });
   const put = async (a: Account, mtimeMs: number) => {
     const f = path.join(roots[a]!, DIR, `${SID}.jsonl`);
@@ -48,6 +48,20 @@ describe('TurnRunner: 삭제 (session-trash)', () => {
     await c.store.set({ sessionId: SID, cwd: '/w/one', account: 'a', projectDir: DIR, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', pendingRetry: { text: 'go', atMs: NOW + 60_000, hops: 1 } });
     expect((await c.runner.trashSession(SID)).ok).toBe(true);
     expect(c.store.get(SID)).not.toHaveProperty('pendingRetry');
+  });
+
+  it('the booking drop failing never turns the delete into a failure; the devices are told at once', async () => {
+    const gone: string[] = [];
+    const c = await setup((sid) => gone.push(sid));
+    await c.put('a', NOW - 3_600_000);
+    await c.index.refresh();
+    await c.store.set({ sessionId: SID, cwd: '/w/one', account: 'a', projectDir: DIR, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', pendingRetry: { text: 'go', atMs: NOW + 60_000, hops: 1 } });
+    vi.spyOn(c.store, 'set').mockRejectedValue(new Error('disk full'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect((await c.runner.trashSession(SID)).ok).toBe(true);
+    expect(err).toHaveBeenCalledWith('deck: dropping the trashed session auto-resume failed', 'disk full');
+    expect(gone).toEqual([SID]);
+    vi.restoreAllMocks();
   });
 
   it('moves both profile copies to the trash and puts them back on undo', async () => {
