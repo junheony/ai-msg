@@ -1,7 +1,7 @@
 {
   "name": "ai-msg",
   "version": "0.1.0",
-  "description": "Self-hosted web shell for Claude Code, Codex CLI and Gemini CLI that routes turns across your own logged-in accounts.",
+  "description": "AI-MSG: a self-hosted web shell for Claude Code, Codex CLI and Gemini CLI that routes turns across your own logged-in accounts.",
   "license": "Apache-2.0",
   "author": "hwangmc88 <hwangmc88@gmail.com>",
   "homepage": "https://github.com/junheony/ai-msg#readme",

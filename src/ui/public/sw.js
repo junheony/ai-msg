@@ -1,4 +1,4 @@
-/* deck service worker: offline shell for the built assets + Web Push notifications.
+/* AI-MSG service worker: offline shell for the built assets + Web Push notifications.
  * Never caches /api/* or /ws — only same-origin GETs of the app shell, hashed assets, icons, manifest. */
 const CACHE = 'deck-shell-v3'; // v3: the AI-MSG app icon under the same /icons/ names
 const MAX_ASSETS = 80;
@@ -76,7 +76,7 @@ self.addEventListener('push', (event) => {
   try { p = event.data ? event.data.json() : {}; } catch { p = { body: event.data ? event.data.text() : '' }; }
   event.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    // Someone is looking at deck right now: the card/result is already on screen. iOS revokes push
+    // Someone is looking at AI-MSG right now: the card/result is already on screen. iOS revokes push
     // permission for pushes that show nothing, so there it is always shown.
     const ios = /iPhone|iPad|iPod/.test(self.navigator.userAgent);
     if (!ios && p.kind !== 'test' && wins.some((w) => w.focused && w.visibilityState === 'visible')) return;

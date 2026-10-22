@@ -9,7 +9,7 @@ export function modelLabel(model: ModelChoice, effort: Effort | null): { name: s
 }
 
 /**
- * Claude Desktop-style model list, shown inline in the session chip's sheet: exact model versions (grouped Claude / GPT /
+ * Model list, shown inline in the session chip's sheet: exact model versions (grouped Claude / GPT /
  * Gemini / Grok when more than one is offered) and a reasoning-effort segment limited to what the model supports.
  */
 /** Effort levels shown as a segment row up to this many; more become a select. */

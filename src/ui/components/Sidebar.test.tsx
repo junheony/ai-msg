@@ -581,9 +581,9 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     };
     const imported = del('imported');
     expect(imported.getAttribute('aria-disabled')).toBe('true');
-    expect(imported.getAttribute('title')).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(imported.getAttribute('title')).toBe('Codex 앱 기록은 AI-MSG에서 지울 수 없어요');
     // touch screens show no tooltip: the reason is also on screen, under the item
-    expect(imported.querySelector('.menu-note')?.textContent).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(imported.querySelector('.menu-note')?.textContent).toBe('Codex 앱 기록은 AI-MSG에서 지울 수 없어요');
     expect(imported.getAttribute('aria-describedby')).toBe(imported.querySelector('.menu-note')!.id);
     fireEvent.click(imported);
     expect(onDelete).not.toHaveBeenCalled();

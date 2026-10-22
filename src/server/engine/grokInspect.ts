@@ -15,7 +15,7 @@ import fs from 'node:fs/promises';
 
 type Rec = Record<string, unknown>;
 
-export const grokInspectRefusal = (item: string) => `Grok 설정(~/.grok/config.toml)의 권한 기본값이 자동이라 deck 승인을 보장할 수 없음 — ${item}`;
+export const grokInspectRefusal = (item: string) => `Grok 설정(~/.grok/config.toml)의 권한 기본값이 자동이라 AI-MSG 승인을 보장할 수 없음 — ${item}`;
 
 export type GrokInspectVerdict = { ok: true } | { ok: false; item: string };
 

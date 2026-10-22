@@ -102,10 +102,10 @@ describe('import rows', () => {
   });
 
   it('delete is blocked with the source in the reason', () => {
-    expect(deleteBlockedReason(e({ source: 'grokbot' }))).toBe('Grok Bot 앱 기록은 deck에서 지울 수 없어요');
-    expect(deleteBlockedReason(e({}))).toBe('Grok CLI 기록은 deck에서 지울 수 없어요');
-    expect(deleteBlockedReason(e({ engine: 'gemini', account: 'g1' }))).toBe('agy 기록은 deck에서 지울 수 없어요');
-    expect(deleteBlockedReason(e({ engine: 'codex', account: 'gpt' }))).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(deleteBlockedReason(e({ source: 'grokbot' }))).toBe('Grok Bot 앱 기록은 AI-MSG에서 지울 수 없어요');
+    expect(deleteBlockedReason(e({}))).toBe('Grok CLI 기록은 AI-MSG에서 지울 수 없어요');
+    expect(deleteBlockedReason(e({ engine: 'gemini', account: 'g1' }))).toBe('agy 기록은 AI-MSG에서 지울 수 없어요');
+    expect(deleteBlockedReason(e({ engine: 'codex', account: 'gpt' }))).toBe('Codex 앱 기록은 AI-MSG에서 지울 수 없어요');
   });
 
   it('Grok Bot usage line: plan, percent, reset, and the app sync age past a day', () => {

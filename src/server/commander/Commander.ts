@@ -110,7 +110,7 @@ export class Commander {
   set(sessionId: string, a: { goal: string; done: string; maxTurns?: number }): CommanderResult {
     if (!this.deps.enabled()) return { ok: false, code: 'commander_disabled', message: DISABLED_MESSAGE };
     const st = this.deps.store.get(sessionId);
-    if (!st) return { ok: false, code: 'commander_engine', message: '총사령탑은 deck 에서 턴을 돌린 Claude 세션에만 걸 수 있습니다' };
+    if (!st) return { ok: false, code: 'commander_engine', message: '총사령탑은 AI-MSG 에서 턴을 돌린 Claude 세션에만 걸 수 있습니다' };
     if (isOtherEngineState(st)) return { ok: false, code: 'commander_engine', message: '총사령탑은 Claude 세션에서만 쓸 수 있습니다' };
     const prev = st.commander;
     if (prev && ACTIVE_STATUSES.includes(prev.status)) return { ok: false, code: 'commander_active', message: '이미 총사령탑이 걸려 있습니다 — 먼저 정지하세요' };
@@ -369,7 +369,7 @@ export class Commander {
 
   private notify(sessionId: string, body: string): void {
     const cwd = this.deps.store.get(sessionId)?.cwd ?? '';
-    const title = clip(this.deps.titleOf?.(sessionId, cwd) || cwd.split('/').filter(Boolean).pop() || 'deck', 60);
+    const title = clip(this.deps.titleOf?.(sessionId, cwd) || cwd.split('/').filter(Boolean).pop() || 'AI-MSG', 60);
     try {
       this.deps.push({ kind: 'commander', title, body: clip(body, PUSH_BODY_MAX), sessionId, tag: `commander:${sessionId}` });
     } catch (err) {

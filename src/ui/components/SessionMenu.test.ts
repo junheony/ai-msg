@@ -23,7 +23,7 @@ describe('menuStep (roving focus)', () => {
 describe('deleteBlockedReason', () => {
   it('only Claude transcripts can be deleted', () => {
     expect(deleteBlockedReason({ account: 'b' })).toBeNull();
-    expect(deleteBlockedReason({ account: 'gpt', engine: 'codex', imported: true })).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(deleteBlockedReason({ account: 'gpt', engine: 'codex', imported: true })).toBe('Codex 앱 기록은 AI-MSG에서 지울 수 없어요');
     expect(deleteBlockedReason({ account: 'gpt', engine: 'codex' })).toMatch(/GPT/);
     expect(deleteBlockedReason({ account: 'a', engine: 'gemini' })).toMatch(/Gemini/);
   });

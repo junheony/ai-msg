@@ -9,13 +9,13 @@ export const isGrokBotEntry = (s: { source?: SessionEntry['source']; sessionId?:
  * Codex-app sessions live in those tools' own folders, which deck never writes.
  */
 export function deleteBlockedReason(s: Pick<SessionEntry, 'imported' | 'engine' | 'account'> & { source?: SessionEntry['source']; sessionId?: string }): string | null {
-  if (isGrokBotEntry(s)) return 'Grok Bot 앱 기록은 deck에서 지울 수 없어요';
-  if (s.imported && s.engine === 'grok') return 'Grok CLI 기록은 deck에서 지울 수 없어요';
-  if (s.imported && s.engine === 'gemini') return 'agy 기록은 deck에서 지울 수 없어요';
-  if (s.imported) return 'Codex 앱 기록은 deck에서 지울 수 없어요';
-  if (s.engine === 'codex' || s.account === 'gpt') return 'GPT 대화 기록은 Codex 폴더에 있어 deck에서 지울 수 없어요';
-  if (s.engine === 'gemini') return 'Gemini 대화 기록은 deck에서 지울 수 없어요';
-  if (s.engine === 'grok') return 'Grok 대화 기록은 deck에서 지울 수 없어요';
+  if (isGrokBotEntry(s)) return 'Grok Bot 앱 기록은 AI-MSG에서 지울 수 없어요';
+  if (s.imported && s.engine === 'grok') return 'Grok CLI 기록은 AI-MSG에서 지울 수 없어요';
+  if (s.imported && s.engine === 'gemini') return 'agy 기록은 AI-MSG에서 지울 수 없어요';
+  if (s.imported) return 'Codex 앱 기록은 AI-MSG에서 지울 수 없어요';
+  if (s.engine === 'codex' || s.account === 'gpt') return 'GPT 대화 기록은 Codex 폴더에 있어 AI-MSG에서 지울 수 없어요';
+  if (s.engine === 'gemini') return 'Gemini 대화 기록은 AI-MSG에서 지울 수 없어요';
+  if (s.engine === 'grok') return 'Grok 대화 기록은 AI-MSG에서 지울 수 없어요';
   return null;
 }
 

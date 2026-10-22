@@ -33,17 +33,11 @@ export function engineOf(s: { engine?: EngineKind | null; account?: Seat }): Eng
 /**
  * The engine badge before a session's title (search hits, palette, highlights, new-chat cards) or after it (the session
  * head). No text content (the letter is CSS), so the title's text and truncation stay as they were. `decorative`: dense
- * lists whose row already says what it is — hidden from assistive tech, tooltip kept. `named`: the engine's name follows
- * as small plain text.
+ * lists whose row already says what it is — hidden from assistive tech, tooltip kept.
  */
-export function EngineMark({ engine, decorative = false, named = false }: { engine: EngineKind; decorative?: boolean; named?: boolean }) {
+export function EngineMark({ engine, decorative = false }: { engine: EngineKind; decorative?: boolean }) {
   if (!(engine in ENGINE_BADGE)) return null;
   const label = engineName(engine);
   const a11y = decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label };
-  return (
-    <>
-      <span className={`engine-mark ${engine}`} title={label} {...a11y}><EngineBadge engine={engine} className="engine-mark-badge" /></span>
-      {named && <span className="engine-name" aria-hidden="true">{label}</span>}
-    </>
-  );
+  return <span className={`engine-mark ${engine}`} title={label} {...a11y}><EngineBadge engine={engine} className="engine-mark-badge" /></span>;
 }

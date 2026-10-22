@@ -578,7 +578,7 @@ export class TurnRunner {
       const pair = await this.forkPair(sessionId);
       if (!pair || !(await this.forkStatus(sessionId))?.diverged) return { ok: false as const, error: '갈라진 사본이 없습니다' };
       if (keep === 'home' && (this.active.has(sessionId) || this.live.has(sessionId))) {
-        return { ok: false as const, error: 'deck 에서 이 세션이 실행 중입니다 — 끝난 뒤 다시 시도하세요' };
+        return { ok: false as const, error: 'AI-MSG 에서 이 세션이 실행 중입니다 — 끝난 뒤 다시 시도하세요' };
       }
       const [srcDir, dstDir] = keep === 'deck' ? [pair.st.projectDir, pair.homeDir] : [pair.homeDir, pair.st.projectDir];
       const stamp = `deck-fork-${new Date().toISOString().replace(/[:.]/g, '-')}`;
@@ -1885,8 +1885,8 @@ export class TurnRunner {
       // sessions stay listed (and deletable); the projects dir of an account removed from the settings is not scanned
       // any more, so such a session stays listed only while another account has a copy of it.
       const readOnly = (account: Account): string | null => {
-        if (!this.accounts.has(account) || !this.roots.has(account)) return `설정에 없는 계정(${this.label(account)})의 세션이라 이어갈 수 없습니다 — 이어 쓰려면 accounts.json 에 {"id": ${JSON.stringify(account)}, "configDir": "그 계정의 설정 폴더"} 를 추가하고 deck 을 다시 시작하세요. 필요 없는 세션이면 삭제해도 됩니다.`;
-        if (this.accounts.isRetired(account)) return `${this.label(account)} 계정은 뺀 계정(retired)이라 이 세션을 이어갈 수 없습니다 — 기록은 그대로 볼 수 있습니다. 이어 쓰려면 accounts.json 에서 이 계정의 "retired" 를 지우고 deck 을 다시 시작하거나, 새 세션에서 이어가세요.`;
+        if (!this.accounts.has(account) || !this.roots.has(account)) return `설정에 없는 계정(${this.label(account)})의 세션이라 이어갈 수 없습니다 — 이어 쓰려면 accounts.json 에 {"id": ${JSON.stringify(account)}, "configDir": "그 계정의 설정 폴더"} 를 추가하고 AI-MSG 를 다시 시작하세요. 필요 없는 세션이면 삭제해도 됩니다.`;
+        if (this.accounts.isRetired(account)) return `${this.label(account)} 계정은 뺀 계정(retired)이라 이 세션을 이어갈 수 없습니다 — 기록은 그대로 볼 수 있습니다. 이어 쓰려면 accounts.json 에서 이 계정의 "retired" 를 지우고 AI-MSG 를 다시 시작하거나, 새 세션에서 이어가세요.`;
         return null;
       };
       let refused = state ? readOnly(state.account) : null;
@@ -2048,7 +2048,7 @@ export class TurnRunner {
         // The background wait limit cut the work (continueAfterCap): this turn is deck's own continuation, or — the auto
         // hops used up — the user's next message, which then carries the note.
         const auto = !!p.bgCapHop;
-        early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — ${auto ? 'deck 이 자동으로 이어갑니다' : '모델에게 알렸습니다'}`);
+        early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — ${auto ? 'AI-MSG 가 자동으로 이어갑니다' : '모델에게 알렸습니다'}`);
         systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. ${auto ? '이 턴은 deck 이 자동으로 이어 보낸 것입니다(사용자가 보낸 메시지가 아닙니다). ' : ''}끊긴 작업이 파일 등에 남긴 부분 결과가 있으면 확인하고, 필요한 작업은 더 작은 단위로 다시 띄우거나 직접 마무리해 보고까지 끝내세요. 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
       } else if (!cut.cause) {
         early.push(`${at} 서버 재시작으로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — 모델에게 알렸습니다`);

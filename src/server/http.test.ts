@@ -577,7 +577,7 @@ describe('PWA + Web Push over http', () => {
     sent.length = 0;
     expect((await raw('POST', '/api/push/test', h, JSON.stringify({ endpoint: SUB.endpoint }))).status).toBe(200);
     expect(sent.map((s) => s.endpoint)).toEqual([SUB.endpoint]);
-    expect(JSON.parse(sent[0]!.payload)).toMatchObject({ kind: 'test', title: 'deck' });
+    expect(JSON.parse(sent[0]!.payload)).toMatchObject({ kind: 'test', title: 'AI-MSG' });
     expect((await raw('POST', '/api/push/unsubscribe', h, JSON.stringify({ endpoint: SUB.endpoint }))).status).toBe(200);
     expect(JSON.parse((await raw('POST', '/api/push/status', h, JSON.stringify({ endpoint: SUB.endpoint }))).text)).toEqual({ subscribed: false });
     expect((await raw('POST', '/api/push/test', h, JSON.stringify({ endpoint: SUB.endpoint }))).status).toBe(502);

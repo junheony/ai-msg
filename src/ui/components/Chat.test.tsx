@@ -68,7 +68,7 @@ describe('Chat', () => {
 
   it('pane bars: a notice is a status bar, an error an alert bar; both show; × dismisses that one', () => {
     const onDismissNotice = vi.fn();
-    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { notices: [{ message: '「x」 대화의 기록 파일이 방금 deck 밖에서 바뀌었어요.', level: 'notice' }, { message: '기록을 읽지 못했습니다', level: 'error' }], onDismissNotice });
+    renderChat([{ kind: 'user', text: 'x' }], false, vi.fn(), { notices: [{ message: '「x」 대화의 기록 파일이 방금 AI-MSG 밖에서 바뀌었어요.', level: 'notice' }, { message: '기록을 읽지 못했습니다', level: 'error' }], onDismissNotice });
     const bars = screen.getAllByTestId('pane-notice');
     expect(bars).toHaveLength(2);
     expect(bars[0]!.getAttribute('role')).toBe('status');
@@ -89,8 +89,8 @@ describe('Chat', () => {
     expect(screen.getAllByText('재시도')).toHaveLength(1);
   });
 
-  it('a GPT turn refused by the thread lock offers deck 에서 새 GPT 세션으로 이어가기 next to 재시도 (errorCode, or an older server\'s text)', () => {
-    const label = 'deck 에서 새 GPT 세션으로 이어가기';
+  it('a GPT turn refused by the thread lock offers AI-MSG 에서 새 GPT 세션으로 이어가기 next to 재시도 (errorCode, or an older server\'s text)', () => {
+    const label = 'AI-MSG 에서 새 GPT 세션으로 이어가기';
     const onCodexHandoff = vi.fn();
     const lockedItem: ChatItem = { ...failed, turnId: 'tl', error: THREAD_LOCKED_MESSAGE, errorCode: 'thread_locked' };
     renderChat([{ kind: 'user', text: 'go' }, lockedItem], false, vi.fn(), { sessionEngine: 'codex', model: 'gpt-6-sol', onCodexHandoff });
@@ -435,12 +435,12 @@ describe('Chat title ⌄ menu', () => {
   });
 
   it('삭제 is disabled with the reason for sessions deck cannot delete; no menu without actions', () => {
-    const tm = menu({ deleteBlocked: 'Codex 앱 기록은 deck에서 지울 수 없어요' });
+    const tm = menu({ deleteBlocked: 'Codex 앱 기록은 AI-MSG에서 지울 수 없어요' });
     renderChat([], false, vi.fn(), { title: 'gpt', sessionId: 's1', titleMenu: tm });
     fireEvent.click(screen.getByRole('button', { name: /gpt/ }));
     const del = screen.getByRole('menuitem', { name: '삭제…' });
     expect(del.getAttribute('aria-disabled')).toBe('true');
-    expect(del.getAttribute('title')).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(del.getAttribute('title')).toBe('Codex 앱 기록은 AI-MSG에서 지울 수 없어요');
     fireEvent.click(del);
     expect(tm.onDelete).not.toHaveBeenCalled();
     cleanup();

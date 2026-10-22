@@ -9,7 +9,7 @@ import { writeSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { postBridge } from './permissionMcp.ts';
 
-const FAILED = '도구 사용 여부를 deck 에 확인하지 못해 거부했습니다';
+const FAILED = '도구 사용 여부를 AI-MSG 에 확인하지 못해 거부했습니다';
 const DENY = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: FAILED } });
 /**
  * `closed`: the whole relay (stdin included) is done within this. Below the bridge's fail-closed cap (bridge.ts

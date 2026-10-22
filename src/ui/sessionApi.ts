@@ -155,7 +155,7 @@ export async function revealFile(cwd: string, file: string, fetchFn: typeof fetc
   if (res.ok) return;
   const body = (await res.json().catch(() => ({}))) as { error?: string };
   if (body.error) throw new Error(body.error);
-  if (res.status === 404) throw new Error('이 deck 서버는 아직 Finder 열기를 지원하지 않아요');
+  if (res.status === 404) throw new Error('이 AI-MSG 서버는 아직 Finder 열기를 지원하지 않아요');
   if (res.status === 501) throw new Error('서버가 macOS 가 아니라 Finder 를 열 수 없어요');
   throw new Error(`Finder 에서 보기 실패 (${res.status})`);
 }

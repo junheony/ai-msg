@@ -35,12 +35,12 @@ function parse(line: string): HighlightEvent | null {
  */
 export function selectEvent(msg: ServerMessage, titleOf: (sessionId: string | null, cwd: string) => string, at: number): HighlightEvent | null {
   if (msg.type === 'turn_notice' && msg.message.startsWith(SHUTDOWN_CUT_NOTICE)) {
-    return { at, kind: 'interrupted', sessionId: msg.sessionId, cwd: msg.cwd, title: titleOf(msg.sessionId, msg.cwd) || 'deck', body: clip(msg.message, BODY_MAX) };
+    return { at, kind: 'interrupted', sessionId: msg.sessionId, cwd: msg.cwd, title: titleOf(msg.sessionId, msg.cwd) || 'AI-MSG', body: clip(msg.message, BODY_MAX) };
   }
   // 총사령탑 판정 한 건(Commander 가 판정마다 한 번 넘긴다 — 상태 방송은 여기로 오지 않는다).
   if (msg.type === 'commander') {
     if (!msg.lastVerdict) return null;
-    return { at, kind: 'commander', sessionId: msg.sessionId, cwd: '', title: titleOf(msg.sessionId, '') || 'deck', body: clip(`사령탑 ${VERDICT_LABEL[msg.lastVerdict.verdict]} · ${msg.lastVerdict.reason}`, BODY_MAX) };
+    return { at, kind: 'commander', sessionId: msg.sessionId, cwd: '', title: titleOf(msg.sessionId, '') || 'AI-MSG', body: clip(`사령탑 ${VERDICT_LABEL[msg.lastVerdict.verdict]} · ${msg.lastVerdict.reason}`, BODY_MAX) };
   }
   const p = selectPush(msg, titleOf);
   if (!p || p.kind === 'test' || p.kind === 'commander') return null;
@@ -89,7 +89,7 @@ export class EventLog {
 
   /** Hook for every server event (next to the push notifier). */
   record(msg: ServerMessage): void {
-    const e = selectEvent(msg, this.opts.titleOf ?? ((_s, cwd) => cwd.split('/').filter(Boolean).pop() ?? 'deck'), this.now());
+    const e = selectEvent(msg, this.opts.titleOf ?? ((_s, cwd) => cwd.split('/').filter(Boolean).pop() ?? 'AI-MSG'), this.now());
     if (e) this.add(e);
   }
 

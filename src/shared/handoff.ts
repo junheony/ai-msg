@@ -36,7 +36,7 @@ export function handoffFirstMessage(oldTitle: string, oldSessionId: string, note
  * Keep the wording: a UI recognises an older server's locked turn by this exact prefix (isThreadLocked).
  */
 export const THREAD_LOCKED_MESSAGE =
-  '이 GPT 스레드를 다른 프로그램이 쓰고 있어 deck 에서 이어갈 수 없습니다 — 보통 ChatGPT 데스크톱 앱(Codex)이 이 스레드를 열어 두고 있을 때입니다(/goal 자동 진행 포함). ' +
+  '이 GPT 스레드를 다른 프로그램이 쓰고 있어 AI-MSG 에서 이어갈 수 없습니다 — 보통 ChatGPT 데스크톱 앱(Codex)이 이 스레드를 열어 두고 있을 때입니다(/goal 자동 진행 포함). ' +
   '데스크톱 앱에서 이어가거나, 데스크톱 앱을 종료(⌘Q)한 뒤 재시도하세요.';
 
 /** A failed GPT turn the desktop app's thread lock refused: its error code, or (an older server) its error text. */
@@ -77,7 +77,7 @@ export function codexHandoffExcerpt(items: readonly { kind: string; text?: strin
 /** The new GPT session's first message (prefilled, sent only when the user presses Enter). */
 export function codexHandoffMessage(oldTitle: string, oldSessionId: string, excerpt: string, request: string): string {
   return [
-    `이전 GPT 세션(${oldTitle}, ${oldSessionId})이 다른 앱에 열려 있어 deck 에서 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
+    `이전 GPT 세션(${oldTitle}, ${oldSessionId})이 다른 앱에 열려 있어 AI-MSG 에서 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
     excerpt.trim() || '(발췌할 이전 대화가 없습니다)',
     '이어서 할 요청:',
     request,
@@ -87,7 +87,7 @@ export function codexHandoffMessage(oldTitle: string, oldSessionId: string, exce
 /** The first message of a deck Grok session continuing a Grok Bot app conversation (prefilled, sent only when the user does). */
 export function grokBotHandoffMessage(oldTitle: string, excerpt: string): string {
   return [
-    `Grok Bot 앱 대화(${oldTitle})를 deck Grok 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
+    `Grok Bot 앱 대화(${oldTitle})를 AI-MSG Grok 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
     excerpt.trim() || '(발췌할 이전 대화가 없습니다)',
     '이어서 할 요청:',
     '',
@@ -95,4 +95,4 @@ export function grokBotHandoffMessage(oldTitle: string, excerpt: string): string
 }
 
 /** Shown under the composer of an imported agy (Gemini) conversation: its past messages are not replayed in deck. */
-export const GEMINI_IMPORT_NOTE = '이전 메시지는 deck 에 보이지 않지만 agy 가 기억하고 이어갑니다';
+export const GEMINI_IMPORT_NOTE = '이전 메시지는 AI-MSG 에 보이지 않지만 agy 가 기억하고 이어갑니다';

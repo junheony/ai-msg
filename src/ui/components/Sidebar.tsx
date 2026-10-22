@@ -14,9 +14,10 @@ import { isMacPlatform, isPinMod, isSafariBrowser, pinKeyLabel } from '../shortc
 import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
 import { BrandMark, BrandWordmark } from './BrandMark';
-export { AVATAR_COLORS, avatarIndex } from './SessionIcon';
 import { SessionGlyph, assignSessionIcons, avatarIndex, publishSessionAvatars, sessionIconBase, type IconRow } from './SessionIcon';
 import { usePrefs } from '../usePrefs';
+// Re-exported so existing importers of these avatar helpers keep working after they moved to SessionIcon.
+export { AVATAR_COLORS, avatarIndex } from './SessionIcon';
 
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
 export const SEARCH_MIN_CHARS = 2;
@@ -634,10 +635,10 @@ export function importTitle(s: SessionEntry): string {
   if (s.source === 'grokbot') return `Grok Bot 앱 대화 — 읽기만 할 수 있어요 (새 Grok 세션으로 이어갈 수 있어요)${preview}`;
   if (s.cwdMissing) return `폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다${preview}`;
   if (s.engine === 'grok' && s.heldBy) return `${SIDEBAR_HELD.title}${preview}`;
-  if (s.engine === 'grok') return `${s.autoRun ? 'grok 헤드리스로 자동 실행된' : '터미널 Grok CLI 에서 만든'} 대화 — 메시지를 보내면 deck 에서 이어갑니다${preview}`;
-  if (s.engine === 'gemini') return `agy 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다 (이전 메시지는 deck 에 보이지 않음)${preview}`;
+  if (s.engine === 'grok') return `${s.autoRun ? 'grok 헤드리스로 자동 실행된' : '터미널 Grok CLI 에서 만든'} 대화 — 메시지를 보내면 AI-MSG 에서 이어갑니다${preview}`;
+  if (s.engine === 'gemini') return `agy 에서 만든 대화 — 메시지를 보내면 AI-MSG 에서 이어갑니다 (이전 메시지는 AI-MSG 에 보이지 않음)${preview}`;
   if (s.codexArchived) return 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다';
-  return s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다';
+  return s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 AI-MSG 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 AI-MSG 에서 이어갑니다';
 }
 
 /** Where an open session sits: "N번 칸에 열림" (the row's small outlined number; not an unread count). */

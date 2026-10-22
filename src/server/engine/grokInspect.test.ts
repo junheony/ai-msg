@@ -27,7 +27,7 @@ describe('checkGrokInspect (fixtures from grok 1.0.62)', () => {
     if (!v.ok) {
       expect(v.item).toContain('권한 규칙 출처 1개');
       expect(v.item).toContain('.claude/settings.local.json');
-      expect(grokInspectRefusal(v.item)).toMatch(/^Grok 설정\(~\/\.grok\/config\.toml\)의 권한 기본값이 자동이라 deck 승인을 보장할 수 없음 — /);
+      expect(grokInspectRefusal(v.item)).toMatch(/^Grok 설정\(~\/\.grok\/config\.toml\)의 권한 기본값이 자동이라 AI-MSG 승인을 보장할 수 없음 — /);
     }
   });
 

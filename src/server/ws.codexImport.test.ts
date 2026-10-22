@@ -86,7 +86,7 @@ describe('ws: imported Codex threads', () => {
     expect(h).toMatchObject({ sessionId: DESKTOP_ID, cwd: work, account: 'gpt', engine: 'codex', sandbox: 'workspace-write', runningTurnId: null });
     expect(h.messages.map((m) => m.kind)).toEqual(['user', 'assistant', 'tool_result', 'assistant']);
     expect(h.messages[0]).toMatchObject({ kind: 'user', text: expect.stringContaining('스크린샷의 버그 고쳐줘') });
-    expect(await c.until((m) => m.type === 'turn_notice')).toMatchObject({ sessionId: DESKTOP_ID, turnId: '', message: expect.stringMatching(/^「스크린샷의 버그 고쳐줘」 GPT 대화의 기록 파일이 (방금|\d+분 전에) deck 밖\(Codex 앱 또는 Codex CLI\)에서 바뀌었어요\. /) });
+    expect(await c.until((m) => m.type === 'turn_notice')).toMatchObject({ sessionId: DESKTOP_ID, turnId: '', message: expect.stringMatching(/^「스크린샷의 버그 고쳐줘」 GPT 대화의 기록 파일이 (방금|\d+분 전에) AI-MSG 밖\(Codex 앱 또는 Codex CLI\)에서 바뀌었어요\. /) });
     c.ws.close();
   });
 

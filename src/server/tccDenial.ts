@@ -18,4 +18,4 @@ export const isTccDenial = (content: string, isError: boolean): boolean =>
 
 export const TCC_DENIAL_NOTICE =
   '맥이 이 세션 프로세스의 문서 폴더 접근을 막았습니다(Operation not permitted) — 파일 읽기와 훅이 실패합니다. ' +
-  '시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근에서 deck 의 claude 와 node 를 허용하세요.';
+  '시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근에서 AI-MSG 의 claude 와 node 를 허용하세요.';

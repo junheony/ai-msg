@@ -4,7 +4,7 @@ import { MEMORY_MAX_BYTES, memoryBytes } from '../../shared/memory';
 type Load = { state: 'loading' } | { state: 'off' } | { state: 'ready'; saved: string; max: number };
 
 /**
- * Settings → 일반 · deck 메모: one note every model sees each turn (server `memory.md`, /api/memory). Hidden when the
+ * Settings → 일반 · AI-MSG 메모: one note every model sees each turn (server `memory.md`, /api/memory). Hidden when the
  * server has no memory store (an older server answers 404).
  */
 export function MemoryEditor({ fetchFn = fetch }: { fetchFn?: typeof fetch }) {
@@ -56,7 +56,7 @@ export function MemoryEditor({ fetchFn = fetch }: { fetchFn?: typeof fetch }) {
 
   return (
     <div className="memory-editor" data-testid="memory-editor">
-      <label htmlFor="deck-memory"><span>deck 메모</span></label>
+      <label htmlFor="deck-memory"><span>AI-MSG 메모</span></label>
       <p className="settings-hint" id="deck-memory-hint">모든 엔진(Claude·GPT·Gemini·Grok)이 매 턴 참고하는 메모입니다. 대화 기록에는 남지 않고, 이 서버의 모든 기기가 같이 씁니다.</p>
       <textarea id="deck-memory" aria-describedby="deck-memory-hint" data-testid="memory-text" rows={6} value={draft} placeholder="예: 답은 한국어로. 회사 저장소는 ~/work 아래에 있음. 배포는 금요일에 하지 않음." onChange={(e) => { setDraft(e.target.value); setStatus(null); }} />
       <div className="memory-foot">

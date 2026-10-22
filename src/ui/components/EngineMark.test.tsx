@@ -24,10 +24,9 @@ describe('engine badges (our letters, no vendor logos)', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('decorative marks hide from assistive tech; `named` adds the engine name as plain text', () => {
-    const { container } = render(<><EngineMark engine="codex" decorative /><EngineMark engine="grok" named /></>);
+  it('decorative marks hide from assistive tech', () => {
+    const { container } = render(<EngineMark engine="codex" decorative />);
     expect(container.querySelector('.engine-mark.codex')?.getAttribute('aria-hidden')).toBe('true');
-    expect(container.querySelector('.engine-name')?.textContent).toBe('Grok');
   });
 
   it('a bare badge takes the caller class; two-letter badges are marked wide', () => {

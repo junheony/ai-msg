@@ -57,7 +57,7 @@ export const FAST_WAIT_BEHIND = '백그라운드 작업(↯ 설정 바뀜)';
 export const FAST_STEER_REJECTED = '↯ 빠르게 설정이 바뀌어 이 턴이 끝난 뒤 새로 보냅니다';
 /** Whether a send asks for ⚡ 빠르게 (never on a handoff — TurnRunner.fastTurn). */
 const fastSend = (m: { fast?: boolean; handoff?: boolean }) => m.fast === true && !m.handoff;
-export const recycleNotice = (n: number) => `deck 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
+export const recycleNotice = (n: number) => `AI-MSG 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
 
 /** How often, while a browser is connected, deck looks for outside holders (one `ps`), outside writes to the open sessions and newer mtimes of the listed transcripts (a stat each). */
 export const OUTSIDE_POLL_MS = 15_000;
