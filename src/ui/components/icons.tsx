@@ -11,6 +11,8 @@ export const ClockIcon = ({ className }: { className?: string }) => <svg {...svg
 export const RefreshIcon = ({ className }: { className?: string }) => <svg {...svg} width={12} height={12} strokeWidth={1.6} className={className}><path d="M13 8a5 5 0 1 1-1.5-3.6" /><path d="M13 2.8v2.6h-2.6" /></svg>;
 /** 새 분할: a window split in two (the top bar's split button). */
 export const ImageIcon = ({ className }: { className?: string }) => <svg {...svg} width={13} height={13} className={className}><rect x="2.5" y="3" width="11" height="10" rx="1.6" /><circle cx="6" cy="6.6" r="1.1" /><path d="M13.5 10.5l-3.2-3.2-5.8 5.7" /></svg>;
+/** The › of a fold, drawn (a text › at 12px reads as a dot next to the line's · separators). Rotates open via .tool-caret. */
+export const ChevronIcon = () => <svg {...svg} width={10} height={10} strokeWidth={1.8} className="tool-caret chev"><path d="M6 3.5L10.5 8 6 12.5" /></svg>;
 export const SplitIcon = () => <svg {...svg}><rect x="2.5" y="3" width="11" height="10" rx="1.6" /><path d="M8 3v10" /></svg>;
 export const ShareIcon = () => <svg {...svg}><path d="M8 10V2.5" /><path d="M5.2 5.2L8 2.4l2.8 2.8" /><path d="M5 7.5H4c-.6 0-1 .4-1 1v4c0 .6.4 1 1 1h8c.6 0 1-.4 1-1v-4c0-.6-.4-1-1-1h-1" /></svg>;
 

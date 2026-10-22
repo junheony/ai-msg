@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { ChevronIcon } from './icons';
 import { ui } from '../i18n';
 import type { InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
@@ -55,7 +56,7 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
   }, [badgeOpen]);
   const badge = useTurnBadge(
     item.badge
-      ? { badge: item.badge, ...(item.model ? { model: item.model } : {}), stopped, failed, cacheNote: item.cacheNote ?? null, ctx: last ? (item.ctx ?? null) : null, repeat: repeatModel }
+      ? { badge: item.badge, ...(item.model ? { model: item.model } : {}), stopped, failed, cacheNote: item.cacheNote ?? null, ctx: last ? (item.ctx ?? null) : null, repeat: repeatModel, inline: true }
       : null,
     badgeOpen, () => toggle('badge'), panelId('badge'),
   );
@@ -63,7 +64,7 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
   /** A › item: a button naming what opens under the line. */
   const opener = (key: string, label: ReactNode, extra: { testId?: string; cls?: string; after?: ReactNode } = {}) => (
     <button type="button" className={`meta-item${extra.cls ? ` ${extra.cls}` : ''}`} {...(extra.testId ? { 'data-testid': extra.testId } : {})} aria-expanded={isOpen(key)} aria-controls={panelId(key)} onClick={() => toggle(key)}>
-      {label}{extra.after}<span className="tool-caret" aria-hidden="true">›</span>
+      {label}{extra.after}<ChevronIcon />
     </button>
   );
   const panel = (key: string, cls: string, body: ReactNode) => <div key={key} id={panelId(key)} className={`meta-panel ${cls}`} hidden={!isOpen(key)}>{body}</div>;
@@ -130,9 +131,9 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
   return (
     <div ref={rootRef} className="turn-foot" data-testid="turn-meta" onKeyDown={onKeyDown}>
       <div className="turn-meta" role="group" aria-label={T.meta.label}>
-        {cells.map((c) => (
+        {cells.map((c, i) => (
           <span key={c.key} className="meta-cell">
-            <span className="meta-sep" aria-hidden="true">·</span>
+            {i > 0 && <span className="meta-sep" aria-hidden="true">·</span>}
             {c.node}
           </span>
         ))}

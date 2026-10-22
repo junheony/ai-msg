@@ -114,7 +114,7 @@ describe('AgentCard', () => {
     cleanup();
     renderCard({}, { ...agentCall, result: '42 files' }, false);
     expect(screen.getByTestId('agent-card').textContent).toContain('count files');
-    expect(screen.getByText('결과 보기')).toBeTruthy();
+    expect(screen.getByText('결과')).toBeTruthy();
   });
 
   it('status: an error result fails; a call without result in a finished turn was stopped', () => {

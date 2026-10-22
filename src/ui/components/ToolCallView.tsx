@@ -43,7 +43,7 @@ function DiffToolCall({ call, live, cwd }: { call: ToolCallItem; live: boolean; 
 }
 
 const isDiffCall = (c: ToolCallItem) => fileDiffsFor(c.name, c.input, c.result) !== null;
-const isAgentCall = (c: ToolCallItem) => c.name === 'Agent' || c.name === 'Task';
+export const isAgentCall = (c: ToolCallItem) => c.name === 'Agent' || c.name === 'Task';
 /** File edits (diff cards) and subagent calls (agent cards) stay out in the reply; other calls fold into its meta line. */
 export const isSoloCall = (c: ToolCallItem) => isAgentCall(c) || isDiffCall(c);
 

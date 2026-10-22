@@ -5,6 +5,7 @@ import { useAccounts } from '../accounts';
 import { has } from '../features';
 import { COLD_HINT, isCacheCold, type ContextInfo } from '../context';
 import { PinIcon } from './AccountPicker';
+import { ui } from '../i18n';
 
 function k(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -40,7 +41,7 @@ export function isFailedTurn(t: { error?: string | null; interrupted?: boolean }
   return !!t.error && !isAbortError(t.error, t.interrupted);
 }
 
-type BadgeProps = { badge: Badge; /** The turn's own model (turn_result / transcript); shown before the badge's. */ model?: string; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null; /** The last reply's context: its cache expiry shows as the dot. */ ctx?: ContextInfo | null; /** The reply before named the same model: the pill leaves the name to screen readers (account and states stay). */ repeat?: boolean };
+type BadgeProps = { badge: Badge; /** The turn's own model (turn_result / transcript); shown before the badge's. */ model?: string; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null; /** The last reply's context: its cache expiry shows as the dot. */ ctx?: ContextInfo | null; /** The reply before named the same model: the pill leaves the name to screen readers (account and states stay). */ repeat?: boolean; /** On the reply's meta line: the account reads as text ("계정 A") like the line's other items, not a tile. */ inline?: boolean };
 
 /**
  * Turn meta as the first item of the reply's meta line: model · account (pin), and "중단됨" / "실패" for a turn that never
@@ -59,7 +60,7 @@ export function useTurnBadge(props: BadgeProps | null, open: boolean, onToggle: 
     return () => clearInterval(t);
   }, [at]);
   if (!props) return { pill: null, detail: null };
-  const { badge, model, stopped = false, failed = false, cacheNote = null, repeat = false } = props;
+  const { badge, model, stopped = false, failed = false, cacheNote = null, repeat = false, inline = false } = props;
   const u = badge.usage;
   const label = names.label(badge.account);
   const look = names.look(badge.account);
@@ -69,10 +70,13 @@ export function useTurnBadge(props: BadgeProps | null, open: boolean, onToggle: 
   const status = stopped ? (failed ? '실패' : '중단됨') : null;
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
   const modelName = modelLabelOf(model ?? badge.model);
+  const acctTitle = `계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`;
   const pill = (
     <button type="button" className={`turn-badge tb-pill${stopped ? ' stopped' : ''}`} data-testid="turn-badge" aria-expanded={open} aria-controls={panelId} title={repeat ? modelName : undefined} onClick={onToggle}>
       <span className={repeat ? 'tb-model sr-only' : 'tb-model'}>{modelName}</span>
-      <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={`계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`}><span className="acct-name">{label}</span></span>
+      {inline
+        ? <span className="acct-text" title={acctTitle}>{ui().chat.account(label)}</span>
+        : <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={acctTitle}><span className="acct-name">{label}</span></span>}
       {fast && <span className={`tb-fast${fast === 'fell' ? ' fell' : ''}`} data-testid="badge-fast" title={badge.modelNote!}><span aria-hidden="true">{fast === 'on' ? '↯' : '↯→표준'}</span><span className="sr-only">{badge.modelNote}</span></span>}
       {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
       {status && <span className="tb-stopped" title={tokens}>{status}</span>}

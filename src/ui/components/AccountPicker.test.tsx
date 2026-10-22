@@ -61,6 +61,13 @@ describe('AccountPicker', () => {
     rerender(<TurnBadge badge={badge} />);
     expect(screen.queryByTestId('badge-pin')).toBeNull();
   });
+
+  it('standalone turn badge keeps the account tile (only the meta line reads it as text)', () => {
+    const badge = { account: 'a' as const, model: 'opus' as const, reason: 'r', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }, modelNote: null };
+    const { container } = render(<TurnBadge badge={badge} />);
+    expect(container.querySelector('.acct')).not.toBeNull();
+    expect(container.querySelector('.acct-text')).toBeNull();
+  });
 });
 
 describe('Pane · account pin', () => {

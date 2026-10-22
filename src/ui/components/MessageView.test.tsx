@@ -115,6 +115,84 @@ describe('MessageView · subagents fold on the meta line', () => {
   });
 });
 
+describe('MessageView · meta line separators and subagent lines', () => {
+  beforeEach(() => { localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: false })); });
+  afterEach(() => { cleanup(); localStorage.removeItem(PREFS_KEY); });
+  const agent = (id: string, type: string, result: string | null = 'done') => ({ toolUseId: id, name: 'Agent', input: { subagent_type: type, description: `${type} 작업`, prompt: 'p' }, result, isError: false });
+  const bash = (id: string) => ({ toolUseId: id, name: 'Bash', input: { command: 'ls' }, result: 'out', isError: false });
+  const reply = (extra: object) => ({ kind: 'assistant' as const, turnId: 't', text: 'ok', model: 'claude-opus-5-5', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [], ...extra });
+
+  it('exactly one dot between items: none before the first, none doubled, no empty item', () => {
+    const badge = { account: 'a', model: 'opus', reason: 'r', modelNote: null, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } };
+    for (const item of [
+      reply({ thinking: { text: '음', redacted: false, startedAt: 0, ms: 8000 }, toolCalls: [bash('1'), bash('2'), agent('3', 'executor')] }),
+      reply({ badge, thinking: { text: '', redacted: true, startedAt: null, ms: null }, toolCalls: [bash('1')] }),
+      reply({ toolCalls: [agent('1', 'explore'), bash('2')] }),
+    ]) {
+      const { getByRole } = render(<MessageView item={item as never} />);
+      const line = getByRole('group');
+      const cells = [...line.querySelectorAll(':scope > .meta-cell')];
+      expect(cells.length).toBeGreaterThan(1);
+      expect(line.querySelectorAll('.meta-sep')).toHaveLength(cells.length - 1);
+      expect(cells[0]!.querySelector('.meta-sep')).toBeNull();
+      for (const c of cells.slice(1)) expect(c.firstElementChild?.className).toBe('meta-sep');
+      for (const c of cells) expect(c.textContent!.replace('·', '').trim()).not.toBe('');
+      expect(line.textContent).not.toMatch(/·\s*·/);
+      cleanup();
+    }
+  });
+
+  it('CSS: a wrapped meta line hides its leading dot (lead pulled left and clipped, first cell padded back)', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8').replace(/\s+/g, ' ');
+    const rule = css.match(/\.turn-meta \{([^}]*)\}/)?.[1] ?? '';
+    expect(rule).toMatch(/--meta-lead: \d+px/);
+    expect(rule).toContain('margin-left: calc(-1 * var(--meta-lead))');
+    expect(rule).toContain('clip-path: inset(-12px -12px -12px var(--meta-lead))');
+    expect(css).toMatch(/\.meta-cell:first-child \{ padding-left: var\(--meta-lead\); \}/);
+  });
+
+  it('a finished subagent is one line naming its type once; the result still opens under it', () => {
+    const { getByTestId } = render(<MessageView item={reply({ toolCalls: [agent('1', 'executor')] })} />);
+    const card = getByTestId('agent-card');
+    expect(card.querySelector('.agent-type')).toBeNull();
+    expect(card.textContent!.match(/executor/g)).toHaveLength(1);
+    const open = card.querySelector('.agent-open')!;
+    expect(open.textContent).toContain('결과');
+    expect(panelOf(open).hidden).toBe(true);
+    fireEvent.click(open);
+    expect(panelOf(open).hidden).toBe(false);
+    expect(panelOf(open).textContent).toContain('done');
+  });
+
+  it('two or more subagents in a row share one group; a single one stands alone', () => {
+    const many = render(<MessageView item={reply({ toolCalls: [agent('1', 'executor'), agent('2', 'code-reviewer'), bash('3')] })} />);
+    expect(many.getAllByTestId('agent-group')).toHaveLength(1);
+    expect(many.getByTestId('agent-group').querySelectorAll('[data-testid="agent-card"]')).toHaveLength(2);
+    cleanup();
+    const one = render(<MessageView item={reply({ toolCalls: [agent('1', 'executor')] })} />);
+    expect(one.queryByTestId('agent-group')).toBeNull();
+  });
+
+  it('the account reads as text on the meta line ("계정 A"), keeping its tooltip', () => {
+    const badge = { account: 'a', model: 'opus', reason: 'r', modelNote: null, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } };
+    const { container } = render(<MessageView item={reply({ badge }) as never} />);
+    const acct = container.querySelector('.turn-meta .acct-text')!;
+    expect(acct.textContent).toBe('계정 A');
+    expect(acct.getAttribute('title')).toContain('계정 A');
+    expect(container.querySelector('.turn-meta .acct')).toBeNull();
+  });
+
+  it('before any text, the meta line ("생각하는 중…") comes first and the cursor waits under it', () => {
+    const { container, getByTestId } = render(<MessageView item={reply({ text: '', streaming: true, thinking: { text: '', redacted: false, startedAt: Date.now(), ms: null } })} />);
+    const cursor = container.querySelector('.cursor')!;
+    expect(getByTestId('turn-meta').compareDocumentPosition(cursor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    cleanup();
+    const writing = render(<MessageView item={reply({ text: '쓰는 중', streaming: true })} />);
+    const c2 = writing.container.querySelector('.cursor')!;
+    expect(c2.compareDocumentPosition(writing.getByTestId('turn-meta')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe('MessageView tool lines (Desktop style)', () => {
   afterEach(cleanup);
   const tc = (id: string, name: string, input: unknown, extra = {}) => ({ toolUseId: id, name, input, result: 'out', isError: false, ...extra });

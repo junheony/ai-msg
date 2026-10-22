@@ -21,7 +21,7 @@ import { usePopoverPlacement } from './usePopoverPlacement';
 import { CopyButton } from './CopyButton';
 import { CopyIcon, EditIcon, ImageIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
-import { ToolCalls, isSoloCall } from './ToolCallView';
+import { ToolCalls, isAgentCall, isSoloCall } from './ToolCallView';
 import { isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
 import { TurnMeta } from './TurnMeta';
 import { ui } from '../i18n';
@@ -545,6 +545,18 @@ function MessageSheet({ excerpt, copy, select, edit, retry, again, pick, version
 
 const NO_NOTICES: InjectedNotice[] = [];
 
+/** A reply's solo calls in order: each file edit alone, each run of subagent calls together (one rail for two or more). */
+function soloRuns(calls: ToolCallItem[]): ToolCallItem[][] {
+  const runs: ToolCallItem[][] = [];
+  for (const c of calls) {
+    if (!isSoloCall(c)) continue;
+    const last = runs.at(-1);
+    if (last && isAgentCall(c) && isAgentCall(last[0]!)) last.push(c);
+    else runs.push([c]);
+  }
+  return runs;
+}
+
 /** A long user message: folded past this many lines or characters, showing about COLLAPSED_LINES (CSS) until 더 보기. */
 const FOLD_LINES = 12;
 const FOLD_CHARS = 1200;
@@ -702,6 +714,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
   // deck-choices are cut from the live stretch only (textAt counts the raw text).
   const split = liveCuts ? { lead: liveLead, live: splitDeckChoices(item.text.slice(liveCut), true).text } : null;
   const reply = last && !item.streaming ? actions.onReply : undefined;
+  const early = item.streaming && !split && !shownText;
   const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
   const regenPick: RegenPick | null = pick && regen ? { models: regen.models, current: regen.current, sticky: !!(turn && branchFrom), onPick: pick } : null;
   return (
@@ -711,7 +724,9 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       {item.notes.map((n, i) => <div key={i} className={`note${concise ? ' concise-note' : ''}`}>{n}</div>)}
       {(!concise || !item.streaming) && item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
       {/* File edits and subagents stay out in the reply, in order; thinking and the other calls fold into the meta line. */}
-      {!concise && item.toolCalls.filter(isSoloCall).map((c) => <ToolCalls key={c.toolUseId} calls={[c]} live={item.streaming} cwd={cwd} />)}
+      {!concise && soloRuns(item.toolCalls).map((run) => (run.length > 1
+        ? <div key={run[0]!.toolUseId} className="agent-group" data-testid="agent-group">{run.map((c) => <ToolCalls key={c.toolUseId} calls={[c]} live={item.streaming} cwd={cwd} />)}</div>
+        : <ToolCalls key={run[0]!.toolUseId} calls={run} live={item.streaming} cwd={cwd} />))}
       {/* Concise, mid-turn: text before the last tool call folds into a gray lead line; the text since streams live below it.
           With tool calls the progress ("계속 작업 중 · 단계 N") is the meta line's tools item, so this shows the lead only. */}
       {split && (!split.live || item.toolCalls.length > 0) && (split.lead || item.toolCalls.length === 0) && (
@@ -722,7 +737,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       )}
       {split ? split.live && <Markdown text={split.live} /> : shownText && <Markdown text={shownText} />}
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
-      {item.streaming && (!split || !!split.live) && <span className="cursor">▍</span>}
+      {item.streaming && (!split || !!split.live) && !early && <span className="cursor">▍</span>}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <TurnError error={item.error} />}
       <TurnMeta
         item={item} turnEnd={turnEnd} repeatModel={repeatModel} notices={notices} last={last} concise={concise} cwd={cwd} markdown={renderMarkdown}
@@ -736,6 +751,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
           </div>
         )}
       />
+      {/* Nothing written yet: the meta line ("생각하는 중…") leads and the cursor waits under it. */}
+      {early && <span className="cursor">▍</span>}
     </div>
     {menu && hasActions && (
       <MessageSheet

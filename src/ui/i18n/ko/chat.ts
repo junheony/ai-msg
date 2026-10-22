@@ -27,5 +27,11 @@ export const chat: Widen<typeof en> = {
     defaultModel: '기본 모델',
     auto: '자동',
   },
+  agent: {
+    result: '결과',
+    prompt: '지시',
+    fallback: '에이전트',
+  },
+  account: (name: string) => `계정 ${name}`,
   images: (n: number) => `이미지 ${n}장`,
 };

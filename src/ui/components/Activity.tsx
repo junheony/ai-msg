@@ -1,4 +1,6 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
+import { ChevronIcon } from './icons';
+import { ui } from '../i18n';
 import type { TaskStatus, TurnPhase } from '../../shared/turn-types';
 import type { AgentInfo, ChatItem, PaneBackground, ToolCallItem } from '../state';
 import { toolLabel } from '../toolLabel';
@@ -147,7 +149,11 @@ function pretty(v: unknown, max = 4000): string {
   return s.length > max ? s.slice(0, max) + '\n…' : s;
 }
 
-/** One Agent/Task call: type and description, live timer/tokens, its last few tool calls, then ✓/✗ and duration. */
+/**
+ * One Agent/Task call. Running: a card (type, description, live timer/tokens, its last few tool calls) that stands out.
+ * Done: one low quiet line — "✓ executor 작업 · 0:04 · 완료 · 결과 ›" — whose › opens the sub calls, the prompt and the result
+ * under it. The type shows only when the description does not already name it.
+ */
 export function AgentCard({ call, live }: { call: ToolCallItem; live: boolean }) {
   const { agents, bgLive, active } = useContext(AgentContext);
   const info = agents[call.toolUseId];
@@ -155,48 +161,60 @@ export function AgentCard({ call, live }: { call: ToolCallItem; live: boolean })
   const running = status === 'running';
   const now = useNow(running && !!info);
   const [all, setAll] = useState(false);
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  const T = ui().chat.agent;
   const input = call.input && typeof call.input === 'object' ? (call.input as Record<string, unknown>) : {};
-  const type = info?.subagentType || (typeof input.subagent_type === 'string' ? input.subagent_type : '') || '에이전트';
+  const type = info?.subagentType || (typeof input.subagent_type === 'string' ? input.subagent_type : '');
   const desc = info?.description || (typeof input.description === 'string' ? input.description : '');
+  const title = desc || type || T.fallback;
+  const showType = !!type && !!desc && !desc.toLowerCase().includes(type.toLowerCase());
   const ms = info ? (info.usage && !running ? info.usage.durationMs : (info.endedAt ?? now) - info.startedAt) : null;
   const calls = info?.calls ?? [];
   const shown = all ? calls : calls.slice(-SHOW_CALLS);
+  const hasDetail = call.result !== null || typeof input.prompt === 'string' || (!running && calls.length > 0);
   const icon = running ? <ProgressMark className="spark spin" /> : status === 'completed' ? <span className="agent-mark ok" aria-hidden="true">✓</span> : status === 'failed' ? <span className="agent-mark err" aria-hidden="true">✗</span> : <span className="agent-mark" aria-hidden="true">■</span>;
+  const callList = calls.length > 0 && (
+    <ul className="agent-calls">
+      {!all && calls.length > SHOW_CALLS && (
+        <li><button type="button" className="agent-more" onClick={() => setAll(true)}>+{calls.length - SHOW_CALLS}개 더 보기</button></li>
+      )}
+      {shown.map((c) => (
+        <li key={c.toolUseId} className={c.isError ? 'error' : c.done ? 'done' : 'running'}>
+          <span className="agent-call-mark" aria-hidden="true">{c.isError ? '✗' : c.done ? '✓' : '…'}</span>
+          <span className="tool-label">{toolLabel({ ...c, result: null })}</span>
+        </li>
+      ))}
+    </ul>
+  );
   return (
     <div className={`agent-card ${status}`} data-testid="agent-card">
       <div className="agent-head">
         {icon}
-        <span className="agent-type">{type}</span>
-        <span className="agent-desc" title={desc}>{desc}</span>
+        {showType && <span className="agent-type">{type}</span>}
+        <span className="agent-desc" title={type && type !== title ? `${type} · ${title}` : title}>{title}</span>
         {info?.backgrounded && <span className="agent-badge">백그라운드</span>}
         <span className="agent-meta">
           {ms !== null && <span>{clock(ms)}</span>}
           {info?.usage && info.usage.totalTokens > 0 && <span>{tokens(info.usage.totalTokens)} 토큰</span>}
           {!running && <span className={`agent-status ${status}`}>{STATUS_TEXT[status]}</span>}
         </span>
+        {hasDetail && (
+          <button type="button" className="agent-open" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
+            <span className="tool-label">{call.result !== null ? T.result : T.prompt}</span><ChevronIcon />
+          </button>
+        )}
       </div>
-      {calls.length > 0 && (
-        <ul className="agent-calls">
-          {!all && calls.length > SHOW_CALLS && (
-            <li><button type="button" className="agent-more" onClick={() => setAll(true)}>+{calls.length - SHOW_CALLS}개 더 보기</button></li>
-          )}
-          {shown.map((c) => (
-            <li key={c.toolUseId} className={c.isError ? 'error' : c.done ? 'done' : 'running'}>
-              <span className="agent-call-mark" aria-hidden="true">{c.isError ? '✗' : c.done ? '✓' : '…'}</span>
-              <span className="tool-label">{toolLabel({ ...c, result: null })}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      {running && callList}
       {running && calls.length === 0 && info?.lastToolName && <div className="agent-last muted">{info.lastToolName}</div>}
-      {(call.result !== null || typeof input.prompt === 'string') && (
-        <details className="agent-detail">
-          <summary><span className="tool-label">{call.result !== null ? '결과 보기' : '지시 보기'}</span><span className="tool-caret" aria-hidden="true">›</span></summary>
+      {hasDetail && (
+        <div id={panelId} className="agent-detail" hidden={!open}>
+          {!running && callList}
           <div className="tool-detail">
             {typeof input.prompt === 'string' && <pre className="tool-input">{pretty(input.prompt)}</pre>}
             {call.result !== null && <pre className="tool-output">{pretty(call.result)}</pre>}
           </div>
-        </details>
+        </div>
       )}
     </div>
   );

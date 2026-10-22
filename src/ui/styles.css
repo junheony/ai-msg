@@ -862,14 +862,16 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Turn meta — one quiet line under the reply (or all of a reply with no text): model · thinking › · tools › · subagents ›
    · background ✓ ›, then the actions. --faint 12.5px, dots between, no pills; each › opens its detail under the line. */
 .turn-foot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s1); min-width: 0; }
-/* Every cell carries its dot; the line is pulled left by one dot + gap and clipped there, so a wrapped line never starts with "·". */
-.turn-meta { --meta-lead: 10px; display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; max-width: calc(100% + var(--meta-lead)); min-height: 28px; margin-left: calc(-1 * var(--meta-lead)); clip-path: inset(-12px -12px -12px var(--meta-lead)); font-size: calc(12.5px * var(--font-scale, 1)); line-height: var(--lh-meta); color: var(--faint); }
-.meta-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+/* One dot before every cell but the first. The line is pulled left by one dot + gap and clipped there (the first cell pads that
+   back), so a cell that wraps to the start of a new line has its dot cut off: a line never starts with "·". */
+.turn-meta { --meta-lead: 11px; display: flex; flex-wrap: wrap; align-items: center; column-gap: 7px; max-width: calc(100% + var(--meta-lead)); min-height: 28px; margin-left: calc(-1 * var(--meta-lead)); clip-path: inset(-12px -12px -12px var(--meta-lead)); font-size: calc(12.5px * var(--font-scale, 1)); line-height: var(--lh-meta); color: var(--faint); }
+.meta-cell { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; }
 .meta-sep { flex-shrink: 0; width: 4px; text-align: center; color: var(--faint); }
+.meta-cell:first-child { padding-left: var(--meta-lead); }
 .meta-model, .meta-text { white-space: nowrap; }
-.meta-item { position: relative; display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; min-height: 28px; padding: 0 2px; border: 0; border-radius: var(--r-xs); background: none; color: inherit; font: inherit; cursor: pointer; user-select: none; transition: color var(--t-fast) var(--ease); }
+.meta-item { position: relative; display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; min-height: 28px; padding: 0 2px; border: 0; border-radius: var(--r-xs); background: none; color: inherit; font: inherit; cursor: pointer; user-select: none; transition: color var(--t-fast) var(--ease); }
 .meta-item:hover, .meta-item[aria-expanded="true"] { color: var(--fg); }
-.meta-item .tool-caret { font-size: calc(12px * var(--font-scale, 1)); transition: transform .15s ease; }
+.tool-caret.chev { flex-shrink: 0; color: var(--faint); transition: transform .15s ease; }
 .meta-item[aria-expanded="true"] > .tool-caret { transform: rotate(90deg); }
 .meta-item .tool-state { font-size: inherit; }
 .meta-item .tool-state.running { color: var(--accent); }
@@ -879,6 +881,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .meta-item.notice.stopped .meta-mark { color: var(--warn); }
 .turn-meta > .msg-actions { margin-left: var(--s1); }
 .turn-meta > .msg-actions:first-child { margin-left: var(--meta-lead); }
+.turn-meta .acct-text { white-space: nowrap; }
 .meta-panel { align-self: stretch; min-width: 0; }
 .meta-panel[hidden], .tb-detail[hidden] { display: none; }
 .roles-panel { padding-left: 3px; }
@@ -1200,19 +1203,31 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .bg-pop-foot { display: flex; justify-content: flex-end; padding: 6px 4px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
 .bg-stop-all { height: 28px; font-size: calc(13px * var(--font-scale, 1)); color: var(--danger); }
 
-.agent-card { margin: 6px 0; padding: 8px 12px 8px; border-radius: var(--radius); background: var(--pill-bg, var(--bg-raised)); box-shadow: inset 0 0 0 1px var(--line); max-width: 100%; }
-.agent-card.running { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, var(--line)); }
+/* Subagent: a running one is a card that stands out (accent ring, live calls); a finished one shrinks to one quiet line
+   "✓ executor 작업 · 0:04 · 완료 · 결과 ›". Two or more in a row share one .agent-group rail instead of stacking boxes. */
+.agent-card { margin: 6px 0; padding: 8px 12px; border-radius: var(--radius); background: var(--pill-bg, var(--bg-raised)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, var(--line)); max-width: 100%; }
+.agent-card:not(.running) { margin: 0; padding: 0; border-radius: 0; background: none; box-shadow: none; }
 .agent-head { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: calc(13.5px * var(--font-scale, 1)); }
+.agent-card:not(.running) > .agent-head { gap: 6px; min-height: 28px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
 .agent-head .spark { font-size: calc(14px * var(--font-scale, 1)); }
 .agent-mark { flex-shrink: 0; width: 14px; text-align: center; font-weight: 700; color: var(--muted); }
 .agent-mark.ok { color: var(--ok); }
 .agent-mark.err { color: var(--danger); }
 .agent-type { flex-shrink: 0; padding: 0 7px; border-radius: 999px; font-size: calc(12px * var(--font-scale, 1)); line-height: 20px; color: var(--fg); background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); }
+.agent-card:not(.running) .agent-type { padding: 0; background: none; box-shadow: none; font-size: inherit; line-height: inherit; color: var(--faint); }
 .agent-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.agent-card:not(.running) .agent-desc { flex: 0 1 auto; color: var(--muted); }
 .agent-badge { flex-shrink: 0; font-size: calc(11.5px * var(--font-scale, 1)); color: var(--accent); }
 .agent-meta { display: inline-flex; gap: 8px; flex-shrink: 0; font-size: calc(12.5px * var(--font-scale, 1)); color: var(--muted); font-variant-numeric: tabular-nums; }
+.agent-card:not(.running) .agent-meta { display: contents; color: var(--faint); }
+.agent-card:not(.running) .agent-meta > span { color: var(--faint); font-size: calc(12.5px * var(--font-scale, 1)); font-variant-numeric: tabular-nums; }
+.agent-card:not(.running) .agent-meta > .agent-status.failed { color: var(--danger); }
+.agent-card:not(.running) .agent-meta > span::before, .agent-card:not(.running) .agent-open::before { content: "·"; margin-right: 6px; color: var(--faint); }
+.agent-card:not(.running) .agent-open { padding: 0; }
+.agent-card:not(.running) .agent-open::before { margin-right: 2px; }
 .agent-status.completed { color: var(--ok); }
 .agent-status.failed { color: var(--danger); }
+.agent-card:not(.running) .agent-status.completed { color: var(--faint); }
 .agent-calls { list-style: none; margin: 6px 0 0 6px; padding: 0 0 0 12px; border-left: 1px solid var(--line-strong); display: flex; flex-direction: column; gap: 1px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
 .agent-calls li { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 22px; }
 .agent-call-mark { flex-shrink: 0; width: 12px; text-align: center; font-size: calc(11.5px * var(--font-scale, 1)); color: var(--faint); }
@@ -1222,10 +1237,18 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .agent-more { font-size: calc(12.5px * var(--font-scale, 1)); color: var(--muted); padding: 0; }
 .agent-more:hover { color: var(--fg); text-decoration: underline; }
 .agent-last { margin: 4px 0 0 22px; font-size: calc(12.5px * var(--font-scale, 1)); }
-.agent-detail { margin-top: 4px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
-.agent-detail > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
-.agent-detail > summary::-webkit-details-marker { display: none; }
-.agent-detail > summary:hover { color: var(--fg); }
+.agent-open { position: relative; flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 2px; border: 0; border-radius: var(--r-xs); background: none; color: var(--muted); font: inherit; font-size: calc(12.5px * var(--font-scale, 1)); cursor: pointer; user-select: none; transition: color var(--t-fast) var(--ease); }
+.agent-card.running .agent-open { margin-left: auto; }
+.agent-open:hover, .agent-open[aria-expanded="true"] { color: var(--fg); }
+.agent-open[aria-expanded="true"] > .tool-caret { transform: rotate(90deg); }
+@media (pointer: coarse) { .agent-open::after { content: ""; position: absolute; inset: calc((28px - var(--phone-tap)) / 2) -3px; } }
+.agent-detail { margin: 2px 0 6px 6px; padding-left: 12px; border-left: 1px solid var(--line-strong); font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
+.agent-detail[hidden] { display: none; }
+.agent-detail > .agent-calls { margin: 0 0 4px; padding: 0; border-left: 0; }
+.agent-card.running > .agent-detail { margin-left: 0; }
+/* Two or more subagents in a row: one rail, rows close together; a running card inside keeps its ring. */
+.agent-group { display: flex; flex-direction: column; gap: 0; margin: 4px 0; padding-left: 10px; border-left: 1px solid var(--line-strong); }
+.agent-group > .agent-card.running { margin: 4px 0; }
 
 
 @media (max-width: 720px) {

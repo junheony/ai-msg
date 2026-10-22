@@ -26,5 +26,11 @@ export const chat = {
     defaultModel: 'default model',
     auto: 'auto',
   },
+  agent: {
+    result: 'Result',
+    prompt: 'Prompt',
+    fallback: 'Agent',
+  },
+  account: (name: string) => `Account ${name}`,
   images: (n: number) => (n === 1 ? '1 image' : `${n} images`),
 };

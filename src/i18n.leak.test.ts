@@ -106,7 +106,7 @@ const BASELINE: Record<string, number> = {
   'src/ui/App.tsx': 109,
   'src/ui/accounts.ts': 2,
   'src/ui/components/AccountPicker.tsx': 15,
-  'src/ui/components/Activity.tsx': 60,
+  'src/ui/components/Activity.tsx': 57,
   'src/ui/components/ActivityButton.tsx': 9,
   'src/ui/components/ActivitySheet.tsx': 67,
   'src/ui/components/AttachmentBar.tsx': 17,
