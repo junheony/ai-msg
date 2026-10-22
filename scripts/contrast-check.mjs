@@ -59,6 +59,9 @@ function check(name, t) {
     ["danger / bg", c("danger"), bg, 4.5],
     ["bg / warn (badge)", bg, c("warn"), 4.5],
     ["fg / bubble", c("fg"), c("bubble"), 7],
+    // Text / glyph on an --accent fill: the 전송 button arrow (graphics 3), the .tag badge and the find-in-page current hit (text 4.5).
+    ["on-accent / accent (send)", c("on-accent"), c("accent"), 3],
+    ["on-accent / accent (tag, find-hit)", c("on-accent"), c("accent"), 4.5],
     ["btn-primary", c("btn-primary-fg"), c("btn-primary-bg"), 4.5],
     // Sidebar rows: the meta / time are faint at rest (faint / sidebar above) and muted on a tinted row (hover, shown ⋯,
     // open menu, current): faint there drops under 4.5 in the light theme.

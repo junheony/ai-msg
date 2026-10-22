@@ -17,6 +17,7 @@
   --code-bg: #1e1f25;
   --code-fg: #b9bcff;
   --accent: #8b8ef6;
+  --on-accent: #0f1020;
   --accent-soft: rgba(139, 142, 246, .16);
   --brand-top: #e0e7ff; --brand-left: #8b8ef6; --brand-right: #5b5bd6;
   --link: #8fb5e9;
@@ -77,6 +78,7 @@
   --code-bg: #eceef3;
   --code-fg: #4338ca;
   --accent: #4f46e5;
+  --on-accent: #ffffff;
   --accent-soft: rgba(79, 70, 229, .1);
   --brand-top: #a5b4fc; --brand-left: #4f46e5; --brand-right: #3730a3;
   --ok: #457841;
@@ -111,6 +113,7 @@
     --code-bg: #eceef3;
     --code-fg: #4338ca;
     --accent: #4f46e5;
+    --on-accent: #ffffff;
     --accent-soft: rgba(79, 70, 229, .1);
     --brand-top: #a5b4fc; --brand-left: #4f46e5; --brand-right: #3730a3;
     --ok: #457841;
@@ -213,7 +216,7 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .menu { display: none; }
 
 /* ───────── Usage chips (header) ───────── */
-.tag { font-size: calc(9.5px * var(--font-scale, 1)); font-weight: 600; letter-spacing: .3px; padding: 1px 4px; border-radius: 4px; background: var(--accent); color: #fff; line-height: 1.3; }
+.tag { font-size: calc(9.5px * var(--font-scale, 1)); font-weight: 600; letter-spacing: .3px; padding: 1px 4px; border-radius: 4px; background: var(--accent); color: var(--on-accent); line-height: 1.3; }
 .tag.stale { background: transparent; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 55%, transparent); font-size: calc(11px * var(--font-scale, 1)); padding: 2px 6px; flex-shrink: 0; }
 
 /* ───────── Sidebar ───────── */
@@ -482,7 +485,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .pick::after { content: "⌄"; position: absolute; right: 7px; top: 50%; transform: translateY(-62%); font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); pointer-events: none; }
 .pick select option { background: var(--panel); color: var(--fg); }
 .pick.sandbox { color: var(--warn); }
-.send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: calc(15px * var(--font-scale, 1)); font-weight: 700; flex-shrink: 0; transition: transform .1s ease, filter .15s ease; }
+.send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: var(--on-accent); font-size: calc(15px * var(--font-scale, 1)); font-weight: 700; flex-shrink: 0; transition: transform .1s ease, filter .15s ease; }
 .send:hover:not(:disabled) { filter: brightness(1.08); }
 .send:active:not(:disabled) { transform: scale(.94); }
 .send:disabled { background: var(--track); color: var(--faint); opacity: 1; }
@@ -673,7 +676,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .engine-badge.codex { background: var(--engine-codex); }
 .engine-badge.gemini { background: var(--engine-gemini); }
 .engine-badge.grok { background: var(--engine-grok); }
-.engine-name { color: var(--muted); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); font-weight: 500; white-space: nowrap; }
 /* The sheet's window rows (label · bar · remaining % · reset). */
 .usage-row { display: grid; grid-template-columns: minmax(36px, max-content) minmax(0, 1fr) max-content max-content; column-gap: 0; align-items: center; height: 16px; min-width: 220px; white-space: nowrap; }
 .usage-label { margin-right: 8px; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); overflow: hidden; }
@@ -2290,7 +2292,7 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
 .find-bar .icon-btn { flex: none; }
 .find-bar .icon-btn:disabled { opacity: .4; cursor: default; }
 mark.find-hit { background: color-mix(in srgb, var(--accent) 28%, transparent); color: inherit; border-radius: 2px; }
-mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 0 1px var(--accent); }
+mark.find-hit.current { background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 1px var(--accent); }
 .touch-tip { position: fixed; z-index: 1000; transform: translate(-50%, -100%); max-width: min(260px, calc(100vw - 16px)); padding: 5px 9px; border-radius: var(--r-sm); background: var(--fg, #222); color: var(--bg, #fff); font-size: calc(12px * var(--font-scale, 1)); line-height: 1.35; box-shadow: var(--shadow); pointer-events: none; white-space: normal; }
 .touch-tip.below { transform: translate(-50%, 0); }
 
