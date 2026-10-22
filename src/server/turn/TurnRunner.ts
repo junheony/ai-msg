@@ -57,7 +57,7 @@ export type TurnSink = {
   /** The server is draining for a restart (ws): no new process is started — follow-ups an ended process did not take go back to their device (code 'draining'). */
   draining?(): boolean;
   /** 다른 AI 로 이어가기: see CrossEngineHandoff; absent = never handed over. */
-  crossEngine?(c: CrossEngineHandoff): Promise<{ excerpt: string } | null>;
+  crossEngine?(c: CrossEngineHandoff): Promise<{ excerpt: string; notice?: string } | null>;
 };
 
 export type TurnParams = {
@@ -2485,6 +2485,8 @@ export class TurnRunner {
     const notice = sm().turn.crossNotice(ROUTE_ENGINE_LABEL[from.engine], ROUTE_ENGINE_LABEL[d.engine]);
     const got = await sink.crossEngine({ from: from.sessionId, fromTurnId: p.turnId, fromEngine: from.engine, engine: d.engine, model: d.model, cwd: from.cwd, turnId: base.turnId, text, ...(attachmentIds?.length ? { attachments: attachmentIds } : {}), notice }).catch(() => null);
     if (!got) return null;
+    // ws adds what was carried over (sm().turn.crossCarried / crossNotCarried): the failed turn says the same.
+    const shown = got.notice ?? notice;
     const next: TurnParams = { ...base, ...scoped, carry: sm().turn.crossCarry(ROUTE_ENGINE_LABEL[from.engine], got.excerpt) };
     const go = async () => {
       // The new session's id, for the follow-ups that follow it (opts.then).
@@ -2513,7 +2515,7 @@ export class TurnRunner {
       }
       await opts?.then?.(sid, [...left]);
     };
-    return { notice, go };
+    return { notice: shown, go };
   }
 
   /**

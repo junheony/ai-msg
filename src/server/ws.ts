@@ -43,7 +43,7 @@ import type { PushPayload } from './push/PushNotifier';
 import { TASKS_QUEUED_MAX, TASK_CANCELED_LINE, clampTaskCap } from '../shared/tasks';
 import { setLocale, type Locale } from '../shared/locale';
 import { turnLanguage } from './turn/language';
-import { resolveServerLocale } from './i18n';
+import { resolveServerLocale, sm } from './i18n';
 
 const FORK_NOTICE = "Desktop 에서 따로 이어진 대화가 있어 갈라졌습니다 — 머리글의 '갈라짐' 메뉴에서 어느 쪽으로 맞출지 고를 수 있습니다";
 
@@ -255,7 +255,7 @@ type TurnMsg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T
  * What a device opening the session mid-turn needs besides the transcript: the latest state of each
  * task (subagent cards), the subagents' tool calls so far (bounded), and the status row's progress.
  */
-type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null; /** Steers delivered in the running segment (the transcript may lag behind them). */ steers: TurnMsg<'steer_delivered'>[]; /** The text block streaming now, as one delta (see record). */ text: TurnMsg<'delta'> | null };
+type ReplayLog = { tasks: Map<string, { msg: TurnMsg<'task_update'>; at: number }>; subs: (TurnMsg<'sub_tool_call'> | TurnMsg<'sub_tool_result'>)[]; progress: TurnMsg<'turn_progress'> | null; /** Steers delivered in the running segment (the transcript may lag behind them). */ steers: TurnMsg<'steer_delivered'>[]; /** The text block streaming now, as one delta (see record). */ text: TurnMsg<'delta'> | null; /** 다른 AI 로 이어가기: the turn's session_handoff messages in order — a device that comes back to an old session follows them. */ handoffs: Extract<ServerMessage, { type: 'session_handoff' }>[] };
 const MAX_REPLAY_SUBS = 500;
 /**
  * Catch-up: how much of a running process's event stream is kept for devices that come back (`open_session.after`).
@@ -266,7 +266,7 @@ export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
 /** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
 export const CATCHUP_IDLE_MS = 10 * 60_000;
 
-type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number; /** Told the device it is going in (pendingRefs): run even if that socket closed. */ held?: true }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null; /** ⚡ 빠르게: the process was started with fast mode (TurnRunner.fastTurn) — a send asking otherwise never joins it. */ fast: boolean; /** 다른 AI 로 이어가기: the session this turn moved away from (sends to it follow the turn). */ crossFrom?: string | null; /** …until the old turn `fromTurnId`'s result is out (the turn keeps the old session meanwhile). */ crossing?: { fromTurnId: string; from: string | null } };
+type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number; /** Told the device it is going in (pendingRefs): run even if that socket closed. */ held?: true }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null; /** ⚡ 빠르게: the process was started with fast mode (TurnRunner.fastTurn) — a send asking otherwise never joins it. */ fast: boolean; /** 다른 AI 로 이어가기: the sessions this turn moved away from, in order (Claude → GPT → Gemini: both; sends to any follow the turn). */ crossFrom?: string[]; /** …until the old turn `fromTurnId`'s result is out (the turn keeps the old session meanwhile). */ crossing?: { fromTurnId: string; from: string | null } };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -766,11 +766,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false, retryHop?: number, commanderHop?: number, commanderNote?: string) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
     // 다른 AI 로 이어가기: a send to a session a running turn moved away from goes to the new session — queued on that
-    // turn until the new session has an id.
+    // turn until the new session has an id and is between turns (the new engine running: it waits, never refused as busy).
     const moved = sent.sessionId && !sent.handoff && commanderHop === undefined ? crossedTo.get(sent.sessionId) : undefined;
     if (moved && turns.get(moved.turnId) !== moved) crossedTo.delete(sent.sessionId!);
     else if (moved) {
-      if (moved.sessionId && moved.sessionId !== sent.sessionId && !moved.crossing) { startTurn(ws, { ...sent, sessionId: moved.sessionId }, checked, retryHop); return; }
+      if (moved.sessionId && moved.sessionId !== sent.sessionId && !moved.crossing && moved.current === null) { startTurn(ws, { ...sent, sessionId: moved.sessionId }, checked, retryHop); return; }
       moved.afterRelease.push({ ws, msg: sent, ...(retryHop ? { retryHop } : {}) });
       return;
     }
@@ -918,7 +918,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const turnId = commanderHop ? `${randomUUID()}:cmd${commanderHop}` : randomUUID();
     markConcise(turnId, msg);
     const ac = new AbortController();
-    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, ...(msg.sessionId === null && msg.title ? { title: msg.title } : {}), afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null, fast: fastSend(msg) && !retryHop && commanderHop === undefined };
+    const turn: Turn = { turnId, sessionId: msg.sessionId, cwd: msg.cwd, origin: ws, watchers: new Set(), ac, current: turnId, since: Date.now(), bg: null, log: { tasks: new Map(), subs: [], progress: null, steers: [], text: null, handoffs: [] }, fresh: msg.sessionId === null, handoffFrom: msg.sessionId === null && isPinnableId(msg.handoffFrom) ? msg.handoffFrom : null, branch: null, ...(msg.sessionId === null && msg.title ? { title: msg.title } : {}), afterRelease: [], pendingRefs: new Set(msg.clientRef ? [msg.clientRef] : []), outside: null, recycling: false, seq: 0, stream: [], streamBytes: 0, streamIdle: null, fast: fastSend(msg) && !retryHop && commanderHop === undefined };
     prompts.set(turnId, promptOf(msg));
     // Taken synchronously, before any await, so two sends in one tick cannot both pass.
     busy.set(msg.sessionId ?? `new:${turnId}`, turnId);
@@ -934,9 +934,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       broadcastActivity();
       // 다른 AI 로 이어가기: sends to the old session that waited for this turn go to the new one (when it got an id).
       if (turn.crossFrom) {
-        if (crossedTo.get(turn.crossFrom) === turn) crossedTo.delete(turn.crossFrom);
+        const left = turn.crossFrom;
+        for (const f of left) if (crossedTo.get(f) === turn) crossedTo.delete(f);
         const to = turn.sessionId;
-        if (to) for (const d of turn.afterRelease) if (d.msg.sessionId === turn.crossFrom) d.msg = { ...d.msg, sessionId: to };
+        if (to) for (const d of turn.afterRelease) if (d.msg.sessionId && left.includes(d.msg.sessionId)) d.msg = { ...d.msg, sessionId: to };
       }
       // Sends that arrived while the process was closing after its result (a closed socket's send is dropped — but not one
       // that waited because deck itself ended the process). Each goes where a send would go now: the first starts the
@@ -1064,20 +1065,23 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         const excerpt = await crossExcerpt(c.from, c.fromEngine, c.text);
         if (turns.get(turnId) !== turn || ac.signal.aborted) return null;
         const prompt = promptOf({ text: c.text, ...(c.attachments ? { attachments: c.attachments } : {}) });
+        // The notice says what the new session got of the old conversation.
+        const notice = `${c.notice} · ${excerpt.trim() ? sm().turn.crossCarried : sm().turn.crossNotCarried}`;
         prompts.set(c.turnId, prompt);
         aliases.set(c.turnId, turnId);
         // The old turn's result no longer ends this turn (current), nor starts the sends waiting for it.
         turn.current = c.turnId;
         turn.since = Date.now();
         turn.crossing = { fromTurnId: c.fromTurnId, from: c.from };
-        turn.crossFrom = c.from;
+        turn.crossFrom = [...(turn.crossFrom ?? []), ...(c.from ? [c.from] : [])];
         if (c.from) crossedTo.set(c.from, turn);
         // Every device showing the old session moves with it (and gets the new turn's events).
-        const out: ServerMessage = { type: 'session_handoff', from: c.from, fromTurnId: c.fromTurnId, cwd: c.cwd, engine: c.engine, model: c.model, turnId: c.turnId, prompt, notice: c.notice };
+        const out: ServerMessage = { type: 'session_handoff', from: c.from, fromTurnId: c.fromTurnId, cwd: c.cwd, engine: c.engine, model: c.model, turnId: c.turnId, prompt, notice };
         const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
         if (c.from) for (const [s, v] of viewing) if (v.has(c.from)) to.add(s);
         for (const s of to) { if (s !== turn.origin && s !== NO_DEVICE) turn.watchers.add(s); send(s, out); }
-        return { excerpt };
+        if (out.type === 'session_handoff') turn.log.handoffs.push(out);
+        return { excerpt, notice };
       },
       askPermission: (req) => {
         const sessionLabel = sessionAllowLabel(req);
@@ -1350,6 +1354,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     } else if (engine === 'grok' && st && isGrokState(st) && deps.grokHome) {
       const dir = await findGrokSessionDir(deps.grokHome, st.grokSessionId ?? from).catch(() => null);
       if (dir) msgs = await readGrokTranscriptTail(path.join(dir, 'chat_history.jsonl')).catch(() => []);
+    } else if (engine === 'gemini') {
+      // No agy transcript reader: its conversation list (conversation_summaries.db, through the index) has the title and
+      // a preview — that summary is what goes over. The preview of a one-turn conversation is the failed message itself.
+      const e = deps.index.lookup(from);
+      const summary = [e?.title, e?.preview].map((t) => t?.trim()).filter((t): t is string => !!t && t !== text.trim());
+      msgs = [...new Set(summary)].map((t) => ({ kind: 'user', text: t }) as TranscriptMessage);
     }
     const last = msgs.findLastIndex((m) => m.kind === 'user');
     if (last >= 0 && (msgs[last] as { text: string }).text.trim() === text.trim()) msgs = msgs.slice(0, last);
@@ -1399,6 +1409,16 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     send(ws, { type: 'catchup', sessionId, ...claude, ...(sandbox ? { sandbox } : {}), ...runningOf(sessionId) });
     for (const e of tail) ws.send(e.data);
     return true;
+  };
+  /**
+   * 다른 AI 로 이어가기: a device opening a session a running turn moved away from (it was offline at the handover, or
+   * reloaded) gets that turn's session_handoff messages again, in order, and the turn's events from here — it follows.
+   */
+  const followHandoffs = (ws: WebSocket, sessionId: string) => {
+    const t = crossedTo.get(sessionId);
+    if (!t || turns.get(t.turnId) !== t) return;
+    if (ws !== t.origin) t.watchers.add(ws);
+    for (const h of t.log.handoffs) send(ws, h);
   };
   const openSession = (ws: WebSocket, sessionId: string) => {
     void (async () => {
@@ -1609,6 +1629,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (msg.accepts?.includes('turn_queued')) queuedAware.add(ws);
           syncHolders();
           if (!(msg.after && catchUp(ws, msg.sessionId, msg.after))) openSession(ws, msg.sessionId);
+          followHandoffs(ws, msg.sessionId);
           break;
         case 'close_session':
           viewing.get(ws)?.delete(msg.sessionId);
