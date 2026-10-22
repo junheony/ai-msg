@@ -186,6 +186,7 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .pane-notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .composer-note { align-items: center; flex-wrap: wrap; row-gap: 6px; }
 .composer-note .btn { flex-shrink: 0; height: 28px; background: var(--bg-raised); }
+.composer-note .pane-notice-text { flex: 1 1 200px; }
 .pane-notice-close { flex-shrink: 0; width: 24px; height: 24px; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
 .pane-notice-close:hover { background: var(--hover); color: var(--fg); }
 .update-pill { display: block; width: 100%; background: var(--accent-soft, var(--bg-raised)); color: var(--accent, var(--text)); border: 0; border-bottom: 1px solid var(--line); padding: 5px 14px; font-size: calc(13px * var(--font-scale, 1)); cursor: pointer; text-align: center; }
