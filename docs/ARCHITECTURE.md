@@ -67,7 +67,7 @@ The server does not own conversations. Transcripts stay in the CLIs' own files:
 | Codex rollouts | `$CODEX_HOME/sessions/…` | Codex CLI (read-only for deck) |
 | Claude Desktop session records | macOS app support directory | Claude Desktop (read-only; titles and recency) |
 | Per-session account, model, pin, permission mode | `session-state.json` | deck |
-| Titles, archive flags, sidebar pins | `session-meta.json`, `pins.json` | deck |
+| Titles, archive flags, sidebar pins, chosen session icons | `session-meta.json`, `pins.json`, `session-icons.json` | deck |
 | 하이라이트 events (what push would announce, restart cuts, server start/drain; `GET /api/highlights`) | `events.jsonl` | deck (append-only; lines older than 7 days dropped at start) |
 | Fork backups, trash | `<profile>/session-backups/`, `<profile>/session-trash/` | deck (pruned after `DECK_BACKUP_RETENTION_DAYS`) |
 

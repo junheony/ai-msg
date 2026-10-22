@@ -643,7 +643,9 @@ describe('ws', () => {
     await pins.set('pinned-1', true);
     await sessionIcons.set('pinned-1', '🚀');
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
-    expect((await collect(ws, (m) => m.type === 'hello')).at(-1)).toMatchObject({ type: 'hello', pins: ['pinned-1'], sessionIcons: { 'pinned-1': '🚀' } });
+    const hello = (await collect(ws, (m) => m.type === 'hello')).at(-1);
+    expect(hello).toMatchObject({ type: 'hello', pins: ['pinned-1'], sessionIcons: { 'pinned-1': '🚀' } });
+    expect(hello?.type === 'hello' && hello.features).toContain('sessionIcons'); // a server with the store says so
     await pins.set('pinned-1', false);
     await sessionIcons.set('pinned-1', null);
     const p = collect(ws, (m) => m.type === 'index');

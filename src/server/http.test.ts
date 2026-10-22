@@ -14,6 +14,7 @@ import { MemoryStore } from './memory/MemoryStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageService } from './usage/UsageService';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
+import { sm } from './i18n';
 
 const TOKEN = 'e'.repeat(64);
 let base = '';
@@ -457,10 +458,11 @@ describe('POST /api/session-icon', () => {
     const roots = { a: path.join(dir, 'a'), b: path.join(dir, 'b'), c: path.join(dir, 'c') };
     const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(dir, 'p.json') });
     await idx.refresh();
-    icons = new SessionIconStore(path.join(dir, 'session-icons.json'));
+    icons = new SessionIconStore(path.join(dir, 'session-icons.json'), 2);
     await icons.load();
     const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
-    srv = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index: idx, sessionIcons: icons, onIndexChanged: () => { changed++; } }));
+    const trash = { trashSession: async () => ({ ok: true as const, trashId: 'tr1' }), restoreSession: async () => ({ ok: true as const }) } as unknown as Parameters<typeof createRequestHandler>[0]['trash'];
+    srv = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index: idx, sessionIcons: icons, trash, onIndexChanged: () => { changed++; } }));
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
   });
@@ -495,6 +497,29 @@ describe('POST /api/session-icon', () => {
     expect(changed).toBe(before + 3);
     await post(JSON.stringify({ sessionId: ID, icon: null }));
     expect(changed).toBe(before + 3); // unchanged: not broadcast
+  });
+
+  it('at the cap: a new entry is refused with 409 and a localized error; replacing or clearing one still works', async () => {
+    const ID2 = '22222222-2222-4222-8222-222222222222';
+    const ID3 = '33333333-3333-4333-8333-333333333333';
+    await post(JSON.stringify({ sessionId: ID, icon: '🚀' }));
+    await post(JSON.stringify({ sessionId: ID2, icon: '🐛' }));
+    const full = await post(JSON.stringify({ sessionId: ID3, icon: '🎨' }));
+    expect(full.status).toBe(409);
+    expect(((await full.json()) as { error: string }).error).toBe(sm().api.sessionIconsFull(2));
+    expect(icons.list()).toEqual({ [ID]: '🚀', [ID2]: '🐛' });
+    expect((await post(JSON.stringify({ sessionId: ID2, icon: '🎨' }))).status).toBe(200);
+    expect((await post(JSON.stringify({ sessionId: ID2, icon: null }))).status).toBe(200);
+    expect((await post(JSON.stringify({ sessionId: ID3, icon: '🎨' }))).status).toBe(200);
+  });
+
+  it('trashing a session drops its icon; others stay', async () => {
+    const ID3 = '33333333-3333-4333-8333-333333333333';
+    expect(icons.list()).toEqual({ [ID]: '🚀', [ID3]: '🎨' });
+    const r = await fetch(`${base}/api/session-trash`, { method: 'POST', headers: { cookie: cookie(), origin: base }, body: JSON.stringify({ sessionId: ID }) });
+    expect(r.status).toBe(200);
+    expect(icons.list()).toEqual({ [ID3]: '🎨' });
+    expect(JSON.parse(await fs.readFile(path.join(dir, 'session-icons.json'), 'utf8'))).toEqual({ [ID3]: '🎨' });
   });
 });
 

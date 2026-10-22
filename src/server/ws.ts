@@ -1363,7 +1363,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
   /** hello.features: 'commander' only while the settings turn it on; 'grok' only with a grok binary. */
   const grokStatusNow = (): GrokStatus | undefined => (typeof deps.grokStatus === 'function' ? deps.grokStatus() : deps.grokStatus);
-  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true) && (f !== 'tasks' || !!deps.tasks) && (f !== 'setup' || !!deps.setup));
+  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true) && (f !== 'tasks' || !!deps.tasks) && (f !== 'setup' || !!deps.setup) && (f !== 'sessionIcons' || !!deps.sessionIcons));
   const runningOf = (sid: string) => {
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;

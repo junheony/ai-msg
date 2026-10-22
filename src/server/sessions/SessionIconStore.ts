@@ -5,6 +5,11 @@ import { isPinnableId } from './PinStore';
 
 export const MAX_SESSION_ICONS = 2000;
 
+/** `set` of a new entry when the store already holds `max`: nothing changed (HTTP answers 409). */
+export class SessionIconsFullError extends Error {
+  constructor(readonly max: number) { super(`session icons full (${max})`); }
+}
+
 /**
  * 직접 고른 세션 아이콘 (`session-icons.json`): session id → icon (an allowed emoji or `glyph:<name>`), shared by every
  * device like the pins. A session without an entry shows its title's first letter.
@@ -41,13 +46,13 @@ export class SessionIconStore {
     return this.icons;
   }
 
-  /** `icon` null = back to the first letter. Returns the whole map. */
+  /** `icon` null = back to the first letter. Returns the whole map; throws SessionIconsFullError at the cap. */
   async set(sessionId: string, icon: string | null): Promise<Record<string, string>> {
     if ((this.icons[sessionId] ?? null) === icon) return this.icons;
     const rest = { ...this.icons };
     delete rest[sessionId];
     if (icon === null) return this.commit(rest);
-    if (Object.keys(rest).length >= this.max) return this.icons;
+    if (Object.keys(rest).length >= this.max) throw new SessionIconsFullError(this.max);
     return this.commit({ ...rest, [sessionId]: icon });
   }
 

@@ -12,7 +12,7 @@ import { FileReadError, type FileLister } from './files';
 import type { PushNotifier } from './push/PushNotifier';
 import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
 import { MAX_PINS, isPinnableId, type PinStore } from './sessions/PinStore';
-import type { SessionIconStore } from './sessions/SessionIconStore';
+import { SessionIconsFullError, type SessionIconStore } from './sessions/SessionIconStore';
 import { isSessionIconChoice } from '../shared/sessionIcons';
 import { sm } from './i18n';
 import { MemoryTooLarge, type MemoryStore } from './memory/MemoryStore';
@@ -426,7 +426,13 @@ export function createRequestHandler(deps: HttpDeps) {
           try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
           if (!body || !isPinnableId(body.sessionId) || (body.icon !== null && !isSessionIconChoice(body.icon))) { json(res, 400, { error: sm().api.badSessionIcon }); return; }
           const before = deps.sessionIcons.list();
-          const icons = await deps.sessionIcons.set(body.sessionId, body.icon);
+          let icons: Record<string, string>;
+        try {
+          icons = await deps.sessionIcons.set(body.sessionId, body.icon);
+        } catch (err) {
+          if (err instanceof SessionIconsFullError) { json(res, 409, { error: sm().api.sessionIconsFull(err.max) }); return; }
+          throw err;
+        }
           if (icons !== before) deps.onIndexChanged?.();
           json(res, 200, { sessionIcons: icons });
           return;
@@ -484,6 +490,8 @@ export function createRequestHandler(deps: HttpDeps) {
           if (!body || (restore ? !isTrashId(body.trashId) : !isPinnableId(body.sessionId))) { json(res, 400, { error: '잘못된 삭제 요청입니다' }); return; }
           const r = restore ? await deps.trash.restoreSession(body.trashId as string) : await deps.trash.trashSession(body.sessionId as string);
           if (!r.ok) { json(res, 409, { error: r.error }); return; }
+          // A trashed session's chosen icon goes with it (a restore comes back with the first letter).
+          if (!restore) await deps.sessionIcons?.set(body.sessionId as string, null).catch(() => {});
           await deps.index.refresh();
           deps.onIndexChanged?.();
           json(res, 200, r);
