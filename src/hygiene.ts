@@ -4,11 +4,15 @@ import path from 'node:path';
 
 /**
  * Repository hygiene check (src/hygiene.test.ts): no file that ships may hold anything key-shaped, nor match
- * the rules of an optional local rules file (`.hygiene-private.json`: `[{ name, pattern, flags?, allow? }]`,
+ * the rules of an optional local rules file (`.hygiene-private.json`: `[{ name, pattern, flags?, allow?, skipFiles? }]`,
  * JavaScript regular expressions) — the place for values specific to one checkout. Rules apply to file
  * contents and to file names.
  */
-export type Rule = { name: string; pattern: RegExp; /** A match is fine when this matches the matched text. */ allow?: RegExp };
+export type Rule = {
+  name: string; pattern: RegExp;
+  /** A match is fine when this matches the matched text. */ allow?: RegExp;
+  /** Files (repo-relative paths) this rule does not apply to — e.g. generated third-party license text. Every other rule still does. */ skipFiles?: string[];
+};
 
 export const RULES_FILE = '.hygiene-private.json';
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git']);
@@ -30,18 +34,18 @@ export const GENERIC_RULES: Rule[] = [
 export function loadRules(file: string): Rule[] {
   let text: string;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
-  const raw = JSON.parse(text) as Array<{ name: string; pattern: string; flags?: string; allow?: string }>;
+  const raw = JSON.parse(text) as Array<{ name: string; pattern: string; flags?: string; allow?: string; skipFiles?: string[] }>;
   return raw.map((r) => {
     const flags = r.flags ?? '';
-    return { name: r.name, pattern: new RegExp(r.pattern, flags.includes('g') ? flags : `${flags}g`), ...(r.allow ? { allow: new RegExp(r.allow, 'i') } : {}) };
+    return { name: r.name, pattern: new RegExp(r.pattern, flags.includes('g') ? flags : `${flags}g`), ...(r.allow ? { allow: new RegExp(r.allow, 'i') } : {}), ...(r.skipFiles ? { skipFiles: r.skipFiles } : {}) };
   });
 }
 
 /** Names of the rules `text` breaks (one entry per match). Compared in NFC, so either spelling of a name is caught. */
-export function violations(text: string, rules: Rule[]): string[] {
+export function violations(text: string, rules: Rule[], file?: string): string[] {
   const out: string[] = [];
   const s = text.normalize('NFC');
-  for (const r of rules) for (const m of s.matchAll(r.pattern)) if (!r.allow?.test(m[0])) out.push(r.name);
+  for (const r of rules) if (!(file !== undefined && r.skipFiles?.includes(file))) for (const m of s.matchAll(r.pattern)) if (!r.allow?.test(m[0])) out.push(r.name);
   return out;
 }
 
@@ -82,7 +86,7 @@ export function scan(root: string, files: string[], rules: Rule[]): string[] {
     if (BINARY.test(f)) continue;
     let text: string;
     try { text = fs.readFileSync(path.join(root, f), 'utf8'); } catch { continue; } // deleted in the work tree, or not a regular file
-    text.split('\n').forEach((line, i) => { for (const name of violations(line, rules)) out.push(`${f}:${i + 1} ${name}`); });
+    text.split('\n').forEach((line, i) => { for (const name of violations(line, rules, f)) out.push(`${f}:${i + 1} ${name}`); });
   }
   return out;
 }

@@ -48,7 +48,10 @@
     "name": "personal mail",
     "pattern": "[A-Za-z0-9._%+-]+@(?:gmail|googlemail|naver|daum|hanmail|kakao|nate|icloud|me|mac|outlook|hotmail|live|yahoo|proton|protonmail|pm)\\.(?:com|net|me|co\\.kr)",
     "flags": "gi",
-    "allow": "^hwangmc88@gmail\\.com$"
+    "allow": "^hwangmc88@gmail\\.com$",
+    "skipFiles": [
+      "THIRD_PARTY_NOTICES.md"
+    ]
   },
   {
     "name": "account name outside the public repo slug",

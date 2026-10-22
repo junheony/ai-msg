@@ -74,4 +74,15 @@ describe('private hygiene rules', () => {
   ])('leaves %s alone', (_what, text) => {
     expect(hit(text)).toEqual([]);
   });
+
+  it('skipFiles: the personal-mail rule is skipped in the listed file only; every other rule still catches there', () => {
+    const skipped = RULES.find((r) => r.name === 'personal mail')?.skipFiles;
+    expect(skipped).toEqual(['THIRD_PARTY_NOTICES.md']);
+    const mail = 'Copyright (c) someone@gmail.com';
+    expect(violations(mail, RULES, 'THIRD_PARTY_NOTICES.md')).toEqual([]);
+    expect(violations(mail, RULES, 'README.md')).toContain('personal mail');
+    expect(violations(mail, RULES)).toContain('personal mail');
+    expect(violations('/Users/max/dev', RULES, 'THIRD_PARTY_NOTICES.md')).toContain('home path');
+    expect(violations('StandX_volume', RULES, 'THIRD_PARTY_NOTICES.md')).toContain('personal project');
+  });
 });

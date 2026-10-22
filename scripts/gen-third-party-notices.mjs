@@ -75,8 +75,7 @@ const uiRows = walk(uiRoots()).filter((r) => !serverKeys.has(`${r.name}@${r.vers
 /** The LICENSE file text shipped inside a package ('' when it has none). */
 const licenseText = (r) => {
   const f = readdirSync(r.dir).find((n) => /^(licen[sc]e|copying)(\.(md|txt))?$/i.test(n));
-  // Contact addresses in copyright lines are left out (the notice itself is unchanged).
-  return f ? readFileSync(join(r.dir, f), 'utf8').replace(/[ \t]*[<(]?[\w.+-]+@[\w-]+(?:\.[\w-]+)+[>)]?/g, '').trim() : '';
+  return f ? readFileSync(join(r.dir, f), 'utf8').trim() : '';
 };
 const table = (list) => list.map((r) => `| ${r.name} | ${r.version} | ${r.license} | ${r.repo} |`).join('\n');
 const nonPermissive = [...rows, ...uiRows].filter((r) => !/^\(?(MIT|ISC|BSD-[23]-Clause|Apache-2\.0|0BSD)\)?$/.test(r.license));
