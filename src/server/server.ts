@@ -35,7 +35,7 @@ import { ServerUpdateWatch, startSupervisor, supervisionCheck } from './serverUp
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
 import { EventLog } from './highlights';
 import { BottleneckWatch, type RetryRequest } from './push/BottleneckWatch';
-import { bookRestartResumes, cutSessions, readActivitySnapshot, readResumed, writeResumed } from './push/restartResume';
+import { bookRestartResumes, cutSessions, readActivitySnapshot, readResumed, takeCutSnapshot, writeCutSnapshot, writeResumed } from './push/restartResume';
 import { PushNotifier } from './push/PushNotifier';
 import { TaskRegistry } from './tasks/TaskRegistry';
 import { readAllCooldownsMs } from './routing/cooldown';
@@ -363,6 +363,9 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // 재시작으로 끊긴 세션 자동 이어가기: what the last server left, read before this one writes anything over it.
     const activityFile = path.join(cfg.configDir, 'activity.json');
     const lastActivity = await readActivitySnapshot(activityFile);
+    // What a forced (or timed-out) shutdown of the last server was about to abort — read once, then gone.
+    const cutFile = path.join(cfg.configDir, 'restart-cut.json');
+    const lastCut = await takeCutSnapshot(cutFile);
     // By session, when a restart last sent it on (the repeat guard): a send of the user's clears its entry.
     const resumedFile = path.join(cfg.configDir, 'restart-resumed.json');
     const resumed = await readResumed(resumedFile, Date.now());
@@ -387,7 +390,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     await (async () => {
       const now = Date.now();
       const r = await bookRestartResumes({
-        cut: cutSessions({ activity: lastActivity, events: events.query(0), states: store.list(), pid: process.pid, now }),
+        cut: cutSessions({ activity: lastActivity, cut: lastCut, events: events.query(0), states: store.list(), pid: process.pid, now }),
         store,
         enabled: settings.get().autoResume,
         exists: (st) => isOtherEngineState(st) || index.lookup(st.sessionId) !== null,
@@ -425,7 +428,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       // The lock goes last: a new server may take the config dir only once this one has written everything.
       void flushThenExit(() => Promise.all([events.flush(), claude.close(), grokBilling?.stop() ?? Promise.resolve()]).then(() => {}), () => { lock.release(); process.exit(0); });
     };
-    restartCtl = installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기') });
+    restartCtl = installGracefulShutdown(process, ws, { maxMs: cfg.drainMaxMs, log: (m) => console.log(m), exit: shutdown, onDrain: () => events.recordServer('재시작 대기'), onCut: () => writeCutSnapshot(cutFile, ws.cutSessions()) });
     o.onListening?.({ port, addresses, tokenFile: cfg.tokenFile, tokenCreated, lockFile: lock.file });
   } catch (err) {
     // Whatever started is stopped in reverse order, so nothing keeps the process alive after the error.

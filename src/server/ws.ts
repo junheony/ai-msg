@@ -287,6 +287,8 @@ export type WsHandle = {
   activeTurns(): number;
   /** Ends every running turn (drain deadline). */
   abortAll(): void;
+  /** Sessions with a turn streaming or background work held open, with the task names (restart-cut.json). */
+  cutSessions(): { sessionId: string; tasks: string[] }[];
   /**
    * An automatic retry (BottleneckWatch, SessionState.pendingRetry): `text` sent to the session as a device's send would
    * be (busy, follow-up and draining rules alike — not reported as the user's send), from no device. `hop` rides the turn
@@ -1917,6 +1919,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // Marked as the server's: those turns end with SHUTDOWN_ABORTED, which the UI shows (a user's stop it hides).
       for (const t of turns.values()) t.ac.abort(SHUTDOWN_ABORT);
     },
+    cutSessions: () => shownTurns().map((t) => ({ sessionId: t.sessionId, tasks: [...(t.bg?.msg.tasks ?? [])] })),
     close() {
       unsubscribeUsage();
       if (outsideTimer) clearInterval(outsideTimer);

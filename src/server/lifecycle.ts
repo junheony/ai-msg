@@ -6,7 +6,7 @@
  * waits until they all end; with a finite `maxMs` whatever is left at the deadline is aborted
  * (SHUTDOWN_ABORT: the pane says so and the session's next turn tells the model). Then the process
  * exits so the supervisor (launchd KeepAlive) starts it again. A second signal, or SIGINT, skips the
- * wait — the way to force a restart.
+ * wait — the way to force a restart: what runs is aborted and given settleMs to record its cut; a third signal exits at once.
  */
 
 export type DrainTarget = {
@@ -19,14 +19,24 @@ export type DrainOptions = {
   /** Infinity: no deadline — wait until no turn is left. */
   maxMs: number;
   pollMs?: number;
-  /** After the abort at the deadline: how long aborted turns get to report their end. */
+  /** After an abort (the deadline, a repeated signal, SIGINT): how long aborted turns get to report their end. */
   settleMs?: number;
+  /**
+   * Right before an abort (the deadline, a repeated signal, SIGINT): a synchronous record of what is about to be cut
+   * (restart-cut.json), so the next server knows even if the traces the aborted turns write never land. A throw is logged.
+   */
+  onCut?: () => void;
   log?: (msg: string) => void;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 };
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const cut = (o: DrainOptions, log: (msg: string) => void) => {
+  try { o.onCut?.(); } catch (err) { log(`deck: restart-cut snapshot failed — ${errText(err)}`); }
+};
 
 /** Drains `target`; resolves 'drained' when no turn is left, 'timeout' when a finite deadline aborted the rest. */
 export async function drain(target: DrainTarget, o: DrainOptions): Promise<'drained' | 'timeout'> {
@@ -45,6 +55,7 @@ export async function drain(target: DrainTarget, o: DrainOptions): Promise<'drai
     await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
   }
   log(`deck: 재시작 대기 시간(${Math.round(o.maxMs / 60_000)}분) 초과 — 남은 턴 ${target.activeTurns()}개를 중단합니다`);
+  cut(o, log);
   target.abortAll();
   const settleUntil = now() + (o.settleMs ?? 3000);
   while (target.activeTurns() > 0 && now() < settleUntil) await sleep(Math.min(pollMs, 100));
@@ -72,16 +83,30 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
   let exited = false;
   const log = o.log ?? (() => {});
   const exit = (reason: string) => { if (exited) return; exited = true; o.exit(reason); };
+  /** Set once an abort-now has started: a further signal while its turns settle exits at once. */
+  let settling = false;
+  // Aborted turns write their traces (events.jsonl 'interrupted', SessionState.interrupted) as they end: they get up to
+  // settleMs for it, like the deadline path, before `exit` (which flushes the event log).
   const now = (sig: string) => {
+    if (settling) { exit(sig); return; }
+    settling = true;
     log(`deck: ${sig} — 기다리지 않고 종료합니다`);
     target.drain();
+    cut(o, log);
     target.abortAll();
-    exit(sig);
+    if (target.activeTurns() === 0) { exit(sig); return; }
+    const sleep = o.sleep ?? defaultSleep;
+    const clock = o.now ?? (() => Date.now());
+    const settleUntil = clock() + (o.settleMs ?? 3000);
+    const pollMs = Math.min(o.pollMs ?? 1000, 100);
+    void (async () => {
+      while (!exited && target.activeTurns() > 0 && clock() < settleUntil) await sleep(pollMs);
+    })().then(() => exit(sig), () => exit(sig));
   };
   const graceful = (sig: string) => {
-    if (draining) { now(sig); return; }
+    if (draining || settling) { now(sig); return; }
     draining = true;
-    try { o.onDrain?.(); } catch (err) { log(`deck: 종료 준비 기록 실패 — ${err instanceof Error ? err.message : String(err)}`); }
+    try { o.onDrain?.(); } catch (err) { log(`deck: 종료 준비 기록 실패 — ${errText(err)}`); }
     log(`deck: ${sig} — 새 턴을 받지 않고 진행 중인 턴과 살아 있는 백그라운드 작업을 기다린 뒤 종료합니다 — 작업 없는 대기 프로세스는 바로 끊음 (다시 보내면 즉시 종료)`);
     void drain(target, o).then((r) => exit(`${sig}:${r}`), () => exit(`${sig}:error`));
   };

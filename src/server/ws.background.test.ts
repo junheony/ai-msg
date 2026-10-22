@@ -658,6 +658,8 @@ describe('ws: drain and held processes', () => {
     // Written by drain itself (well inside the 200 ms debounce of a change), not with the next change.
     const activity = async () => JSON.parse(await fs.readFile(s.activityFile, 'utf8')) as { draining: boolean; sessions: unknown[] };
     await vi.waitFor(async () => expect(await activity()).toMatchObject({ draining: true, sessions: [{ sessionId: S, running: false, bg: 1, tasks: ['build'] }] }), { timeout: 150, interval: 5 });
+    // What a forced restart would record as cut (restart-cut.json): the same session, with its task names.
+    expect(s.api.cutSessions()).toEqual([{ sessionId: S, tasks: ['build'] }]);
 
     s.own.foreign = true;
     a.send({ type: 'send', sessionId: S, cwd: h.cwd, text: 'N', clientRef: 'n1' });

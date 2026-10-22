@@ -1,3 +1,4 @@
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import type { HighlightEvent } from '../../shared/highlights';
 import type { SessionState } from '../turn/SessionState';
@@ -26,11 +27,34 @@ export async function readActivitySnapshot(file: string): Promise<unknown> {
   }
 }
 
+/**
+ * `restart-cut.json`: written synchronously by a forced or timed-out shutdown right before it aborts (lifecycle onCut),
+ * so the next server knows what was cut even when the aborted turns' own traces never land. Atomic, 0600.
+ */
+export function writeCutSnapshot(file: string, sessions: CutSession[], pid = process.pid, atMs = Date.now()): void {
+  const tmp = `${file}.${pid}.tmp`;
+  try {
+    fsSync.writeFileSync(tmp, JSON.stringify({ pid, atMs, sessions }), { mode: 0o600 });
+    fsSync.renameSync(tmp, file);
+  } catch (err) {
+    try { fsSync.rmSync(tmp, { force: true }); } catch { /* the write already failed */ }
+    throw err;
+  }
+}
+
+/** `restart-cut.json` as the last server left it (null when missing or broken), deleted once read — whatever it held. */
+export async function takeCutSnapshot(file: string): Promise<unknown> {
+  const raw = await readActivitySnapshot(file);
+  await fs.rm(file, { force: true }).catch(() => {});
+  return raw;
+}
+
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 /**
- * The sessions the server run that just ended left cut (pure). Three traces, any of which may be missing:
+ * The sessions the server run that just ended left cut (pure). Four traces, any of which may be missing:
+ * - its `restart-cut.json` (another pid, within the window): what a forced or timed-out shutdown was about to abort.
  * - its `activity.json` (another pid, written within the window): sessions running a turn or holding background work.
  *   A crash or kill leaves it; an ordinary shutdown deletes it (ws close()), so the two below cover that case.
  * - the event log's restart cuts ('interrupted': a turn ended by the shutdown, or its background work cut).
@@ -38,7 +62,7 @@ const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is
  * Only traces since the event log's last server event (that run's start or drain) and within the window count: once
  * this server has logged its own start, the same traces are never taken again on the next restart.
  */
-export function cutSessions(o: { activity: unknown; events: HighlightEvent[]; states: SessionState[]; pid: number; now: number }): CutSession[] {
+export function cutSessions(o: { activity: unknown; cut?: unknown; events: HighlightEvent[]; states: SessionState[]; pid: number; now: number }): CutSession[] {
   const lastServer = o.events.reduce((m, e) => (e.kind === 'server' && e.at <= o.now ? Math.max(m, e.at) : m), 0);
   const since = Math.max(o.now - RESTART_RESUME_WINDOW_MS, lastServer);
   const out = new Map<string, Set<string>>();
@@ -58,12 +82,17 @@ export function cutSessions(o: { activity: unknown; events: HighlightEvent[]; st
       }
     }
   }
+  const c = o.cut;
+  // Written after that run's drain event (재시작 대기), so the since-last-server-event rule takes it like the others.
+  if (isRec(c) && typeof c.pid === 'number' && c.pid !== o.pid && typeof c.atMs === 'number' && c.atMs >= since && c.atMs <= o.now && Array.isArray(c.sessions)) {
+    for (const s of c.sessions) if (isRec(s) && typeof s.sessionId === 'string' && s.sessionId) add(s.sessionId, strings(s.tasks));
+  }
   for (const e of [...o.events].sort((x, y) => x.at - y.at)) {
     if (e.kind === 'interrupted' && e.sessionId && e.at >= since && e.at <= o.now) add(e.sessionId, []);
   }
   for (const st of o.states) {
-    const c = st.interrupted;
-    if (isRec(c) && c.cause === undefined && c.kind === undefined && typeof c.atMs === 'number' && c.atMs >= since && c.atMs <= o.now) add(st.sessionId, strings(c.tasks));
+    const i = st.interrupted;
+    if (isRec(i) && i.cause === undefined && i.kind === undefined && typeof i.atMs === 'number' && i.atMs >= since && i.atMs <= o.now) add(st.sessionId, strings(i.tasks));
   }
   return [...out].map(([sessionId, tasks]) => ({ sessionId, tasks: [...tasks].slice(0, TASKS_MAX) }));
 }

@@ -112,7 +112,8 @@ describe('installGracefulShutdown', () => {
   it('force: nothing when not draining; while draining it aborts and exits now like a second signal', () => {
     const h = host();
     const calls: string[] = [];
-    const target: DrainTarget = { drain: () => calls.push('drain'), activeTurns: () => 1, abortAll: () => calls.push('abort') };
+    let active = 1;
+    const target: DrainTarget = { drain: () => calls.push('drain'), activeTurns: () => active, abortAll: () => { calls.push('abort'); active = 0; } };
     const exits: string[] = [];
     const g = installGracefulShutdown(h, target, { maxMs: Infinity, pollMs: 1, sleep: () => new Promise(() => {}), exit: (r) => exits.push(r) });
     expect(g.force('UI 강제 재시작')).toBe(false);
@@ -164,14 +165,79 @@ describe('installGracefulShutdown', () => {
     expect(exits).toEqual(['SIGUSR2']);
   });
 
-  it('SIGINT does not wait', () => {
+  it('SIGINT does not wait for the work: it aborts at once and exits when the aborted turns have ended', () => {
     const h = host();
     const calls: string[] = [];
     const exits: string[] = [];
-    installGracefulShutdown(h, { drain: () => calls.push('drain'), activeTurns: () => 3, abortAll: () => calls.push('abort') }, { maxMs: 60_000, exit: (r) => exits.push(r) });
+    let active = 3;
+    installGracefulShutdown(h, { drain: () => calls.push('drain'), activeTurns: () => active, abortAll: () => { calls.push('abort'); active = 0; } }, { maxMs: 60_000, exit: (r) => exits.push(r) });
     h.fire('SIGINT');
     expect(calls).toEqual(['drain', 'abort']);
     expect(exits).toEqual(['SIGINT']);
+  });
+
+  it('a forced exit gives the aborted turns up to settleMs to end (their cut traces), then exits', async () => {
+    const h = host();
+    let t = 0;
+    let active = 2;
+    const calls: string[] = [];
+    const exits: string[] = [];
+    // Aborted turns end 250 ms later (they write their traces on the way out).
+    const target: DrainTarget = { drain: () => calls.push('drain'), activeTurns: () => active, abortAll: () => { calls.push('abort'); } };
+    installGracefulShutdown(h, target, { maxMs: Infinity, pollMs: 1000, settleMs: 3000, now: () => t, sleep: async (ms) => { t += ms; if (calls.includes('abort') && t >= 250) active = 0; await new Promise((r) => setTimeout(r, 0)); }, exit: (r) => exits.push(r) });
+    h.fire('SIGUSR2');
+    await new Promise((r) => setTimeout(r, 0));
+    t = 0;
+    h.fire('SIGUSR2');
+    expect(calls.filter((c) => c === 'abort')).toEqual(['abort']);
+    expect(exits).toEqual([]);
+    for (let i = 0; i < 20 && !exits.length; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(exits).toEqual(['SIGUSR2']);
+    expect(t).toBeGreaterThanOrEqual(250);
+    expect(t).toBeLessThan(3000);
+  });
+
+  it('a forced exit whose turns never end exits at the settle limit', async () => {
+    const h = host();
+    let t = 0;
+    const exits: string[] = [];
+    installGracefulShutdown(h, { drain: () => {}, activeTurns: () => 1, abortAll: () => {} }, { maxMs: 60_000, settleMs: 3000, now: () => t, sleep: async (ms) => { t += ms; await new Promise((r) => setTimeout(r, 0)); }, exit: (r) => exits.push(r) });
+    h.fire('SIGINT');
+    expect(exits).toEqual([]);
+    for (let i = 0; i < 100 && !exits.length; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(exits).toEqual(['SIGINT']);
+    expect(t).toBe(3000);
+  });
+
+  it('a third signal while the aborted turns settle exits at once, once', async () => {
+    const h = host();
+    const exits: string[] = [];
+    const calls: string[] = [];
+    installGracefulShutdown(h, { drain: () => calls.push('drain'), activeTurns: () => 1, abortAll: () => calls.push('abort') }, { maxMs: Infinity, sleep: () => new Promise(() => {}), exit: (r) => exits.push(r) });
+    h.fire('SIGTERM');
+    h.fire('SIGTERM');
+    expect(exits).toEqual([]);
+    h.fire('SIGINT');
+    expect(exits).toEqual(['SIGINT']);
+    h.fire('SIGUSR2');
+    expect(exits).toEqual(['SIGINT']);
+    expect(calls.filter((c) => c === 'abort')).toEqual(['abort']);
+  });
+
+  it('onCut records what is cut right before every abort (forced and at the deadline); a throw is logged', async () => {
+    const order: string[] = [];
+    const h = host();
+    const logs: string[] = [];
+    installGracefulShutdown(h, { drain: () => {}, activeTurns: () => (order.includes('abort') ? 0 : 1), abortAll: () => order.push('abort') }, { maxMs: Infinity, sleep: () => new Promise(() => {}), exit: () => {}, log: (m) => logs.push(m), onCut: () => { order.push('cut'); throw new Error('ro fs'); } });
+    h.fire('SIGTERM');
+    expect(order).toEqual([]);
+    h.fire('SIGTERM');
+    expect(order).toEqual(['cut', 'abort']);
+    expect(logs.join('\n')).toContain('ro fs');
+    const w = world([10 * 60_000]);
+    const cuts: string[] = [];
+    await drain({ ...w.target, abortAll: () => { cuts.push('abort'); w.target.abortAll(); } }, { maxMs: 60_000, now: w.now, sleep: w.sleep, onCut: () => cuts.push('cut') });
+    expect(cuts).toEqual(['cut', 'abort']);
   });
 });
 

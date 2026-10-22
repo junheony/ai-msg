@@ -7,7 +7,7 @@ import { SessionStateStore, type ClaudeSessionState, type SessionState } from '.
 import { en } from '../i18n/en';
 import { ko } from '../i18n/ko';
 import { isAutoRetryNotice, AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
-import { bookRestartResumes, cutSessions, readActivitySnapshot, readResumed, writeResumed, RESTART_RESUME_DELAY_MS, RESTART_RESUME_GAP_MS, RESTART_RESUME_REPEAT_MS } from './restartResume';
+import { bookRestartResumes, cutSessions, readActivitySnapshot, readResumed, takeCutSnapshot, writeCutSnapshot, writeResumed, RESTART_RESUME_DELAY_MS, RESTART_RESUME_GAP_MS, RESTART_RESUME_REPEAT_MS } from './restartResume';
 
 const MIN = 60_000;
 const NOW = Date.parse('2026-10-23T03:00:00Z');
@@ -59,6 +59,67 @@ describe('cutSessions — what the last server left cut', () => {
   it('one entry per session, task names merged without repeats', () => {
     const states: SessionState[] = [claude({ sessionId: 's1', interrupted: { atMs: NOW - MIN, tasks: ['sleep 600', 'Agent: x'] } })];
     expect(cutSessions({ activity: snap(), events: [ev({ sessionId: 's1' })], states, pid: 222, now: NOW })).toEqual([{ sessionId: 's1', tasks: ['monitor build', 'sleep 600', 'Agent: x'] }]);
+  });
+});
+
+describe('restart-cut.json — what a forced shutdown was about to abort', () => {
+  const cut = (over: Record<string, unknown> = {}) => ({ pid: 111, atMs: NOW - MIN, sessions: [{ sessionId: 's1', tasks: ['monitor build'] }, { sessionId: 's2', tasks: [] }], ...over });
+
+  it('alone (no events, no session state, no activity) it is enough', () => {
+    expect(cutSessions({ activity: null, cut: cut(), events: [], states: [], pid: 222, now: NOW })).toEqual([{ sessionId: 's1', tasks: ['monitor build'] }, { sessionId: 's2', tasks: [] }]);
+  });
+
+  it('written after that run\'s drain event, it still counts; this very pid, older than 30 minutes or before the last server event does not', () => {
+    const drainEvent = [ev({ at: NOW - 2 * MIN, kind: 'server', sessionId: null })];
+    expect(cutSessions({ activity: null, cut: cut(), events: drainEvent, states: [], pid: 222, now: NOW })).toHaveLength(2);
+    expect(cutSessions({ activity: null, cut: cut(), events: [], states: [], pid: 111, now: NOW })).toEqual([]);
+    expect(cutSessions({ activity: null, cut: cut({ atMs: NOW - 31 * MIN }), events: [], states: [], pid: 222, now: NOW })).toEqual([]);
+    expect(cutSessions({ activity: null, cut: cut({ atMs: NOW - 3 * MIN }), events: drainEvent, states: [], pid: 222, now: NOW })).toEqual([]);
+  });
+
+  it('a broken one never throws and adds nothing', () => {
+    for (const c of [null, 'x', 42, [], { pid: 1 }, { pid: 1, atMs: NOW - MIN, sessions: 'x' }, { pid: 1, atMs: NOW - MIN, sessions: [null, 1, { sessionId: '' }, { sessionId: 7 }] }]) {
+      expect(cutSessions({ activity: null, cut: c, events: [], states: [], pid: 222, now: NOW })).toEqual([]);
+    }
+  });
+
+  it('task names merge with the other traces', () => {
+    const states: SessionState[] = [claude({ sessionId: 's1', interrupted: { atMs: NOW - MIN, tasks: ['Agent: x', 'monitor build'] } })];
+    expect(cutSessions({ activity: snap(), cut: cut(), events: [ev({ sessionId: 's2' })], states, pid: 222, now: NOW })).toEqual([{ sessionId: 's1', tasks: ['monitor build', 'sleep 600', 'Agent: x'] }, { sessionId: 's2', tasks: [] }]);
+  });
+
+  it('written atomically (0600) and read back once: the file is gone after reading, also when broken', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-rr-'));
+    const f = path.join(dir, 'restart-cut.json');
+    writeCutSnapshot(f, [{ sessionId: 's1', tasks: ['sleep 600'] }], 111, NOW - MIN);
+    expect((await fs.stat(f)).mode & 0o777).toBe(0o600);
+    expect(await fs.readdir(dir)).toEqual(['restart-cut.json']);
+    const raw = await takeCutSnapshot(f);
+    expect(raw).toEqual({ pid: 111, atMs: NOW - MIN, sessions: [{ sessionId: 's1', tasks: ['sleep 600'] }] });
+    await expect(fs.stat(f)).rejects.toThrow();
+    expect(await takeCutSnapshot(f)).toBeNull();
+    await fs.writeFile(f, '{oops');
+    expect(await takeCutSnapshot(f)).toBeNull();
+    await expect(fs.stat(f)).rejects.toThrow();
+  });
+
+  it('a write that fails throws (lifecycle logs it) and leaves no temp file', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-rr-'));
+    expect(() => writeCutSnapshot(path.join(dir, 'missing', 'restart-cut.json'), [])).toThrow();
+    expect(await fs.readdir(dir)).toEqual([]);
+  });
+
+  it('from the file alone a resume is booked (the forced-restart case)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-rr-'));
+    const f = path.join(dir, 'restart-cut.json');
+    writeCutSnapshot(f, [{ sessionId: 's1', tasks: ['sleep 600'] }], 111, NOW - MIN);
+    const store = new SessionStateStore(path.join(dir, 'state.json'));
+    await store.load();
+    await store.set(claude({ sessionId: 's1' }));
+    const c = cutSessions({ activity: null, cut: await takeCutSnapshot(f), events: [ev({ at: NOW - 2 * MIN, kind: 'server', sessionId: null })], states: store.list(), pid: 222, now: NOW });
+    const r = await bookRestartResumes({ cut: c, store, enabled: true, exists: () => true, isDir: async () => true, text: (t) => `go ${t.join(',')}`, now: NOW, resumed: new Map() });
+    expect(r.booked).toBe(1);
+    expect(store.get('s1')?.pendingRetry).toEqual({ text: 'go sleep 600', atMs: NOW + RESTART_RESUME_DELAY_MS, hops: 1 });
   });
 });
 
