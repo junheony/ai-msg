@@ -788,7 +788,7 @@ describe('TurnRunner: background work after the turn result', () => {
     });
 
     /** 다른 AI 로 이어가기 wired in (setting on, ws's hook), GPT taking the work when `gpt`; usage with a GPT card. */
-    async function crossSetup(o: { gpt: boolean; on?: boolean }) {
+    async function crossSetup(o: { gpt: boolean; on?: boolean; gptLimitOn?: string; gemini?: boolean }) {
       const resetsAt = new Date(NOW + 36 * 3_600_000).toISOString();
       const card = (id: string, s: number, w: number) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Session (5h)', used: s, resetsAt }, { label: 'Weekly (7d)', used: w, resetsAt }, { label: 'Fable (7d)', used: 0, resetsAt }] });
       const cards = [card('claude:main', 13, 7), card('claude:second', 2, 3), card('claude:third', 0, 91), { id: 'codex', status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Weekly (7d)', used: 10 }] }];
@@ -796,18 +796,48 @@ describe('TurnRunner: background work after the turn result', () => {
       await usage.pollOnce();
       const s = await setup({ usage, move: okMove });
       const codexCalls: { prompt: string; resumeThreadId: string | null }[] = [];
+      const geminiCalls: { prompt: string; resumeSessionId: string | null }[] = [];
       Object.assign(s.deps, {
         crossEngineFailover: () => o.on ?? true, findRollout: async () => null, readRateLimits: async () => null,
         codex: o.gpt ? { async *runTurn(req: { prompt: string; resumeThreadId: string | null }) {
           codexCalls.push(req);
+          const ok = req.prompt !== o.gptLimitOn;
           yield { kind: 'init', sessionId: 'tid-x', model: 'gpt-6-sol' };
-          yield { kind: 'result', sessionId: 'tid-x', ok: true, text: 'ok', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' };
+          yield { kind: 'result', sessionId: 'tid-x', ok, text: ok ? 'ok' : '', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: ok ? null : 'usage limit reached for this week', stderr: null, errorKind: null, terminalReason: ok ? 'completed' : null };
         } } : null,
+        ...(o.gemini ? {
+          autoRoute: () => ({ autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: ['gemini'], grokFast: false, crossEngineFailover: true }),
+          gemini: { loggedIn: (a: string) => a === 'g1', engine: { async *runTurn(req: { prompt: string; resumeSessionId: string | null }) {
+            geminiCalls.push(req);
+            yield { kind: 'init', sessionId: 'gem-1', model: 'gemini-2.5-pro' };
+            yield { kind: 'result', sessionId: 'gem-1', ok: true, text: 'ok', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' };
+          } } },
+        } : {}),
       });
       const handoffs: { engine: string; turnId: string; text: string }[] = [];
       s.sink.crossEngine = async (c) => { handoffs.push(c); return { excerpt: 'User: q\nClaude: a' }; };
-      return { ...s, codexCalls, handoffs };
+      return { ...s, codexCalls, geminiCalls, handoffs };
     }
+
+    it('다른 AI 로 이어가기 inside the line: a follow-up that hits GPT\'s limit moves to Gemini, and the next one follows it there — not a new session each', async () => {
+      const ASK = '이 함수가 무엇을 하는지 설명해 줘';
+      const ASK2 = '이 모듈이 무엇을 하는지 설명해 줘';
+      const { f, msgs, sink, runner, codexCalls, geminiCalls, handoffs } = await crossSetup({ gpt: true, gptLimitOn: ASK, gemini: true });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'));
+      await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+      runner.followUp(SID, { turnId: 'f2', text: ASK, clientRef: 'r2' });
+      runner.followUp(SID, { turnId: 'f3', text: ASK2, clientRef: 'r3' });
+      f.push(limited);
+      await done;
+      expect(handoffs.map((h) => [h.engine, h.turnId])).toEqual([['codex', 't1:bg1:x1'], ['gemini', 'f2:x1']]);
+      expect(codexCalls.map((r) => r.prompt)).toEqual(['이어서 진행해 주세요.', ASK]);
+      expect(geminiCalls.map((r) => [r.prompt.endsWith(ASK) ? 'f2' : r.prompt.endsWith(ASK2) ? 'f3' : r.prompt, r.resumeSessionId])).toEqual([['f2', null], ['f3', 'gem-1']]);
+      expect(of(msgs, 'turn_started').filter((m) => m.turnId === 'f3').map((m) => m.sessionId)).toEqual(['gem-1']);
+      expect(of(msgs, 'error')).toEqual([]);
+    });
 
     it('다른 AI 로 이어가기: with no Claude account left the segment goes on in a new GPT session, and the two follow-ups waiting follow it there in order', async () => {
       const { f, msgs, sink, runner, deps, codexCalls, handoffs } = await crossSetup({ gpt: true });

@@ -134,6 +134,40 @@ describe('TurnRunner · 다른 AI 로 이어가기', () => {
     expect(of(c, 'turn_result')[1]!.errorText).toContain('GPT 한도가 차서 Gemini 로 이어갑니다');
   });
 
+  it('the new engine never gets more than the old session allowed: 묻기 / plan → read-only, only 모두 자동 승인 lets GPT write', async () => {
+    const cases: [Partial<TurnRunnerDeps>, { permissionMode?: 'plan' | 'acceptEdits' }, string][] = [
+      [{}, {}, 'read-only'],
+      [{}, { permissionMode: 'plan' }, 'read-only'],
+      [{}, { permissionMode: 'acceptEdits' }, 'read-only'],
+      [{ defaultPermissionMode: () => 'bypassPermissions' }, {}, 'workspace-write'],
+    ];
+    for (const [over, extra, sandbox] of cases) {
+      const codex = fakeCodex(() => codexResult('tid-x', true, 'continued'));
+      const c = await ctx(claudeLimit, { codex: codex.engine, ...over });
+      await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi', ...extra }, c.sink);
+      expect(codex.calls.map((r) => r.sandbox)).toEqual([sandbox]);
+      expect(c.deps.store.get('tid-x')).toMatchObject({ sandbox });
+    }
+  });
+
+  it('a chain keeps the narrowest: a read-only GPT hands Gemini read-only, a writing one lets Gemini edit', async () => {
+    for (const [over, sandbox] of [[{}, 'read-only'], [{ defaultPermissionMode: () => 'bypassPermissions' as const }, 'workspace-write']] as const) {
+      const codex = fakeCodex(() => codexResult('tid-x', false, 'usage limit reached for this week'));
+      const g = fakeGemini(() => geminiQuota('gem-1'));
+      const c = await ctx(claudeLimit, { codex: codex.engine, gemini: g.dep, autoRoute: () => ({ autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: ['gemini', 'grok'], grokFast: false, crossEngineFailover: true }), ...over });
+      await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: EXPLAIN }, c.sink);
+      expect(g.calls.map((r) => r.sandbox)).toEqual([sandbox]);
+    }
+  });
+
+  it('while deck shuts down (draining) nothing moves: no new process, the old refusal / retry stands', async () => {
+    const codex = fakeCodex(() => codexResult('tid-x', true, 'continued'));
+    const c = await ctx(claudeLimit, { codex: codex.engine });
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, { ...c.sink, draining: () => true });
+    expect(c.handoffs).toEqual([]);
+    expect(codex.calls).toEqual([]);
+  });
+
   it('a handoff-note, commander or background-task turn never moves', async () => {
     const codex = fakeCodex(() => codexResult('tid-x', true, 'continued'));
     for (const extra of [{ commanderHop: 1 }, { bgTask: true }]) {
