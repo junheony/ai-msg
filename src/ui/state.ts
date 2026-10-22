@@ -371,7 +371,11 @@ export type AppState = {
   /** 총사령탑 켜짐 (server setting); null = not known yet, or a server without it. */
   commanderEnabled: boolean | null;
   /** 자동 분배 settings (engines 자동 may pick, consented ones, Grok fast); null = not known yet / a server without them. */
-  autoRoute: { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean } | null;
+  autoRoute: { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean; crossEngineFailover: boolean } | null;
+  /** The engine a new pane starts on (settings newChatEngine: 자동 on a fresh install, Claude on one from before); null = not known yet. */
+  newChatEngine: 'auto' | 'claude' | null;
+  /** The panes came from this device's saved layout (hydrate): their pickers are the user's, never reset to newChatEngine. */
+  panesRestored?: true;
   /** The settings' 총사령탑 turn cap (the 걸기 sheet starts there); null = not known yet. */
   commanderMaxTurns: number | null;
   /** 총사령탑 per session, exactly as the server last said (`commander`, SessionFacts.commander) — never stored on the device. */
@@ -415,7 +419,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: 'auto', modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'auto', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, turnRoute: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, grok: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, experimental: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, autoRoute: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
+export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, grok: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, experimental: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, autoRoute: null, newChatEngine: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -572,7 +576,7 @@ function updateTurn(pane: PaneState, turnId: string, fn: (item: AssistantItem) =
   return { ...pane, items };
 }
 
-type TurnMsg = Extract<ServerMessage, { turnId: string; cwd: string }>;
+type TurnMsg = Exclude<Extract<ServerMessage, { turnId: string; cwd: string }>, { type: 'session_handoff' }>;
 
 /** Review I3: a turn event is applied only if it belongs to the session this pane has open. */
 function belongs(pane: PaneState, msg: TurnMsg): boolean {
@@ -1132,6 +1136,11 @@ export function paneMode(pane: PaneState, defaultMode: PermMode | null): PermMod
   return pane.session?.permissionMode ?? defaultMode ?? 'default';
 }
 
+/** A new chat start of an install from before 새 설치 기본 엔진 자동 (settings newChatEngine 'claude'). */
+const LEGACY_NEW_CHAT = { engine: 'claude', model: DEFAULT_MODEL } as const;
+/** A pane still on the new-chat defaults: no session or an empty new one, engine and model 자동, nothing picked. */
+const untouchedNewChat = (p: PaneState) => (p.session === null || (p.session.sessionId === null && !p.items.length)) && p.engine === 'auto' && p.model === 'auto' && !p.modelPicked;
+
 /**
  * Server settings. 자동 승인 changes the default sandbox of new Gemini sessions only (Gemini panes still on the old default
  * follow it); the GPT default is always workspace-write (DEFAULT_SANDBOX).
@@ -1145,8 +1154,15 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
   if ((settings.commanderEnabled ?? null) !== state.commanderEnabled) state = { ...state, commanderEnabled: settings.commanderEnabled ?? null };
   if ((settings.commanderMaxTurns ?? null) !== state.commanderMaxTurns) state = { ...state, commanderMaxTurns: settings.commanderMaxTurns ?? null };
   if (settings.autoEngines && settings.autoConsent) {
-    const next = { autoEngines: settings.autoEngines, autoConsent: settings.autoConsent, grokFast: settings.grokFast ?? false };
+    const next = { autoEngines: settings.autoEngines, autoConsent: settings.autoConsent, grokFast: settings.grokFast ?? false, crossEngineFailover: settings.crossEngineFailover ?? true };
     if (JSON.stringify(next) !== JSON.stringify(state.autoRoute)) state = { ...state, autoRoute: next };
+  }
+  const nce = settings.newChatEngine ?? null;
+  if (nce !== state.newChatEngine) {
+    // An install from before keeps Claude for a new chat: the first word of it moves this device's untouched first pane
+    // (nothing saved here) off 자동. A saved layout keeps its pickers; panes added later start there too (add_pane).
+    const first = state.newChatEngine === null && nce === 'claude' && !state.panesRestored;
+    state = { ...state, newChatEngine: nce, ...(first ? { panes: state.panes.map((p) => (untouchedNewChat(p) ? { ...p, ...LEGACY_NEW_CHAT, ...(p.session ? { session: { ...p.session, engine: 'claude' as const } } : {}) } : p)) } : {}) };
   }
   if (settings.autoApprove === state.autoApprove) return state;
   const from = defaultGeminiSandbox(state.autoApprove ?? false);
@@ -1214,6 +1230,29 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
         ...p, engine: msg.engine, model: msg.model, modelPicked: true, ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
         session: { ...p.session!, engine: msg.engine, newTitle: msg.title, ...(msg.engine === 'claude' && activePin(state.accounts, msg.accountPin ?? null) ? { accountPin: msg.accountPin } : {}), ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) },
       }));
+    }
+    case 'session_handoff': {
+      // 다른 AI 로 이어가기: the session hit its limit and deck moved the conversation to a new session on another engine.
+      // Every pane showing it follows (the old turn's result, which comes after, no longer belongs to it); queued messages stay
+      // and go to the new session.
+      const moves = (p: PaneState) => p.myTurns.includes(msg.fromTurnId) || (msg.from !== null && p.session?.sessionId === msg.from);
+      if (!state.panes.some(moves)) return state;
+      return {
+        ...state,
+        panes: state.panes.map((p) => {
+          if (!moves(p)) return p;
+          const title = p.session?.title ?? null;
+          const moved: PaneState = {
+            ...p,
+            session: { sessionId: null, cwd: msg.cwd, account: null, title: handoffTitle(title ?? ''), engine: msg.engine, sandbox: null },
+            engine: msg.engine, model: msg.model, modelPicked: false,
+            items: [promptItem(msg.prompt, 0), streamingItem(msg.turnId)], activeTurnId: msg.turnId, myTurns: [msg.turnId],
+            ...ACTIVITY_RESET, runStartedAt: Date.now(), handoff: null, notices: [],
+            handoffFrom: msg.from ? { sessionId: msg.from, title: title ?? '' } : null,
+          };
+          return withNotice(moved, { sessionId: null, message: msg.notice, level: 'notice' });
+        }),
+      };
     }
     case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
     case 'history': case 'catchup': {
@@ -1463,7 +1502,7 @@ export function reducer(state: AppState, action: Action): AppState {
       // The new pane takes the docked panes' average weight, so those keep their proportions to each other.
       const docked = dockedPanes(state.panes);
       const avg = docked.length ? docked.reduce((t, p) => t + paneSize(p.size), 0) / docked.length : 1;
-      const pane: PaneState = { ...newPane(`p${n}`), ...(avg !== 1 ? { size: avg } : {}) };
+      const pane: PaneState = { ...newPane(`p${n}`), ...(state.newChatEngine === 'claude' ? LEGACY_NEW_CHAT : {}), ...(avg !== 1 ? { size: avg } : {}) };
       return { ...state, panes: [...state.panes, pane], activePaneId: pane.id };
     }
     case 'move_pane': {

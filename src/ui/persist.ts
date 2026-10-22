@@ -163,7 +163,7 @@ export function hydrate(base: AppState, ui: PersistedUi | null, queues: Persiste
     // Its history is asked for again once the socket is up: loading until it arrives.
     ...(p.session?.sessionId ? { loading: true } : {}),
   }));
-  return withQueues({ ...base, panes, activePaneId: panes[ui.active]?.id ?? panes[0]!.id }, queues);
+  return withQueues({ ...base, panes, activePaneId: panes[ui.active]?.id ?? panes[0]!.id, panesRestored: true }, queues);
 }
 
 // --- queued messages (sessionStorage: per tab, so two tabs never send each other's queue) ---

@@ -21,20 +21,13 @@ export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁�
 export const AUTO_CONSENT_TEXT = '자동 세션의 코드·대화가 Google(Gemini)/xAI(Grok)로 갈 수 있습니다';
 /** 정보: the non-affiliation line (README carries the English original). */
 export const ABOUT_NOTICE = 'AI-MSG 는 독립 프로젝트로, Anthropic · OpenAI · Google · xAI 와 제휴하거나 보증받지 않았습니다. 제품명은 각 소유자의 상표입니다.';
-export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean };
+export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean; crossEngineFailover: boolean };
 const AUTO_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
 const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
 
 /** Each language's name in that language (the same in every UI language, so a lost reader still finds theirs). */
 export const LANGUAGE_NAMES: Record<Locale, string> = { en: 'English', ko: '한국어' };
-/** 실험적 기능 › 다른 앱 연동: what the sub-group says before its switches (the owner's wording). */
-export const EXPERIMENTAL_NOTICE = '공식 기능이 아니며 각 앱의 업데이트로 언제든 멈출 수 있어요. 켜면 해당 앱의 로컬 파일을 읽어요.';
 /** Each 실험적 기능 switch: its row label and one line on what it reads / does (files named, so the user knows what is opened). */
-/**
- * 실험적 기능 › 계정 순환: what the sub-group says before its switch (it reads no other app's files). Owner's decision
- * 2026-10-22: 벤더 간 자동 분배 is on for everyone; same-vendor rotation is the user's own pick, then automatic.
- */
-export const ROTATION_NOTICE = '켜면 한도가 찬 계정에서 다음 계정으로 자동으로 넘어갑니다. 각 제공자 약관상 본인이 결제한 본인 계정끼리, 개인 사용에만 쓰세요.';
 export const EXPERIMENTAL_ROWS: [keyof ExperimentalSettings, string, string][] = [
   ['grokBot', 'Grok Bot 앱 대화·사용량', 'Grok Bot 앱의 대화 목록·대화 내용·주간 사용량 캐시를 읽기만 해요 (~/Library/Application Support/Grok Bot/sand-client-persistence).'],
   ['desktop', 'Claude Desktop 연동', 'Desktop 의 최근 세션 기록(~/Library/Application Support/Claude/claude-code-sessions)을 읽고, 다른 계정에서 돈 세션을 기본 계정 기록에 되써서 Desktop 에서 이어 열 수 있게 해요.'],
@@ -235,6 +228,11 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
                   <span>Grok 빠른 모델 쓰기(2배 가격)</span>
                   <input type="checkbox" checked={autoRoute.grokFast} data-testid="auto-grok-fast" onChange={(ev) => onAutoRoute({ grokFast: ev.target.checked })} />
                 </label>
+                <label className="settings-row">
+                  <span>{L.crossEngineFailover}</span>
+                  <input type="checkbox" checked={autoRoute.crossEngineFailover} data-testid="auto-cross-engine" onChange={(ev) => onAutoRoute({ crossEngineFailover: ev.target.checked })} />
+                </label>
+                <Hint short={L.crossEngineFailoverHint} />
                 <Hint short="체크한 엔진만 자동의 후보가 됩니다.">엔진을 자동으로 두면 첫 턴 내용과 남은 한도로 엔진·모델을 고릅니다. 체크한 엔진만 후보가 되고, Gemini·Grok 은 동의한 뒤에만 고릅니다. 세션이 시작된 뒤에는 엔진이 바뀌지 않습니다.</Hint>
               </>
             )}
@@ -282,8 +280,8 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
           <section {...section('experimental')}>
             {heading('experimental')}
             <div className="settings-subgroup" role="group" aria-labelledby="settings-experimental-apps">
-              <h4 id="settings-experimental-apps">다른 앱 연동</h4>
-              <div className="settings-consent" role="note" data-testid="experimental-notice"><p>실험적 · 비공식 — {EXPERIMENTAL_NOTICE}</p></div>
+              <h4 id="settings-experimental-apps">{L.experimentalAppsTitle}</h4>
+              <div className="settings-consent" role="note" data-testid="experimental-notice"><p>{L.experimentalBadge} — {L.experimentalNotice}</p></div>
               {onExperimental && experimental ? (
                 <>
                   {EXPERIMENTAL_ROWS.map(([key, label, what]) => (
@@ -298,8 +296,8 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
             </div>
             {onSameVendorRotation && sameVendorRotation !== null && (
               <div className="settings-subgroup" role="group" aria-labelledby="settings-experimental-rotation">
-                <h4 id="settings-experimental-rotation">계정 순환</h4>
-                <div className="settings-consent" role="note" data-testid="rotation-notice"><p>{ROTATION_NOTICE}</p></div>
+                <h4 id="settings-experimental-rotation">{L.rotationTitle}</h4>
+                <div className="settings-consent" role="note" data-testid="rotation-notice"><p>{L.rotationNotice}</p></div>
                 <div className="settings-row">
                   <span id="seg-rotation">같은 벤더 계정 자동 순환</span>
                   <div className="seg" role="group" aria-labelledby="seg-rotation">

@@ -6,10 +6,13 @@ import { SettingsStore } from './settings';
 import { resolveServerLocale } from './i18n';
 
 /** 자동 분배 defaults: every engine, no external-transfer consent, Grok 4.7 (not Fast). */
-const AUTO = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 };
-/** 실험적 기능 on a fresh install (Grok Bot / Desktop off, Codex·Gemini imports on) and on one from before the switches (all on). */
-const FRESH = { ...AUTO, experimental: { grokBot: false, desktop: false, localImports: true } };
-const LEGACY = { ...AUTO, experimental: { grokBot: true, desktop: true, localImports: true } };
+const AUTO = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, crossEngineFailover: true, taskSoftCap: 3 };
+/**
+ * 실험적 기능 on a fresh install (Grok Bot / Desktop off, Codex·Gemini imports on) and on one from before the switches (all
+ * on); a new chat's engine likewise (자동 fresh, Claude from before).
+ */
+const FRESH = { ...AUTO, newChatEngine: 'auto', experimental: { grokBot: false, desktop: false, localImports: true } };
+const LEGACY = { ...AUTO, newChatEngine: 'claude', experimental: { grokBot: true, desktop: true, localImports: true } };
 
 describe('SettingsStore', () => {
   it('defaults to asking (자동 승인 off); persists a change; a corrupt file falls back to defaults', async () => {
@@ -135,6 +138,11 @@ describe('SettingsStore', () => {
     const next = await s.set({ autoEngines: ['codex', 'claude'], autoConsent: ['grok'] });
     expect(next).toMatchObject({ autoEngines: ['claude', 'codex'], autoConsent: ['grok'], grokFast: true });
     expect(await s.set({ grokFast: false })).toMatchObject({ autoEngines: ['claude', 'codex'], autoConsent: ['grok'], grokFast: false });
+    // 다른 AI 로 이어가기: on unless the file says false; set turns it off and on, other changes keep it.
+    expect((await s.set({ crossEngineFailover: false })).crossEngineFailover).toBe(false);
+    expect((await s.set({ grokFast: false })).crossEngineFailover).toBe(false);
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).crossEngineFailover).toBe(false);
+    expect((await s.set({ crossEngineFailover: true })).crossEngineFailover).toBe(true);
     const again = new SettingsStore(file);
     await again.load();
     expect(again.get()).toMatchObject({ autoEngines: ['claude', 'codex'], autoConsent: ['grok'], grokFast: false });
@@ -175,6 +183,40 @@ describe('SettingsStore', () => {
     expect(c.get().experimental).toEqual(FRESH.experimental);
   });
 
+  it('새 채팅 기본 엔진: fresh install 자동, an install from before Claude; decided once and written back; a corrupt file is not overwritten', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-set-'));
+    const fresh = path.join(dir, 'fresh.json');
+    const a = new SettingsStore(fresh, async () => false);
+    await a.load();
+    expect(a.get().newChatEngine).toBe('auto');
+    expect(JSON.parse(await fs.readFile(fresh, 'utf8')).newChatEngine).toBe('auto');
+    // The deck state appearing later does not turn a decided 자동 into Claude.
+    const a2 = new SettingsStore(fresh, async () => true);
+    await a2.load();
+    expect(a2.get().newChatEngine).toBe('auto');
+    // Existing deck state with no file, or a file an older deck wrote: Claude, written back.
+    const noFile = path.join(dir, 'nofile.json');
+    const b = new SettingsStore(noFile, async () => true);
+    await b.load();
+    expect(b.get().newChatEngine).toBe('claude');
+    expect(JSON.parse(await fs.readFile(noFile, 'utf8')).newChatEngine).toBe('claude');
+    const older = path.join(dir, 'older.json');
+    // Written by a deck that had the 실험적 기능 switches but not this one: still an install from before.
+    await fs.writeFile(older, JSON.stringify({ routingPolicy: 'drain', experimental: { grokBot: false, desktop: false, localImports: true } }));
+    const c = new SettingsStore(older);
+    await c.load();
+    expect(c.get()).toMatchObject({ routingPolicy: 'drain', newChatEngine: 'claude', experimental: FRESH.experimental });
+    expect(JSON.parse(await fs.readFile(older, 'utf8'))).toMatchObject({ newChatEngine: 'claude', experimental: FRESH.experimental });
+    // Other changes keep it.
+    expect((await c.set({ routingPolicy: 'balance' })).newChatEngine).toBe('claude');
+    // A corrupt file on an existing install: Claude for this run, the file left as it is.
+    await fs.writeFile(older, '{oops');
+    const d = new SettingsStore(older, async () => true);
+    await d.load();
+    expect(d.get().newChatEngine).toBe('claude');
+    expect(await fs.readFile(older, 'utf8')).toBe('{oops');
+  });
+
   it('실험적 기능 migration that cannot be saved: this run uses the fresh-install switches, other settings untouched', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-set-'));
     // The settings dir cannot be made (a file is in the way): the write fails.
@@ -182,6 +224,7 @@ describe('SettingsStore', () => {
     const s = new SettingsStore(path.join(dir, 'blocker', 'settings.json'), async () => true);
     await s.load();
     expect(s.get().experimental).toEqual(FRESH.experimental);
+    expect(s.get().newChatEngine).toBe('auto');
     expect(s.get().routingPolicy).toBe('balance');
   });
 

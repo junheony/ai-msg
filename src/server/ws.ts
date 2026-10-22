@@ -8,16 +8,16 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, isGrokAccount, type AccountNames } from '../shared/accounts';
 import { DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isGrokModel, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
 import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type CommanderView, type StreamPos, type GeminiStatus, type GrokStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
-import type { SessionEntry } from '../shared/session-types';
+import type { SessionEntry, TranscriptMessage } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import type { AcceptedRefs } from './sessions/AcceptedRefs';
 import { DirError, resolveUnderRoots } from './dirs';
-import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
+import { HANDOFF_PROMPT, codexHandoffExcerpt, handoffTitle } from '../shared/handoff';
 import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { isGrokAutoApprovable } from './engine/GrokEngine';
-import { displayError } from './engine/redact';
+import { displayError, redactSecrets } from './engine/redact';
 import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
 import { findGrokSessionDir, readGrokTranscriptTail } from './engine/grokHistory';
 import { elsewhereNotice } from './sessions/elsewhereNotice';
@@ -33,7 +33,7 @@ import type { ProcessHolders } from './sessions/ProcessHolders';
 import type { SessionIndex } from './sessions/SessionIndex';
 import { readBranchPoint, readTranscript, type BranchPoint } from './sessions/transcript';
 import { isCodexState, isGeminiState, isGrokState, isOtherEngineState, type ClaudeSessionState, type SessionStateStore } from './turn/SessionState';
-import { abortedText, RESEND_NOTICE, SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
+import { abortedText, RESEND_NOTICE, ROUTE_ENGINE_LABEL, SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
 import { SegmentCollector } from './commander/digest';
 import { DISABLED_MESSAGE, type CommanderResult, type CommanderSendRequest } from './commander/Commander';
@@ -266,7 +266,7 @@ export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
 /** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
 export const CATCHUP_IDLE_MS = 10 * 60_000;
 
-type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number; /** Told the device it is going in (pendingRefs): run even if that socket closed. */ held?: true }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null; /** ⚡ 빠르게: the process was started with fast mode (TurnRunner.fastTurn) — a send asking otherwise never joins it. */ fast: boolean };
+type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number; /** Told the device it is going in (pendingRefs): run even if that socket closed. */ held?: true }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null; /** ⚡ 빠르게: the process was started with fast mode (TurnRunner.fastTurn) — a send asking otherwise never joins it. */ fast: boolean; /** 다른 AI 로 이어가기: the session this turn moved away from (sends to it follow the turn). */ crossFrom?: string | null; /** …until the old turn `fromTurnId`'s result is out (the turn keeps the old session meanwhile). */ crossing?: { fromTurnId: string; from: string | null } };
 
 export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
 
@@ -353,6 +353,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    * `new:<turnId>` until the CLI reports its id, then by that id as well.
    */
   const busy = new Map<string, string>();
+  /** 다른 AI 로 이어가기: a session a running turn moved away from → that turn (sends to the old session follow it). */
+  const crossedTo = new Map<string, Turn>();
   // A `claude -p` transcript is deck's own while a deck turn runs it or once the state store has it; other scripts' runs stay out of the sidebar.
   deps.index.setKnown?.((id) => busy.has(id) || deps.store.get(id) !== null);
   /** D6: the sessions each socket has open (one per pane); a session's turn events go to every socket viewing it. */
@@ -763,6 +765,15 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
 
   const startTurn = (ws: WebSocket, sent: Extract<ClientMessage, { type: 'send' }>, checked = false, retryHop?: number, commanderHop?: number, commanderNote?: string) => {
     // The handoff note's prompt is fixed server-side (the turn runs with tools denied, so it must not carry arbitrary text).
+    // 다른 AI 로 이어가기: a send to a session a running turn moved away from goes to the new session — queued on that
+    // turn until the new session has an id.
+    const moved = sent.sessionId && !sent.handoff && commanderHop === undefined ? crossedTo.get(sent.sessionId) : undefined;
+    if (moved && turns.get(moved.turnId) !== moved) crossedTo.delete(sent.sessionId!);
+    else if (moved) {
+      if (moved.sessionId && moved.sessionId !== sent.sessionId && !moved.crossing) { startTurn(ws, { ...sent, sessionId: moved.sessionId }, checked, retryHop); return; }
+      moved.afterRelease.push({ ws, msg: sent, ...(retryHop ? { retryHop } : {}) });
+      return;
+    }
     const msg = sent.handoff ? { ...sent, text: HANDOFF_PROMPT, attachments: undefined } : sent;
     // A socket that closed while its send waited (foreign-write check, recycle) still gets its message run; it just views nothing.
     if (msg.sessionId && clients.has(ws)) view(ws, msg.sessionId);
@@ -921,6 +932,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       questions.cancelTurn(turnId);
       for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); followFrom.delete(a); prompts.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
       broadcastActivity();
+      // 다른 AI 로 이어가기: sends to the old session that waited for this turn go to the new one (when it got an id).
+      if (turn.crossFrom) {
+        if (crossedTo.get(turn.crossFrom) === turn) crossedTo.delete(turn.crossFrom);
+        const to = turn.sessionId;
+        if (to) for (const d of turn.afterRelease) if (d.msg.sessionId === turn.crossFrom) d.msg = { ...d.msg, sessionId: to };
+      }
       // Sends that arrived while the process was closing after its result (a closed socket's send is dropped — but not one
       // that waited because deck itself ended the process). Each goes where a send would go now: the first starts the
       // session's next turn; the others wait on that turn until its process can take a follow-up or is gone.
@@ -1027,6 +1044,40 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           tccNoticed = m.turnId;
           emitTurn(turn, { type: 'turn_notice', turnId: m.turnId, sessionId: m.sessionId, cwd: m.cwd, message: TCC_DENIAL_NOTICE });
         }
+        // 다른 AI 로 이어가기: the old turn's result is out — from here the turn is the new session's (no id yet).
+        if (m.type === 'turn_result' && turn.crossing?.fromTurnId === m.turnId) {
+          const from = turn.crossing.from;
+          turn.crossing = undefined;
+          if (from && busy.get(from) === turnId) busy.delete(from);
+          busy.set(`new:${turnId}`, turnId);
+          turn.sessionId = null;
+          turn.fresh = true;
+          turn.title = undefined;
+          turn.branch = null;
+          turn.handoffFrom = from;
+          if (from) sessionIdle(from);
+          broadcastActivity();
+        }
+      },
+      crossEngine: async (c) => {
+        if (turns.get(turnId) !== turn || ac.signal.aborted) return null;
+        const excerpt = await crossExcerpt(c.from, c.fromEngine, c.text);
+        if (turns.get(turnId) !== turn || ac.signal.aborted) return null;
+        const prompt = promptOf({ text: c.text, ...(c.attachments ? { attachments: c.attachments } : {}) });
+        prompts.set(c.turnId, prompt);
+        aliases.set(c.turnId, turnId);
+        // The old turn's result no longer ends this turn (current), nor starts the sends waiting for it.
+        turn.current = c.turnId;
+        turn.since = Date.now();
+        turn.crossing = { fromTurnId: c.fromTurnId, from: c.from };
+        turn.crossFrom = c.from;
+        if (c.from) crossedTo.set(c.from, turn);
+        // Every device showing the old session moves with it (and gets the new turn's events).
+        const out: ServerMessage = { type: 'session_handoff', from: c.from, fromTurnId: c.fromTurnId, cwd: c.cwd, engine: c.engine, model: c.model, turnId: c.turnId, prompt, notice: c.notice };
+        const to = new Set<WebSocket>([turn.origin, ...turn.watchers]);
+        if (c.from) for (const [s, v] of viewing) if (v.has(c.from)) to.add(s);
+        for (const s of to) { if (s !== turn.origin && s !== NO_DEVICE) turn.watchers.add(s); send(s, out); }
+        return { excerpt };
       },
       askPermission: (req) => {
         const sessionLabel = sessionAllowLabel(req);
@@ -1112,7 +1163,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       } finally {
         release();
       }
-      if (msg.sessionId === null) {
+      // A turn that moved to another AI made a new session too.
+      if (msg.sessionId === null || turn.crossFrom !== undefined) {
         await deps.index.refresh();
         broadcast(indexMsg());
       } else {
@@ -1280,6 +1332,28 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const at = Date.now();
     const messages = await readTranscript(best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file)).catch(() => readTranscript(found.file));
     return { found, st, at, messages };
+  };
+  /**
+   * 다른 AI 로 이어가기: what the new session is told of `from`'s conversation (engine `engine`) — user / assistant text
+   * only, length-capped (codexHandoffExcerpt), secrets masked. The failed message itself (the transcript's last user line)
+   * is left out: it rides the new turn as its prompt. '' = nothing readable.
+   */
+  const crossExcerpt = async (from: string | null, engine: EngineKind, text: string): Promise<string> => {
+    if (!from) return '';
+    const st = deps.store.get(from);
+    let msgs: TranscriptMessage[] = [];
+    if (engine === 'claude') {
+      const file = st && !isOtherEngineState(st) ? path.join(st.projectDir, `${from}.jsonl`) : deps.index.lookup(from)?.file;
+      if (file) msgs = await readTranscript(file).catch(() => []);
+    } else if (engine === 'codex' && st && isCodexState(st) && st.rolloutFile) {
+      msgs = await (deps.readCodexHistory ?? readCodexTranscript)(st.rolloutFile).catch(() => []);
+    } else if (engine === 'grok' && st && isGrokState(st) && deps.grokHome) {
+      const dir = await findGrokSessionDir(deps.grokHome, st.grokSessionId ?? from).catch(() => null);
+      if (dir) msgs = await readGrokTranscriptTail(path.join(dir, 'chat_history.jsonl')).catch(() => []);
+    }
+    const last = msgs.findLastIndex((m) => m.kind === 'user');
+    if (last >= 0 && (msgs[last] as { text: string }).text.trim() === text.trim()) msgs = msgs.slice(0, last);
+    return redactSecrets(codexHandoffExcerpt(msgs, ROUTE_ENGINE_LABEL[engine]));
   };
   const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages }: ClaudeHistory, clean?: Map<string, number>) => {
     const t = turns.get(busy.get(sessionId) ?? '');
@@ -1654,7 +1728,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
           // The default only applies to new sessions (and ones with no stored mode) from their next turn: waiting cards stay.
-          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}), ...(msg.autoEngines ? { autoEngines: msg.autoEngines } : {}), ...(msg.autoConsent ? { autoConsent: msg.autoConsent } : {}), ...(msg.grokFast !== undefined ? { grokFast: msg.grokFast } : {}), ...(msg.taskSoftCap !== undefined ? { taskSoftCap: msg.taskSoftCap } : {}), ...(msg.language !== undefined ? { language: msg.language } : {}), ...(msg.experimental ? { experimental: msg.experimental } : {}) })
+          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}), ...(msg.autoEngines ? { autoEngines: msg.autoEngines } : {}), ...(msg.autoConsent ? { autoConsent: msg.autoConsent } : {}), ...(msg.grokFast !== undefined ? { grokFast: msg.grokFast } : {}), ...(msg.crossEngineFailover !== undefined ? { crossEngineFailover: msg.crossEngineFailover } : {}), ...(msg.taskSoftCap !== undefined ? { taskSoftCap: msg.taskSoftCap } : {}), ...(msg.language !== undefined ? { language: msg.language } : {}), ...(msg.experimental ? { experimental: msg.experimental } : {}) })
             // 총사령탑 켜기·끄기 changes what the server advertises: every device gets the list again.
             .then((settings) => {
               // Off: no commander is left running unseen (devices drop the chip with the feature) or armed for a later on.

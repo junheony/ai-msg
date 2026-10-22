@@ -143,7 +143,7 @@ const BASELINE: Record<string, number> = {
   'src/ui/components/SessionChipHead.tsx': 3,
   'src/ui/components/SessionCwdDialog.tsx': 5,
   'src/ui/components/SessionMenu.tsx': 9,
-  'src/ui/components/SettingsView.tsx': 98,
+  'src/ui/components/SettingsView.tsx': 93,
   'src/ui/components/ShareMenu.tsx': 10,
   'src/ui/components/SidePanel.tsx': 62,
   'src/ui/components/Sidebar.tsx': 93,

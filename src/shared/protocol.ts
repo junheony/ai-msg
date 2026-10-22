@@ -131,6 +131,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional(),
     /** 자동 분배: engines 자동 may use, engines whose external-transfer card was accepted, Grok fast model. */
     autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional(),
+    /** 한도 → 다른 AI 로 이어가기 (설정 토글). */ crossEngineFailover: z.boolean().optional(),
     /** The server's language, from a device's explicit pick; null (the device picked Auto) = from the environment again. */ language: z.enum(LOCALES).nullable().optional(),
     /** 실험적 기능 switches; only the ones given change. */
     experimental: ExperimentalSchema.partial().strict().optional() }),
@@ -192,6 +193,16 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
   autoConsent?: EngineKind[];
   /** 자동 uses Grok 4.7 Build Fast instead of Grok 4.7 (2× price; default off). */
   grokFast?: boolean;
+  /**
+   * 다른 AI 로 이어가기: a turn that hits a limit with no other account of its engine left goes on, unasked, in a new
+   * session of another engine (autoEngines; Gemini / Grok only with autoConsent). Default on. Absent from older servers.
+   */
+  crossEngineFailover?: boolean;
+  /**
+   * The engine a new chat starts on (a new pane): 'auto' on a fresh install; an install from before (decided once, like
+   * 실험적 기능) keeps 'claude', the default it had. A pane's own pick always wins. Absent from older servers.
+   */
+  newChatEngine?: 'auto' | 'claude';
   /** 백그라운드 작업 running at once before new ones wait (1–10, default 3). Absent from older servers. */
   taskSoftCap?: number;
   /** Server messages' language: the last explicit pick on any device. Absent / null = from the environment (DECK_LANG, LANG …). */
@@ -382,6 +393,12 @@ export type ServerMessage =
    * sent back as the first send's `title`. No history is copied.
    */
   | { type: 'session_duplicate'; from: string; cwd: string; engine: EngineKind; model: AnyModel; title: string; accountPin?: Account | null; permissionMode?: PermMode; sandbox?: CodexSandbox }
+  /**
+   * 다른 AI 로 이어가기 (crossEngineFailover): turn `fromTurnId` of session `from` (null = a new session's first turn) hit
+   * its engine's limit; the same message now runs as turn `turnId` in a new `engine` session in `cwd`. The panes showing
+   * `from` (or owning `fromTurnId`) move to that new session; their queued messages follow.
+   */
+  | { type: 'session_handoff'; from: string | null; fromTurnId: string; cwd: string; engine: EngineKind; model: AnyModel; turnId: string; prompt: TurnPrompt; notice: string }
   /**
    * The engine cannot take this turn (auto-route §10-4: Gemini with a shell / non-explain turn, Grok with an image): the
    * turn was not sent. `need` = what is missing ("셸 실행"). Resend with `ignoreFit: true` to send anyway. Carries the

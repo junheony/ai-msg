@@ -2,13 +2,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { GEMINI_ACCOUNTS, GEMINI_LABEL, GROK_LABEL, isGeminiAccount, isGrokAccount, type Account, type AccountNames, type GeminiAccount, type GrokAccount, type ProjectsRoots } from '../../shared/accounts';
-import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, GROK_CLI_ALIAS, IMPORTED_DEFAULT_MODEL, MODEL_EFFORTS, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type GeminiModel, type GrokModel, type ModelChoice } from '../../shared/models';
+import { AUTO_EFFORT, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, GROK_CLI_ALIAS, IMPORTED_DEFAULT_MODEL, MODEL_EFFORTS, defaultGeminiSandbox, effortFor, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type AnyModel, type ClaudeModel, type CodexModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type GeminiModel, type GrokModel, type ModelChoice } from '../../shared/models';
 import { sdkPermMode, type PermMode } from '../../shared/permission';
 import { conciseStylePrompt } from '../../shared/concise';
 import { DECK_CHOICES_PROMPT, systemReminder } from '../../shared/choices';
 import { deckAddendum } from '../../shared/memory';
 import type { Locale } from '../../shared/locale';
 import { languageDirective } from './language';
+import { sm } from '../i18n';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -55,6 +56,8 @@ export type TurnSink = {
   sessionKnown?(sessionId: string): void;
   /** The server is draining for a restart (ws): no new process is started — follow-ups an ended process did not take go back to their device (code 'draining'). */
   draining?(): boolean;
+  /** 다른 AI 로 이어가기: see CrossEngineHandoff; absent = never handed over. */
+  crossEngine?(c: CrossEngineHandoff): Promise<{ excerpt: string } | null>;
 };
 
 export type TurnParams = {
@@ -112,12 +115,28 @@ export type TurnParams = {
   ignoreFit?: boolean;
   /** The reply language (ws: turnLanguage — the device's send.lang, else the session's last, else settings `language`); en / absent = no note. Carried to continuations. */
   lang?: Locale;
+  /** Server-internal (다른 AI 로 이어가기): engines 자동 분배 must not pick for this new session (the ones whose limit sent it here). */
+  excludeEngines?: EngineKind[];
+  /** Server-internal (다른 AI 로 이어가기): what the new session takes over (sm().turn.crossCarry) — rides the system prompt / context, never the transcript. */
+  carry?: string;
+  /** Server-internal (다른 AI 로 이어가기): this turn is the n-th engine handover of one message (CROSS_ENGINE_MAX_HOPS). */
+  crossHop?: number;
 };
+
+/** 다른 AI 로 이어가기: one message moves to another engine at most this many times in a row. */
+export const CROSS_ENGINE_MAX_HOPS = 2;
+
+/**
+ * 다른 AI 로 이어가기, asked of ws (TurnSink.crossEngine) before the new session's turn runs: the pane moves to the new
+ * turn `turnId` (engine `engine`) and the hook answers the excerpt of session `from`'s conversation; null = not now (the
+ * old turn is not the one running any more) — the limit failure then stands as before.
+ */
+export type CrossEngineHandoff = { from: string | null; fromTurnId: string; fromEngine: EngineKind; engine: EngineKind; model: AnyModel; cwd: string; turnId: string; text: string; attachments?: string[]; notice: string };
 
 /** 자동 분배 settings (DeckSettings autoEngines / autoConsent / grokFast). */
 export type AutoRouteSettings = { autoEngines: readonly EngineKind[]; autoConsent: readonly EngineKind[]; grokFast: boolean };
 const DEFAULT_AUTO_ROUTE: AutoRouteSettings = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false };
-const ROUTE_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
+export const ROUTE_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
 
 /** ⚡ 빠르게 applies to this turn: only a person's turn (never a handoff note, 총사령탑 hop, cap continuation or automatic retry). */
 export function fastTurn(p: Pick<TurnParams, 'fast' | 'handoff' | 'commanderHop' | 'bgCapHop' | 'retryHop'>): boolean {
@@ -182,6 +201,8 @@ export type TurnRunnerDeps = {
   sameVendorRotation?: () => boolean;
   /** 자동 분배 settings (read per new session); absent = every engine, no Gemini / Grok consent, Grok 4.7. */
   autoRoute?: () => AutoRouteSettings;
+  /** 다른 AI 로 이어가기 (DeckSettings.crossEngineFailover, read per limit failure); absent = off. */
+  crossEngineFailover?: () => boolean;
   /** 개발용(총사령탑 3단계, DECK_DEV_COMMANDER_GATE=1): every Claude turn without a commanderHop runs as hop 1 of the gate. */
   devCommanderGate?: boolean;
   /** One line per routed Claude turn (main: console.log); absent = not logged. */
@@ -1101,7 +1122,9 @@ export class TurnRunner {
     let memory = '';
     try { memory = this.deps.memory?.() ?? ''; } catch { /* a broken store never blocks a turn */ }
     // GPT, Gemini and Grok have no question tool: they offer decisions as a deck-choices block (option cards in the pane).
-    return deckAddendum({ style, choices: engine === 'claude' ? null : DECK_CHOICES_PROMPT, memory, language: languageDirective(p.lang, { questionTool: engine === 'claude' && !p.bgTask }) });
+    const base = deckAddendum({ style, choices: engine === 'claude' ? null : DECK_CHOICES_PROMPT, memory, language: languageDirective(p.lang, { questionTool: engine === 'claude' && !p.bgTask }) });
+    // 다른 AI 로 이어가기: the conversation this new session takes over rides the same channel (system prompt / context).
+    return p.carry ? (base ? `${base}\n\n${p.carry}` : p.carry) : base;
   }
 
   /**
@@ -1585,7 +1608,26 @@ export class TurnRunner {
     return candidate;
   }
 
+  /**
+   * 다른 AI 로 이어가기 handovers booked by a limit failure (crossOver), keyed by the failed turn's id: run once that turn's
+   * own run has returned (its turn_result is out), so the new session's turn never nests inside the old one's.
+   */
+  private readonly crossed = new Map<string, () => Promise<void>>();
+
   async run(p: TurnParams, sink: TurnSink): Promise<void> {
+    try {
+      await this.runOnce(p, sink);
+    } catch (err) {
+      this.crossed.delete(p.turnId);
+      throw err;
+    }
+    const next = this.crossed.get(p.turnId);
+    if (!next) return;
+    this.crossed.delete(p.turnId);
+    await next();
+  }
+
+  private async runOnce(p: TurnParams, sink: TurnSink): Promise<void> {
     const { deps } = this;
     // D7: only store-resolved attachments (server-side paths in the private dir) ever reach an engine.
     let attachments: Attachment[] = [];
@@ -1728,6 +1770,18 @@ export class TurnRunner {
    * full `why` goes to the server log only.
    */
   private async runRouted(p: TurnParams, sink: TurnSink, attachments: Attachment[]): Promise<void> {
+    const d = await this.decideRoute(p, attachments);
+    if (d.kind === 'no_route') {
+      this.deps.routeLog?.(`deck route ${p.turnId}: no route — ${Object.entries(d.reasons).map(([e, r]) => `${e}: ${r}`).join(' | ')}`);
+      const parts = (Object.keys(ROUTE_ENGINE_LABEL) as EngineKind[]).map((e) => `${ROUTE_ENGINE_LABEL[e]}: ${d.reasons[e]}`);
+      sink.emit({ type: 'error', turnId: p.turnId, message: `자동 분배: 쓸 수 있는 엔진 없음 — ${parts.join(', ')}` });
+      return;
+    }
+    return this.runDecided(p, sink, attachments, d);
+  }
+
+  /** chooseRoute for a new session (runRouted, crossOver): engines in `p.excludeEngines` are left out of 자동 분배. */
+  private async decideRoute(p: TurnParams, attachments: Attachment[]): Promise<RouteDecision> {
     const { deps } = this;
     const nowMs = this.now();
     const claudeAccounts = this.rotation() ? this.accounts : onlyAccount(this.accounts, fixedAccount({ pinned: p.accountPin ?? null, current: null, accounts: this.accounts }));
@@ -1740,17 +1794,19 @@ export class TurnRunner {
       grok: { installed: !!deps.grok, cooldownUntilMs: this.grokCooldownUntil.x1 ?? null, lastError: this.grokLastError },
     });
     const settings = deps.autoRoute?.() ?? DEFAULT_AUTO_ROUTE;
-    const d: RouteDecision = chooseRoute({
+    const exclude = p.excludeEngines ?? [];
+    return chooseRoute({
       text: p.text, images: attachments.filter((a) => a.isImage).length, engine: p.engine ?? 'auto', model: p.model ?? 'auto',
       ...(p.effort ? { effort: p.effort } : {}), limits, nowMs, cwdInsideHome: await insideHome(p.cwd),
-      autoEngines: settings.autoEngines, consented: settings.autoConsent, grokFast: settings.grokFast, commander: p.commanderHop !== undefined,
+      autoEngines: settings.autoEngines.filter((e) => !exclude.includes(e)), consented: settings.autoConsent, grokFast: settings.grokFast, commander: p.commanderHop !== undefined,
     });
-    if (d.kind === 'no_route') {
-      deps.routeLog?.(`deck route ${p.turnId}: no route — ${Object.entries(d.reasons).map(([e, r]) => `${e}: ${r}`).join(' | ')}`);
-      const parts = (Object.keys(ROUTE_ENGINE_LABEL) as EngineKind[]).map((e) => `${ROUTE_ENGINE_LABEL[e]}: ${d.reasons[e]}`);
-      sink.emit({ type: 'error', turnId: p.turnId, message: `자동 분배: 쓸 수 있는 엔진 없음 — ${parts.join(', ')}` });
-      return;
-    }
+  }
+
+  /** Runs a new session on the engine chooseRoute picked (`d`, not no_route). */
+  private async runDecided(p: TurnParams, sink: TurnSink, attachments: Attachment[], d: Exclude<RouteDecision, { kind: 'no_route' }>): Promise<void> {
+    const { deps } = this;
+    const nowMs = this.now();
+    const claudeAccounts = this.rotation() ? this.accounts : onlyAccount(this.accounts, fixedAccount({ pinned: p.accountPin ?? null, current: null, accounts: this.accounts }));
     deps.routeLog?.(`deck route ${p.turnId}: ${d.why.join(' | ')}`);
     if (d.fit && !d.fit.ok && !p.ignoreFit) { sink.emit({ type: 'route_fit', turnId: p.turnId, sessionId: null, engine: d.engine, need: d.fit.need }); return; }
     // A model chosen here: the user's 자동 effort (if any) wins, clamped; else the route's. A picked model keeps the picked effort.
@@ -1783,7 +1839,7 @@ export class TurnRunner {
     const badge = (usage: TurnUsage) => ({ account: 'gpt' as const, model, reason, usage, modelNote: null });
     if (!deps.codex) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: 'codex CLI 를 찾을 수 없습니다' }); return; }
     if (sink.signal.aborted) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: abortedText(sink.signal) }); return; }
-    sink.emit({ type: 'turn_started', ...scope(), account: 'gpt', model, reason, attempt: 0, engine: 'codex' });
+    sink.emit({ type: 'turn_started', ...scope(), account: 'gpt', model, reason, attempt: 0, engine: 'codex', ...(p.clientRef ? { clientRef: p.clientRef } : {}) });
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     let result: EngineResult | null = null;
     const effort = effortFor(model, p.effort);
@@ -1829,8 +1885,13 @@ export class TurnRunner {
         if (w) deps.usage.applyTurn('gpt', w);
       }
     }
-    if (!res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit') this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit;
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr), ...(!res.ok && !sink.signal.aborted && res.errorKind === 'thread_locked' ? { errorCode: 'thread_locked' as const } : {}) });
+    const limited = !res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit';
+    if (limited) this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit;
+    // 다른 AI 로 이어가기: one ChatGPT account — a limit is always "no account left".
+    const crossed = limited ? await this.crossOver(p, sink, { sessionId, engine: 'codex', cwd }, attachments) : null;
+    if (crossed) this.crossed.set(p.turnId, crossed.go);
+    const shown = res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr);
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: crossed ? `${shown ?? ''} · ${crossed.notice}` : shown, ...(!res.ok && !sink.signal.aborted && res.errorKind === 'thread_locked' ? { errorCode: 'thread_locked' as const } : {}) });
   }
 
   /** Explicit Gemini: a new session takes the first logged-in, non-cooled account (g1, then g2) and stays on it. */
@@ -1858,7 +1919,7 @@ export class TurnRunner {
     }
     const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
     if (sink.signal.aborted) { fail(account, abortedText(sink.signal)); return; }
-    sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini' });
+    sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'gemini', ...(p.clientRef ? { clientRef: p.clientRef } : {}) });
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     let result: EngineResult | null = null;
     // A picked effort Gemini does not have (xhigh) becomes the closest lower one (high).
@@ -1886,8 +1947,13 @@ export class TurnRunner {
         defaultModel: state?.defaultModel ?? model, sandbox, createdAtMs: state?.createdAtMs ?? this.now(), title: state?.title ?? titleOf(p.text),
       });
     }
-    if (!res.ok && GEMINI_LIMIT_RE.test(res.errorText ?? '')) this.geminiCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
+    const limited = !res.ok && GEMINI_LIMIT_RE.test(res.errorText ?? '');
+    if (limited) this.geminiCooldownUntil[account] = this.now() + COOLDOWN_MS.limit;
+    // 다른 AI 로 이어가기: a session stays on its Gemini account — a limit is "no account left" for it.
+    const crossed = limited ? await this.crossOver(p, sink, { sessionId, engine: 'gemini', cwd }, attachments) : null;
+    if (crossed) this.crossed.set(p.turnId, crossed.go);
+    const shown = res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr);
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: crossed ? `${shown ?? ''} · ${crossed.notice}` : shown });
     deps.geminiUsage?.bump();
   }
 
@@ -1925,7 +1991,7 @@ export class TurnRunner {
       };
       return deps.store.set(next);
     };
-    sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'grok' });
+    sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'grok', ...(p.clientRef ? { clientRef: p.clientRef } : {}) });
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     const audit = (toolName: string, input: unknown, decision: ToolAuditEntry['decision'], source: ToolAuditEntry['source']) =>
       appendAudit(deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId, toolName, decision, source, inputSha256: hashInput(input) })
@@ -1992,7 +2058,11 @@ export class TurnRunner {
     } catch (err) {
       console.error('deck: recording Grok usage failed', err instanceof Error ? err.message : err);
     }
-    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr) });
+    // 다른 AI 로 이어가기: one Grok seat — a limit is always "no account left".
+    const crossed = !res.ok && res.errorKind === 'rate_limit' ? await this.crossOver(p, sink, { sessionId, engine: 'grok', cwd }, attachments) : null;
+    if (crossed) this.crossed.set(p.turnId, crossed.go);
+    const shown = res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr);
+    sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: crossed ? `${shown ?? ''} · ${crossed.notice}` : shown });
   }
 
   private async runClaude(p: TurnParams, state: ClaudeSessionState | null, sink: TurnSink, enginePrefix: string | null, attachments: Attachment[], newSessionModel?: ClaudeModel): Promise<void> {
@@ -2353,8 +2423,11 @@ export class TurnRunner {
         // Nowhere to go on a limit: the same prompt is tried again by itself once a limit should have lifted (written before
         // the result, so BottleneckWatch sees the booking with it). Not for a fork, a handoff note or a turn with files.
         const sid = shownId();
-        if (failure === 'limit' && !moveRefused && sid && !p.handoff && !p.attachments?.length) await this.bookRetry(sid, p.text, p.retryHop, res.errorText, p.commanderHop).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
-        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : `대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`} · ${shownError ?? ''}`.trim() });
+        // 다른 AI 로 이어가기: no Claude account left on a limit → another engine takes the message (instead of a booked retry).
+        const crossed = failure === 'limit' && !moveRefused ? await this.crossOver(p, sink, { sessionId: sid, engine: 'claude', cwd }, attachments) : null;
+        if (crossed) this.crossed.set(p.turnId, crossed.go);
+        else if (failure === 'limit' && !moveRefused && sid && !p.handoff && !p.attachments?.length) await this.bookRetry(sid, p.text, p.retryHop, res.errorText, p.commanderHop).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
+        sink.emit({ type: 'turn_result', turnId: p.turnId, sessionId, cwd, ok: false, text: '', badge, errorText: `${why} · ${moveRefused ? '세션 이전 실패' : `대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`}${crossed ? ` · ${crossed.notice}` : ''} · ${shownError ?? ''}`.trim() });
         announceMode();
         return done();
       }
@@ -2365,6 +2438,49 @@ export class TurnRunner {
       byPin = false;
     }
     return done();
+  }
+
+  /**
+   * 다른 AI 로 이어가기 (crossEngineFailover): turn `p` hit `from.engine`'s limit with no account of that engine left. If the
+   * setting is on, the handover cap not reached and 자동 분배 (without the engines that hit their limit; Gemini / Grok
+   * only with consent) finds another engine that can take the message, ws moves the pane to the new turn
+   * (sink.crossEngine) and this answers the notice plus the new session's run — the caller ends the failed turn first
+   * (its errorText carries the notice), then runs it. null = no handover: the old behaviour stands.
+   */
+  private async crossOver(p: TurnParams, sink: TurnSink, from: { sessionId: string | null; engine: EngineKind; cwd: string }, attachments: Attachment[], opts?: { text: string; attachmentIds?: string[]; then?: (sessionId: string | null) => Promise<void> }): Promise<{ notice: string; go: () => Promise<void> } | null> {
+    const { deps } = this;
+    const hop = p.crossHop ?? 0;
+    if (!deps.crossEngineFailover?.() || !sink.crossEngine || p.handoff || p.commanderHop !== undefined || p.bgTask || p.fork || sink.signal.aborted || hop >= CROSS_ENGINE_MAX_HOPS) return null;
+    const text = opts?.text ?? p.text;
+    const attachmentIds = opts ? opts.attachmentIds : p.attachments;
+    const exclude = [...new Set([...(p.excludeEngines ?? []), from.engine])];
+    const base: TurnParams = { turnId: `${p.turnId}:x${hop + 1}`, cwd: from.cwd, sessionId: null, text, engine: 'auto', model: 'auto', excludeEngines: exclude, crossHop: hop + 1, ...(attachmentIds?.length ? { attachments: attachmentIds } : {}), ...(p.lang ? { lang: p.lang } : {}), ...(p.concise ? { concise: true } : {}) };
+    const d = await this.decideRoute(base, attachments).catch(() => null);
+    if (!d || d.kind === 'no_route' || (d.fit && !d.fit.ok) || exclude.includes(d.engine) || (d.engine === 'codex' && !deps.codex)) return null;
+    const notice = sm().turn.crossNotice(ROUTE_ENGINE_LABEL[from.engine], ROUTE_ENGINE_LABEL[d.engine]);
+    const got = await sink.crossEngine({ from: from.sessionId, fromTurnId: p.turnId, fromEngine: from.engine, engine: d.engine, model: d.model, cwd: from.cwd, turnId: base.turnId, text, ...(attachmentIds?.length ? { attachments: attachmentIds } : {}), notice }).catch(() => null);
+    if (!got) return null;
+    const next: TurnParams = { ...base, carry: sm().turn.crossCarry(ROUTE_ENGINE_LABEL[from.engine], got.excerpt) };
+    const go = async () => {
+      // The new session's id, for the follow-ups that follow it (opts.then).
+      let sid: string | null = null;
+      const watched: TurnSink = {
+        ...sink,
+        emit: (m) => { if ((m.type === 'turn_started' || m.type === 'turn_result') && m.turnId === next.turnId && m.sessionId) sid = m.sessionId; sink.emit(m); },
+        sessionKnown: (id) => { sid = id; sink.sessionKnown?.(id); },
+      };
+      try {
+        await this.runDecided(next, watched, attachments, d);
+        const more = this.crossed.get(next.turnId);
+        if (more) { this.crossed.delete(next.turnId); await more(); }
+      } catch (err) {
+        this.crossed.delete(next.turnId);
+        console.error('deck: cross-engine handover failed', err instanceof Error ? err.message : err);
+        sink.emit({ type: 'error', turnId: next.turnId, message: displayError(err instanceof Error ? err.message : String(err), null) ?? ABORTED });
+      }
+      await opts?.then?.(sid);
+    };
+    return { notice, go };
   }
 
   /**
@@ -2412,6 +2528,28 @@ export class TurnRunner {
     // A background continuation is booked as '이어서 진행해 주세요.', a failed follow-up as its own text (not with files).
     const retryText = need.followUp ? (need.followUp.f.attachments?.length ? null : need.followUp.f.text) : '이어서 진행해 주세요.';
     const none = async () => {
+      // 다른 AI 로 이어가기: the failed follow-up (or a 계속 request for cut background work) goes to another engine; the
+      // follow-ups that waited behind the segment, then the rest of the session's line (sends that came meanwhile stay
+      // queued in it, see resending), follow into the new session in order — not refused as below.
+      const crossed = need.failure === 'limit'
+        ? await this.crossOver({ ...p, turnId: need.seg.turnId }, sink, { sessionId, engine: 'claude', cwd }, need.followUp?.attachments ?? [], {
+          text: need.followUp ? need.followUp.f.text : sm().turn.crossContinue,
+          ...(need.followUp?.f.attachments?.length ? { attachmentIds: need.followUp.f.attachments } : {}),
+          then: async (sid) => {
+            line.unshift(...need.queued);
+            if (!sid) { for (const q of line.splice(0)) this.refuseFollowUp(q, sink, sessionId, cwd); return; }
+            // A Claude model picked for the old session does not carry over to the other engine.
+            for (const q of line) if (q.f.model) q.f = (({ model: _old, ...f }) => f)(q.f);
+            await this.resendFollowUps(line, { base: { cwd, sessionId: sid, ...keptOf(p) }, sink, cwd, sessionId: sid, notice: false });
+          },
+        })
+        : null;
+      if (crossed) {
+        lined = true;
+        sink.emit({ type: 'turn_result', turnId: need.seg.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: need.seg.reason, usage: ZERO_USAGE, modelNote: null }, errorText: `${noneLeft} · ${crossed.notice}` });
+        await crossed.go();
+        return;
+      }
       if (need.failure === 'limit' && retryText) await this.bookRetry(sessionId, retryText, need.followUp ? need.followUp.f.retryHop : p.retryHop, need.errorText, p.commanderHop).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
       close(noneLeft);
       // No account can take anything now: sent on, each would only hit the limit again (a process each, its booked retry
