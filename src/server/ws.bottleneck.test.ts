@@ -381,6 +381,59 @@ describe('ws: 자동 재시도 end to end', () => {
     ws.close();
   });
 
+  it('submitRetry says a busy refusal apart (fired again at idle) from a start it took', async () => {
+    const S = '7f7f7f7f-7f7f-47f7-87f7-7f7f7f7f7f7f';
+    await store.set(state(S));
+    let done!: () => void;
+    const held = new Promise<void>((r) => { done = r; });
+    vi.spyOn(runner, 'run').mockImplementation(async (p, sink) => { sink.emit(startedOf(p)); await held; sink.emit(resultOf(p)); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: 'run' }));
+    await vi.waitFor(() => expect(wsApi.isBusy(S)).toBe(true));
+    // An automatic (commander) turn's retry never joins a running process: refused as busy.
+    expect(wsApi.submitRetry({ sessionId: S, cwd: base, text: 'go', hop: 1, commanderHop: 1 })).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^deck: retry deferred — /));
+    done();
+    await vi.waitFor(() => expect(wsApi.isBusy(S)).toBe(false));
+    expect(wsApi.submitRetry({ sessionId: S, cwd: base, text: 'go', hop: 1 })).toBe(true);
+    await vi.waitFor(() => expect(wsApi.isBusy(S)).toBe(false));
+    ws.close();
+  });
+
+  it('a send startTurn refuses (a handoff from a GPT session) leaves the booking alone', async () => {
+    const S = '80808080-8080-4808-8808-808080808080';
+    await store.set(state(S, { pendingRetry: { text: 'go', atMs: Date.now() + 60_000, hops: 1 } }));
+    watch.rearm([store.get(S)!]);
+    const run = vi.spyOn(runner, 'run');
+    const ws = await connect();
+    const seen: ServerMessage[] = [];
+    ws.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: 'x', handoff: true, engine: 'codex' }));
+    await vi.waitFor(() => expect(seen).toContainEqual(expect.objectContaining({ type: 'error', message: '이어서 새 세션은 Claude 대화에서만 돼요' })));
+    expect(store.get(S)?.pendingRetry).toMatchObject({ text: 'go' });
+    expect(run).not.toHaveBeenCalled();
+    watch.cancelRetry(S);
+    ws.close();
+  });
+
+  it('turning 자동으로 이어가기 off also stops an automatic turn fired but not started yet', async () => {
+    const S = '81818181-8181-4818-8818-818181818181';
+    await store.set(state(S, { pendingRetry: { text: 'go', atMs: Date.now() - 1000, hops: 1 } }));
+    const { calls, sinks } = departingRun();
+    const ws = await connect();
+    const seen: ServerMessage[] = [];
+    ws.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    watch.rearm([store.get(S)!]);
+    fire();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    ws.send(JSON.stringify({ type: 'set_settings', autoResume: false }));
+    await vi.waitFor(() => expect(sinks[0]!.signal.aborted).toBe(true));
+    ws.send(JSON.stringify({ type: 'set_settings', autoResume: true }));
+    await vi.waitFor(() => expect(seen.filter((m) => m.type === 'settings')).toHaveLength(2));
+    ws.close();
+  });
+
   // Last: drained stays drained.
   it('while draining, a due retry is refused with a log line and its booking is kept for the restart', async () => {
     const S = '77777777-7777-4777-8777-777777777777';

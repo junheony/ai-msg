@@ -57,8 +57,8 @@ export class BottleneckWatch {
     store: WatchStore;
     /** The earliest end of an account cooldown (ms), or null: "HH:MM 쯤 다시 시도 가능" for 대안 계정 없음. */
     earliestCooldownMs?: () => number | null;
-    /** Starts the booked retry turn; absent = retries are not fired. */
-    retry?: (r: RetryRequest) => void;
+    /** Starts the booked retry turn; absent = retries are not fired. False: the session was busy — fired again at idle (retryDue), not counted as refused. */
+    retry?: (r: RetryRequest) => boolean | void;
     /** 한도가 풀리면 자동으로 이어가기 on (the setting); absent = on. Off: a booking is dropped, not fired. */
     enabled?: () => boolean;
     /** A booked retry was armed (its time) or went (null: started, sent over, cancelled, stale) — the devices' 자동으로 이어가기 line. */
@@ -284,9 +284,12 @@ export class BottleneckWatch {
     // Gone meanwhile (e.g. the conversation was deleted): the devices' line goes too.
     if (!st?.pendingRetry) { this.deps.onRetry?.(sessionId, null); return; }
     if (this.deps.enabled?.() === false) { this.dropRetry(sessionId); return; }
-    this.fired.set(sessionId, { atMs: st.pendingRetry.atMs, n: (this.fired.get(sessionId)?.n ?? 0) + 1 });
+    const prev = this.fired.get(sessionId);
+    this.fired.set(sessionId, { atMs: st.pendingRetry.atMs, n: (prev?.n ?? 0) + 1 });
     try {
-      this.deps.retry?.({ sessionId, cwd: st.cwd, text: st.pendingRetry.text, hop: st.pendingRetry.hops, ...(st.pendingRetry.commanderHop ? { commanderHop: st.pendingRetry.commanderHop } : {}) });
+      const took = this.deps.retry?.({ sessionId, cwd: st.cwd, text: st.pendingRetry.text, hop: st.pendingRetry.hops, ...(st.pendingRetry.commanderHop ? { commanderHop: st.pendingRetry.commanderHop } : {}) });
+      // Busy (a running turn, a commander hop): not a refusal before start — retryDue fires it once the session is idle.
+      if (took === false) { if (prev) this.fired.set(sessionId, prev); else this.fired.delete(sessionId); }
     } catch (err) {
       console.error('deck: 자동 재시도 실패', err instanceof Error ? err.message : err);
     }

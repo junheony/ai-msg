@@ -14,7 +14,7 @@ const scope = { turnId: 't1', sessionId: 's1', cwd: '/w/proj' };
 const claude = (over: Partial<ClaudeSessionState> = {}): ClaudeSessionState => ({ sessionId: 's1', cwd: '/w/proj', account: 'a', projectDir: '/p', lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', ...over });
 
 /** A manual clock: timers fire when `advance` passes their time. */
-async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | null; quiet?: () => boolean; enabled?: () => boolean } = {}) {
+async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | null; quiet?: () => boolean; enabled?: () => boolean; busy?: () => boolean } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-bottleneck-'));
   const store = new SessionStateStore(path.join(dir, 'state.json'));
   await store.load();
@@ -31,7 +31,7 @@ async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | nul
     titleOf: () => '세션 제목',
     store,
     earliestCooldownMs: () => o.cooldown ?? null,
-    retry: (r) => retries.push(r),
+    retry: (r) => { retries.push(r); return o.busy?.() !== true; },
     ...(o.quiet ? { quiet: o.quiet } : {}),
     ...(o.enabled ? { enabled: o.enabled } : {}),
     now: () => now,
@@ -324,6 +324,21 @@ describe('BottleneckWatch · 사령탑이 맡은 세션', () => {
     expect(c.shown.at(-1)).toEqual(['s1', null]);
     c.advance(60 * MIN);
     expect(c.retries).toHaveLength(3);
+  });
+
+  it('a fire refused because the session was busy is not counted: fired again at once when it goes idle, every time', async () => {
+    let busy = true;
+    const c = await setup({ busy: () => busy });
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() - MIN, hops: 1 } }));
+    for (let i = 0; i < 5; i++) c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(5);
+    expect(c.store.get('s1')?.pendingRetry?.atMs).toBe(c.now() - MIN);
+    busy = false;
+    c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(6);
+    // Taken now: a refusal before its turn_started would be the counted kind (booked 5 min later).
+    c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(6);
   });
 
   it('자동으로 이어가기 turned off after booking: not fired at its time but dropped; cancelAllRetries drops every booking', async () => {

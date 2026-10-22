@@ -292,7 +292,8 @@ export type WsHandle = {
    * automatic one, 보안 #3) rides a new turn only: such a retry on a busy session is refused, since a follow-up carries no
    * commanderHop and the held process may be a person's ungated one.
    */
-  submitRetry(r: { sessionId: string; cwd: string; text: string; hop: number; commanderHop?: number }): void;
+  /** False: refused because the session was busy (or the server drains) — fire it again once the session is idle. */
+  submitRetry(r: { sessionId: string; cwd: string; text: string; hop: number; commanderHop?: number }): boolean;
   /**
    * submitRetry, generalized. `kind: 'commander'` (총사령탑 §6): only ever a new turn — refused synchronously (false) when
    * the feature is off, the server drains, the session is busy (a running turn, sends waiting in afterRelease, a booked
@@ -376,7 +377,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const pinList = () => deps.pins?.list() ?? [];
   const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList(), desktop: deps.index.desktop() });
 
+  /** Errors refusing a send (turnId null) so far: a caller sees whether startTurn refused at once (the count moved). */
+  let refusals = 0;
   const send = (ws: WebSocket, msg: ServerMessage) => {
+    if (msg.type === 'error' && msg.turnId === null) refusals++;
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
     // A refused automatic retry (draining, busy, …) has no pane to show it: the booking stays (a restart re-arms it).
     else if (ws === NO_DEVICE && msg.type === 'error') console.warn(`deck: retry deferred — ${msg.message}`);
@@ -845,7 +849,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         if (queuedAware.has(ws) && !rehold.has(msg.clientRef)) send(ws, { type: 'turn_queued', turnId: b.turnId, sessionId: sid, cwd: b.cwd, clientRef: msg.clientRef, behind });
       };
       if (base?.recycling) {
-        if (!base.ac.signal.aborted) holdBehindBg(base);
+        // Behind an automatic turn about to be ended (case 'send'): nothing to wait behind worth telling.
+        if (!base.ac.signal.aborted && departed.get(sid) !== base) holdBehindBg(base);
         base.afterRelease.push({ ws, msg, ...hop });
         return;
       }
@@ -1238,8 +1243,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       console.error('deck: commander idle hook failed', errMsg(err));
     }
   };
+  /** The last server send was refused because its session was busy or the server drains (submitRetry tells the watch). */
+  let refusedBusy = false;
   const submitServerSend = (r: ServerSend): boolean => {
     const { sessionId, cwd, text } = r;
+    refusedBusy = false;
     if (r.kind === 'commander') {
       const st = deps.store.get(sessionId);
       if (!deps.commander?.enabled() || draining || isBusy(sessionId) || sentKeys.get(sessionId) === r.sendKey) return false;
@@ -1265,7 +1273,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (!segments.has(sessionId)) segments.set(sessionId, new SegmentCollector(cwd));
     }
     const was = busy.has(sessionId);
+    const n = refusals;
     startTurn(NO_DEVICE, { type: 'send', sessionId, cwd, text }, false, r.hop, r.commanderHop);
+    // Refused because the session is busy (or the server drains): fired again once it is idle (BottleneckWatch).
+    if (refusals !== n && (was || draining)) { refusedBusy = true; return false; }
     // A new turn (not a follow-up into a live process): until its turn_started a cancel or a user's send can still end it.
     const fresh = was ? undefined : turns.get(busy.get(sessionId) ?? '');
     if (fresh) departed.set(sessionId, fresh);
@@ -1587,16 +1598,18 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       const msg = r.data;
       switch (msg.type) {
         case 'send': {
-          // Only a send that goes in stops the booking: not a duplicate copy, not one refused while draining.
           const sid = msg.sessionId;
-          const refused = !!sid && ((!!msg.clientRef && !!refusal(sid, msg.clientRef)) || (draining && !busy.has(sid)));
-          if (sid && !refused) {
-            userSent(sid);
-            // The automatic turn fired but not started yet gives way: this send runs once it is gone (afterRelease).
-            const auto = departed.get(sid);
-            if (auto && turns.get(busy.get(sid) ?? '') === auto) { auto.recycling = true; auto.ac.abort(); }
-          }
+          // The automatic turn fired but not started yet gives way: the send waits for it (afterRelease) instead of being
+          // refused as busy — and it is ended only if startTurn took the send.
+          const auto = sid ? departed.get(sid) : undefined;
+          const giving = !!auto && !auto.recycling && turns.get(busy.get(sid!) ?? '') === auto;
+          if (giving) auto!.recycling = true;
+          const n = refusals;
           startTurn(ws, msg);
+          // Only a send startTurn took (no refusal sent back) stops the booking.
+          const took = refusals === n;
+          if (giving) { if (took) auto!.ac.abort(); else auto!.recycling = false; }
+          if (sid && took) userSent(sid);
           break;
         }
         case 'permission_response': {
@@ -1803,6 +1816,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               // 자동으로 이어가기 off: nothing booked is left to fire later.
               if (msg.autoResume === false) {
                 try { deps.cancelAllRetries?.(); } catch (err) { console.error('deck: dropping the auto-resume bookings failed', errMsg(err)); }
+                // …and an automatic turn fired but not started yet is stopped too.
+                for (const t of departed.values()) t.ac.abort();
               }
               broadcast({ type: 'settings', settings, ...(msg.commanderEnabled !== undefined ? { features: featureList() } : {}) });
               if (msg.taskSoftCap !== undefined) { broadcastTasks(); pumpTasks(); }
@@ -1886,6 +1901,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     },
     submitRetry({ sessionId, cwd, text, hop, commanderHop }) {
       submitServerSend({ kind: 'retry', sessionId, cwd, text, hop, ...(commanderHop ? { commanderHop } : {}) });
+      return !refusedBusy;
     },
     submitServerSend,
     isBusy,
