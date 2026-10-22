@@ -6,11 +6,12 @@ import type { Locale } from '../../shared/locale';
 const NAMES: Record<Exclude<Locale, 'en'>, { en: string; own: string }> = { ko: { en: 'Korean', own: '한국어' } };
 
 /**
- * Which language a turn's replies come in: an explicit server-wide pick (settings `language`) wins over the sending
- * device's UI language (send.lang); neither = no note.
+ * Which language a turn's replies come in: the connecting device decides (send.lang — its explicit pick or its
+ * browser's); a turn without a device (총사령탑, retries) keeps the session's last (SessionState.lang); settings
+ * `language` is only the fallback for neither. None = no note.
  */
-export function turnLanguage(explicit: Locale | null | undefined, device: Locale | undefined): Locale | undefined {
-  return explicit ?? device;
+export function turnLanguage(o: { device?: Locale; session?: Locale; server?: Locale | null }): Locale | undefined {
+  return o.device ?? o.session ?? o.server ?? undefined;
 }
 
 /**

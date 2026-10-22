@@ -59,7 +59,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     ignoreFit: z.boolean().optional(),
     /** 간결 모드 (the device's pref): answer results-first, short, decisions as cards (shared/concise CONCISE_STYLE_PROMPT). Claude only for now. */
     concise: z.boolean().optional(),
-    /** The device's UI language (its resolved pick or browser): the reply language unless settings `language` is explicit (server/turn/language). */
+    /** The device's UI language (its pick or its browser's): the reply language, ahead of the session's last and settings `language` (server/turn/language). */
     lang: z.enum(LOCALES).optional(),
     /**
      * ⚡ 빠르게 (the session's switch on the device): a Claude turn runs on Opus with `fastMode` (billed to usage credits,
@@ -124,7 +124,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional(),
     /** 자동 분배: engines 자동 may use, engines whose external-transfer card was accepted, Grok fast model. */
     autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional(),
-    /** The server's language, from a device's explicit pick (its 'auto' sends nothing). */ language: z.enum(LOCALES).optional() }),
+    /** The server's language, from a device's explicit pick; null (the device picked Auto) = from the environment again. */ language: z.enum(LOCALES).nullable().optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
    * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),

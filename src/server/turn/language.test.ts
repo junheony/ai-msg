@@ -14,11 +14,12 @@ describe('reply-language note', () => {
     expect(languageDirective(null)).toBeNull();
   });
 
-  it("an explicit settings language wins over the device's; neither = none", () => {
-    expect(turnLanguage('en', 'ko')).toBe('en');
-    expect(turnLanguage('ko', 'en')).toBe('ko');
-    expect(turnLanguage(null, 'ko')).toBe('ko');
-    expect(turnLanguage(undefined, 'en')).toBe('en');
-    expect(turnLanguage(undefined, undefined)).toBeUndefined();
+  it("the device decides; a turn without one keeps the session's; settings language is only the fallback", () => {
+    expect(turnLanguage({ device: 'ko', session: 'en', server: 'en' })).toBe('ko');
+    expect(turnLanguage({ device: 'en', server: 'ko' })).toBe('en');
+    expect(turnLanguage({ session: 'ko', server: 'en' })).toBe('ko');
+    expect(turnLanguage({ server: 'ko' })).toBe('ko');
+    expect(turnLanguage({ server: null })).toBeUndefined();
+    expect(turnLanguage({})).toBeUndefined();
   });
 });

@@ -861,6 +861,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         ...(msg.attachments ? { attachments: msg.attachments } : {}),
         ...(msg.model ? { model: msg.model } : {}),
         ...(msg.clientRef ? { clientRef: msg.clientRef } : {}),
+        ...(msg.lang ? { lang: msg.lang } : {}),
         ...hop,
       });
       // Accepted once its turn_started comes (the sink's alias branch): that is when the process takes it in.
@@ -934,7 +935,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const sink: TurnSink = {
       // The CLI named the session: known now, not only with the first event that carries the id. The send's ref is
       // recorded under it at once (a device reloaded mid first turn drops its maybe-sent copy instead of sending it again).
-      sessionKnown: (sid) => { adopt(turn, sid); if (started) accepted(sid); taskSockets.get(ws)?.(sid); },
+      sessionKnown: (sid) => { adopt(turn, sid); if (started) accepted(sid); taskSockets.get(ws)?.(sid); if (msg.lang && deps.store.get(sid)?.lang !== msg.lang) void deps.store.setLang(sid, msg.lang).catch((err: unknown) => console.error('deck: session language write failed', errMsg(err))); },
       emit: (m) => {
         if (m.type === 'turn_started') {
           if (turn.current !== m.turnId) turn.since = Date.now();
@@ -1038,7 +1039,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             if (st && !isOtherEngineState(st)) model = st.defaultModel;
           }
         }
-        const lang = turnLanguage(deps.settings?.get().language, msg.lang);
+        // The session's language sticks: it changes only when a device sends another (the prompt cache holds otherwise).
+        const sticky = msg.sessionId ? deps.store.get(msg.sessionId)?.lang : msg.branch ? deps.store.get(msg.branch.from)?.lang : undefined;
+        const lang = turnLanguage({ device: msg.lang, session: sticky, server: deps.settings?.get().language });
+        if (msg.lang && msg.sessionId && msg.lang !== sticky) await deps.store.setLang(msg.sessionId, msg.lang).catch((err: unknown) => console.error('deck: session language write failed', errMsg(err)));
         await deps.runner.run({
           turnId, cwd: runCwd, sessionId: msg.sessionId, text: msg.text,
           ...(fork ? { fork } : {}),
@@ -1612,7 +1616,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
           // The default only applies to new sessions (and ones with no stored mode) from their next turn: waiting cards stay.
-          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}), ...(msg.autoEngines ? { autoEngines: msg.autoEngines } : {}), ...(msg.autoConsent ? { autoConsent: msg.autoConsent } : {}), ...(msg.grokFast !== undefined ? { grokFast: msg.grokFast } : {}), ...(msg.taskSoftCap !== undefined ? { taskSoftCap: msg.taskSoftCap } : {}), ...(msg.language ? { language: msg.language } : {}) })
+          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}), ...(msg.autoEngines ? { autoEngines: msg.autoEngines } : {}), ...(msg.autoConsent ? { autoConsent: msg.autoConsent } : {}), ...(msg.grokFast !== undefined ? { grokFast: msg.grokFast } : {}), ...(msg.taskSoftCap !== undefined ? { taskSoftCap: msg.taskSoftCap } : {}), ...(msg.language !== undefined ? { language: msg.language } : {}) })
             // 총사령탑 켜기·끄기 changes what the server advertises: every device gets the list again.
             .then((settings) => {
               // Off: no commander is left running unseen (devices drop the chip with the feature) or armed for a later on.
@@ -1620,7 +1624,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               broadcast({ type: 'settings', settings, ...(msg.commanderEnabled !== undefined ? { features: featureList() } : {}) });
               if (msg.taskSoftCap !== undefined) { broadcastTasks(); pumpTasks(); }
               // Server messages follow the last explicit pick from now on.
-              if (msg.language) setLocale(resolveServerLocale(settings, process.env));
+              if (msg.language !== undefined) setLocale(resolveServerLocale(settings, process.env));
             })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `설정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;

@@ -108,7 +108,7 @@ export type TurnParams = {
   commanderNote?: string;
   /** 그래도 보내기: skip the capability check (auto-route §10-4) that would answer `route_fit` instead of running the turn. */
   ignoreFit?: boolean;
-  /** The reply language (ws: turnLanguage — explicit settings `language`, else the device's send.lang); en / absent = no note. */
+  /** The reply language (ws: turnLanguage — the device's send.lang, else the session's last, else settings `language`); en / absent = no note. Carried to continuations. */
   lang?: Locale;
 };
 
@@ -246,7 +246,7 @@ export type RoutePreview = { account: Account; asOpus?: boolean; reason: string 
  * No `commanderHop` on purpose: a follow-up goes into a process that already runs with its own turn's gate (or none) —
  * the hook settings, fail-closed registration and autoApprove of that process apply to it as they are.
  */
-export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string; retryHop?: number };
+export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string; retryHop?: number; /** The sending device's reply language (send.lang); the failover resend keeps it. */ lang?: Locale };
 
 /**
  * A background / follow-up segment of a held-open process ended on a limit or auth failure (followThrough): the process
@@ -2290,8 +2290,8 @@ export class TurnRunner {
         // is the continuation turn's whole point), for a resent follow-up only when background work was cut with it.
         if (!need.followUp || need.tasks.length) await deps.store.set({ ...st, interrupted: { atMs: this.now(), tasks: need.tasks, cause: `${this.label(account)} 계정 ${why}` } });
       }
-      const next = { cwd, sessionId, failoverHop: hop + 1, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}) };
-      const ofFollowUp = (f: FollowUpParams): TurnParams => ({ ...next, turnId: f.turnId, text: f.text, ...(f.model ? { model: f.model } : {}), ...(f.attachments ? { attachments: f.attachments } : {}), ...(f.clientRef ? { clientRef: f.clientRef } : {}), ...(f.retryHop ? { retryHop: f.retryHop } : {}) });
+      const next = { cwd, sessionId, failoverHop: hop + 1, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}), ...(p.lang ? { lang: p.lang } : {}) };
+      const ofFollowUp = (f: FollowUpParams): TurnParams => ({ ...next, turnId: f.turnId, text: f.text, ...(f.model ? { model: f.model } : {}), ...(f.attachments ? { attachments: f.attachments } : {}), ...(f.clientRef ? { clientRef: f.clientRef } : {}), ...(f.retryHop ? { retryHop: f.retryHop } : {}), ...(f.lang ? { lang: f.lang } : {}) });
       // The continuation refused before its turn_started (attachment purged, session gone): the segment that got the
       // turn_retry still needs an end, else the pane waits on it.
       let started = false;

@@ -31,6 +31,7 @@ let base = '';
 let work = '';
 let wsApi: ReturnType<typeof attachWebSocket>;
 let settings: SettingsStore;
+let store: SessionStateStore;
 let tasks: TaskRegistry;
 const pushed: PushPayload[] = [];
 const notified: ServerMessage[] = [];
@@ -53,7 +54,7 @@ beforeAll(async () => {
   await index.refresh();
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main'), card('claude:second'), card('claude:third')] }) }) });
   await usage.pollOnce();
-  const store = new SessionStateStore(path.join(base, 'state.json'));
+  store = new SessionStateStore(path.join(base, 'state.json'));
   await store.load();
   let n = 0;
   const stub = new StubEngine(async (req) => {
@@ -253,15 +254,31 @@ describe('ws · reply language', () => {
     ws.close();
   });
 
-  it("an explicit settings language wins over the device's", async () => {
+  it("the device's lang beats the server setting; the setting is only the fallback for a turn with no lang", async () => {
     const { ws } = await open();
-    await settings.set({ language: 'en' });
-    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-explicit-en', lang: 'ko' }));
-    expect((await callFor('lang-explicit-en')).appendSystemPrompt).toBeUndefined();
     await settings.set({ language: 'ko' });
-    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-explicit-ko', lang: 'en' }));
-    expect((await callFor('lang-explicit-ko')).appendSystemPrompt).toContain('[deck language]');
-    await settings.set({ language: null });
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-device-en', lang: 'en' }));
+    expect((await callFor('lang-device-en')).appendSystemPrompt).toBeUndefined();
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-fallback-ko' }));
+    expect((await callFor('lang-fallback-ko')).appendSystemPrompt).toContain('[deck language]');
+    // Auto in Settings clears it (set_settings.language null).
+    ws.send(JSON.stringify({ type: 'set_settings', language: null }));
+    await until(() => settings.get().language === undefined);
+    ws.close();
+  });
+
+  it("a session keeps the language a device last sent: a turn without lang reuses it, a new lang replaces it", async () => {
+    const { ws, msgs } = await open();
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'sticky-1', lang: 'ko', clientRef: 'sticky-1' }));
+    const started = await until(() => msgs.find((m) => m.type === 'turn_result' && m.sessionId && calls.some((c) => c.prompt === 'sticky-1')));
+    const sid = (started as { sessionId: string }).sessionId;
+    await until(() => store.get(sid)?.lang === 'ko');
+    ws.send(JSON.stringify({ type: 'send', sessionId: sid, cwd: work, text: 'sticky-2' }));
+    expect((await callFor('sticky-2')).appendSystemPrompt).toContain('[deck language]');
+    await until(() => msgs.some((m) => m.type === 'turn_result' && m.text === 'sticky-2 완료'));
+    ws.send(JSON.stringify({ type: 'send', sessionId: sid, cwd: work, text: 'sticky-3', lang: 'en' }));
+    expect((await callFor('sticky-3')).appendSystemPrompt).toBeUndefined();
+    expect(store.get(sid)?.lang).toBe('en');
     ws.close();
   });
 

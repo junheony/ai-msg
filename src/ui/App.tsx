@@ -41,6 +41,8 @@ import { FIND_EVENT } from './components/FindBar';
 /** Disconnected this long → the 서버에 연결할 수 없어요 bar (short blips during a restart stay at 재연결 중…). */
 const DOWN_NOTICE_MS = 20_000;
 const DOWN_TICK_MS = 10_000;
+/** A language pick reloads the page once the server echoes `settings`, or after this long without it. */
+const SETTINGS_ACK_MS = 3_000;
 /** Hidden sidebar peek: dwell on the left edge this long before it slides out; this long outside it before it goes. */
 const PEEK_OPEN_MS = 150;
 const PEEK_CLOSE_MS = 300;
@@ -162,6 +164,8 @@ export function App() {
   const firstBuild = useRef<string | null | undefined>(undefined);
   const [newBuild, setNewBuild] = useState(false);
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
+  /** A language pick waiting for the server's `settings` echo before the page reloads (SettingsView onLanguage). */
+  const settingsAck = useRef<(() => void) | null>(null);
   // Down for a while: the header dot alone says nothing (on a phone it is all there is), so after DOWN_NOTICE_MS a bar
   // says since when the server stopped answering and offers 다시 시도. `now` ticks only while disconnected.
   const [now, setNow] = useState(() => Date.now());
@@ -409,6 +413,7 @@ export function App() {
       if (msg.type === 'hello' && has('setup') && msg.setup?.needed && !setupAsked.current) { setupAsked.current = true; setSetupOpen(true); }
       // 총사령탑 켜기·끄기 changed what the server does (before the dispatch, so the render that follows sees it).
       if (msg.type === 'settings' && msg.features) setFeatures(msg.features);
+      if (msg.type === 'settings') settingsAck.current?.();
       // A repeat of an event already applied, one ahead of a gap (what is missing was just asked for), or a retry's same failure: not applied.
       if (!tracker.accept(msg)) return;
       dispatch(msg.type === 'history' ? { type: 'server', msg, sentFiles: loadSent(msg.sessionId) } : { type: 'server', msg });
@@ -1337,7 +1342,7 @@ export function App() {
       )}
       {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
-      {settingsOpen && <SettingsView build={buildId} onLanguage={(language) => send({ type: 'set_settings', language })} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onSetup={has('setup') ? () => { setSettingsOpen(false); setSetupOpen(true); } : undefined} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsView build={buildId} onLanguage={(language) => new Promise<void>((resolve) => { const done = () => { clearTimeout(t); if (settingsAck.current === done) settingsAck.current = null; resolve(); }; const t = setTimeout(done, SETTINGS_ACK_MS); settingsAck.current = done; if (!send({ type: 'set_settings', language })) done(); })} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onSetup={has('setup') ? () => { setSettingsOpen(false); setSetupOpen(true); } : undefined} onClose={() => setSettingsOpen(false)} />}
       {setupOpen && <SetupWizard activity={state.activity} onDone={() => setSetupOpen(false)} onClose={() => setSetupOpen(false)} />}
       {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)}
         onOpenSessionSplit={(s) => openSplit(s.sessionId, s.cwd, s.title)}

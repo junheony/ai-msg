@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PREFS, FONT_SCALE, PREFS_KEY, applyPrefs, loadPrefs, nextTheme, parsePrefs, prefsReducer, savePrefs } from './prefs';
 import { initUiLocale, ui } from './i18n';
-import { getLocale } from '../shared/locale';
+import { getLocale, setLocale } from '../shared/locale';
 
 const mem = (init: Record<string, string> = {}) => {
   const m = new Map(Object.entries(init));
@@ -30,9 +30,9 @@ describe('prefs', () => {
     const store = mem();
     const prefs = { theme: 'dark', fontSize: 'xlarge', chatWidth: 'wide', sendKey: 'mod-enter', conciseMode: false, pinnedFolded: true } as const;
     savePrefs(prefs, store);
-    expect(loadPrefs(store)).toEqual(prefs);
+    expect(loadPrefs(store)).toEqual({ ...prefs, lang: 'auto' });
     expect(parsePrefs('not json')).toEqual(DEFAULT_PREFS);
-    expect(parsePrefs(JSON.stringify({ theme: 'neon', fontSize: 'large' }))).toEqual({ ...DEFAULT_PREFS, fontSize: 'large' });
+    expect(parsePrefs(JSON.stringify({ theme: 'neon', fontSize: 'large', lang: 'auto' }))).toEqual({ ...DEFAULT_PREFS, fontSize: 'large', lang: 'auto' });
     expect(loadPrefs(mem({ [PREFS_KEY]: '{"chatWidth":"wide"}' })).chatWidth).toBe('wide');
     expect(loadPrefs(null)).toEqual(DEFAULT_PREFS);
   });
@@ -84,6 +84,27 @@ describe('lang pref', () => {
     expect(parsePrefs('{"lang":"ko"}').lang).toBe('ko');
     expect(prefsReducer(DEFAULT_PREFS, { type: 'set', key: 'lang', value: 'en' }).lang).toBe('en');
     expect(prefsReducer(DEFAULT_PREFS, { type: 'set', key: 'lang', value: 'fr' as never })).toBe(DEFAULT_PREFS);
+  });
+
+  it('a device whose prefs predate the language setting stays Korean; a new one is auto (and saved as such)', () => {
+    expect(parsePrefs('{"theme":"dark"}').lang).toBe('ko');
+    expect(parsePrefs(null).lang).toBeUndefined();
+    const store = mem();
+    savePrefs({ ...DEFAULT_PREFS, theme: 'dark' }, store);
+    expect(loadPrefs(store).lang).toBe('auto');
+  });
+
+  it('auto from a non-Korean start: any ko entry in the browser languages gives ko, none gives en', () => {
+    // Overrides the Korean test setup (src/test/setup.ts): an English runtime and an auto device.
+    setLocale('en');
+    const root = { lang: '' } as HTMLElement;
+    const pref = loadPrefs(mem({ [PREFS_KEY]: JSON.stringify({ ...DEFAULT_PREFS, lang: 'auto' }) })).lang ?? 'auto';
+    expect(pref).toBe('auto');
+    expect(initUiLocale(pref, ['en-US'], root)).toBe('en');
+    expect(root.lang).toBe('en');
+    expect(initUiLocale(pref, ['en-US', 'ko-KR'], root)).toBe('ko');
+    expect(root.lang).toBe('ko');
+    expect(getLocale()).toBe('ko');
   });
 
   it('initUiLocale: auto follows the browser and sets <html lang>', () => {

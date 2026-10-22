@@ -4,9 +4,11 @@ import { getLocale, intlTag, isLocale, localeFromEnv, localeFromLanguages, pick,
 describe('locale', () => {
   afterEach(() => setLocale('ko'));
 
-  it('browser languages: first supported primary tag wins, else en', () => {
+  it('browser languages: any ko entry → ko, else the first supported primary tag, else en', () => {
     expect(localeFromLanguages(['ko-KR', 'en-US'])).toBe('ko');
-    expect(localeFromLanguages(['en-GB', 'ko'])).toBe('en');
+    expect(localeFromLanguages(['en-US', 'ko-KR'])).toBe('ko');
+    expect(localeFromLanguages(['en-GB', 'fr'])).toBe('en');
+    expect(localeFromLanguages(['fr-FR', 'de'])).toBe('en');
     expect(localeFromLanguages(['fr-FR', 'KO'])).toBe('ko');
     expect(localeFromLanguages([])).toBe('en');
   });

@@ -333,23 +333,27 @@ describe('SettingsView 언어', () => {
   afterEach(cleanup);
   const langGroup = () => screen.getByRole('group', { name: '언어 · Language' });
 
-  it('picking English saves the pref, tells the server, and reloads', () => {
-    const onLanguage = vi.fn();
+  it('picking English saves the pref, tells the server, and reloads only once the server has it', async () => {
+    let ack!: () => void;
+    const onLanguage = vi.fn(() => new Promise<void>((r) => { ack = r; }));
     const reload = vi.fn();
     render(<SettingsView build={null} onLanguage={onLanguage} reload={reload} onClose={noop} />);
     fireEvent.click(within(langGroup()).getByRole('button', { name: 'English' }));
     expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).lang).toBe('en');
     expect(onLanguage).toHaveBeenCalledWith('en');
-    expect(reload).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(reload).not.toHaveBeenCalled();
+    ack();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
-  it('picking Auto does not change the server language', () => {
+  it('picking Auto clears the server language (null)', () => {
     const onLanguage = vi.fn();
     const reload = vi.fn();
     render(<SettingsView build={null} onLanguage={onLanguage} reload={reload} onClose={noop} />);
     fireEvent.click(within(langGroup()).getByRole('button', { name: '자동' }));
     expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).lang).toBe('auto');
-    expect(onLanguage).not.toHaveBeenCalled();
+    expect(onLanguage).toHaveBeenCalledWith(null);
   });
 
   it('picking the current language does nothing', () => {

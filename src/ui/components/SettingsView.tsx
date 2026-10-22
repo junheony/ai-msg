@@ -69,8 +69,11 @@ type GroupId = (typeof SETTINGS_GROUPS)[number][0];
 
 export function SettingsView({ build, onLanguage, reload = () => location.reload(), defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onSetup, onClose }: {
   build: string | null;
-  /** An explicit language pick (not 'auto'): the server follows the last one any device made (set_settings.language). */
-  onLanguage?: (language: Locale) => void;
+  /**
+   * A language pick: explicit → the server's fallback language (set_settings.language, for turns no device sends);
+   * Auto → null (cleared). Resolves once the server has it: the page reloads only then.
+   */
+  onLanguage?: (language: Locale | null) => Promise<void> | void;
   /** Reloads the page: the UI language is fixed at boot. */
   reload?: () => void;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
@@ -108,8 +111,8 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
   const pickLang = (v: LangPref) => {
     if (v === (prefs.lang ?? 'auto')) return;
     set('lang', v);
-    if (v !== 'auto') onLanguage?.(v);
-    if ((v === 'auto' ? localeFromLanguages(navigator.languages ?? []) : v) !== getLocale()) reload();
+    const changes = (v === 'auto' ? localeFromLanguages(navigator.languages ?? []) : v) !== getLocale();
+    void Promise.resolve(onLanguage?.(v === 'auto' ? null : v)).catch(() => undefined).then(() => { if (changes) reload(); });
   };
   const [askConsent, setAskConsent] = useState(false);
   const single = claudeAccounts <= 1;

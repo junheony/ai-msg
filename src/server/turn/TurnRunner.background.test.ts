@@ -323,6 +323,20 @@ describe('TurnRunner: background work after the turn result', () => {
     await done;
   });
 
+  it('the reply language is carried to the cap continuation', async () => {
+    const { f, msgs, sink, runner, deps } = await setup({ bgMaxMs: 20 });
+    const notes: (string | undefined)[] = [];
+    const engine = deps.engine;
+    deps.engine = { runTurn: (r) => { notes.push(r.appendSystemPrompt); return engine.runTurn(r); } };
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', lang: 'ko' }, sink);
+    f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'slow analysis' }]), cli.result('launched', SID));
+    await waitFor(() => of(msgs, 'turn_started').length === 2, 'the automatic continuation');
+    f.push(cli.init(SID), cli.result('resumed', SID));
+    await done;
+    expect(notes).toHaveLength(2);
+    for (const n of notes) expect(n).toContain('[deck language]');
+  });
+
   it('the background wait limit cutting work: deck records it and sends 이어서 진행해 주세요 itself, telling the model it is an automatic continuation', async () => {
     const { f, msgs, sink, runner, store, procs } = await setup({ bgMaxMs: 20 });
     const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
@@ -481,6 +495,40 @@ describe('TurnRunner: background work after the turn result', () => {
       await done;
       expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.account])).toEqual([['t1', 'b'], ['t1:bg1', 'b'], ['t1:bg1', 'a']]);
       expect(hops).toEqual([2, 2]);
+    });
+
+    it('the reply language is carried to the turn that goes on on the other account (continuation and resent follow-up)', async () => {
+      const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const notes: (string | undefined)[] = [];
+      const engine = deps.engine;
+      deps.engine = { runTurn: (r) => { notes.push(r.appendSystemPrompt); return engine.runTurn(r); } };
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', lang: 'ko' }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'), limited);
+      await waitFor(() => f.state.calls === 2, 'the continuation process');
+      f.push(cli.init(SID), cli.delta('resumed'), cli.result('resumed', SID));
+      await done;
+      expect(notes).toHaveLength(2);
+      for (const n of notes) expect(n).toContain('[deck language] Respond to the user in Korean');
+    });
+
+    it("a resent follow-up keeps its own device's language", async () => {
+      const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const notes: (string | undefined)[] = [];
+      const engine = deps.engine;
+      deps.engine = { runTurn: (r) => { notes.push(r.appendSystemPrompt); return engine.runTurn(r); } };
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      expect(runner.followUp(SID, { turnId: 'f1', text: 'status?', clientRef: 'r1', lang: 'ko' })).toEqual({ queuedBehind: null });
+      await waitFor(() => f.inputs.length === 2, 'follow-up written');
+      f.push(limited);
+      await waitFor(() => f.state.calls === 2, 'the retry process');
+      f.push(cli.init(SID), cli.result('fine', SID));
+      await done;
+      expect(notes[0]).toBeUndefined();
+      expect(notes[1]).toContain('[deck language]');
     });
 
     it('같은 벤더 순환 꺼짐: the segment does not go on on another Claude account; it ends as failed and the retry is booked', async () => {

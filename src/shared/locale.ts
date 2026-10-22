@@ -9,13 +9,14 @@ export function isLocale(v: unknown): v is Locale {
   return (LOCALES as readonly unknown[]).includes(v);
 }
 
-/** The first entry whose primary subtag (`ko-KR` → `ko`, any case) is supported; none → 'en'. */
+/**
+ * Korean when any entry's primary subtag is `ko` (`ko-KR`, any case): Korean users often list English first
+ * (['en-US', 'ko-KR']). Otherwise the first supported entry; none → 'en'.
+ */
 export function localeFromLanguages(langs: readonly string[]): Locale {
-  for (const l of langs) {
-    const primary = l.split(/[-_]/)[0]!.toLowerCase();
-    if (isLocale(primary)) return primary;
-  }
-  return 'en';
+  const primaries = langs.map((l) => l.split(/[-_]/)[0]!.toLowerCase());
+  if (primaries.includes('ko')) return 'ko';
+  return primaries.find(isLocale) ?? 'en';
 }
 
 /**

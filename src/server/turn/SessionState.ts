@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Account, GeminiAccount, GrokAccount } from '../../shared/accounts';
 import type { ClaudeModel, CodexModel, CodexSandbox, Effort, GeminiModel, GrokModel } from '../../shared/models';
 import type { PermMode } from '../../shared/permission';
+import { isLocale, type Locale } from '../../shared/locale';
 import type { SessionEntry } from '../../shared/session-types';
 import { isCommanderState, type CommanderState } from '../commander/types';
 
@@ -47,6 +48,12 @@ type SessionBase = {
    * `set()` 에 실려 온 값은 버리고 기존 값을 지킨다(TurnRunner 가 턴 끝에 상태를 새로 만들어도 풀리지 않게).
    */
   commanderEdited?: true;
+  /**
+   * The reply language a device last sent this session (send.lang): later turns without a device (총사령탑, retries,
+   * continuations) reuse it, and the note only changes on a real change (the prompt cache holds). Changed only via
+   * `setLang`, kept across `set()` like commander.
+   */
+  lang?: Locale;
 };
 
 export type ClaudeSessionState = SessionBase & {
@@ -135,6 +142,8 @@ export class SessionStateStore {
   private map = new Map<string, SessionState>();
   /** Review I6: writes are serialized; each snapshot goes through its own tmp file. */
   private chain: Promise<void> = Promise.resolve();
+  /** setLang for a session whose first state is not written yet (a new session's id comes before it). */
+  private readonly pendingLang = new Map<string, Locale>();
 
   constructor(private readonly file: string) {}
 
@@ -157,6 +166,8 @@ export class SessionStateStore {
           if ((s as { commanderEdited?: unknown }).commanderEdited === false) delete (s as { commanderEdited?: true }).commanderEdited;
           else (s as { commanderEdited?: true }).commanderEdited = true;
         }
+        // A hand-edited language deck does not have: dropped (the session then follows the server's).
+        if (s && typeof s === 'object' && 'lang' in s && !isLocale(s.lang)) delete (s as { lang?: Locale }).lang;
         // 보안 #3: a retry booking whose commanderHop is not a positive integer could run an automatic turn ungated — dropped.
         if (s && typeof s === 'object' && s.pendingRetry && typeof s.pendingRetry === 'object' && 'commanderHop' in s.pendingRetry && !(Number.isInteger(s.pendingRetry.commanderHop) && s.pendingRetry.commanderHop! > 0)) delete (s as { pendingRetry?: unknown }).pendingRetry;
       }
@@ -225,7 +236,26 @@ export class SessionStateStore {
       const { commanderEdited: _drop, ...rest } = s;
       s = prev?.commanderEdited ? { ...rest, commanderEdited: true } : rest;
     }
+    // A new session's language, set (setLang) before its first state was written, joins that state.
+    const lang = prev ? prev.lang : this.pendingLang.get(s.sessionId);
+    if (!prev) this.pendingLang.delete(s.sessionId);
+    if ('lang' in s || lang) {
+      const { lang: _drop, ...rest } = s;
+      s = lang ? { ...rest, lang } : rest;
+    }
     return this.save(s);
+  }
+
+  /** Sets a session's reply language; a session with no state yet gets it with its first `set()`. */
+  setLang(id: string, lang: Locale): Promise<void> {
+    const prev = this.map.get(id);
+    if (!prev) {
+      this.pendingLang.set(id, lang);
+      if (this.pendingLang.size > 200) this.pendingLang.delete(this.pendingLang.keys().next().value!);
+      return Promise.resolve();
+    }
+    if (prev.lang === lang) return Promise.resolve();
+    return this.save({ ...prev, lang });
   }
 
   /** Sets or clears a session's commanderEdited flag. False when there is no state for `id`. */

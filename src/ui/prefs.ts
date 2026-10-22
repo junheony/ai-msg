@@ -38,6 +38,8 @@ export function parsePrefs(raw: string | null): Prefs {
     const v = (o as Record<string, unknown>)[k];
     if ((ALLOWED[k] as readonly unknown[]).includes(v)) (out as Record<string, unknown>)[k] = v;
   }
+  // Saved before the language setting existed (savePrefs always writes one now): that deck was Korean, so it stays Korean.
+  if (!('lang' in o)) out.lang = 'ko';
   return out;
 }
 
@@ -46,7 +48,7 @@ export function loadPrefs(store: Store | null = defaultStore()): Prefs {
 }
 
 export function savePrefs(prefs: Prefs, store: Store | null = defaultStore()): void {
-  try { store?.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* private mode / quota: the pref just won't persist */ }
+  try { store?.setItem(PREFS_KEY, JSON.stringify({ ...prefs, lang: prefs.lang ?? 'auto' })); } catch { /* private mode / quota: the pref just won't persist */ }
 }
 
 /** ⌘K 테마 전환: 시스템 → 라이트 → 다크 → 시스템. */
