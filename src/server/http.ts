@@ -12,6 +12,9 @@ import { FileReadError, type FileLister } from './files';
 import type { PushNotifier } from './push/PushNotifier';
 import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
 import { MAX_PINS, isPinnableId, type PinStore } from './sessions/PinStore';
+import type { SessionIconStore } from './sessions/SessionIconStore';
+import { isSessionIconChoice } from '../shared/sessionIcons';
+import { sm } from './i18n';
 import { MemoryTooLarge, type MemoryStore } from './memory/MemoryStore';
 import { MEMORY_MAX_BYTES } from '../shared/memory';
 import { isTrashId } from './sessions/SessionTrash';
@@ -39,6 +42,8 @@ export type HttpDeps = {
   onIndexChanged?: () => void;
   /** F2: pinned sessions; absent = no /api/pins. */
   pins?: PinStore;
+  /** 직접 고른 세션 아이콘; absent = no /api/session-icon. */
+  sessionIcons?: SessionIconStore;
   /** deck 메모 (Settings → 일반); absent = no /api/memory. */
   memory?: MemoryStore;
   /** Session rename / 보관 (session-meta.json); absent = no /api/session-meta. */
@@ -389,7 +394,7 @@ export function createRequestHandler(deps: HttpDeps) {
           json(res, 404, { error: 'not found' });
           return;
         }
-        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }
+        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], sessionIcons: deps.sessionIcons?.list() ?? {}, desktop: deps.index.desktop() }); return; }
         if (url.pathname === '/api/memory' && (req.method === 'GET' || req.method === 'PUT')) {
           if (!deps.memory) { json(res, 404, { error: 'not found' }); return; }
           if (req.method === 'GET') { json(res, 200, { text: deps.memory.get(), max: MEMORY_MAX_BYTES }); return; }
@@ -413,6 +418,17 @@ export function createRequestHandler(deps: HttpDeps) {
           const pins = await deps.pins.set(body.sessionId, body.pinned);
           deps.onIndexChanged?.();
           json(res, 200, { pins });
+          return;
+        }
+        if (url.pathname === '/api/session-icon' && req.method === 'POST') {
+          if (!deps.sessionIcons) { json(res, 404, { error: 'not found' }); return; }
+          let body: { sessionId?: unknown; icon?: unknown } = {};
+          try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
+          if (!body || !isPinnableId(body.sessionId) || (body.icon !== null && !isSessionIconChoice(body.icon))) { json(res, 400, { error: sm().api.badSessionIcon }); return; }
+          const before = deps.sessionIcons.list();
+          const icons = await deps.sessionIcons.set(body.sessionId, body.icon);
+          if (icons !== before) deps.onIndexChanged?.();
+          json(res, 200, { sessionIcons: icons });
           return;
         }
         if (url.pathname === '/api/pins/order' && req.method === 'POST') {

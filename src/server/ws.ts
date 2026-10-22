@@ -26,6 +26,7 @@ import { grokImportBlockReason } from './sessions/GrokImports';
 import { OWN_LAG_MS, scanForeign } from './sessions/foreignWrites';
 import { deckWrites } from './engine/claudeCli/ownedEntries';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
+import type { SessionIconStore } from './sessions/SessionIconStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
 import { TCC_DENIAL_NOTICE, isTccDenial } from './tccDenial';
@@ -167,6 +168,8 @@ export type WsDeps = {
   cwdRoots?: string[];
   /** F2: pinned session ids ride hello and every index message. */
   pins?: PinStore;
+  /** 직접 고른 세션 아이콘; rides hello / index like the pins. */
+  sessionIcons?: SessionIconStore;
   /** 자동 승인 etc.; rides hello, changed with set_settings. */
   settings?: SettingsStore;
   /** Web Push hook: sees every turn event and every permission/question card (PushNotifier picks what to send). */
@@ -375,7 +378,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const ownUnstored = () => [...turns.values()].flatMap((t) => (t.sessionId && busy.get(`new:${t.turnId}`) === t.turnId ? [t.sessionId] : []));
   const projects = () => deps.index.projects(deps.store.codexEntries(), { own: ownUnstored() });
   const pinList = () => deps.pins?.list() ?? [];
-  const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList(), desktop: deps.index.desktop() });
+  const iconMap = () => deps.sessionIcons?.list() ?? {};
+  const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList(), sessionIcons: iconMap(), desktop: deps.index.desktop() });
 
   /** Errors refusing a send (turnId null) so far: a caller sees whether startTurn refused at once (the count moved). */
   let refusals = 0;
@@ -1575,7 +1579,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     clients.add(ws);
     // Without this listener a bad frame (invalid UTF-8, oversized) is an uncaught 'error' that kills the process.
     ws.on('error', (err) => { console.error('deck ws: client error', (err as Error & { code?: string }).code ?? err.message); ws.terminate(); });
-    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.grokStatus ? { grok: grokStatusNow() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}), ...(deps.setup ? { setup: { needed: deps.setup.needed() } } : {}) });
+    send(ws, { type: 'hello', usage: deps.usage.snapshot(), projects: projects(), pins: pinList(), sessionIcons: iconMap(), desktop: deps.index.desktop(), ...(deps.settings ? { settings: deps.settings.get() } : {}), running: running(), activity: activity(), codex: { available: deps.codexAvailable }, features: featureList(), accounts: accountInfos(accounts), ...(deps.geminiStatus ? { gemini: deps.geminiStatus() } : {}), ...(deps.grokStatus ? { grok: grokStatusNow() } : {}), ...(deps.build !== undefined ? { build: typeof deps.build === 'function' ? deps.build() : deps.build } : {}), ...(deps.setup ? { setup: { needed: deps.setup.needed() } } : {}) });
     // hello's `activity` is the session list only: whether the server is draining, and since when it runs, come here.
     send(ws, activityMsg());
     for (const m of broker.pending()) send(ws, m);

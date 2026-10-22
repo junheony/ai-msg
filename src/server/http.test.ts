@@ -9,6 +9,7 @@ import { createRequestHandler } from './http';
 import { PushNotifier, type PushSender } from './push/PushNotifier';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { PinStore } from './sessions/PinStore';
+import { SessionIconStore } from './sessions/SessionIconStore';
 import { MemoryStore } from './memory/MemoryStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { UsageService } from './usage/UsageService';
@@ -438,6 +439,62 @@ describe('POST /api/pins (F2)', () => {
     expect(await same.json()).toEqual({ pins: [ID, ID3, ID2] });
     expect(changed).toBe(before + 1); // nothing changed: no broadcast
     for (const id of [ID, ID2, ID3]) await pins.set(id, false);
+  });
+});
+
+describe('POST /api/session-icon', () => {
+  let base = '';
+  let srv: http.Server;
+  let icons: SessionIconStore;
+  let dir: string;
+  let changed = 0;
+  const ID = '11111111-1111-4111-8111-111111111111';
+  const cookie = () => `deck_session=${cookieValueFor(TOKEN)}`;
+  const post = (body: string, headers: Record<string, string> = { cookie: cookie(), origin: base }) => fetch(`${base}/api/session-icon`, { method: 'POST', headers, body });
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-iconhttp-'));
+    const roots = { a: path.join(dir, 'a'), b: path.join(dir, 'b'), c: path.join(dir, 'c') };
+    const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(dir, 'p.json') });
+    await idx.refresh();
+    icons = new SessionIconStore(path.join(dir, 'session-icons.json'));
+    await icons.load();
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    srv = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index: idx, sessionIcons: icons, onIndexChanged: () => { changed++; } }));
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  });
+  afterAll(async () => { srv.close(); await fs.rm(dir, { recursive: true, force: true }); });
+
+  it('needs auth and a same-origin Origin', async () => {
+    const body = JSON.stringify({ sessionId: ID, icon: '🚀' });
+    expect((await post(body, { origin: base })).status).toBe(401);
+    expect((await post(body, { cookie: cookie() })).status).toBe(403);
+    expect(icons.list()).toEqual({});
+  });
+
+  it('validates the id and the icon', async () => {
+    for (const body of ['{bad', JSON.stringify({ sessionId: '../x', icon: '🚀' }), JSON.stringify({ sessionId: ID, icon: '😀' }), JSON.stringify({ sessionId: ID, icon: 'glyph:nope' }), JSON.stringify({ sessionId: ID })]) {
+      expect((await post(body)).status).toBe(400);
+    }
+    expect(icons.list()).toEqual({});
+  });
+
+  it('sets, persists, notifies, bootstrap carries it, and null deletes', async () => {
+    const before = changed;
+    const r = await post(JSON.stringify({ sessionId: ID, icon: '🚀' }));
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ sessionIcons: { [ID]: '🚀' } });
+    expect(changed).toBe(before + 1);
+    expect(JSON.parse(await fs.readFile(path.join(dir, 'session-icons.json'), 'utf8'))).toEqual({ [ID]: '🚀' });
+    const boot = (await (await fetch(`${base}/api/bootstrap`, { headers: { cookie: cookie() } })).json()) as { sessionIcons: Record<string, string> };
+    expect(boot.sessionIcons).toEqual({ [ID]: '🚀' });
+    expect(await (await post(JSON.stringify({ sessionId: ID, icon: 'glyph:leaf' }))).json()).toEqual({ sessionIcons: { [ID]: 'glyph:leaf' } });
+    const off = await post(JSON.stringify({ sessionId: ID, icon: null }));
+    expect(await off.json()).toEqual({ sessionIcons: {} });
+    expect(changed).toBe(before + 3);
+    await post(JSON.stringify({ sessionId: ID, icon: null }));
+    expect(changed).toBe(before + 3); // unchanged: not broadcast
   });
 });
 

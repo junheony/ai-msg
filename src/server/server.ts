@@ -42,6 +42,7 @@ import { readAllCooldownsMs } from './routing/cooldown';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { loadOrCreateVapid } from './push/vapid';
 import { PinStore } from './sessions/PinStore';
+import { SessionIconStore } from './sessions/SessionIconStore';
 import { MemoryStore } from './memory/MemoryStore';
 import { pruneRootsOf, startBackupPruning } from './sessions/backupPrune';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
@@ -181,11 +182,12 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const index = new SessionIndex({ grokImports, geminiImports, grokBotImports, holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home, desktopEnabled: () => experimental().desktop, localImportsEnabled: () => experimental().localImports });
     const store = new SessionStateStore(cfg.stateFile);
     const pins = new PinStore(cfg.pinsFile);
+    const sessionIcons = new SessionIconStore(cfg.sessionIconsFile);
     const memory = new MemoryStore(path.join(cfg.configDir, 'memory.md'));
     const tasks = new TaskRegistry(path.join(cfg.configDir, 'tasks.json'));
     const pushSubs = new SubscriptionStore(cfg.pushSubscriptionsFile);
     // Codex rollouts (~1000 files) are read after listening; the sidebar is told when they are in.
-    await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), pushSubs.load(), tasks.load(), memory.load()]);
+    await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), sessionIcons.load(), pushSubs.load(), tasks.load(), memory.load()]);
     const commands = new SlashCommandCache();
     const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries(), { all: true }).flatMap((p) => p.sessions) });
     // /api/file never previews deck's own config (token, VAPID key, push subscriptions), even with the cwd at ~.
@@ -371,8 +373,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     let restartCtl: ReturnType<typeof installGracefulShutdown> = { draining: () => false, request: () => {}, force: () => false };
     const serverUpdate: ServerUpdateDeps = { check: () => updates.check(), supervised: supervisionCheck({ supervisor: cfg.supervisor, pidFile: path.join(cfg.configDir, 'relaunch.pid') }), draining: () => restartCtl.draining(), activeTurns: () => ws.activeTurns(), restart: () => restartCtl.request('UI 재시작'), forceRestart: () => restartCtl.force('UI 강제 재시작') };
     const setup = new SetupService({ cfg, accounts, store: setupStore, supervised: serverUpdate.supervised, addresses: [...addresses.map((a) => `http://${a.includes(':') ? `[${a}]` : a}:${port}`), ...(dnsName ? [`https://${dnsName}/`] : [])] });
-    const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup });
-    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); if (resumed.delete(sessionId)) saveResumed(); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), cancelRetry: (sessionId) => watch.cancelRetry(sessionId), cancelAllRetries: () => watch.cancelAllRetries(), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile, tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });
+    const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup });
+    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, sessionIcons, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); if (resumed.delete(sessionId)) saveResumed(); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), cancelRetry: (sessionId) => watch.cancelRetry(sessionId), cancelAllRetries: () => watch.cancelAllRetries(), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile, tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });
     cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();
     submitRetry = (r) => ws.submitRetry(r);

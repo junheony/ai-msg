@@ -13,6 +13,7 @@ import { cookieValueFor } from './auth';
 import { StubEngine, okResult } from './engine/StubEngine';
 import { createRequestHandler } from './http';
 import { PinStore } from './sessions/PinStore';
+import { SessionIconStore } from './sessions/SessionIconStore';
 import { SettingsStore } from './settings';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
@@ -32,6 +33,7 @@ let stub: StubEngine;
 let wsApi: ReturnType<typeof attachWebSocket>;
 let wsDeps: Parameters<typeof attachWebSocket>[1];
 let pins: PinStore;
+let sessionIcons: SessionIconStore;
 let settings: SettingsStore;
 let base: string;
 let work: string;
@@ -109,10 +111,12 @@ beforeAll(async () => {
   const runner = new TurnRunner({ accounts: testRegistry(), attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
   pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
+  sessionIcons = new SessionIconStore(path.join(base, 'session-icons.json'));
+  await sessionIcons.load();
   settings = new SettingsStore(path.join(base, 'settings.json'));
   await settings.load();
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsDeps = { accounts: testRegistry(), token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, settings, notify: (m) => notified.push(m), attachments: store2, meta, acceptedRefs: new AcceptedRefs(null) };
+  wsDeps = { accounts: testRegistry(), token: TOKEN, devOrigins: ['http://dev.local'], runner, index, usage, store, codexAvailable: false, cwdRoots: [path.dirname(work)], pins, sessionIcons, settings, notify: (m) => notified.push(m), attachments: store2, meta, acceptedRefs: new AcceptedRefs(null) };
   wsApi = attachWebSocket([server], wsDeps);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
@@ -637,12 +641,14 @@ describe('ws', () => {
 
   it('broadcastIndex sends the project index and the pins to every client; hello carries the pins (F2)', async () => {
     await pins.set('pinned-1', true);
+    await sessionIcons.set('pinned-1', '🚀');
     const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
-    expect((await collect(ws, (m) => m.type === 'hello')).at(-1)).toMatchObject({ type: 'hello', pins: ['pinned-1'] });
+    expect((await collect(ws, (m) => m.type === 'hello')).at(-1)).toMatchObject({ type: 'hello', pins: ['pinned-1'], sessionIcons: { 'pinned-1': '🚀' } });
     await pins.set('pinned-1', false);
+    await sessionIcons.set('pinned-1', null);
     const p = collect(ws, (m) => m.type === 'index');
     wsApi.broadcastIndex();
-    expect((await p).at(-1)).toMatchObject({ type: 'index', projects: expect.any(Array), pins: [] });
+    expect((await p).at(-1)).toMatchObject({ type: 'index', projects: expect.any(Array), pins: [], sessionIcons: {} });
     ws.close();
   });
 

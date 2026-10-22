@@ -303,7 +303,7 @@ export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
   | { type: 'grok_status'; grok: GrokStatus }
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null; /** 'setup' servers: the first-run wizard is still to be shown. */ setup?: { needed: boolean } }
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; /** 직접 고른 세션 아이콘 (session id → icon); absent = an older server. */ sessionIcons?: Record<string, string>; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null; /** 'setup' servers: the first-run wizard is still to be shown. */ setup?: { needed: boolean } }
   /** `features`: the server's list again when a setting changed it (총사령탑 켜기·끄기 → 'commander'); absent = unchanged. */
   | { type: 'settings'; settings: DeckSettings; features?: string[] }
   /** 백그라운드 작업 ('tasks' servers): the whole list (newest last) and the soft cap, after hello and on every change. */
@@ -318,7 +318,7 @@ export type ServerMessage =
   /** A GPT session's sandbox changed (set_sandbox, 'sessionSandbox' servers). */
   | { type: 'sandbox'; sessionId: string; sandbox: CodexSandbox }
   | { type: 'usage'; usage: UsageSnapshot }
-  | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; desktop?: DesktopSession[] }
+  | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; sessionIcons?: Record<string, string>; desktop?: DesktopSession[] }
   | ({ type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[] } & SessionFacts)
   /**
    * The answer to `open_session.after` when nothing has to be read again: the device keeps what it shows, and the events

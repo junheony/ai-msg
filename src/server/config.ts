@@ -57,6 +57,8 @@ export type DeckConfig = {
   recentFoldersFile: string;
   /** F2: pinned session ids. */
   pinsFile: string;
+  /** 직접 고른 세션 아이콘: session id → icon. */
+  sessionIconsFile: string;
   /** Server settings (자동 승인). */
   settingsFile: string;
   /** F1: a new session's cwd must lie inside one of these: home, plus `DECK_EXTRA_CWD_ROOTS` (E2E temp dirs; loopback-only servers, never `/`). */
@@ -250,6 +252,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     attachmentsDir: path.join(configDir, 'attachments'),
     recentFoldersFile: path.join(configDir, 'recent-folders.json'),
     pinsFile: path.join(configDir, 'pins.json'),
+    sessionIconsFile: path.join(configDir, 'session-icons.json'),
     settingsFile: path.join(configDir, 'settings.json'),
     cwdRoots: [home, ...extraCwdRoots(env)],
     desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
