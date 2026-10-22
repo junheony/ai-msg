@@ -93,7 +93,7 @@ describe('import rows', () => {
   });
 
   it('tooltips per source, with the preview', () => {
-    expect(importTitle(e({ source: 'grokbot', preview: '마지막 말' }))).toContain('Grok Bot 앱에서 이어가세요');
+    expect(importTitle(e({ source: 'grokbot', preview: '마지막 말' }))).toContain('새 Grok 세션으로 이어갈 수 있어요');
     expect(importTitle(e({ source: 'grokbot', preview: '마지막 말' }))).toContain('마지막 말');
     expect(importTitle(e({}))).toContain('Grok CLI');
     expect(importTitle(e({ autoRun: true }))).toContain('헤드리스');

@@ -14,7 +14,7 @@ const UNTITLED = '(제목 없음)';
 export const GROKBOT_ID_PREFIX = 'grokbot-';
 const AGENT_ID = /^[A-Za-z0-9-]{1,100}$/;
 
-export const GROKBOT_READONLY_NOTICE = 'Grok Bot 대화는 읽기만 할 수 있어요 — 이어가려면 Grok Bot 앱에서 열어 주세요';
+export const GROKBOT_READONLY_NOTICE = 'Grok Bot 앱 대화는 읽기만 할 수 있어요 — 이어 쓰려면 아래 “새 Grok 세션으로 이어가기”를 누르세요';
 export const GROKBOT_SEND_REFUSED = 'Grok Bot 대화는 Grok Bot 앱에서 이어가세요';
 
 export type GrokBotBlobKind = 'roster' | 'transcript' | 'usage';

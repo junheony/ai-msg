@@ -1580,7 +1580,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const st = deps.store.get(id);
           const entry = deps.index.lookup(id);
           const imported = st || entry ? null : deps.index.importOf(id);
-          if (imported?.source === 'grokbot') { send(ws, { type: 'error', turnId: null, sessionId: id, message: 'Grok Bot 대화는 복제할 수 없어요 — deck Grok 새 세션으로 이어가기를 쓰세요' }); break; }
+          if (imported?.source === 'grokbot') { send(ws, { type: 'error', turnId: null, sessionId: id, message: 'Grok Bot 대화는 복제할 수 없어요 — “새 Grok 세션으로 이어가기”를 쓰세요' }); break; }
           const cwd = st?.cwd ?? entry?.cwd ?? imported?.cwd;
           if (!cwd) { send(ws, { type: 'error', turnId: null, sessionId: id, message: `복제할 수 없는 세션입니다: ${id}` }); break; }
           const old = deps.meta?.title?.(id) ?? entry?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === id)?.title ?? imported?.title ?? id.slice(0, 8);

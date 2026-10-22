@@ -29,7 +29,7 @@ describe('Grok Bot conversation pane', () => {
     const ta = screen.getByLabelText('메시지') as HTMLTextAreaElement;
     expect(ta.disabled).toBe(true);
     expect(ta.placeholder).toBe('Grok Bot 앱 대화라 읽기만 할 수 있어요');
-    expect(screen.getByTestId('composer-note').textContent).toBe('Grok Bot 앱에서 이어가세요');
+    expect(screen.getByTestId('composer-note').textContent).toBe('Grok Bot 앱 대화예요 — 여기서 이어 쓰려면 새 Grok 세션으로 옮겨요');
     fireEvent.click(screen.getByTestId('grokbot-handoff'));
     expect(dispatch).toHaveBeenCalledWith({ type: 'grokbot_handoff', paneId: 'p1' });
     expect(send).not.toHaveBeenCalled();

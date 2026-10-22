@@ -189,7 +189,7 @@ describe('ws: a Grok Bot conversation is never written to', () => {
   it('복제 (duplicate_session) is refused', async () => {
     const c = await client();
     c.say({ type: 'duplicate_session', sessionId: 'grokbot-a' });
-    expect(await c.until<Err>((m) => m.type === 'error')).toMatchObject({ sessionId: 'grokbot-a', message: 'Grok Bot 대화는 복제할 수 없어요 — deck Grok 새 세션으로 이어가기를 쓰세요' });
+    expect(await c.until<Err>((m) => m.type === 'error')).toMatchObject({ sessionId: 'grokbot-a', message: 'Grok Bot 대화는 복제할 수 없어요 — “새 Grok 세션으로 이어가기”를 쓰세요' });
     c.ws.close();
   });
 
