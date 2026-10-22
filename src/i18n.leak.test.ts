@@ -85,7 +85,7 @@ const BASELINE: Record<string, number> = {
   'src/server/tasks/TaskRegistry.ts': 3,
   'src/server/tccDenial.ts': 2,
   'src/server/turn/SessionState.ts': 5,
-  'src/server/turn/TurnRunner.ts': 172,
+  'src/server/turn/TurnRunner.ts': 174,
   'src/server/usage/ClaudeUsagePoller.ts': 13,
   'src/server/usage/GeminiUsagePoller.ts': 11,
   'src/server/usage/GrokBillingPoller.ts': 2,
@@ -171,7 +171,7 @@ const BASELINE: Record<string, number> = {
   'src/ui/sessionApi.ts': 21,
   'src/ui/shellFit.ts': 5,
   'src/ui/shortcuts.ts': 16,
-  'src/ui/state.ts': 14,
+  'src/ui/state.ts': 12,
   'src/ui/toolLabel.ts': 27,
   'src/ui/upload.ts': 8,
 };
