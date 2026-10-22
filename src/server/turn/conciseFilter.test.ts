@@ -5,7 +5,7 @@ import type { ServerMessage } from '../../shared/protocol';
 const scope = { turnId: 't1', sessionId: 's1', cwd: '/w' };
 
 describe('filterConciseEvent', () => {
-  it('forwards started/result, milestones tools, suppresses thinking and tool bodies, defers deltas', () => {
+  it('forwards started/result, milestones tools, suppresses thinking and tool bodies, streams deltas', () => {
     let state = emptyMilestoneState(1000);
     const start = filterConciseEvent({ type: 'turn_started', ...scope, account: 'a', model: 'sonnet', reason: 'r', attempt: 0 }, state, 1000);
     expect(start.forward).toBe(true);
@@ -18,8 +18,9 @@ describe('filterConciseEvent', () => {
     state = think.state;
 
     const delta = filterConciseEvent({ type: 'delta', ...scope, text: 'hi' }, state, 3000);
-    expect(delta.forward).toBe(false);
-    expect(delta.role).toBe('defer');
+    expect(delta.forward).toBe(true);
+    expect(delta.role).toBe('stream');
+    expect(delta.milestone).toBeUndefined();
     state = delta.state;
 
     const tool = filterConciseEvent({ type: 'tool_call', ...scope, toolUseId: 'u1', name: 'Bash', input: {} }, state, 4000);
@@ -37,7 +38,7 @@ describe('filterConciseEvent', () => {
 });
 
 describe('projectConciseStream', () => {
-  it('keeps surface/milestone events only', () => {
+  it('keeps surface/milestone/stream events only', () => {
     const events: ServerMessage[] = [
       { type: 'turn_started', ...scope, account: 'a', model: 'gpt-6-sol', reason: 'auto', attempt: 0 },
       { type: 'thinking', ...scope, text: 'x' },
@@ -47,7 +48,7 @@ describe('projectConciseStream', () => {
       { type: 'turn_result', ...scope, ok: true, text: 'Hello', badge: null, errorText: null },
     ];
     const { kept, milestones } = projectConciseStream(events, 10_000);
-    expect(kept.map((m) => m.type)).toEqual(['turn_started', 'tool_call', 'turn_result']);
+    expect(kept.map((m) => m.type)).toEqual(['turn_started', 'delta', 'tool_call', 'turn_result']);
     expect(milestones[0]).toBe('시작함');
     expect(milestones.at(-1)).toBe('끝남');
   });

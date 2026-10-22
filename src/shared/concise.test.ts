@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CONCISE_STYLE_PROMPT, conciseAck, conciseEventRole, conciseFirstStep, conciseForwardsEvent, conciseLeadLine, conciseMilestone, shouldEmitMilestone, withConcise, CONCISE_MILESTONE_MS } from './concise';
+import { CONCISE_STYLE_PROMPT, conciseAck, conciseEventRole, conciseFirstStep, conciseForwardsEvent, conciseLeadLine, conciseLiveSplit, conciseMilestone, shouldEmitMilestone, withConcise, CONCISE_MILESTONE_MS } from './concise';
 
 describe('conciseAck', () => {
   it('names the model', () => {
@@ -10,16 +10,17 @@ describe('conciseAck', () => {
 });
 
 describe('conciseEventRole', () => {
-  it('surfaces starts/results/asks, milestones progress/tools, defers deltas, suppresses thinking bodies', () => {
+  it('surfaces starts/results/asks, milestones progress/tools, streams deltas, suppresses thinking bodies', () => {
     expect(conciseEventRole('turn_started')).toBe('surface');
     expect(conciseEventRole('turn_result')).toBe('surface');
     expect(conciseEventRole('permission_request')).toBe('surface');
     expect(conciseEventRole('tool_call')).toBe('milestone');
     expect(conciseEventRole('turn_progress')).toBe('milestone');
-    expect(conciseEventRole('delta')).toBe('defer');
+    expect(conciseEventRole('delta')).toBe('stream');
     expect(conciseEventRole('thinking')).toBe('suppress');
     expect(conciseEventRole('tool_result')).toBe('suppress');
-    expect(conciseForwardsEvent('delta')).toBe(false);
+    expect(conciseForwardsEvent('delta')).toBe(true);
+    expect(conciseForwardsEvent('thinking')).toBe(false);
     expect(conciseForwardsEvent('tool_call')).toBe(true);
   });
 });
@@ -74,6 +75,29 @@ describe('conciseLeadLine', () => {
     expect(conciseLeadLine('')).toBeNull();
     expect(conciseLeadLine('# 제목.\n\n본문')).toBeNull();
     expect(conciseLeadLine(`${'가'.repeat(200)}.`, 20)).toHaveLength(20);
+  });
+});
+
+describe('conciseLiveSplit', () => {
+  it('streams the whole text before any tool call', () => {
+    expect(conciseLiveSplit('바로 답할게요', [])).toEqual({ lead: null, live: '바로 답할게요' });
+    expect(conciseLiveSplit('답', [undefined, 0])).toEqual({ lead: null, live: '답' });
+  });
+  it('folds the text before the last tool call into a lead line and streams the rest', () => {
+    const t = '먼저 테스트부터 볼게요. 그다음 고칠게요.\n\n원인은 X예요';
+    const cut = t.indexOf('\n\n');
+    expect(conciseLiveSplit(t, [cut])).toEqual({ lead: '먼저 테스트부터 볼게요.', live: '\n\n원인은 X예요' });
+    // Right after the call: nothing live yet, the lead stays.
+    expect(conciseLiveSplit(t.slice(0, cut), [cut])).toEqual({ lead: '먼저 테스트부터 볼게요.', live: '' });
+  });
+  it('leads with the latest non-empty stretch; an unfinished one shows its first line', () => {
+    const t = '먼저 볼게요.이제 고쳐 볼게요끝';
+    const a = '먼저 볼게요.'.length;
+    const b = t.length - 1;
+    expect(conciseLiveSplit(t, [a, b])).toEqual({ lead: '이제 고쳐 볼게요', live: '끝' });
+    // Back-to-back calls (empty stretch between): the earlier stretch leads.
+    expect(conciseLiveSplit('먼저 볼게요.', [a, a, a])).toEqual({ lead: '먼저 볼게요.', live: '' });
+    expect(conciseLiveSplit('```\ncode\n```', [14])).toEqual({ lead: null, live: '' });
   });
 });
 

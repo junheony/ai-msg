@@ -105,7 +105,7 @@ describe('reducer', () => {
       { type: 'permission_request', turnId: 't1', sessionId: null, cwd: '/w', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' },
     ], s);
     expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'hi', n: 0, at: expect.any(Number) });
-    expect(pane(s).items[1]).toMatchObject({ kind: 'assistant', turnId: 't1', text: 'ok', streaming: true, toolCalls: [{ toolUseId: 'tu1', name: 'Bash', result: null }] });
+    expect(pane(s).items[1]).toMatchObject({ kind: 'assistant', turnId: 't1', text: 'ok', streaming: true, toolCalls: [{ toolUseId: 'tu1', name: 'Bash', result: null, textAt: 2 }] });
     expect(s.pending).toMatchObject([{ turnId: 't1', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, cwd: '/w' }]);
     expect(pane(s).activeTurnId).toBe('t1');
     s = play([
@@ -119,6 +119,8 @@ describe('reducer', () => {
     expect(pane(s).items).toHaveLength(2);
     const a = pane(s).items[1];
     expect(a).toMatchObject({ kind: 'assistant', streaming: false, badge: { account: 'c' }, notes: ['재시도 B → C: 한도 도달'], toolCalls: [{ result: 'a.txt' }] });
+    // The retry restarted the text: the old call's text mark (간결 모드 fold point) is gone.
+    expect((a as { toolCalls: { textAt?: number }[] }).toolCalls[0]!.textAt).toBeUndefined();
     expect(pane(s).session).toMatchObject({ sessionId: 's1', account: 'c' });
     expect(pane(s).activeTurnId).toBeNull();
   });
