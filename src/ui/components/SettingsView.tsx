@@ -27,8 +27,11 @@ export const LANGUAGE_NAMES: Record<Locale, string> = { en: 'English', ko: '한�
 /** 실험적 기능 › 다른 앱 연동: what the sub-group says before its switches (the owner's wording). */
 export const EXPERIMENTAL_NOTICE = '공식 기능이 아니며 각 앱의 업데이트로 언제든 멈출 수 있어요. 켜면 해당 앱의 로컬 파일을 읽어요.';
 /** Each 실험적 기능 switch: its row label and one line on what it reads / does (files named, so the user knows what is opened). */
-/** 실험적 기능 › 계정 순환: what the sub-group says before its switch (it reads no other app's files). */
-export const ROTATION_NOTICE = '같은 회사의 여러 Claude 계정을 번갈아 쓰는 기능이에요. 본인이 결제한 본인 계정끼리만 쓰세요.';
+/**
+ * 실험적 기능 › 계정 순환: what the sub-group says before its switch (it reads no other app's files). Owner's decision
+ * 2026-10-22: 벤더 간 자동 분배 is on for everyone; same-vendor rotation is the user's own pick, then automatic.
+ */
+export const ROTATION_NOTICE = '켜면 한도가 찬 계정에서 다음 계정으로 자동으로 넘어갑니다. 각 제공자 약관상 본인이 결제한 본인 계정끼리, 개인 사용에만 쓰세요.';
 export const EXPERIMENTAL_ROWS: [keyof ExperimentalSettings, string, string][] = [
   ['grokBot', 'Grok Bot 앱 대화·사용량', 'Grok Bot 앱의 대화 목록·대화 내용·주간 사용량 캐시를 읽기만 해요 (~/Library/Application Support/Grok Bot/sand-client-persistence).'],
   ['desktop', 'Claude Desktop 연동', 'Desktop 의 최근 세션 기록(~/Library/Application Support/Claude/claude-code-sessions)을 읽고, 다른 계정에서 돈 세션을 기본 계정 기록에 되써서 Desktop 에서 이어 열 수 있게 해요.'],

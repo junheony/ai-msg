@@ -142,6 +142,9 @@ describe('SettingsView 실험적 기능', () => {
     expect(within(apps).getByTestId('experimental-notice').textContent).toContain(EXPERIMENTAL_NOTICE);
     for (const [, label] of EXPERIMENTAL_ROWS) expect(within(apps).getByRole('group', { name: label })).toBeTruthy();
     expect(within(rotation).getByTestId('rotation-notice').textContent).toBe(ROTATION_NOTICE);
+    // Owner's decision (2026-10-22): what turning it on does, and the own-accounts / personal-use terms line.
+    expect(ROTATION_NOTICE).toContain('켜면 한도가 찬 계정에서 다음 계정으로 자동으로 넘어갑니다');
+    expect(ROTATION_NOTICE).toContain('개인 사용');
     expect(within(rotation).queryByText(new RegExp(EXPERIMENTAL_NOTICE.slice(0, 10)))).toBeNull();
     expect(within(rotation).getByRole('group', { name: '같은 벤더 계정 자동 순환' })).toBeTruthy();
   });
