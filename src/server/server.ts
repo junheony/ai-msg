@@ -53,6 +53,7 @@ import { GrokBotIndex } from './sessions/GrokBotImports';
 import { GrokSessionIndex } from './sessions/GrokImports';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
+import { ClaudeUsagePoller } from './usage/ClaudeUsagePoller';
 import { CodexUsagePoller } from './usage/CodexUsagePoller';
 import { GeminiUsagePoller } from './usage/GeminiUsagePoller';
 import { GrokUsageTracker } from './usage/GrokUsageTracker';
@@ -186,6 +187,10 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
     codexUsage.start();
     cleanup.push(() => codexUsage.stop());
+    // `cli` usage mode: an account no deck turn observed for 10 min gets its real limits from `claude -p /usage` (no tokens), one at a time.
+    const claudeUsage = cfg.usageMode === 'cli' && cfg.claudeUsagePoll && cfg.claudeBin.ok ? new ClaudeUsagePoller({ bin: cfg.claudeBin.bin, accounts, usage }) : null;
+    claudeUsage?.start();
+    cleanup.push(() => claudeUsage?.stop());
     // 사용량 view: incremental token usage index over every transcript/rollout; first scan runs in the background.
     const usageHistory = new UsageIndex({ projectsRoots: cfg.projectsRoots, codexSessionsRoot: cfg.codexSessionsRoot, indexFile: cfg.usageIndexFile, legacyIndexFile: cfg.usageIndexV1File });
     usageHistory.start();
@@ -368,7 +373,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // SIGTERM / SIGUSR2 (`npm run restart`): drain, then exit for launchd to restart; SIGINT or a repeat: now.
     const shutdown = (reason: string) => {
       console.log(`deck: 종료 (${reason})`);
-      stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
+      stopGrokLockWatch(); ws.close(); watch.stop(); commander.dispose(); usage.stop(); codexUsage.stop(); claudeUsage?.stop(); geminiUsage?.stop(); usageHistory.stop(); attachments.stop(); stopBackupPruning(); clearInterval(transcriptPruneTimer); for (const s of servers) s.close();
       // grokBilling.stop() aborts an in-progress billing probe; awaited below so shutdown does not race it (review item 5).
       // The permission bridge (unix socket + its temp dir) closes inside the same bounded wait as the event log.
       // The lock goes last: a new server may take the config dir only once this one has written everything.

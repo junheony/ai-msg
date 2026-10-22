@@ -68,12 +68,15 @@ export function agoText(iso: string | null, now: number): string {
 
 /**
  * `cli` usage mode: when a Claude card's numbers were observed ("마지막 턴 기준 · 12분 전"), or that they never were.
- * Old but still a lower bound (stale within `trustUntil`): "추정 · 마지막 턴 12분 전".
+ * Old but still a lower bound (stale within `trustUntil`): "추정 · 마지막 턴 12분 전". Read by deck's `/usage` poll, not a
+ * turn (`observedBy: 'poll'`): "12분 전 확인" / "추정 · 12분 전 확인".
  */
 export function observedText(u: AccountUsage, now: number): string {
   const ago = u.fiveHour || u.weekly ? agoText(u.fetchedAt, now) : '';
   if (!ago) return '아직 관측 없음';
-  return u.status === 'stale' && trusted(u, now) ? `추정 · 마지막 턴 ${ago}` : `마지막 턴 기준 · ${ago}`;
+  const kept = u.status === 'stale' && trusted(u, now);
+  if (u.observedBy === 'poll') return kept ? `추정 · ${ago} 확인` : `${ago} 확인`;
+  return kept ? `추정 · 마지막 턴 ${ago}` : `마지막 턴 기준 · ${ago}`;
 }
 
 /** `cli` usage mode: the Fable row when no turn told a value (rate_limit_event has no Fable window). */
@@ -141,6 +144,8 @@ export type SeatData = {
   until?: string;
   /** When the seat's numbers were last read (ISO), for the strip's "3일 전" on old numbers; absent when unknown. */
   fetchedAt?: string | null;
+  /** Claude, `cli` mode: those numbers came from deck's `/usage` poll, not a turn (old ones are said "확인한 값"). */
+  polled?: boolean;
   /** Appended to the sheet below the rows (Grok's "오늘 · deck 기준" block). */
   extraPopover?: ReactNode;
 };
@@ -264,8 +269,8 @@ export const RESET_PASSED_SAID = RESET_PASSED_NOTE.replace('. ', ', ');
  * Old numbers not reset yet, in words: when they were read, and that less can be left now (nothing is given back before
  * the reset, while the account may have been used since): the old % left is an upper bound.
  */
-export function staleNote(ago: string): string {
-  return `${ago ? `${ago} 마지막 턴 기준 값` : '마지막 턴 기준의 오래된 값'}. 지금은 이보다 적게 남았을 수 있음`;
+export function staleNote(ago: string, polled = false): string {
+  return `${ago ? `${ago} ${polled ? '확인한 값' : '마지막 턴 기준 값'}` : polled ? '확인한 지 오래된 값' : '마지막 턴 기준의 오래된 값'}. 지금은 이보다 적게 남았을 수 있음`;
 }
 /** The sheet's one line on an old seat. */
 export const REFRESH_HINT = '지금은 이보다 적게 남았을 수 있어요 · 이 계정으로 한 턴 돌리면 갱신돼요';
@@ -280,7 +285,7 @@ export function shownPct(w: UsageWindow | null): number | null {
  * One window row in the sheet: label · bar (or spent pill) · REMAINING % · countdown. Every seat (Claude, GPT, Gemini
  * buckets, Grok) says the share left, like the strip: the bar is as full as what is left (a battery).
  */
-export function PopRow({ seat, name, k, w, now, empty, stale }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean }) {
+export function PopRow({ seat, name, k, w, now, empty, stale, polled }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean; polled?: boolean }) {
   if (stale && windowPassed(w, now)) {
     return (
       <div data-testid={`${seat}-${k}`} className="usage-row old passed" title={`${name} · ${RESET_PASSED_NOTE}`}>
@@ -292,7 +297,7 @@ export function PopRow({ seat, name, k, w, now, empty, stale }: { seat: Seat; na
   }
   const rem = shownPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
-  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '') + (stale && rem !== null ? ' · 마지막 턴 기준 값, 지금은 이보다 적게 남았을 수 있음' : '');
+  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '') + (stale && rem !== null ? ` · ${polled ? '예전에 확인한 값' : '마지막 턴 기준 값'}, 지금은 이보다 적게 남았을 수 있음` : '');
   if (rem === 0) {
     const at = resetStamp(w?.resetsAt ?? null);
     return (
@@ -373,6 +378,7 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
         seat: a, engine: 'claude', mark: <ClaudeMark className="usage-mark claude" />, rows: claudeRows(u, cli),
         status: (kept ? 'kept' : u.status) as SeatData['status'], dim, fetchedAt: u.fetchedAt,
         ...(cli ? { observed: observedText(u, now) } : {}),
+        ...(u.observedBy === 'poll' ? { polled: true } : {}),
       };
     }),
     {
@@ -501,7 +507,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
     kind = lvl === 'danger' ? 'danger' : lvl === 'warn' ? 'warn' : stale ? 'stale' : estimated ? 'estimated' : 'ok';
     text = `${left}%${stale ? ` · ${ago || '오래됨'}` : reset ? ` · ${reset}` : ''}`;
     compactText = `${left}%`;
-    spoken = `${left}퍼센트 남음${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}${stale ? `, ${staleNote(ago).replace('. ', ', ')}` : estimated ? ', 추정' : ''}`;
+    spoken = `${left}퍼센트 남음${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}${stale ? `, ${staleNote(ago, d.polled).replace('. ', ', ')}` : estimated ? ', 추정' : ''}`;
   } else {
     const ok = d.engine === 'grok' && d.status === 'ok';
     kind = ok ? 'ok' : 'unknown'; text = ok ? '가능' : '?'; compactText = text; spoken = ok ? '사용 가능' : '알 수 없음';
@@ -510,6 +516,6 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   return {
     target: d.seat, nextSeat, onlyNext, kind, stale: stale && !!known && d.status !== 'cooldown', left, resetPassed, ago, reset: resetPassed ? '' : reset, text, compactText, otherDanger,
     aria: `${onlyNext ? `다음 턴 ${name}${next!.asOpus ? '(Opus)' : ''}` : name} 계정 사용량 ${spoken}${nextAria}${dangerAria}`,
-    title: [`${name} 계정${resetPassed ? ` · ${RESET_PASSED_NOTE}` : left !== null ? ` · ${main!.row.name} ${left}% 남음${stale ? ` (${staleNote(ago)})` : ''}` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
+    title: [`${name} 계정${resetPassed ? ` · ${RESET_PASSED_NOTE}` : left !== null ? ` · ${main!.row.name} ${left}% 남음${stale ? ` (${staleNote(ago, d.polled)})` : ''}` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
   };
 }

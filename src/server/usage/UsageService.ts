@@ -76,8 +76,8 @@ export function parseDeckState(json: unknown, reg: AccountNames): Record<Account
   return parseDeckCards(json, reg).accounts;
 }
 
-/** One window as last observed from a deck turn's `rate_limit_event` (`cli` mode), with when. */
-type CliWindowObs = { w: UsageWindow; at: number };
+/** One window as last observed from a deck turn's `rate_limit_event` (`cli` mode), with when; `by: 'poll'` = read by ClaudeUsagePoller (`/usage`). */
+type CliWindowObs = { w: UsageWindow; at: number; by?: 'poll' };
 type CliAccountObs = { fiveHour?: CliWindowObs; weekly?: CliWindowObs; /** Only when the CLI told one (spent = 100 %, or a warning's utilization). */ fable?: CliWindowObs };
 const CLI_WINDOWS = ['fiveHour', 'weekly', 'fable'] as const;
 
@@ -90,7 +90,7 @@ function windowObsOf(v: unknown, nowMs: number): CliWindowObs | undefined {
   const o = v as Record<string, unknown>;
   const used = num(o.usedPct), at = num(o.at);
   if (used === null || at === null) return undefined;
-  return { w: { usedPct: used, resetsAt: str(o.resetsAt) }, at: Math.min(at, nowMs) };
+  return { w: { usedPct: used, resetsAt: str(o.resetsAt) }, at: Math.min(at, nowMs), ...(o.by === 'poll' ? { by: 'poll' as const } : {}) };
 }
 
 /** A window whose `resetsAt` has passed reads 0 % with `estimated` (the next observation tells the real value). */
@@ -183,10 +183,10 @@ export class UsageService {
   /** Atomically, 0600; a failure is logged and the numbers stay in memory. */
   private writeObserved(): void {
     if (!this.observedFile) return;
-    const out: Record<string, Record<string, { usedPct: number; resetsAt: string | null; at: number }>> = {};
+    const out: Record<string, Record<string, { usedPct: number; resetsAt: string | null; at: number; by?: 'poll' }>> = {};
     for (const [a, o] of this.cliObs) {
       const e: (typeof out)[string] = {};
-      for (const k of CLI_WINDOWS) { const x = o[k]; if (x) e[k] = { usedPct: x.w.usedPct, resetsAt: x.w.resetsAt, at: x.at }; }
+      for (const k of CLI_WINDOWS) { const x = o[k]; if (x) e[k] = { usedPct: x.w.usedPct, resetsAt: x.w.resetsAt, at: x.at, ...(x.by ? { by: x.by } : {}) }; }
       out[a] = e;
     }
     const tmp = `${this.observedFile}.${process.pid}.tmp`;
@@ -217,11 +217,13 @@ export class UsageService {
     if (!o || (!o.fiveHour && !o.weekly)) return { ...emptyAccountUsage(), fable };
     const shown = [o.fiveHour, o.weekly].filter((x): x is CliWindowObs => x !== undefined);
     const oldest = Math.min(...shown.map((x) => x.at));
+    const polled = shown.find((x) => x.at === oldest)?.by === 'poll';
     const until = (x: CliWindowObs) => { const r = x.w.resetsAt === null ? Number.NaN : parseIsoUtc(x.w.resetsAt); return Number.isNaN(r) ? x.at + STALE_MAX_MS : r; };
     const trustUntil = Math.min(...shown.map(until), oldest + CLI_TRUST_MAX_MS);
     return {
       status: nowMs - oldest > STALE_MAX_MS ? 'stale' : 'ok', fetchedAt: new Date(oldest).toISOString(), trustUntil: new Date(trustUntil).toISOString(),
       fiveHour: o.fiveHour ? estimateWindow(o.fiveHour.w, nowMs) : null, weekly: o.weekly ? estimateWindow(o.weekly.w, nowMs) : null, fable,
+      ...(polled ? { observedBy: 'poll' as const } : {}),
     };
   }
 
@@ -488,19 +490,28 @@ export class UsageService {
    * `cli` mode: a Claude turn's windows become the account's numbers (per window, never back in time), saved to disk.
    * A kept time in the future (the clock went back) never blocks a new value.
    */
-  private applyCliTurn(account: Account, w: TurnWindows, observedAtMs: number): void {
+  private applyCliTurn(account: Account, w: TurnWindows, observedAtMs: number, by?: 'poll'): void {
     if (!w.fiveHour && !w.weekly && !w.fable) return;
     const prev = this.cliObs.get(account) ?? {};
     const next: CliAccountObs = { ...prev };
     const nowMs = this.now().getTime();
     for (const k of CLI_WINDOWS) {
       const x = w[k], p = prev[k];
-      if (x && (!p || observedAtMs >= p.at || p.at > nowMs)) next[k] = { w: { usedPct: x.usedPct, resetsAt: x.resetsAt }, at: observedAtMs };
+      if (x && (!p || observedAtMs >= p.at || p.at > nowMs)) next[k] = { w: { usedPct: x.usedPct, resetsAt: x.resetsAt }, at: observedAtMs, ...(by ? { by } : {}) };
     }
     if (CLI_WINDOWS.every((k) => next[k] === prev[k])) return;
     this.cliObs.set(account, next);
     this.writeObserved();
     this.publish({ ...this.snap, generatedAt: this.now().toISOString(), accounts: { ...this.snap.accounts, [account]: this.cliAccount(account, this.now().getTime()) } });
+  }
+
+  /**
+   * ClaudeUsagePoller: the account's `/usage` reading (no turn), taken at `observedAtMs`. Same path as a turn's
+   * rate_limit_event (`cli` mode only), so a window a turn observed later is never overwritten; marked as polled.
+   */
+  applyCliPoll(account: Account, w: TurnWindows, observedAtMs: number): void {
+    if (this.mode !== 'cli' || !this.reg.has(account)) return;
+    this.applyCliTurn(account, w, observedAtMs, 'poll');
   }
 
   /** deck just completed a turn on `account` (result ok): affects `routingSnapshot` only (see `lift`); nothing is published. */

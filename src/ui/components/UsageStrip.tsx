@@ -101,7 +101,7 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
       : spent ? '소진' : st.left !== null ? `${st.left}퍼센트 남음` : st.text === '가능' ? '사용 가능' : '알 수 없음';
     const resetSaid = (spent || st.left !== null) && st.reset ? `, ${spokenCountdown(st.reset)} 뒤 초기화` : '';
     const old = st.stale && !st.resetPassed && st.left !== null;
-    const note = old ? staleNote(st.ago) : '';
+    const note = old ? staleNote(st.ago, d.polled) : '';
     const spoken = `${name} ${said}${resetSaid}${old ? `, ${note.replace('. ', ', ')}` : st.kind === 'estimated' ? ', 추정' : ''}`;
     return {
       seat: d.seat, label: name, kind: st.kind, stale: st.stale || st.kind === 'stale', icon: st.resetPassed ? 'refresh' : old ? 'clock' : null,
