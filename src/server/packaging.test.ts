@@ -17,7 +17,9 @@ describe('package metadata', () => {
     // D1 (npm name) is open: publishing stays blocked by `private` until Task 8 sets the name.
     expect(pkg.private).toBe(true);
     expect(pkg.bin).toEqual({ 'ai-msg': 'dist/server/bin.js' });
-    expect(pkg.files).toEqual(['dist/server', 'dist/ui', 'README.md', 'README.ko.md', 'LICENSE', 'SECURITY.md']);
+    // Apache-2.0 §4(d): the NOTICE file travels with every copy; the third-party list goes with it.
+    expect(pkg.license).toBe('Apache-2.0');
+    expect(pkg.files).toEqual(['dist/server', 'dist/ui', 'README.md', 'README.ko.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md']);
     expect(pkg.files).not.toContain('src');
     expect(Object.keys(pkg.dependencies).sort()).toEqual(['web-push', 'ws', 'zod']);
     expect(pkg.devDependencies.esbuild).toBeDefined();

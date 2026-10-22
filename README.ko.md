@@ -1,11 +1,13 @@
 # AI-MSG
 
 [![CI](https://github.com/junheony/ai-msg/actions/workflows/ci.yml/badge.svg)](https://github.com/junheony/ai-msg/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 [English](README.md) | 한국어
 
-이미 로그인해 둔 코딩 CLI 를 Claude Desktop 과 비슷한 화면으로 쓰는, 내 컴퓨터에서 돌리는 웹 셸.
+이미 로그인해 둔 코딩 CLI 를 위한, 내 컴퓨터에서 돌리는 코딩 에이전트용 웹·모바일 셸 (a web/mobile shell for your coding agents).
+
+AI-MSG is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI. Product names are trademarks of their owners.
 
 AI-MSG 는 자기 컴퓨터에서 실행한다. 공식 Claude Code CLI(헤드리스)과 Codex CLI, Gemini CLI 를 **본인 로그인 그대로** 구동한다. Claude 계정(좌석)이 여러 개면 계정별 사용량을 보여 주고, 턴마다 알맞은 계정을 자동으로 고른다. 같은 화면을 폰·태블릿에서도 열 수 있어서, 돌고 있는 세션을 다른 기기에서 이어 볼 수 있다.
 
@@ -21,7 +23,7 @@ AI-MSG 는 자기 컴퓨터에서 실행한다. 공식 Claude Code CLI(헤드리
 - **간결 모드** — 기본 켜짐(설정 → 일반). 엔진·모델이 정해지면 짧은 확인("확인 · GPT Sol로 처리 중")을 보이고, 본문은 결과 위주로 두며(생각·도구는 접힘), 긴 턴은 이정표만 표시합니다. 긴 턴이 끝나면 Web Push로 알립니다(다른 탭을 보고 있을 때). 끄면 기존처럼 전체 스트림을 봅니다. 설명·쉬운 요청은 빠른 모델(Sonnet·Flash·Sol), 어려운 구현·설계만 Fable/Opus/Astra로 갑니다.
 - **분할보기** — 패널 2~4개, 패널마다 독립 세션. 좁은 화면에서는 패널 하나와 서랍형 사이드바.
 - **세션 목록** — 디스크에 이미 있는 Claude Code 기록을 읽어 프로젝트 폴더별로 묶는다. 고정, 이름 바꾸기, 보관, 검색, 분기, 삭제(되돌리기 가능), 마크다운 내보내기. 스크립트가 `claude -p` 로만 남긴 기록(일괄 작업의 일회성 실행)은 deck 이 이어서 돌리거나 이름을 붙이기 전까지 목록에 안 나오고, 검색으로는 찾을 수 있다.
-- **Claude Desktop 미러링** — 다른 계정 프로필에서 돌린 세션을 홈 프로필로 되써서 Claude Desktop 과 `claude --resume` 이 같은 대화를 본다. 다른 `claude` 프로세스가 열고 있는 세션은 표시된다.
+- **데스크톱 세션 미러링 (실험적, Desktop session mirroring)** — 다른 계정 프로필에서 돌린 세션을 홈 프로필로 되써서 Claude Desktop 과 `claude --resume` 이 같은 대화를 본다. 다른 `claude` 프로세스가 열고 있는 세션은 표시된다.
 - **계정 라우팅** — Claude 턴마다 사용량·캐시 온도·쿨다운을 보고 계정을 정한다. 세션을 한 계정에 고정할 수 있고, 한 계정을 *보호 계정*(똑같이 순위를 매기되 동률이면 마지막)으로 둘 수 있다.
 - **사용량 패널** — 계정별 5시간·주간·Fable 잔여량, 그리고 로컬 기록으로 만든 토큰 사용 이력 화면.
 - **권한** — 승인 카드(한 번 / 이 세션 / 거부), 세션별 권한 모드, `AskUserQuestion` 카드, 모든 결정의 감사 로그.
@@ -310,4 +312,6 @@ AI-MSG 는 비공식 개인 프로젝트다. Anthropic, OpenAI, Google 과 관�
 
 ## 라이선스
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE). 저작자 표시와 함께 쓰는 의존성의 라이선스는 [NOTICE](NOTICE) 와 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 를 본다.
+
+AI-MSG is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI. Product names are trademarks of their owners.

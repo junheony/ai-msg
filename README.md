@@ -1,13 +1,15 @@
 # AI-MSG
 
 [![CI](https://github.com/junheony/ai-msg/actions/workflows/ci.yml/badge.svg)](https://github.com/junheony/ai-msg/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 English | [한국어](README.ko.md)
 
 AI-MSG — run Claude Code, Codex, Gemini and Grok from your phone. It keeps going while you're away.
 
-A self-hosted, Claude Desktop-style web shell for the coding CLIs you are already logged in to.
+A self-hosted web/mobile shell for your coding agents — the CLIs you are already logged in to.
+
+AI-MSG is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI. Product names are trademarks of their owners.
 
 AI-MSG runs on your own computer. It drives the official Claude Code CLI (headless), the Codex CLI and the Gemini CLI **with your own logins, as they are**. If you have more than one Claude account ("seat"), it shows the usage of each and assigns every turn to a suitable one automatically. The same UI works from a phone or tablet, so you can pick up a running session from another device.
 
@@ -23,7 +25,7 @@ The name: "AI-MSG" plays on the Korean word "머시기" ("whatsit") and on messa
 - **Concise mode (간결 모드)** — on by default (Settings → 일반). Instant short ack naming the chosen engine/model, results-first pane (thinking/tool bodies collapsed; mid-turn chatter tucked away), milestone-style progress on long turns, and Web Push when a long turn finishes (unfocused tab). Toggle off for the full Claude Code–style stream. Explain/chat turns prefer fast models (Sonnet / Gemini Flash / GPT Sol); hard/build work still uses Fable / Opus / Astra.
 - **Split view** — 2 to 4 panes, each an independent session. On narrow screens: one pane and a drawer sidebar. On desktop `⌘\` hides the sidebar; resting the pointer on the window's left edge then slides it out over the panes until the pointer leaves.
 - **Session list** — reads the Claude Code transcripts already on disk, grouped by project folder. Pin, rename, archive, search, fork, delete (with undo), export to Markdown. Transcripts written only by scripted `claude -p` runs (a batch job's one-shots) stay out of the list unless deck runs or renames them; search still finds them.
-- **Claude Desktop mirroring** — a session that ran on another account's profile is copied back to the home profile, so Claude Desktop and `claude --resume` see the same conversation. Sessions currently held open by another `claude` process are marked.
+- **Desktop session mirroring (experimental)** — a session that ran on another account's profile is copied back to the home profile, so Claude Desktop and `claude --resume` see the same conversation. Sessions currently held open by another `claude` process are marked.
 - **Account routing** — every Claude turn gets an account based on usage, cache warmth and cooldowns. A session can be pinned to one account. One account can be marked *protected* (ranked like the others; last only on a tie).
 - **Usage panel** — remaining 5-hour / weekly / Fable windows per account (with a short countdown to the fullest window's reset, and a *다음* tag on the account the open session's next turn would use), plus a token-usage history view built from local transcripts. On desktop the top bar also shows running / background / waiting-for-approval work and the server's restart state.
 - **Permissions** — approval cards (once / this session / deny), per-session permission modes, `AskUserQuestion` cards, and an audit log of every decision.
@@ -328,4 +330,6 @@ It is a local front end for CLIs that you have installed and logged in to yourse
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and the licenses of bundled dependencies.
+
+AI-MSG is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI. Product names are trademarks of their owners.
