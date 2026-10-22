@@ -104,7 +104,7 @@ export class UsageService {
   private listeners = new Set<(s: UsageSnapshot) => void>();
   /** Per-turn windows and when they were observed; kept until the deck has a newer reading. */
   /** `fiveAt`/`weekAt`: when that window itself was last observed (a partial observation keeps the other's time). */
-  private turnObs = new Map<UsageSeat, { w: TurnWindows; atMs: number; fiveAt?: number; weekAt?: number }>();
+  private turnObs = new Map<UsageSeat, { w: TurnWindows; atMs: number; fiveAt?: number; weekAt?: number; by?: 'poll' }>();
   /** Newest GPT credits reading; the usage-deck card has none, so it outlives the window overlay. */
   private gptCredits: { c: GptCredits; atMs: number } | null = null;
   /** When deck last completed a turn on each Claude account (see noteTurnOk). */
@@ -371,8 +371,14 @@ export class UsageService {
     const fetched = u.fetchedAt ? parseIsoUtc(u.fetchedAt) : Number.NaN;
     // A 'down' card (e.g. setup_needed) carries no usable numbers, so it never retires an observation.
     if (u.status === 'down' || Number.isNaN(fetched) || obs.atMs > fetched) {
-      const overridden: AccountUsage = { ...u, fiveHour: obs.w.fiveHour ?? u.fiveHour, weekly: obs.w.weekly ?? u.weekly };
+      const { observedBy: _prevBy, ...base } = u;
+      const overridden: AccountUsage = { ...base, fiveHour: obs.w.fiveHour ?? u.fiveHour, weekly: obs.w.weekly ?? u.weekly };
       if (seat === 'gpt') return { ...overridden, status: this.obsStatus(obs.w), fetchedAt: new Date(obs.atMs).toISOString() };
+      // A `/usage` poll read the account's real limits (Fable too): shown as observed then, even over a 'down' card.
+      if (obs.by === 'poll') {
+        const status = this.now().getTime() - obs.atMs > STALE_MAX_MS ? 'stale' : this.obsStatus(obs.w);
+        return { ...overridden, fable: obs.w.fable ?? u.fable, status, fetchedAt: new Date(obs.atMs).toISOString(), observedBy: 'poll' };
+      }
       return overridden;
     }
     this.turnObs.delete(seat);
@@ -471,17 +477,18 @@ export class UsageService {
    * `status: 'ok'` with `fetchedAt` = the observed time, even if the usage-deck `codex` card is
    * currently `setup_needed` — a newer deck card still wins afterwards (see `overlay`).
    */
-  applyTurn(seat: UsageSeat, w: TurnWindows, observedAtMs: number = this.now().getTime()): void {
+  applyTurn(seat: UsageSeat, w: TurnWindows, observedAtMs: number = this.now().getTime(), by?: 'poll'): void {
     if (this.mode === 'cli' && seat !== 'gpt') return this.applyCliTurn(seat, w, observedAtMs);
     const prev = this.turnObs.get(seat);
     // F3: the rollout poller may report a reading older than one a turn already gave; never go back in time.
     if (prev && observedAtMs < prev.atMs) return;
     if (seat === 'gpt' && w.credits && (!this.gptCredits || observedAtMs >= this.gptCredits.atMs)) this.gptCredits = { c: w.credits, atMs: observedAtMs };
-    const merged: TurnWindows = { ...prev?.w, ...(w.fiveHour ? { fiveHour: w.fiveHour } : {}), ...(w.weekly ? { weekly: w.weekly } : {}) };
+    // Fable is only ever told by a `/usage` poll (a turn's rate_limit_event has none).
+    const merged: TurnWindows = { ...prev?.w, ...(w.fiveHour ? { fiveHour: w.fiveHour } : {}), ...(w.weekly ? { weekly: w.weekly } : {}), ...(by && w.fable ? { fable: w.fable } : {}) };
     const atMs = Math.max(observedAtMs, prev?.atMs ?? 0);
-    this.turnObs.set(seat, { w: merged, atMs, fiveAt: w.fiveHour ? observedAtMs : prev?.fiveAt, weekAt: w.weekly ? observedAtMs : prev?.weekAt });
+    this.turnObs.set(seat, { w: merged, atMs, fiveAt: w.fiveHour ? observedAtMs : prev?.fiveAt, weekAt: w.weekly ? observedAtMs : prev?.weekAt, ...(by && atMs === observedAtMs ? { by } : {}) });
     const cur = this.seatOf(this.snap, seat);
-    let next: AccountUsage = { ...cur, fiveHour: w.fiveHour ?? cur.fiveHour, weekly: w.weekly ?? cur.weekly };
+    let next: AccountUsage = seat === 'gpt' ? { ...cur, fiveHour: w.fiveHour ?? cur.fiveHour, weekly: w.weekly ?? cur.weekly } : this.overlay(seat, cur);
     if (seat === 'gpt') next = this.withCredits({ ...next, status: this.obsStatus(merged), fetchedAt: new Date(atMs).toISOString() });
     const generatedAt = this.now().toISOString();
     if (seat === 'gpt') this.publish({ ...this.snap, generatedAt, gpt: next });
@@ -512,8 +519,9 @@ export class UsageService {
    * rate_limit_event (`cli` mode only), so a window a turn observed later is never overwritten; marked as polled.
    */
   applyCliPoll(account: Account, w: TurnWindows, observedAtMs: number): void {
-    if (this.mode !== 'cli' || !this.reg.has(account)) return;
-    this.applyCliTurn(account, w, observedAtMs, 'poll');
+    if (!this.reg.has(account)) return;
+    if (this.mode === 'cli') this.applyCliTurn(account, w, observedAtMs, 'poll');
+    else this.applyTurn(account, w, observedAtMs, 'poll'); // usage-deck: as a turn's observation; a newer ok card wins (overlay)
   }
 
   /**
@@ -521,6 +529,14 @@ export class UsageService {
    * polled Fable value (turns keep 5h/weekly fresh but never tell Fable, so only a poll does). null = never.
    */
   cliObservedAt(account: Account): number | null {
+    if (this.mode !== 'cli') {
+      // usage-deck: an ok card from the dashboard itself (not our overlay) needs no poll; anything else is judged by the observation.
+      const card = usageOf(this.snap, account);
+      if (this.snap.deckReachable && card.status === 'ok' && card.observedBy !== 'poll') return this.now().getTime();
+      const t = this.turnObs.get(account);
+      const ats = t ? [t.fiveAt, t.weekAt, t.by === 'poll' && t.w.fable ? t.atMs : undefined].filter((x): x is number => x !== undefined) : [];
+      return ats.length ? Math.min(...ats) : null;
+    }
     const o = this.cliObs.get(account);
     if (!o || (!o.fiveHour && !o.weekly)) return null;
     const ats = [o.fiveHour, o.weekly, o.fable?.by === 'poll' ? o.fable : undefined].filter((x): x is CliWindowObs => x !== undefined).map((x) => x.at);

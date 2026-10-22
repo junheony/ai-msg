@@ -187,8 +187,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
     codexUsage.start();
     cleanup.push(() => codexUsage.stop());
-    // `cli` usage mode: an account not observed for ~8 min (before it would turn stale) gets its real limits from `claude -p /usage` (no tokens), one at a time, checked every 5 min.
-    const claudeUsage = cfg.usageMode === 'cli' && cfg.claudeUsagePoll && cfg.claudeBin.ok ? new ClaudeUsagePoller({ bin: cfg.claudeBin.bin, accounts, usage }) : null;
+    // An account not observed (`cli` mode; usage-deck mode: only one whose dashboard card is not ok) for ~8 min (before it would turn stale) gets its real limits from `claude -p /usage` (no tokens), one at a time, checked every 5 min.
+    const claudeUsage = cfg.claudeUsagePoll && cfg.claudeBin.ok ? new ClaudeUsagePoller({ bin: cfg.claudeBin.bin, accounts, usage }) : null;
     claudeUsage?.start();
     cleanup.push(() => claudeUsage?.stop());
     // 사용량 view: incremental token usage index over every transcript/rollout; first scan runs in the background.
