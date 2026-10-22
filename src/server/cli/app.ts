@@ -89,7 +89,7 @@ function serviceDeps(io: CliIo, home: string): ServiceDeps {
   };
 }
 
-/** The `quarterdeck` command. Resolves with the exit code; `start` resolves once the server is up (it keeps running). */
+/** The `ai-msg` command. Resolves with the exit code; `start` resolves once the server is up (it keeps running). */
 export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { start?: typeof startServer; probeExec?: ProbeExec; service?: Partial<ServiceDeps>; sleep?: (ms: number) => Promise<void> } = {}): Promise<number> {
   const cmd = parseCli(argv);
   const home = io.env.HOME || os.homedir();
@@ -133,7 +133,7 @@ export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { st
       const launchd = env.DECK_SUPERVISOR === 'launchd';
       if (launchd) {
         // The LaunchAgent appends to this file forever otherwise: checked now and hourly.
-        const log = path.join(resolveConfigDir(env, home), 'quarterdeck.log');
+        const log = path.join(resolveConfigDir(env, home), 'ai-msg.log');
         capServiceLog(log);
         if (!deps.start) setInterval(() => capServiceLog(log), 3_600_000).unref();
       }

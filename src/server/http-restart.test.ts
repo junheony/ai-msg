@@ -95,7 +95,7 @@ describe('server update / restart', () => {
       expect(r.status).toBe(409);
       expect(await r.json()).toEqual({ error: UNSUPERVISED_MESSAGE });
       expect(UNSUPERVISED_MESSAGE).toMatch(/재시작/);
-      expect(UNSUPERVISED_MESSAGE).toContain('quarterdeck service install');
+      expect(UNSUPERVISED_MESSAGE).toContain('ai-msg service install');
       expect(restarts).toBe(1);
       expect((await (await fetch(`${base}/api/server-update`, { headers: { cookie } })).json()).supervised).toBe(false);
     } finally { supervised = true; }

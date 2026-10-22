@@ -1,6 +1,6 @@
 # Security
 
-quarterdeck runs commands on the machine it is installed on. Please report vulnerabilities privately.
+AI-MSG runs commands on the machine it is installed on. Please report vulnerabilities privately.
 
 ## Reporting
 

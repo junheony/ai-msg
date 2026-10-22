@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-const unitFile = () => path.join(home, '.config', 'systemd', 'user', 'quarterdeck.service');
+const unitFile = () => path.join(home, '.config', 'systemd', 'user', 'ai-msg.service');
 const plistFile = (label = LAUNCHD_LABEL) => path.join(home, 'Library', 'LaunchAgents', `${label}.plist`);
 const writeLock = (pid: number, port: number, supervisor: string | null) =>
   fs.writeFileSync(path.join(configDir, 'server.lock'), JSON.stringify({ pid, port, addresses: [], version: '0.1.0', configDir, startedAt: '', supervisor }));
@@ -75,8 +75,8 @@ describe('serviceAction (linux)', () => {
     expect(run.lines()).toEqual([
       'systemctl --user show-environment',
       'systemctl --user daemon-reload',
-      'systemctl --user enable --now quarterdeck.service',
-      'systemctl --user show -p MainPID --value quarterdeck.service',
+      'systemctl --user enable --now ai-msg.service',
+      'systemctl --user show -p MainPID --value ai-msg.service',
     ]);
     expect(out.join('\n')).toContain('loginctl enable-linger');
   });
@@ -95,7 +95,7 @@ describe('serviceAction (linux)', () => {
   it('linux install rolls back when the service does not come up with the recorded port', async () => {
     const run = recordRun({ 'systemctl --user show -p MainPID': { stdout: '4242\n' } });
     expect(await serviceAction(install, deps({ run }))).toBe(1);
-    expect(run.lines()).toContain('systemctl --user disable --now --no-block quarterdeck.service');
+    expect(run.lines()).toContain('systemctl --user disable --now --no-block ai-msg.service');
     expect(fs.existsSync(unitFile())).toBe(false);
     expect(fs.existsSync(path.join(configDir, 'service.json'))).toBe(false);
     expect(err.join('\n')).toContain('journalctl');
@@ -115,8 +115,8 @@ describe('serviceAction (linux)', () => {
     expect(fs.readFileSync(unitFile(), 'utf8')).toBe(old);
     expect(fs.readFileSync(path.join(configDir, 'service.json'), 'utf8')).toBe('{"old":true}');
     expect(fs.existsSync(path.join(configDir, 'service.env'))).toBe(false);
-    expect(run.lines()).toContain('systemctl --user enable quarterdeck.service');
-    expect(run.lines()).not.toContain('systemctl --user disable --now --no-block quarterdeck.service');
+    expect(run.lines()).toContain('systemctl --user enable ai-msg.service');
+    expect(run.lines()).not.toContain('systemctl --user disable --now --no-block ai-msg.service');
   });
 
   it('reinstall of our own unit: enable + queued restart (drain); verified only once a new pid holds the lock', async () => {
@@ -128,7 +128,7 @@ describe('serviceAction (linux)', () => {
     const sleep = async () => { if (++polls === 5) writeLock(777, 9400, 'systemd'); };
     const run = recordRun({ 'systemctl --user show -p MainPID': () => ({ stdout: polls >= 5 ? '777\n' : '4242\n' }) });
     expect(await serviceAction(install, deps({ run, sleep, portBusy: async () => true }))).toBe(0);
-    expect(run.lines().slice(1, 4)).toEqual(['systemctl --user daemon-reload', 'systemctl --user enable quarterdeck.service', 'systemctl --user restart --no-block quarterdeck.service']);
+    expect(run.lines().slice(1, 4)).toEqual(['systemctl --user daemon-reload', 'systemctl --user enable ai-msg.service', 'systemctl --user restart --no-block ai-msg.service']);
     expect(polls).toBe(5);
   });
 
@@ -147,11 +147,11 @@ describe('serviceAction (linux)', () => {
     // 2 s verifyMs + 180 s (drainMaxMin 1) before giving up, then two polls while the job was still deactivating.
     expect(slept).toBeGreaterThanOrEqual(182_000);
     const lines = run.lines();
-    const firstState = lines.indexOf('systemctl --user is-active quarterdeck.service');
+    const firstState = lines.indexOf('systemctl --user is-active ai-msg.service');
     const restore = lines.lastIndexOf('systemctl --user daemon-reload');
     expect(firstState).toBeGreaterThan(-1);
     expect(restore).toBeGreaterThan(firstState + 2);
-    expect(lines.at(-1)).toBe('systemctl --user restart --no-block quarterdeck.service');
+    expect(lines.at(-1)).toBe('systemctl --user restart --no-block ai-msg.service');
   });
 
   it('a unit without our marker is neither overwritten nor removed', async () => {
@@ -174,7 +174,7 @@ describe('serviceAction (linux)', () => {
     const text = out.join('\n');
     expect(text).toContain(unitFile());
     expect(text).toContain('ExecStart=/usr/bin/node /g/lib/node_modules/q/dist/server/bin.js start');
-    expect(text).toContain('systemctl --user enable --now quarterdeck.service');
+    expect(text).toContain('systemctl --user enable --now ai-msg.service');
     expect(text).toContain('node: /usr/bin/node');
   });
 
@@ -279,13 +279,13 @@ describe('serviceAction (linux)', () => {
     writeLock(4242, 9400, 'systemd');
     const run = recordRun({ 'systemctl --user is-active': { stdout: 'active\n' } });
     expect(await serviceAction({ ...install, action: 'restart' }, deps({ run }))).toBe(0);
-    expect(run.lines()).toContain('systemctl --user restart --no-block quarterdeck.service');
+    expect(run.lines()).toContain('systemctl --user restart --no-block ai-msg.service');
     out = [];
     expect(await serviceAction({ ...install, action: 'status' }, deps({ run, packageVersion: () => '0.2.0' }))).toBe(0);
     const text = out.join('\n');
     expect(text).toContain('active');
     expect(text).toContain('4242');
-    expect(text).toContain('quarterdeck service restart');
+    expect(text).toContain('ai-msg service restart');
   });
 });
 
@@ -401,7 +401,7 @@ describe('serviceAction (darwin)', () => {
     expect(run.lines()).toContain(`launchctl bootout gui/501/${LAUNCHD_LABEL}`);
     expect(fs.existsSync(plistFile())).toBe(false);
     expect(fs.existsSync(path.join(configDir, 'service.json'))).toBe(false);
-    expect(err.join('\n')).toContain('quarterdeck.log');
+    expect(err.join('\n')).toContain('ai-msg.log');
   });
 
   it('previous labels with our marker are cleaned on install', async () => {

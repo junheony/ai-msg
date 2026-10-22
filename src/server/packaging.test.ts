@@ -16,7 +16,7 @@ describe('package metadata', () => {
   it('ships the bundled server, not the sources', () => {
     // D1 (npm name) is open: publishing stays blocked by `private` until Task 8 sets the name.
     expect(pkg.private).toBe(true);
-    expect(pkg.bin).toEqual({ quarterdeck: 'dist/server/bin.js' });
+    expect(pkg.bin).toEqual({ 'ai-msg': 'dist/server/bin.js' });
     expect(pkg.files).toEqual(['dist/server', 'dist/ui', 'README.md', 'README.ko.md', 'LICENSE', 'SECURITY.md']);
     expect(pkg.files).not.toContain('src');
     expect(Object.keys(pkg.dependencies).sort()).toEqual(['web-push', 'ws', 'zod']);

@@ -1,15 +1,17 @@
-# quarterdeck
+# AI-MSG
 
-[![CI](https://github.com/junheony/quarterdeck/actions/workflows/ci.yml/badge.svg)](https://github.com/junheony/quarterdeck/actions/workflows/ci.yml)
+[![CI](https://github.com/junheony/ai-msg/actions/workflows/ci.yml/badge.svg)](https://github.com/junheony/ai-msg/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 English | [한국어](README.ko.md)
 
+AI-MSG — run Claude Code, Codex, Gemini and Grok from your phone. It keeps going while you're away.
+
 A self-hosted, Claude Desktop-style web shell for the coding CLIs you are already logged in to.
 
-quarterdeck runs on your own computer. It drives the official Claude Code engine (through the Claude Agent SDK), the Codex CLI and the Gemini CLI **with your own logins, as they are**. If you have more than one Claude account ("seat"), it shows the usage of each and assigns every turn to a suitable one automatically. The same UI works from a phone or tablet, so you can pick up a running session from another device.
+AI-MSG runs on your own computer. It drives the official Claude Code CLI (headless), the Codex CLI and the Gemini CLI **with your own logins, as they are**. If you have more than one Claude account ("seat"), it shows the usage of each and assigns every turn to a suitable one automatically. The same UI works from a phone or tablet, so you can pick up a running session from another device.
 
-The name: a quarterdeck is where the captain commands the ship. Internal identifiers keep the short name `deck` (`DECK_*` environment variables, `~/.config/deck`).
+The name: "AI-MSG" plays on the Korean word "머시기" ("whatsit") and on message / MSG. Internal identifiers keep the short name `deck` (`DECK_*` environment variables, `~/.config/deck`).
 
 <!-- Screenshot placeholder: add docs/screenshot.png (desktop, split view) and reference it here. -->
 
@@ -45,8 +47,8 @@ The name: a quarterdeck is where the captain commands the ship. Internal identif
 ## Quick start
 
 ```bash
-git clone https://github.com/junheony/quarterdeck.git
-cd quarterdeck
+git clone https://github.com/junheony/ai-msg.git
+cd ai-msg
 npm install        # includes the Claude Code native binary (optional dependency of the SDK)
 npm run build      # UI -> dist/ui
 npm start          # http://127.0.0.1:9320
@@ -94,7 +96,7 @@ CLAUDE_CONFIG_DIR=~/.claude-b claude     # second account -> ~/.claude-b
 CLAUDE_CONFIG_DIR=~/.claude-c claude     # third account  -> ~/.claude-c  (any number of accounts works)
 ```
 
-With no `accounts.json`, quarterdeck discovers accounts at start: `~/.claude` becomes account `a`, and `~/.claude-<letter>` (one lower-case ASCII letter) becomes the account with that letter. A `.claude-<x>` directory counts only if it contains a `projects` directory or a `.claude.json`. Any other `~/.claude-*` name (`.claude-backup`, `.claude-2`) is ignored, and the start log prints the `accounts.json` entry that would add it. One account is enough; with nothing found, the account is `a`.
+With no `accounts.json`, AI-MSG discovers accounts at start: `~/.claude` becomes account `a`, and `~/.claude-<letter>` (one lower-case ASCII letter) becomes the account with that letter. A `.claude-<x>` directory counts only if it contains a `projects` directory or a `.claude.json`. Any other `~/.claude-*` name (`.claude-backup`, `.claude-2`) is ignored, and the start log prints the `accounts.json` entry that would add it. One account is enough; with nothing found, the account is `a`.
 
 To use other ids or directories, name accounts, set the home account or retire one, create `<config dir>/accounts.json` (default `~/.config/deck/accounts.json`):
 
@@ -165,17 +167,17 @@ Each turn's badge shows the account, the model and the reason for the choice.
 | Gemini | `gemini -o stream-json` as a child process | Picked by 자동 only after you consent in Settings (자동 분배). Up to two accounts (`g1`, `g2`), each with its own `GEMINI_CLI_HOME` at `<configDir>/gemini/<id>`. Reopened sessions do not show earlier messages. |
 | Grok | `grok agent` (Grok Build CLI) over ACP, one process group per turn | Picked by 자동 only after you consent in Settings (자동 분배). One seat (`x1`) using `~/.grok`. Models Grok 4.7 (default), Grok 4.7 Fast, Grok 4.6 and Grok 4.5. Approval cards, 모두 자동 승인, 편집 자동 승인, messages sent mid-turn and the audit log work as in Claude sessions; a mode change applies at once. Plan mode is not offered. No usage card (Grok's quota is not readable). Image attachments are refused. Reopened sessions do not show earlier messages. |
 
-**자동 (auto engine).** New sessions start on the 자동 engine; with the model also on 자동, quarterdeck picks the engine and model from the first message and the remaining limits (Claude, GPT, and Gemini / Grok once consented) and shows why on the turn badge. Settings → 자동 분배 chooses which engines it may use; if the chosen engine cannot do the task (shell for Gemini, images for Grok), it asks before sending.
+**자동 (auto engine).** New sessions start on the 자동 engine; with the model also on 자동, AI-MSG picks the engine and model from the first message and the remaining limits (Claude, GPT, and Gemini / Grok once consented) and shows why on the turn badge. Settings → 자동 분배 chooses which engines it may use; if the chosen engine cannot do the task (shell for Gemini, images for Grok), it asks before sending.
 
-Without the binary, the engine is hidden in the UI (Grok is shown dimmed). quarterdeck never logs in for you: use `codex login`, and see [docs/gemini-spike.md](docs/gemini-spike.md) (Korean) for the Gemini login steps and limits. Grok: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, then run `grok login` once in a terminal, then restart quarterdeck.
+Without the binary, the engine is hidden in the UI (Grok is shown dimmed). AI-MSG never logs in for you: use `codex login`, and see [docs/gemini-spike.md](docs/gemini-spike.md) (Korean) for the Gemini login steps and limits. Grok: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, then run `grok login` once in a terminal, then restart AI-MSG.
 
-**Grok and project `.grok/` folders.** The Grok CLI reads a project's own `.grok/` settings, which can change its permissions or run commands. Do not start Grok sessions in folders that contain a `.grok/` directory you did not create; quarterdeck refuses such folders where it can detect them.
+**Grok and project `.grok/` folders.** The Grok CLI reads a project's own `.grok/` settings, which can change its permissions or run commands. Do not start Grok sessions in folders that contain a `.grok/` directory you did not create; AI-MSG refuses such folders where it can detect them.
 
-**What Grok approvals guarantee.** Grok always runs in its own `default` mode; quarterdeck answers every approval request itself according to the session's mode (never "always allow"). Before each turn it runs `grok inspect --json` with the same environment and refuses the turn if any permission-rule source, a default mode other than `default`, or auto mode shows up. Even in `default` mode the Grok CLI runs read tools, read-only shell commands, `mkdir` and `touch` without asking. If a tool that should have asked runs without a request, or the session mode leaves `default`, quarterdeck stops the turn and locks the Grok engine until you unlock it in Settings (권한). This is a best-effort check on what Grok reports, not a sandbox.
+**What Grok approvals guarantee.** Grok always runs in its own `default` mode; AI-MSG answers every approval request itself according to the session's mode (never "always allow"). Before each turn it runs `grok inspect --json` with the same environment and refuses the turn if any permission-rule source, a default mode other than `default`, or auto mode shows up. Even in `default` mode the Grok CLI runs read tools, read-only shell commands, `mkdir` and `touch` without asking. If a tool that should have asked runs without a request, or the session mode leaves `default`, AI-MSG stops the turn and locks the Grok engine until you unlock it in Settings (권한). This is a best-effort check on what Grok reports, not a sandbox.
 
 **Shadow HOME.** Each Grok turn runs with `HOME` set to a fresh empty folder under `<configDir>/homes/grok` (deleted after the turn; leftovers are removed at server start), so Grok cannot pick up Claude settings or other tools' files from your real home. Only `.gitconfig`, `.config/git` and `.ssh` are linked in, when they exist, and `SSH_AUTH_SOCK` is passed through. The cost: anything else Grok's shell commands expect in your home (other dotfiles, language toolchains configured there) is not visible to them. `GROK_HOME` still points at the real `~/.grok`.
 
-**Do not open the same Grok session in a terminal at the same time.** quarterdeck serializes its own turns per session, but cannot see a `grok` you run yourself. Loading the same session from both can mix their histories; when quarterdeck notices the session's files changed since its last turn, it shows a notice.
+**Do not open the same Grok session in a terminal at the same time.** AI-MSG serializes its own turns per session, but cannot see a `grok` you run yourself. Loading the same session from both can mix their histories; when AI-MSG notices the session's files changed since its last turn, it shows a notice.
 
 ## Configuration
 
@@ -212,10 +214,10 @@ Server-wide settings changed in the UI (default permission mode, routing policy)
 
 There are two sources for the Claude usage cards, chosen with `DECK_USAGE_SOURCE`:
 
-- **`cli` (default).** quarterdeck never calls a usage endpoint. Each Claude account's 5-hour and weekly numbers come only from the `rate_limit_event` that the official `claude` CLI prints during a turn quarterdeck runs on that account. The last reading and when it was taken are kept per account in `<config dir>/claude-usage-observed.json` (mode 0600), so they survive a restart. A card shows when its numbers were observed ("마지막 턴 기준 · 12분 전" — as of the last turn, 12 minutes ago), or that the account has not been observed yet. A window whose reset time has passed is shown as 0 % and marked as an estimate. Usage within a window never goes down, so after 10 minutes a reading still counts for routing as a lower bound until the earliest reset time of its windows (at most 24 hours after it was taken; a window with no reset time: 10 minutes). The card then says "추정 · 마지막 턴 12분 전" (estimate, last turn 12 minutes ago), and a fresher account wins over it. Past that point the card is dimmed and routing treats the account as unknown. The CLI reports no Fable window, so the Fable limit stays unknown (the Fable row says "CLI 미제공", not provided by the CLI); as in any install without a dashboard, that alone does not turn a Fable request into Opus (set `DECK_USAGE_STRICT=1` if you want it to). When the CLI says the account is on overage, or that the Opus-family limit refused a request, Fable counts as spent until that limit resets, and Fable requests go to Opus.
+- **`cli` (default).** AI-MSG never calls a usage endpoint. Each Claude account's 5-hour and weekly numbers come only from the `rate_limit_event` that the official `claude` CLI prints during a turn AI-MSG runs on that account. The last reading and when it was taken are kept per account in `<config dir>/claude-usage-observed.json` (mode 0600), so they survive a restart. A card shows when its numbers were observed ("마지막 턴 기준 · 12분 전" — as of the last turn, 12 minutes ago), or that the account has not been observed yet. A window whose reset time has passed is shown as 0 % and marked as an estimate. Usage within a window never goes down, so after 10 minutes a reading still counts for routing as a lower bound until the earliest reset time of its windows (at most 24 hours after it was taken; a window with no reset time: 10 minutes). The card then says "추정 · 마지막 턴 12분 전" (estimate, last turn 12 minutes ago), and a fresher account wins over it. Past that point the card is dimmed and routing treats the account as unknown. The CLI reports no Fable window, so the Fable limit stays unknown (the Fable row says "CLI 미제공", not provided by the CLI); as in any install without a dashboard, that alone does not turn a Fable request into Opus (set `DECK_USAGE_STRICT=1` if you want it to). When the CLI says the account is on overage, or that the Opus-family limit refused a request, Fable counts as spent until that limit resets, and Fable requests go to Opus.
 - **`usage-deck`.** Chosen automatically when you set the dashboard address (`DECK_URL`, or the `deck_url` file) or when a dashboard at the default address has answered this install before (recorded in `<config dir>/usage-source.json`), or with `DECK_USAGE_SOURCE=usage-deck`. Described below.
 
-In `usage-deck` mode, quarterdeck polls an external usage dashboard at `DECK_URL` (`GET /api/state`, every 60 seconds) for per-account usage windows. The dashboard is a separate program and not part of this repository; the expected response is:
+In `usage-deck` mode, AI-MSG polls an external usage dashboard at `DECK_URL` (`GET /api/state`, every 60 seconds) for per-account usage windows. The dashboard is a separate program and not part of this repository; the expected response is:
 
 ```json
 { "cards": [ { "id": "claude:main", "status": "ok", "fetchedAt": "2026-01-01T00:00:00Z",
@@ -227,7 +229,7 @@ Account `a`, `b` and `c` map to the card ids `claude:main`, `claude:second` and 
 
 When no dashboard answers, everything still works. Usage windows then come from what the CLIs report during each turn, so an account shows numbers only after it has run a turn, and accounts with unknown usage are tried after accounts with known usage and before accounts known to be at their limit. The token-usage history view reads local transcripts and does not depend on the dashboard.
 
-**Without a usage dashboard, remaining quota is unknown, and quarterdeck does not change your request because of that.** An unknown value alone does not switch the model or the engine: a Fable turn runs on Fable as requested. Managing Fable usage beyond your plan's limit (extra billing) is up to you. An install that has seen a dashboard answer even once is recorded as strict in `<config dir>/usage-source.json`, and one where the dashboard address is set explicitly (`DECK_URL`, or the `deck_url` file) is strict from the start; there, unknown quota means Opus instead of Fable and a switch of engine. Set `DECK_USAGE_STRICT=1` to force strict mode or `DECK_USAGE_STRICT=0` to force the lenient one. Until the first dashboard request has finished, the strict side applies.
+**Without a usage dashboard, remaining quota is unknown, and AI-MSG does not change your request because of that.** An unknown value alone does not switch the model or the engine: a Fable turn runs on Fable as requested. Managing Fable usage beyond your plan's limit (extra billing) is up to you. An install that has seen a dashboard answer even once is recorded as strict in `<config dir>/usage-source.json`, and one where the dashboard address is set explicitly (`DECK_URL`, or the `deck_url` file) is strict from the start; there, unknown quota means Opus instead of Fable and a switch of engine. Set `DECK_USAGE_STRICT=1` to force strict mode or `DECK_USAGE_STRICT=0` to force the lenient one. Until the first dashboard request has finished, the strict side applies.
 
 ## Remote access
 
@@ -245,7 +247,7 @@ Do not expose the port to the public internet. There is no multi-user support an
 
 ## Security model
 
-quarterdeck can run commands on your machine. Treat access to it like shell access.
+AI-MSG can run commands on your machine. Treat access to it like shell access.
 
 - **Who can connect.** Processes on the machine and devices on your tailnet. Every `/api` request except login, and the WebSocket, requires the session cookie.
 - **Token.** 64 hex characters in `~/.config/deck/token` (`0600`). The browser holds only a SHA-256-derived cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS).
@@ -254,7 +256,7 @@ quarterdeck can run commands on your machine. Treat access to it like shell acce
 - **Auto-approve everything is opt-in.** You can turn it on for one session or make it the default in Settings. With it on, every tool call the model makes, including shell commands, file edits and network access, runs without a card, on any device and while nobody is watching. Each call is still written to the audit log, and deny rules and hooks still apply. (Codex sessions are not affected: they always default to the workspace-write sandbox.) Unanswered requests are denied after 30 minutes or when the turn ends.
 - **Claude settings apply.** Turns load your user, project and local Claude Code settings, including allow rules and hooks, exactly as the CLI would.
 - **Audit log.** Every permission decision is appended to `~/.config/deck/audit.log` as JSON lines: time, session, tool name, decision, who decided, and a SHA-256 of the tool input (not the input itself). The file rotates to `audit.log.1` at 5 MiB.
-- **Credentials.** quarterdeck does not read, store or forward CLI credentials. It starts the official CLIs with a profile directory selected; for Gemini it checks only whether the credential file exists. Before a Claude turn it removes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` and base-URL variables from the child environment, so a turn cannot silently bill a different account.
+- **Credentials.** AI-MSG does not read, store or forward CLI credentials. It starts the official CLIs with a profile directory selected; for Gemini it checks only whether the credential file exists. Before a Claude turn it removes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` and base-URL variables from the child environment, so a turn cannot silently bill a different account.
 - **File access.** New sessions must start inside your home directory (or a `DECK_EXTRA_CWD_ROOTS` path on a loopback-only server). The file preview API refuses the config directory, dot-directories directly under home, and common secret files (`.env`, private keys, credential files).
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
@@ -301,7 +303,7 @@ npm run build
 
 ```
 src/server/          HTTP + WebSocket server (Node, TypeScript)
-  engine/            ClaudeEngine (Agent SDK), CodexEngine, GeminiEngine, GrokEngine
+  engine/            ClaudeEngine (claude CLI), CodexEngine, GeminiEngine, GrokEngine
   routing/           account, engine and model selection; cooldowns
   turn/              TurnRunner: one turn from routing to result, retries
   sessions/          session index, cross-profile moves, forks, trash, search
@@ -320,7 +322,7 @@ docs/                architecture and protocol notes
 
 ## Disclaimer
 
-quarterdeck is an unofficial personal project. It is not affiliated with, endorsed by or supported by Anthropic, OpenAI, Google or xAI. "Claude", "Codex", "Gemini" and "Grok" are trademarks of their respective owners.
+AI-MSG is an unofficial personal project. It is not affiliated with, endorsed by or supported by Anthropic, OpenAI, Google or xAI. "Claude", "Codex", "Gemini" and "Grok" are trademarks of their respective owners.
 
 It is a local front end for CLIs that you have installed and logged in to yourself, on your own device. It does not use API keys and does not share accounts between people. Whether your use, including the use of more than one account, complies with each service's terms is your responsibility.
 

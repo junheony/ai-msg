@@ -8,16 +8,16 @@ export const TEXTS = {
     `설정 폴더 ${dir} 를 이미 서버(pid ${pid ?? '?'}, 포트 ${port ?? '?'})가 쓰고 있습니다 — 주소 http://127.0.0.1:${port ?? '?'}. 별도 인스턴스는 DECK_CONFIG_DIR=<다른 폴더> 로`,
   relaunchLoop: (dir: string) => `이 설정 폴더(${dir})는 relaunch 루프가 관리 중입니다 — 패키지 서버를 따로 띄우지 마세요`,
   startFailed: (msg: string) => `deck: 시작 실패 — ${msg}`,
-  fatalBackoff: (sec: number) => `deck: 재시작해도 같은 이유로 실패합니다 — ${sec}초 뒤 종료합니다(원인을 고친 뒤 quarterdeck service restart)`,
+  fatalBackoff: (sec: number) => `deck: 재시작해도 같은 이유로 실패합니다 — ${sec}초 뒤 종료합니다(원인을 고친 뒤 ai-msg service restart)`,
   starting: '시작 중입니다 — 잠시 뒤 다시 시도하세요',
   loginUrlLine: (url: string) => `deck: 로그인 주소 ${url} (이 주소를 열면 바로 로그인됩니다 — 남에게 보여 주지 마세요)`,
-  tokenFileLine: (file: string) => `deck: 로그인 토큰 파일 ${file} — 로그인 주소는 quarterdeck login-url 로 볼 수 있습니다`,
+  tokenFileLine: (file: string) => `deck: 로그인 토큰 파일 ${file} — 로그인 주소는 ai-msg login-url 로 볼 수 있습니다`,
   notRunning: (port: number) => `deck: 서버가 실행 중이 아닙니다 — 설정 포트 ${port} 로 주소를 만듭니다`,
   noToken: (file: string) => `deck: 로그인 토큰(${file})이 없습니다 — 서버를 한 번 실행하세요`,
-  notYet: (cmd: string) => `quarterdeck ${cmd}: 아직 없는 명령입니다`,
-  badArgs: (msg: string) => `quarterdeck: ${msg} (quarterdeck --help)`,
+  notYet: (cmd: string) => `ai-msg ${cmd}: 아직 없는 명령입니다`,
+  badArgs: (msg: string) => `ai-msg: ${msg} (ai-msg --help)`,
   help: [
-    '사용법: quarterdeck [명령] [옵션]',
+    '사용법: ai-msg [명령] [옵션]',
     '',
     '  start [--port N]     서버 시작 (기본 명령)',
     '  login-url            실행 중인 서버의 로그인 주소 출력',
@@ -83,7 +83,7 @@ export const PROFILE_TEXTS = {
   busy: '다른 곳에서 계정 파일을 고치는 중입니다 — 잠시 뒤 다시 시도하세요',
 } as const;
 
-/** `quarterdeck service` (plan ② Task 7). */
+/** `ai-msg service` (plan ② Task 7). */
 export const SERVICE_TEXTS = {
   windows: 'Windows 서비스는 아직 지원하지 않습니다',
   npxCache: 'npx 캐시에서 실행 중이라 서비스로 등록할 수 없습니다(캐시가 지워지면 서비스가 죽습니다) — 전역 설치(npm i -g <패키지>) 뒤 다시 실행하세요',
@@ -91,7 +91,7 @@ export const SERVICE_TEXTS = {
   nodeCellarNoLink: (p: string) => `Homebrew node(${p})의 안정 경로(opt/…/bin/node, bin/node)를 찾지 못했습니다 — --node <경로>로 지정하세요`,
   nodeMissing: (p: string) => `--node ${p} 를 실행할 수 없습니다`,
   nodeOld: (p: string, v: string) => `--node ${p} 는 ${v} 입니다 — Node 24 이상이 필요합니다`,
-  nodeTcc: 'macOS 권한(전체 디스크 접근)은 이 node 경로에 줍니다 — node 를 업그레이드한 뒤 권한이 유지되는지 quarterdeck doctor 로 확인하세요',
+  nodeTcc: 'macOS 권한(전체 디스크 접근)은 이 node 경로에 줍니다 — node 를 업그레이드한 뒤 권한이 유지되는지 ai-msg doctor 로 확인하세요',
   notOurs: (file: string) => `남이 만든 파일이라 건드리지 않습니다: ${file}`,
   lockHeld: (pid: number, port: number) => `이 설정 폴더를 쓰는 서버(pid ${pid}, 포트 ${port})가 이미 있습니다 — 먼저 끄세요`,
   portBusy: (port: number) => `포트 ${port} 에 이미 서버가 있습니다 — 그 서버를 끄거나 --port 로 다른 포트를 지정하세요`,
@@ -113,7 +113,7 @@ export const SERVICE_TEXTS = {
   rolledBack: '이전 상태로 되돌렸습니다',
   rollbackFailed: (msg: string) => `되돌리기 실패: ${msg}`,
   notVerified: (log: string) => `서비스가 기록된 설정으로 뜨지 않았습니다 — 로그: ${log}`,
-  installed: (port: number) => `서비스를 설치했습니다 — http://127.0.0.1:${port} (로그인 주소: quarterdeck login-url)`,
+  installed: (port: number) => `서비스를 설치했습니다 — http://127.0.0.1:${port} (로그인 주소: ai-msg login-url)`,
   lingerHint: '로그아웃 뒤에도 돌게 하려면: loginctl enable-linger',
   tccHint: (node: string) => `macOS: 시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에 ${node} 를 추가하세요`,
   notInstalled: '설치된 서비스가 없습니다',
@@ -130,6 +130,6 @@ export const SERVICE_TEXTS = {
   statusLock: (pid: number, port: number, version: string, supervisor: string | null) => `실행 중: pid ${pid} · 포트 ${port} · 버전 ${version || '?'} · 관리자 ${supervisor ?? '없음'}`,
   statusNoLock: '실행 중: 없음',
   statusDisk: (version: string) => `디스크의 패키지 버전: ${version}`,
-  statusMismatch: '업그레이드 뒤 재시작 필요: quarterdeck service restart',
-  statusPortMismatch: (rec: number, live: number) => `기록된 포트 ${rec} 와 실행 중인 포트 ${live} 가 다릅니다 — quarterdeck service install 로 다시 설치하세요`,
+  statusMismatch: '업그레이드 뒤 재시작 필요: ai-msg service restart',
+  statusPortMismatch: (rec: number, live: number) => `기록된 포트 ${rec} 와 실행 중인 포트 ${live} 가 다릅니다 — ai-msg service install 로 다시 설치하세요`,
 } as const;

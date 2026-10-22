@@ -1,4 +1,4 @@
-// Which CLIs are installed and whether each is logged in — for the setup wizard and `quarterdeck doctor` only
+// Which CLIs are installed and whether each is logged in — for the setup wizard and `ai-msg doctor` only
 // (turns never pre-check a login, design §5). Login state comes from the official status commands' output / exit code;
 // only the fields named below are read, and raw output is never logged or returned.
 import { spawn } from 'node:child_process';

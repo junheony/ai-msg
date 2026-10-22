@@ -86,7 +86,7 @@ export type ServerUpdateDeps = {
 
 export const NOT_DRAINING_MESSAGE = '재시작 대기 중이 아니라 강제로 재시작할 수 없습니다 — 먼저 지금 재시작을 누르세요';
 
-export const UNSUPERVISED_MESSAGE = '이 서버는 자동으로 다시 켜 주는 관리자(relaunch 루프·launchd·systemd) 없이 실행 중이라 여기서 재시작하면 꺼진 채로 남습니다 — 터미널에서 직접 다시 시작하세요. 패키지로 설치했다면 `quarterdeck service install` 로 서비스를 등록할 수 있습니다';
+export const UNSUPERVISED_MESSAGE = '이 서버는 자동으로 다시 켜 주는 관리자(relaunch 루프·launchd·systemd) 없이 실행 중이라 여기서 재시작하면 꺼진 채로 남습니다 — 터미널에서 직접 다시 시작하세요. 패키지로 설치했다면 `ai-msg service install` 로 서비스를 등록할 수 있습니다';
 
 /** /api/usage/history: how long `refresh=1` waits for the scan before answering with what is indexed so far. */
 const USAGE_REFRESH_WAIT_MS = 15_000;

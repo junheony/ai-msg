@@ -5,7 +5,7 @@ import { grokEnv } from './engine/grokEnv';
 import { SUPERVISOR_ENV_KEYS, stripSupervisorEnv } from './supervisorEnv';
 
 const markers = Object.fromEntries(SUPERVISOR_ENV_KEYS.map((k) => [k, 'x'])) as Record<string, string>;
-const base: Record<string, string> = { PATH: '/bin', HOME: '/h', ...markers, XPC_SERVICE_NAME: 'local.quarterdeck.server', INVOCATION_ID: 'abc', DECK_SUPERVISOR: 'systemd' };
+const base: Record<string, string> = { PATH: '/bin', HOME: '/h', ...markers, XPC_SERVICE_NAME: 'local.ai-msg.server', INVOCATION_ID: 'abc', DECK_SUPERVISOR: 'systemd' };
 
 describe('supervisorEnv', () => {
   it('the key list is the one in the plan', () => {

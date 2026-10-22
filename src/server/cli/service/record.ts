@@ -1,21 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-/** systemd user unit name (`quarterdeck.service`). */
-export const SERVICE_NAME = 'quarterdeck';
+/** systemd user unit name (`ai-msg.service`). */
+export const SERVICE_NAME = 'ai-msg';
 /** macOS LaunchAgent label — fixed for good (plan ② D8), whatever the domain or npm scope becomes. */
-export const LAUNCHD_LABEL = 'local.quarterdeck.server';
+export const LAUNCHD_LABEL = 'local.ai-msg.server';
 /** Names used before a rename: install/uninstall/status take down and delete their files when they carry our marker. */
 export const PREVIOUS_LAUNCHD_LABELS: string[] = [];
 export const PREVIOUS_UNIT_NAMES: string[] = [];
 /** This Mac's repo-run service (scripts/launchd): never touched, its presence refuses a package service. */
 export const LEGACY_LAUNCHD_LABEL = 'com.deck.server';
 
-export const MANAGED_MARKER = 'managed-by: quarterdeck service';
-export const MARKER_LINE = `${MANAGED_MARKER} (수정하지 마세요 — quarterdeck service install 이 다시 씁니다)`;
+export const MANAGED_MARKER = 'managed-by: ai-msg service';
+export const MARKER_LINE = `${MANAGED_MARKER} (수정하지 마세요 — ai-msg service install 이 다시 씁니다)`;
 
 /**
- * `quarterdeck start`'s exit code for failures a restart cannot fix (port taken, config dir locked, broken accounts.json):
+ * `ai-msg start`'s exit code for failures a restart cannot fix (port taken, config dir locked, broken accounts.json):
  * systemd does not restart on it (RestartPreventExitStatus); under launchd the process waits FATAL_LAUNCHD_DELAY_SEC first.
  */
 export const FATAL_EXIT_CODE = 78;

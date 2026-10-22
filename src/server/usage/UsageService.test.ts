@@ -566,10 +566,10 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     expect(usageOf(s.routingSnapshot(), 'a').fable).toBeNull();
   });
 
-  it('applyCliPoll is ignored outside cli mode', () => {
+  it('applyCliPoll outside cli mode goes in as a turn observation (usage-deck mode)', () => {
     const s = new UsageService({ mode: 'usage-deck', deckUrl: 'http://usage-deck.invalid', fetchFn: vi.fn<FetchLike>(), accounts: testRegistry() });
     s.applyCliPoll('a', { fiveHour: FIVE, weekly: WEEK }, T0);
-    expect(usageOf(s.snapshot(), 'a').fiveHour).toBeNull();
+    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual(FIVE);
   });
 
   it('per window, an older observation never replaces a newer one; a partial event keeps the other window and its time', async () => {
@@ -749,5 +749,98 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     expect(s.snapshot().accounts).not.toHaveProperty('zz');
     expect(usageOf(s.snapshot(), 'a').status).toBe('down');
     expect(usageOf(s.snapshot(), 'b').weekly).toEqual({ usedPct: 3, resetsAt: null });
+  });
+});
+
+describe('UsageService · usage-deck 모드의 /usage 폴', () => {
+  const svc = (fetchFn: any, now: () => Date) => new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://deck.test:9310/', fetchFn, intervalMs: 60_000, now });
+  const POLLED = { fiveHour: { usedPct: 30, resetsAt: '2026-09-30T15:00:00.000Z' }, weekly: { usedPct: 40, resetsAt: '2026-10-06T22:00:00.000Z' }, fable: { usedPct: 12, resetsAt: '2026-10-06T23:00:00.000Z' } };
+
+  it('폴 대상: ok 카드는 아님, down/stale/카드 없음/대시보드 불통은 폴', async () => {
+    const nowMs = Date.parse('2026-09-30T12:30:00Z');
+    let reach = true;
+    const s = svc(async () => { if (!reach) throw new Error('down'); return { ok: true, json: async () => LIVE }; }, () => new Date(nowMs));
+    await s.pollOnce();
+    expect(s.cliObservedAt('a')).toBe(nowMs); // ok card: not due
+    expect(s.cliObservedAt('b')).toBeNull(); // stale card
+    expect(s.cliObservedAt('c')).toBeNull(); // no card
+    reach = false;
+    await s.pollOnce();
+    expect(s.cliObservedAt('a')).toBeNull(); // dashboard unreachable: ok card became stale
+  });
+
+  it('폴 결과가 down 카드 위에 ok · 확인함으로 보이고 Fable 도 들어가며, 더 새 ok 카드가 오면 카드가 이긴다', async () => {
+    let nowMs = Date.parse('2026-09-30T12:30:00Z');
+    let state: unknown = { cards: [{ id: 'claude:third', status: 'setup_needed', rows: [] }] };
+    const s = svc(async () => ({ ok: true, json: async () => state }), () => new Date(nowMs));
+    await s.pollOnce();
+    expect(s.snapshot().accounts.c!.status).toBe('down');
+    s.applyCliPoll('c', POLLED, nowMs - 5_000);
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll', fiveHour: { usedPct: 30 }, weekly: { usedPct: 40 }, fable: { usedPct: 12 } });
+    expect(s.cliObservedAt('c')).toBe(nowMs - 5_000);
+    await s.pollOnce(); // the card is still down: the observation stays on top
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll', fable: { usedPct: 12 } });
+    nowMs += 60_000;
+    state = { cards: [{ id: 'claude:third', status: 'ok', fetchedAt: new Date(nowMs).toISOString(), rows: [{ label: 'Session (5h)', used: 50, cap: 100, unit: '%', resetsAt: null }, { label: 'Weekly (7d)', used: 60, cap: 100, unit: '%', resetsAt: null }] }] };
+    await s.pollOnce();
+    const c = s.snapshot().accounts.c!;
+    expect(c).toMatchObject({ status: 'ok', fiveHour: { usedPct: 50 }, weekly: { usedPct: 60 } });
+    expect(c.observedBy).toBeUndefined();
+    expect(s.cliObservedAt('c')).toBe(nowMs); // ok card: not due
+  });
+
+  it('폴은 대시보드 카드가 없는 계정도 ok 로 보이게 하고 오래되면 stale', async () => {
+    let nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const s = svc(async () => ({ ok: true, json: async () => ({ cards: [] }) }), () => new Date(nowMs));
+    await s.pollOnce();
+    s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs);
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll' });
+    nowMs += STALE_MAX_MS + 60_000;
+    await s.pollOnce();
+    expect(s.snapshot().accounts.c!.status).toBe('stale');
+  });
+
+  it('폴 → 일반 턴 → 여전히 down 인 카드: ok · Fable 유지, 확인함 표시는 턴이 가장 새로우면 빠진다', async () => {
+    let nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const s = svc(async () => ({ ok: true, json: async () => ({ cards: [{ id: 'claude:third', status: 'setup_needed', rows: [] }] }) }), () => new Date(nowMs));
+    await s.pollOnce();
+    s.applyCliPoll('c', POLLED, nowMs - 60_000);
+    s.applyTurn('c', { fiveHour: { usedPct: 35, resetsAt: POLLED.fiveHour.resetsAt } });
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', fiveHour: { usedPct: 35 }, weekly: { usedPct: 40 }, fable: { usedPct: 12 } });
+    expect(s.snapshot().accounts.c!.observedBy).toBeUndefined();
+    await s.pollOnce();
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', fable: { usedPct: 12 } });
+    expect(s.cliObservedAt('c')).toBe(nowMs - 60_000); // 5h turn is newer, weekly and Fable are the poll's
+    nowMs += 30_000;
+    s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs);
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll' });
+  });
+
+  it('턴보다 먼저 시작해 늦게 끝난 폴: 5h/주간은 턴이 이기고 Fable 은 들어간다', async () => {
+    const nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const s = svc(async () => ({ ok: true, json: async () => ({ cards: [{ id: 'claude:third', status: 'setup_needed', rows: [] }] }) }), () => new Date(nowMs));
+    await s.pollOnce();
+    s.applyTurn('c', { fiveHour: { usedPct: 35, resetsAt: null } }, nowMs - 1_000);
+    s.applyCliPoll('c', POLLED, nowMs - 10_000);
+    expect(s.snapshot().accounts.c).toMatchObject({ fiveHour: { usedPct: 35 }, fable: { usedPct: 12 }, status: 'ok' });
+    expect(s.snapshot().accounts.c!.weekly).toBeNull();
+  });
+
+  it('부분 폴(5h 만): cliObservedAt 은 그 시각; ok 카드는 fetchedAt 이 오래됐거나 없어도 폴하지 않는다', async () => {
+    const nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const state = { cards: [
+      { id: 'claude:main', status: 'ok', fetchedAt: '2026-09-30T12:00:00.000Z', rows: [{ label: 'Session (5h)', used: 1, cap: 100, unit: '%', resetsAt: null }] },
+      { id: 'claude:second', status: 'ok', rows: [{ label: 'Session (5h)', used: 2, cap: 100, unit: '%', resetsAt: null }] },
+      { id: 'claude:third', status: 'setup_needed', rows: [] },
+    ] };
+    const s = svc(async () => ({ ok: true, json: async () => state }), () => new Date(nowMs));
+    await s.pollOnce();
+    s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs - 3_000);
+    expect(s.cliObservedAt('c')).toBe(nowMs - 3_000);
+    expect(s.cliObservedAt('a')).toBe(nowMs); // old card time, still ok: not polled
+    expect(s.cliObservedAt('b')).toBe(nowMs); // no card time: the card's word, not polled
+    s.applyCliPoll('b', POLLED, nowMs);
+    expect(s.snapshot().accounts.b).toMatchObject({ fiveHour: { usedPct: 2 } }); // the card wins
+    expect(s.snapshot().accounts.b!.observedBy).toBeUndefined();
   });
 });

@@ -379,7 +379,7 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
       return {
         seat: a, engine: 'claude', mark: <ClaudeMark className="usage-mark claude" />, rows: claudeRows(u, cli),
         status: (kept ? 'kept' : u.status) as SeatData['status'], dim, fetchedAt: u.fetchedAt,
-        ...(cli ? { observed: observedText(u, now) } : {}),
+        ...(cli || u.observedBy === 'poll' ? { observed: observedText(u, now) } : {}),
         ...(u.observedBy === 'poll' ? { polled: true } : {}),
       };
     }),

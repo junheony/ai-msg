@@ -1,4 +1,4 @@
-// `quarterdeck doctor`: one line per engine, then one per Claude profile. Exit code is always 0.
+// `ai-msg doctor`: one line per engine, then one per Claude profile. Exit code is always 0.
 import type { ClaudeProfileProbe, EngineProbe } from '../../shared/setup-types';
 import { PROBE_TEXTS, loginHint } from '../setup/texts';
 

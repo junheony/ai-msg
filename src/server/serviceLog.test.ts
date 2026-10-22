@@ -9,7 +9,7 @@ beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-svclog-'));
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 it('under the cap: untouched; over it: copied to .1 and truncated in place (same inode, appends keep working)', () => {
-  const file = path.join(dir, 'quarterdeck.log');
+  const file = path.join(dir, 'ai-msg.log');
   expect(capServiceLog(file, 10)).toBe(false); // missing file
   fs.writeFileSync(file, 'short\n');
   expect(capServiceLog(file, 10)).toBe(false);

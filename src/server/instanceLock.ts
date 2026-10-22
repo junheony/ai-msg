@@ -47,11 +47,11 @@ function readText(file: string): string | null {
   try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
 }
 
-/** A holder is live while its pid runs and that pid is still a node/quarterdeck process (a reused pid is not). Unknown command → live. */
+/** A holder is live while its pid runs and that pid is still a node/ai-msg process (a reused pid is not). Unknown command → live. */
 function holderLive(info: LockInfo | null, isAlive: (pid: number) => boolean, commandOf: (pid: number) => string | null): boolean {
   if (!info || !isAlive(info.pid)) return false;
   const cmd = commandOf(info.pid);
-  return cmd === null || /node|quarterdeck/i.test(cmd);
+  return cmd === null || /node|ai-msg/i.test(cmd);
 }
 
 /** Write `text` to `file` only if it does not exist yet (temp file + link: readers never see a half-written lock). */

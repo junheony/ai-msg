@@ -1,12 +1,12 @@
 # Architecture
 
-quarterdeck is one Node.js server plus a React UI. The server runs on the machine that holds your project files and CLI logins; browsers connect over HTTP and a WebSocket. Internal names use the short form `deck`.
+AI-MSG is one Node.js server plus a React UI. The server runs on the machine that holds your project files and CLI logins; browsers connect over HTTP and a WebSocket. Internal names use the short form `deck`.
 
 ## Processes
 
 ```
 browser (desktop, phone) ──HTTP + WS──▶ deck server (one Node process)
-                                         ├─ TurnRunner ─┬─ ClaudeEngine ── Claude Agent SDK ── claude CLI (child, per account profile)
+                                         ├─ TurnRunner ─┬─ ClaudeEngine ── claude CLI (stream-json) (child, per account profile)
                                          │              ├─ CodexEngine ─── codex exec --json (child)
                                          │              └─ GeminiEngine ── gemini -o stream-json (child)
                                          ├─ AccountRouter / EngineChoice / ModelPolicy
@@ -45,7 +45,7 @@ The *home* account (top-level `home`) is the single profile Claude Desktop uses;
    - candidates are ordered by the routing policy: `balance` (lowest 5-hour usage) or `drain` (`(100 − weekly%) / hours to weekly reset`, highest first). The protected account is ranked the same way; it comes last only on a tie.
 3. **Model** (`routing/ModelPolicy.ts`, `routing/AutoModel.ts`): the session's model, or the per-turn choice. A Fable turn on an account whose Fable window is at 80% runs on Opus instead. An unknown Fable window has the same effect only on an install that has seen a usage dashboard answer (strict mode, see Usage data); otherwise the turn runs as requested.
 4. **Relocation.** If the chosen account differs from where the session's transcript lives, `SessionMover` copies the transcript (and its side files) into the target profile's `projects/` directory and verifies the copy by hash. The source is never modified. If the copies have diverged, the move is refused rather than overwritten, except that a diverged copy outside the home/protected profile is backed up first.
-5. **Run.** `ClaudeEngine` calls the Agent SDK with `resume`, the session's permission mode and the user/project/local setting sources. Engine events are mapped to protocol messages and emitted to the turn's sink. Permission requests arrive through the SDK's `canUseTool` callback, are shown as cards on every connected device, and each decision is appended to the audit log.
+5. **Run.** `ClaudeEngine` runs the claude CLI headless (stream-json, `--resume`) with the session's permission mode and the user/project/local setting sources. Engine events are mapped to protocol messages and emitted to the turn's sink. Permission requests arrive as the CLI's permission prompts, are shown as cards on every connected device, and each decision is appended to the audit log.
 6. **Retry.** `limitDetect.ts` classifies a failed result from the SDK's own error text. A `limit` failure puts the account on cooldown for 1 hour and an `auth` failure for 6 hours; the session is relocated and the same turn is retried on the next account, at most 2 times. Cooldowns are plain files (`<cooldown dir>/<account id>` holding a Unix time) so other local tools can share them.
 7. **Write-back.** After a turn on a non-home account, the transcript is mirrored to the home profile so Claude Desktop sees the current conversation.
 
