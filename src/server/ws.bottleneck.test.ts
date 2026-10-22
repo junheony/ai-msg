@@ -155,6 +155,27 @@ describe('ws: submitRetry keeps its hop on every path', () => {
   });
 });
 
+describe('ws: 새 세션으로 이어가기 into a process that only waits for its prompt suggestion', () => {
+  it('the held process is ended, then the handoff note runs; no error', async () => {
+    const S = '76767676-7676-4767-8767-767676767676';
+    const h = heldRun();
+    const ws = await connect();
+    const got: ServerMessage[] = [];
+    ws.on('message', (d) => got.push(JSON.parse(String(d)) as ServerMessage));
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: 'first' }));
+    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    await vi.waitFor(() => expect(got.some((m) => m.type === 'turn_result')).toBe(true));
+    const firstSignal = h.run.mock.calls[0]![1].signal;
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: 'x', handoff: true }));
+    await vi.waitFor(() => expect(h.calls).toHaveLength(2));
+    expect(firstSignal.aborted).toBe(true);
+    expect(h.calls[1]).toMatchObject({ sessionId: S, handoff: true });
+    expect(got.filter((m) => m.type === 'error')).toEqual([]);
+    h.release();
+    ws.close();
+  });
+});
+
 describe('ws: an automatic (commander) turn\'s retry stays gated (보안 #3)', () => {
   it('a new turn carries commanderHop with the hop', async () => {
     const S = '78787878-7878-4787-8787-787878787878';

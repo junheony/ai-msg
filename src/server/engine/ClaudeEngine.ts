@@ -38,6 +38,11 @@ export const BG_GRACE_MS = 60_000;
  * ~2 s after the result, or not at all); the process is let go as soon as one arrives.
  */
 export const SUGGEST_WAIT_MS = 5_000;
+/**
+ * An abort of a turn that is already over (waiting for its suggestion, or closing): stdin is closed first so the CLI
+ * flushes its transcript and exits by itself; one still alive after this long is SIGTERMed.
+ */
+export const OVER_ABORT_GRACE_MS = 1_000;
 
 const HOOK_RELAY = childScript('hookRelay');
 const PERMISSION_MCP = childScript('permissionMcp');
@@ -63,6 +68,8 @@ export type ClaudeEngineOptions = {
   promptSuggestions?: boolean;
   /** Default SUGGEST_WAIT_MS. */
   suggestWaitMs?: number;
+  /** Default OVER_ABORT_GRACE_MS. */
+  overAbortGraceMs?: number;
 };
 
 export class ClaudeEngine implements Engine {
@@ -123,15 +130,25 @@ export class ClaudeEngine implements Engine {
     /** The turn is over and stdin is held open only for the CLI's prompt_suggestion (SUGGEST_WAIT_MS). */
     let suggestWait = false;
     /**
-     * The turn is over (waiting only for its suggestion, or closing): its transcript is written, so an abort ends the
-     * process at once (SIGTERM, no SIGINT) — a send waiting for the session does not sit through SUGGEST_WAIT_MS.
+     * The turn is over (waiting only for its suggestion, or closing): an abort closes stdin (no SIGINT) and SIGTERMs only
+     * a process still alive after OVER_ABORT_GRACE_MS — the CLI may still be flushing the transcript's end, and a send
+     * waiting for the session does not sit through SUGGEST_WAIT_MS.
      */
     let over = false;
-    const onAbort = () => { aborted = true; reg.abortAll(); if (over) proc?.terminate(); else proc?.interrupt(); };
-    req.signal.addEventListener('abort', onAbort, { once: true });
     let capTimer: NodeJS.Timeout | null = null;
     let graceTimer: NodeJS.Timeout | null = null;
     let suggestTimer: NodeJS.Timeout | null = null;
+    let overKill: NodeJS.Timeout | null = null;
+    const onAbort = () => {
+      aborted = true;
+      reg.abortAll();
+      if (!over) { proc?.interrupt(); return; }
+      if (suggestTimer) { clearTimeout(suggestTimer); suggestTimer = null; }
+      proc?.closeInput();
+      overKill = setTimeout(() => proc?.terminate(), this.o.overAbortGraceMs ?? OVER_ABORT_GRACE_MS);
+      overKill.unref?.();
+    };
+    req.signal.addEventListener('abort', onAbort, { once: true });
     try {
       const relay = { node: this.o.node ?? process.execPath, script: this.o.scripts?.hookRelay ?? HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
       const settingsPath = path.join(procDir, 'settings.json');
@@ -339,6 +356,7 @@ export class ClaudeEngine implements Engine {
       if (capTimer) clearTimeout(capTimer);
       if (graceTimer) clearTimeout(graceTimer);
       if (suggestTimer) clearTimeout(suggestTimer);
+      if (overKill) clearTimeout(overKill);
       req.signal.removeEventListener('abort', onAbort);
       // A consumer that stopped reading early must not leave the child behind.
       if (proc && proc.exit === null) proc.terminate();

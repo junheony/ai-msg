@@ -100,17 +100,30 @@ describe('ClaudeEngine prompt suggestions', () => {
     expect(evs.filter((e) => e.kind === 'suggestion')).toEqual([{ kind: 'suggestion', text: '새 추천' }]);
   });
 
-  it('abort during the wait ends the process at once (SIGTERM, no SIGINT) and drops a late suggestion', async () => {
-    const { f, engine } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000 }, { exitOnStdinClose: false });
+  it('abort during the wait closes stdin first: a CLI that exits by itself within the grace gets no signal at all', async () => {
+    const { f, engine } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000, overAbortGraceMs: 5_000 });
+    const ac = new AbortController();
+    const evs: EngineEvent[] = [];
+    f.push(cli.init('s1'), cli.result('a', 's1'));
+    const t0 = Date.now();
+    for await (const e of engine.runTurn(req({ signal: ac.signal }))) { evs.push(e); if (e.kind === 'result') setTimeout(() => ac.abort(), 5); }
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(f.state.inputClosed).toBe(true);
+    expect(f.state.signals).toEqual([]);
+  });
+
+  it('abort during the wait: a CLI still alive after the grace is SIGTERMed (no SIGINT); a late suggestion is dropped', async () => {
+    const { f, engine } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000, overAbortGraceMs: 40 }, { exitOnStdinClose: false });
     const ac = new AbortController();
     const evs: EngineEvent[] = [];
     f.push(cli.init('s1'), cli.result('a', 's1'));
     const done = (async () => { for await (const e of engine.runTurn(req({ signal: ac.signal }))) { evs.push(e); if (e.kind === 'result') setTimeout(() => ac.abort(), 5); } })();
     for (let i = 0; i < 200 && !f.state.inputClosed; i++) await new Promise((r) => setTimeout(r, 5));
     expect(f.state.inputClosed).toBe(true);
+    expect(f.state.signals).toEqual([]); // stdin first, no signal yet
     f.push(suggestion('늦은 추천'));
     await done;
-    expect(f.state.signals).toContain('SIGTERM');
+    expect(f.state.signals[0]).toBe('SIGTERM');
     expect(f.state.signals).not.toContain('SIGINT');
     expect(evs.some((e) => e.kind === 'suggestion')).toBe(false);
   });
