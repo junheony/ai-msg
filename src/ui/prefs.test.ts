@@ -26,7 +26,7 @@ describe('prefs', () => {
 
   it('round-trips through storage and tolerates junk', () => {
     const store = mem();
-    const prefs = { theme: 'dark', fontSize: 'xlarge', chatWidth: 'wide', sendKey: 'mod-enter', conciseMode: false } as const;
+    const prefs = { theme: 'dark', fontSize: 'xlarge', chatWidth: 'wide', sendKey: 'mod-enter', conciseMode: false, pinnedFolded: true } as const;
     savePrefs(prefs, store);
     expect(loadPrefs(store)).toEqual(prefs);
     expect(parsePrefs('not json')).toEqual(DEFAULT_PREFS);

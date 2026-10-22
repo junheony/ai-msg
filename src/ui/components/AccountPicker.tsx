@@ -47,14 +47,14 @@ export function useAccountWords(pin: Account | null, current: Seat | null) {
   };
 }
 
-/** The account part of the session chip: the pinned name (with a pin), or "자동 · " + the current one (a narrow pane keeps the name). */
+/** The account part of the session chip: the pinned name (with a pin), or the current one (자동 lives in its title, aria-label and the sheet). */
 export function AccountChipName({ pin, current }: { pin: Account | null; current: Seat | null }) {
   const w = useAccountWords(pin, current);
   return (
     <span className={`sc-acct ${pin ? 'pinned' : ''}`} data-testid="account-picker" role="img" aria-label={w.aria}>
       {pin && <PinIcon />}
       {pin ? <span className={w.cls} title={w.title}>{w.pinLabel}</span>
-        : w.cur ? <><span className="sc-extra">자동 · </span><span className={w.cls} title={w.title}>{w.cur}</span></>
+        : w.cur ? <span className={w.cls} title={`자동 · ${w.title}`}>{w.cur}</span>
         : <span className="mp-acct" title={w.title}>자동</span>}
     </span>
   );

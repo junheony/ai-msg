@@ -271,7 +271,7 @@ describe('turn meta pill', () => {
     expect(screen.queryByTestId('badge-dot')).toBeNull();
     rerender(<TurnBadge badge={badge} ctx={{ usage: { inputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 1 }, window: 200_000, at: Date.now() - 2 * 3600_000, model: 'opus', account: null } as never} />);
     expect(screen.getByTestId('badge-dot')).toBeTruthy();
-    expect(screen.getByTestId('badge-cold').textContent).toBe('캐시 만료 · 이번 턴은 전체 다시 읽기');
+    expect(screen.getByTestId('badge-cold').textContent).toBe('오래 쉬어서 다음 답은 조금 느리고 비싸요');
   });
 });
 

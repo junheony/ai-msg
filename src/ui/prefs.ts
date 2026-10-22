@@ -5,11 +5,11 @@ export type Theme = 'system' | 'light' | 'dark';
 export type FontSize = 'small' | 'normal' | 'large' | 'xlarge';
 export type ChatWidth = 'narrow' | 'wide';
 export type SendKey = 'enter' | 'mod-enter';
-export type Prefs = { theme: Theme; fontSize: FontSize; chatWidth: ChatWidth; sendKey: SendKey; /** 간결 모드: results-first chat (default on). */ conciseMode: boolean };
+export type Prefs = { theme: Theme; fontSize: FontSize; chatWidth: ChatWidth; sendKey: SendKey; /** 간결 모드: results-first chat (default on). */ conciseMode: boolean; /** The sidebar's 고정됨 section folded (default open). */ pinnedFolded: boolean };
 
 /** 작게 = the pre-settings size; the default (보통) is already larger. */
 export const FONT_SCALE: Record<FontSize, number> = { small: 1, normal: 1.1, large: 1.2, xlarge: 1.35 };
-export const DEFAULT_PREFS: Prefs = { theme: 'system', fontSize: 'normal', chatWidth: 'narrow', sendKey: 'enter', conciseMode: true };
+export const DEFAULT_PREFS: Prefs = { theme: 'system', fontSize: 'normal', chatWidth: 'narrow', sendKey: 'enter', conciseMode: true, pinnedFolded: false };
 
 const ALLOWED: { [K in keyof Prefs]: readonly Prefs[K][] } = {
   theme: ['system', 'light', 'dark'],
@@ -17,6 +17,7 @@ const ALLOWED: { [K in keyof Prefs]: readonly Prefs[K][] } = {
   chatWidth: ['narrow', 'wide'],
   sendKey: ['enter', 'mod-enter'],
   conciseMode: [true, false],
+  pinnedFolded: [true, false],
 };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;

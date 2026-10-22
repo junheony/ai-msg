@@ -195,6 +195,17 @@ export function modelChoices(engine: EngineChoice): readonly ModelChoice[] {
   return engine === 'gemini' ? GEMINI_MODELS : engine === 'grok' ? GROK_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
 }
 
+/** The send keys live on the 보내기 button's tooltip; the placeholder only names who the message goes to. */
+export const SEND_TITLE = '보내기 (Enter · Shift+Enter 줄바꿈)';
+export const SEND_TITLE_MOD = '보내기 (⌘Enter · Enter 줄바꿈)';
+const PLACEHOLDER_NAME_MAX = 30;
+/** "{세션 이름}에게 메시지 보내기", or "메시지 보내기" without a name (a new session). */
+export function composerPlaceholder(name: string | null | undefined): string {
+  const n = name?.replace(/\s+/g, ' ').trim();
+  if (!n) return '메시지 보내기';
+  return `${n.length > PLACEHOLDER_NAME_MAX ? `${n.slice(0, PLACEHOLDER_NAME_MAX - 1)}…` : n}에게 메시지 보내기`;
+}
+
 /** Enter inserts a newline on touch screens (send with the button), as on Desktop's mobile apps. */
 const COARSE_QUERY = '(pointer: coarse), (hover: none)';
 function useCoarsePointer(): boolean {
@@ -701,7 +712,7 @@ export function Chat(p: ChatProps) {
           </>}
           action={p.activeTurnId
             ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
-            : <button type="button" className="send" onClick={submit} disabled={!canSend} title="보내기 (Enter)"><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
+            : <button type="button" className="send" onClick={submit} disabled={!canSend} title={sendKey === 'mod-enter' ? SEND_TITLE_MOD : SEND_TITLE} aria-keyshortcuts={sendKey === 'mod-enter' ? 'Meta+Enter Control+Enter' : 'Enter'}><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
         >
           <textarea
             ref={taRef}
@@ -716,7 +727,7 @@ export function Chat(p: ChatProps) {
             // letter, swaps words with autocorrect and underlines code — prompts are not prose.
             autoCorrect="off" autoCapitalize="off" spellCheck={false}
             disabled={!!p.readOnly}
-            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
+            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : composerPlaceholder(p.isNew ? null : p.title)}
             aria-label="메시지"
             rows={1}
             // Not a form field: keeps iOS from showing its AutoFill (password/card/address) bar above the keyboard.

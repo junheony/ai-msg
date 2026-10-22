@@ -669,7 +669,7 @@ describe('App split view (D6)', () => {
     const opens = () => frames().filter((f) => f.type === 'open_session').length;
     const before = opens();
     const side = document.querySelector('.sidebar') as HTMLElement;
-    expect(within(side).getByRole('img', { name: '분할 1번 패널에 열림' })).toBeTruthy();
+    expect(within(side).getByRole('img', { name: '1번 칸에 열림' })).toBeTruthy();
     openSession('one');
     expect(screen.getByTestId('pane-p0').classList.contains('active')).toBe(true);
     expect(chipOf(screen.getByTestId('pane-p1')).textContent).not.toContain('one');
@@ -681,7 +681,7 @@ describe('App split view (D6)', () => {
     openSession('two');
     expect(chipOf(screen.getByTestId('pane-p1')).textContent).toContain('two');
     expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's2' });
-    expect(within(side).getByRole('img', { name: '분할 2번 패널에 열림' })).toBeTruthy();
+    expect(within(side).getByRole('img', { name: '2번 칸에 열림' })).toBeTruthy();
   });
 
   it('T9 (b): a pane closed while its open_session reply is in flight never gets its history into a blank pane', async () => {
@@ -1150,17 +1150,21 @@ describe('App boot', () => {
     expect(fetchFn.mock.calls.filter((c) => (c as unknown[])[0] === '/api/me').length).toBe(1);
   });
 
-  it('boot: a server that keeps not answering is named as the cause (서버 응답 없음), with a retry button', async () => {
+  it('boot: a server that keeps not answering says so in plain words, with a retry button; Tailscale only under 자세히', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
     render(<App />);
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     expect(screen.getByText('확인 중…')).toBeTruthy();
     // Misses at 0, 3, 6, 9 s: four — still 확인 중…; the fifth (12 s) names the cause.
     await act(async () => { await vi.advanceTimersByTimeAsync(3000 * 3 + 100); });
-    expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
+    expect(screen.queryByText('서버에 연결할 수 없어요')).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-    expect(screen.getByText(/서버 응답 없음 — 3초마다 다시 시도합니다/)).toBeTruthy();
-    expect(screen.getByText('지금 다시 시도')).toBeTruthy();
+    expect(screen.getByText('서버에 연결할 수 없어요')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeTruthy();
+    const more = screen.getByText('자세히').closest('details')!;
+    expect(more.open).toBe(false);
+    expect(more.textContent).toContain('Tailscale');
+    expect(screen.getByText('서버에 연결할 수 없어요').textContent).not.toContain('Tailscale');
   });
 
   it('a long disconnect shows since when the server stopped answering and offers 다시 시도; reconnecting clears it', async () => {

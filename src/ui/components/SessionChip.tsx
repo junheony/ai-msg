@@ -7,7 +7,7 @@ import { PERM_MODES, PERM_MODE_LABEL, permModeHint, permModesFor, type PermMode 
 import { contextLabel, type ContextInfo } from '../context';
 import { has } from '../features';
 import { AccountChipName, AccountMenu, useAccountWords } from './AccountPicker';
-import { ContextRing, HandoffButton, contextLevel } from './ContextGauge';
+import { HandoffButton, contextLevel } from './ContextGauge';
 import { Sheet, SheetHead } from './Dialogs';
 import { ModelMenu, modelLabel } from './ModelPicker';
 import { menuStep } from './SessionMenu';
@@ -40,6 +40,9 @@ function trapTab(e: KeyboardEvent<HTMLDivElement>) {
 
 /** The chip's compact permission wording. */
 export const PERM_MODE_SHORT: Record<PermMode, string> = { default: '묻기', acceptEdits: '편집 승인', plan: '계획', bypassPermissions: '자동 승인' };
+/** Below this fill the chip says nothing about the context (a ring there read as a loading spinner). */
+export const CONTEXT_SHOWN_PCT = 60;
+export const contextShownText = (pct: number) => `컨텍스트 ${pct}%`;
 const ENGINE_NAME: Record<EngineChoice, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok', auto: '자동' };
 /** On the chip an auto engine must not read as a permission mode. */
 const ENGINE_CHIP: Record<EngineChoice, string> = { ...ENGINE_NAME, auto: '엔진 자동' };
@@ -95,7 +98,7 @@ export type SessionChipProps = {
 
 /**
  * The composer's one session chip (design §3.4): model · account · permission (a new session: folder · engine ·
- * permission), with the context ring inside. Tapping it opens a sheet (a bottom sheet on a phone) with every choice:
+ * permission; the permission only when not the default), with "컨텍스트 N%" beside it from CONTEXT_SHOWN_PCT up. Tapping it opens a sheet (a bottom sheet on a phone) with every choice:
  * folder, engine and sandbox, model and effort, account, permission. A permission change (Shift+Tab) flashes it.
  */
 export function SessionChip(p: SessionChipProps) {
@@ -131,6 +134,9 @@ export function SessionChip(p: SessionChipProps) {
 
   // The third part: GPT/Gemini name their sandbox (no approvals there), the others their permission mode.
   const tail = sb ? sandboxLabel[sb.value].split(' · ')[0]! : perm ? PERM_MODE_SHORT[permShown] : p.isNew && p.defaultPerm ? PERM_MODE_SHORT[p.defaultPerm] : null;
+  // The chip shows a permission only when it is not the default (묻기); the aria-label still names it.
+  const tailShown = sb ? tail : (perm ? permShown : p.defaultPerm) === 'default' ? null : tail;
+  const ctxShown = ctx && ctx.pct >= CONTEXT_SHOWN_PCT ? ctx : null;
   const parts: ReactNode[] = p.isNew
     ? [
         ...(p.folder ? [<span key="f" className="sc-part sc-folder"><FolderIcon />{p.folder}</span>] : []),
@@ -141,7 +147,7 @@ export function SessionChip(p: SessionChipProps) {
         <span key="m" className="sc-part sc-model">{m.name}{m.effort && <span className="sc-extra"> {m.effort}</span>}</span>,
         ...(p.account ? [<AccountChipName key="a" pin={p.account.pin} current={p.account.current} />] : []),
       ];
-  if (tail) parts.push(<span key="t" className={`sc-part sc-perm${!sb && perm ? ` perm-${permShown}` : ''}`}>{tail}</span>);
+  if (tailShown) parts.push(<span key="t" className={`sc-part sc-perm${!sb && perm ? ` perm-${permShown}` : ''}`}>{tailShown}</span>);
   const aria = [
     p.isNew ? [p.folder, ENGINE_CHIP[engine], `모델 ${modelText}`] : [m.effort ? `${m.name} ${m.effort}` : m.name, p.account ? acct.aria : null],
     tail,
@@ -161,13 +167,12 @@ export function SessionChip(p: SessionChipProps) {
         disabled={p.disabled}
         onClick={() => setOpen(true)}
       >
-        {ctx && p.ctx && <ContextRing info={p.ctx} />}
         <span className="sc-label">
           {parts.map((x, i) => <span key={i} className="sc-seg">{i > 0 && <span className="sc-dot" aria-hidden="true">·</span>}{x}</span>)}
         </span>
         <span className="sc-caret" aria-hidden="true">⌄</span>
       </button>
-      {ctx && ctx.pct >= 80 && <span className={`ctx-out ${ctx.level}`} data-testid="context-out" title={ctx.label}>{ctx.pct}%</span>}
+      {ctxShown && <span className={`ctx-out ${ctxShown.level}`} data-testid="context-out" title={ctxShown.label}>{contextShownText(ctxShown.pct)}</span>}
       <span className="sr-only" aria-live="polite" data-testid="session-chip-said">{said}</span>
       {open && (
         <Sheet className="session-sheet" label="세션 설정" onClose={() => setOpen(false)}>

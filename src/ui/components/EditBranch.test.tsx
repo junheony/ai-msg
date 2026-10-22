@@ -68,7 +68,7 @@ describe('메시지 편집 갈래 · inline edit', () => {
     expect(editButtons()[0]!.getAttribute('title')).toContain('GPT·Gemini');
     fireEvent.click(editButtons()[0]!);
     expect(screen.queryByTestId('inline-edit')).toBeNull();
-    expect((screen.getByPlaceholderText(/메시지 입력/) as HTMLTextAreaElement).value).toBe('첫 질문');
+    expect((screen.getByPlaceholderText(/메시지 보내기/) as HTMLTextAreaElement).value).toBe('첫 질문');
     cleanup();
     renderChat([{ kind: 'user', text: '위치 모름' }, reply('답')], { onBranch: vi.fn() });
     expect(editButtons()[0]!.getAttribute('title')).toContain('메시지 위치를 알 수 없어');
@@ -97,7 +97,7 @@ describe('메시지 편집 갈래 · inline edit × 설정 / 권한 모드', () 
     fireEvent.click(editButtons()[0]!);
     fireEvent.keyDown(editor(), { key: 'Tab', shiftKey: true });
     expect(onPermMode).not.toHaveBeenCalled();
-    fireEvent.keyDown(screen.getByPlaceholderText(/메시지 입력/), { key: 'Tab', shiftKey: true });
+    fireEvent.keyDown(screen.getByPlaceholderText(/메시지 보내기/), { key: 'Tab', shiftKey: true });
     expect(onPermMode).toHaveBeenCalledTimes(1);
   });
 });

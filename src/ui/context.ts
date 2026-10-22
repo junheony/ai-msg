@@ -71,7 +71,8 @@ export function contextLabel(info: ContextInfo): string {
 }
 
 export const LONG_HINT = '대화가 길어요 · 새 세션으로 넘기면 매 턴 비용이 크게 줄어요';
-export const COLD_HINT = '캐시 만료 · 이번 턴은 전체 다시 읽기';
+/** Said in the user's words: the prompt cache expired, so the next turn re-reads the whole context (slower, costlier). */
+export const COLD_HINT = '오래 쉬어서 다음 답은 조금 느리고 비싸요';
 
 /** The one hint line under the gauge (cache expiry first: it is about the very next send). */
 export function contextHint(info: ContextInfo | null, now: number): string | null {

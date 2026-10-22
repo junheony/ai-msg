@@ -135,7 +135,7 @@ describe('Chat scroll lock', () => {
     expect(screen.getByTestId('jump-bottom')).toBeTruthy();
     view.rerender(<Chat {...props([user('q'), answer('ab')], { onSend })} />);
     fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'next' } });
-    act(() => { fireEvent.click(screen.getByTitle('보내기 (Enter)')); });
+    act(() => { fireEvent.click(screen.getByTitle('보내기 (Enter · Shift+Enter 줄바꿈)')); });
     expect(onSend).toHaveBeenCalledWith('next');
     expect(box.top).toBe(800);
     expect(screen.queryByTestId('jump-bottom')).toBeNull();

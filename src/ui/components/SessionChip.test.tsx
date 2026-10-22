@@ -54,6 +54,21 @@ describe('SessionChip', () => {
     expect(chip.getAttribute('aria-label')).not.toContain('묻기');
   });
 
+  it('compact: the default permission (묻기) and 자동 stay off the chip but in its aria-label; another mode shows, 자동 승인 in danger', () => {
+    const { rerender } = render(<SessionChip {...base()} />);
+    const chip = screen.getByTestId('session-chip');
+    expect(chip.textContent).not.toContain('묻기');
+    expect(chip.textContent).not.toContain('자동');
+    expect(chip.querySelector('.sc-perm')).toBeNull();
+    expect(chip.getAttribute('aria-label')).toContain('묻기');
+    expect(chip.getAttribute('aria-label')).toContain('자동 · A');
+    rerender(<SessionChip {...base({ perm: { mode: 'bypassPermissions', supported: true, onChange: vi.fn() } })} />);
+    expect(chip.querySelector('.sc-perm.perm-bypassPermissions')?.textContent).toBe('자동 승인');
+    expect(chip.classList.contains('bypass')).toBe(true);
+    rerender(<SessionChip {...base({ isNew: true, folder: 'repo', account: null, perm: null, defaultPerm: 'acceptEdits' })} />);
+    expect(chip.textContent).toContain('편집 승인');
+  });
+
   it('Esc closes the sheet and focus returns to the chip, even with the model/account menus inside it', () => {
     render(<SessionChip {...base()} />);
     const chip = screen.getByTestId('session-chip');
@@ -117,14 +132,17 @@ describe('SessionChip', () => {
     expect(chip.classList.contains('flash')).toBe(false);
   });
 
-  it('the context ring sits in the chip; the number shows outside only at ≥80%; the sheet carries the line and the handoff', () => {
+  it('no context ring (it read as a spinner); "컨텍스트 N%" shows only from 60%; the sheet carries the line and the handoff', () => {
     const onHandoff = vi.fn();
     const { rerender } = render(<SessionChip {...base({ ctx: info(300_000), onHandoff })} />);
-    expect(within(screen.getByTestId('session-chip')).getByTestId('context-ring')).toBeTruthy();
+    expect(screen.queryByTestId('context-ring')).toBeNull();
     expect(screen.queryByTestId('context-out')).toBeNull();
     expect(screen.getByTestId('session-chip').getAttribute('aria-label')).toContain('컨텍스트 31%');
+    rerender(<SessionChip {...base({ ctx: info(708_000), onHandoff })} />);
+    expect(screen.getByTestId('context-out').textContent).toBe('컨텍스트 72%');
+    expect(screen.getByTestId('context-out').getAttribute('title')).toContain('컨텍스트 720k / 1M');
     rerender(<SessionChip {...base({ ctx: info(820_000), onHandoff })} />);
-    expect(screen.getByTestId('context-out').textContent).toBe('83%');
+    expect(screen.getByTestId('context-out').textContent).toBe('컨텍스트 83%');
     fireEvent.click(screen.getByTestId('session-chip'));
     expect(screen.getByTestId('context-line')).toBeTruthy();
     fireEvent.click(screen.getByTestId('handoff-btn'));

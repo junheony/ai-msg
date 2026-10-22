@@ -26,7 +26,7 @@ describe('AccountPicker', () => {
   it('shows 자동 · current letter, lists 자동 / A (Desktop) / B / C with their 5h and weekly %, reports the pick', () => {
     const onPin = vi.fn();
     render(<><AccountChipName pin={null} current="b" /><AccountMenu pin={null} usage={usage()} onPin={onPin} /></>);
-    expect(screen.getByTestId('account-picker').textContent).toContain('자동 · B');
+    expect(screen.getByTestId('account-picker').textContent).toBe('B'); // 자동 is in the aria-label / title, not on the chip
     expect(screen.getByTestId('account-picker').getAttribute('aria-label')).toBe('계정: 자동 · B');
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
     expect(items.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['자동', 'A (Desktop)', 'B', 'C']);
@@ -95,7 +95,7 @@ describe('Pane · account pin', () => {
     fireEvent.click(screen.getByTestId('session-chip'));
     fireEvent.click(within(screen.getByTestId('account-menu')).getByText('자동'));
     expect(frames2).toEqual([{ type: 'set_account_pin', sessionId: 's1', pin: null }]);
-    expect(screen.getByTestId('account-picker').textContent).toContain('자동 · B');
+    expect(screen.getByTestId('account-picker').textContent).toBe('B'); // 자동 is in the aria-label / title, not on the chip
     // Another device pinned it: every pane on the session follows the broadcast.
     server({ type: 'account_pin', sessionId: 's1', pin: 'a' });
     expect(screen.getByTestId('account-picker').getAttribute('aria-label')).toBe('계정: A (Desktop) 고정');

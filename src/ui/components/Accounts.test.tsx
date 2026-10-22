@@ -76,7 +76,7 @@ describe('AccountPicker with the configured accounts', () => {
   it('lists the active accounts only, by label, (Desktop) on the home one; picks report the id', () => {
     const onPin = vi.fn();
     render(<With list={SIX}><AccountPicker pin={null} current="team-2" usage={usage} onPin={onPin} /></With>);
-    expect(screen.getByTestId('account-picker').textContent).toContain('자동 · Team-2');
+    expect(screen.getByTestId('account-picker').textContent).toBe('Team-2'); // 자동 is in the aria-label / title, not on the chip
     expect(names()).toEqual(['자동', 'Main', 'Work (Desktop)', 'D', 'Team-2', 'Personal']);
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
     expect(items[1]!.textContent).toContain('5h 90% 남음 · 주간 80% 남음');
@@ -94,12 +94,12 @@ describe('AccountPicker with the configured accounts', () => {
   it('a session on a retired account or on an id that is not configured: label dimmed / the id in grey, neither offered as a pin', () => {
     const { unmount } = render(<With list={SIX}><AccountPicker pin={null} current="old" usage={null} onPin={() => {}} /></With>);
     const btn = screen.getByTestId('account-picker');
-    expect(btn.textContent).toContain('자동 · Old');
+    expect(btn.textContent).toBe('Old'); // 자동 is in the aria-label / title, not on the chip
     expect(btn.querySelector('.acct-retired')).not.toBeNull();
     unmount();
     render(<With list={SIX}><AccountPicker pin={null} current="c" usage={null} onPin={() => {}} /></With>);
     const gone = screen.getByTestId('account-picker');
-    expect(gone.textContent).toContain('자동 · c');
+    expect(gone.textContent).toBe('c'); // 자동 is in the aria-label / title, not on the chip
     expect(gone.textContent).not.toContain('undefined');
     expect(gone.querySelector('.acct-unknown')).not.toBeNull();
     expect(names()).not.toContain('Old');

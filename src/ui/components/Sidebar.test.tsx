@@ -623,7 +623,7 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     }
     const first = screen.getByText('first').closest('li')!;
     // Unread wins the one slot; the split it is open in is still in the mark's label.
-    expect(first.querySelector('.row-open > .row-status.unread')?.getAttribute('aria-label')).toBe('안 읽음 · 분할 1번 패널에 열림');
+    expect(first.querySelector('.row-open > .row-status.unread')?.getAttribute('aria-label')).toBe('안 읽음 · 1번 칸에 열림');
     expect(first.querySelector('.open-mark')).toBeNull();
     expect(first.querySelector('.session-meta')!.textContent).toBe('one');
     // The glyph is decoration (the title and meta name session and project): hidden from the accessibility tree, no text.
@@ -981,8 +981,8 @@ describe('Sidebar open-session markers', () => {
   it('names where the session is open (aria-label and tooltip)', () => {
     const openPanes = new Map<string, number | 'float'>([['s2', 3], ['s4', 'float']]);
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} openPanes={openPanes} />);
-    const split = screen.getByRole('img', { name: '분할 3번 패널에 열림' });
-    expect(split.getAttribute('title')).toBe('분할 3번 패널에 열림');
+    const split = screen.getByRole('img', { name: '3번 칸에 열림' });
+    expect(split.getAttribute('title')).toBe('3번 칸에 열림');
     expect(split.textContent).toBe('3');
     expect(screen.getByRole('img', { name: '떠 있는 카드에 열림' }).textContent).toBe('◱');
   });
@@ -995,5 +995,65 @@ describe('Sidebar open-session markers', () => {
     expect(screen.getByText('desk').closest('li')!.querySelector('.open-mark')?.textContent).toBe('2');
     rerender(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s2']} onTogglePin={noop} desktop={desktop} />);
     expect(container.querySelectorAll('.open-mark')).toHaveLength(0);
+  });
+});
+
+describe('Sidebar UX polish: status marks, 칸 번호, same titles, 고정됨 folding', () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+  const s = (id: string, title: string, extra: Record<string, unknown> = {}) => ({ sessionId: id, account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title, lastModified: stamp(), sizeBytes: 1, ...extra });
+  const css = readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
+
+  it('nothing spins: 응답 중 pulses (stopped under reduced motion), 백그라운드 is a still hollow circle', () => {
+    expect(css).not.toMatch(/row-spin/);
+    expect(css).toMatch(/\.row-status\.running::before \{[^}]*animation: row-pulse/);
+    expect(css).toMatch(/\.row-status\.bg::before \{[^}]*border: 1\.5px solid var\(--muted\)/);
+    expect(css.match(/\.row-status\.bg::before \{[^}]*\}/)![0]).not.toMatch(/animation/);
+    const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce) {\n  .sidebar .row-end'));
+    expect(reduced.slice(0, reduced.indexOf('\n}'))).toMatch(/\.row-status\.running::before \{ animation: none; \}/);
+  });
+
+  it('the open-pane number is a 칸 number (outlined square, "N번 칸에 열림"), not a count', () => {
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'one')] }];
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} openPanes={new Map([['s1', 1]])} />);
+    const mark = screen.getByRole('img', { name: '1번 칸에 열림' });
+    expect(mark.getAttribute('title')).toBe('1번 칸에 열림');
+    expect(mark.textContent).toBe('1');
+    expect(css).toMatch(/\.row-status\.open \{[^}]*box-shadow: inset 0 0 0 1px var\(--line-strong\)/);
+  });
+
+  it('two rows with the same title lead line 2 with their folder; a unique title does not', () => {
+    const projects = [
+      { cwd: '/a/alpha', name: 'alpha', pinned: false, sessions: [s('s1', 'Same', { cwd: '/a/alpha', preview: '첫 답' }), s('s3', 'Only', { cwd: '/a/alpha', preview: '혼자' })] },
+      { cwd: '/b/beta', name: 'beta', pinned: false, sessions: [s('s2', 'Same', { cwd: '/b/beta', preview: '둘째 답' })] },
+    ];
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    const folders = screen.getAllByTestId('meta-folder').map((x) => x.textContent).sort();
+    expect(folders).toEqual(['alpha', 'beta']);
+    expect(screen.getByText('Only').closest('li')!.querySelector('[data-testid="meta-folder"]')).toBeNull();
+    expect(screen.getByText('첫 답').closest('.session-meta')!.textContent).toBe('alpha·첫 답');
+  });
+
+  it('고정됨 folds from its head (open by default) and the choice is kept in the prefs', () => {
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'pinned one'), s('s2', 'other')] }];
+    const view = () => <Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s1']} onTogglePin={noop} />;
+    const { unmount } = render(view());
+    const head = within(screen.getByTestId('pinned-group')).getByRole('button', { name: '고정됨' });
+    expect(head.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('pinned one')).toBeTruthy();
+    fireEvent.click(head);
+    expect(head.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('pinned one')).toBeNull();
+    expect(screen.getByTestId('pinned-group').classList.contains('collapsed')).toBe(true);
+    expect(JSON.parse(localStorage.getItem('deck.prefs.v1')!).pinnedFolded).toBe(true);
+    unmount();
+    render(view());
+    expect(screen.queryByText('pinned one')).toBeNull();
+    fireEvent.click(within(screen.getByTestId('pinned-group')).getByRole('button', { name: '고정됨' }));
+    expect(screen.getByText('pinned one')).toBeTruthy();
+  });
+
+  it('the list keeps room under its last row for the avatar foot', () => {
+    expect(css).toMatch(/\.sidebar \{ scroll-padding-bottom: \d+px; \}/);
+    expect(css).toMatch(/\.sidebar > section:last-of-type \{ padding-bottom: var\(--s5\); \}/);
   });
 });

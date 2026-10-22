@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { Chat, messageKeys, modelChoices } from './Chat';
+import { Chat, composerPlaceholder, messageKeys, modelChoices } from './Chat';
 import { GROK_MODELS } from '../../shared/models';
 import { THREAD_LOCKED_MESSAGE } from '../../shared/handoff';
 import { GROK_BYPASS_HINT, PERM_MODE_HINT } from '../../shared/permission';
@@ -258,7 +260,11 @@ describe('Composer keyboard (Desktop)', () => {
     type('again');
     fireEvent.keyDown(box(), { key: 'Enter', metaKey: true });
     expect(onSend).toHaveBeenLastCalledWith('again');
-    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toContain('Enter 로 보내기 · Shift+Enter 줄바꿈');
+    // The keys are on the 보내기 button (tooltip + aria-keyshortcuts); the placeholder names the session.
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).not.toContain('Enter');
+    const sendBtn = screen.getByRole('button', { name: '보내기' });
+    expect(sendBtn.getAttribute('title')).toBe('보내기 (Enter · Shift+Enter 줄바꿈)');
+    expect(sendBtn.getAttribute('aria-keyshortcuts')).toBe('Enter');
   });
 
   it('an Enter that belongs to an IME composition never sends (isComposing, keyCode 229, between compositionstart/end)', () => {
@@ -284,7 +290,7 @@ describe('Composer keyboard (Desktop)', () => {
       type('hi');
       expect(fireEvent.keyDown(box(), { key: 'Enter' })).toBe(true);
       expect(onSend).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByTitle('보내기 (Enter)'));
+      fireEvent.click(screen.getByTitle('보내기 (Enter · Shift+Enter 줄바꿈)'));
       expect(onSend).toHaveBeenCalledWith('hi');
     } finally {
       window.matchMedia = mm;
@@ -540,5 +546,32 @@ describe('Chat title ⌄ menu', () => {
       expect(screen.getByTestId('chat-loading')).not.toBeNull();
       expect(screen.queryByTestId('chat-refreshing')).toBeNull();
     });
+  });
+});
+
+describe('Composer placeholder and 보내기', () => {
+  afterEach(cleanup);
+  it('names the session ("{이름}에게 메시지 보내기"), plain "메시지 보내기" for a new one; a long name is cut', () => {
+    renderChat([], false, vi.fn(), { title: '$BBAI' });
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toBe('$BBAI에게 메시지 보내기');
+    cleanup();
+    renderChat([], false, vi.fn(), { isNew: true, title: '새 세션' });
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toBe('메시지 보내기');
+    expect(composerPlaceholder('  ')).toBe('메시지 보내기');
+    expect(composerPlaceholder('a'.repeat(40))).toBe(`${'a'.repeat(29)}…에게 메시지 보내기`);
+  });
+
+  it('disabled 보내기 is neutral (--track), only an enabled one is the accent', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const disabled = [...css.matchAll(/(^|\n)[^\n{]*\.send:disabled \{([^}]*)\}/g)].map((m) => m[2]!);
+    expect(disabled.length).toBeGreaterThan(0);
+    for (const d of disabled) { expect(d).not.toMatch(/--accent/); }
+    expect(disabled[disabled.length - 1]).toMatch(/background: var\(--track\)/);
+  });
+
+  it('the session chip focus ring is a box-shadow (--focus is a shadow value), kept on hover', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).not.toMatch(/(session-chip|\.send):focus-visible[^{]*\{[^}]*outline: 2px solid var\(--focus\)/);
+    expect(css).toMatch(/\.session-chip:focus-visible, \.session-chip:focus-visible:hover \{[^}]*box-shadow:[^}]*var\(--focus\)/);
   });
 });

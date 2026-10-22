@@ -48,6 +48,9 @@ const PEEK_CLOSE_MS = 300;
 const RESTARTED_CHIP_MS = 10 * 60_000;
 /** Boot /api/me misses (3 s apart) before 확인 중… turns into 서버 응답 없음. */
 const BOOT_NOTICE_FAILS = 5;
+/** The boot notice in plain words; the technical causes (server off, Tailscale) sit folded under 자세히. */
+const BOOT_OFFLINE_TITLE = '서버에 연결할 수 없어요';
+const BOOT_OFFLINE_DETAIL = 'deck 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 3초마다 다시 시도하고, 연결되면 자동으로 들어갑니다.';
 const hhmm = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 import { usePrefs } from './usePrefs';
 import { nextTheme, type Theme } from './prefs';
@@ -703,9 +706,9 @@ export function App() {
     if (bootFails < BOOT_NOTICE_FAILS) return <div className="center">확인 중…</div>;
     return (
       <div className="center boot-wait" role="status">
-        <div>서버 응답 없음 — 3초마다 다시 시도합니다</div>
-        <div className="boot-wait-hint">deck 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 연결되면 자동으로 들어갑니다.</div>
-        <button type="button" className="text-btn" onClick={() => location.reload()}>지금 다시 시도</button>
+        <div>{BOOT_OFFLINE_TITLE}</div>
+        <button type="button" className="btn" onClick={() => location.reload()}>다시 시도</button>
+        <details className="boot-wait-more"><summary>자세히</summary><p>{BOOT_OFFLINE_DETAIL}</p></details>
       </div>
     );
   }

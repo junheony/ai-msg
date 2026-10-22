@@ -29,7 +29,7 @@ describe('ContextHint', () => {
     cleanup();
     expect(render(<ContextHint info={info(400_000)} />).getByTestId('context-hint').textContent).toContain('새 세션으로 넘기면');
     cleanup();
-    expect(render(<ContextHint info={info(50_000, { at: Date.now() - WARM_MS - 60_000 })} />).getByTestId('context-hint').textContent).toBe('캐시 만료 · 이번 턴은 전체 다시 읽기');
+    expect(render(<ContextHint info={info(50_000, { at: Date.now() - WARM_MS - 60_000 })} />).getByTestId('context-hint').textContent).toBe('오래 쉬어서 다음 답은 조금 느리고 비싸요');
   });
 });
 

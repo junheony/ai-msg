@@ -15,6 +15,7 @@ import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
 import { DeckMark } from './DeckMark';
 import { SessionGlyph, assignSessionIcons, publishSessionAvatars, sessionIconBase, type IconRow } from './SessionIcon';
+import { usePrefs } from '../usePrefs';
 
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
 export const SEARCH_MIN_CHARS = 2;
@@ -115,6 +116,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   onOpenPalette?: () => void;
 }) {
   const [picking, setPicking] = useState(false);
+  const [{ pinnedFolded }, setPref] = usePrefs();
   // "N분 전" (row tooltips, the 갈래 menu line) moves on by itself: the rows re-render every minute even when no index arrives.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), META_TICK_MS); return () => clearInterval(t); }, []);
@@ -260,7 +262,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const openAt = (ids: string[]) => {
     const at = ids.map((id) => openPanes?.get(id)).find((x) => x !== undefined);
     if (at === undefined) return null;
-    return { at, label: at === 'float' ? '떠 있는 카드에 열림' : `분할 ${at}번 패널에 열림` };
+    return { at, label: at === 'float' ? '떠 있는 카드에 열림' : openSlotLabel(at) };
   };
   /**
    * The row's end: one quiet mark, or nothing (Grok Bot's list). A status wins; with none, a session open in a pane shows
@@ -289,10 +291,12 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
    * Line 2: the last reply's preview when there is one, else the project folder. Only a non-Claude engine gets a mark (a
    * 12px muted glyph up front); a row deck cannot continue gets a one-word tag. Statuses are the row end's job.
    */
-  const metaLine = (p: { engine: EngineKind; tag?: string | null; text: string; title?: string }) => (
+  const metaLine = (p: { engine: EngineKind; tag?: string | null; text: string; title?: string; folder?: string | null }) => (
     <span className="session-meta" {...(p.title ? { title: p.title } : {})}>
       {p.engine !== 'claude' && <MetaEngine engine={p.engine} />}
       {p.tag && <span className="meta-tag">{p.tag}</span>}
+      {p.folder && <span className="meta-folder" data-testid="meta-folder">{p.folder}</span>}
+      {p.folder && <span className="meta-sep" aria-hidden="true">·</span>}
       <span className="meta-text">{p.text}</span>
     </span>
   );
@@ -328,7 +332,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const engine = engineOf(target);
     // A 갈래 row shows its newest version (`target`): title and preview both come from it.
     const preview = oneLine(target.preview);
-    const meta = metaLine({ engine, tag: rowTag(s), text: preview || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
+    // Another row shows the same title: line 2 leads with the folder (when the preview would otherwise hide it).
+    const folder = preview && (titleCount.get(target.title) ?? 0) > 1 ? slug : null;
+    const meta = metaLine({ engine, tag: rowTag(s), text: preview || slug, folder, ...(s.imported ? { title: importTitle(s) } : {}) });
     const avatarEl = avatarOf(slug, s.sessionId);
     // The row's tooltip keeps what the row stopped showing: folder, engine, run kind, 갈래, the time.
     const facts = [slug, engine !== 'claude' ? ENGINE_NAME[engine] ?? engine : null, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s).filter((t) => !t.startsWith('안 읽음')), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(target.lastModified, now)];
@@ -475,6 +481,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   useEffect(() => {
     publishSessionAvatars(new Map([...pinRows, ...restRows].map((r) => [r.id, { color: avatarIndex(r.project), icon: icons.get(r.id) ?? sessionIconBase(r.id) }])));
   });
+  // Same-titled rows (as shown: a 갈래 tree counts once, by its newest version) tell apart by their folder.
+  const titleCount = new Map<string, number>();
+  const countTitle = (t: string) => titleCount.set(t, (titleCount.get(t) ?? 0) + 1);
+  for (const it of pinned) countTitle(it.kind === 'session' ? it.s.title : it.d.title);
+  for (const t of [...recentList, ...archived.list]) countTitle(t.kind === 'session' ? (byId.get(t.g.openId) ?? t.g.entry).title : t.d.title);
   // A full-text hit in an archived session shows once 보관됨 is open (as its row does).
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || !s.archived || archivedOpen; });
   const searching = fullOn && found?.q !== fullQ;
@@ -532,9 +543,14 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         </div>
       )}
       {pinned.length > 0 && (
-        <section className="project pinned-group" data-testid="pinned-group">
-          <div className="project-head"><span className="project-name">고정됨</span></div>
-          <ul {...pinDrag.listProps}>{pinned.map((it, i) => (it.kind === 'session' ? row(it.s, 'pinned', undefined, pinKey(i)) : desktopRow(it.d, 'pinned', pinKey(i))))}</ul>
+        <section className={`project pinned-group${pinnedFolded ? ' collapsed' : ''}`} data-testid="pinned-group">
+          <div className="project-head">
+            <button type="button" className="project-head-btn" aria-expanded={!pinnedFolded} aria-controls="pinned-list" title={pinnedFolded ? '고정됨 펼치기' : '고정됨 접기'}
+              onClick={() => setPref({ type: 'set', key: 'pinnedFolded', value: !pinnedFolded })}>
+              <Chevron /><span className="project-name">고정됨</span>
+            </button>
+          </div>
+          {!pinnedFolded && <ul id="pinned-list" {...pinDrag.listProps}>{pinned.map((it, i) => (it.kind === 'session' ? row(it.s, 'pinned', undefined, pinKey(i)) : desktopRow(it.d, 'pinned', pinKey(i))))}</ul>}
           <span className="sr-only" role="status" aria-live="polite">{pinDrag.live}</span>
         </section>
       )}
@@ -616,6 +632,9 @@ export function importTitle(s: SessionEntry): string {
   if (s.codexArchived) return 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다';
   return s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 deck 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다';
 }
+
+/** Where an open session sits: "N번 칸에 열림" (the row's small outlined number; not an unread count). */
+export const openSlotLabel = (n: number) => `${n}번 칸에 열림`;
 
 /** A non-Claude engine's name, for the row's tooltip. */
 const ENGINE_NAME: Partial<Record<EngineKind, string>> = { codex: 'Codex (GPT)', grok: 'Grok', gemini: 'Gemini' };
