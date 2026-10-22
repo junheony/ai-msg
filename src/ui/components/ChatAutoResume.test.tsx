@@ -21,12 +21,20 @@ describe('Chat: 한도가 풀리면 자동으로 이어가기 line', () => {
 
   it('one meta line with the local time; 취소 cancels', () => {
     const onCancel = vi.fn();
-    renderChat({ autoResume: { atMs: new Date(2026, 9, 23, 1, 40).getTime(), onCancel } });
+    const today = new Date();
+    renderChat({ autoResume: { atMs: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 1, 40).getTime(), onCancel } });
     const line = screen.getByTestId('auto-resume');
     expect(line.textContent).toContain(ui().chat.autoResume.at('1:40'));
     expect(line.querySelector('.turn-meta-text')).toBeTruthy();
     fireEvent.click(screen.getByTestId('auto-resume-cancel'));
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('not today: the local date comes before the time (M/D H:MM)', () => {
+    const today = new Date();
+    const later = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2, 14, 20);
+    renderChat({ autoResume: { atMs: later.getTime(), onCancel: () => {} } });
+    expect(screen.getByTestId('auto-resume').textContent).toContain(ui().chat.autoResume.at(`${later.getMonth() + 1}/${later.getDate()} 14:20`));
   });
 
   it('hidden while a turn runs', () => {

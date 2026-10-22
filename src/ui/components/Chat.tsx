@@ -301,8 +301,12 @@ export function messageKeys(items: ChatItem[]): string[] {
   });
 }
 
-/** An epoch ms as this device's local H:MM (24h), e.g. 1:40. */
-const clockOf = (ms: number): string => { const d = new Date(ms); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
+/** An epoch ms as this device's local H:MM (24h), e.g. 1:40 — with M/D before it when that is not today, e.g. 10/25 14:20. */
+const clockOf = (ms: number, now = new Date()): string => {
+  const d = new Date(ms);
+  const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return d.toDateString() === now.toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+};
 
 const WarnIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z" /><path d="M8 6.6v3M8 11.6v.1" /></svg>;
 const TaskIcon = () => <svg className="task-add-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h4v4M13 3 7.5 8.5" /><path d="M11.5 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1h2.5" /></svg>;
