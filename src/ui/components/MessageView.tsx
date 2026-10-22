@@ -14,7 +14,8 @@ import { has } from '../features';
 import { rawFileUrl } from '../sessionApi';
 import { Sheet, SheetHead } from './Dialogs';
 import { baseName, useFileActions, useFileMenu, useLongPress } from './FileMenu';
-import type { ChatItem, SentFile } from '../state';
+import type { ChatItem, SentFile, ToolCallItem } from '../state';
+import { groupLabel } from '../toolLabel';
 import { MODEL_INFO, modelLabelOf, type ModelChoice } from '../../shared/models';
 import type { ReplyTurn } from '../replyTurn';
 import { usePopoverPlacement } from './usePopoverPlacement';
@@ -140,6 +141,11 @@ const MD_COMPONENTS: Components = {
   // GFM tables scroll sideways inside the message instead of widening the chat (phone).
   table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  // A paragraph opening with bold text reads as a small heading: it gets a little more room above it (CSS .md-lead).
+  p: ({ node, children }) => {
+    const first = node?.children[0];
+    return <p className={first?.type === 'element' && first.tagName === 'strong' ? 'md-lead' : undefined}>{children}</p>;
+  },
 };
 const MD_PLUGINS = [remarkGfm];
 
@@ -167,18 +173,88 @@ export const Markdown = memo(function Markdown({ text, className = 'markdown' }:
   );
 });
 
-/** Claude's thinking as a collapsed disclosure above the reply (Desktop: "N초 동안 생각함"). Concise: label only while streaming. */
-function Thinking({ t, streaming, concise = false }: { t: NonNullable<Extract<ChatItem, { kind: 'assistant' }>['thinking']>; streaming: boolean; concise?: boolean }) {
-  const secs = t.ms === null ? null : Math.max(1, Math.round(t.ms / 1000));
-  const label = t.ms === null && streaming ? '생각하는 중…' : secs === null ? '생각 과정' : `${secs}초 동안 생각함`;
-  const body = t.text.trim();
-  if (concise && streaming) return <div className="thinking-line concise" data-testid="thinking">{label}</div>;
-  if (!body && !t.redacted) return <div className="thinking-line" data-testid="thinking">{label}</div>;
+/** 작업 기록 fold and error line wording. */
+const WORK_TEXT = { log: '작업 기록', live: '계속 작업 중', step: (n: number) => `단계 ${n}`, running: '실행 중…', errors: (n: number) => `오류 ${n}`, thinking: '생각하는 중…', thought: '생각함', thoughtFor: (s: number) => `${s}초 동안 생각함`, secs: (s: number) => `${s}초`, process: '생각 과정' };
+const ERROR_TEXT = {
+  raw: '원문 보기',
+  generic: '응답 중 오류가 났어요',
+  rate: '사용 한도에 걸렸어요 — 잠시 뒤 다시 시도해 주세요',
+  overloaded: '서버가 붐벼 응답하지 못했어요 — 잠시 뒤 다시 시도해 주세요',
+  network: '연결이 끊겨 응답을 받지 못했어요',
+  auth: '로그인이 풀렸거나 권한이 없어요',
+  timeout: '응답 시간이 초과됐어요',
+  exited: '엔진이 도중에 종료됐어요',
+};
+
+/**
+ * A turn's thinking and tool calls as one quiet gray line ("작업 기록 · 12초 · 실행된 명령 7개 ›") that unfolds to the
+ * thinking text and one line per call. Thinking alone keeps its own label ("N초 동안 생각함"); thinking with nothing
+ * readable (empty or encrypted) is plain text, no fold. Concise, live: the thinking text stays hidden and the line says
+ * "계속 작업 중 · 단계 N".
+ */
+function WorkLog({ t, calls, streaming, concise, cwd }: { t: Extract<ChatItem, { kind: 'assistant' }>['thinking']; calls: ToolCallItem[]; streaming: boolean; concise: boolean; cwd?: string }) {
+  const secs = !t || t.ms === null ? null : Math.max(1, Math.round(t.ms / 1000));
+  const conciseLive = concise && streaming;
+  const body = t && !conciseLive ? t.text.trim() : '';
+  if (calls.length === 0) {
+    if (!t) return null;
+    const label = t.ms === null && streaming ? WORK_TEXT.thinking : secs !== null ? WORK_TEXT.thoughtFor(secs) : body ? WORK_TEXT.process : WORK_TEXT.thought;
+    if (!body) return <div className={`thinking-line${conciseLive ? ' concise' : ''}`} data-testid="thinking">{label}</div>;
+    return (
+      <details className="work-log thinking" data-testid="thinking">
+        <summary><span className="tool-label">{label}</span><span className="tool-caret" aria-hidden="true">›</span></summary>
+        <Markdown text={body} className="markdown thinking-body" />
+      </details>
+    );
+  }
+  const running = streaming && calls.some((c) => c.result === null);
+  const errors = calls.filter((c) => c.isError).length;
+  const label = conciseLive
+    ? `${WORK_TEXT.live} · ${WORK_TEXT.step(calls.length)}`
+    : [WORK_TEXT.log, secs !== null ? WORK_TEXT.secs(secs) : null, groupLabel(calls)].filter(Boolean).join(' · ');
   return (
-    <details className="thinking" data-testid="thinking">
-      <summary>{label}</summary>
-      {body ? <Markdown text={body} className="markdown thinking-body" /> : <div className="thinking-body muted">(암호화된 생각)</div>}
+    <details className={`work-log${running ? ' running' : ''}`} data-testid="work-log">
+      <summary>
+        <span className="tool-label">{label}</span>
+        {running && <span className="tool-state">{WORK_TEXT.running}</span>}
+        {errors > 0 && <span className="tool-state error">{WORK_TEXT.errors(errors)}</span>}
+        <span className="tool-caret" aria-hidden="true">›</span>
+      </summary>
+      <div className="work-log-body">
+        {body && <Markdown text={body} className="markdown thinking-body" />}
+        <ToolCalls calls={calls} live={streaming} cwd={cwd} flat />
+      </div>
     </details>
+  );
+}
+
+/** A failed turn's error as one line a person can read; the raw text unfolds below it when it says more. */
+export function errorSummary(raw: string): string {
+  const s = raw.trim();
+  if (/\b429\b|rate.?limit|usage limit|quota|한도/i.test(s)) return ERROR_TEXT.rate;
+  if (/\b529\b|overloaded|과부하/i.test(s)) return ERROR_TEXT.overloaded;
+  if (/\b401\b|\b403\b|unauthori[sz]ed|forbidden|invalid api key|authentication|로그인/i.test(s)) return ERROR_TEXT.auth;
+  if (/timed? ?out|timeout|시간 초과/i.test(s)) return ERROR_TEXT.timeout;
+  if (/ECONN|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network/i.test(s)) return ERROR_TEXT.network;
+  const first = s.split('\n')[0]!.trim();
+  // Already a readable sentence (deck's own Korean messages, a short engine line): shown as it is.
+  if (first && first.length <= 120 && !/^\s*[{[]|\bat \S+ \(|^\w*Error:|exited with code/.test(first)) return first;
+  if (/exited with code|process exited|terminated/i.test(s)) return ERROR_TEXT.exited;
+  return ERROR_TEXT.generic;
+}
+
+function TurnError({ error }: { error: string }) {
+  const summary = errorSummary(error);
+  return (
+    <div className="error turn-error" data-testid="turn-error">
+      <div className="turn-error-line">{summary}</div>
+      {error.trim() !== summary && (
+        <details className="sys-raw">
+          <summary>{ERROR_TEXT.raw}</summary>
+          <pre>{error}</pre>
+        </details>
+      )}
+    </div>
   );
 }
 
@@ -544,7 +620,7 @@ function ChoiceCards({ choices, onPick }: { choices: DeckChoices; onPick: ((text
  * markdown of) the whole transcript. Items are immutable (the reducer replaces what changes), so identity is enough.
  * `last`: the conversation's last message (its actions stay visible and it offers 재시도).
  */
-export const MessageView = memo(function MessageView({ item, cwd, last = false }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean }) {
+export const MessageView = memo(function MessageView({ item, cwd, last = false, turnEnd = true }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean; /** The last reply block of its turn: only it names the model. */ turnEnd?: boolean }) {
   const actions = useContext(MessageActionsContext);
   const regen = useContext(RegenerateContext);
   const [prefs] = usePrefs();
@@ -642,29 +718,25 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
       {/* Concise: mid-turn notes stay (milestones); full-mode attempts always show. */}
       {item.notes.map((n, i) => <div key={i} className={`note${concise ? ' concise-note' : ''}`}>{n}</div>)}
       {(!concise || !item.streaming) && item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
-      {item.thinking && !(concise && item.streaming && !item.thinking.text && !item.thinking.redacted) && (
-        <Thinking t={item.thinking} streaming={item.streaming} concise={concise} />
+      {(item.toolCalls.length > 0 || (item.thinking && !(concise && item.streaming && !item.thinking.text && !item.thinking.redacted))) && (
+        <WorkLog t={item.thinking} calls={item.toolCalls} streaming={item.streaming} concise={concise} cwd={cwd} />
       )}
-      <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} concise={concise} />
-      {/* Concise, mid-turn: text before the last tool call folds into a gray lead line; the text since streams live below it. */}
-      {split && (!split.live || item.toolCalls.length > 0) && (
+      {/* Concise, mid-turn: text before the last tool call folds into a gray lead line; the text since streams live below it.
+          With tool calls the progress ("계속 작업 중 · 단계 N") is the 작업 기록 line above, so this shows the lead only. */}
+      {split && (!split.live || item.toolCalls.length > 0) && (split.lead || item.toolCalls.length === 0) && (
         <div className="concise-progress" data-testid="concise-progress" aria-live="polite">
           {split.lead && <div className="concise-lead" data-testid="concise-lead">{split.lead}</div>}
-          {item.toolCalls.length > 0
-            ? `계속 작업 중 · 단계 ${item.toolCalls.length}`
-            : item.thinking
-              ? '생각하는 중…'
-              : '처리 중…'}
+          {item.toolCalls.length > 0 ? null : item.thinking ? '생각하는 중…' : '처리 중…'}
         </div>
       )}
       {split ? split.live && <Markdown text={split.live} /> : shownText && <Markdown text={shownText} />}
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
       {item.streaming && (!split || !!split.live) && <span className="cursor">▍</span>}
-      {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
-      {(item.badge || item.model || item.toolCalls.length > 0 || hasActions) && (
+      {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <TurnError error={item.error} />}
+      {(item.badge || (item.model && turnEnd) || item.toolCalls.length > 0 || hasActions) && (
         <div className="turn-foot">
           {item.badge && <TurnBadge badge={item.badge} {...(item.model ? { model: item.model } : {})} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} ctx={last ? (item.ctx ?? null) : null} />}
-          {!item.badge && item.model && <span className="msg-model" data-testid="msg-model" title={item.model}>{modelLabelOf(item.model)}</span>}
+          {!item.badge && item.model && turnEnd && <span className="msg-model" data-testid="msg-model" title={item.model}>{modelLabelOf(item.model)}</span>}
           {hasActions && (
             <div className="msg-actions" data-testid="turn-actions">
               {item.text && <CopyButton icon text={shownText || item.text} label="응답 복사" {...(copied ? { onDone: copied } : {})} />}

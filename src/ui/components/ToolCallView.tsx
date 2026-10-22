@@ -88,27 +88,9 @@ export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; 
  * A turn's tool calls in order: file edits as their own diff cards and subagent calls as agent cards (Desktop style); each run of other calls
  * as one line alone, or one collapsed group line ("실행된 명령 5개 ›") for several.
  */
-export function ToolCalls({ calls, live = false, cwd, concise = false }: { calls: ToolCallItem[]; live?: boolean; cwd?: string | null; /** 간결 모드: one collapsed group; bodies only when expanded. */ concise?: boolean }) {
+export function ToolCalls({ calls, live = false, cwd, flat = false }: { calls: ToolCallItem[]; live?: boolean; cwd?: string | null; /** Inside a 작업 기록 fold: one line per call, no group line of its own. */ flat?: boolean }) {
   if (calls.length === 0) return null;
-  // Concise: never expand tool chrome into the main pane by default (one group line; expand to inspect).
-  if (concise) {
-    const running = live && calls.some((c) => c.result === null);
-    const errors = calls.filter((c) => c.isError).length;
-    const label = live ? `작업 ${calls.length}단계` : groupLabel(calls);
-    return (
-      <details className={`tool-group concise ${running ? 'running' : ''}`} data-testid="tool-group">
-        <summary>
-          <span className="tool-label">{label}</span>
-          {running && <span className="tool-state">실행 중…</span>}
-          {errors > 0 && <span className="tool-state error">오류 {errors}</span>}
-          <span className="tool-caret" aria-hidden="true">›</span>
-        </summary>
-        <div className="tool-group-list">
-          {calls.map((c) => <ToolCallView key={c.toolUseId} call={c} live={live} cwd={cwd} />)}
-        </div>
-      </details>
-    );
-  }
+  if (flat) return <>{calls.map((c) => (isAgentCall(c) ? <AgentCard key={c.toolUseId} call={c} live={live} /> : <ToolCallView key={c.toolUseId} call={c} live={live} cwd={cwd} />))}</>;
   // File edits and subagent (Agent/Task) calls stand alone; other calls group.
   const segments: { solo: boolean; calls: ToolCallItem[] }[] = [];
   for (const c of calls) {

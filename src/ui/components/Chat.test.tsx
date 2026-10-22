@@ -579,3 +579,12 @@ describe('Composer placeholder and 보내기', () => {
     expect(css).toMatch(/\.session-chip:focus-visible, \.session-chip:focus-visible:hover \{[^}]*box-shadow:[^}]*var\(--focus\)/);
   });
 });
+
+describe('Chat · model name once per turn', () => {
+  afterEach(cleanup);
+  it('only the last reply block of each turn names its model (system rows do not end a turn)', () => {
+    const a = (text: string): ChatItem => ({ kind: 'assistant', turnId: null, text, model: 'claude-opus-5-5', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] });
+    render(<Chat {...chatProps([{ kind: 'user', text: 'q0', n: 0 }, a('a'), a('b'), { kind: 'system', source: 'hook', label: 'Stop', text: 'x' }, a('c'), { kind: 'user', text: 'q1', n: 1 }, a('d')])} />);
+    expect(screen.getAllByTestId('msg-model')).toHaveLength(2);
+  });
+});

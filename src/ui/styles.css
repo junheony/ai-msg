@@ -736,9 +736,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* System notices (task notifications, slash commands) — a quiet left-aligned pill */
 .msg.system { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .sys-notice { max-width: 100%; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
-.sys-notice > summary { list-style: none; display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 28px; padding: 3px 12px 3px 10px; border-radius: 999px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; user-select: none; transition: background .15s ease, color .15s ease; }
+.sys-notice > summary { list-style: none; display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 34px; padding: 0; border-radius: var(--r-xs); cursor: pointer; user-select: none; transition: color .15s ease; }
 .sys-notice > summary::-webkit-details-marker { display: none; }
-.sys-notice > summary:hover { background: var(--hover); color: var(--fg); }
+.sys-notice > summary:hover { color: var(--fg); }
 .sys-icon { flex-shrink: 0; color: var(--faint); font-family: var(--mono); font-size: calc(12px * var(--font-scale, 1)); }
 .sys-notice.injected .sys-icon { color: var(--accent); font-family: inherit; }
 .sys-notice.completed .sys-icon { color: var(--ok); }
@@ -763,7 +763,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .markdown { font-size: calc(15.5px * var(--font-scale, 1)); line-height: 1.7; color: var(--md-fg); overflow-wrap: anywhere; }
 .markdown > :first-child { margin-top: 0; } .markdown > :last-child { margin-bottom: 0; }
 .markdown:empty { display: none; }
-.markdown p { margin: 0 0 12px; }
+.markdown p { margin: 0 0 16px; }
+.markdown p.md-lead:not(:first-child) { margin-top: 22px; }
 .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 26px 0 10px; line-height: 1.35; font-weight: 650; letter-spacing: -.005em; color: var(--fg-strong); }
 .markdown h1 { font-size: calc(21px * var(--font-scale, 1)); } .markdown h2 { font-size: calc(18.5px * var(--font-scale, 1)); } .markdown h3 { font-size: calc(16.5px * var(--font-scale, 1)); } .markdown h4, .markdown h5, .markdown h6 { font-size: calc(15.5px * var(--font-scale, 1)); }
 .markdown ul, .markdown ol { margin: 4px 0 14px; padding-left: 24px; }
@@ -814,6 +815,17 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .msg.assistant > .tool-group > summary:hover, .msg.assistant > .tool-call > summary:hover { background: var(--hover); }
 .msg.assistant > .tool-group, .msg.assistant > .tool-call { align-self: flex-start; max-width: 100%; }
 .msg.assistant > details[open] { align-self: stretch; }
+/* 작업 기록 — a turn's thinking + tool calls as one quiet gray line (no pill), unfolding to a rail of per-call lines */
+.work-log { font-size: calc(13.5px * var(--font-scale, 1)); color: var(--muted); min-width: 0; }
+.work-log > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 34px; cursor: pointer; user-select: none; border-radius: var(--r-xs); transition: color .15s ease; }
+.work-log > summary::-webkit-details-marker { display: none; }
+.work-log > summary:hover { color: var(--fg); }
+.msg.assistant > .work-log { align-self: flex-start; max-width: 100%; }
+.msg.assistant > .work-log[open] { align-self: stretch; }
+.work-log.running .tool-state { color: var(--accent); }
+.work-log-body { margin: 2px 0 2px 3px; padding-left: 12px; border-left: 1px solid var(--line-strong); display: flex; flex-direction: column; gap: 4px; }
+.work-log-body > .thinking-body { border-left: 0; padding-left: 0; }
+@media (pointer: coarse) { .work-log > summary, .sys-notice > summary { min-height: 44px; } }
 .tool-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .tool-label code { font-family: var(--mono); font-size: calc(13px * var(--font-scale, 1)); color: color-mix(in srgb, var(--fg) 75%, var(--muted)); }
 .tool-caret { flex-shrink: 0; font-size: calc(13px * var(--font-scale, 1)); color: var(--faint); transition: transform .15s ease; }
@@ -825,6 +837,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .tool-detail { margin: 6px 0 8px; border-radius: 10px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
 .tool-input, .tool-output { padding: 10px 12px; max-height: 260px; overflow: auto; color: var(--fg); }
 .tool-output { border-top: 1px solid var(--line); color: var(--muted); }
+
+/* A failed turn: one readable line, the raw text folded under it */
+.turn-error { display: flex; flex-direction: column; gap: 4px; font-size: calc(14px * var(--font-scale, 1)); }
+.turn-error .sys-raw > summary { display: inline-flex; align-items: center; min-height: 34px; border-radius: var(--r-xs); }
+.turn-error .sys-raw pre { margin-top: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Turn footer — the meta pill (model · account), then the actions and the role chip on one wrapping row (P5: content-fit,
    --faint 12px, never a full-width bar). Pressing the pill opens its detail above it: tokens, reason, cache lines. */
@@ -863,7 +880,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .chat-body, .panes:not([data-count="1"]) .chat-body { padding: 8px calc(var(--s4) + var(--s1)) 16px; gap: 16px; }
   .msg.user pre { max-width: 90%; }
   .code-copy { min-height: var(--phone-tap); }
-  .tool-group > summary, .tool-call > summary, .sys-notice > summary { min-height: 34px; }
+  .tool-group > summary, .tool-call > summary, .sys-notice > summary, .work-log > summary { min-height: 34px; }
   .code-block pre { padding: 10px 12px 12px; }
   .markdown th, .markdown td { padding: 7px 11px; }
 }
@@ -1545,7 +1562,7 @@ button.hl-row-main:hover { background: var(--hover); }
 }
 .sidebar-foot { display: flex; align-items: center; gap: 4px; }
 /* Thinking disclosure (collapsed above the reply). */
-.thinking, .thinking-line { margin: 0 0 10px; font-size: calc(13px * var(--font-scale, 1)); color: var(--muted); }
+.thinking, .thinking-line { margin: 0; font-size: calc(13.5px * var(--font-scale, 1)); color: var(--muted); }
 .thinking > summary { cursor: pointer; user-select: none; width: fit-content; }
 .thinking > summary:hover { color: var(--fg); }
 .thinking[open] > summary { margin-bottom: 6px; }
@@ -2225,7 +2242,8 @@ mark.find-hit.current { background: var(--accent); color: #fff; box-shadow: 0 0 
 .session-cwd-dialog .session-cwd-title { color: var(--fg); font-weight: 500; }
 .session-cwd-dialog .session-cwd-hint { margin: 0 0 10px; font-size: calc(12px * var(--font-scale, 1)); }
 /* A reply with a model but no badge (older transcript): the same meta pill, model only. */
-.msg-model { display: inline-flex; align-items: center; height: 24px; padding: 0 var(--s2); border-radius: var(--r-full); background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--faint); font-size: var(--fs-meta); }
+/* Not pressable, so text only — the pressable turn badge keeps its pill. */
+.msg-model { display: inline-flex; align-items: center; height: 24px; padding: 0 2px; color: var(--faint); font-size: var(--fs-meta); }
 
 .layouts-dialog { width: min(520px, calc(100vw - 24px)); max-width: none; }
 .layouts-save { display: flex; gap: 8px; }
@@ -2340,7 +2358,7 @@ html[data-concise='on'] .concise-progress {
   color: var(--muted);
   padding: 2px 0 8px;
 }
-html[data-concise='on'] .msg.assistant.streaming .tool-group.concise { margin-bottom: 4px; }
+html[data-concise='on'] .msg.assistant.streaming .work-log { margin-bottom: 4px; }
 html[data-concise='on'] .turn-status.concise .status-verb { color: var(--fg); }
 html[data-concise='on'] .concise-lead { color: var(--fg); margin-bottom: 2px; }
 html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font-scale, 1)); color: var(--faint); }

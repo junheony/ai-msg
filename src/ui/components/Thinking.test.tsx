@@ -17,9 +17,14 @@ describe('thinking render', () => {
     expect(d.textContent).toContain('먼저 확인');
   });
 
-  it('redacted thinking shows only the placeholder', () => {
-    const { container } = render(<MessageView item={{ ...base, thinking: { text: '', redacted: true, startedAt: null, ms: null } }} />);
-    expect(container.querySelector('.thinking-body')?.textContent).toBe('(암호화된 생각)');
+  it('redacted thinking is plain text with no fold: "N초 동안 생각함", or "생각함" without a time', () => {
+    const { container, getByTestId } = render(<MessageView item={{ ...base, thinking: { text: '', redacted: true, startedAt: null, ms: null } }} />);
+    expect(container.querySelector('details')).toBeNull();
+    expect(getByTestId('thinking').textContent).toBe('생각함');
+    cleanup();
+    const timed = render(<MessageView item={{ ...base, thinking: { text: '', redacted: true, startedAt: 0, ms: 4000 } }} />);
+    expect(timed.container.querySelector('details')).toBeNull();
+    expect(timed.getByTestId('thinking').textContent).toBe('4초 동안 생각함');
   });
 
   it('history: transcript thinking becomes an item with thinking', () => {

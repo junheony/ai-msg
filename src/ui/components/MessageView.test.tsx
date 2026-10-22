@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
-import { MessageView } from './MessageView';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { MessageView, errorSummary } from './MessageView';
 import { codeFileName } from '../codeWrap';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 import { initialState, reducer, type AppState, type ChatItem } from '../state';
@@ -77,16 +79,17 @@ describe('MessageView tool lines (Desktop style)', () => {
   afterEach(cleanup);
   const tc = (id: string, name: string, input: unknown, extra = {}) => ({ toolUseId: id, name, input, result: 'out', isError: false, ...extra });
 
-  it('one tool call is one collapsed line; several are one collapsed group line that expands to per-call lines', () => {
+  it('tool calls fold into one 작업 기록 line that expands to per-call lines (one or several)', () => {
     const one = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'ok', toolCalls: [tc('1', 'Bash', { command: 'npm test', description: 'Run tests' })], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
     const line = one.container.querySelector('[data-testid="tool-call"]') as HTMLDetailsElement;
     expect(line.querySelector('summary')?.textContent).toContain('Run tests');
     expect(line.open).toBe(false);
     expect(one.container.querySelector('.tool-group')).toBeNull();
+    expect((one.getByTestId('work-log') as HTMLDetailsElement).open).toBe(false);
     cleanup();
     const many = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: '', toolCalls: [tc('1', 'Bash', { command: 'a' }), tc('2', 'Bash', { command: 'b' }, { isError: true })], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
-    const group = many.container.querySelector('[data-testid="tool-group"]') as HTMLDetailsElement;
-    expect(group.querySelector('summary')?.textContent).toContain('실행된 명령 2개');
+    const group = many.container.querySelector('[data-testid="work-log"]') as HTMLDetailsElement;
+    expect(group.querySelector('summary')?.textContent).toContain('작업 기록 · 실행된 명령 2개');
     expect(group.querySelector('summary')?.textContent).toContain('오류 1');
     expect(group.open).toBe(false);
     expect(group.querySelectorAll('[data-testid="tool-call"]')).toHaveLength(2);
@@ -234,13 +237,13 @@ describe('MessageView · 간결 모드 live text', () => {
     const before = '먼저 테스트부터 볼게요.';
     const { container, getByTestId, rerender } = render(<MessageView item={turn(before, [call('1', before.length)], true, { thinking: { text: 'SECRET-THOUGHT', redacted: false, startedAt: 0, ms: 1000 } })} />);
     expect(getByTestId('concise-lead').textContent).toBe(before);
-    expect(getByTestId('concise-progress').textContent).toContain('단계 1');
+    expect(getByTestId('work-log').querySelector('summary')?.textContent).toContain('계속 작업 중 · 단계 1');
     expect(container.querySelector('.markdown:not(.thinking-body)')).toBeNull();
-    // Tool bodies stay folded inside the collapsed step group (as before).
-    expect((getByTestId('tool-group') as HTMLDetailsElement).open).toBe(false);
-    // …and nothing of the output shows outside that folded group.
+    // Tool bodies stay folded inside the collapsed 작업 기록 line (as before).
+    expect((getByTestId('work-log') as HTMLDetailsElement).open).toBe(false);
+    // …and nothing of the output shows outside that folded line.
     const outside = container.cloneNode(true) as HTMLElement;
-    outside.querySelector('[data-testid="tool-group"]')!.remove();
+    outside.querySelector('[data-testid="work-log"]')!.remove();
     expect(outside.textContent).not.toContain('SECRET-OUTPUT');
     expect(container.textContent).not.toContain('SECRET-THOUGHT');
     rerender(<MessageView item={turn(`${before}\n\n원인은 오타였어요`, [call('1', before.length)])} />);
@@ -303,9 +306,76 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(item.streaming).toBe(true);
     const { container, getByTestId } = render(<MessageView item={item} />);
     expect(getByTestId('concise-lead').textContent).toBe('먼저 테스트부터 볼게요.');
-    expect(getByTestId('concise-progress').textContent).toContain('단계 1');
+    expect(getByTestId('work-log').querySelector('summary')?.textContent).toContain('단계 1');
     const md = container.querySelectorAll('.markdown');
     expect(md).toHaveLength(1);
     expect(md[0]!.textContent).toBe('원인은 오타였어요');
+  });
+});
+
+describe('MessageView · 대화 본문 다듬기', () => {
+  afterEach(cleanup);
+  const reply = (extra: object = {}) => ({ kind: 'assistant' as const, turnId: 't', text: 'ok', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [], ...extra });
+  const bash = (id: string) => ({ toolUseId: id, name: 'Bash', input: { command: 'ls' }, result: 'out', isError: false });
+
+  it('thinking and tool calls share one 작업 기록 line with the seconds; expanded it shows both', () => {
+    const { getByTestId, queryByTestId } = render(<MessageView item={reply({ thinking: { text: '먼저 확인', redacted: false, startedAt: 0, ms: 12000 }, toolCalls: [bash('1'), bash('2')] })} />);
+    const log = getByTestId('work-log') as HTMLDetailsElement;
+    expect(log.querySelector('summary')?.textContent).toContain('작업 기록 · 12초 · 실행된 명령 2개');
+    expect(log.querySelector('.thinking-body')?.textContent).toContain('먼저 확인');
+    expect(log.querySelectorAll('[data-testid="tool-call"]')).toHaveLength(2);
+    expect(queryByTestId('thinking')).toBeNull();
+    expect(queryByTestId('tool-group')).toBeNull();
+  });
+
+  it('only the last block of a turn names the model', () => {
+    const mid = render(<MessageView item={reply({ model: 'claude-opus-5-5' })} turnEnd={false} />);
+    expect(mid.queryByTestId('msg-model')).toBeNull();
+    cleanup();
+    const end = render(<MessageView item={reply({ model: 'claude-opus-5-5' })} />);
+    expect(end.getByTestId('msg-model').textContent).toBe('Opus 5.5');
+  });
+
+  it('a paragraph opening with bold text is marked as a lead paragraph', () => {
+    const { container } = render(<MessageView item={reply({ text: '첫 문단.\n\n**라이브 상태.** 설명.\n\n보통 **굵게** 문단.' })} />);
+    const ps = [...container.querySelectorAll('.markdown p')];
+    expect(ps.map((p) => p.classList.contains('md-lead'))).toEqual([false, true, false]);
+  });
+
+  it('an error shows a readable line with the raw text folded under it', () => {
+    const raw = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error"}}';
+    const { getByTestId } = render(<MessageView item={reply({ text: '', error: raw })} />);
+    const e = getByTestId('turn-error');
+    expect(e.querySelector('.turn-error-line')?.textContent).toBe('서버가 붐벼 응답하지 못했어요 — 잠시 뒤 다시 시도해 주세요');
+    expect((e.querySelector('details') as HTMLDetailsElement).open).toBe(false);
+    expect(e.querySelector('pre')?.textContent).toBe(raw);
+    expect(e.textContent).not.toContain('오류: ');
+  });
+
+  it('errorSummary: a readable one-liner stays as it is (no raw fold), stacks and JSON become a summary', () => {
+    expect(errorSummary('엔진이 결과 없이 종료했습니다')).toBe('엔진이 결과 없이 종료했습니다');
+    expect(errorSummary('Error: boom\n    at x (y.js:1)')).toBe('응답 중 오류가 났어요');
+    expect(errorSummary('Claude Code process exited with code 1')).toBe('엔진이 도중에 종료됐어요');
+    expect(errorSummary('429 rate_limit_error')).toBe('사용 한도에 걸렸어요 — 잠시 뒤 다시 시도해 주세요');
+    const { getByTestId } = render(<MessageView item={reply({ text: '', error: '엔진이 결과 없이 종료했습니다' })} />);
+    expect(getByTestId('turn-error').querySelector('details')).toBeNull();
+  });
+});
+
+describe('MessageView · quiet status lines (CSS)', () => {
+  const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+  // The last rule for a selector is the one the cascade keeps.
+  const rule = (sel: string) => [...css.matchAll(new RegExp(`\\n${sel.replace(/[.>]/g, (c) => `\\${c}`)} \\{([^}]*)\\}`, 'g'))].at(-1)![1]!;
+  it('작업 기록, system notices and the model name are plain muted text — no pill background or ring', () => {
+    for (const sel of ['.work-log > summary', '.sys-notice > summary', '.msg-model']) {
+      expect(rule(sel)).not.toMatch(/background|box-shadow|999px|r-full/);
+    }
+    expect(rule('.work-log')).toContain('var(--muted)');
+  });
+  it('expandable rows are at least 34px tall; prose paragraphs get 16px apart', () => {
+    expect(rule('.work-log > summary')).toContain('min-height: 34px');
+    expect(rule('.sys-notice > summary')).toContain('min-height: 34px');
+    expect(rule('.turn-error .sys-raw > summary')).toContain('min-height: 34px');
+    expect(rule('.markdown p')).toContain('margin: 0 0 16px');
   });
 });

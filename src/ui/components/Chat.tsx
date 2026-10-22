@@ -338,6 +338,18 @@ export function Chat(p: ChatProps) {
   const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
   const keys = useMemo(() => messageKeys(shown), [shown]);
   const dividers = useMemo(() => timeDividers(shown), [shown]);
+  // A reply block ends its turn when no other reply follows before the next user message (system rows are skipped).
+  const turnEnds = useMemo(() => {
+    const ends: boolean[] = [];
+    let after = true;
+    for (let i = shown.length - 1; i >= 0; i--) {
+      const it = shown[i]!;
+      ends[i] = after;
+      if (it.kind === 'user') after = true;
+      else if (it.kind === 'assistant') after = false;
+    }
+    return ends;
+  }, [shown]);
   const todos = useMemo(() => latestTodos(p.items), [p.items]);
 
   // Review M12: a failed last turn can be re-sent as-is.
@@ -621,7 +633,7 @@ export function Chat(p: ChatProps) {
                 return (
                   <Fragment key={keys[i]}>
                     {at != null && <div className="msg-time" data-testid="msg-time"><time dateTime={new Date(at).toISOString()}>{timeLabel(at)}</time></div>}
-                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} />
+                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} turnEnd={turnEnds[i]} />
                   </Fragment>
                 );
               })}
