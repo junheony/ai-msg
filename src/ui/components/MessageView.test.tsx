@@ -379,3 +379,71 @@ describe('MessageView · quiet status lines (CSS)', () => {
     expect(rule('.markdown p')).toContain('margin: 0 0 16px');
   });
 });
+
+describe('MessageView · 작업 기록 keeps cards in the open (full mode)', () => {
+  beforeEach(() => { localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: false })); });
+  afterEach(() => { cleanup(); localStorage.removeItem(PREFS_KEY); });
+  const call = (id: string, name: string, input: unknown, result: string | null = 'out') => ({ toolUseId: id, name, input, result, isError: false });
+  const reply = (toolCalls: ReturnType<typeof call>[], streaming = false) => ({ kind: 'assistant' as const, turnId: 't', text: '', toolCalls, badge: null, streaming, error: null, notes: [], attempts: [], thinking: { text: '확인', redacted: false, startedAt: 0, ms: 3000 } });
+
+  it('a file edit diff card and a subagent card stay outside the folded 작업 기록 lines, in order', () => {
+    const { container, getAllByTestId } = render(<MessageView item={reply([
+      call('1', 'Bash', { command: 'ls' }),
+      call('2', 'Edit', { file_path: '/w/a.ts', old_string: 'one', new_string: 'two' }),
+      call('3', 'Agent', { description: 'look around', prompt: 'p' }),
+      call('4', 'Bash', { command: 'pwd' }),
+    ])} />);
+    const logs = getAllByTestId('work-log') as HTMLDetailsElement[];
+    expect(logs).toHaveLength(2);
+    for (const l of logs) { expect(l.open).toBe(false); expect(l.querySelector('[data-testid="diff-card"], [data-testid="agent-card"]')).toBeNull(); }
+    const diff = container.querySelector('[data-testid="diff-card"]')!;
+    expect(diff.closest('.work-log')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-card"]')!.closest('.work-log')).toBeNull();
+    // Seconds and the thinking text belong to the first line only.
+    expect(logs[0]!.querySelector('summary')?.textContent).toContain('작업 기록 · 3초');
+    expect(logs[1]!.querySelector('summary')?.textContent).not.toContain('3초');
+    expect(logs[0]!.querySelector('.thinking-body')).not.toBeNull();
+    expect(logs[1]!.querySelector('.thinking-body')).toBeNull();
+  });
+
+  it('only diff cards: the thinking keeps its own line and the card shows', () => {
+    const { container, getByTestId, queryByTestId } = render(<MessageView item={reply([call('1', 'Write', { file_path: '/w/n.md', content: 'a' }, 'File created successfully at: /w/n.md')])} />);
+    expect(queryByTestId('work-log')).toBeNull();
+    expect(getByTestId('thinking').textContent).toContain('3초 동안 생각함');
+    expect(container.querySelector('[data-testid="diff-card"]')).not.toBeNull();
+  });
+
+  it('a running command says 실행 중… on its line while live', () => {
+    const { getByTestId } = render(<MessageView item={reply([call('1', 'Bash', { command: 'npm test' }, null)], true)} />);
+    expect(getByTestId('work-log').querySelector('summary')?.textContent).toContain('실행 중…');
+  });
+});
+
+describe('MessageView · concise progress is announced', () => {
+  beforeEach(() => { localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: true })); });
+  afterEach(() => { cleanup(); localStorage.removeItem(PREFS_KEY); });
+  it('"계속 작업 중 · 단계 N" sits in a polite live region', () => {
+    const item = { kind: 'assistant' as const, turnId: 't', text: '', toolCalls: [{ toolUseId: '1', name: 'Bash', input: { command: 'ls' }, result: null, isError: false }], badge: null, streaming: true, error: null, notes: [], attempts: [] };
+    const { getByTestId } = render(<MessageView item={item} />);
+    const label = getByTestId('work-log').querySelector('summary .tool-label')!;
+    expect(label.textContent).toBe('계속 작업 중 · 단계 1');
+    expect(label.getAttribute('aria-live')).toBe('polite');
+  });
+});
+
+describe('errorSummary · deck messages first', () => {
+  it('a short Korean first line is shown as it is, even when it names a keyword (로그인, 한도)', () => {
+    expect(errorSummary('Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인')).toBe('Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인');
+    expect(errorSummary('이 계정의 사용 한도를 넘었어요 (5시간 창)\nraw: 429')).toBe('이 계정의 사용 한도를 넘었어요 (5시간 창)');
+  });
+});
+
+describe('styles · phone touch rows', () => {
+  it('the coarse-pointer 44px rule comes after the 720px 34px rule, so phones get 44px', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const narrow = css.indexOf('.work-log > summary { min-height: 34px; }');
+    const coarse = css.search(/@media \(pointer: coarse\) \{ \.work-log > summary[^}]*min-height: 44px/);
+    expect(narrow).toBeGreaterThan(-1);
+    expect(coarse).toBeGreaterThan(narrow);
+  });
+});

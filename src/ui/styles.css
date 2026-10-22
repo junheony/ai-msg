@@ -825,7 +825,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .work-log.running .tool-state { color: var(--accent); }
 .work-log-body { margin: 2px 0 2px 3px; padding-left: 12px; border-left: 1px solid var(--line-strong); display: flex; flex-direction: column; gap: 4px; }
 .work-log-body > .thinking-body { border-left: 0; padding-left: 0; }
-@media (pointer: coarse) { .work-log > summary, .sys-notice > summary { min-height: 44px; } }
 .tool-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .tool-label code { font-family: var(--mono); font-size: calc(13px * var(--font-scale, 1)); color: color-mix(in srgb, var(--fg) 75%, var(--muted)); }
 .tool-caret { flex-shrink: 0; font-size: calc(13px * var(--font-scale, 1)); color: var(--faint); transition: transform .15s ease; }
@@ -884,6 +883,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .code-block pre { padding: 10px 12px 12px; }
   .markdown th, .markdown td { padding: 7px 11px; }
 }
+/* After the 720px block so a phone's finger gets 44px, not the 34px floor above. */
+@media (pointer: coarse) { .work-log > summary, .sys-notice > summary, .turn-error .sys-raw > summary { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .chat-body > .msg { animation: none; } }
 /* === model picker === */
 .mp-pop { position: fixed; z-index: 40; width: 300px; max-width: calc(100vw - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); color: var(--fg); }

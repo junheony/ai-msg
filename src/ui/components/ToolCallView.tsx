@@ -84,14 +84,8 @@ export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; 
   );
 }
 
-/**
- * A turn's tool calls in order: file edits as their own diff cards and subagent calls as agent cards (Desktop style); each run of other calls
- * as one line alone, or one collapsed group line ("실행된 명령 5개 ›") for several.
- */
-export function ToolCalls({ calls, live = false, cwd, flat = false }: { calls: ToolCallItem[]; live?: boolean; cwd?: string | null; /** Inside a 작업 기록 fold: one line per call, no group line of its own. */ flat?: boolean }) {
-  if (calls.length === 0) return null;
-  if (flat) return <>{calls.map((c) => (isAgentCall(c) ? <AgentCard key={c.toolUseId} call={c} live={live} /> : <ToolCallView key={c.toolUseId} call={c} live={live} cwd={cwd} />))}</>;
-  // File edits and subagent (Agent/Task) calls stand alone; other calls group.
+/** File edits and subagent (Agent/Task) calls stand alone (solo); runs of other calls group, in order. */
+export function toolSegments(calls: ToolCallItem[]): { solo: boolean; calls: ToolCallItem[] }[] {
   const segments: { solo: boolean; calls: ToolCallItem[] }[] = [];
   for (const c of calls) {
     const solo = isAgentCall(c) || isDiffCall(c);
@@ -99,6 +93,17 @@ export function ToolCalls({ calls, live = false, cwd, flat = false }: { calls: T
     if (last && !solo && !last.solo) last.calls.push(c);
     else segments.push({ solo, calls: [c] });
   }
+  return segments;
+}
+
+/**
+ * A turn's tool calls in order: file edits as their own diff cards and subagent calls as agent cards (Desktop style); each run of other calls
+ * as one line alone, or one collapsed group line ("실행된 명령 5개 ›") for several.
+ */
+export function ToolCalls({ calls, live = false, cwd, flat = false }: { calls: ToolCallItem[]; live?: boolean; cwd?: string | null; /** Inside a 작업 기록 fold: one line per call, no group line of its own. */ flat?: boolean }) {
+  if (calls.length === 0) return null;
+  if (flat) return <>{calls.map((c) => (isAgentCall(c) ? <AgentCard key={c.toolUseId} call={c} live={live} /> : <ToolCallView key={c.toolUseId} call={c} live={live} cwd={cwd} />))}</>;
+  const segments = toolSegments(calls);
   if (segments.length > 1) return <>{segments.map((s) => <ToolCalls key={s.calls[0]!.toolUseId} calls={s.calls} live={live} cwd={cwd} />)}</>;
   if (isAgentCall(calls[0]!)) return <AgentCard call={calls[0]!} live={live} />;
   if (segments[0]!.solo) return <ToolCallView call={calls[0]!} live={live} cwd={cwd} />;

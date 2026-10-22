@@ -23,7 +23,7 @@ import { CopyButton } from './CopyButton';
 import { CopyIcon, EditIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
 import { RoleBadge } from './RoleBadge';
-import { ToolCalls } from './ToolCallView';
+import { ToolCalls, toolSegments } from './ToolCallView';
 import { TurnBadge, isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
 
 /** Plain text of a rendered markdown subtree (code blocks arrive as nested elements). */
@@ -173,71 +173,91 @@ export const Markdown = memo(function Markdown({ text, className = 'markdown' }:
   );
 });
 
-/** 작업 기록 fold and error line wording. */
-const WORK_TEXT = { log: '작업 기록', live: '계속 작업 중', step: (n: number) => `단계 ${n}`, running: '실행 중…', errors: (n: number) => `오류 ${n}`, thinking: '생각하는 중…', thought: '생각함', thoughtFor: (s: number) => `${s}초 동안 생각함`, secs: (s: number) => `${s}초`, process: '생각 과정' };
-const ERROR_TEXT = {
-  raw: '원문 보기',
-  generic: '응답 중 오류가 났어요',
-  rate: '사용 한도에 걸렸어요 — 잠시 뒤 다시 시도해 주세요',
-  overloaded: '서버가 붐벼 응답하지 못했어요 — 잠시 뒤 다시 시도해 주세요',
-  network: '연결이 끊겨 응답을 받지 못했어요',
-  auth: '로그인이 풀렸거나 권한이 없어요',
-  timeout: '응답 시간이 초과됐어요',
-  exited: '엔진이 도중에 종료됐어요',
+/** This view's own wording (작업 기록 fold, error line), kept in one place. */
+const TEXT = {
+  work: { log: '작업 기록', live: '계속 작업 중', step: (n: number) => `단계 ${n}`, running: '실행 중…', errors: (n: number) => `오류 ${n}`, thinking: '생각하는 중…', thought: '생각함', thoughtFor: (s: number) => `${s}초 동안 생각함`, secs: (s: number) => `${s}초`, process: '생각 과정' },
+  error: {
+    raw: '원문 보기',
+    generic: '응답 중 오류가 났어요',
+    rate: '사용 한도에 걸렸어요 — 잠시 뒤 다시 시도해 주세요',
+    overloaded: '서버가 붐벼 응답하지 못했어요 — 잠시 뒤 다시 시도해 주세요',
+    network: '연결이 끊겨 응답을 받지 못했어요',
+    auth: '로그인이 풀렸거나 권한이 없어요',
+    timeout: '응답 시간이 초과됐어요',
+    exited: '엔진이 도중에 종료됐어요',
+  },
 };
+const WORK_TEXT = TEXT.work;
+const ERROR_TEXT = TEXT.error;
 
 /**
- * A turn's thinking and tool calls as one quiet gray line ("작업 기록 · 12초 · 실행된 명령 7개 ›") that unfolds to the
- * thinking text and one line per call. Thinking alone keeps its own label ("N초 동안 생각함"); thinking with nothing
- * readable (empty or encrypted) is plain text, no fold. Concise, live: the thinking text stays hidden and the line says
+ * A turn's thinking and plain tool calls as a quiet gray line ("작업 기록 · 12초 · 실행된 명령 7개 ›") that unfolds to the
+ * thinking text and one line per call. File-edit diff cards and subagent cards stay out in the open, in order, between
+ * such lines. Thinking alone keeps its own label ("N초 동안 생각함"); thinking with nothing readable (empty or encrypted)
+ * is plain text, no fold. Concise: everything folds into one line; live, the thinking text stays hidden and the line says
  * "계속 작업 중 · 단계 N".
  */
 function WorkLog({ t, calls, streaming, concise, cwd }: { t: Extract<ChatItem, { kind: 'assistant' }>['thinking']; calls: ToolCallItem[]; streaming: boolean; concise: boolean; cwd?: string }) {
   const secs = !t || t.ms === null ? null : Math.max(1, Math.round(t.ms / 1000));
   const conciseLive = concise && streaming;
   const body = t && !conciseLive ? t.text.trim() : '';
-  if (calls.length === 0) {
-    if (!t) return null;
+  const segments = concise ? (calls.length ? [{ solo: false, calls }] : []) : toolSegments(calls);
+  const firstFold = segments.findIndex((s) => !s.solo);
+  let thinking: ReactNode = null;
+  if (t && firstFold < 0) {
     const label = t.ms === null && streaming ? WORK_TEXT.thinking : secs !== null ? WORK_TEXT.thoughtFor(secs) : body ? WORK_TEXT.process : WORK_TEXT.thought;
-    if (!body) return <div className={`thinking-line${conciseLive ? ' concise' : ''}`} data-testid="thinking">{label}</div>;
-    return (
-      <details className="work-log thinking" data-testid="thinking">
-        <summary><span className="tool-label">{label}</span><span className="tool-caret" aria-hidden="true">›</span></summary>
-        <Markdown text={body} className="markdown thinking-body" />
-      </details>
-    );
+    thinking = !body
+      ? <div className={`thinking-line${conciseLive ? ' concise' : ''}`} data-testid="thinking">{label}</div>
+      : (
+        <details className="work-log thinking" data-testid="thinking">
+          <summary><span className="tool-label">{label}</span><span className="tool-caret" aria-hidden="true">›</span></summary>
+          <Markdown text={body} className="markdown thinking-body" />
+        </details>
+      );
   }
-  const running = streaming && calls.some((c) => c.result === null);
-  const errors = calls.filter((c) => c.isError).length;
-  const label = conciseLive
-    ? `${WORK_TEXT.live} · ${WORK_TEXT.step(calls.length)}`
-    : [WORK_TEXT.log, secs !== null ? WORK_TEXT.secs(secs) : null, groupLabel(calls)].filter(Boolean).join(' · ');
   return (
-    <details className={`work-log${running ? ' running' : ''}`} data-testid="work-log">
-      <summary>
-        <span className="tool-label">{label}</span>
-        {running && <span className="tool-state">{WORK_TEXT.running}</span>}
-        {errors > 0 && <span className="tool-state error">{WORK_TEXT.errors(errors)}</span>}
-        <span className="tool-caret" aria-hidden="true">›</span>
-      </summary>
-      <div className="work-log-body">
-        {body && <Markdown text={body} className="markdown thinking-body" />}
-        <ToolCalls calls={calls} live={streaming} cwd={cwd} flat />
-      </div>
-    </details>
+    <>
+      {thinking}
+      {segments.map((seg, i) => {
+        const key = seg.calls[0]!.toolUseId;
+        if (seg.solo) return <ToolCalls key={key} calls={seg.calls} live={streaming} cwd={cwd} />;
+        const first = i === firstFold;
+        const running = streaming && seg.calls.some((c) => c.result === null);
+        const errors = seg.calls.filter((c) => c.isError).length;
+        const label = conciseLive
+          ? `${WORK_TEXT.live} · ${WORK_TEXT.step(calls.length)}`
+          : [WORK_TEXT.log, first && secs !== null ? WORK_TEXT.secs(secs) : null, groupLabel(seg.calls)].filter(Boolean).join(' · ');
+        return (
+          <details key={key} className={`work-log${running ? ' running' : ''}`} data-testid="work-log">
+            <summary>
+              <span className="tool-label" {...(conciseLive ? { 'aria-live': 'polite' as const } : {})}>{label}</span>
+              {running && <span className="tool-state">{WORK_TEXT.running}</span>}
+              {errors > 0 && <span className="tool-state error">{WORK_TEXT.errors(errors)}</span>}
+              <span className="tool-caret" aria-hidden="true">›</span>
+            </summary>
+            <div className="work-log-body">
+              {first && body && <Markdown text={body} className="markdown thinking-body" />}
+              <ToolCalls calls={seg.calls} live={streaming} cwd={cwd} flat />
+            </div>
+          </details>
+        );
+      })}
+    </>
   );
 }
 
 /** A failed turn's error as one line a person can read; the raw text unfolds below it when it says more. */
 export function errorSummary(raw: string): string {
   const s = raw.trim();
+  const first = s.split('\n')[0]!.trim();
+  // deck's own Korean messages ("Gemini 로그인 필요 — …") already read well: shown as they are, before any keyword mapping.
+  if (first && first.length <= 120 && /[\uAC00-\uD7A3]/.test(first) && !/^\s*[{[]/.test(first)) return first;
   if (/\b429\b|rate.?limit|usage limit|quota|한도/i.test(s)) return ERROR_TEXT.rate;
   if (/\b529\b|overloaded|과부하/i.test(s)) return ERROR_TEXT.overloaded;
   if (/\b401\b|\b403\b|unauthori[sz]ed|forbidden|invalid api key|authentication|로그인/i.test(s)) return ERROR_TEXT.auth;
   if (/timed? ?out|timeout|시간 초과/i.test(s)) return ERROR_TEXT.timeout;
   if (/ECONN|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network/i.test(s)) return ERROR_TEXT.network;
-  const first = s.split('\n')[0]!.trim();
-  // Already a readable sentence (deck's own Korean messages, a short engine line): shown as it is.
+  // Already a readable sentence (a short engine line): shown as it is.
   if (first && first.length <= 120 && !/^\s*[{[]|\bat \S+ \(|^\w*Error:|exited with code/.test(first)) return first;
   if (/exited with code|process exited|terminated/i.test(s)) return ERROR_TEXT.exited;
   return ERROR_TEXT.generic;
