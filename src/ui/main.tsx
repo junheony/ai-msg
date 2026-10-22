@@ -3,10 +3,14 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles.css';
 import { applyPrefs, loadPrefs } from './prefs';
+import { initUiLocale } from './i18n';
 import { pinShell, relaxViewport, watchShell } from './shellFit';
 
 // Before the first render (no inline script: the CSP forbids it) so a saved theme/font size doesn't flash.
-applyPrefs(loadPrefs());
+const prefs = loadPrefs();
+applyPrefs(prefs);
+// Before anything renders: every string is read in this language (changing it reloads the page).
+initUiLocale(prefs.lang ?? 'auto');
 relaxViewport();
 pinShell();
 watchShell();

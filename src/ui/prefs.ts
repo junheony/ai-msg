@@ -1,3 +1,5 @@
+import type { LangPref } from '../shared/locale';
+
 /** Per-device client prefs (localStorage): phone and Mac differ on purpose. Applied to <html> as data-* + --font-scale. */
 export const PREFS_KEY = 'deck.prefs.v1';
 
@@ -5,19 +7,21 @@ export type Theme = 'system' | 'light' | 'dark';
 export type FontSize = 'small' | 'normal' | 'large' | 'xlarge';
 export type ChatWidth = 'narrow' | 'wide';
 export type SendKey = 'enter' | 'mod-enter';
-export type Prefs = { theme: Theme; fontSize: FontSize; chatWidth: ChatWidth; sendKey: SendKey; /** 간결 모드: results-first chat (default on). */ conciseMode: boolean; /** The sidebar's 고정됨 section folded (default open). */ pinnedFolded: boolean };
+export type Prefs = { theme: Theme; fontSize: FontSize; chatWidth: ChatWidth; sendKey: SendKey; /** 간결 모드: results-first chat (default on). */ conciseMode: boolean; /** The sidebar's 고정됨 section folded (default open). */ pinnedFolded: boolean;
+  /** UI language, read once at boot (src/ui/i18n). Absent = 'auto' (the browser's languages). */ lang?: LangPref };
 
 /** 작게 = the pre-settings size; the default (보통) is already larger. */
 export const FONT_SCALE: Record<FontSize, number> = { small: 1, normal: 1.1, large: 1.2, xlarge: 1.35 };
 export const DEFAULT_PREFS: Prefs = { theme: 'system', fontSize: 'normal', chatWidth: 'narrow', sendKey: 'enter', conciseMode: true, pinnedFolded: false };
 
-const ALLOWED: { [K in keyof Prefs]: readonly Prefs[K][] } = {
+const ALLOWED: { [K in keyof Prefs]-?: readonly NonNullable<Prefs[K]>[] } = {
   theme: ['system', 'light', 'dark'],
   fontSize: ['small', 'normal', 'large', 'xlarge'],
   chatWidth: ['narrow', 'wide'],
   sendKey: ['enter', 'mod-enter'],
   conciseMode: [true, false],
   pinnedFolded: [true, false],
+  lang: ['auto', 'en', 'ko'],
 };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;

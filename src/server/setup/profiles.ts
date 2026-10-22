@@ -6,7 +6,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { AccountsFileError, loadAccountRegistry } from '../accounts';
 import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, buildRegistry, type AccountRegistry, type AccountSpec, type AccountsConfig } from '../../shared/accounts';
-import { PROFILE_TEXTS } from './texts';
+import { profileTexts } from './texts';
 
 export class ProfileError extends Error {
   override name = 'ProfileError';
@@ -82,7 +82,7 @@ export async function takeFileLock(file: string, waitMs: number, afterStaleCheck
       }
       continue;
     }
-    if (Date.now() >= until) throw new ProfileError(409, PROFILE_TEXTS.busy);
+    if (Date.now() >= until) throw new ProfileError(409, profileTexts().busy);
     await new Promise((r) => setTimeout(r, 25));
   }
 }
@@ -94,9 +94,9 @@ async function checkOwn(p: string, uid: number | undefined, kind: 'file' | 'dir'
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
   }
-  if (st.isSymbolicLink()) throw new ProfileError(400, PROFILE_TEXTS.symlink(p));
-  if (uid !== undefined && st.uid !== uid) throw new ProfileError(400, PROFILE_TEXTS.notOwner(p));
-  if (kind === 'dir' && !st.isDirectory()) throw new ProfileError(400, PROFILE_TEXTS.notDir(p));
+  if (st.isSymbolicLink()) throw new ProfileError(400, profileTexts().symlink(p));
+  if (uid !== undefined && st.uid !== uid) throw new ProfileError(400, profileTexts().notOwner(p));
+  if (kind === 'dir' && !st.isDirectory()) throw new ProfileError(400, profileTexts().notDir(p));
   return st;
 }
 
@@ -123,9 +123,9 @@ export function addClaudeProfile(o: {
   hooks?: { afterRead?: () => void | Promise<void>; rename?: (from: string, to: string) => Promise<void> };
 }): Promise<{ id: string; dir: string; createdDir: boolean; backup: string | null }> {
   const { id } = o;
-  if (typeof id !== 'string' || !ACCOUNT_ID_RE.test(id)) return Promise.reject(new ProfileError(400, PROFILE_TEXTS.badId(String(id), ACCOUNT_ID_RE.source)));
-  if (RESERVED_ACCOUNT_IDS.includes(id)) return Promise.reject(new ProfileError(400, PROFILE_TEXTS.reservedId(id)));
-  if (o.label !== undefined && (o.label.trim().length === 0 || o.label.length > 40)) return Promise.reject(new ProfileError(400, PROFILE_TEXTS.badLabel));
+  if (typeof id !== 'string' || !ACCOUNT_ID_RE.test(id)) return Promise.reject(new ProfileError(400, profileTexts().badId(String(id), ACCOUNT_ID_RE.source)));
+  if (RESERVED_ACCOUNT_IDS.includes(id)) return Promise.reject(new ProfileError(400, profileTexts().reservedId(id)));
+  if (o.label !== undefined && (o.label.trim().length === 0 || o.label.length > 40)) return Promise.reject(new ProfileError(400, profileTexts().badLabel));
   const uid = o.uid ?? process.getuid?.();
   const file = path.join(o.configDir, 'accounts.json');
   const home = path.resolve(o.home);
@@ -145,7 +145,7 @@ export function addClaudeProfile(o: {
         base = materializeAccountsConfig(loadAccountRegistry({ configDir: o.configDir, homeDir: home, log: () => {} }), home);
       } else {
         try { loadAccountRegistry({ configDir: o.configDir, homeDir: home, log: () => {}, text }); } catch (err) {
-          if (err instanceof AccountsFileError) throw new ProfileError(400, PROFILE_TEXTS.brokenFile(err.message));
+          if (err instanceof AccountsFileError) throw new ProfileError(400, profileTexts().brokenFile(err.message));
           throw err;
         }
         base = JSON.parse(text) as typeof base;
@@ -153,14 +153,14 @@ export function addClaudeProfile(o: {
       await o.hooks?.afterRead?.();
 
       // 3. Checks.
-      if (base.accounts.some((a) => a.id === id)) throw new ProfileError(409, PROFILE_TEXTS.duplicate(id));
+      if (base.accounts.some((a) => a.id === id)) throw new ProfileError(409, profileTexts().duplicate(id));
       const existing = await checkOwn(dir, uid, 'dir');
 
       // 5. The new content must build a registry (same dir under another name, …) before anything is touched.
       const spec: AccountSpec = { id, ...(o.label !== undefined ? { label: o.label.trim() } : {}), configDir: `~/.claude-${id}` };
       const next = { ...base, accounts: [...base.accounts, spec] };
       try { buildRegistry(next as AccountsConfig, { homeDir: home, canonical: canonicalDir }); } catch (err) {
-        throw new ProfileError(400, PROFILE_TEXTS.invalid(err instanceof Error ? err.message : String(err)));
+        throw new ProfileError(400, profileTexts().invalid(err instanceof Error ? err.message : String(err)));
       }
 
       // 4. The profile dir (an existing one is left as it is).
@@ -171,7 +171,7 @@ export function addClaudeProfile(o: {
 
       // 6. Still the file that was read?
       const now = await readOrNull(file);
-      if ((now === null) !== (text === null) || (now !== null && text !== null && sha(now) !== sha(text))) throw new ProfileError(409, PROFILE_TEXTS.changed);
+      if ((now === null) !== (text === null) || (now !== null && text !== null && sha(now) !== sha(text))) throw new ProfileError(409, profileTexts().changed);
 
       // 7. deck's first edit of a file the user wrote: one copy.
       let backup: string | null = null;

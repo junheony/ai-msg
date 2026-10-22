@@ -11,6 +11,8 @@ import { Sheet, SheetHead } from './Dialogs';
 import { TASK_SOFT_CAP_MAX, TASK_SOFT_CAP_MIN } from '../../shared/tasks';
 import { MemoryEditor } from './MemoryEditor';
 import { SETUP_TEXTS } from '../setupTexts';
+import { getLocale, localeFromLanguages, type LangPref, type Locale } from '../../shared/locale';
+import { ui } from '../i18n';
 
 /** What turning 같은 벤더 계정 자동 순환 on asks the user to agree to (spec: paid design §3 rule 3). */
 export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁니다. 계정 공유·재판매·한도 회피 목적의 계정 생성은 각 제공자 약관 위반입니다.';
@@ -19,6 +21,9 @@ export const AUTO_CONSENT_TEXT = '자동 세션의 코드·대화가 Google(Gemi
 export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean };
 const AUTO_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
 const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
+
+/** Each language's name in that language (the same in every UI language, so a lost reader still finds theirs). */
+export const LANGUAGE_NAMES: Record<Locale, string> = { en: 'English', ko: '한국어' };
 
 /** Segmented buttons for up to 3 choices; 4 or more become a select (a row of 4 does not fit a phone's line). */
 export const SEG_MAX = 3;
@@ -62,8 +67,12 @@ function Hint({ short, children }: { short: string; children?: ReactNode }) {
 export const SETTINGS_GROUPS = [['screen', '화면'], ['input', '입력'], ['perm', '권한·알림'], ['account', '계정']] as const;
 type GroupId = (typeof SETTINGS_GROUPS)[number][0];
 
-export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onSetup, onClose }: {
+export function SettingsView({ build, onLanguage, reload = () => location.reload(), defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onSetup, onClose }: {
   build: string | null;
+  /** An explicit language pick (not 'auto'): the server follows the last one any device made (set_settings.language). */
+  onLanguage?: (language: Locale) => void;
+  /** Reloads the page: the UI language is fixed at boot. */
+  reload?: () => void;
   /** The mode new sessions start in (null = not known yet); per-session modes live in the composer (Shift+Tab). */
   defaultPermMode?: PermMode | null;
   onDefaultPermMode?: (m: PermMode) => void;
@@ -94,6 +103,14 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
   const [prefs, dispatch] = usePrefs();
   const [codeWrap, setCodeWrap] = useCodeWrap();
   const set = <K extends keyof Prefs>(key: K, value: Prefs[K]) => dispatch({ type: 'set', key, value });
+  const L = ui().settings;
+  // Drafts are already saved on every keystroke (drafts.ts), so reloading loses nothing typed.
+  const pickLang = (v: LangPref) => {
+    if (v === (prefs.lang ?? 'auto')) return;
+    set('lang', v);
+    if (v !== 'auto') onLanguage?.(v);
+    if ((v === 'auto' ? localeFromLanguages(navigator.languages ?? []) : v) !== getLocale()) reload();
+  };
   const [askConsent, setAskConsent] = useState(false);
   const single = claudeAccounts <= 1;
   const [askAuto, setAskAuto] = useState<EngineKind | null>(null);
@@ -134,6 +151,8 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
         <div className="settings-groups">
           <section {...section('screen')}>
             {heading('screen')}
+            <Seg<LangPref> label={L.language} value={prefs.lang ?? 'auto'} onPick={pickLang} options={[['auto', L.languageAuto], ['en', LANGUAGE_NAMES.en], ['ko', LANGUAGE_NAMES.ko]]} />
+            <Hint short={L.languageHint} />
             <Seg<Theme> label="테마" value={prefs.theme} onPick={(v) => set('theme', v)} options={[['system', '시스템'], ['light', '라이트'], ['dark', '다크']]} />
             <Seg<FontSize> label="글자 크기" value={prefs.fontSize} onPick={(v) => set('fontSize', v)} options={[['small', '작게'], ['normal', '보통'], ['large', '크게'], ['xlarge', '아주 크게']]} />
             <Seg<ChatWidth> label="채팅 폭" value={prefs.chatWidth} onPick={(v) => set('chatWidth', v)} options={[['narrow', '좁게'], ['wide', '넓게']]} />

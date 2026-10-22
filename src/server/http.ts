@@ -26,7 +26,7 @@ import { DEFAULT_HIGHLIGHT_HOURS, HIGHLIGHT_HOURS } from '../shared/highlights';
 import type { UsageService } from './usage/UsageService';
 import type { ClaudeProfileProbe, SetupStatus } from '../shared/setup-types';
 import { ProfileError } from './setup/profiles';
-import { PROFILE_TEXTS } from './setup/texts';
+import { profileTexts } from './setup/texts';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
 export type HttpDeps = {
@@ -375,7 +375,7 @@ export function createRequestHandler(deps: HttpDeps) {
           if (url.pathname === '/api/setup/profiles' && req.method === 'POST') {
             let body: { id?: unknown; label?: unknown } = {};
             try { body = JSON.parse(await readBody(req, 4096)) as typeof body; } catch { /* invalid below */ }
-            if (!body || typeof body.id !== 'string' || (body.label !== undefined && typeof body.label !== 'string')) { json(res, 400, { error: PROFILE_TEXTS.badRequest }); return; }
+            if (!body || typeof body.id !== 'string' || (body.label !== undefined && typeof body.label !== 'string')) { json(res, 400, { error: profileTexts().badRequest }); return; }
             const label = typeof body.label === 'string' && body.label.trim() ? body.label : undefined;
             try {
               const r = await setup.addProfile(body.id, label);

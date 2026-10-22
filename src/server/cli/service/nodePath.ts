@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { SERVICE_TEXTS as T } from '../../setup/texts';
+import { serviceTexts } from '../../setup/texts';
 
 const VERSION_MANAGERS = ['/.nvm/versions/', '/fnm/node-versions/', '/.fnm/', '/.volta/tools/image/', '/.asdf/installs/', '/mise/installs/', '/n/versions/'];
 const CELLAR_RE = /^(.*)\/Cellar\/(node(?:@\d+)?)\/[^/]+\/bin\/node$/;
@@ -17,14 +17,14 @@ export async function stableNodePath(o: {
   execPath: string; explicit?: string; platform?: NodeJS.Platform;
   realpath: (p: string) => string; exists: (p: string) => boolean; nodeVersion: (bin: string) => Promise<string | null>;
 }): Promise<{ node: string; warning?: string } | { error: string }> {
-  const warn = (o.platform ?? process.platform) === 'darwin' ? { warning: T.nodeTcc } : {};
+  const warn = (o.platform ?? process.platform) === 'darwin' ? { warning: serviceTexts().nodeTcc } : {};
   if (o.explicit) {
     const p = path.resolve(o.explicit);
-    if (!o.exists(p)) return { error: T.nodeMissing(p) };
+    if (!o.exists(p)) return { error: serviceTexts().nodeMissing(p) };
     const v = await o.nodeVersion(p);
     const m = major(v);
-    if (m === null) return { error: T.nodeMissing(p) };
-    if (m < 24) return { error: T.nodeOld(p, v!) };
+    if (m === null) return { error: serviceTexts().nodeMissing(p) };
+    if (m < 24) return { error: serviceTexts().nodeOld(p, v!) };
     return { node: p, ...warn };
   }
   let real: string;
@@ -36,8 +36,8 @@ export async function stableNodePath(o: {
       if (!o.exists(cand)) continue;
       try { if (o.realpath(cand) === real) return { node: cand, ...warn }; } catch { /* broken link */ }
     }
-    return { error: T.nodeCellarNoLink(real) };
+    return { error: serviceTexts().nodeCellarNoLink(real) };
   }
-  if (VERSION_MANAGERS.some((s) => real.includes(s) || o.execPath.includes(s))) return { error: T.nodeVersionManager(real) };
+  if (VERSION_MANAGERS.some((s) => real.includes(s) || o.execPath.includes(s))) return { error: serviceTexts().nodeVersionManager(real) };
   return { node: o.execPath, ...warn };
 }

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ACCOUNT_ID_RE, RESERVED_ACCOUNT_IDS, type Account, type AccountNames, type GeminiAccount, type Seat } from './accounts';
 import { GROK_MODELS, type AnyModel, type ClaudeModel, type CodexSandbox, type Effort, type EngineKind } from './models';
 import { PERM_MODES, type PermMode } from './permission';
+import { LOCALES, type Locale } from './locale';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from './session-types';
 import type { BgTaskInfo, PermissionDecision, Question, QuestionAnswers, TaskUpdate, TaskUsage, TurnPhase, TurnUsage } from './turn-types';
 import type { UsageSnapshot } from './usage-types';
@@ -120,7 +121,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('grok_unlock') }),
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional(),
     /** 자동 분배: engines 자동 may use, engines whose external-transfer card was accepted, Grok fast model. */
-    autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional() }),
+    autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional(),
+    /** The server's language, from a device's explicit pick (its 'auto' sends nothing). */ language: z.enum(LOCALES).optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
    * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),
@@ -180,7 +182,9 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
   /** 자동 uses Grok 4.7 Build Fast instead of Grok 4.7 (2× price; default off). */
   grokFast?: boolean;
   /** 백그라운드 작업 running at once before new ones wait (1–10, default 3). Absent from older servers. */
-  taskSoftCap?: number };
+  taskSoftCap?: number;
+  /** Server messages' language: the last explicit pick on any device. Absent / null = from the environment (DECK_LANG, LANG …). */
+  language?: Locale | null };
 
 /**
  * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;

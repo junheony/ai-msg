@@ -157,3 +157,15 @@ describe('runCli', () => {
 
   it('loginUrl encodes the token', () => expect(loginUrl(9320, 'a+b')).toBe('http://127.0.0.1:9320/#token=a%2Bb'));
 });
+
+describe('runCli language', () => {
+  it('--help follows the terminal language', async () => {
+    const env = { HOME: os.tmpdir(), PATH: '' };
+    const e = fakeIo({ ...env, LANG: 'en_US.UTF-8' });
+    expect(await runCli(['--help'], e)).toBe(0);
+    expect(e.outText().split('\n')[0]).toBe('Usage: ai-msg [command] [options]');
+    const k = fakeIo({ ...env, LANG: 'ko_KR.UTF-8' });
+    expect(await runCli(['--help'], k)).toBe(0);
+    expect(k.outText().split('\n')[0]).toBe('사용법: ai-msg [명령] [옵션]');
+  });
+});

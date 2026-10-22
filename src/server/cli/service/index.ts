@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { commandOfPid, pidAlive, readInstanceLock } from '../../instanceLock';
 import { RELAUNCH_LOOP_RE } from '../../serverUpdate';
-import { SERVICE_TEXTS as T } from '../../setup/texts';
+import { serviceTexts } from '../../setup/texts';
 import type { CliCommand } from '../args';
 import { launchAgentPlist, parseLaunchctlPid } from './launchd';
 import { stableNodePath } from './nodePath';
@@ -100,7 +100,7 @@ function systemdManager(d: ServiceDeps, previous: string[]): Manager {
     previous,
     logFile: `journalctl --user -u ${unit(SERVICE_NAME)}`,
     render: (r) => systemdUnit(r, envFile(r.configDir)),
-    preflight: async () => ((await d.run('systemctl', ['--user', 'show-environment'])).code === 0 ? null : T.noUserBus),
+    preflight: async () => ((await d.run('systemctl', ['--user', 'show-environment'])).code === 0 ? null : serviceTexts().noUserBus),
     legacy: async () => null,
     loaded: async () => false,
     // restart/stop are queued (--no-block): the old server may drain for up to TimeoutStopSec, longer than any exec timeout.
@@ -134,12 +134,12 @@ function launchdManager(d: ServiceDeps, previous: string[]): Manager {
     previous,
     logFile: path.join(d.configDir, 'ai-msg.log'),
     render: (r) => launchAgentPlist(r, { label: LAUNCHD_LABEL, logFile: path.join(r.configDir, 'ai-msg.log') }),
-    preflight: async () => ((await d.run('launchctl', ['print', domain])).code === 0 ? null : T.noGui),
+    preflight: async () => ((await d.run('launchctl', ['print', domain])).code === 0 ? null : serviceTexts().noGui),
     legacy: async (dryRun) => {
-      if (exists(fileOf(LEGACY_LAUNCHD_LABEL))) return T.legacy;
+      if (exists(fileOf(LEGACY_LAUNCHD_LABEL))) return serviceTexts().legacy;
       const loopPid = Number((readText(path.join(d.configDir, 'relaunch.pid')) ?? '').trim());
-      if (Number.isInteger(loopPid) && loopPid > 0 && isAlive(loopPid) && RELAUNCH_LOOP_RE.test(commandOf(loopPid) ?? '')) return T.legacy;
-      if (!dryRun && (await d.run('launchctl', ['print', target(LEGACY_LAUNCHD_LABEL)])).code === 0) return T.legacy;
+      if (Number.isInteger(loopPid) && loopPid > 0 && isAlive(loopPid) && RELAUNCH_LOOP_RE.test(commandOf(loopPid) ?? '')) return serviceTexts().legacy;
+      if (!dryRun && (await d.run('launchctl', ['print', target(LEGACY_LAUNCHD_LABEL)])).code === 0) return serviceTexts().legacy;
       return null;
     },
     loaded: async (n) => (await d.run('launchctl', ['print', target(n)])).code === 0,
@@ -164,7 +164,7 @@ function launchdManager(d: ServiceDeps, previous: string[]): Manager {
 
 /** `ai-msg service <install|uninstall|status|restart>`. Resolves with the exit code. */
 export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }>, d: ServiceDeps): Promise<number> {
-  if (d.platform !== 'linux' && d.platform !== 'darwin') { d.err(T.windows); return 1; }
+  if (d.platform !== 'linux' && d.platform !== 'darwin') { d.err(serviceTexts().windows); return 1; }
   const m = d.platform === 'linux'
     ? systemdManager(d, d.previousNames ?? PREVIOUS_UNIT_NAMES)
     : launchdManager(d, d.previousNames ?? PREVIOUS_LAUNCHD_LABELS);
@@ -174,7 +174,7 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
   const exec = async (c: Cmd, timeoutMs?: number): Promise<boolean> => {
     const r = await (timeoutMs === undefined ? d.run(c[0]!, c.slice(1)) : d.run(c[0]!, c.slice(1), { timeoutMs }));
     if (r.code === 0) return true;
-    d.err(T.commandFailed(show(c), r.code, (r.stderr.split('\n').find((l) => l.trim()) ?? '').trim().slice(0, 200)));
+    d.err(serviceTexts().commandFailed(show(c), r.code, (r.stderr.split('\n').find((l) => l.trim()) ?? '').trim().slice(0, 200)));
     return false;
   };
   const execAll = async (cs: Cmd[], timeoutMs?: number): Promise<boolean> => {
@@ -193,9 +193,9 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
   const waitStopped = (name: string, limitSec: number) => waitFor(() => m.stopped(name), limitSec);
   const confirm = async (q: string): Promise<boolean | null> => {
     if (cmd.yes) return true;
-    if (!d.isTTY) { d.err(T.needConfirm); return null; }
+    if (!d.isTTY) { d.err(serviceTexts().needConfirm); return null; }
     if (await d.ask(q)) return true;
-    d.err(T.cancelled);
+    d.err(serviceTexts().cancelled);
     return false;
   };
   /** Old names (PREVIOUS_*): only files carrying our marker are taken down and deleted. */
@@ -206,11 +206,11 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       if (text === null || !hasMarker(text)) continue;
       if (m.kind === 'systemd' || (await m.loaded(name))) {
         if (!(await execAll(m.downSteps(name), stopTimeoutMs(1800)))) return false;
-        if (!(await waitStopped(name, 1800))) { d.err(T.notStopped(file)); return false; }
+        if (!(await waitStopped(name, 1800))) { d.err(serviceTexts().notStopped(file)); return false; }
       }
       fs.rmSync(file, { force: true });
       if (!(await execAll(m.afterRemove))) return false;
-      d.out(T.previousRemoved(name));
+      d.out(serviceTexts().previousRemoved(name));
     }
     return true;
   };
@@ -221,7 +221,7 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
     const exists = d.exists ?? fs.existsSync;
     let realBin = d.bin;
     try { realBin = realpath(d.bin); } catch { /* as given */ }
-    if (realBin.includes('/_npx/') || d.bin.includes('/_npx/')) { d.err(T.npxCache); return 1; }
+    if (realBin.includes('/_npx/') || d.bin.includes('/_npx/')) { d.err(serviceTexts().npxCache); return 1; }
     const node = await stableNodePath({ execPath: d.execPath, explicit: cmd.node, platform: d.platform, realpath, exists, nodeVersion: d.nodeVersion ?? (async () => null) });
     if ('error' in node) { d.err(node.error); return 1; }
     if (!cmd.dryRun) {
@@ -231,12 +231,12 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
     const legacy = await m.legacy(cmd.dryRun);
     if (legacy) { d.err(legacy); return 1; }
     const prevUnit = readText(file);
-    if (prevUnit !== null && !hasMarker(prevUnit)) { d.err(T.notOurs(file)); return 1; }
+    if (prevUnit !== null && !hasMarker(prevUnit)) { d.err(serviceTexts().notOurs(file)); return 1; }
     const port = cmd.port ?? d.port;
     const holder = readInstanceLock(d.configDir, d.isAlive ?? pidAlive);
     const prevRecord = readServiceRecord(d.configDir);
-    if (holder && holder.supervisor !== m.kind) { d.err(T.lockHeld(holder.pid, holder.port)); return 1; }
-    if (!holder && (await d.portBusy(port))) { d.err(T.portBusy(port)); return 1; }
+    if (holder && holder.supervisor !== m.kind) { d.err(serviceTexts().lockHeld(holder.pid, holder.port)); return 1; }
+    if (!holder && (await d.portBusy(port))) { d.err(serviceTexts().portBusy(port)); return 1; }
 
     const { record, warnings } = buildServiceRecord({
       platform: d.platform, env: d.env, home: d.home, configDir: d.configDir, port, node: node.node, bin: realBin,
@@ -252,14 +252,14 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       [file, unitText],
     ];
     const steps = [...(m.needsUnloadFirst && (cmd.dryRun ? reinstall : await m.loaded(m.current)) ? m.downSteps(m.current) : []), ...m.upSteps(reinstall)];
-    if (cmd.dryRun) d.out(T.dryRunHead);
-    for (const [f, text] of files) { d.out(T.fileHead(f)); d.out(text.trimEnd()); }
-    d.out(T.commandsHead);
+    if (cmd.dryRun) d.out(serviceTexts().dryRunHead);
+    for (const [f, text] of files) { d.out(serviceTexts().fileHead(f)); d.out(text.trimEnd()); }
+    d.out(serviceTexts().commandsHead);
     for (const c of steps) d.out(`  ${show(c)}`);
-    d.out(T.nodeLine(node.node));
-    for (const w of [...(node.warning ? [node.warning] : []), ...warnings]) d.out(T.warning(w));
-    if (cmd.dryRun) { d.out(T.dryRunNoProbe); return 0; }
-    const ok = await confirm(T.askInstall);
+    d.out(serviceTexts().nodeLine(node.node));
+    for (const w of [...(node.warning ? [node.warning] : []), ...warnings]) d.out(serviceTexts().warning(w));
+    if (cmd.dryRun) { d.out(serviceTexts().dryRunNoProbe); return 0; }
+    const ok = await confirm(serviceTexts().askInstall);
     if (ok !== true) return 1;
     if (!(await cleanPrevious())) return 1;
 
@@ -270,10 +270,10 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       const tryCmd = async (c: Cmd) => { if (!(await exec(c))) problems.push(show(c)); };
       // A queued systemd job (restart --no-block, a drain in progress) finishes first: never act on top of it.
       const settled = await waitFor(() => m.settled(m.current), Math.max(prevStopSec, stopTimeoutSec(record)));
-      if (!settled) problems.push(T.notStopped(file));
+      if (!settled) problems.push(serviceTexts().notStopped(file));
       if (settled && (m.kind === 'systemd' ? !reinstall : await m.loaded(m.current))) {
         for (const c of m.downSteps(m.current)) await tryCmd(c);
-        if (!(await waitStopped(m.current, stopTimeoutSec(record)))) problems.push(T.notStopped(file));
+        if (!(await waitStopped(m.current, stopTimeoutSec(record)))) problems.push(serviceTexts().notStopped(file));
       }
       for (const [f, text] of before) {
         try {
@@ -283,7 +283,7 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       }
       for (const c of m.afterRemove) await tryCmd(c);
       if (reinstall && settled) for (const c of m.kind === 'systemd' ? [['systemctl', '--user', 'restart', '--no-block', `${SERVICE_NAME}.service`]] : m.upSteps(true)) await tryCmd(c);
-      d.err(problems.length ? T.rollbackFailed(problems.join('; ')) : T.rolledBack);
+      d.err(problems.length ? serviceTexts().rollbackFailed(problems.join('; ')) : serviceTexts().rolledBack);
       return 1;
     };
 
@@ -295,12 +295,12 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
         fs.chmodSync(f, f === file ? 0o644 : 0o600);
       }
     } catch (e) {
-      d.err(T.writeFailed(file, e instanceof Error ? e.message : String(e)));
+      d.err(serviceTexts().writeFailed(file, e instanceof Error ? e.message : String(e)));
       return rollback();
     }
     if (m.needsUnloadFirst && (await m.loaded(m.current))) {
       if (!(await execAll(m.downSteps(m.current), stopTimeoutMs(prevStopSec)))) return rollback();
-      if (!(await waitStopped(m.current, prevStopSec))) { d.err(T.notStopped(file)); return rollback(); }
+      if (!(await waitStopped(m.current, prevStopSec))) { d.err(serviceTexts().notStopped(file)); return rollback(); }
     }
     if (!(await execAll(m.upSteps(reinstall)))) return rollback();
 
@@ -317,58 +317,58 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       }
       await sleep(POLL_MS);
     }
-    if (!verified) { d.err(T.notVerified(m.logFile)); return rollback(); }
-    d.out(T.installed(record.port));
-    if (m.kind === 'systemd') d.out(T.lingerHint);
-    else d.out(T.tccHint(record.node));
+    if (!verified) { d.err(serviceTexts().notVerified(m.logFile)); return rollback(); }
+    d.out(serviceTexts().installed(record.port));
+    if (m.kind === 'systemd') d.out(serviceTexts().lingerHint);
+    else d.out(serviceTexts().tccHint(record.node));
     return 0;
   }
 
   if (cmd.action === 'uninstall') {
     const text = readText(file);
-    if (text !== null && !hasMarker(text)) { d.err(T.notOurs(file)); return 1; }
+    if (text !== null && !hasMarker(text)) { d.err(serviceTexts().notOurs(file)); return 1; }
     const rec = readServiceRecord(d.configDir);
     const limit = stopTimeoutSec({ drainMaxMin: rec?.drainMaxMin ?? 28 });
     const targets = [file, recordFile(d.configDir), envFile(d.configDir)];
     const steps = text === null ? [] : [...m.downSteps(m.current), ...m.afterRemove];
     if (cmd.dryRun) {
-      d.out(T.dryRunHead);
-      for (const f of targets) d.out(T.fileHead(f));
-      d.out(T.commandsHead);
+      d.out(serviceTexts().dryRunHead);
+      for (const f of targets) d.out(serviceTexts().fileHead(f));
+      d.out(serviceTexts().commandsHead);
       for (const c of steps) d.out(`  ${show(c)}`);
-      d.out(T.dataKept(d.configDir));
+      d.out(serviceTexts().dataKept(d.configDir));
       return 0;
     }
     const pre = await m.preflight();
     if (pre) { d.err(pre); return 1; }
-    const ok = await confirm(T.askUninstall);
+    const ok = await confirm(serviceTexts().askUninstall);
     if (ok !== true) return 1;
     if (!(await cleanPrevious())) return 1;
     if (text !== null) {
       if ((m.kind === 'systemd' || (await m.loaded(m.current))) && !(await execAll(m.downSteps(m.current), stopTimeoutMs(limit)))) return 1;
-      if (!(await waitStopped(m.current, limit))) { d.err(T.notStopped(file)); return 1; }
+      if (!(await waitStopped(m.current, limit))) { d.err(serviceTexts().notStopped(file)); return 1; }
     } else {
-      d.out(T.notInstalled);
+      d.out(serviceTexts().notInstalled);
       // The plist is gone but launchd still has our label loaded (deleted by hand): take it down, our label only.
       if (m.kind === 'launchd' && (await m.loaded(m.current))) {
         if (!(await execAll(m.downSteps(m.current), stopTimeoutMs(limit)))) return 1;
-        if (!(await waitStopped(m.current, limit))) { d.err(T.notStopped(file)); return 1; }
-        d.out(T.orphanUnloaded(m.current));
+        if (!(await waitStopped(m.current, limit))) { d.err(serviceTexts().notStopped(file)); return 1; }
+        d.out(serviceTexts().orphanUnloaded(m.current));
       }
     }
     for (const f of targets) fs.rmSync(f, { force: true });
     if (text !== null && !(await execAll(m.afterRemove))) return 1;
-    if (text !== null) d.out(T.uninstalled);
-    d.out(T.dataKept(d.configDir));
+    if (text !== null) d.out(serviceTexts().uninstalled);
+    d.out(serviceTexts().dataKept(d.configDir));
     return 0;
   }
 
   const text = readText(file);
   if (cmd.action === 'restart') {
-    if (text === null) { d.err(T.notInstalled); return 1; }
-    if (!hasMarker(text)) { d.err(T.notOurs(file)); return 1; }
+    if (text === null) { d.err(serviceTexts().notInstalled); return 1; }
+    if (!hasMarker(text)) { d.err(serviceTexts().notOurs(file)); return 1; }
     const systemdRestart: Cmd = ['systemctl', '--user', 'restart', '--no-block', `${SERVICE_NAME}.service`];
-    if (cmd.dryRun) { d.out(T.dryRunHead); d.out(T.commandsHead); d.out(`  ${m.kind === 'systemd' ? show(systemdRestart) : T.launchdRestartPlan}`); return 0; }
+    if (cmd.dryRun) { d.out(serviceTexts().dryRunHead); d.out(serviceTexts().commandsHead); d.out(`  ${m.kind === 'systemd' ? show(systemdRestart) : serviceTexts().launchdRestartPlan}`); return 0; }
     const pre = await m.preflight();
     if (pre) { d.err(pre); return 1; }
     if (m.kind === 'systemd') {
@@ -379,26 +379,26 @@ export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }
       const pid = await m.mainPid();
       const lock = readInstanceLock(d.configDir, d.isAlive ?? pidAlive);
       if (pid !== null && lock?.pid === pid && lock.supervisor === 'launchd') {
-        try { (d.kill ?? process.kill.bind(process))(pid, 'SIGTERM'); } catch (e) { d.err(T.commandFailed(`kill -TERM ${pid}`, 1, e instanceof Error ? e.message : String(e))); return 1; }
+        try { (d.kill ?? process.kill.bind(process))(pid, 'SIGTERM'); } catch (e) { d.err(serviceTexts().commandFailed(`kill -TERM ${pid}`, 1, e instanceof Error ? e.message : String(e))); return 1; }
       } else if (!(await exec(['launchctl', 'kickstart', ...(pid !== null ? ['-k'] : []), `gui/${d.uid}/${LAUNCHD_LABEL}`]))) {
         return 1;
       }
     }
-    d.out(T.restarted);
+    d.out(serviceTexts().restarted);
     return 0;
   }
 
   // status: the unit/plist, the record, the running instance (lock) and the package on disk, side by side.
-  if (text === null) d.out(T.notInstalled);
-  else if (!hasMarker(text)) d.out(T.notOurs(file));
-  else d.out(T.statusUnit(file, cmd.dryRun ? '?' : await m.state()));
+  if (text === null) d.out(serviceTexts().notInstalled);
+  else if (!hasMarker(text)) d.out(serviceTexts().notOurs(file));
+  else d.out(serviceTexts().statusUnit(file, cmd.dryRun ? '?' : await m.state()));
   const rec = readServiceRecord(d.configDir);
-  d.out(rec ? T.statusRecord(rec.node, rec.bin, rec.port, rec.drainMaxMin) : T.statusNoRecord);
+  d.out(rec ? serviceTexts().statusRecord(rec.node, rec.bin, rec.port, rec.drainMaxMin) : serviceTexts().statusNoRecord);
   const lock = readInstanceLock(d.configDir, d.isAlive ?? pidAlive);
-  d.out(lock ? T.statusLock(lock.pid, lock.port, lock.version, lock.supervisor) : T.statusNoLock);
+  d.out(lock ? serviceTexts().statusLock(lock.pid, lock.port, lock.version, lock.supervisor) : serviceTexts().statusNoLock);
   const disk = d.packageVersion?.() ?? null;
-  if (disk) d.out(T.statusDisk(disk));
-  if (rec && lock && rec.port !== lock.port) d.out(T.warning(T.statusPortMismatch(rec.port, lock.port)));
-  if (lock && disk && lock.version && lock.version !== disk) d.out(T.warning(T.statusMismatch));
+  if (disk) d.out(serviceTexts().statusDisk(disk));
+  if (rec && lock && rec.port !== lock.port) d.out(serviceTexts().warning(serviceTexts().statusPortMismatch(rec.port, lock.port)));
+  if (lock && disk && lock.version && lock.version !== disk) d.out(serviceTexts().warning(serviceTexts().statusMismatch));
   return 0;
 }

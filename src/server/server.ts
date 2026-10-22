@@ -11,7 +11,9 @@ import { bindAddresses, tailscaleDnsName, tailscaleIPv4s } from './bind';
 import { loadConfig, repoRootDefault, type DeckConfig } from './config';
 import { acquireInstanceLock, commandOfPid } from './instanceLock';
 import { ChildRegistry, groupAlive, killGroup, processStartMs } from './childRegistry';
-import { TEXTS } from './setup/texts';
+import { texts } from './setup/texts';
+import { setLocale } from '../shared/locale';
+import { resolveServerLocale } from './i18n';
 import { SetupService } from './setup/SetupService';
 import { SetupStore, existingInstall } from './setup/SetupStore';
 import { ClaudeEngine } from './engine/ClaudeEngine';
@@ -115,7 +117,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
   // Placeholder until everything below is ready; swapped for the real handler at the end.
   let handler: http.RequestListener = (_req, res) => {
     res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '2', 'cache-control': 'no-store' });
-    res.end(TEXTS.starting);
+    res.end(texts().starting);
   };
   const bound = addresses.map((address) => ({ address, server: http.createServer((req, res) => handler(req, res)) }));
   const servers = bound.map((b) => b.server);
@@ -177,6 +179,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const pushSubs = new SubscriptionStore(cfg.pushSubscriptionsFile);
     // Codex rollouts (~1000 files) are read after listening; the sidebar is told when they are in.
     await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), settings.load(), pushSubs.load(), tasks.load(), memory.load()]);
+    // Server messages: the last explicit pick from a device, else the environment (LANG …).
+    setLocale(resolveServerLocale(settings.get(), process.env));
     const commands = new SlashCommandCache();
     const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries(), { all: true }).flatMap((p) => p.sessions) });
     // /api/file never previews deck's own config (token, VAPID key, push subscriptions), even with the cwd at ~.

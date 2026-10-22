@@ -328,3 +328,43 @@ describe('SettingsView 4그룹', () => {
     expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).fontSize).toBe('xlarge');
   });
 });
+
+describe('SettingsView 언어', () => {
+  afterEach(cleanup);
+  const langGroup = () => screen.getByRole('group', { name: '언어 · Language' });
+
+  it('picking English saves the pref, tells the server, and reloads', () => {
+    const onLanguage = vi.fn();
+    const reload = vi.fn();
+    render(<SettingsView build={null} onLanguage={onLanguage} reload={reload} onClose={noop} />);
+    fireEvent.click(within(langGroup()).getByRole('button', { name: 'English' }));
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).lang).toBe('en');
+    expect(onLanguage).toHaveBeenCalledWith('en');
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('picking Auto does not change the server language', () => {
+    const onLanguage = vi.fn();
+    const reload = vi.fn();
+    render(<SettingsView build={null} onLanguage={onLanguage} reload={reload} onClose={noop} />);
+    fireEvent.click(within(langGroup()).getByRole('button', { name: '자동' }));
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).lang).toBe('auto');
+    expect(onLanguage).not.toHaveBeenCalled();
+  });
+
+  it('picking the current language does nothing', () => {
+    const onLanguage = vi.fn();
+    const reload = vi.fn();
+    render(<SettingsView build={null} onLanguage={onLanguage} reload={reload} onClose={noop} />);
+    fireEvent.click(within(langGroup()).getByRole('button', { name: '한국어' }));
+    expect(onLanguage).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('the language row is a 3-way segment (SEG_MAX), language names in their own language', () => {
+    render(<SettingsView build={null} onClose={noop} />);
+    const names = within(langGroup()).getAllByRole('button').map((b) => b.textContent);
+    expect(names).toEqual(['자동', 'English', '한국어']);
+    expect(names.length).toBeLessThanOrEqual(SEG_MAX);
+  });
+});

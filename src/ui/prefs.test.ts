@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PREFS, FONT_SCALE, PREFS_KEY, applyPrefs, loadPrefs, nextTheme, parsePrefs, prefsReducer, savePrefs } from './prefs';
+import { initUiLocale, ui } from './i18n';
+import { getLocale } from '../shared/locale';
 
 const mem = (init: Record<string, string> = {}) => {
   const m = new Map(Object.entries(init));
@@ -72,5 +74,25 @@ describe('nextTheme', () => {
     expect(nextTheme('system')).toBe('light');
     expect(nextTheme('light')).toBe('dark');
     expect(nextTheme('dark')).toBe('system');
+  });
+});
+
+describe('lang pref', () => {
+  it('lang defaults to auto (absent) and rejects unknown values', () => {
+    expect(parsePrefs(null).lang ?? 'auto').toBe('auto');
+    expect(parsePrefs('{"lang":"fr"}').lang ?? 'auto').toBe('auto');
+    expect(parsePrefs('{"lang":"ko"}').lang).toBe('ko');
+    expect(prefsReducer(DEFAULT_PREFS, { type: 'set', key: 'lang', value: 'en' }).lang).toBe('en');
+    expect(prefsReducer(DEFAULT_PREFS, { type: 'set', key: 'lang', value: 'fr' as never })).toBe(DEFAULT_PREFS);
+  });
+
+  it('initUiLocale: auto follows the browser and sets <html lang>', () => {
+    const root = { lang: '' } as HTMLElement;
+    expect(initUiLocale('auto', ['ko-KR'], root)).toBe('ko');
+    expect(root.lang).toBe('ko');
+    expect(getLocale()).toBe('ko');
+    expect(initUiLocale('en', ['ko-KR'], root)).toBe('en');
+    expect(root.lang).toBe('en');
+    expect(ui().login.submit).toBe('Log in');
   });
 });

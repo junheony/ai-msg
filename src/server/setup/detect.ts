@@ -9,7 +9,7 @@ import type { DeckConfig } from '../config';
 import { MIN_CLAUDE_VERSION } from '../engine/claudeCli/version';
 import { grokEnv } from '../engine/grokEnv';
 import { stripSupervisorEnv } from '../supervisorEnv';
-import { PROBE_TEXTS, loginCommandFor, missingBinNote } from './texts';
+import { probeTexts, loginCommandFor, missingBinNote } from './texts';
 
 export type ProbeResult = { code: number | null; stdout: string; timedOut: boolean; spawnError?: 'ENOENT' | 'EACCES' | 'OTHER' };
 export type ProbeExec = (bin: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number) => Promise<ProbeResult>;
@@ -110,8 +110,8 @@ export function parseGrokModels(stdout: string): LoginState {
 
 /** A run that said nothing usable about login: why (never reported as logged out). */
 function failure(r: ProbeResult, timeoutMs: number): string | null {
-  if (r.spawnError) return PROBE_TEXTS.spawnFailed(r.spawnError);
-  if (r.timedOut) return PROBE_TEXTS.timedOut(Math.round(timeoutMs / 1000));
+  if (r.spawnError) return probeTexts().spawnFailed(r.spawnError);
+  if (r.timedOut) return probeTexts().timedOut(Math.round(timeoutMs / 1000));
   return null;
 }
 
@@ -168,7 +168,7 @@ export async function probeEngines(o: {
     const login: LoginState = active.some((p) => p.login === 'yes') ? 'yes' : active.length > 0 && active.every((p) => p.login === 'no') ? 'no' : 'unknown';
     claude = { engine: 'claude', bin: cb.bin, version: cb.version, login, loginCommand: loginCommandFor('claude') };
   } else if (cb.reason === 'too_old') {
-    claude = { engine: 'claude', bin: cb.bin, version: cb.version, login: 'unknown', loginCommand: loginCommandFor('claude'), note: PROBE_TEXTS.claudeTooOld(cb.version, MIN_CLAUDE_VERSION) };
+    claude = { engine: 'claude', bin: cb.bin, version: cb.version, login: 'unknown', loginCommand: loginCommandFor('claude'), note: probeTexts().claudeTooOld(cb.version, MIN_CLAUDE_VERSION) };
   } else {
     claude = missing('claude');
   }

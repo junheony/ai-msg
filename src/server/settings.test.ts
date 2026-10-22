@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { SettingsStore } from './settings';
+import { resolveServerLocale } from './i18n';
 
 /** 자동 분배 defaults: every engine, no external-transfer consent, Grok 4.7 (not Fast). */
 const AUTO = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 };
@@ -134,5 +135,32 @@ describe('SettingsStore', () => {
     const again = new SettingsStore(file);
     await again.load();
     expect(again.get()).toMatchObject({ autoEngines: ['claude', 'codex'], autoConsent: ['grok'], grokFast: false });
+  });
+});
+
+describe('SettingsStore language', () => {
+  it('language: absent by default, persisted when set, invalid value ignored, null clears', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-set-'));
+    const file = path.join(dir, 'settings.json');
+    const s = new SettingsStore(file);
+    await s.load();
+    expect(s.get().language).toBeUndefined();
+    expect((await s.set({ language: 'en' })).language).toBe('en');
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).language).toBe('en');
+    expect((await s.set({ routingPolicy: 'drain' })).language).toBe('en');
+    const again = new SettingsStore(file);
+    await again.load();
+    expect(again.get().language).toBe('en');
+    await fs.writeFile(file, JSON.stringify({ language: 'fr' }));
+    await again.load();
+    expect(again.get().language).toBeUndefined();
+    await again.set({ language: 'ko' });
+    expect((await again.set({ language: null })).language).toBeUndefined();
+  });
+
+  it('resolveServerLocale: explicit setting wins over env', () => {
+    expect(resolveServerLocale({ language: null }, { LANG: 'ko_KR.UTF-8' })).toBe('ko');
+    expect(resolveServerLocale({}, { LANG: 'en_US.UTF-8' })).toBe('en');
+    expect(resolveServerLocale({ language: 'en' }, { LANG: 'ko_KR.UTF-8' })).toBe('en');
   });
 });

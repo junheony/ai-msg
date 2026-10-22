@@ -13,7 +13,8 @@ import { InstanceLockedError, readInstanceLock } from '../instanceLock';
 import { resolveConfigDir } from '../paths';
 import { PortInUseError, packageVersion, startServer } from '../server';
 import { probeEngines, type ProbeExec } from '../setup/detect';
-import { TEXTS } from '../setup/texts';
+import { texts } from '../setup/texts';
+import { getLocale, localeFromEnv, setLocale } from '../../shared/locale';
 import { parseCli } from './args';
 import { formatDoctor } from './doctor';
 import { serviceAction, type RunResult, type ServiceDeps } from './service/index';
@@ -34,10 +35,10 @@ function readToken(file: string): string | null {
 
 /** A start failure → one line (conflicts never signal the other server). */
 export function startErrorLine(err: unknown): string {
-  if (err instanceof PortInUseError) return TEXTS.portInUse(err.port);
-  if (err instanceof InstanceLockedError) return err.reason === 'relaunch-loop' ? TEXTS.relaunchLoop(err.configDir) : TEXTS.instanceLocked(err.configDir, err.holder?.pid ?? null, err.holder?.port ?? null);
+  if (err instanceof PortInUseError) return texts().portInUse(err.port);
+  if (err instanceof InstanceLockedError) return err.reason === 'relaunch-loop' ? texts().relaunchLoop(err.configDir) : texts().instanceLocked(err.configDir, err.holder?.pid ?? null, err.holder?.port ?? null);
   if (err instanceof AccountsFileError) return err.message;
-  return TEXTS.startFailed(err instanceof Error ? err.message : String(err));
+  return texts().startFailed(err instanceof Error ? err.message : String(err));
 }
 
 /** Start failures a restart cannot fix → FATAL_EXIT_CODE (the service manager stops retrying, or retries slowly). */
@@ -91,12 +92,14 @@ function serviceDeps(io: CliIo, home: string): ServiceDeps {
 
 /** The `ai-msg` command. Resolves with the exit code; `start` resolves once the server is up (it keeps running). */
 export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { start?: typeof startServer; probeExec?: ProbeExec; service?: Partial<ServiceDeps>; sleep?: (ms: number) => Promise<void> } = {}): Promise<number> {
+  // --help, doctor and service speak the terminal's language; start decides again once the server has read its settings.
+  setLocale(localeFromEnv(io.env, getLocale()));
   const cmd = parseCli(argv);
   const home = io.env.HOME || os.homedir();
   switch (cmd.kind) {
     case 'version': io.out(packageVersion()); return 0;
-    case 'help': io.out(TEXTS.help); return 0;
-    case 'error': io.err(TEXTS.badArgs(cmd.message)); return 2;
+    case 'help': io.out(texts().help); return 0;
+    case 'error': io.err(texts().badArgs(cmd.message)); return 2;
     case 'doctor': {
       try {
         const cfg = loadConfig(io.env, home);
@@ -121,8 +124,8 @@ export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { st
       }
       const tokenFile = path.join(configDir, 'token');
       const token = readToken(tokenFile);
-      if (!token) { io.err(TEXTS.noToken(tokenFile)); return 1; }
-      if (!running) io.err(TEXTS.notRunning(port));
+      if (!token) { io.err(texts().noToken(tokenFile)); return 1; }
+      if (!running) io.err(texts().notRunning(port));
       io.out(loginUrl(port, token));
       return 0;
     }
@@ -144,7 +147,7 @@ export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { st
           onListening: (info) => {
             // The address carries the token: printed on a terminal only, never into a service log.
             const token = io.isTTY ? readToken(info.tokenFile) : null;
-            io.out(token ? TEXTS.loginUrlLine(loginUrl(info.port, token)) : TEXTS.tokenFileLine(info.tokenFile));
+            io.out(token ? texts().loginUrlLine(loginUrl(info.port, token)) : texts().tokenFileLine(info.tokenFile));
           },
         });
         return 0;
@@ -153,7 +156,7 @@ export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { st
         if (!isFatalStart(err)) return 1;
         // launchd's KeepAlive cannot skip an exit code: waiting here stretches its 10 s restart loop to minutes.
         if (launchd) {
-          io.err(TEXTS.fatalBackoff(FATAL_LAUNCHD_DELAY_SEC));
+          io.err(texts().fatalBackoff(FATAL_LAUNCHD_DELAY_SEC));
           await (deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))))(FATAL_LAUNCHD_DELAY_SEC * 1000);
         }
         return FATAL_EXIT_CODE;

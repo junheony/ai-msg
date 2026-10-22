@@ -2,7 +2,9 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { ClaudeProfileProbe, EngineProbe, LoginState, SetupStatus } from '../../shared/setup-types';
 import type { SessionActivity } from '../../shared/protocol';
 import { addProfile, getSetup, markSetupDone, refreshSetup, restartServer } from '../setupApi';
-import { ENGINE_NAME, LOGIN_LABEL, SETUP_TEXTS as T } from '../setupTexts';
+import { ENGINE_NAME, SETUP_TEXTS as T } from '../setupTexts';
+import { shared } from '../../shared/messages';
+import { ui } from '../i18n';
 import { RESTART_WAIT_WARNING, restartConfirmText } from './ActivitySheet';
 import { CopyButton } from './CopyButton';
 import { Sheet, SheetHead } from './Dialogs';
@@ -24,7 +26,7 @@ function Command({ cmd }: { cmd: string }) {
   return (
     <div className="setup-cmd">
       <code>{cmd}</code>
-      <CopyButton text={cmd} label={T.copy(cmd)} caption="복사" className="btn ghost setup-copy" />
+      <CopyButton text={cmd} label={T.copy(cmd)} caption={ui().common.copy} className="btn ghost setup-copy" />
     </div>
   );
 }
@@ -36,7 +38,7 @@ function EngineRow({ e }: { e: EngineProbe }) {
       <div className="setup-row-main">
         <span className="setup-name">{ENGINE_NAME[e.engine]}</span>
         {installed && <span className="setup-meta">{e.version ?? T.noVersion}</span>}
-        {installed ? <State tone={LOGIN_TONE[e.login]}>{LOGIN_LABEL[e.login]}</State> : <State tone="warn">{T.notInstalled}</State>}
+        {installed ? <State tone={LOGIN_TONE[e.login]}>{shared().loginState[e.login]}</State> : <State tone="warn">{T.notInstalled}</State>}
       </div>
       {e.note && <p className="setup-note">{e.note}</p>}
       {installed && e.login === 'no' && <Command cmd={e.loginCommand} />}
@@ -51,7 +53,7 @@ function ProfileRow({ p, restartNeeded }: { p: ClaudeProfileProbe; restartNeeded
         <span className="setup-name">{p.label}</span>
         {p.home && <span className="setup-badge">{T.profileHome}</span>}
         <span className="setup-meta setup-dir">{p.dir}</span>
-        {p.active ? <State tone={LOGIN_TONE[p.login]}>{LOGIN_LABEL[p.login]}</State> : <State tone="muted">{restartNeeded ? T.profileNext : T.profileOff}</State>}
+        {p.active ? <State tone={LOGIN_TONE[p.login]}>{shared().loginState[p.login]}</State> : <State tone="muted">{restartNeeded ? T.profileNext : T.profileOff}</State>}
       </div>
       {p.login === 'no' && <Command cmd={p.loginCommand} />}
     </li>
