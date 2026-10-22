@@ -2164,10 +2164,30 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) .session-meta { color: var(--muted); }
 @media (hover: hover) { .sidebar li.session-item:hover .session-meta { color: var(--muted); } }
 .session-rename { min-width: 0; height: 24px; padding: 0 6px; border-radius: var(--r-xs); border: 1px solid var(--accent); background: var(--bg); color: var(--fg); font: inherit; font-size: calc(var(--fs-body) * var(--font-scale, 1)); outline: none; }
-/* Avatar: 40px circle, the project's palette colour behind the session's line glyph (SessionIcon, --avatar-glyph;
-   decorative — the title and tooltip name the session and project). */
-.row-avatar { flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
+/* Avatar: 40px circle, the project's palette colour behind the title's first letter (two when a neighbour clashes) or
+   the icon the user chose (SessionIcon, --avatar-glyph; decorative — the title and tooltip name the session and project).
+   --av-size drives the letters: one ≈ 50% of the circle, two ≈ 38%, an emoji ≈ 55%. */
+.row-avatar { --av-size: 40px; flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
 .row-avatar-icon { display: block; width: 28px; height: 28px; }
+.avatar-mono { display: block; font-size: calc(var(--av-size) * .5); font-weight: 650; line-height: 1; letter-spacing: -.02em; text-align: center; white-space: nowrap; user-select: none; }
+.avatar-mono[data-len="2"] { font-size: calc(var(--av-size) * .38); letter-spacing: -.04em; }
+.avatar-emoji { display: block; font-size: calc(var(--av-size) * .55); line-height: 1; user-select: none; }
+/* 직접 고르기: a transparent button over the avatar (beside the row's open button, never inside it). */
+.avatar-pick { position: absolute; z-index: 1; padding: 0; border: 0; border-radius: var(--r-full); background: transparent; cursor: pointer; }
+.avatar-pick:hover { box-shadow: 0 0 0 2px var(--line-strong); }
+.avatar-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row-avatar-pick { left: 10px; top: 50%; width: 40px; height: 40px; transform: translateY(-50%); }
+.head-avatar-pick { left: var(--head-pad); top: 50%; width: var(--head-av); height: var(--head-av); transform: translateY(-50%); }
+.icon-picker { position: fixed; z-index: 1000; width: min(296px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: var(--s2); border-radius: var(--r-md); background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg); }
+.icon-picker-head { padding: var(--s1) var(--s1) 2px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); font-weight: 500; }
+.icon-picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 2px; }
+.icon-picker-item { display: grid; place-items: center; height: 36px; border-radius: var(--r-sm); font-size: 20px; line-height: 1; color: var(--fg); }
+.icon-picker-item .row-avatar-icon { width: 20px; height: 20px; }
+.icon-picker-item:hover, .icon-picker-reset:hover { background: var(--hover); }
+.icon-picker-item[aria-pressed="true"], .icon-picker-reset[aria-pressed="true"] { background: var(--selected); }
+.icon-picker-item:focus-visible, .icon-picker-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.icon-picker-reset { display: block; width: 100%; margin-top: var(--s2); padding: var(--s2); border-radius: var(--r-sm); text-align: left; color: var(--fg); font: inherit; font-size: calc(var(--fs-label) * var(--font-scale, 1)); }
+@media (pointer: coarse) { .icon-picker-item { height: 44px; } }
 /* The row's end mark: a 16px slot, so the dots and the number line up down the list. Nothing spins: 응답 중 breathes,
    백그라운드 is a still hollow circle, 안 읽음 a filled accent dot, 승인 대기 a warn dot with a ring. */
 .row-status { flex-shrink: 0; position: relative; display: grid; place-items: center; width: 16px; height: 16px; margin-left: 2px; }
@@ -2556,7 +2576,7 @@ button.head-chip:hover, button.head-chip[aria-expanded="true"] { background: var
 button.head-chip:focus-visible { outline: none; box-shadow: var(--focus); }
 .head-chip[data-grip] { touch-action: none; }
 body.pane-dragging .head-chip { cursor: grabbing; }
-.head-avatar { flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); transition: opacity var(--t-fast) var(--ease); }
+.head-avatar { --av-size: var(--head-av); flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); transition: opacity var(--t-fast) var(--ease); }
 .head-avatar .row-avatar-icon { width: 64%; height: 64%; }
 /* A split pane that is not the active one: its avatar steps back with its title. */
 .pane:not(.active) > .pane-head:not(.in-topbar) .head-avatar, .pane:not(.active) .chat > .pane-head:not(.in-topbar) .head-avatar { opacity: .7; }

@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { HeadItem, SessionChipHead, type HeadMenuCtl } from './SessionChipHead';
-import { SESSION_ICONS, publishSessionAvatars, sessionIconBase } from './SessionIcon';
+import { publishSessionAvatars } from './SessionIcon';
 import { avatarIndex } from './SessionIcon';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -116,29 +116,48 @@ describe('SessionChipHead · 폰 시트', () => {
 
 describe('SessionChipHead · 세션 정체성', () => {
   const groups = (ctl: HeadMenuCtl) => [[<HeadItem key="a" label="첫째" run={() => {}} ctl={ctl} />]];
-  afterEach(() => { act(() => publishSessionAvatars(new Map())); });
+  afterEach(() => { act(() => publishSessionAvatars(new Map(), {}, null)); });
 
-  it('shows the avatar the sidebar gave the session (colour + glyph), and follows a change', () => {
-    act(() => publishSessionAvatars(new Map([['s1', { color: 3, icon: 4 }]])));
+  it('shows the avatar the sidebar gave the session (colour + letters or icon), and follows a change', () => {
+    act(() => publishSessionAvatars(new Map([['s1', { color: 3, mono: '백테', icon: null, iconId: 's1' }]])));
     render(<SessionChipHead title="세션 1" sessionKey="s1" cwd="/w/deck" groups={groups} />);
     const av = document.querySelector<HTMLElement>('[data-testid="session-chip-head"] .head-avatar')!;
     expect(av.getAttribute('aria-hidden')).toBe('true');
     expect(av.dataset.avatar).toBe('3');
     expect(av.style.getPropertyValue('--av')).toBe('var(--avatar-3)');
-    expect(av.querySelector('svg')?.getAttribute('data-icon')).toBe(SESSION_ICONS[4]!.name);
-    act(() => publishSessionAvatars(new Map([['s1', { color: 5, icon: 6 }]])));
+    expect(av.querySelector('.avatar-mono')?.textContent).toBe('백테');
+    expect(av.querySelector('.avatar-mono')?.getAttribute('data-len')).toBe('2');
+    act(() => publishSessionAvatars(new Map([['s1', { color: 5, mono: '백', icon: 'glyph:moon', iconId: 's1' }]])));
     expect(av.dataset.avatar).toBe('5');
-    expect(av.querySelector('svg')?.getAttribute('data-icon')).toBe(SESSION_ICONS[6]!.name);
+    expect(av.querySelector('svg')?.getAttribute('data-icon')).toBe('moon');
   });
 
-  it('falls back to the folder colour and the id glyph before the sidebar lists it; a new chat has none', () => {
-    render(<SessionChipHead title="세션 2" sessionKey="s2" cwd="/w/deck" groups={groups} />);
+  it('falls back to the folder colour and the title\'s first letter before the sidebar lists it; a new chat has none', () => {
+    render(<SessionChipHead title="refactor 세션" sessionKey="s2" cwd="/w/deck" groups={groups} />);
     const av = document.querySelector<HTMLElement>('.head-avatar')!;
     expect(av.dataset.avatar).toBe(String(avatarIndex('deck')));
-    expect(av.querySelector('svg')?.getAttribute('data-icon')).toBe(SESSION_ICONS[sessionIconBase('s2')]!.name);
+    expect(av.querySelector('.avatar-mono')?.textContent).toBe('R');
+    cleanup();
+    act(() => publishSessionAvatars(new Map(), { s2: '🐛' }, null));
+    render(<SessionChipHead title="refactor 세션" sessionKey="s2" cwd="/w/deck" groups={groups} />);
+    expect(document.querySelector('.head-avatar [data-testid="avatar-emoji"]')?.textContent).toBe('🐛');
     cleanup();
     render(<SessionChipHead title="새 세션" groups={groups} />);
     expect(document.querySelector('.head-avatar')).toBeNull();
+  });
+
+  it('직접 고르기 from the head: the avatar opens the picker (not the chip menu) and sets the row\'s icon id', () => {
+    const setIcon = vi.fn();
+    act(() => publishSessionAvatars(new Map([['leaf2', { color: 2, mono: 'A', icon: null, iconId: 'root1' }]]), {}, setIcon));
+    render(<SessionChipHead title="a" sessionKey="leaf2" cwd="/w/deck" groups={groups} />);
+    fireEvent.click(screen.getByRole('button', { name: '아이콘 바꾸기' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '📈' }));
+    expect(setIcon).toHaveBeenCalledWith('root1', '📈');
+    cleanup();
+    act(() => publishSessionAvatars(new Map(), {}, null));
+    render(<SessionChipHead title="a" sessionKey="leaf2" cwd="/w/deck" groups={groups} />);
+    expect(screen.queryByRole('button', { name: '아이콘 바꾸기' })).toBeNull();
   });
 
   it('desktop top bar: the folder is its own button under the title; the chip keeps the session name as its label', () => {
@@ -148,7 +167,9 @@ describe('SessionChipHead · 세션 정체성', () => {
     const main = slot.querySelector('.pane-head-main')!;
     expect(main.classList.contains('with-folder')).toBe(true);
     expect(main.querySelector(':scope > .folder-chip.head-folder')?.textContent).toBe('deck');
-    expect(screen.getByTestId('session-chip-head').textContent).toBe('세션 3');
+    // The avatar's letter is decorative (aria-hidden): the name the chip carries is the title.
+    expect(screen.getByTestId('session-chip-head').querySelector('.head-chip-text')?.textContent).toBe('세션 3');
+    expect(screen.getByRole('button', { name: '세션 3' })).toBe(screen.getByTestId('session-chip-head'));
     slot.remove();
   });
 

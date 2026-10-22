@@ -75,6 +75,17 @@ describe('reducer', () => {
     expect(reducer(s, { type: 'show_error', message: '고정 실패' }).error).toBe('고정 실패');
   });
 
+  it('session icons come from hello/index and set_session_icons; an index without them keeps them', () => {
+    expect(initialState.sessionIcons).toEqual({});
+    let s = play([{ type: 'hello', usage, projects: [], sessionIcons: { a: '🚀' }, running: [], codex: { available: false } }]);
+    expect(s.sessionIcons).toEqual({ a: '🚀' });
+    s = play([{ type: 'index', projects: [] }], s);
+    expect(s.sessionIcons).toEqual({ a: '🚀' });
+    s = play([{ type: 'index', projects: [], sessionIcons: {} }], s);
+    expect(s.sessionIcons).toEqual({});
+    expect(reducer(s, { type: 'set_session_icons', sessionIcons: { b: 'glyph:leaf' } }).sessionIcons).toEqual({ b: 'glyph:leaf' });
+  });
+
   it('adopts the server-known title into a pane once the index reports it (finding 3)', () => {
     let s = reducer(initialState, { type: 'open', sessionId: 's1', cwd: '/w', title: 'w · 새 세션' });
     const sessionEntry = { sessionId: 's1', account: 'b', cwd: '/w', projectDir: '/w', file: 'f', title: 'Reply with exactly: ok', lastModified: 0, sizeBytes: 0 } as const;

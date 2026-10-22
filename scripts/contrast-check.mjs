@@ -95,6 +95,8 @@ function check(name, t) {
     ["warn dot / panel", c("warn"), c("panel"), 3],
     // Sidebar row avatars: the session glyph (a 2px line icon, --avatar-glyph) on the project colour — graphics floor 3.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`glyph / avatar-${n}`, c("avatar-glyph"), c(`avatar-${n}`), 3]),
+    // …and the default monogram (the title's first letter or two, 600+ weight, --avatar-glyph): text, so the text floor.
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`monogram / avatar-${n}`, c("avatar-glyph"), c(`avatar-${n}`), 4.5]),
     // Engine badges (C · G · Gm · X): a white letter on the engine colour — text, so the text floor; in a sidebar row's
     // line 2 the badge is muted with the letter cut in the sidebar colour.
     ...["claude", "codex", "gemini", "grok"].map((k) => [`badge letter / engine-${k}`, c("engine-fg"), c(`engine-${k}`), 4.5]),

@@ -15,7 +15,7 @@ import { SetupWizard } from './components/SetupWizard';
 import { readHashToken } from './loginHash';
 import { Toasts, type ToastItem } from './components/Toasts';
 import { SplitIcon } from './components/icons';
-import { postPin, postPinOrder } from './pins';
+import { postPin, postPinOrder, postSessionIcon } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
 import { Pane, sendFromPane, TOGGLE_SIDE_EVENT, useQueueRunner } from './components/Pane';
@@ -66,7 +66,7 @@ import { createCatchup, type Catchup } from './catchup';
 import { AccountsContext, uiAccounts } from './accounts';
 import { has, setFeatures } from './features';
 import { withConcise } from '../shared/concise';
-import { withLang } from './i18n';
+import { ui, withLang } from './i18n';
 
 const HIDDEN_KEY = 'deck.sidebarHidden';
 const UNDO_MS = 10_000;
@@ -1274,6 +1274,7 @@ export function App() {
   };
   // The sidebar ⋯ menu and the chat title ⌄ menu share these.
   const togglePin = (sessionId: string, pinned: boolean) => { postPin(sessionId, pinned).then((pins) => dispatch({ type: 'set_pins', pins }), showError('고정 실패')); };
+  const setSessionIcon = (sessionId: string, icon: string | null) => { postSessionIcon(sessionId, icon).then((sessionIcons) => dispatch({ type: 'set_session_icons', sessionIcons }), showError(ui().sessionIcon.failed)); };
   const renameSession = (sessionId: string, title: string | null) => { postSessionMeta(sessionId, { title }).catch(showError('이름 바꾸기 실패')); };
   const archiveSession = (sessionId: string, archived: boolean) => {
     // A 삭제 undo still showing keeps its slot: the archive can be undone from the archived list anyway.
@@ -1399,6 +1400,8 @@ export function App() {
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
             pins={state.pins}
+            sessionIcons={state.sessionIcons}
+            onSetSessionIcon={setSessionIcon}
             pinShortcut={openPinned}
             desktop={state.desktop}
             onTogglePin={togglePin}

@@ -335,6 +335,8 @@ export type AppState = {
   grok: GrokStatus | null;
   /** F2: pinned session ids, pin order (server-side pins.json). */
   pins: string[];
+  /** 직접 고른 세션 아이콘: session id → icon (server-side session-icons.json). */
+  sessionIcons: Record<string, string>;
   /** Recent Claude Desktop sessions (server-side, newest first). */
   desktop: DesktopSession[];
   /** 자동 승인 (server setting); null until the server says. */
@@ -421,7 +423,7 @@ export function newPane(id: string): PaneState {
   return { id, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, model: 'auto', modelPicked: false, efforts: { ...DEFAULT_EFFORT }, autoEffort: null, engine: 'auto', sandbox: DEFAULT_SANDBOX, attachments: [], queue: [], queuePaused: false, queueSendNow: null, runStartedAt: null, progress: null, turnRoute: null, agents: {}, bg: null, handoff: null, handoffFrom: null, prefill: null, notices: [] };
 }
 
-export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, grok: null, pins: [], desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, experimental: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, autoRoute: null, newChatEngine: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
+export const initialState: AppState = { connected: false, disconnectedSince: null, usage: null, accounts: LEGACY_ACCOUNT_LIST, projects: [], pending: [], questions: [], panes: [newPane('p0')], activePaneId: 'p0', error: null, codexAvailable: false, gemini: null, grok: null, pins: [], sessionIcons: {}, desktop: [], autoApprove: null, defaultPermMode: null, routingPolicy: null, sameVendorRotation: null, experimental: null, activity: [], unread: [], parked: {}, ready: false, recent: {}, draining: false, serverStartedAt: null, restartedAt: null, routePreview: null, commanderEnabled: null, autoRoute: null, newChatEngine: null, commanderMaxTurns: null, commanders: {}, commanderRefusals: {} };
 
 export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
@@ -490,6 +492,7 @@ export type Action =
   /** 총사령탑: the refusal shown in the sheet / chip goes (the user acts again, or it timed out). */
   | { type: 'commander_refusal_clear'; sessionId: string }
   | { type: 'set_pins'; pins: string[] }
+  | { type: 'set_session_icons'; sessionIcons: Record<string, string> }
   | { type: 'show_error'; message: string }
   | { type: 'queue_add'; text: string; paneId?: string; /** Also sent as a steer under this id (전달 대기 until the server answers). */ steerId?: string }
   | { type: 'queue_edit'; id: string; text: string; paneId?: string }
@@ -1213,7 +1216,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
         if (!pin || activePin(accounts, pin)) return p;
         return withNotice({ ...p, session: { ...p.session!, accountPin: null } }, { sessionId: null, message: `고정해 둔 계정(${seatLabel(accounts, pin)})을 지금 쓸 수 없어 자동으로 바꿨습니다`, level: 'notice' });
       });
-      return applySettings({ ...state, connected: true, disconnectedSince: null, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, grok: msg.grok ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
+      return applySettings({ ...state, connected: true, disconnectedSince: null, ready: true, activity: msg.activity ?? state.activity, usage: msg.usage, accounts, projects: msg.projects, pins: msg.pins ?? state.pins, sessionIcons: msg.sessionIcons ?? state.sessionIcons, desktop: msg.desktop ?? state.desktop, codexAvailable: msg.codex.available, gemini: msg.gemini ?? null, grok: msg.grok ?? null, panes: applyTitles(panes, msg.projects) }, msg.settings);
     }
     case 'grok_status':
       return { ...state, grok: msg.grok };
@@ -1266,7 +1269,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
         }),
       };
     }
-    case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
+    case 'index': return { ...state, projects: msg.projects, pins: msg.pins ?? state.pins, sessionIcons: msg.sessionIcons ?? state.sessionIcons, desktop: msg.desktop ?? state.desktop, panes: applyTitles(state.panes, msg.projects) };
     case 'history': case 'catchup': {
       // Every pane with this session open (`open` records the id before open_session is sent, so a pane still
       // waiting for its reply counts). A history no pane views — its pane was closed or switched while the reply
@@ -1651,6 +1654,7 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'dismiss_notice': return updatePane(state, action.paneId, (p) => (p.notices?.length ? { ...p, notices: action.message === undefined ? [] : p.notices.filter((n) => n.message !== action.message) } : p));
     case 'set_pins': return { ...state, pins: action.pins };
+    case 'set_session_icons': return { ...state, sessionIcons: action.sessionIcons };
     case 'show_error': return { ...state, error: action.message };
     case 'queue_add': {
       const text = action.text.trim();

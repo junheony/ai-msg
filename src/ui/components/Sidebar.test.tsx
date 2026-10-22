@@ -5,7 +5,6 @@ import path from 'node:path';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AVATAR_COLORS, DECK_VERSION_LINE, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex } from './Sidebar';
 import { SessionChipHead } from './SessionChipHead';
-import { SESSION_ICONS, assignSessionIcons, sessionIconBase } from './SessionIcon';
 import type { SessionActivity } from '../../shared/protocol';
 
 const noop = () => {};
@@ -616,7 +615,7 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
       expect(kids.slice(2).every((k) => k === 'row-status' || k === 'sr-only')).toBe(true);
       const text = open.querySelector('.row-text')!;
       expect(Array.from(text.children).map((el) => el.className.split(' ')[0])).toEqual(['session-title', 'session-meta']);
-      expect(Array.from(open.querySelectorAll('.row-avatar > *')).map((el) => el.tagName.toLowerCase())).toEqual(['svg']);
+      expect(Array.from(open.querySelectorAll('.row-avatar > *')).map((el) => el.className)).toEqual(['avatar-mono']);
       // ⋯ only (pinning is in its menu); hidden it stays in the tab order
       const btns = Array.from(li.querySelectorAll('.row-end button'));
       expect(btns.map((b) => b.getAttribute('aria-label'))).toEqual(['세션 메뉴']);
@@ -627,10 +626,10 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     expect(first.querySelector('.row-open > .row-status.unread')?.getAttribute('aria-label')).toBe('안 읽음 · 1번 칸에 열림');
     expect(first.querySelector('.open-mark')).toBeNull();
     expect(first.querySelector('.session-meta')!.textContent).toBe('one');
-    // The glyph is decoration (the title and meta name session and project): hidden from the accessibility tree, no text.
-    const glyph = first.querySelector('.row-avatar > svg.row-avatar-icon')!;
-    expect(glyph.getAttribute('aria-hidden')).toBe('true');
-    expect(first.querySelector('.row-avatar')!.textContent).toBe(''); // no letter, no badge in the circle
+    // The letter is decoration (the title and meta name session and project): hidden from the accessibility tree, nothing else in the circle.
+    const mono = first.querySelector('.row-avatar > .avatar-mono')!;
+    expect(mono.getAttribute('aria-hidden')).toBe('true');
+    expect(first.querySelector('.row-avatar')!.textContent).toBe('F'); // the title's first letter, no badge
     expect(first.getAttribute('title')).toMatch(/^first\none · /);
   });
 
@@ -681,84 +680,90 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     expect(av('beta').dataset.avatar).toBe(av('alpha').dataset.avatar);
   });
 
-  /** `n` ids (`prefix`0, 1, …) whose hash lands on glyph `want`: real clashes, searched for, so nothing rests on luck. */
-  const clashing = (prefix: string, n: number, want = sessionIconBase(`${prefix}0`)) => {
-    const out: string[] = [];
-    for (let i = 0; out.length < n; i++) if (sessionIconBase(`${prefix}${i}`) === want) out.push(`${prefix}${i}`);
-    return out;
-  };
-
-  it('the session head shows the row\'s own avatar (the sidebar shares colour + glyph, clash steps included)', () => {
-    const ids = clashing('hd', 2);
-    const one = [{ cwd: '/w/deck', name: 'deck', pinned: false, sessions: [s(ids[0]!, '/w/deck', 'alpha'), s(ids[1]!, '/w/deck', 'beta')] }];
+  it('the session head shows the row\'s own avatar (the sidebar shares colour + letters, two-letter clashes included)', () => {
+    const ids = ['hd0', 'hd1'];
+    const one = [{ cwd: '/w/deck', name: 'deck', pinned: false, sessions: [s(ids[0]!, '/w/deck', '백테스트 A'), s(ids[1]!, '/w/deck', '백업 B')] }];
     const groups = () => [[<button key="x" type="button">x</button>]];
     render(<><Sidebar projects={one} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />
-      {ids.map((id) => <div key={id} data-head={id}><SessionChipHead title={id} sessionKey={id} cwd="/w/deck" groups={groups} /></div>)}</>);
-    const icon = (el: Element) => el.querySelector('svg')!.getAttribute('data-icon');
+      {ids.map((id) => <div key={id} data-head={id}><SessionChipHead title={`head ${id}`} sessionKey={id} cwd="/w/deck" groups={groups} /></div>)}</>);
+    const mono = (el: Element) => el.querySelector('.avatar-mono')!.textContent;
     const rowOf = (t: string) => screen.getByText(t, { selector: '.session-title' }).closest('li')!.querySelector<HTMLElement>('.row-avatar')!;
     const heads = ids.map((id) => document.querySelector<HTMLElement>(`[data-head="${id}"] .head-avatar`)!);
-    ['alpha', 'beta'].forEach((t, k) => {
+    ['백테스트 A', '백업 B'].forEach((t, k) => {
       expect(heads[k]!.dataset.avatar).toBe(rowOf(t).dataset.avatar);
-      expect(icon(heads[k]!)).toBe(icon(rowOf(t)));
+      expect(mono(heads[k]!)).toBe(mono(rowOf(t)));
     });
-    expect(icon(heads[0]!)).not.toBe(icon(heads[1]!)); // the clash was stepped, and the head followed
+    expect([mono(heads[0]!), mono(heads[1]!)].sort()).toEqual(['백', '백업'].sort()); // the clash took two letters, and the head followed
   });
 
-
-  it('session glyph: from the id hash, stable; clashing pins of one project all differ; a clashing row steps past its neighbour and the pins', () => {
-    const ids = Array.from({ length: 40 }, (_, i) => `id-${i}`);
-    for (const id of ids) expect(sessionIconBase(id)).toBe(sessionIconBase(id));
-    expect(new Set(ids.map(sessionIconBase)).size).toBeGreaterThan(15); // spread over the set
-    expect(SESSION_ICONS.length).toBeGreaterThanOrEqual(24);
-    expect(new Set(SESSION_ICONS.map((i) => i.name)).size).toBe(SESSION_ICONS.length);
-    // Four pins of one project, one hash: four glyphs, the same whatever order the pins come in.
-    const pinIds = clashing('p', 4);
-    const pins = pinIds.map((id) => ({ id, project: 'dev' }));
-    const a = assignSessionIcons(pins, []);
-    expect(new Set(pinIds.map((id) => a.get(id))).size).toBe(4);
-    const b = assignSessionIcons([...pins].reverse(), []);
-    for (const id of pinIds) expect(b.get(id)).toBe(a.get(id));
-    // Pins of another project may share a glyph (the colour tells them apart).
-    const two = assignSessionIcons([pins[0]!, { id: pinIds[1]!, project: 'other' }], []);
-    expect(two.get(pinIds[1]!)).toBe(two.get(pinIds[0]!));
-    // Four rows of one project in a row, one hash: each differs from the one above.
-    const rowIds = clashing('r', 4);
-    const r = assignSessionIcons([], rowIds.map((id) => ({ id, project: 'dev' })));
-    for (let i = 1; i < rowIds.length; i++) expect(r.get(rowIds[i]!)).not.toBe(r.get(rowIds[i - 1]!));
-    // …unless the neighbour is another project: the hash stays.
-    const mixed = assignSessionIcons([], [{ id: rowIds[0]!, project: 'dev' }, { id: rowIds[1]!, project: 'other' }]);
-    expect(mixed.get(rowIds[1]!)).toBe(sessionIconBase(rowIds[1]!));
-    // A row hashing onto a pinned glyph of its project steps past it; a pin keeps its glyph in the list below.
-    const onPin = clashing('q', 2, sessionIconBase(pinIds[0]!));
-    const withPins = assignSessionIcons(pins, [{ id: pinIds[0]!, project: 'dev' }, { id: 'zz', project: 'x' }, ...onPin.map((id) => ({ id, project: 'dev' }))]);
-    for (const id of onPin) expect(pinIds.map((p) => withPins.get(p))).not.toContain(withPins.get(id));
-    expect(withPins.get(pinIds[0]!)).toBe(a.get(pinIds[0]!));
-  });
-
-  it('session glyph on the row: clashing pins of one project render apart, as do clashing rows below; a search moves none', () => {
-    const pinIds = clashing('p', 3);
-    const rowIds = clashing('r', 3);
-    const other = Array.from({ length: 60 }, (_, i) => `o${i}`).find((id) => sessionIconBase(id) !== sessionIconBase(rowIds[0]!))!;
+  it('avatar letters on the row: clashing pins of one project render apart, as do clashing rows below; a search moves none', () => {
+    const pinIds = ['p0', 'p1', 'p2'];
     const sessions = [
-      ...pinIds.map((id, i) => s(id, '/w/dev', `pin ${i}`)),
-      s(rowIds[0]!, '/w/dev', 'keep a'), s(other, '/w/dev', 'drop b'), s(rowIds[1]!, '/w/dev', 'keep c'), s(rowIds[2]!, '/w/dev', 'keep d'),
+      s('p0', '/w/dev', 'pin alpha'), s('p1', '/w/dev', 'pin beta'), s('p2', '/w/dev', 'zeta'),
+      s('r0', '/w/dev', 'keep a'), s('o1', '/w/dev', 'drop b'), s('r1', '/w/dev', 'keep c'), s('r2', '/w/dev', 'kilo d'),
     ];
     const p = [{ cwd: '/w/dev', name: 'dev', pinned: false, sessions }];
-    const ui = () => <Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={pinIds} onTogglePin={noop} />;
-    const { rerender } = render(ui());
-    const glyph = (t: string) => screen.getByText(t).closest('li')!.querySelector('.row-avatar-icon')!.getAttribute('data-icon');
-    const pinGlyphs = ['pin 0', 'pin 1', 'pin 2'].map(glyph);
-    expect(new Set(pinGlyphs).size).toBe(3);
-    const rows = ['keep a', 'drop b', 'keep c', 'keep d'];
-    const before = rows.map(glyph);
-    expect(before[3]).not.toBe(before[2]); // c and d share a hash and sit together
-    for (const g of before) expect(pinGlyphs).not.toContain(g);
-    rerender(ui());
-    expect(rows.map(glyph)).toEqual(before);
+    const view = () => <Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={pinIds} onTogglePin={noop} />;
+    const { rerender } = render(view());
+    const mono = (t: string) => screen.getByText(t).closest('li')!.querySelector('.avatar-mono')!.textContent;
+    expect(['pin alpha', 'pin beta', 'zeta'].map(mono)).toEqual(['P', 'Pi', 'Z']);
+    const rows = ['keep a', 'drop b', 'keep c', 'kilo d'];
+    const before = rows.map(mono);
+    // c sits under b (another letter): one letter; d sits under c, same letter: two.
+    expect(before).toEqual(['K', 'D', 'K', 'Ki']);
+    rerender(view());
+    expect(rows.map(mono)).toEqual(before);
     openSearch();
-    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'keep' } }); // a and c now sit together
-    expect(['keep a', 'keep c', 'keep d'].map(glyph)).toEqual([before[0], before[2], before[3]]);
-    expect(screen.getByText('keep c').closest('li')!.getAttribute('title')).toMatch(/^keep c\ndev · /);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'k' } }); // a and c now sit together
+    expect(['keep a', 'keep c', 'kilo d'].map(mono)).toEqual([before[0], before[2], before[3]]);
+  });
+
+  it('직접 고르기: tapping the avatar opens the picker without opening the session; a choice calls back, renders, and resets', () => {
+    const onOpen = vi.fn();
+    const onSetSessionIcon = vi.fn();
+    const p = [{ cwd: '/w/dev', name: 'dev', pinned: false, sessions: [s('s1', '/w/dev', 'fx backtest')] }];
+    const view = (icons: Record<string, string>) => <Sidebar projects={p} currentSessionId={null} onOpen={onOpen} onNew={noop} onRefresh={noop} sessionIcons={icons} onSetSessionIcon={onSetSessionIcon} />;
+    const { rerender } = render(view({}));
+    const li = screen.getByText('fx backtest').closest('li')!;
+    expect(li.querySelector('.avatar-mono')!.textContent).toBe('F');
+    const pick = within(li).getByRole('button', { name: '아이콘 바꾸기' });
+    fireEvent.click(pick);
+    expect(onOpen).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog', { name: '세션 아이콘' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '🚀' }));
+    expect(onSetSessionIcon).toHaveBeenCalledWith('s1', '🚀');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(pick);
+    rerender(view({ s1: '🚀' }));
+    expect(li.querySelector('[data-testid="avatar-emoji"]')!.textContent).toBe('🚀');
+    expect(li.querySelector('.avatar-mono')).toBeNull();
+    // A line glyph from the second section.
+    fireEvent.click(pick);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'leaf' }));
+    expect(onSetSessionIcon).toHaveBeenLastCalledWith('s1', 'glyph:leaf');
+    rerender(view({ s1: 'glyph:leaf' }));
+    expect(li.querySelector('.row-avatar svg')!.getAttribute('data-icon')).toBe('leaf');
+    // Reset, Esc and an outside press.
+    fireEvent.click(pick);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '기본으로 (첫 글자)' }));
+    expect(onSetSessionIcon).toHaveBeenLastCalledWith('s1', null);
+    rerender(view({}));
+    expect(li.querySelector('.avatar-mono')!.textContent).toBe('F');
+    fireEvent.click(pick);
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(pick);
+    fireEvent.click(pick);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onSetSessionIcon).toHaveBeenCalledTimes(3);
+  });
+
+  it('no picker without onSetSessionIcon', () => {
+    const p = [{ cwd: '/w/dev', name: 'dev', pinned: false, sessions: [s('s1', '/w/dev', 'alpha')] }];
+    render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(screen.queryByRole('button', { name: '아이콘 바꾸기' })).toBeNull();
   });
 
   it('승인 대기: a warn mark at the row end, ahead of running / unread; screen readers get it from its label', () => {

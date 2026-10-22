@@ -4,7 +4,8 @@ import type { EngineKind } from '../../shared/models';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
 import { MenuList } from './SessionMenu';
-import { SessionGlyph, avatarIndex, sessionIconBase, useSessionAvatar } from './SessionIcon';
+import { AvatarFace, avatarIndex, monogram, useSessionAvatar, useSessionIconStore } from './SessionIcon';
+import { SessionIconButton } from './SessionIconPicker';
 
 /** The head's words, in one place. */
 const T = {
@@ -23,19 +24,29 @@ function Caret() {
 }
 
 /**
- * The session's avatar, the one its sidebar row shows (project colour + glyph). Before the sidebar has listed the session
- * (a fresh page, a row past the list's end) it falls back to the folder's colour and the id's own glyph — what the row
- * itself starts from. Decorative: the title next to it names the session.
+ * The session's avatar, the one its sidebar row shows (project colour + letters or the chosen icon). Before the sidebar
+ * has listed the session (a fresh page, a row past the list's end) it falls back to the folder's colour and the title's
+ * first letter — what the row itself starts from. Decorative: the title next to it names the session.
  */
-function HeadAvatar({ sessionKey, cwd }: { sessionKey: string; cwd?: string }) {
+function HeadAvatar({ sessionKey, cwd, title }: { sessionKey: string; cwd?: string; title: string }) {
   const shared = useSessionAvatar(sessionKey);
-  const color = shared?.color ?? avatarIndex(cwd ? (cwd.split('/').filter(Boolean).pop() ?? cwd) : '');
-  const icon = shared?.icon ?? sessionIconBase(sessionKey);
+  const { icons } = useSessionIconStore();
+  const folder = cwd ? (cwd.split('/').filter(Boolean).pop() ?? cwd) : '';
+  const color = shared?.color ?? avatarIndex(folder);
   return (
     <span className="head-avatar" data-avatar={color} style={{ '--av': `var(--avatar-${color})` } as CSSProperties} aria-hidden="true">
-      <SessionGlyph index={icon} />
+      <AvatarFace mono={shared?.mono ?? monogram(title, folder)} icon={shared ? shared.icon : icons[sessionKey] ?? null} />
     </span>
   );
+}
+
+/** 직접 고르기 from the head: the same picker as the row's avatar, changing the icon the row stores (a 갈래 tree: its root). */
+function HeadAvatarPick({ sessionKey }: { sessionKey: string }) {
+  const shared = useSessionAvatar(sessionKey);
+  const { icons, setIcon } = useSessionIconStore();
+  if (!setIcon) return null;
+  const id = shared?.iconId ?? sessionKey;
+  return <SessionIconButton className="head-avatar-pick" current={shared ? shared.icon : icons[sessionKey] ?? null} onPick={(icon) => setIcon(id, icon)} />;
 }
 
 /** Where a pane's ⋯ item sits in the session chip's menu (세션 → 보기 → 공유 → 창 → 총사령탑 → 위험); `viewEnd` = 보기's last rows. */
@@ -170,7 +181,7 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   // that room inside the chip.
   const label = (
     <>
-      {sessionKey && <HeadAvatar sessionKey={sessionKey} cwd={cwd} />}
+      {sessionKey && <HeadAvatar sessionKey={sessionKey} cwd={cwd} title={title} />}
       <span className="head-chip-text">
         <span className="head-chip-title"><span className="head-chip-name">{title}</span>{engine && <EngineMark engine={engine} />}</span>
         {folderLine && folder && <span className="head-chip-spacer" aria-hidden="true" />}
@@ -224,6 +235,7 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
           ) : (
             <span className="head-chip static" data-testid="session-chip-head" title={title}>{label}</span>
           )}
+          {sessionKey && renaming === null && <HeadAvatarPick sessionKey={sessionKey} />}
           {toast && <span className="share-toast" role="status">{toast}</span>}
           {open && hasMenu && !phone && <MenuList className="session-menu head-menu" label={T.menu} onClose={() => setOpen(false)}>{items}</MenuList>}
           {open && hasMenu && phone && createPortal(
