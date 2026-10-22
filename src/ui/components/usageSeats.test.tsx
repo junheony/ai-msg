@@ -267,6 +267,18 @@ describe('usage seats · cli usage mode (observed times)', () => {
     expect(observedText(cliUsage.accounts.b!, NOW)).toBe('아직 관측 없음');
   });
 
+  it('numbers read by the /usage poll say "N분 전 확인", not a turn', () => {
+    const c = { ...cliUsage.accounts.c!, observedBy: 'poll' as const };
+    expect(observedText(c, NOW)).toBe('방금 확인');
+    expect(observedText({ ...cliUsage.accounts.a!, observedBy: 'poll' }, NOW)).toBe('12분 전 확인');
+    const kept = { ...cliUsage.accounts.a!, observedBy: 'poll' as const, trustUntil: new Date(NOW + 3_600_000).toISOString() };
+    expect(observedText(kept, NOW)).toBe('추정 · 12분 전 확인');
+    sheet({ ...cliUsage, accounts: { ...cliUsage.accounts, a: { ...cliUsage.accounts.a!, observedBy: 'poll' } } }, null);
+    expect(screen.getByTestId('a-observed').textContent).toContain('12분 전 확인');
+    expect(screen.getByTestId('a-refresh').textContent).toBe('12분 전 확인한 값 · 지금은 이보다 적게 남았을 수 있어요 · deck 이 자동으로 다시 확인해요');
+    expect(screen.getByTestId('a-weekly').title).toContain('예전에 확인한 값');
+  });
+
   it('each Claude seat says when its numbers were observed; no usage-deck stale note', () => {
     sheet(cliUsage, null);
     expect(screen.getByTestId('account-a').title).toBe('마지막 턴 기준 · 12분 전 · 라우팅은 모름으로 봄');

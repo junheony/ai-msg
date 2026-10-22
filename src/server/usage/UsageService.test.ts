@@ -532,6 +532,46 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     expect(usageOf(again.snapshot(), 'b')).toMatchObject({ fiveHour: { usedPct: 5, resetsAt: null }, weekly: null });
   });
 
+  it('applyCliPoll (ClaudeUsagePoller): same path as a turn, marked observedBy poll, kept across a restart; a later turn clears the mark', async () => {
+    const file = await tmpFile();
+    const clock = { ms: T0 };
+    const s = make({ clock, file });
+    s.applyCliPoll('a', { fiveHour: FIVE, weekly: WEEK, fable: { usedPct: 87, resetsAt: WEEK.resetsAt } }, T0);
+    expect(usageOf(s.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: FIVE.resetsAt, fiveHour: FIVE, weekly: WEEK, fable: { usedPct: 87, resetsAt: WEEK.resetsAt }, observedBy: 'poll' });
+    const saved = JSON.parse(await fsp.readFile(file, 'utf8'));
+    expect(saved.accounts.a.weekly).toEqual({ ...WEEK, at: T0, by: 'poll' });
+    expect(usageOf(make({ clock, file }).snapshot(), 'a').observedBy).toBe('poll');
+    s.applyCliPoll('zz', { fiveHour: FIVE }, T0); // not configured: ignored
+    expect(s.snapshot().accounts).not.toHaveProperty('zz');
+    clock.ms = T0 + 60_000;
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
+    expect(usageOf(s.snapshot(), 'a')).not.toHaveProperty('observedBy');
+  });
+
+  it('cliObservedAt: the oldest of 5h/weekly and a polled Fable; a turn-told Fable does not count; a polled Fable goes after CLI_TRUST_MAX_MS', () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    expect(s.cliObservedAt('a')).toBeNull();
+    const fable = { usedPct: 87, resetsAt: new Date(T0 + 6 * 86_400_000).toISOString() };
+    s.applyCliPoll('a', { fiveHour: FIVE, weekly: WEEK, fable }, T0);
+    clock.ms = T0 + 60_000;
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK }); // turns keep 5h/weekly fresh, never Fable
+    expect(s.cliObservedAt('a')).toBe(T0);
+    s.applyTurn('b', { fiveHour: FIVE, weekly: WEEK, fable: { usedPct: 100, resetsAt: fable.resetsAt } });
+    expect(s.cliObservedAt('b')).toBe(T0 + 60_000);
+    clock.ms = T0 + CLI_TRUST_MAX_MS - 1;
+    s.applyTurn('a', { fiveHour: FIVE, weekly: { ...WEEK, resetsAt: new Date(T0 + 5 * 86_400_000).toISOString() } });
+    expect(usageOf(s.routingSnapshot(), 'a').fable).toEqual(fable);
+    clock.ms = T0 + CLI_TRUST_MAX_MS + 1;
+    expect(usageOf(s.routingSnapshot(), 'a').fable).toBeNull();
+  });
+
+  it('applyCliPoll is ignored outside cli mode', () => {
+    const s = new UsageService({ mode: 'usage-deck', deckUrl: 'http://usage-deck.invalid', fetchFn: vi.fn<FetchLike>(), accounts: testRegistry() });
+    s.applyCliPoll('a', { fiveHour: FIVE, weekly: WEEK }, T0);
+    expect(usageOf(s.snapshot(), 'a').fiveHour).toBeNull();
+  });
+
   it('per window, an older observation never replaces a newer one; a partial event keeps the other window and its time', async () => {
     const clock = { ms: T0 };
     const s = make({ clock });

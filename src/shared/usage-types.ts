@@ -24,6 +24,8 @@ export type AccountUsage = {
    * then (see `trusted`). Absent = no such promise (usage-deck mode, never observed).
    */
   trustUntil?: string;
+  /** `cli` usage mode: 'poll' = the numbers shown (their oldest window) were read by deck's `/usage` poll, not a turn. Absent = a turn. */
+  observedBy?: 'poll';
 };
 
 /** One Antigravity quota bucket as `agy -p=/usage` reports it; agy 1.4.2 names it "<group> · <window>" (e.g. `Gemini · 5h`, `Argon · 주간`). */

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SERVICE_DECK_KEYS } from './cli/service/record';
 import { loadConfig } from './config';
 import { drain, flushThenExit, installGracefulShutdown, type DrainTarget } from './lifecycle';
 
@@ -215,5 +216,11 @@ describe('config: drain and background limits', () => {
   it('prompt suggestions are on unless DECK_PROMPT_SUGGEST=0', () => {
     expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').promptSuggestions).toBe(true);
     expect(loadConfig({ PATH: '/nonexistent', DECK_PROMPT_SUGGEST: '0' }, '/h', '/repo').promptSuggestions).toBe(false);
+  });
+
+  it('the Claude /usage poll is on unless DECK_CLAUDE_USAGE_POLL=0, and a service carries the switch over', () => {
+    expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').claudeUsagePoll).toBe(true);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_CLAUDE_USAGE_POLL: '0' }, '/h', '/repo').claudeUsagePoll).toBe(false);
+    expect(SERVICE_DECK_KEYS).toContain('DECK_CLAUDE_USAGE_POLL');
   });
 });
