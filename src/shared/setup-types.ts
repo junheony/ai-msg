@@ -1,4 +1,4 @@
-// What the setup wizard and `quarterdeck doctor` know about the installed CLIs (plan ② Task 4).
+// What the setup wizard and `ai-msg doctor` know about the installed CLIs (plan ② Task 4).
 
 export type EngineId = 'claude' | 'codex' | 'gemini' | 'grok';
 /** From the official status command's output / exit code only. 'unknown' = could not tell (never shown as logged out). */

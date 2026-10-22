@@ -10,7 +10,7 @@ const rec = (o: Partial<ServiceRecord> = {}): ServiceRecord => ({ version: 1, pl
 
 describe('launchAgentPlist', () => {
   it('plist: marker, AbandonProcessGroup false, ExitTimeOut, escaped env, verifies with plutil when available', () => {
-    const p = launchAgentPlist(rec({ platform: 'darwin', env: { HOME: '/h', ODD: 'a<b>&"c\'' } }), { label: LAUNCHD_LABEL, logFile: '/h/.config/deck/quarterdeck.log' });
+    const p = launchAgentPlist(rec({ platform: 'darwin', env: { HOME: '/h', ODD: 'a<b>&"c\'' } }), { label: LAUNCHD_LABEL, logFile: '/h/.config/deck/ai-msg.log' });
     expect(p.split('\n')[1]).toContain(MANAGED_MARKER);
     expect(p).toContain('<key>AbandonProcessGroup</key><false/>');
     expect(p).toContain('<key>KeepAlive</key><true/>');
@@ -19,7 +19,7 @@ describe('launchAgentPlist', () => {
     expect(p).toContain('<key>DECK_SUPERVISOR</key><string>launchd</string>');
     expect(p).toContain('<string>/opt/q dir/bin.js</string>');
     expect(p).toContain(`<key>Label</key><string>${LAUNCHD_LABEL}</string>`);
-    expect(p).toContain('<key>StandardErrorPath</key><string>/h/.config/deck/quarterdeck.log</string>');
+    expect(p).toContain('<key>StandardErrorPath</key><string>/h/.config/deck/ai-msg.log</string>');
     if (process.platform !== 'darwin' || !fs.existsSync('/usr/bin/plutil')) return;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-plist-'));
     try {

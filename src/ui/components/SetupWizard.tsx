@@ -61,7 +61,7 @@ function ProfileRow({ p, restartNeeded }: { p: ClaudeProfileProbe; restartNeeded
 /**
  * 설치 점검 — the first-run wizard, also opened from 설정 › 계정. One sheet, three numbered parts: ① the four engine CLIs
  * (installed · version · login, the login command to copy when logged out, 다시 확인 = fresh probes) ② Claude accounts
- * and the add form (applied at the next server start: 지금 재시작 under a supervisor, else run quarterdeck again)
+ * and the add form (applied at the next server start: 지금 재시작 under a supervisor, else run ai-msg again)
  * (confirmed like the activity sheet's: what the drain waits for, from `activity`)
  * ③ the addresses to open from another device. 완료 records the wizard done (it stops opening by itself), ✕ only closes.
  * While open the status is re-read every `pollMs` (a login done in a terminal shows up by itself).

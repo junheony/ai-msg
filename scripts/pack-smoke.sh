@@ -102,7 +102,7 @@ guard_path
 step '전역 설치 (공백·한글 접두사)'
 G="$T/g 공백 한글"
 "${E[@]}" npm i -g --no-audit --no-fund --loglevel=error --prefix "$G" "$TGZ" >"$T/install.log" 2>&1 || { tail -20 "$T/install.log" >&2; die '전역 설치 실패'; }
-Q="$G/bin/quarterdeck"
+Q="$G/bin/ai-msg"
 [[ "$("${E[@]}" "$Q" --version)" == "$PKG_VERSION" ]] || die "--version 이 $PKG_VERSION 아님"
 INSTALLED="$G/lib/node_modules/$PKG_NAME"
 [[ -f "$INSTALLED/dist/server/bin.js" ]] || die "설치본 없음: $INSTALLED"
@@ -111,24 +111,24 @@ free_port() { node -e 'const s=require("net").createServer();s.listen(0,"127.0.0
 step 'service install --dry-run (아무것도 쓰거나 실행하지 않음)'
 "${E[@]}" "$Q" service install --dry-run --port "$(free_port)" >"$T/service-dry.log" 2>&1 || { cat "$T/service-dry.log" >&2; die 'service install --dry-run 실패'; }
 case "$(uname -s)" in
-  Darwin) grep -q 'local.quarterdeck.server' "$T/service-dry.log" && grep -q 'AbandonProcessGroup' "$T/service-dry.log" || { cat "$T/service-dry.log" >&2; die 'dry-run 에 LaunchAgent plist 가 없음'; } ;;
-  Linux) grep -q 'quarterdeck.service' "$T/service-dry.log" && grep -q 'KillMode=mixed' "$T/service-dry.log" || { cat "$T/service-dry.log" >&2; die 'dry-run 에 systemd 유닛이 없음'; } ;;
+  Darwin) grep -q 'local.ai-msg.server' "$T/service-dry.log" && grep -q 'AbandonProcessGroup' "$T/service-dry.log" || { cat "$T/service-dry.log" >&2; die 'dry-run 에 LaunchAgent plist 가 없음'; } ;;
+  Linux) grep -q 'ai-msg.service' "$T/service-dry.log" && grep -q 'KillMode=mixed' "$T/service-dry.log" || { cat "$T/service-dry.log" >&2; die 'dry-run 에 systemd 유닛이 없음'; } ;;
 esac
 grep -q "$INSTALLED/dist/server/bin.js" "$T/service-dry.log" || { cat "$T/service-dry.log" >&2; die 'dry-run 의 실행 경로가 설치본이 아님'; }
 [[ ! -e "$T/home/Library" && ! -e "$T/home/.config/systemd" ]] || die '서비스 파일이 쓰였음'
 
 step 'bin 충돌 (EEXIST)'
 mkdir -p "$T/g2/bin"
-printf '#!/bin/sh\necho someone-else\n' >"$T/g2/bin/quarterdeck"
-chmod 755 "$T/g2/bin/quarterdeck"
+printf '#!/bin/sh\necho someone-else\n' >"$T/g2/bin/ai-msg"
+chmod 755 "$T/g2/bin/ai-msg"
 if "${E[@]}" npm i -g --no-audit --no-fund --loglevel=error --prefix "$T/g2" "$TGZ" >"$T/install2.log" 2>&1; then
-  echo "pack-smoke: 경고 — 기존 quarterdeck 명령이 있어도 설치가 실패하지 않음 ($(head -1 "$T/g2/bin/quarterdeck" 2>/dev/null))" >&2
+  echo "pack-smoke: 경고 — 기존 ai-msg 명령이 있어도 설치가 실패하지 않음 ($(head -1 "$T/g2/bin/ai-msg" 2>/dev/null))" >&2
 else
   grep -q EEXIST "$T/install2.log" || echo "pack-smoke: 경고 — 설치는 실패했지만 EEXIST 가 아님" >&2
 fi
 
-step "npx --package <tgz> quarterdeck --version"
-out="$("${E[@]}" npx --yes --package "$TGZ" -- quarterdeck --version 2>"$T/npx.log")" || true
+step "npx --package <tgz> ai-msg --version"
+out="$("${E[@]}" npx --yes --package "$TGZ" -- ai-msg --version 2>"$T/npx.log")" || true
 [[ "$out" == "$PKG_VERSION" ]] || { tail -20 "$T/npx.log" >&2; die "npx --version 이 $PKG_VERSION 아님: $out"; }
 
 if [[ "${SKIP_DOCTOR:-}" == 1 ]]; then

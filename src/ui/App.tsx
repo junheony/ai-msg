@@ -337,7 +337,7 @@ export function App() {
         else retry();
       }, retry);
     };
-    // A login address (`quarterdeck login-url`: …/#token=…) logs in first; the token leaves the address bar either way.
+    // A login address (`ai-msg login-url`: …/#token=…) logs in first; the token leaves the address bar either way.
     const token = readHashToken(window.location.hash);
     if (token) {
       const strip = () => window.history.replaceState(null, '', window.location.pathname + window.location.search);

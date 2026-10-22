@@ -33,7 +33,7 @@ export const SETUP_TEXTS = {
   restartConfirm: '재시작',
   restartCancel: '취소',
   restarting: '재시작 요청함 — 잠시 뒤 다시 연결됩니다',
-  restartManual: '터미널에서 quarterdeck 을 다시 실행하세요',
+  restartManual: '터미널에서 ai-msg 를 다시 실행하세요',
   addressesHead: '접속 주소',
   addressesNote: '같은 네트워크의 기기에서 열 수 있습니다. 처음 여는 기기는 로그인 토큰을 물어봅니다.',
   pairingLater: '폰에서 QR 로 바로 연결하는 기능은 다음 버전에 들어갑니다.',
@@ -44,5 +44,5 @@ export const SETUP_TEXTS = {
   unreachable: '서버에 닿지 못했어요 — 연결되면 다시 눌러 주세요',
   requestFailed: (status: number) => `요청 실패 (${status})`,
   copy: (what: string) => `${what} 복사`,
-  loginHint: '터미널에서 `quarterdeck login-url` 을 실행해 나온 주소를 열거나, 설정 폴더의 token 파일 내용을 입력하세요.',
+  loginHint: '터미널에서 `ai-msg login-url` 을 실행해 나온 주소를 열거나, 설정 폴더의 token 파일 내용을 입력하세요.',
 } as const;

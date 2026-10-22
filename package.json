@@ -1,18 +1,18 @@
 {
-  "name": "quarterdeck",
+  "name": "ai-msg",
   "version": "0.1.0",
   "description": "Self-hosted web shell for Claude Code, Codex CLI and Gemini CLI that routes turns across your own logged-in accounts.",
   "license": "MIT",
   "author": "hwangmc88 <hwangmc88@gmail.com>",
-  "homepage": "https://github.com/junheony/quarterdeck#readme",
-  "repository": "github:junheony/quarterdeck",
+  "homepage": "https://github.com/junheony/ai-msg#readme",
+  "repository": "github:junheony/ai-msg",
   "bugs": {
-    "url": "https://github.com/junheony/quarterdeck/issues"
+    "url": "https://github.com/junheony/ai-msg/issues"
   },
   "private": true,
   "type": "module",
   "bin": {
-    "quarterdeck": "dist/server/bin.js"
+    "ai-msg": "dist/server/bin.js"
   },
   "files": [
     "dist/server",

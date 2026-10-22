@@ -43,7 +43,7 @@ describe('systemdUnit', () => {
     try {
       const envFile = path.join(dir, 'service.env');
       fs.writeFileSync(envFile, 'PATH=/usr/bin\n');
-      const unit = path.join(dir, 'quarterdeck.service');
+      const unit = path.join(dir, 'ai-msg.service');
       fs.writeFileSync(unit, systemdUnit(rec({ node: process.execPath, bin: process.execPath, env: { HOME: dir } }), envFile));
       execFileSync('systemd-analyze', ['verify', '--user', unit], { stdio: 'pipe' });
     } finally {

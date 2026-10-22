@@ -57,7 +57,7 @@ describe('runCli', () => {
     expect(await runCli(['start'], fakeIo(launchdEnv), { start: async () => { throw new Error('boom'); }, sleep: async (ms) => { slept.push(ms); } })).toBe(1);
     expect(slept).toEqual([]);
     fs.mkdirSync(env.DECK_CONFIG_DIR!);
-    const log = path.join(env.DECK_CONFIG_DIR!, 'quarterdeck.log');
+    const log = path.join(env.DECK_CONFIG_DIR!, 'ai-msg.log');
     fs.writeFileSync(log, Buffer.alloc(10 * 1024 * 1024 + 1, 'x'));
     const io2 = fakeIo(launchdEnv);
     expect(await runCli(['start'], io2, { start: async () => { throw new PortInUseError(9320); }, sleep: async (ms) => { slept.push(ms); } })).toBe(78);
@@ -129,7 +129,7 @@ describe('runCli', () => {
     expect(calls.every((c) => c.startsWith('launchctl ') || c.startsWith('systemctl '))).toBe(true);
     const d = fakeIo(env);
     expect(await runCli(['service', 'install', '--dry-run', '--port', '9555'], d, { service: { run, cliBins: () => ({}), execPath: '/usr/bin/node', bin: '/g/q/dist/server/bin.js' } })).toBe(process.platform === 'win32' ? 1 : 0);
-    if (process.platform !== 'win32') expect(d.outText()).toMatch(/quarterdeck/);
+    if (process.platform !== 'win32') expect(d.outText()).toMatch(/ai-msg/);
     expect(calls.filter((c) => /bootstrap|enable|daemon-reload/.test(c))).toEqual([]);
   });
 

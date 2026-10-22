@@ -132,8 +132,8 @@ function launchdManager(d: ServiceDeps, previous: string[]): Manager {
     fileOf,
     current: LAUNCHD_LABEL,
     previous,
-    logFile: path.join(d.configDir, 'quarterdeck.log'),
-    render: (r) => launchAgentPlist(r, { label: LAUNCHD_LABEL, logFile: path.join(r.configDir, 'quarterdeck.log') }),
+    logFile: path.join(d.configDir, 'ai-msg.log'),
+    render: (r) => launchAgentPlist(r, { label: LAUNCHD_LABEL, logFile: path.join(r.configDir, 'ai-msg.log') }),
     preflight: async () => ((await d.run('launchctl', ['print', domain])).code === 0 ? null : T.noGui),
     legacy: async (dryRun) => {
       if (exists(fileOf(LEGACY_LAUNCHD_LABEL))) return T.legacy;
@@ -162,7 +162,7 @@ function launchdManager(d: ServiceDeps, previous: string[]): Manager {
   };
 }
 
-/** `quarterdeck service <install|uninstall|status|restart>`. Resolves with the exit code. */
+/** `ai-msg service <install|uninstall|status|restart>`. Resolves with the exit code. */
 export async function serviceAction(cmd: Extract<CliCommand, { kind: 'service' }>, d: ServiceDeps): Promise<number> {
   if (d.platform !== 'linux' && d.platform !== 'darwin') { d.err(T.windows); return 1; }
   const m = d.platform === 'linux'

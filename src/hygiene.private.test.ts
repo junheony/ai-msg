@@ -68,7 +68,7 @@ describe('private hygiene rules', () => {
     ['example tailnet host', 'deck-host.example.ts.net'],
     ['example CGNAT address', '100.64.0.1'],
     ['the public author address', 'hwangmc88@gmail.com'],
-    ['the public repo slug', 'https://github.com/junheony/quarterdeck/issues'],
+    ['the public repo slug', 'https://github.com/junheony/ai-msg/issues'],
     ['a project mailbox', 'security@example.org'],
     ['an npm scope', '@types/node'],
   ])('leaves %s alone', (_what, text) => {

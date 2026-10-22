@@ -52,7 +52,7 @@
   },
   {
     "name": "account name outside the public repo slug",
-    "pattern": "junheony(?!/quarterdeck)",
+    "pattern": "junheony(?!/ai-msg)",
     "flags": "gi"
   }
 ]

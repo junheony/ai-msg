@@ -102,7 +102,7 @@ describe('SetupWizard', () => {
     expect(await screen.findByText(SETUP_TEXTS.restarting)).toBeTruthy();
   });
 
-  it('not supervised: the notice says to run quarterdeck again, no restart button', async () => {
+  it('not supervised: the notice says to run ai-msg again, no restart button', async () => {
     const onAddProfile = vi.fn(async () => ({ ok: true as const, restartNeeded: true as const }));
     render(<SetupWizard load={async () => sample} onAddProfile={onAddProfile} onDone={vi.fn()} onClose={vi.fn()} />);
     fireEvent.change(await screen.findByLabelText(SETUP_TEXTS.addId), { target: { value: 'd' } });
