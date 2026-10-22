@@ -2,7 +2,23 @@
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 이 저장소는 비공개 원본(원격 없음)이고, 공개본은 `scripts/export-public.sh` 로 뽑아 따로 올린다.
 
-## 지금 상태 (2026-10-22 밤)
+## 지금 상태 (2026-10-22 늦은 밤)
+
+**한 줄:** 제품명을 **AI-MSG**(npm·CLI `ai-msg`)로 바꿔 master 에 합치고 빌드, 공개 저장소도 이름 변경·푸시. 출시 형태는 "무료 오픈 코어 + Pro 구독(클라우드 릴레이·Paddle·7일 체험) 한 번에". **재시작 필요(사용자 지시 대기):** 리브랜드와 usage-deck 모드 사용량 폴 보완은 아직 실행 중 서버에 반영 안 됨.
+- **한 일:**
+  - 20:33 재시작 완료 — 추천·사용량 폴(cli 모드분) 반영.
+  - **usage-deck 모드 사용량 폴:** 실제 서버는 usage-deck 모드라 폴이 꺼져 있었음. 대시보드 카드가 ok 가 아니거나(down·stale·없음) 대시보드에 못 닿을 때만 그 계정을 폴하고, 결과는 턴 관측 경로로 합친다(더 새로운 ok 카드가 이김, Fable 은 자기 시각 유지). 폴한 적 없는 계정은 턴만으로 down→ok 로 안 바꿈(재로그인 신호 보존). 리뷰 MEDIUM 1·LOW 3 반영.
+  - **리브랜드:** 표시명 AI-MSG, 기계 식별자 `ai-msg`(package name·bin·launchd 라벨·systemd 유닛·instanceLock 패턴·설정 문구·README/ARCHITECTURE·hygiene·pack-smoke). 내부 코드명 deck(`DECK_*`, `~/.config/deck`, `com.deck.server`, `run.sh`)은 유지. README·ARCHITECTURE 의 "Agent SDK" 서술을 "claude CLI 헤드리스"로 정정. 이름 뜻: 머시기 / message / MSG(조미료) 말장난.
+  - **계획 ③ i18n·랜딩** 작성·커밋(`docs/superpowers/plans/2026-10-22-ai-msg-i18n-landing.md`, 8 Task: 언어 기반·UI A/B/C·서버 문구·모델 프롬프트·랜딩·영어 설치 문서). Task 1 구현 진행 중.
+  - **계획 ④ 클라우드 Pro·결제** 플래너 작성 중(`docs/superpowers/plans/2026-10-22-ai-msg-cloud-pro.md`).
+  - **질문 카드(AskUserQuestion) 재디자인** 진행 중 — 사용자 요청.
+- **남은 일:**
+  - 재시작(사용자 지시 때) → "launchd 시작" 줄, 사용량 카드 "N분 전 확인", 설정 화면 AI-MSG 표기 실기 확인.
+  - 계획 ③ Task 2~8, 계획 ④ 전체.
+  - **사용자 몫:** aimsg.app(선택 meosigi.com) 구매, npm `ai-msg` 선점 시도(`aimsg` 와 유사 이름으로 거부되면 `@ai-msg/cli` + npm org), Paddle KYC·Cloudflare 계정, 대시보드 머신에서 C 계정 재로그인.
+- **재현·복구용:** 리브랜드 81a3628, deck 모드 폴 b188a43, 계획 ③ ce68ba0. 공개 저장소 junheony/ai-msg(옛 quarterdeck, GitHub 자동 리다이렉트) 3898e55.
+
+## 이전 상태 (2026-10-22 밤)
 
 **한 줄:** 저녁 작업(추천·실시간 답·아이콘·문구)에 ⑤ Claude 사용량 자동 확인(`/usage` 폴, 토큰 0)을 더해 master 에 합치고 빌드했다. **재시작은 사용자 요청("빨리 적용")으로 20:16 경 `--force` 신호를 보냄 — 진행 중 턴(다른 세션·이 세션)이 끝나면 launchd 가 다시 띄운다. deck.log 의 "launchd 시작" 줄로 확인 필요.**
 - **한 일:**
