@@ -52,7 +52,7 @@ const RESTARTED_CHIP_MS = 10 * 60_000;
 const BOOT_NOTICE_FAILS = 5;
 /** The boot notice in plain words; the technical causes (server off, Tailscale) sit folded under 자세히. */
 const BOOT_OFFLINE_TITLE = '서버에 연결할 수 없어요';
-const BOOT_OFFLINE_DETAIL = 'deck 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 3초마다 다시 시도하고, 연결되면 자동으로 들어갑니다.';
+const BOOT_OFFLINE_DETAIL = 'AI-MSG 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 3초마다 다시 시도하고, 연결되면 자동으로 들어갑니다.';
 const hhmm = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 import { usePrefs } from './usePrefs';
 import { nextTheme, type Theme } from './prefs';
@@ -1434,7 +1434,7 @@ export function App() {
             // The avatar is the person using deck, not the shown session's account (that one is the usage chip's): the
             // same letter on the new-session screen and in any chat.
             avatar="D"
-            avatarTitle="deck"
+            avatarTitle="AI-MSG"
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
               { label: '사용량 기록', run: () => setUsageOpen('history') },

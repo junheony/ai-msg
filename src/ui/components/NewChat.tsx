@@ -8,7 +8,8 @@ import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePast
 import { AttachmentBar } from './AttachmentBar';
 import { Composer } from './Composer';
 import { SessionChip } from './SessionChip';
-import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
+import { EngineMark, engineOf } from './EngineMark';
+import { BrandMark } from './BrandMark';
 import { has } from '../features';
 import { modelChoices, touchEnterIsNewline } from './Chat';
 import { PinIcon } from './icons';
@@ -157,7 +158,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   return (
     <div className="newchat">
       <div className="newchat-inner">
-        <h1 className="newchat-greeting"><ClaudeMark className="spark" />{greeting(new Date(t).getHours())}</h1>
+        <h1 className="newchat-greeting"><BrandMark className="spark" />{greeting(new Date(t).getHours())}</h1>
         {projects.length === 0 ? (
           <p className="muted">프로젝트가 없습니다. 사이드바의 폴더 열기로 시작하거나 ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</p>
         ) : (

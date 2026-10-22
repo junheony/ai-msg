@@ -13,7 +13,7 @@ import { openInNewTab } from './ShareMenu';
 import { isMacPlatform, isPinMod, isSafariBrowser, pinKeyLabel } from '../shortcuts';
 import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
-import { DeckMark } from './DeckMark';
+import { BrandMark, BrandWordmark } from './BrandMark';
 import { SessionGlyph, assignSessionIcons, publishSessionAvatars, sessionIconBase, type IconRow } from './SessionIcon';
 import { usePrefs } from '../usePrefs';
 
@@ -34,7 +34,7 @@ export const RECENT_FOLDERS = 3;
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
 declare const __DECK_VERSION__: string | undefined;
 /** The avatar menu's last line (spec §3.2/§3.6: 정보 → "deck v…"), an information row that does nothing. */
-export const DECK_VERSION_LINE = `deck ${typeof __DECK_VERSION__ === 'string' ? `v${__DECK_VERSION__}` : '개발 모드'}`;
+export const DECK_VERSION_LINE = `AI-MSG ${typeof __DECK_VERSION__ === 'string' ? `v${__DECK_VERSION__}` : '개발 모드'}`;
 /** One entry of the avatar (설정 및 계정) menu at the bottom left. */
 export type SidebarMenuItem = { label: string; hint?: string; run: () => void };
 
@@ -526,7 +526,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       }}
       onScroll={revealed ? () => setRevealed(null) : undefined}>
       <div className="sidebar-head">
-        <span className="sidebar-brand"><DeckMark className="sidebar-brand-mark" />deck</span>
+        <span className="sidebar-brand"><BrandMark className="sidebar-brand-mark" /><BrandWordmark /></span>
         <span className="grow" />
         <button ref={searchBtn} type="button" className="icon-btn" aria-label="검색" title="세션 검색" aria-expanded={searchOpen} onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}><SearchIcon /></button>
         <span className="new-menu-wrap">

@@ -1,17 +1,16 @@
 // Generates the PWA icons and the notification badge as PNGs — no dependencies, the outputs are committed.
 // Run: node scripts/gen-icons.mjs   (writes src/ui/public/icons/*.png)
 //
-// The app icon is cut from scripts/assets/deck-icon-1024.png (the deck mark: a glossy terracotta chip with a cream `>_`
-// on the dark theme background). Each size is a crop around the chip, box-filtered down. The badge (Android shows it
-// as a monochrome silhouette next to the notification — a colour icon with a background turns into a white square)
-// is the `>_` alone, white on transparent, drawn here.
+// The app icon is the AI-MSG mark (docs/brand/ai-msg-mark-a.svg: a faceted crystal grain whose lower-left corner is a
+// speech tail) in light facets on an indigo tile, drawn here from the same polygons (4x4 supersampled). The badge
+// (Android shows it as a monochrome silhouette next to the notification — a colour icon with a background turns into a
+// white square) is the silhouette alone, white on transparent, with the facet Y cut out.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const SOURCE = path.join(here, 'assets', 'deck-icon-1024.png');
 const OUT = path.resolve(here, '..', 'src', 'ui', 'public', 'icons');
 
 // ---- PNG ----
@@ -54,121 +53,78 @@ function encodePng(w, h, channels, px) {
     chunk('IEND', Buffer.alloc(0)),
   ]);
 }
-/** 8-bit RGB/RGBA, non-interlaced only (what the source is). */
-function decodePng(buf) {
-  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('not a PNG');
-  const idat = [];
-  let w = 0, h = 0, channels = 0;
-  for (let off = 8; off < buf.length;) {
-    const len = buf.readUInt32BE(off);
-    const type = buf.toString('ascii', off + 4, off + 8);
-    const data = buf.subarray(off + 8, off + 8 + len);
-    if (type === 'IHDR') {
-      w = data.readUInt32BE(0);
-      h = data.readUInt32BE(4);
-      channels = { 2: 3, 6: 4 }[data[9]];
-      if (data[8] !== 8 || !channels || data[12] !== 0) throw new Error('source must be 8-bit RGB/RGBA, non-interlaced');
-    } else if (type === 'IDAT') idat.push(data);
-    off += 12 + len;
+// ---- The mark (24-unit box, the same numbers as BrandMark.tsx / the SVG) ----
+
+const FACES = [
+  { pts: [[12, 1.4], [20.31, 6.2], [12, 11], [3.69, 6.2]], rgb: [0xff, 0xff, 0xff] }, // top: the lit face
+  { pts: [[3.69, 6.2], [12, 11], [12, 20.6], [8.26, 18.44], [4.1, 22.4], [5.19, 16.66], [3.69, 15.8]], rgb: [0xe0, 0xe7, 0xff] }, // left + tail
+  { pts: [[12, 11], [20.31, 6.2], [20.31, 15.8], [12, 20.6]], rgb: [0xa5, 0xb4, 0xfc] }, // right: the shade
+];
+/** The facet edges cut out of the monochrome badge (centre lines, `CUT` units wide). */
+const CUTS = [[[3.69, 6.2], [12, 11]], [[12, 11], [20.31, 6.2]], [[12, 11], [12, 20.6]]];
+const CUT = 1.5;
+/** The mark's visual centre in the box (its extent is x 3.69..20.31, y 1.4..22.4). */
+const CENTER = [12, 11.9];
+const TILE_TOP = [0x63, 0x66, 0xf1];
+const TILE_BOTTOM = [0x43, 0x38, 0xca];
+
+function inside(x, y, pts) {
+  let hit = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
   }
-  const raw = zlib.inflateSync(Buffer.concat(idat));
-  const stride = w * channels;
-  const px = Buffer.alloc(h * stride);
-  for (let y = 0; y < h; y++) {
-    const filter = raw[y * (stride + 1)];
-    const src = y * (stride + 1) + 1;
-    const dst = y * stride;
-    for (let i = 0; i < stride; i++) {
-      const x = raw[src + i];
-      const a = i >= channels ? px[dst + i - channels] : 0;
-      const b = y > 0 ? px[dst - stride + i] : 0;
-      const c = y > 0 && i >= channels ? px[dst - stride + i - channels] : 0;
-      let v;
-      if (filter === 0) v = x;
-      else if (filter === 1) v = x + a;
-      else if (filter === 2) v = x + b;
-      else if (filter === 3) v = x + ((a + b) >> 1);
-      else {
-        const p = a + b - c;
-        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
-        v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
-      }
-      px[dst + i] = v & 0xff;
-    }
-  }
-  return { w, h, channels, px };
+  return hit;
 }
-
-// ---- The app icon: crops of the source ----
-
-/** Where the chip sits in the source (measured: its bounding box is x 217..805, y 184..770). */
-const CHIP = { cx: 511.5, cy: 477.5, size: 589 };
-
-/** Box-filtered crop: the source window `win` px wide, centred on the chip, scaled to `size`. RGB out. */
-function cropResize(src, win, size) {
-  const out = Buffer.alloc(size * size * 3);
-  const scale = win / size;
-  const x0 = CHIP.cx - win / 2, y0 = CHIP.cy - win / 2;
-  if (x0 < 0 || y0 < 0 || x0 + win > src.w || y0 + win > src.h) throw new Error(`window ${win} leaves the source`);
-  const overlap = (a0, a1, i) => Math.max(0, Math.min(a1, i + 1) - Math.max(a0, i));
-  for (let y = 0; y < size; y++) {
-    const sy0 = y0 + y * scale, sy1 = sy0 + scale;
-    for (let x = 0; x < size; x++) {
-      const sx0 = x0 + x * scale, sx1 = sx0 + scale;
-      const acc = [0, 0, 0];
-      let wsum = 0;
-      for (let sy = Math.floor(sy0); sy < Math.ceil(sy1); sy++) {
-        const wy = overlap(sy0, sy1, sy);
-        for (let sx = Math.floor(sx0); sx < Math.ceil(sx1); sx++) {
-          const wgt = wy * overlap(sx0, sx1, sx);
-          const i = (sy * src.w + sx) * src.channels;
-          for (let c = 0; c < 3; c++) acc[c] += src.px[i + c] * wgt;
-          wsum += wgt;
-        }
-      }
-      for (let c = 0; c < 3; c++) out[(y * size + x) * 3 + c] = Math.round(acc[c] / wsum);
-    }
-  }
-  return out;
-}
-
-// ---- The badge: the `>_` alone ----
-
-/** The glyph's centre lines in chip units (0..1 of the chip's side), measured off the source; stroke = 0.124 of the chip. */
-const GLYPH = {
-  strokes: [
-    [[0.272, 0.315], [0.47, 0.505]],
-    [[0.47, 0.505], [0.272, 0.695]],
-    [[0.58, 0.695], [0.757, 0.695]],
-  ],
-  width: 0.124,
-  bounds: { x0: 0.21, x1: 0.82, y0: 0.25, y1: 0.76 }, // outer extent, caps included
-};
-
 function segDist(px, py, [[ax, ay], [bx, by]]) {
   const vx = bx - ax, vy = by - ay;
   const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)));
   return Math.hypot(px - (ax + t * vx), py - (ay + t * vy));
 }
+const SS = 4;
 
-/** White `>_` on transparent, the glyph `fill` wide (fraction of the frame), centred. RGBA out. */
+/** The mark `fill` of the frame tall (24 units → fill·size px), centred: what covers each sample, or null. */
+function sampler(size, fill) {
+  const k = (fill * size) / 21; // the mark is 21 units tall
+  return (x, y) => [CENTER[0] + (x - size / 2) / k, CENTER[1] + (y - size / 2) / k];
+}
+
+/** The app icon: the coloured mark on the indigo tile (vertical gradient), RGB out. */
+function renderIcon(size, fill) {
+  const out = Buffer.alloc(size * size * 3);
+  const at = sampler(size, fill);
+  for (let y = 0; y < size; y++) {
+    const t = y / (size - 1);
+    const tile = TILE_TOP.map((c, i) => c + (TILE_BOTTOM[i] - c) * t);
+    for (let x = 0; x < size; x++) {
+      const acc = [0, 0, 0];
+      for (let sy = 0; sy < SS; sy++) {
+        for (let sx = 0; sx < SS; sx++) {
+          const [u, v] = at(x + (sx + 0.5) / SS, y + (sy + 0.5) / SS);
+          const face = FACES.find((f) => inside(u, v, f.pts));
+          const rgb = face ? face.rgb : tile;
+          for (let c = 0; c < 3; c++) acc[c] += rgb[c];
+        }
+      }
+      for (let c = 0; c < 3; c++) out[(y * size + x) * 3 + c] = Math.round(acc[c] / (SS * SS));
+    }
+  }
+  return out;
+}
+
+/** The badge: the white silhouette on transparent, the facet Y cut out. RGBA out. */
 function renderBadge(size, fill) {
   const out = Buffer.alloc(size * size * 4);
-  const k = (fill * size) / (GLYPH.bounds.x1 - GLYPH.bounds.x0); // chip side in px
-  const gx = (GLYPH.bounds.x0 + GLYPH.bounds.x1) / 2, gy = (GLYPH.bounds.y0 + GLYPH.bounds.y1) / 2;
-  const half = (GLYPH.width * k) / 2;
-  const SS = 4;
+  const at = sampler(size, fill);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       let hit = 0;
       for (let sy = 0; sy < SS; sy++) {
         for (let sx = 0; sx < SS; sx++) {
-          const px = x + (sx + 0.5) / SS - size / 2 + gx * k;
-          const py = y + (sy + 0.5) / SS - size / 2 + gy * k;
-          const u = px / k, v = py / k;
-          let d = Infinity;
-          for (const s of GLYPH.strokes) d = Math.min(d, segDist(u, v, s) * k);
-          if (d <= half) hit++;
+          const [u, v] = at(x + (sx + 0.5) / SS, y + (sy + 0.5) / SS);
+          if (!FACES.some((f) => inside(u, v, f.pts))) continue;
+          if (CUTS.some((s) => segDist(u, v, s) <= CUT / 2)) continue;
+          hit++;
         }
       }
       const i = (y * size + x) * 4;
@@ -181,20 +137,18 @@ function renderBadge(size, fill) {
 
 // ---- Outputs ----
 
-const src = decodePng(fs.readFileSync(SOURCE));
 fs.mkdirSync(OUT, { recursive: true });
-const chipWindow = (fraction) => CHIP.size / fraction;
 const icons = [
-  // The chip at 74% of the frame, the dark background around it (favicon, Android notification, iOS home screen).
-  ['icon-192.png', 192, chipWindow(0.74)],
-  ['icon-512.png', 512, chipWindow(0.74)],
-  ['apple-touch-icon.png', 180, chipWindow(0.74)],
-  // Maskable: the platform may crop to a circle of 80% — the chip (corners included) stays inside it at 62%.
-  ['icon-maskable-512.png', 512, chipWindow(0.62)],
+  // The mark at 62% of the frame on the full-bleed tile (favicon, Android notification, iOS home screen).
+  ['icon-192.png', 192, 0.62],
+  ['icon-512.png', 512, 0.62],
+  ['apple-touch-icon.png', 180, 0.62],
+  // Maskable: the platform may crop to a circle of 80% — the mark (tail included) stays inside it at 48%.
+  ['icon-maskable-512.png', 512, 0.48],
 ];
-for (const [name, size, win] of icons) {
-  fs.writeFileSync(path.join(OUT, name), encodePng(size, size, 3, cropResize(src, win, size)));
+for (const [name, size, fill] of icons) {
+  fs.writeFileSync(path.join(OUT, name), encodePng(size, size, 3, renderIcon(size, fill)));
   console.log(`wrote ${name} (${size}x${size})`);
 }
-fs.writeFileSync(path.join(OUT, 'badge-96.png'), encodePng(96, 96, 4, renderBadge(96, 0.8)));
+fs.writeFileSync(path.join(OUT, 'badge-96.png'), encodePng(96, 96, 4, renderBadge(96, 0.84)));
 console.log('wrote badge-96.png (96x96, alpha)');

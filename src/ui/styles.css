@@ -1,32 +1,33 @@
-/* deck — Claude Desktop (Code tab) family. Tokens first; every color below reads from them. */
+/* AI-MSG — a quiet shell around your coding agents: cool neutral greys, one deep-indigo accent. Tokens first; every color below reads from them. */
 :root {
   color-scheme: dark;
-  --bg: #161615;
-  --bg-raised: #1e1e1c;
-  --sidebar: #121211;
-  --panel: #242422;
+  --bg: #131418;
+  --bg-raised: #1b1c21;
+  --sidebar: #0f1013;
+  --panel: #202127;
   --hover: rgba(255, 255, 255, .045);
   --selected: rgba(255, 255, 255, .09);
   --line: rgba(255, 255, 255, .08);
   --line-strong: rgba(255, 255, 255, .13);
-  --fg: #e7e5e1;
-  --fg-strong: #f5f4f1;
-  --muted: #a09d95;
-  --faint: #8c8a84;
-  --bubble: #2a2927;
-  --code-bg: #232321;
-  --code-fg: #e9b99d;
-  --accent: #d97757;
-  --accent-soft: rgba(217, 119, 87, .16);
-  --link: #8fb5d9;
+  --fg: #e4e5ea;
+  --fg-strong: #f4f5f8;
+  --muted: #a1a4b0;
+  --faint: #8a8d99;
+  --bubble: #26272e;
+  --code-bg: #1e1f25;
+  --code-fg: #b9bcff;
+  --accent: #8b8ef6;
+  --accent-soft: rgba(139, 142, 246, .16);
+  --brand-top: #e0e7ff; --brand-left: #8b8ef6; --brand-right: #5b5bd6;
+  --link: #8fb5e9;
   --pill-bg: color-mix(in srgb, var(--fg) 6%, transparent);
   --ok: #7fae7a;
   --warn: #d6a24a;
   --danger: #e2675b;
   --danger-soft: rgba(226, 103, 91, .12);
   --track: rgba(255, 255, 255, .09);
-  --btn-primary-bg: #ebe9e4;
-  --btn-primary-fg: #161615;
+  --btn-primary-bg: #e9eaef;
+  --btn-primary-fg: #131418;
   --shadow: 0 8px 28px rgba(0, 0, 0, .45);
   --radius: 10px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
@@ -58,30 +59,31 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #fbfaf8;
-  --bg-raised: #f5f3ef;
-  --sidebar: #f1efea;
+  --bg: #fafafc;
+  --bg-raised: #f3f4f7;
+  --sidebar: #eff0f4;
   --panel: #ffffff;
   --hover: rgba(0, 0, 0, .04);
   --selected: rgba(0, 0, 0, .07);
   --line: rgba(0, 0, 0, .08);
   --line-strong: rgba(0, 0, 0, .14);
-  --fg: #2a2926;
-  --fg-strong: #141412;
-  --muted: #5f5c54;
-  --faint: #706c65;
-  --bubble: #ebe8e2;
-  --code-bg: #efece6;
-  --code-fg: #a8482a;
-  --accent: #c96442;
-  --accent-soft: rgba(201, 100, 66, .12);
+  --fg: #23242b;
+  --fg-strong: #121318;
+  --muted: #555864;
+  --faint: #6a6d79;
+  --bubble: #e9eaf0;
+  --code-bg: #eceef3;
+  --code-fg: #4338ca;
+  --accent: #4f46e5;
+  --accent-soft: rgba(79, 70, 229, .1);
+  --brand-top: #a5b4fc; --brand-left: #4f46e5; --brand-right: #3730a3;
   --ok: #457841;
   --warn: #916410;
   --danger: #c4483c;
   --danger-soft: rgba(196, 72, 60, .1);
   --track: rgba(0, 0, 0, .08);
-  --btn-primary-bg: #2a2926;
-  --btn-primary-fg: #fbfaf8;
+  --btn-primary-bg: #23242b;
+  --btn-primary-fg: #fafafc;
   --shadow: 0 8px 28px rgba(0, 0, 0, .14);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .08);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, .14);
@@ -91,30 +93,31 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-    --bg: #fbfaf8;
-    --bg-raised: #f5f3ef;
-    --sidebar: #f1efea;
+    --bg: #fafafc;
+    --bg-raised: #f3f4f7;
+    --sidebar: #eff0f4;
     --panel: #ffffff;
     --hover: rgba(0, 0, 0, .04);
     --selected: rgba(0, 0, 0, .07);
     --line: rgba(0, 0, 0, .08);
     --line-strong: rgba(0, 0, 0, .14);
-    --fg: #2a2926;
-    --fg-strong: #141412;
-    --muted: #5f5c54;
-    --faint: #706c65;
-    --bubble: #ebe8e2;
-    --code-bg: #efece6;
-    --code-fg: #a8482a;
-    --accent: #c96442;
-    --accent-soft: rgba(201, 100, 66, .12);
+    --fg: #23242b;
+    --fg-strong: #121318;
+    --muted: #555864;
+    --faint: #6a6d79;
+    --bubble: #e9eaf0;
+    --code-bg: #eceef3;
+    --code-fg: #4338ca;
+    --accent: #4f46e5;
+    --accent-soft: rgba(79, 70, 229, .1);
+    --brand-top: #a5b4fc; --brand-left: #4f46e5; --brand-right: #3730a3;
     --ok: #457841;
     --warn: #916410;
     --danger: #c4483c;
     --danger-soft: rgba(196, 72, 60, .1);
     --track: rgba(0, 0, 0, .08);
-    --btn-primary-bg: #2a2926;
-    --btn-primary-fg: #fbfaf8;
+    --btn-primary-bg: #23242b;
+    --btn-primary-fg: #fafafc;
     --shadow: 0 8px 28px rgba(0, 0, 0, .14);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, .08);
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, .14);
@@ -140,9 +143,17 @@ input, textarea, select { font: inherit; color: var(--fg); }
 .note { color: var(--warn); font-size: calc(13px * var(--font-scale, 1)); }
 .center { display: flex; align-items: center; justify-content: center; height: 100%; }
 .spark { color: var(--accent); font-weight: 700; display: inline-block; line-height: 1; }
-/* The Claude star (ClaudeMark) and the deck mark (DeckMark, on the login screen): SVGs sized by the font, never a ✳ glyph
- * (drawn as a green emoji on many systems). */
-.claude-mark, .deck-mark { display: inline-block; width: 1em; height: 1em; vertical-align: -.125em; flex-shrink: 0; }
+/* The AI-MSG mark (BrandMark: a crystal grain with a speech tail, three indigo facets per theme) and the neutral progress
+ * mark (ProgressMark, in currentColor): SVGs sized by the font. */
+.brand-mark, .progress-mark { display: inline-block; width: 1em; height: 1em; vertical-align: -.125em; flex-shrink: 0; }
+.brand-mark .brand-top { fill: var(--brand-top); }
+.brand-mark .brand-left { fill: var(--brand-left); }
+.brand-mark .brand-right { fill: var(--brand-right); }
+/* The wordmark: "AI-" in the text colour, "MSG" (the seasoning) heavier, in the accent. */
+.brand-wordmark { white-space: nowrap; letter-spacing: -.01em; }
+.brand-wordmark .brand-ai { font-weight: 550; }
+.brand-wordmark .brand-dash { font-weight: 400; color: var(--muted); margin: 0 .04em; }
+.brand-wordmark .brand-msg { font-weight: 800; letter-spacing: .02em; color: var(--accent); }
 svg.spark { transform-box: fill-box; transform-origin: center; }
 .spark.spin { animation: spark-spin 2.4s linear infinite; }
 @keyframes spark-spin { to { transform: rotate(360deg); } }
@@ -478,7 +489,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* Login */
 .login { max-width: 340px; margin: 18vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; }
-.login h1 { display: flex; align-items: center; gap: 8px; font-size: calc(20px * var(--font-scale, 1)); margin: 0 0 4px; }
+.login-mark { width: 26px; height: 26px; }
+.login h1 { display: flex; align-items: center; gap: 10px; font-size: calc(20px * var(--font-scale, 1)); margin: 0 0 4px; }
 .login p { margin: 0 0 6px; color: var(--muted); font-size: calc(13.5px * var(--font-scale, 1)); }
 .login input { height: 36px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg-raised); }
 .login .btn { height: 36px; }
@@ -2139,6 +2151,7 @@ button.hl-row-main:hover { background: var(--hover); }
 /* Head: the brand, then 검색 and + (새 세션 · 폴더 열기 · 지금 / 최근 폴더 · 다시 읽기); the search box opens under it. */
 .sidebar-brand { display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--s1); color: var(--fg); font-size: calc(var(--fs-label) * var(--font-scale, 1)); font-weight: 600; letter-spacing: -.005em; }
 .sidebar-brand-mark { width: 18px; height: 18px; }
+.sidebar-brand .brand-wordmark { font-size: calc(14px * var(--font-scale, 1)); }
 .new-menu .menu-tag { margin-left: auto; color: var(--muted); font-size: calc(11.5px * var(--font-scale, 1)); }
 .new-menu-wrap { position: relative; display: inline-flex; }
 .session-menu.new-menu { right: 0; top: calc(100% + 4px); min-width: 220px; max-height: min(440px, 70vh); overflow-y: auto; overscroll-behavior: contain; }

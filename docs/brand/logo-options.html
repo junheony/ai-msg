@@ -1,0 +1,174 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<!-- AI-MSG 로고 시안 비교 시트. Render: Chrome headless (scripts/render-brand.sh) -> docs/brand/logo-options.png.
+     The marks are inline <symbol>s; colours come from CSS custom properties so one symbol draws every variant
+     (indigo, dark theme tint, monochrome, app icon). Option A is the one implemented in src/ui/components/BrandMark.tsx. -->
+<title>AI-MSG — logo options</title>
+<style>
+  :root {
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+    --ink: #1f2030; --sub: #5a5d6a; --line: rgba(0,0,0,.08);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 40px 44px 48px; width: 1440px; background: #f4f5f8; color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+  header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 26px; }
+  h1 { margin: 0; font-size: 30px; letter-spacing: -.02em; font-weight: 700; }
+  h1 small { display: block; font-size: 14px; font-weight: 500; color: var(--sub); letter-spacing: 0; margin-top: 6px; }
+  .legend { font-size: 13px; color: var(--sub); text-align: right; line-height: 1.6; }
+  .row { display: grid; grid-template-columns: 250px 1fr; gap: 24px; padding: 22px; margin-bottom: 18px; background: #fff; border-radius: 18px; box-shadow: 0 1px 2px rgba(20,20,40,.06), 0 0 0 1px var(--line); }
+  .row.pick { box-shadow: 0 0 0 2px #4f46e5, 0 10px 30px rgba(79,70,229,.14); }
+  .about h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+  .about h2 .tag { font-size: 11px; font-weight: 700; letter-spacing: .04em; color: #fff; background: #4f46e5; border-radius: 999px; padding: 2px 8px; }
+  .about .ko { font-size: 13px; color: var(--sub); margin: 0 0 10px; }
+  .about p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; color: #3a3c48; }
+  .about ul { margin: 6px 0 0; padding-left: 16px; font-size: 12.5px; color: var(--sub); line-height: 1.6; }
+  .cells { display: grid; grid-template-columns: 170px 170px 1fr 120px 210px; gap: 14px; align-items: stretch; }
+  .cell { border-radius: 14px; display: grid; place-items: center; position: relative; padding: 14px; min-height: 170px; }
+  .cell .cap { position: absolute; left: 12px; bottom: 9px; font-size: 10.5px; letter-spacing: .03em; color: var(--sub); text-transform: uppercase; }
+  .light { background: #fafafc; box-shadow: inset 0 0 0 1px var(--line); --top: #a5b4fc; --left: #4f46e5; --right: #3730a3; --bg: #fafafc; --mono: #4f46e5; }
+  .dark { background: #131418; --top: #e0e7ff; --left: #8b8ef6; --right: #5b5bd6; --bg: #131418; --mono: #8b8ef6; color: #e4e5ea; }
+  .dark .cap { color: #9c9fab; }
+  .sizes { display: grid; grid-template-rows: 1fr 1fr; gap: 10px; }
+  .sizes .cell { min-height: 0; display: flex; align-items: center; justify-content: center; gap: 22px; padding: 10px 14px 22px; }
+  .mono-black { --top: #111; --left: #111; --right: #111; --mono: #111; --cut: #fafafc; }
+  .mono-white { --top: #fff; --left: #fff; --right: #fff; --mono: #fff; --cut: #131418; }
+  .icons { display: grid; grid-template-rows: 1fr 1fr; gap: 10px; }
+  .icons .cell { min-height: 0; padding: 10px 10px 22px; }
+  .app { width: 64px; height: 64px; border-radius: 15px; display: grid; place-items: center; background: linear-gradient(160deg, #6366f1, #4338ca); box-shadow: 0 4px 12px rgba(67,56,202,.35); --top: #ffffff; --left: #e0e7ff; --right: #a5b4fc; --bg: #4f46e5; --mono: #fff; }
+  .lockups { display: grid; grid-template-rows: 1fr 1fr; gap: 10px; }
+  .lockups .cell { min-height: 0; justify-content: start; padding: 10px 16px 22px; }
+  .lock { display: flex; align-items: center; gap: 9px; }
+  .wm { font-size: 22px; letter-spacing: -.01em; line-height: 1; white-space: nowrap; }
+  .wm .ai { font-weight: 500; }
+  .wm .dash { font-weight: 400; opacity: .55; margin: 0 .03em; }
+  .wm .msg { font-weight: 800; letter-spacing: .015em; color: var(--left); }
+  .dark .wm .msg { color: #a5b4fc; }
+  .tagline { display: block; margin-top: 5px; font-size: 11.5px; color: var(--sub); letter-spacing: 0; font-weight: 500; }
+  .dark .tagline { color: #9c9fab; }
+  svg { display: block; overflow: visible; }
+  .f-top { fill: var(--top); } .f-left { fill: var(--left); } .f-right { fill: var(--right); }
+  .f-mono { fill: var(--mono); } .s-mono { stroke: var(--mono); } .f-bg { fill: var(--bg); } .f-cut { fill: var(--cut, var(--bg)); } .s-cut { stroke: var(--cut, var(--bg)); }
+  footer { margin-top: 6px; font-size: 12px; color: var(--sub); display: flex; justify-content: space-between; }
+</style></head><body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- A · 결정 말풍선 (Grain): an isometric crystal grain (three lit facets) whose lower-left corner becomes a speech tail. -->
+    <symbol id="opt-a" viewBox="0 0 24 24">
+      <path class="f-top" d="M12 1.4 20.31 6.2 12 11 3.69 6.2Z"/>
+      <path class="f-left" d="M3.69 6.2 12 11V20.6L8.26 18.44 4.1 22.4 5.19 16.66 3.69 15.8Z"/>
+      <path class="f-right" d="M12 11 20.31 6.2V15.8L12 20.6Z"/>
+    </symbol>
+    <symbol id="opt-a-mono" viewBox="0 0 24 24">
+      <path class="f-mono" d="M12 1.4 20.31 6.2V15.8L12 20.6 8.26 18.44 4.1 22.4 5.19 16.66 3.69 15.8V6.2Z"/>
+      <path class="s-cut" d="M3.69 6.2 12 11 20.31 6.2M12 11V20.6" fill="none" stroke-width="1.5" stroke-linejoin="round"/>
+    </symbol>
+    <!-- B · 한 꼬집 (Pinch): a plain speech bubble, one crystal grain dropped on its shoulder. -->
+    <symbol id="opt-b" viewBox="0 0 24 24">
+      <path class="f-left" d="M6.5 6H12.5A4.5 4.5 0 0 1 17 10.5V13.5A4.5 4.5 0 0 1 12.5 18H8.5L4.5 21.5V17.6A4.5 4.5 0 0 1 2 13.5V10.5A4.5 4.5 0 0 1 6.5 6Z"/>
+      <path class="f-cut" d="M18.2 -.4 23.57 2.7V8.9L18.2 12 12.83 8.9V2.7Z"/>
+      <path class="f-top" d="M18.2 1.2 22.18 3.5 18.2 5.8 14.22 3.5Z"/>
+      <path class="f-left" d="M14.22 3.5 18.2 5.8V10.4L14.22 8.1Z" opacity=".75"/>
+      <path class="f-right" d="M18.2 5.8 22.18 3.5V8.1L18.2 10.4Z"/>
+    </symbol>
+    <symbol id="opt-b-mono" viewBox="0 0 24 24">
+      <path class="f-mono" d="M6.5 6H12.5A4.5 4.5 0 0 1 17 10.5V13.5A4.5 4.5 0 0 1 12.5 18H8.5L4.5 21.5V17.6A4.5 4.5 0 0 1 2 13.5V10.5A4.5 4.5 0 0 1 6.5 6Z"/>
+      <path class="f-cut" d="M18.2 -.4 23.57 2.7V8.9L18.2 12 12.83 8.9V2.7Z"/>
+      <path class="f-mono" d="M18.2 1.2 22.18 3.5V8.1L18.2 10.4 14.22 8.1V3.5Z"/>
+      <path class="s-cut" d="M14.22 3.5 18.2 5.8 22.18 3.5M18.2 5.8V10.4" fill="none" stroke-width="1.1" stroke-linejoin="round"/>
+    </symbol>
+    <!-- C · 감칠 점 (Typing grains): a speech bubble whose typing dots are three crystal grains. -->
+    <symbol id="opt-c" viewBox="0 0 24 24">
+      <path class="f-left" d="M6 3.5H18A4.5 4.5 0 0 1 22.5 8V13.5A4.5 4.5 0 0 1 18 18H10.5L5.5 21.8V17.8A4.5 4.5 0 0 1 1.5 13.5V8A4.5 4.5 0 0 1 6 3.5Z"/>
+      <path class="f-top" d="M7 8.3 8.75 10.75 7 13.2 5.25 10.75Z"/>
+      <path class="f-top" d="M12 7.6 13.9 10.75 12 13.9 10.1 10.75Z"/>
+      <path class="f-top" d="M17 8.3 18.75 10.75 17 13.2 15.25 10.75Z"/>
+    </symbol>
+    <symbol id="opt-c-mono" viewBox="0 0 24 24">
+      <path class="f-mono" d="M6 3.5H18A4.5 4.5 0 0 1 22.5 8V13.5A4.5 4.5 0 0 1 18 18H10.5L5.5 21.8V17.8A4.5 4.5 0 0 1 1.5 13.5V8A4.5 4.5 0 0 1 6 3.5Z"/>
+      <path class="f-cut" d="M7 8.3 8.75 10.75 7 13.2 5.25 10.75ZM12 7.6 13.9 10.75 12 13.9 10.1 10.75ZM17 8.3 18.75 10.75 17 13.2 15.25 10.75Z"/>
+    </symbol>
+  </defs>
+</svg>
+
+<header>
+  <h1>AI-MSG 로고 시안 <small>MSG = 조미료 · "AI에 감칠맛을" — 주인공(AI)의 맛을 살리는 조연. 결정 알갱이 × 말풍선.</small></h1>
+  <div class="legend">각 줄: 큰 마크(라이트·다크) · 64/32/24/16px · 단색 · 앱 아이콘 · 워드마크<br>색: Indigo #4f46e5 (라이트) · #8b8ef6 (다크) · 무채색 쿨 그레이 배경</div>
+</header>
+
+<section class="row pick" data-opt="a">
+  <div class="about">
+    <h2>A · 결정 말풍선 <span class="tag">추천 · 적용</span></h2>
+    <p class="ko">Grain — 깎인 MSG 결정 한 알이 그대로 말풍선이 된다</p>
+    <p>정육각형 결정(빛 받는 윗면 · 그늘진 옆면 둘)의 왼쪽 아래 모서리가 말풍선 꼬리로 빠져나온다. 한 덩어리 실루엣이라 16px 에서도 형태가 무너지지 않는다.</p>
+    <ul><li>단색: 실루엣 + Y자 홈</li><li>스피너: 꼬리를 뗀 결정이 천천히 회전</li><li>세 면 = 세 단계 인디고, 테마마다 틴트만 교체</li></ul>
+  </div>
+  <div class="cells">
+    <div class="cell light"><svg width="112" height="112"><use href="#opt-a"/></svg><span class="cap">light</span></div>
+    <div class="cell dark"><svg width="112" height="112"><use href="#opt-a"/></svg><span class="cap">dark</span></div>
+    <div class="sizes">
+      <div class="cell light"><svg width="64" height="64"><use href="#opt-a"/></svg><svg width="32" height="32"><use href="#opt-a"/></svg><svg width="24" height="24"><use href="#opt-a"/></svg><svg width="16" height="16"><use href="#opt-a"/></svg><span class="cap">64 · 32 · 24 · 16</span></div>
+      <div class="cell dark"><svg width="64" height="64"><use href="#opt-a"/></svg><svg width="32" height="32"><use href="#opt-a"/></svg><svg width="24" height="24"><use href="#opt-a"/></svg><svg width="16" height="16"><use href="#opt-a"/></svg><span class="cap">64 · 32 · 24 · 16</span></div>
+    </div>
+    <div class="icons">
+      <div class="cell light mono-black" style="gap:10px;display:flex"><svg width="34" height="34"><use href="#opt-a-mono"/></svg><svg width="16" height="16"><use href="#opt-a-mono"/></svg><span class="cap">mono</span></div>
+      <div class="cell dark"><div class="app"><svg width="40" height="40"><use href="#opt-a"/></svg></div><span class="cap">app icon</span></div>
+    </div>
+    <div class="lockups">
+      <div class="cell light"><div class="lock"><svg width="30" height="30"><use href="#opt-a"/></svg><div><span class="wm"><span class="ai">AI</span><span class="dash">-</span><span class="msg">MSG</span></span><span class="tagline">AI에 감칠맛을</span></div></div><span class="cap">wordmark</span></div>
+      <div class="cell dark"><div class="lock"><svg width="30" height="30"><use href="#opt-a"/></svg><div><span class="wm"><span class="ai">AI</span><span class="dash">-</span><span class="msg">MSG</span></span><span class="tagline">Seasoning for your AI</span></div></div><span class="cap">wordmark</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="row" data-opt="b">
+  <div class="about">
+    <h2>B · 한 꼬집</h2>
+    <p class="ko">Pinch — 말풍선 어깨에 결정 한 알을 톡</p>
+    <p>평범한 말풍선(=AI 대화) 위에 결정 알갱이가 살짝 얹힌다. "조연" 이야기를 가장 직접적으로 말하지만, 16px 에서는 알갱이가 점으로 뭉개진다.</p>
+    <ul><li>단색: 알갱이 둘레를 배경색으로 끊어야 함</li><li>두 요소라 파비콘에서 약함</li></ul>
+  </div>
+  <div class="cells">
+    <div class="cell light"><svg width="112" height="112"><use href="#opt-b"/></svg><span class="cap">light</span></div>
+    <div class="cell dark"><svg width="112" height="112"><use href="#opt-b"/></svg><span class="cap">dark</span></div>
+    <div class="sizes">
+      <div class="cell light"><svg width="64" height="64"><use href="#opt-b"/></svg><svg width="32" height="32"><use href="#opt-b"/></svg><svg width="24" height="24"><use href="#opt-b"/></svg><svg width="16" height="16"><use href="#opt-b"/></svg><span class="cap">64 · 32 · 24 · 16</span></div>
+      <div class="cell dark"><svg width="64" height="64"><use href="#opt-b"/></svg><svg width="32" height="32"><use href="#opt-b"/></svg><svg width="24" height="24"><use href="#opt-b"/></svg><svg width="16" height="16"><use href="#opt-b"/></svg><span class="cap">64 · 32 · 24 · 16</span></div>
+    </div>
+    <div class="icons">
+      <div class="cell light mono-black" style="gap:10px;display:flex"><svg width="34" height="34"><use href="#opt-b-mono"/></svg><svg width="16" height="16"><use href="#opt-b-mono"/></svg><span class="cap">mono</span></div>
+      <div class="cell dark"><div class="app"><svg width="40" height="40"><use href="#opt-b"/></svg></div><span class="cap">app icon</span></div>
+    </div>
+    <div class="lockups">
+      <div class="cell light"><div class="lock"><svg width="30" height="30"><use href="#opt-b"/></svg><div><span class="wm"><span class="ai">AI</span><span class="dash">-</span><span class="msg">MSG</span></span><span class="tagline">AI에 감칠맛을</span></div></div><span class="cap">wordmark</span></div>
+      <div class="cell dark"><div class="lock"><svg width="30" height="30"><use href="#opt-b"/></svg><div><span class="wm"><span class="ai">AI</span><span class="dash">-</span><span class="msg">MSG</span></span><span class="tagline">Seasoning for your AI</span></div></div><span class="cap">wordmark</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="row" data-opt="c">
+  <div class="about">
+    <h2>C · 감칠 점</h2>
+    <p class="ko">Typing grains — 입력 중 점 세 개가 결정 알갱이</p>
+    <p>"상대가 입력 중…" 점 세 개를 마름모 결정으로 바꿨다. 채팅 앱이라는 건 바로 읽히지만 흔한 말풍선 실루엣이라 다른 메신저와 구별이 약하다.</p>
+    <ul><li>단색: 알갱이를 뚫어서 표현</li><li>16px 에서 점 간격이 1px 수준</li></ul>
+  </div>
+  <div class="cells">
+    <div class="cell light"><svg width="112" height="112"><use href="#opt-c"/></svg><span class="cap">light</span></div>
+    <div class="cell dark"><svg width="112" height="112"><use href="#opt-c"/></svg><span class="cap">dark</span></div>
+    <div class="sizes">
+      <div class="cell light"><svg width="64" height="64"><use href="#opt-c"/></svg><svg width="32" height="32"><use href="#opt-c"/></svg><svg width="24" height="24"><use href="#opt-c"/></svg><svg width="16" height="16"><use href="#opt-c"/></svg><span class="cap">64 · 32 · 24 · 16</span></div>
+      <div class="cell dark"><svg width="64" height="64"><use href="#opt-c"/></svg><svg width="32" height="32"><use href="#opt-c"/></svg><svg width="24" height="24"><use href="#opt-c"/></svg><svg width="16" height="16"><use href="#opt-c"/></svg><span class="cap">64 · 32 · 24 · 16</span></div>
+    </div>
+    <div class="icons">
+      <div class="cell light mono-black" style="gap:10px;display:flex"><svg width="34" height="34"><use href="#opt-c-mono"/></svg><svg width="16" height="16"><use href="#opt-c-mono"/></svg><span class="cap">mono</span></div>
+      <div class="cell dark"><div class="app"><svg width="40" height="40"><use href="#opt-c"/></svg></div><span class="cap">app icon</span></div>
+    </div>
+    <div class="lockups">
+      <div class="cell light"><div class="lock"><svg width="30" height="30"><use href="#opt-c"/></svg><div><span class="wm"><span class="ai">AI</span><span class="dash">-</span><span class="msg">MSG</span></span><span class="tagline">AI에 감칠맛을</span></div></div><span class="cap">wordmark</span></div>
+      <div class="cell dark"><div class="lock"><svg width="30" height="30"><use href="#opt-c"/></svg><div><span class="wm"><span class="ai">AI</span><span class="dash">-</span><span class="msg">MSG</span></span><span class="tagline">Seasoning for your AI</span></div></div><span class="cap">wordmark</span></div>
+    </div>
+  </div>
+</section>
+
+<footer><span>SVG 원본: docs/brand/ai-msg-mark-{a,b,c}.svg · 앱 아이콘 PNG: node scripts/gen-icons.mjs</span><span>AI-MSG is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI.</span></footer>
+</body></html>

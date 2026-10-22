@@ -530,7 +530,7 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     const version = items.at(-1)!;
     expect(version).toBe(screen.getByTestId('foot-menu-version'));
     // Under vitest there is no __DECK_VERSION__; the build has `deck v<package.json version>`.
-    expect(DECK_VERSION_LINE).toMatch(/^deck (v\d+\.\d+\.\d+|개발 모드)$/);
+    expect(DECK_VERSION_LINE).toMatch(/^AI-MSG (v\d+\.\d+\.\d+|개발 모드)$/);
     expect(version.textContent).toBe(DECK_VERSION_LINE);
     expect(version.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(version);
@@ -837,8 +837,8 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first')] }];
     const { container } = render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenPalette={onOpenPalette} onOpenFolder={noop} />);
     const brand = container.querySelector('.sidebar-head .sidebar-brand')!;
-    expect(brand.textContent).toBe('deck');
-    expect(brand.querySelector('svg.deck-mark')).not.toBeNull();
+    expect(brand.textContent).toBe('AI-MSG');
+    expect(brand.querySelector('svg.brand-mark')).not.toBeNull();
     expect(screen.queryByLabelText('세션 검색')).toBeNull();
     openSearch();
     const box = screen.getByLabelText('세션 검색');

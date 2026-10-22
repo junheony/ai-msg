@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { DeckMark } from './DeckMark';
+import { BrandMark, BrandWordmark } from './BrandMark';
 import { ui } from '../i18n';
 
 export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
@@ -14,7 +14,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   };
   return (
     <form className="login" onSubmit={submit}>
-      <h1><DeckMark className="spark" />deck</h1>
+      <h1><BrandMark className="login-mark" /><BrandWordmark /></h1>
       {/* `…` in the hint is a command: shown as code. */}
       <p>{T.hint.split('`').map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part))}</p>
       <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={T.token} autoFocus />

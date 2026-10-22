@@ -15,8 +15,8 @@ describe('status-bar colour (PWA top inset)', () => {
   afterEach(() => { document.head.innerHTML = ''; document.documentElement.removeAttribute('data-theme'); });
 
   it('index.html ships one theme-color per scheme, each the top bar colour (--sidebar) of that theme', () => {
-    expect(html).toMatch(/<meta name="theme-color" content="#121211" media="\(prefers-color-scheme: dark\)"/);
-    expect(html).toMatch(/<meta name="theme-color" content="#f1efea" media="\(prefers-color-scheme: light\)"/);
+    expect(html).toMatch(/<meta name="theme-color" content="#0f1013" media="\(prefers-color-scheme: dark\)"/);
+    expect(html).toMatch(/<meta name="theme-color" content="#eff0f4" media="\(prefers-color-scheme: light\)"/);
     expect(sidebarToken(/:root\s*\{([^}]*)\}/)).toBe(THEME_COLOR.dark);
     expect(sidebarToken(/:root\[data-theme="light"\]\s*\{([^}]*)\}/)).toBe(THEME_COLOR.light);
   });
@@ -26,7 +26,7 @@ describe('status-bar colour (PWA top inset)', () => {
   });
 
   it('a forced theme points both metas at its colour; system restores each scheme', () => {
-    document.head.innerHTML = '<meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#f1efea" media="(prefers-color-scheme: light)">';
+    document.head.innerHTML = '<meta name="theme-color" content="#0f1013" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#eff0f4" media="(prefers-color-scheme: light)">';
     applyThemeColor('light');
     expect([content('dark'), content('light')]).toEqual([THEME_COLOR.light, THEME_COLOR.light]);
     applyPrefs({ ...DEFAULT_PREFS, theme: 'dark' });
