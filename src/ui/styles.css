@@ -1985,7 +1985,7 @@ button.hl-row-main:hover { background: var(--hover); }
 /* Avatar: 40px circle, the project's palette colour behind the session's line glyph (SessionIcon, --avatar-glyph;
    decorative — the title and tooltip name the session and project). */
 .row-avatar { flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
-.row-avatar-icon { display: block; width: 20px; height: 20px; }
+.row-avatar-icon { display: block; width: 28px; height: 28px; }
 /* The row's end mark: a 16px slot, so the dot / ring / number line up down the list. */
 .row-status { flex-shrink: 0; position: relative; display: grid; place-items: center; width: 16px; height: 16px; margin-left: 2px; }
 .row-status::before { content: ""; box-sizing: border-box; border-radius: var(--r-full); }
