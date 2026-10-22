@@ -278,6 +278,19 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     if (open) return <span className="row-status open open-mark" role="img" aria-label={open.label} title={open.label}>{open.at === 'float' ? '◱' : open.at}</span>;
     return null;
   };
+  // 고정됨 folded: the session open now stays as a row; the rest fold away, their highest status (승인 대기 > 안 읽음 >
+  // 응답 중) shown on the head so it doesn't vanish with them.
+  const pinnedId = (it: PinnedItem) => (it.kind === 'session' ? it.s.sessionId : it.d.sessionId);
+  const pinnedShown = pinnedFolded ? pinned.filter((it) => pinnedId(it) === currentSessionId) : pinned;
+  const foldedMark = (() => {
+    if (!pinnedFolded) return null;
+    const hidden = pinned.filter((it) => !pinnedShown.includes(it));
+    const bot = (it: PinnedItem) => (it.kind === 'session' ? it.s.grokBot : undefined);
+    if (hidden.some((it) => waitingSet.has(pinnedId(it)) || !!bot(it)?.awaitingUserResponse)) return { kind: 'waiting', label: '고정됨에 승인 대기' };
+    if (hidden.some((it) => unreadSet.has(pinnedId(it)) || (bot(it)?.unreadCount ?? 0) > 0)) return { kind: 'unread', label: '고정됨에 안 읽음' };
+    if (hidden.some((it) => actById.get(pinnedId(it))?.running)) return { kind: 'running', label: '고정됨에 응답 중' };
+    return null;
+  })();
   /**
    * The row's avatar (§3.2): project colour + the session's glyph (SessionIcon: one per session, so a project's rows tell
    * apart). Nothing on its edge — status, engine and open marks live at the row's end and on the second line.
@@ -549,8 +562,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
               onClick={() => setPref({ type: 'set', key: 'pinnedFolded', value: !pinnedFolded })}>
               <Chevron /><span className="project-name">고정됨</span>
             </button>
+            {foldedMark && <span className={`row-status ${foldedMark.kind}`} role="img" aria-label={foldedMark.label} title={foldedMark.label} data-testid="pinned-folded-status" />}
           </div>
-          {!pinnedFolded && <ul id="pinned-list" {...pinDrag.listProps}>{pinned.map((it, i) => (it.kind === 'session' ? row(it.s, 'pinned', undefined, pinKey(i)) : desktopRow(it.d, 'pinned', pinKey(i))))}</ul>}
+          <ul id="pinned-list" hidden={pinnedFolded && !pinnedShown.length} {...pinDrag.listProps}>{pinned.map((it, i) => (!pinnedShown.includes(it) ? null : it.kind === 'session' ? row(it.s, 'pinned', undefined, pinKey(i)) : desktopRow(it.d, 'pinned', pinKey(i))))}</ul>
           <span className="sr-only" role="status" aria-live="polite">{pinDrag.live}</span>
         </section>
       )}

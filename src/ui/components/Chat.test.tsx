@@ -290,7 +290,11 @@ describe('Composer keyboard (Desktop)', () => {
       type('hi');
       expect(fireEvent.keyDown(box(), { key: 'Enter' })).toBe(true);
       expect(onSend).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByTitle('보내기 (Enter · Shift+Enter 줄바꿈)'));
+      // No key to promise here: the tooltip is just 보내기 and no aria-keyshortcuts.
+      const sendBtn = screen.getByRole('button', { name: '보내기' });
+      expect(sendBtn.getAttribute('title')).toBe('보내기');
+      expect(sendBtn.hasAttribute('aria-keyshortcuts')).toBe(false);
+      fireEvent.click(sendBtn);
       expect(onSend).toHaveBeenCalledWith('hi');
     } finally {
       window.matchMedia = mm;

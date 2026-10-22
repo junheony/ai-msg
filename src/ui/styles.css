@@ -1184,12 +1184,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .pulse-dot { animation: none; }
 }
 
-/* Context ring (inside the session chip) and its one-line cost hint above the composer */
-.ctx-track, .ctx-arc { fill: none; stroke-width: 2.4; }
-.ctx-track { stroke: var(--track); }
-.ctx-arc { stroke: var(--muted); stroke-linecap: round; }
-.ctx-ring.long .ctx-arc { stroke: var(--warn); }
-.ctx-ring.high .ctx-arc { stroke: var(--danger); }
+/* Context: the one-line cost hint above the composer */
 .ctx-hint { padding: 0 6px 4px; color: var(--faint); font-size: calc(11.5px * var(--font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .handoff-btn { margin-left: 8px; padding: 2px 8px; border: 0; border-radius: var(--r-xs); background: var(--accent-soft); color: var(--fg); font: inherit; font-size: calc(12px * var(--font-scale, 1)); cursor: pointer; }
 .handoff-status { padding: 0 6px 4px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
@@ -1934,8 +1929,8 @@ button.hl-row-main:hover { background: var(--hover); }
 .sc-perm.perm-plan { color: var(--link); }
 .sc-perm.perm-bypassPermissions { color: var(--danger); }
 .sc-caret { flex-shrink: 0; color: var(--faint); font-size: calc(11px * var(--font-scale, 1)); transform: translateY(-2px); }
-.ctx-ring { display: block; }
 .ctx-out { flex-shrink: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--warn); }
+.ctx-out.ok { color: var(--muted); }
 .ctx-out.high { color: var(--danger); }
 @container pane (max-width: 480px) { .sc-extra { display: none; } }
 @media (max-width: 720px) {

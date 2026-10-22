@@ -712,7 +712,7 @@ export function Chat(p: ChatProps) {
           </>}
           action={p.activeTurnId
             ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
-            : <button type="button" className="send" onClick={submit} disabled={!canSend} title={sendKey === 'mod-enter' ? SEND_TITLE_MOD : SEND_TITLE} aria-keyshortcuts={sendKey === 'mod-enter' ? 'Meta+Enter Control+Enter' : 'Enter'}><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
+            : <button type="button" className="send" onClick={submit} disabled={!canSend} title={coarse ? '보내기' : sendKey === 'mod-enter' ? SEND_TITLE_MOD : SEND_TITLE} aria-keyshortcuts={coarse ? undefined : sendKey === 'mod-enter' ? 'Meta+Enter Control+Enter' : 'Enter'}><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
         >
           <textarea
             ref={taRef}

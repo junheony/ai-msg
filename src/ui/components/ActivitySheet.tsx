@@ -227,7 +227,7 @@ export function ActivitySheet(p: ActivitySheetProps) {
         {blocker && <p className="act-banner warn" data-testid="act-notify-blocked">알림이 꺼져 있어요 — {BLOCKER_TEXT[blocker]}</p>}
         {!p.connected && (
           <div className="act-banner danger" data-testid="act-conn">
-            <span>{p.downSince !== null ? `서버 응답 없음 · ${hhmm(p.downSince)}부터` : '재연결 중…'}</span>
+            <span>{p.downSince !== null ? `서버에 연결할 수 없어요 · ${hhmm(p.downSince)}부터` : '재연결 중…'}</span>
             <button type="button" className="text-btn" onClick={p.onRetry}>다시 시도</button>
           </div>
         )}

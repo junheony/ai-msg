@@ -1160,6 +1160,8 @@ describe('App boot', () => {
     expect(screen.queryByText('서버에 연결할 수 없어요')).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
     expect(screen.getByText('서버에 연결할 수 없어요')).toBeTruthy();
+    // Only the headline is the live status; the buttons sit outside it.
+    expect(screen.getByRole('status').textContent).toBe('서버에 연결할 수 없어요');
     expect(screen.getByRole('button', { name: '다시 시도' })).toBeTruthy();
     const more = screen.getByText('자세히').closest('details')!;
     expect(more.open).toBe(false);
@@ -1181,19 +1183,19 @@ describe('App boot', () => {
     expect(dot.getAttribute('aria-label')).toBe('활동 · 연결 끊김');
     fireEvent.click(dot);
     expect(within(screen.getByTestId('act-conn')).getByText('재연결 중…')).toBeTruthy();
-    expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
+    expect(screen.queryByText(/서버에 연결할 수 없어요/)).toBeNull();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(21_000); });
-    expect(screen.getByText(/서버 응답 없음 · 00:25부터 — 연결되면/)).toBeTruthy();
+    expect(screen.getByText(/서버에 연결할 수 없어요 · 00:25부터 — 연결되면/)).toBeTruthy();
     // Both the banner's button and the sheet's retry now.
     fireEvent.click(screen.getByText('다시 시도'));
     fireEvent.click(dot);
-    expect(within(screen.getByTestId('act-conn')).getByText('서버 응답 없음 · 00:25부터')).toBeTruthy();
+    expect(within(screen.getByTestId('act-conn')).getByText('서버에 연결할 수 없어요 · 00:25부터')).toBeTruthy();
     fireEvent.click(within(screen.getByTestId('act-conn')).getByRole('button', { name: '다시 시도' }));
     expect(sock.retries).toBe(2);
     act(() => sock.onStatus!(true));
-    expect(screen.queryByText(/서버 응답 없음/)).toBeNull();
+    expect(screen.queryByText(/서버에 연결할 수 없어요/)).toBeNull();
     expect(screen.queryByTestId('act-conn')).toBeNull();
     expect(dot.classList.contains('lvl-down')).toBe(false);
   });

@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { AVATAR_COLORS, DECK_VERSION_LINE, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex } from './Sidebar';
 import { SessionChipHead } from './SessionChipHead';
 import { SESSION_ICONS, assignSessionIcons, sessionIconBase } from './SessionIcon';
+import type { SessionActivity } from '../../shared/protocol';
 
 const noop = () => {};
 /** The head's search icon opens the 세션 검색 box (it is not on screen until then). */
@@ -1050,6 +1051,42 @@ describe('Sidebar UX polish: status marks, 칸 번호, same titles, 고정됨 fo
     expect(screen.queryByText('pinned one')).toBeNull();
     fireEvent.click(within(screen.getByTestId('pinned-group')).getByRole('button', { name: '고정됨' }));
     expect(screen.getByText('pinned one')).toBeTruthy();
+  });
+
+  it('고정됨 folded: the list stays mounted (aria-controls) but hidden, the open session keeps its row', () => {
+    localStorage.setItem('deck.prefs.v1', JSON.stringify({ pinnedFolded: true }));
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'pinned one'), s('s2', 'pinned two'), s('s3', 'other')] }];
+    const view = (cur: string | null) => <Sidebar projects={projects} currentSessionId={cur} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s1', 's2']} onTogglePin={noop} />;
+    const { rerender } = render(view(null));
+    const list = document.getElementById('pinned-list')!;
+    expect(list).toBeTruthy();
+    expect(list.hidden).toBe(true);
+    rerender(view('s2'));
+    expect(document.getElementById('pinned-list')!.hidden).toBe(false);
+    expect(screen.getByText('pinned two')).toBeTruthy();
+    expect(screen.queryByText('pinned one')).toBeNull();
+  });
+
+  it('고정됨 folded: the head shows the hidden pins’ highest status (승인 대기 > 안 읽음 > 응답 중)', () => {
+    localStorage.setItem('deck.prefs.v1', JSON.stringify({ pinnedFolded: true }));
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [s('s1', 'a'), s('s2', 'b'), s('s3', 'c')] }];
+    const run = [{ sessionId: 's1', running: true, bg: 0 }] as unknown as SessionActivity[];
+    const view = (extra: { waiting?: string[]; unread?: string[]; activity?: SessionActivity[] }) => <Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s1', 's2', 's3']} onTogglePin={noop} {...extra} />;
+    const mark = () => screen.queryByTestId('pinned-folded-status');
+    const { rerender } = render(view({}));
+    expect(mark()).toBeNull();
+    rerender(view({ activity: run }));
+    expect(mark()!.className).toBe('row-status running');
+    expect(mark()!.getAttribute('aria-label')).toBe('고정됨에 응답 중');
+    rerender(view({ activity: run, unread: ['s2'] }));
+    expect(mark()!.className).toBe('row-status unread');
+    expect(mark()!.getAttribute('aria-label')).toBe('고정됨에 안 읽음');
+    rerender(view({ activity: run, unread: ['s2'], waiting: ['s3'] }));
+    expect(mark()!.className).toBe('row-status waiting');
+    expect(mark()!.getAttribute('aria-label')).toBe('고정됨에 승인 대기');
+    // Unfolded: the rows carry their own marks, the head none.
+    fireEvent.click(within(screen.getByTestId('pinned-group')).getByRole('button', { name: /고정됨/ }));
+    expect(mark()).toBeNull();
   });
 
   it('the list keeps room under its last row for the avatar foot', () => {

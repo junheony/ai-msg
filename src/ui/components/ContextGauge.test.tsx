@@ -2,22 +2,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { WARM_MS, type ContextInfo } from '../context';
-import { ContextHint, ContextRing, contextLevel } from './ContextGauge';
+import { ContextHint, contextLevel } from './ContextGauge';
 
 const info = (cacheReadTokens: number, over: Partial<ContextInfo> = {}): ContextInfo =>
   ({ usage: { inputTokens: 2_000, cacheReadTokens, cacheCreationTokens: 10_000 }, window: 1_000_000, at: Date.now(), model: 'opus', account: 'b', ...over });
 
-describe('ContextRing', () => {
+describe('contextLevel', () => {
   afterEach(cleanup);
 
-  it('a long session is flagged on the ring, a small one is not, ≥85% is high', () => {
+  it('a long session is flagged, a small one is not, ≥85% is high', () => {
     expect(contextLevel(info(300_000))).toEqual({ pct: 31, level: 'long' });
     expect(contextLevel(info(50_000)).level).toBe('ok');
     expect(contextLevel(info(880_000)).level).toBe('high');
-    const { getByTestId } = render(<ContextRing info={info(300_000)} />);
-    const ring = getByTestId('context-ring');
-    expect(ring.getAttribute('class')).toBe('ctx-ring long');
-    expect(ring.getAttribute('aria-hidden')).toBe('true');
   });
 });
 

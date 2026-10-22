@@ -11,25 +11,11 @@ function useNow(ms: number): number {
   return now;
 }
 
-const R = 7;
-const C = 2 * Math.PI * R;
-
 /** Context fill: percent of the window and its level (high ≥85%, long = past the long-session mark). */
 export function contextLevel(info: ContextInfo): { pct: number; level: 'high' | 'long' | 'ok' } {
   const tokens = contextTokens(info.usage);
   const pct = contextPct(tokens, info.window);
   return { pct, level: pct >= 85 ? 'high' : isLongContext(tokens, info.window) ? 'long' : 'ok' };
-}
-
-/** The small context ring inside the session chip (decorative; the chip's label carries the words). */
-export function ContextRing({ info }: { info: ContextInfo }) {
-  const { pct, level } = contextLevel(info);
-  return (
-    <svg className={`ctx-ring ${level}`} width="16" height="16" viewBox="0 0 18 18" aria-hidden="true" data-testid="context-ring">
-      <circle className="ctx-track" cx="9" cy="9" r={R} />
-      <circle className="ctx-arc" cx="9" cy="9" r={R} strokeDasharray={`${(C * Math.max(pct, 2)) / 100} ${C}`} transform="rotate(-90 9 9)" />
-    </svg>
-  );
 }
 
 /** The 새 세션으로 이어가기 button; mousedown keeps focus where it is so a surrounding popover's blur does not eat the click. */

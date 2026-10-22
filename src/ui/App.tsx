@@ -38,7 +38,7 @@ import { useIsPhone } from './useIsPhone';
 import { useTouchTooltip } from './useTouchTooltip';
 import { FIND_EVENT } from './components/FindBar';
 
-/** Disconnected this long → the 서버 응답 없음 bar (short blips during a restart stay at 재연결 중…). */
+/** Disconnected this long → the 서버에 연결할 수 없어요 bar (short blips during a restart stay at 재연결 중…). */
 const DOWN_NOTICE_MS = 20_000;
 const DOWN_TICK_MS = 10_000;
 /** Hidden sidebar peek: dwell on the left edge this long before it slides out; this long outside it before it goes. */
@@ -46,7 +46,7 @@ const PEEK_OPEN_MS = 150;
 const PEEK_CLOSE_MS = 300;
 /** How long the 재시작됨 chip stays after a reconnect found a new server process (a click closes it sooner). */
 const RESTARTED_CHIP_MS = 10 * 60_000;
-/** Boot /api/me misses (3 s apart) before 확인 중… turns into 서버 응답 없음. */
+/** Boot /api/me misses (3 s apart) before 확인 중… turns into 서버에 연결할 수 없어요. */
 const BOOT_NOTICE_FAILS = 5;
 /** The boot notice in plain words; the technical causes (server off, Tailscale) sit folded under 자세히. */
 const BOOT_OFFLINE_TITLE = '서버에 연결할 수 없어요';
@@ -705,8 +705,8 @@ export function App() {
   if (authed === null) {
     if (bootFails < BOOT_NOTICE_FAILS) return <div className="center">확인 중…</div>;
     return (
-      <div className="center boot-wait" role="status">
-        <div>{BOOT_OFFLINE_TITLE}</div>
+      <div className="center boot-wait">
+        <div role="status">{BOOT_OFFLINE_TITLE}</div>
         <button type="button" className="btn" onClick={() => location.reload()}>다시 시도</button>
         <details className="boot-wait-more"><summary>자세히</summary><p>{BOOT_OFFLINE_DETAIL}</p></details>
       </div>
@@ -1330,7 +1330,7 @@ export function App() {
       <div className="usage-strip-slot" ref={setStripRow} />
       {downSince !== null && (
         <div className="conn-down" role="status">
-          <span>서버 응답 없음 · {hhmm(downSince)}부터 — 연결되면 자동으로 이어집니다</span>
+          <span>서버에 연결할 수 없어요 · {hhmm(downSince)}부터 — 연결되면 자동으로 이어집니다</span>
           <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
         </div>
       )}
