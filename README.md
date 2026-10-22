@@ -49,7 +49,7 @@ The name: "AI-MSG" plays on the Korean word "머시기" ("whatsit") and on messa
 ```bash
 git clone https://github.com/junheony/ai-msg.git
 cd ai-msg
-npm install        # includes the Claude Code native binary (optional dependency of the SDK)
+npm install        # uses the claude, codex, gemini, grok CLIs you already installed
 npm run build      # UI -> dist/ui
 npm start          # http://127.0.0.1:9320
 ```

@@ -46,7 +46,7 @@ AI-MSG 는 자기 컴퓨터에서 실행한다. 공식 Claude Code CLI(헤드리
 ```bash
 git clone https://github.com/junheony/ai-msg.git
 cd ai-msg
-npm install        # Claude Code 네이티브 바이너리 포함(SDK 의 optional dependency)
+npm install        # 이미 설치한 claude·codex·gemini·grok CLI 를 씁니다
 npm run build      # UI -> dist/ui
 npm start          # http://127.0.0.1:9320
 ```
