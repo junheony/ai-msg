@@ -212,7 +212,7 @@ describe('SettingsView 총사령탑', () => {
 
 describe('SettingsView 자동 분배', () => {
   afterEach(cleanup);
-  const view = { autoEngines: ['claude', 'codex', 'gemini', 'grok'] as const, autoConsent: [] as const, grokFast: false, crossEngineFailover: true };
+  const view = { autoEngines: ['claude', 'codex', 'gemini', 'grok'] as const, autoConsent: [] as const, grokFast: false, crossEngineFailover: true, autoResume: true };
 
   it('four engine checkboxes; unchecking sends the rest; hidden until the server says', () => {
     const on = vi.fn();
@@ -225,6 +225,19 @@ describe('SettingsView 자동 분배', () => {
     fireEvent.click(screen.getByTestId('auto-grok-fast'));
     expect(on).toHaveBeenLastCalledWith({ grokFast: true });
     expect(screen.getByText('Grok 빠른 모델 쓰기(2배 가격)')).toBeTruthy();
+  });
+
+  it('한도가 풀리면 자동으로 이어가기: one row, on by default, sends the flipped value, with its one line', () => {
+    const on = vi.fn();
+    const { rerender } = render(<SettingsView build={null} autoRoute={{ ...view, autoEngines: [...view.autoEngines], autoConsent: [] }} onAutoRoute={on} onClose={noop} />);
+    const box = () => screen.getByTestId('auto-resume-toggle') as HTMLInputElement;
+    expect(box().checked).toBe(true);
+    expect(screen.getByText(ui().settings.autoResume)).toBeTruthy();
+    expect(screen.getByText(ui().settings.autoResumeHint)).toBeTruthy();
+    fireEvent.click(box());
+    expect(on).toHaveBeenLastCalledWith({ autoResume: false });
+    rerender(<SettingsView build={null} autoRoute={{ ...view, autoEngines: [...view.autoEngines], autoConsent: [], autoResume: false }} onAutoRoute={on} onClose={noop} />);
+    expect(box().checked).toBe(false);
   });
 
   it('다른 AI 로 이어가기: the switch shows the setting and sends the flipped value, with its one line', () => {
@@ -243,7 +256,7 @@ describe('SettingsView 자동 분배', () => {
 
   it('Gemini / Grok show 동의 필요 until consented; the consent card adds the engine to autoConsent', () => {
     const on = vi.fn();
-    const { rerender } = render(<SettingsView build={null} autoRoute={{ autoEngines: ['claude', 'codex'], autoConsent: [], grokFast: false, crossEngineFailover: true }} onAutoRoute={on} onClose={noop} />);
+    const { rerender } = render(<SettingsView build={null} autoRoute={{ autoEngines: ['claude', 'codex'], autoConsent: [], grokFast: false, crossEngineFailover: true, autoResume: true }} onAutoRoute={on} onClose={noop} />);
     expect(screen.queryByTestId('auto-consent-claude')).toBeNull();
     expect(screen.queryByTestId('auto-consent-codex')).toBeNull();
     expect(screen.queryByText(AUTO_CONSENT_TEXT)).toBeNull();
@@ -256,7 +269,7 @@ describe('SettingsView 자동 분배', () => {
     fireEvent.click(screen.getByTestId('auto-consent-grok'));
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
     expect(on).toHaveBeenCalledTimes(1);
-    rerender(<SettingsView build={null} autoRoute={{ autoEngines: ['claude', 'codex', 'gemini'], autoConsent: ['gemini'], grokFast: false, crossEngineFailover: true }} onAutoRoute={on} onClose={noop} />);
+    rerender(<SettingsView build={null} autoRoute={{ autoEngines: ['claude', 'codex', 'gemini'], autoConsent: ['gemini'], grokFast: false, crossEngineFailover: true, autoResume: true }} onAutoRoute={on} onClose={noop} />);
     expect(screen.queryByTestId('auto-consent-gemini')).toBeNull();
     expect(screen.getByTestId('auto-consent-grok')).toBeTruthy();
   });
@@ -275,7 +288,7 @@ describe('SettingsView 간결 모드', () => {
 describe('SettingsView 4그룹', () => {
   afterEach(() => { cleanup(); localStorage.clear(); });
   const full = () => render(<SettingsView build="b42" defaultPermMode="default" onDefaultPermMode={noop} routingPolicy="balance" onRoutingPolicy={noop} sameVendorRotation={false} onSameVendorRotation={noop} claudeAccounts={2}
-    commanderEnabled={false} onCommanderEnabled={noop} autoRoute={{ autoEngines: ['claude'], autoConsent: [], grokFast: false, crossEngineFailover: true }} onAutoRoute={noop} grokLocked="tripwire" onGrokUnlock={noop} taskCap={2} onTaskCap={noop}
+    commanderEnabled={false} onCommanderEnabled={noop} autoRoute={{ autoEngines: ['claude'], autoConsent: [], grokFast: false, crossEngineFailover: true, autoResume: true }} onAutoRoute={noop} grokLocked="tripwire" onGrokUnlock={noop} taskCap={2} onTaskCap={noop}
     onClose={noop} />);
   const region = (name: string) => screen.getByRole('region', { name });
 

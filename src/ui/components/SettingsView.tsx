@@ -21,7 +21,7 @@ export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁�
 export const AUTO_CONSENT_TEXT = '자동 세션의 코드·대화가 Google(Gemini)/xAI(Grok)로 갈 수 있습니다';
 /** 정보: the non-affiliation line (README carries the English original). */
 export const ABOUT_NOTICE = 'AI-MSG 는 독립 프로젝트로, Anthropic · OpenAI · Google · xAI 와 제휴하거나 보증받지 않았습니다. 제품명은 각 소유자의 상표입니다.';
-export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean; crossEngineFailover: boolean };
+export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean; crossEngineFailover: boolean; autoResume: boolean };
 const AUTO_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
 const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
 
@@ -233,6 +233,11 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
                   <input type="checkbox" checked={autoRoute.crossEngineFailover} data-testid="auto-cross-engine" onChange={(ev) => onAutoRoute({ crossEngineFailover: ev.target.checked })} />
                 </label>
                 <Hint short={L.crossEngineFailoverHint} />
+                <label className="settings-row">
+                  <span>{L.autoResume}</span>
+                  <input type="checkbox" checked={autoRoute.autoResume} data-testid="auto-resume-toggle" onChange={(ev) => onAutoRoute({ autoResume: ev.target.checked })} />
+                </label>
+                <Hint short={L.autoResumeHint} />
                 <Hint short="체크한 엔진만 자동의 후보가 됩니다.">엔진을 자동으로 두면 첫 턴 내용과 남은 한도로 엔진·모델을 고릅니다. 체크한 엔진만 후보가 되고, Gemini·Grok 은 동의한 뒤에만 고릅니다. 세션이 시작된 뒤에는 엔진이 바뀌지 않습니다.</Hint>
               </>
             )}

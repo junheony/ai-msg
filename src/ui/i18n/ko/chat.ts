@@ -38,4 +38,5 @@ export const chat: Widen<typeof en> = {
   account: (name: string) => `계정 ${name}`,
   accountNote: { unknown: '설정에 없는 계정', retired: '뺀 계정', pinned: '고정', pin: '고정 계정' },
   images: (n: number) => `이미지 ${n}장`,
+  autoResume: { at: (time: string) => `한도가 풀리는 ${time}에 자동으로 이어가요`, cancel: '취소' },
 };

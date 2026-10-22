@@ -216,7 +216,7 @@ const GROK_HELD = {
 
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts, onAddPane, onMaxPane, paneMaxed, headSlot, onPalette }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap' | 'suggestions' | 'experimental'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap' | 'suggestions' | 'experimental' | 'autoResumes'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
@@ -637,6 +637,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
           routeFit={pane.routeFit ?? null}
           suggestion={s.sessionId ? app.suggestions?.[s.sessionId] ?? null : null}
+          autoResume={s.sessionId && app.autoResumes?.[s.sessionId] !== undefined ? { atMs: app.autoResumes[s.sessionId]!, onCancel: () => { send({ type: 'cancel_auto_resume', sessionId: s.sessionId! }); } } : null}
           onRouteFit={(how) => {
             const f = pane.routeFit;
             if (!f || fitAnswered.current === f) return;

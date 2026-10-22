@@ -371,7 +371,7 @@ export type AppState = {
   /** 총사령탑 켜짐 (server setting); null = not known yet, or a server without it. */
   commanderEnabled: boolean | null;
   /** 자동 분배 settings (engines 자동 may pick, consented ones, Grok fast); null = not known yet / a server without them. */
-  autoRoute: { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean; crossEngineFailover: boolean } | null;
+  autoRoute: { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean; crossEngineFailover: boolean; autoResume: boolean } | null;
   /** The engine a new pane starts on (settings newChatEngine: 자동 on a fresh install, Claude on one from before); null = not known yet. */
   newChatEngine: 'auto' | 'claude' | null;
   /** The panes came from this device's saved layout (hydrate): their pickers are the user's, never reset to newChatEngine. */
@@ -1156,7 +1156,7 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
   if ((settings.commanderEnabled ?? null) !== state.commanderEnabled) state = { ...state, commanderEnabled: settings.commanderEnabled ?? null };
   if ((settings.commanderMaxTurns ?? null) !== state.commanderMaxTurns) state = { ...state, commanderMaxTurns: settings.commanderMaxTurns ?? null };
   if (settings.autoEngines && settings.autoConsent) {
-    const next = { autoEngines: settings.autoEngines, autoConsent: settings.autoConsent, grokFast: settings.grokFast ?? false, crossEngineFailover: settings.crossEngineFailover ?? true };
+    const next = { autoEngines: settings.autoEngines, autoConsent: settings.autoConsent, grokFast: settings.grokFast ?? false, crossEngineFailover: settings.crossEngineFailover ?? true, autoResume: settings.autoResume ?? true };
     if (JSON.stringify(next) !== JSON.stringify(state.autoRoute)) state = { ...state, autoRoute: next };
   }
   const nce = settings.newChatEngine ?? null;

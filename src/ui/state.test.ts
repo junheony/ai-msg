@@ -1870,7 +1870,7 @@ describe('자동 분배 (auto-route) UI state', () => {
     let s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default' } }]);
     expect(s.autoRoute).toBeNull();
     s = play([{ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'default', autoEngines: ['claude', 'gemini'], autoConsent: ['gemini'], grokFast: true } }], s);
-    expect(s.autoRoute).toEqual({ autoEngines: ['claude', 'gemini'], autoConsent: ['gemini'], grokFast: true, crossEngineFailover: true });
+    expect(s.autoRoute).toEqual({ autoEngines: ['claude', 'gemini'], autoConsent: ['gemini'], grokFast: true, crossEngineFailover: true, autoResume: true });
   });
 
   const held = () => {

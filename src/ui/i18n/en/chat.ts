@@ -37,4 +37,6 @@ export const chat = {
   account: (name: string) => `Account ${name}`,
   accountNote: { unknown: 'not in settings', retired: 'removed account', pinned: 'pinned', pin: 'Pinned account' },
   images: (n: number) => (n === 1 ? '1 image' : `${n} images`),
+  /** 한도가 풀리면 자동으로 이어가기: the session's one line (`time` = local H:MM) and its cancel button. */
+  autoResume: { at: (time: string) => `Continues automatically at ${time} when the limit resets`, cancel: 'Cancel' },
 };

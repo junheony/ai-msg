@@ -42,6 +42,7 @@ import { usePrefs } from '../usePrefs';
 import { BlockedDeleteItem } from './SessionMenu';
 import { useAutoGrow } from '../useAutoGrow';
 import { FAST_TITLE, requestFast, useFast } from '../fastMode';
+import { ui } from '../i18n';
 
 export type ChatProps = {
   items: ChatItem[];
@@ -171,6 +172,8 @@ export type ChatProps = {
   /** 새 세션으로 이어가기 links: the session this one continues / continues in. */
   prevSession?: { title: string; open: () => void } | null;
   nextSession?: { title: string; open: () => void } | null;
+  /** 한도가 풀리면 자동으로 이어가기: the booked resume (epoch ms) and its 취소. Absent/null = none booked. */
+  autoResume?: { atMs: number; onCancel: () => void } | null;
   /** Notes / errors about this session no turn owns (e.g. it was just written outside deck): dismissible bars above the transcript. */
   notices?: { message: string; level: 'notice' | 'error' }[];
   onDismissNotice?: (message: string) => void;
@@ -297,6 +300,9 @@ export function messageKeys(items: ChatItem[]): string[] {
     return `${anchor}+${++k}`;
   });
 }
+
+/** An epoch ms as this device's local H:MM (24h), e.g. 1:40. */
+const clockOf = (ms: number): string => { const d = new Date(ms); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 const WarnIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z" /><path d="M8 6.6v3M8 11.6v.1" /></svg>;
 const TaskIcon = () => <svg className="task-add-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h4v4M13 3 7.5 8.5" /><path d="M11.5 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1h2.5" /></svg>;
@@ -649,6 +655,13 @@ export function Chat(p: ChatProps) {
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
         {p.tasks && p.tasks.length > 0 && <TaskCards tasks={p.tasks} cap={p.taskCap ?? null} {...(p.onOpenTask ? { onOpen: p.onOpenTask } : {})} {...(p.onDismissTask ? { onDismiss: p.onDismissTask } : {})} {...(p.onCancelTask ? { onCancel: p.onCancelTask } : {})} />}
+        {p.autoResume && !p.busy && (
+          <div className="auto-resume" role="status" data-testid="auto-resume">
+            <span className="turn-meta-text">{ui().chat.autoResume.at(clockOf(p.autoResume.atMs))}</span>
+            <span aria-hidden="true">·</span>
+            <button type="button" className="auto-resume-cancel" data-testid="auto-resume-cancel" onClick={p.autoResume.onCancel}>{ui().chat.autoResume.cancel}</button>
+          </div>
+        )}
         {p.nextSession && <button type="button" className="session-link next" data-testid="handoff-next" onClick={p.nextSession.open} title={p.nextSession.title}>→ 새 세션으로 이어감 · {p.nextSession.title}</button>}
       </div>
       {scroll.detached && (

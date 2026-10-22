@@ -1649,7 +1649,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const st = deps.store.get(msg.sessionId);
           if (st?.pendingRetry) {
             const { pendingRetry: _off, ...rest } = st;
-            void deps.store.set(rest).catch((err: unknown) => console.error('deck: 자동 재시도 취소 저장 실패', errMsg(err)));
+            void deps.store.set(rest).catch((err: unknown) => console.error('deck: saving the auto-resume cancel failed', errMsg(err)));
           }
           broadcast({ type: 'auto_resume', sessionId: msg.sessionId, atMs: null });
           break;

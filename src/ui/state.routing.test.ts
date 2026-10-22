@@ -35,6 +35,11 @@ describe('다른 AI 로 이어가기 (session_handoff)', () => {
     expect(play([settings()]).autoRoute?.crossEngineFailover).toBe(true);
     expect(play([settings(false)]).autoRoute?.crossEngineFailover).toBe(false);
   });
+  it('자동으로 이어가기: on for a server that does not send it, off when it says so', () => {
+    const base = { autoApprove: false, defaultPermissionMode: 'default' as const, autoEngines: ['claude' as const], autoConsent: [] };
+    expect(play([{ type: 'settings', settings: base }]).autoRoute?.autoResume).toBe(true);
+    expect(play([{ type: 'settings', settings: { ...base, autoResume: false } }]).autoRoute?.autoResume).toBe(false);
+  });
 
   it('the pane showing the session moves to the new one with a notice, keeps its queue, and the old failed result no longer lands in it', () => {
     const p0 = initialState.panes[0]!;
