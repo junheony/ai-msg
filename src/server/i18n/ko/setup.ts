@@ -3,7 +3,7 @@ import type { setup as en } from '../en/setup';
 
 export const setup: Widen<typeof en> = {
   cli: {
-    portInUse: (port: number) => `포트 ${port} 에 이미 서버가 있습니다 — 같은 deck 이면 http://127.0.0.1:${port} 으로 접속하세요. 별도 인스턴스는 --port 와 DECK_CONFIG_DIR=<다른 폴더> 를 함께 지정해야 합니다(설정 폴더는 서버 하나만 씁니다)`,
+    portInUse: (port: number) => `포트 ${port} 에 이미 서버가 있습니다 — 같은 AI-MSG 면 http://127.0.0.1:${port} 으로 접속하세요. 별도 인스턴스는 --port 와 DECK_CONFIG_DIR=<다른 폴더> 를 함께 지정해야 합니다(설정 폴더는 서버 하나만 씁니다)`,
     instanceLocked: (dir: string, pid: number | null, port: number | null) =>
       `설정 폴더 ${dir} 를 이미 서버(pid ${pid ?? '?'}, 포트 ${port ?? '?'})가 쓰고 있습니다 — 주소 http://127.0.0.1:${port ?? '?'}. 별도 인스턴스는 DECK_CONFIG_DIR=<다른 폴더> 로`,
     relaunchLoop: (dir: string) => `이 설정 폴더(${dir})는 relaunch 루프가 관리 중입니다 — 패키지 서버를 따로 띄우지 마세요`,

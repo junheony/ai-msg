@@ -1,7 +1,7 @@
 // Server-side strings for packaging: CLI, lock, doctor, service, setup wizard (moved from setup/texts.ts).
 
 const cli = {
-  portInUse: (port: number) => `A server is already on port ${port} — if it is the same deck, open http://127.0.0.1:${port}. A separate instance needs both --port and DECK_CONFIG_DIR=<another folder> (a config folder serves one server only)`,
+  portInUse: (port: number) => `A server is already on port ${port} — if it is the same AI-MSG, open http://127.0.0.1:${port}. A separate instance needs both --port and DECK_CONFIG_DIR=<another folder> (a config folder serves one server only)`,
   instanceLocked: (dir: string, pid: number | null, port: number | null) =>
     `The config folder ${dir} is already used by a server (pid ${pid ?? '?'}, port ${port ?? '?'}) — address http://127.0.0.1:${port ?? '?'}. For a separate instance use DECK_CONFIG_DIR=<another folder>`,
   relaunchLoop: (dir: string) => `This config folder (${dir}) is managed by the relaunch loop — don't start the package server separately`,

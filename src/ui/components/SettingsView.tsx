@@ -38,7 +38,7 @@ export const ROTATION_NOTICE = '켜면 한도가 찬 계정에서 다음 계정�
 export const EXPERIMENTAL_ROWS: [keyof ExperimentalSettings, string, string][] = [
   ['grokBot', 'Grok Bot 앱 대화·사용량', 'Grok Bot 앱의 대화 목록·대화 내용·주간 사용량 캐시를 읽기만 해요 (~/Library/Application Support/Grok Bot/sand-client-persistence).'],
   ['desktop', 'Claude Desktop 연동', 'Desktop 의 최근 세션 기록(~/Library/Application Support/Claude/claude-code-sessions)을 읽고, 다른 계정에서 돈 세션을 기본 계정 기록에 되써서 Desktop 에서 이어 열 수 있게 해요.'],
-  ['localImports', 'Codex·Gemini 대화 가져오기', '~/.codex/sessions · ~/.codex/archived_sessions 의 rollout-*.jsonl 과 ~/.gemini/antigravity-cli/conversation_summaries.db(임시 사본으로)를 읽어 deck 밖에서 만든 대화를 목록에 보여 줘요.'],
+  ['localImports', 'Codex·Gemini 대화 가져오기', '~/.codex/sessions · ~/.codex/archived_sessions 의 rollout-*.jsonl 과 ~/.gemini/antigravity-cli/conversation_summaries.db(임시 사본으로)를 읽어 AI-MSG 밖에서 만든 대화를 목록에 보여 줘요.'],
 ];
 
 /** Segmented buttons for up to 3 choices; 4 or more become a select (a row of 4 does not fit a phone's line). */

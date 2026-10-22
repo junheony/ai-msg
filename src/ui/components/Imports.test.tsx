@@ -78,7 +78,7 @@ describe('Grok conversation open in a terminal grok (heldBy)', () => {
 
   it('the sidebar row carries 터미널에서 열림 and the tooltip says why', () => {
     expect(rowTag(held)).toBe('터미널에서 열림');
-    expect(importTitle(held)).toContain('그쪽 grok 을 끝내면 deck 에서 이어 쓸 수 있어요');
+    expect(importTitle(held)).toContain('그쪽 grok 을 끝내면 AI-MSG 에서 이어 쓸 수 있어요');
     expect(rowTag({ ...held, engine: 'claude' })).toBeNull(); // Claude sessions open elsewhere sync silently
     expect(rowTag({ ...held, heldBy: undefined })).toBeNull();
   });

@@ -658,7 +658,7 @@ export function rowTag(s: SessionEntry): string | null {
 /** A Grok conversation a terminal grok has open (heldBy): its row tag and the tooltip's line. */
 const SIDEBAR_HELD = {
   tag: '터미널에서 열림',
-  title: '터미널에서 grok 이 열고 있어 지금은 읽기만 할 수 있어요 — 그쪽 grok 을 끝내면 deck 에서 이어 쓸 수 있어요',
+  title: '터미널에서 grok 이 열고 있어 지금은 읽기만 할 수 있어요 — 그쪽 grok 을 끝내면 AI-MSG 에서 이어 쓸 수 있어요',
 } as const;
 
 /** A preview as one line (the row truncates it with an ellipsis). */
