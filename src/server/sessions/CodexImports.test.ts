@@ -265,6 +265,23 @@ describe('SessionIndex codex imports 실험적 기능 switch', () => {
     expect(await index.freshCodexImport(CLI_ID)).toBeNull();
     expect(await index.freshCodexImport(CLI_ID, { owned: true })).toMatchObject({ codexArchived: true });
   });
+
+  it('turned off: a deck-owned thread archived in Codex afterwards is not seen as archived until the switch is on again (the documented limit)', async () => {
+    const { cli } = await writeFixtures(root, work);
+    const arch = path.join(base, 'archived_sessions');
+    await fs.mkdir(arch);
+    const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
+    let on = true;
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root, codexArchivedRoot: arch, localImportsEnabled: () => on });
+    await index.refresh();
+    on = false;
+    await index.refresh();
+    await fs.rename(cli, path.join(arch, path.basename(cli)));
+    expect((await index.freshCodexImport(CLI_ID, { owned: true }))?.codexArchived).toBeFalsy();
+    on = true;
+    await index.refresh();
+    expect(await index.freshCodexImport(CLI_ID, { owned: true })).toMatchObject({ codexArchived: true });
+  });
 });
 
 const nameLine = (id: string, thread_name: unknown) => JSON.stringify({ id, thread_name, updated_at: '2026-10-01T02:00:00.000Z' });

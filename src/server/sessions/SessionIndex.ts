@@ -469,6 +469,9 @@ export class SessionIndex {
    * The Codex thread as it is now: when the cached entry is stale — its rollout moved (archived / unarchived
    * in Codex) or its folder came / went — the Codex list is rescanned once and `onChange` fires (index push).
    * `owned`: one of deck's own Codex sessions — with Codex 가져오기 off, the last scan's entry as is (no rescan).
+   * The limit, on purpose: with the switch off no Codex folder is read, so a deck-owned thread archived in Codex after it
+   * was turned off is not seen as archived (nor one never scanned at all: null) until the switch is on again. Reading only
+   * deck's own rollouts would still list Codex's archive folder, which the switch promises not to touch.
    */
   async freshCodexImport(threadId: string, opts: { owned?: boolean } = {}): Promise<SessionEntry | null> {
     if (opts.owned && !this.codex) return this.codexIndex?.lookup(threadId) ?? null;
