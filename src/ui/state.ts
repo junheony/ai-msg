@@ -1136,7 +1136,7 @@ export function paneMode(pane: PaneState, defaultMode: PermMode | null): PermMod
   return pane.session?.permissionMode ?? defaultMode ?? 'default';
 }
 
-/** A new chat start of an install from before 새 설치 기본 엔진 자동 (settings newChatEngine 'claude'). */
+/** A new chat start when Claude is the saved new-chat engine (settings newChatEngine 'claude'). */
 const LEGACY_NEW_CHAT = { engine: 'claude', model: DEFAULT_MODEL } as const;
 /** A pane still on the new-chat defaults: no session or an empty new one, engine and model 자동, nothing picked. */
 const untouchedNewChat = (p: PaneState) => (p.session === null || (p.session.sessionId === null && !p.items.length)) && p.engine === 'auto' && p.model === 'auto' && !p.modelPicked;
@@ -1159,7 +1159,7 @@ function applySettings(state: AppState, settings: DeckSettings | undefined): App
   }
   const nce = settings.newChatEngine ?? null;
   if (nce !== state.newChatEngine) {
-    // An install from before keeps Claude for a new chat: the first word of it moves this device's untouched first pane
+    // Claude saved as the new-chat engine: the first word of it moves this device's untouched first pane
     // (nothing saved here) off 자동. A saved layout keeps its pickers; panes added later start there too (add_pane).
     const first = state.newChatEngine === null && nce === 'claude' && !state.panesRestored;
     state = { ...state, newChatEngine: nce, ...(first ? { panes: state.panes.map((p) => (untouchedNewChat(p) ? { ...p, ...LEGACY_NEW_CHAT, ...(p.session ? { session: { ...p.session, engine: 'claude' as const } } : {}) } : p)) } : {}) };

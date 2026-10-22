@@ -199,8 +199,8 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
    */
   crossEngineFailover?: boolean;
   /**
-   * The engine a new chat starts on (a new pane): 'auto' on a fresh install; an install from before (decided once, like
-   * 실험적 기능) keeps 'claude', the default it had. A pane's own pick always wins. Absent from older servers.
+   * The engine a new chat starts on (a new pane): 'auto' unless 'claude' was saved in settings.json. A pane's own pick
+   * always wins. Absent from older servers.
    */
   newChatEngine?: 'auto' | 'claude';
   /** 백그라운드 작업 running at once before new ones wait (1–10, default 3). Absent from older servers. */

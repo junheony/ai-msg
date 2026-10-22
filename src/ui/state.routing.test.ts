@@ -68,7 +68,7 @@ describe('새 채팅 기본 엔진 (newChatEngine)', () => {
     expect(s.panes.at(-1)).toMatchObject({ engine: 'auto', model: 'auto' });
   });
 
-  it('an install from before: the untouched first pane and added panes start on Claude; a restored layout is left as it is', () => {
+  it('Claude saved as the new-chat engine: the untouched first pane and added panes start on Claude; a restored layout is left as it is', () => {
     let s = play([said('claude')]);
     expect(s.panes[0]!.engine).toBe('claude');
     s = reducer(s, { type: 'add_pane' });

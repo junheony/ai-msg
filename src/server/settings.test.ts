@@ -9,10 +9,10 @@ import { resolveServerLocale } from './i18n';
 const AUTO = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, crossEngineFailover: true, taskSoftCap: 3 };
 /**
  * 실험적 기능 on a fresh install (Grok Bot / Desktop off, Codex·Gemini imports on) and on one from before the switches (all
- * on); a new chat's engine likewise (자동 fresh, Claude from before).
+ * on). A new chat starts on 자동 on both (not migrated).
  */
 const FRESH = { ...AUTO, newChatEngine: 'auto', experimental: { grokBot: false, desktop: false, localImports: true } };
-const LEGACY = { ...AUTO, newChatEngine: 'claude', experimental: { grokBot: true, desktop: true, localImports: true } };
+const LEGACY = { ...AUTO, newChatEngine: 'auto', experimental: { grokBot: true, desktop: true, localImports: true } };
 
 describe('SettingsStore', () => {
   it('defaults to asking (자동 승인 off); persists a change; a corrupt file falls back to defaults', async () => {
@@ -183,37 +183,36 @@ describe('SettingsStore', () => {
     expect(c.get().experimental).toEqual(FRESH.experimental);
   });
 
-  it('새 채팅 기본 엔진: fresh install 자동, an install from before Claude; decided once and written back; a corrupt file is not overwritten', async () => {
+  it('새 채팅 기본 엔진: 자동 on a fresh and on an existing install alike (not migrated, nothing written for it); a saved Claude is kept', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-set-'));
     const fresh = path.join(dir, 'fresh.json');
     const a = new SettingsStore(fresh, async () => false);
     await a.load();
     expect(a.get().newChatEngine).toBe('auto');
-    expect(JSON.parse(await fs.readFile(fresh, 'utf8')).newChatEngine).toBe('auto');
-    // The deck state appearing later does not turn a decided 자동 into Claude.
-    const a2 = new SettingsStore(fresh, async () => true);
-    await a2.load();
-    expect(a2.get().newChatEngine).toBe('auto');
-    // Existing deck state with no file, or a file an older deck wrote: Claude, written back.
+    // Existing deck state with no file, or a file an older deck wrote: still 자동 — what it starts a new chat on today.
     const noFile = path.join(dir, 'nofile.json');
     const b = new SettingsStore(noFile, async () => true);
     await b.load();
-    expect(b.get().newChatEngine).toBe('claude');
-    expect(JSON.parse(await fs.readFile(noFile, 'utf8')).newChatEngine).toBe('claude');
+    expect(b.get().newChatEngine).toBe('auto');
     const older = path.join(dir, 'older.json');
-    // Written by a deck that had the 실험적 기능 switches but not this one: still an install from before.
     await fs.writeFile(older, JSON.stringify({ routingPolicy: 'drain', experimental: { grokBot: false, desktop: false, localImports: true } }));
-    const c = new SettingsStore(older);
+    const c = new SettingsStore(older, async () => true);
     await c.load();
-    expect(c.get()).toMatchObject({ routingPolicy: 'drain', newChatEngine: 'claude', experimental: FRESH.experimental });
-    expect(JSON.parse(await fs.readFile(older, 'utf8'))).toMatchObject({ newChatEngine: 'claude', experimental: FRESH.experimental });
-    // Other changes keep it.
+    expect(c.get()).toMatchObject({ routingPolicy: 'drain', newChatEngine: 'auto' });
+    // A decided file is not rewritten for it.
+    expect(JSON.parse(await fs.readFile(older, 'utf8')).newChatEngine).toBeUndefined();
+    // An explicit choice in the file wins, and other changes keep it; junk = 자동.
+    await fs.writeFile(older, JSON.stringify({ newChatEngine: 'claude', experimental: { grokBot: false, desktop: false, localImports: true } }));
+    await c.load();
+    expect(c.get().newChatEngine).toBe('claude');
     expect((await c.set({ routingPolicy: 'balance' })).newChatEngine).toBe('claude');
-    // A corrupt file on an existing install: Claude for this run, the file left as it is.
+    await fs.writeFile(older, JSON.stringify({ newChatEngine: 'gpt', experimental: {} }));
+    await c.load();
+    expect(c.get().newChatEngine).toBe('auto');
+    // A corrupt file on an existing install: 자동, the file left as it is.
     await fs.writeFile(older, '{oops');
-    const d = new SettingsStore(older, async () => true);
-    await d.load();
-    expect(d.get().newChatEngine).toBe('claude');
+    await c.load();
+    expect(c.get().newChatEngine).toBe('auto');
     expect(await fs.readFile(older, 'utf8')).toBe('{oops');
   });
 

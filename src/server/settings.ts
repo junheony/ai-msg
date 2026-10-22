@@ -13,7 +13,7 @@ import { isLocale, type Locale } from '../shared/locale';
  * every engine, but Gemini / Grok only after their external-transfer card (autoConsent, empty by default). 다른 AI 로
  * 이어가기 (crossEngineFailover) is on for everyone; a file without it = on.
  * 실험적 기능: Grok Bot and Claude Desktop reads are off on a fresh install; Codex / agy import reads stay on (see experimentalFrom).
- * A new chat starts on 자동 (newChatEngine 'auto') on a fresh install; an install from before keeps Claude (LEGACY_NEW_CHAT_ENGINE).
+ * A new chat starts on 자동 (newChatEngine 'auto'), as it already does: only a choice saved in the file changes it.
  */
 export type ServerSettings = Required<Omit<DeckSettings, 'language'>> & {
   /** Absent = from the environment (resolveServerLocale); only an explicit pick is stored. */
@@ -23,9 +23,6 @@ export type ServerSettings = Required<Omit<DeckSettings, 'language'>> & {
 export const DEFAULT_EXPERIMENTAL: ExperimentalSettings = { grokBot: false, desktop: false, localImports: true };
 /** What an install from before the 실험적 기능 switches gets: everything it already did keeps working. */
 export const LEGACY_EXPERIMENTAL: ExperimentalSettings = { grokBot: true, desktop: true, localImports: true };
-
-/** What an install from before 새 설치 기본 엔진 자동 gets: a new chat starts on Claude, as it did. */
-export const LEGACY_NEW_CHAT_ENGINE = 'claude' as const;
 
 export const DEFAULT_SETTINGS: ServerSettings = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: [...ENGINE_KINDS], autoConsent: [], grokFast: false, crossEngineFailover: true, newChatEngine: 'auto', taskSoftCap: DEFAULT_TASK_SOFT_CAP, experimental: { ...DEFAULT_EXPERIMENTAL } };
 
@@ -83,8 +80,8 @@ function isRoutingPolicy(v: unknown): v is RoutingPolicy {
  * never changes later). Install from before the switches — the file is a JSON object (an older deck wrote it), or
  * `existingInstall` says so (deck's own session state is there: an install that never opened 설정) — keeps everything on
  * (LEGACY_EXPERIMENTAL), as it ran before; anything else is a fresh install (DEFAULT_EXPERIMENTAL). Deck's own files are
- * the signal: nothing of Grok Bot or Claude Desktop is looked at to decide it. `newChatEngine` is decided the same way, on
- * its own: an install from before keeps Claude (LEGACY_NEW_CHAT_ENGINE), a fresh one gets 자동.
+ * the signal: nothing of Grok Bot or Claude Desktop is looked at to decide it. `newChatEngine` is not migrated: a saved
+ * choice is kept, anything else is 자동 (what every install already starts a new chat on).
  */
 export class SettingsStore {
   private current: ServerSettings = { ...DEFAULT_SETTINGS };
@@ -105,20 +102,19 @@ export class SettingsStore {
     // Migration: a file from before per-session modes has only autoApprove.
     const mode = isPermMode(r.defaultPermissionMode) ? r.defaultPermissionMode : typeof r.autoApprove === 'boolean' ? permModeFromAutoApprove(r.autoApprove) : DEFAULT_SETTINGS.defaultPermissionMode;
     const decided = r.experimental && typeof r.experimental === 'object';
-    const engineDecided = r.newChatEngine === 'auto' || r.newChatEngine === 'claude';
     // An existing install with a corrupt file is asked here on every load (nothing is written back, see below), so it runs
     // as LEGACY each time — kept on purpose: the file is the user's to look at, and deck's own session state, the signal,
     // does not change between loads, so the answer stays the same.
-    const legacy = (!decided || !engineDecided) && (fromOlderDeck || (await this.existingInstall().catch(() => false)));
-    const experimental = experimentalFrom(r.experimental, !decided && legacy ? LEGACY_EXPERIMENTAL : DEFAULT_EXPERIMENTAL);
-    const newChatEngine = engineDecided ? (r.newChatEngine as ServerSettings['newChatEngine']) : legacy ? LEGACY_NEW_CHAT_ENGINE : DEFAULT_SETTINGS.newChatEngine;
+    const legacy = !decided && (fromOlderDeck || (await this.existingInstall().catch(() => false)));
+    const experimental = experimentalFrom(r.experimental, legacy ? LEGACY_EXPERIMENTAL : DEFAULT_EXPERIMENTAL);
+    const newChatEngine = r.newChatEngine === 'claude' ? 'claude' : DEFAULT_SETTINGS.newChatEngine;
     this.current = normalize(mode, isRoutingPolicy(r.routingPolicy) ? r.routingPolicy : DEFAULT_SETTINGS.routingPolicy, r.sameVendorRotation === true, commanderFrom(r), autoRouteFrom(r), isLocale(r.language) ? r.language : null, experimental, newChatEngine);
     // A corrupt file is left for the user to see (the next change through 설정 replaces it, as before). A migration that
-    // could not be saved is not relied on: this run uses the fresh-install values (nothing outside deck is read).
-    if ((!decided || !engineDecided) && (raw === null || fromOlderDeck)) {
+    // could not be saved is not relied on: this run uses the fresh-install switches (nothing outside deck is read).
+    if (!decided && (raw === null || fromOlderDeck)) {
       await this.write(this.current).catch((err: unknown) => {
         console.warn('deck: settings migration not saved', err instanceof Error ? err.message : err);
-        this.current = { ...this.current, ...(!decided ? { experimental: { ...DEFAULT_EXPERIMENTAL } } : {}), ...(!engineDecided ? { newChatEngine: DEFAULT_SETTINGS.newChatEngine } : {}) };
+        this.current = { ...this.current, experimental: { ...DEFAULT_EXPERIMENTAL } };
       });
     }
   }
