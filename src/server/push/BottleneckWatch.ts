@@ -52,6 +52,8 @@ export class BottleneckWatch {
     earliestCooldownMs?: () => number | null;
     /** Starts the booked retry turn; absent = retries are not fired. */
     retry?: (r: RetryRequest) => void;
+    /** A booked retry was armed (its time) or went (null: started, sent over, cancelled, stale) — the devices' 자동으로 이어가기 line. */
+    onRetry?: (sessionId: string, atMs: number | null) => void;
     /** 총사령탑이 이 세션의 실패를 맡았다(사람 필요 푸시를 따로 낸다): 실패 리마인더는 내지 않고 재시도 예약만 둔다. */
     quiet?: (sessionId: string) => boolean;
     now?: () => number;
@@ -113,7 +115,7 @@ export class BottleneckWatch {
         this.armTurn(st.sessionId);
       }
       if (st.pendingRetry) {
-        if (this.now() - st.pendingRetry.atMs > RETRY_STALE_MS) { this.strip(st.sessionId, 'pendingRetry'); continue; }
+        if (this.now() - st.pendingRetry.atMs > RETRY_STALE_MS) { this.dropRetry(st.sessionId); continue; }
         this.armRetry(st.sessionId);
       }
     }
@@ -129,8 +131,13 @@ export class BottleneckWatch {
     const t = this.retries.get(sessionId);
     if (t !== undefined) this.clearTimer(t);
     // Same rule as rearm: a booking this old (e.g. kept while background work held the process for hours) is dropped.
-    if (this.now() - r.atMs > RETRY_STALE_MS) { this.retries.delete(sessionId); this.strip(sessionId, 'pendingRetry'); return; }
+    if (this.now() - r.atMs > RETRY_STALE_MS) { this.dropRetry(sessionId); return; }
     this.fireRetry(sessionId);
+  }
+
+  /** 취소 on the 자동으로 이어가기 line: the booking is called off. False when there was none. */
+  cancelRetry(sessionId: string): boolean {
+    return this.dropRetry(sessionId);
   }
 
   /** Every timer off (tests, shutdown). */
@@ -229,6 +236,7 @@ export class BottleneckWatch {
     const old = this.retries.get(sessionId);
     if (old !== undefined) this.clearTimer(old);
     this.retries.set(sessionId, this.setTimer(() => this.fireRetry(sessionId), Math.max(0, r.atMs - this.now())));
+    this.deps.onRetry?.(sessionId, r.atMs);
   }
 
   /** The booking stays stored until the retry's turn starts (a refused start leaves it for the next restart). */
@@ -243,11 +251,14 @@ export class BottleneckWatch {
     }
   }
 
-  private dropRetry(sessionId: string): void {
+  private dropRetry(sessionId: string): boolean {
     const t = this.retries.get(sessionId);
+    const had = t !== undefined || this.deps.store.get(sessionId)?.pendingRetry !== undefined;
     if (t !== undefined) this.clearTimer(t);
     this.retries.delete(sessionId);
     this.strip(sessionId, 'pendingRetry');
+    if (had) this.deps.onRetry?.(sessionId, null);
+    return had;
   }
 
   /** A turn started or succeeded: the session is moving again — reminders and any booked retry are settled. */

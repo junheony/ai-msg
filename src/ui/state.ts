@@ -384,6 +384,8 @@ export type AppState = {
   commanderRefusals: Record<string, RefusalCode>;
   /** Claude's next-prompt guess per session (prompt_suggestion), until its next turn starts or a pane leaves it. Memory only. */
   suggestions?: Record<string, string>;
+  /** 한도가 풀리면 자동으로 이어가기: the booked resume time (epoch ms) by session id; absent = none booked. */
+  autoResumes?: Record<string, number>;
 };
 
 export type RoutePreview = Omit<Extract<ServerMessage, { type: 'route_preview' }>, 'type'>;
@@ -1178,6 +1180,15 @@ function withCommander(state: AppState, sessionId: string, view: CommanderView |
   return { ...state, commanders: rest };
 }
 
+/** `autoResumes` with `sessionId`'s booking set (a number) or dropped (null/undefined; the same object when it has none). */
+function withAutoResume(resumes: AppState['autoResumes'], sessionId: string | null | undefined, atMs: number | null | undefined): AppState['autoResumes'] {
+  if (!sessionId) return resumes;
+  if (typeof atMs === 'number') return { ...resumes, [sessionId]: atMs };
+  if (!resumes || !(sessionId in resumes)) return resumes;
+  const { [sessionId]: _gone, ...rest } = resumes;
+  return rest;
+}
+
 /** `suggestions` without `sessionId`'s (the same object when it has none). */
 function dropSuggestion(suggestions: AppState['suggestions'], sessionId: string | null | undefined): AppState['suggestions'] {
   if (!sessionId || !suggestions || !(sessionId in suggestions)) return suggestions;
@@ -1187,6 +1198,7 @@ function dropSuggestion(suggestions: AppState['suggestions'], sessionId: string 
 
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
+    case 'auto_resume': return { ...state, autoResumes: withAutoResume(state.autoResumes, msg.sessionId, msg.atMs) };
     case 'prompt_suggestion': return msg.sessionId ? { ...state, suggestions: { ...state.suggestions, [msg.sessionId]: msg.text } } : state;
     case 'hello': {
       const listed = has('accounts') ? accountListOf(msg.accounts) : LEGACY_ACCOUNT_LIST;
@@ -1260,7 +1272,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       // waiting for its reply counts). A history no pane views — its pane was closed or switched while the reply
       // was in flight — is dropped, never adopted by a blank pane (T9 prerequisite b).
       if (!state.panes.some((p) => p.session?.sessionId === msg.sessionId)) return state;
-      state = withCommander(state, msg.sessionId, msg.commander);
+      state = { ...withCommander(state, msg.sessionId, msg.commander), autoResumes: withAutoResume(state.autoResumes, msg.sessionId, msg.autoResumeAtMs) };
       const doubt = inDoubt(msg, Date.now());
       const doubted = state.panes.filter((p) => p.session?.sessionId === msg.sessionId).flatMap((p) => p.queue.filter(doubt).map((q) => q.text || '첨부만'));
       return { ...state, ...(doubted.length ? { error: `이미 들어갔을 수 있어 멈춰 둔 메시지: ${doubted.join(' / ')}` } : {}), panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...paneOnServer(p, msg, false, state.accounts), loading: false } : p)) };
@@ -1286,7 +1298,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
         if (canClaim && next.myTurns.includes(msg.turnId)) claimed = true;
         return next;
       });
-      return { ...state, panes, suggestions: dropSuggestion(state.suggestions, msg.sessionId) };
+      return { ...state, panes, suggestions: dropSuggestion(state.suggestions, msg.sessionId), autoResumes: withAutoResume(state.autoResumes, msg.sessionId, null) };
     }
     case 'thinking': case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
     case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result': case 'turn_queued':

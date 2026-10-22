@@ -206,6 +206,8 @@ export type WsDeps = {
    * refused because the session was busy then is not left for the next restart (BottleneckWatch.retryDue).
    */
   retryDue?: (sessionId: string) => void;
+  /** 취소 on the 자동으로 이어가기 line (BottleneckWatch.cancelRetry): false = nothing was booked. Absent = the booking is only unstored. */
+  cancelRetry?: (sessionId: string) => boolean;
   /** 백그라운드 작업 (`start_task`): the list; absent = no tasks ('tasks' not advertised). */
   tasks?: TaskRegistry;
   /** A task ended: always pushed (PushNotifier.sendAll), whatever turnNeedsAttention says. */
@@ -1327,7 +1329,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const since = deps.acceptedRefs?.since(sid);
     const pos = heads.get(sid);
     const cmd = deps.commander?.enabled() ? { commander: deps.commander.view(sid) } : {};
-    return { ...cmd, ...(pos ? { pos } : {}), runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
+    const resume = deps.store.get(sid)?.pendingRetry;
+    return { ...cmd, ...(pos ? { pos } : {}), ...(resume ? { autoResumeAtMs: resume.atMs } : {}), runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
   };
   type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: Awaited<ReturnType<typeof readTranscript>> };
   /** A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one read. */
@@ -1640,6 +1643,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
             .then(() => broadcast(indexMsg()))
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
           break;
+        case 'cancel_auto_resume': {
+          // The watch tells every device (onRetry); with nothing booked (a stale line) or no watch, ws says it itself.
+          if (deps.cancelRetry?.(msg.sessionId)) break;
+          const st = deps.store.get(msg.sessionId);
+          if (st?.pendingRetry) {
+            const { pendingRetry: _off, ...rest } = st;
+            void deps.store.set(rest).catch((err: unknown) => console.error('deck: 자동 재시도 취소 저장 실패', errMsg(err)));
+          }
+          broadcast({ type: 'auto_resume', sessionId: msg.sessionId, atMs: null });
+          break;
+        }
         case 'set_account_pin': {
           const badPin = msg.pin === null ? null : pinRefusal(msg.pin);
           if (badPin) {

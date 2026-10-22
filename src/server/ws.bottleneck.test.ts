@@ -53,10 +53,11 @@ beforeAll(async () => {
   runner = new TurnRunner({ accounts: testRegistry(), attachments: null, engine: new ClaudeEngine({ bin: 'claude', spawnFn: fake.spawnFn, bridge, killGraceMs: 50, accounts: testRegistry(), readFile: async () => Buffer.from('') }), usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex') });
   watch = new BottleneckWatch({
     sendPush: (p) => pushes.push(p), titleOf: () => 't', store, retry: (r) => wsApi.submitRetry(r),
+    onRetry: (sessionId, atMs) => wsApi.broadcast({ type: 'auto_resume', sessionId, atMs }),
     setTimer: (fn) => { const id = ++seq; timers.set(id, fn); return id; }, clearTimer: (t) => { timers.delete(t as number); },
   });
   const server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: base, usage, index }));
-  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [base], notify: (m) => watch.observe(m), onUserSend: (sid) => { sends.push(sid); watch.userSent(sid); } });
+  wsApi = attachWebSocket([server], { accounts: testRegistry(), token: TOKEN, devOrigins: [], runner, index, usage, store, codexAvailable: false, cwdRoots: [base], notify: (m) => watch.observe(m), onUserSend: (sid) => { sends.push(sid); watch.userSent(sid); }, cancelRetry: (sid) => watch.cancelRetry(sid) });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as { port: number };
   wsUrl = `ws://127.0.0.1:${port}/ws`;
@@ -230,6 +231,40 @@ describe('ws: 자동 재시도 end to end', () => {
     await vi.waitFor(() => expect(store.get(S)).not.toHaveProperty('pendingRetry'));
     expect(store.get(S)).not.toHaveProperty('blocked');
     ws.close();
+  });
+
+  it('자동으로 이어가기 line: devices are told the booking, a reopened session carries it, 취소 calls it off for every device', async () => {
+    const S = '78787878-7878-4787-8787-787878787878';
+    await store.set(state(S));
+    const calls: TurnParams[] = [];
+    vi.spyOn(runner, 'run').mockImplementation(async (p, sink) => {
+      calls.push(p);
+      sink.emit(startedOf(p));
+      await store.set({ ...store.get(S)!, pendingRetry: { text: p.text, atMs: Date.now() + 60_000, hops: 1 } });
+      sink.emit(resultOf(p, false, '한도 도달 · 대안 계정 없음'));
+    });
+    const a = await connect();
+    const b = await connect();
+    const seen: ServerMessage[] = [];
+    b.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    a.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: '고쳐 줘' }));
+    await vi.waitFor(() => expect(seen).toContainEqual({ type: 'auto_resume', sessionId: S, atMs: store.get(S)!.pendingRetry!.atMs }));
+    const atMs = store.get(S)!.pendingRetry!.atMs;
+    // Reopened (a Gemini session here: its history needs no transcript file), the line comes back with it.
+    await store.set({ engine: 'gemini', account: 'g1', sessionId: S, cwd: base, lastTurnAtMs: null, justCompacted: false, defaultModel: 'gemini-pro', sandbox: 'read-only', createdAtMs: 1, pendingRetry: store.get(S)!.pendingRetry! });
+    b.send(JSON.stringify({ type: 'open_session', sessionId: S }));
+    await vi.waitFor(() => expect(seen.find((m) => (m.type === 'history' || m.type === 'catchup') && m.sessionId === S)).toMatchObject({ autoResumeAtMs: atMs }));
+    a.send(JSON.stringify({ type: 'cancel_auto_resume', sessionId: S }));
+    await vi.waitFor(() => expect(seen).toContainEqual({ type: 'auto_resume', sessionId: S, atMs: null }));
+    expect(store.get(S)).not.toHaveProperty('pendingRetry');
+    fire();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls).toHaveLength(1);
+    // Nothing booked any more: a second 취소 (another device's stale line) still clears that line.
+    seen.length = 0;
+    a.send(JSON.stringify({ type: 'cancel_auto_resume', sessionId: S }));
+    await vi.waitFor(() => expect(seen).toContainEqual({ type: 'auto_resume', sessionId: S, atMs: null }));
+    a.close(); b.close();
   });
 
   // Last: drained stays drained.

@@ -24,7 +24,9 @@ async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | nul
   const timers = new Map<number, { at: number; fn: () => void }>();
   const pushes: PushPayload[] = [];
   const retries: RetryRequest[] = [];
+  const shown: [string, number | null][] = [];
   const watch = new BottleneckWatch({
+    onRetry: (sessionId, atMs) => shown.push([sessionId, atMs]),
     sendPush: (p) => pushes.push(p),
     titleOf: () => '세션 제목',
     store,
@@ -46,7 +48,7 @@ async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | nul
     }
     now = end;
   };
-  return { watch, store, pushes, retries, advance, now: () => now, pending: () => timers.size };
+  return { watch, store, pushes, retries, shown, advance, now: () => now, pending: () => timers.size };
 }
 
 const perm = (requestId: string, over: Record<string, unknown> = {}) => ({ type: 'permission_request', ...scope, requestId, toolName: 'Bash', input: {}, title: 'Run make', decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, ...over } as ServerMessage);
@@ -223,6 +225,35 @@ describe('BottleneckWatch · 자동 재시도', () => {
     c.advance(60 * MIN);
     expect(c.retries).toEqual([]);
     expect(c.store.get('s1')).not.toHaveProperty('pendingRetry');
+  });
+
+  it('자동으로 이어가기: the booking is told to the devices when armed and when it goes (start, send, cancel)', async () => {
+    const c = await setup({ states: [claude(), claude({ sessionId: 's2', cwd: '/w/two' })] });
+    const atMs = c.now() + 40 * MIN;
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs, hops: 1 } }));
+    c.watch.observe(failed('대안 계정 없음'));
+    expect(c.shown).toEqual([['s1', atMs]]);
+    c.watch.observe({ type: 'turn_started', ...scope, turnId: 't2', account: 'a', model: 'opus', reason: 'r', attempt: 0 } as ServerMessage);
+    expect(c.shown).toEqual([['s1', atMs], ['s1', null]]);
+    // Nothing booked: nothing to tell.
+    c.watch.userSent('s1');
+    expect(c.shown).toHaveLength(2);
+    await c.store.set(claude({ sessionId: 's2', cwd: '/w/two', pendingRetry: { text: 'go', atMs, hops: 1 } }));
+    c.watch.observe({ ...failed('대안 계정 없음'), sessionId: 's2', cwd: '/w/two' } as ServerMessage);
+    c.watch.userSent('s2');
+    expect(c.shown.slice(2)).toEqual([['s2', atMs], ['s2', null]]);
+  });
+
+  it('취소: cancelRetry calls the booking off — no retry at its time, nothing stored', async () => {
+    const c = await setup();
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 5 * MIN, hops: 1 } }));
+    c.watch.observe(failed('대안 계정 없음'));
+    expect(c.watch.cancelRetry('s1')).toBe(true);
+    expect(c.watch.cancelRetry('s1')).toBe(false);
+    c.advance(60 * MIN);
+    expect(c.retries).toEqual([]);
+    expect(c.store.get('s1')).not.toHaveProperty('pendingRetry');
+    expect(c.shown.at(-1)).toEqual(['s1', null]);
   });
 
   it('re-armed at start: a booking already due fires at once, a stale one is dropped', async () => {

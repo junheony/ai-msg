@@ -118,6 +118,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('refresh_index') }),
   /** Pin a Claude session to an account (null = 자동); persisted, applied from the next turn, broadcast as `account_pin`. */
   z.object({ type: z.literal('set_account_pin'), sessionId: z.string().min(1), pin: AccountId.nullable() }),
+  /** 취소 on the 자동으로 이어가기 line: the session's booked resume (SessionState.pendingRetry) is called off; every device hears `auto_resume` null. */
+  z.object({ type: z.literal('cancel_auto_resume'), sessionId: z.string().min(1) }),
   /** A Claude session's permission mode; persisted, applied to its running turn at once, broadcast as `permission_mode`. */
   z.object({ type: z.literal('set_permission_mode'), sessionId: z.string().min(1), mode: z.enum(PERM_MODES) }),
   /** A GPT session's sandbox (D2; never danger-full-access); persisted, used from its next turn, broadcast as `sandbox`. Claude/Gemini: refused. */
@@ -295,7 +297,7 @@ export type CommanderView = {
 };
 
 /** What `history` and `catchup` both say about the session besides its messages. */
-export type SessionFacts = { /** 'commander' servers: the session's commander, null when it has none. */ commander?: CommanderView | null; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** The model the session runs on (its stored default; GPT / Gemini / Grok too: the model 자동 picked stays on reopen; absent: an older server). */ sessionModel?: AnyModel; /** Grok sessions: the stored effort (a reopened pane keeps it). */ sessionEffort?: Effort; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number; /** The session's newest stream position (absent: no turn since the server started, or an older server). */ pos?: StreamPos };
+export type SessionFacts = { /** 'commander' servers: the session's commander, null when it has none. */ commander?: CommanderView | null; runningTurnId: string | null; /** Claude sessions: the pinned account (null = 자동). */ accountPin?: Account | null; /** Claude sessions: the mode its next tool calls run in. */ permissionMode?: PermMode; /** The model the session runs on (its stored default; GPT / Gemini / Grok too: the model 자동 picked stays on reopen; absent: an older server). */ sessionModel?: AnyModel; /** Grok sessions: the stored effort (a reopened pane keeps it). */ sessionEffort?: Effort; /** The running turn's prompt (a device opening the session mid-turn shows it even before the transcript has it). */ runningPrompt?: TurnPrompt | null; /** How long the running turn has run (its elapsed timer on a device that opens it mid-turn). */ runningForMs?: number; /** The send clientRefs / steer ids this session accepted lately (absent: an older server). */ acceptedRefs?: string[]; /** Refs handed to the running process but not recorded yet: they are going in — never sent again by themselves. */ pendingRefs?: string[]; /** Set when the per-session cap may have pushed older refs out: the oldest kept ref's time (ms). A maybe-sent message from before it cannot be told by the list. */ acceptedRefsSince?: number; /** The session's newest stream position (absent: no turn since the server started, or an older server). */ pos?: StreamPos; /** 한도가 풀리면 자동으로 이어가기: when the booked resume goes out (epoch ms); absent = none booked. */ autoResumeAtMs?: number };
 
 export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
@@ -311,6 +313,8 @@ export type ServerMessage =
   | { type: 'permission_mode'; sessionId: string; mode: PermMode }
   /** A session's account pin changed (null = 자동). */
   | { type: 'account_pin'; sessionId: string; pin: Account | null }
+  /** 한도가 풀리면 자동으로 이어가기: the session's resume is booked for `atMs` (epoch ms), or null = no longer booked (started, sent over, cancelled). */
+  | { type: 'auto_resume'; sessionId: string; atMs: number | null }
   /** A GPT session's sandbox changed (set_sandbox, 'sessionSandbox' servers). */
   | { type: 'sandbox'; sessionId: string; sandbox: CodexSandbox }
   | { type: 'usage'; usage: UsageSnapshot }
