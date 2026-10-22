@@ -58,11 +58,13 @@ export function resolveDocLink(docPath: string, href: string): string {
 
 /**
  * 파일 열기's Enter / 열기: what was typed when it names a listed file exactly or nothing matches (a path the list does
- * not have — the server answers), else the highlighted match.
+ * not have — the server answers; or a typed path when the list was cut off), else the highlighted match.
  */
-export function pickTarget(typed: string, matches: string[], files: string[], active: number): string | null {
+export function pickTarget(typed: string, matches: string[], files: string[], active: number, truncated = false): string | null {
   const t = typed.trim();
   if (t && files.includes(t)) return t;
+  // A cut-off list may lack the file; a typed path (has a `/`) is then taken as written over a fuzzy guess.
+  if (truncated && t.includes('/') && t.replace(/^(\.\/)+/, '') !== '') return t.replace(/^(\.\/)+/, '');
   if (matches.length && active >= 0 && active < matches.length) return matches[active]!;
   return t || null;
 }

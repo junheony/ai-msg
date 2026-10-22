@@ -130,6 +130,51 @@ describe('SidePanel', () => {
     expect(open.mock.calls.map((c) => (c[0] as { path: string }).path)).toEqual(['docs/plan.md', 'README.md', 'src/a.ts']);
   });
 
+  it('a markdown image shows inside the panel next to the document; a `../..` past the folder stays a link', async () => {
+    const features = await import('../features');
+    vi.spyOn(features, 'has').mockImplementation((f) => f === 'fileRaw');
+    mockFetch({ path: '/w/docs/spec.md', size: 1, kind: 'text', text: '![shot](./img/p.png)\n\n![away](../../q.png)\n\n[out](../../secret.md)' });
+    const open = vi.fn();
+    render(
+      <SidePanelContext.Provider value={open}>
+        <SidePanel doc={{ kind: 'file', path: 'docs/spec.md' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />
+      </SidePanelContext.Provider>,
+    );
+    const img = (await screen.findByAltText('p.png')) as HTMLImageElement;
+    expect(decodeURIComponent(img.getAttribute('src')!)).toContain('path=docs/img/p.png');
+    // past the folder: no thumbnail, the image stays a plain link; a link keeps its `..` (the server refuses it), never folded to a folder path
+    expect(screen.getByText(/away/).closest('a')!.getAttribute('href')).toBe('../../q.png');
+    fireEvent.click(screen.getByText('out'));
+    expect((open.mock.calls[0]![0] as { path: string }).path).toBe('../secret.md');
+    vi.mocked(features.has).mockRestore();
+  });
+
+  it('Lightbox: Tab keeps focus on 닫기; clicking 닫기 closes once', async () => {
+    mockFetch({ path: '/w/p.png', size: 10, kind: 'image', mediaType: 'image/png', base64: 'AAAA' });
+    render(<SidePanel doc={{ kind: 'file', path: 'p.png' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'p.png 크게 보기' }));
+    const close = screen.getByRole('button', { name: '닫기' });
+    expect(document.activeElement).toBe(close);
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+    window.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(close);
+    fireEvent.click(close);
+    expect(screen.queryByTestId('lightbox')).toBeNull();
+  });
+
+  it('←/→ with a modifier do not switch tabs', async () => {
+    mockFetch({ path: '/w/a.md', size: 3, kind: 'text', text: '# T' });
+    render(<SidePanel doc={{ kind: 'file', path: 'a.md' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    await screen.findByRole('tablist');
+    const sel = () => screen.getAllByRole('tab').find((t) => t.getAttribute('aria-selected') === 'true')!.textContent;
+    const before = sel();
+    fireEvent.keyDown(screen.getByRole('tablist'), { key: 'ArrowRight', metaKey: true });
+    expect(sel()).toBe(before);
+    fireEvent.keyDown(screen.getByRole('tablist'), { key: 'ArrowRight' });
+    expect(sel()).not.toBe(before);
+  });
+
   it('HTML preview: sandboxed iframe (scripts only, never same-origin) on the shell URL; 원문 tab shows the source', () => {
     render(<SidePanel doc={{ kind: 'html', title: 'HTML 미리보기', html: '<b>hi</b>' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
     const frame = screen.getByTestId('html-preview') as HTMLIFrameElement;

@@ -43,4 +43,11 @@ describe('sideView', () => {
     expect(pickTarget('new.ts', [], files, -1)).toBe('new.ts');
     expect(pickTarget('  ', files, files, -1)).toBeNull();
   });
+
+  it('pickTarget: a cut-off list and a typed path → the path as written (leading ./ dropped), not the fuzzy match', () => {
+    const files = ['a/bb.ts'];
+    expect(pickTarget('./a/b', ['a/bb.ts'], files, 0, true)).toBe('a/b');
+    expect(pickTarget('a/b', ['a/bb.ts'], files, 0, false)).toBe('a/bb.ts');
+    expect(pickTarget('bb', ['a/bb.ts'], files, 0, true)).toBe('a/bb.ts');
+  });
 });

@@ -154,7 +154,7 @@ function FilePick({ cwd, onOpen }: { cwd: string; onOpen: (doc: SideDoc) => void
   const open = (path: string | null) => { if (path) onOpen({ kind: 'file', path }); };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    open(pickTarget(value, matches, files, active));
+    open(pickTarget(value, matches, files, active, typeof list === 'object' && list.truncated));
   };
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing || !matches.length) return;
@@ -401,6 +401,7 @@ function DocView({ doc, cwd, sessionId, onClose, onOpen }: {
       </div>
       {tabs.length > 1 && (
         <div className="side-tabs" role="tablist" aria-label="보기 방식" onKeyDown={(e) => {
+          if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
           // ←/→ (Home/End) move between 보기 / 원문 / 변경 사항, as a tab strip does.
           const i = tabs.indexOf(active!);
           const next = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;

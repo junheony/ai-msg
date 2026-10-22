@@ -16,6 +16,12 @@ export function Lightbox({ src, alt, onClose }: { src: string; alt: string; onCl
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') {
+        // aria-modal: focus stays on the close button, never behind the dialog.
+        e.preventDefault();
+        closeRef.current?.focus({ preventScroll: true });
+        return;
+      }
       if (e.key !== 'Escape') return;
       e.preventDefault();
       e.stopPropagation();
@@ -27,7 +33,7 @@ export function Lightbox({ src, alt, onClose }: { src: string; alt: string; onCl
   return (
     <div className="lightbox" role="dialog" aria-modal="true" aria-label={alt} data-testid="lightbox" onClick={onClose}>
       <img src={src} alt={alt} />
-      <button ref={closeRef} type="button" className="lightbox-close" aria-label="닫기" onClick={onClose}>✕</button>
+      <button ref={closeRef} type="button" className="lightbox-close" aria-label="닫기" onClick={(e) => { e.stopPropagation(); onClose(); }}>✕</button>
     </div>
   );
 }
