@@ -2,22 +2,24 @@
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 이 저장소는 비공개 원본(원격 없음)이고, 공개본은 `scripts/export-public.sh` 로 뽑아 따로 올린다.
 
-## 지금 상태 (2026-10-22 저녁)
+## 지금 상태 (2026-10-22 밤)
 
-**한 줄:** 다음 프롬프트 추천(Tab·칩), 간결 모드 실시간 답, 세션 아이콘 확대, 간결 모드 답변 문구(두괄식+충분히)를 master 에 합쳤다. 전체 검증(서버 2550·UI 1358)·빌드·공개본 반영까지 끝. **서버 변경(추천·답변 문구)은 "재시작 ㄱ" 대기. UI(실시간 답·아이콘·추천 칩)는 새로고침으로 보이지만 추천은 서버가 보내야 뜬다.**
+**한 줄:** 저녁 작업(추천·실시간 답·아이콘·문구)에 ⑤ Claude 사용량 자동 확인(`/usage` 폴, 토큰 0)을 더해 master 에 합치고 빌드했다. **재시작은 사용자 요청("빨리 적용")으로 20:16 경 `--force` 신호를 보냄 — 진행 중 턴(다른 세션·이 세션)이 끝나면 launchd 가 다시 띄운다. deck.log 의 "launchd 시작" 줄로 확인 필요.**
 - **한 일:**
   - ① **다음 프롬프트 추천:** Claude CLI 는 stream-json 에서 initialize `promptSuggestions:true` 를 받으면 턴 result ~2초 뒤 `prompt_suggestion` 을 낸다(첫 턴은 캐시 쓰기 >10k 라 보통 생략). deck 이 이를 켜고 WS `prompt_suggestion` 으로 넘겨, 빈 입력창에 회색으로 보여 주고 Tab(IME·수식키·@/슬래시 팝업 제외) 또는 칩 탭으로 채운다(전송 안 함). 성공한 사람 턴 뒤에만 stdin 을 최대 5초 열어 추천을 기다린다 — 대기 중 후속 메시지는 그대로 받고, 중단·새 전송은 stdin EOF → 1초 유예 → SIGTERM, `/handoff` 도 대기 프로세스를 끝낸 뒤 진행. commanderHop·bgTask·재시도·cap 이어가기·failover·handoff 턴은 요청·대기 안 함. 끄기: `DECK_PROMPT_SUGGEST=0`(설정 UI 토글 없음). 독립 리뷰 2회 반영.
   - ② **간결 모드 실시간 답:** 서버는 원래 delta 를 보냈고 UI(`MessageView`)가 턴 끝까지 숨겼다(`'defer'`) — 체감 지연의 근본 원인. 이제 마지막 도구 호출 뒤 글을 실시간으로 흘리고, 앞 구간은 첫 문장 회색 리드 줄로 접는다(`ToolCallItem.textAt` 오프셋, `conciseLiveSplit`). 끝난 턴은 예전처럼 말풍선 하나. 리뷰 LOW 3건 반영.
   - ③ **아이콘:** 사이드바 40px 원 안 그림 20→28px.
+  - ⑤ **Claude 사용량 자동 확인:** cli 모드 카드는 deck 턴의 `rate_limit_event` 로만 갱신돼, 안 쓴 계정은 "1일 전 마지막 턴 기준 · 불명"으로 멈췄다(사용자는 C 결제 후 반영 안 된다고 오해 — 실측 C 주간 90%·Fable 87% 사용, 10-23 17:59 리셋, 결제로 주간 초기화 안 됨). `claude -p /usage --setting-sources= --no-session-persistence --strict-mcp-config --output-format json` 은 모델 호출 없이 ~5초에 실제 한도를 준다(`--bare` 는 OAuth 를 안 읽어 불가). `ClaudeUsagePoller` 가 시작 20초 뒤·5분마다 점검, 관측이 8분(STALE_MAX_MS−2분) 넘은 계정만 직렬로 폴 → `UsageService.applyCliPoll`(턴 관측이 더 새로우면 턴이 이김). 카드는 "N분 전 확인". 실패는 상태 변화 때만 로그, 연속 실패는 최대 2시간 백오프. 끄기 `DECK_CLAUDE_USAGE_POLL=0`. 리뷰 MEDIUM 3·LOW 4·UI 1 반영.
   - ④ **간결 모드 문구:** "1–2개의 짧은 문단" → "첫 문장에 답, 이어서 근거·숫자·원인·다음 할 일을 질문 무게만큼"(Grok Bot 식, 사용자 피드백).
 - **남은 일:**
-  - "재시작 ㄱ" — 추천·답변 문구·이전 대기분(있다면) 반영. 재시작 뒤 Claude 세션 두 번째 턴부터 추천이 뜨는지 실기 확인.
+  - 재시작 완료 확인("launchd 시작" 줄) → Claude 세션 두 번째 턴부터 추천이 뜨는지, 사용량 카드가 20초~5분 안에 "N분 전 확인"으로 바뀌는지 실기 확인.
+  - 리셋 시각이 지난 창의 `RESET_PASSED_NOTE`("한 턴 돌리면 갱신됨")는 폴 계정에 덜 맞음 — 문구 조정 여지.
   - GPT·Grok 추천: Codex CLI 0.159.2 엔 기능 없음 — deck 이 턴마다 싼 모델로 생성할지 사용자 결정 대기.
   - 사용량 대시보드(다른 머신)의 claude:third 가 `setup_needed`(cred_file 에 accessToken 없음) — 계정 C 는 결제·이 맥 로그인(Max) 정상, 그 머신에서 사용자가 C 계정 `claude /login` 필요.
   - D1 npm 이름 → 패키징 Task 8. Safari ⌃1·비맥 상주 서비스 실기 확인.
 - **제안:** 추천 켜기/끄기 설정 UI 토글. 턴 도중 새로고침하면 실시간 답이 구간 구분 없이 흐르는 점(textAt 미보존) 보완.
 - **참고(환경):** 10-22 저녁 맥이 크게 느렸던 건 ChatGPT 앱 Codex 가 돌린 Unity 배치 빌드 — 초당 150~220 exec 로 syspolicyd 80%·한 번 재시작, node 시작 멈춤·명령 2분 정체. deck 문제 아님.
-- **재현·복구용:** 병합 커밋 a7342ef(아이콘·문구), 21fbf98(추천), b9c47d6(실시간). 공개본 f5f9715.
+- **재현·복구용:** 병합 커밋 a7342ef(아이콘·문구), 21fbf98(추천), b9c47d6(실시간), 4bff895(사용량 폴). 공개본 f5f9715(사용량 폴 반영본은 아래 커밋 후 갱신).
 
 ## 이전 상태 (2026-10-22 새벽)
 
