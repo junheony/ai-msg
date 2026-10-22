@@ -9,7 +9,8 @@ import { roleSummary } from '../roles';
 import { usePrefs } from '../usePrefs';
 import { conciseCut, conciseLead } from '../../shared/concise';
 import { codeFileName, useCodeWrap } from '../codeWrap';
-import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
+import { DocLinkContext, FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
+import { resolveDocLink } from '../sideView';
 import { has } from '../features';
 import { rawFileUrl } from '../sessionApi';
 import { Sheet, SheetHead } from './Dialogs';
@@ -115,11 +116,25 @@ function FileLink({ path, fallback, children }: { path: string | null; fallback:
  */
 function MdImage({ src, alt }: { src?: unknown; alt?: string }) {
   const root = useContext(FileRootContext);
+  const doc = useContext(DocLinkContext);
   const s = typeof src === 'string' ? src : undefined;
   const link = <a href={s} title={s} rel="noreferrer noopener" target="_blank">🖼 {alt || s || '이미지'}</a>;
-  const path = s && root !== null && !/^[a-z][\w+.-]*:/i.test(s) && !s.startsWith('//') ? filePathIn(decodeSafe(s)) : null;
+  const path = s && root !== null && !/^[a-z][\w+.-]*:/i.test(s) && !s.startsWith('//') ? filePathIn(docRelative(doc, decodeSafe(s))) : null;
   if (!path || viewFor(path) !== 'image' || !inSessionFolder(path, root!)) return link;
   return <FileLink path={path} fallback={link}>🖼 {alt || path}</FileLink>;
+}
+
+/** A markdown link's / image's target inside a document shown in the side panel: next to that document (sideView.resolveDocLink). */
+function docRelative(doc: string | null, target: string): string {
+  return doc ? resolveDocLink(doc, target) : target;
+}
+
+/** A markdown link: a file path opens in the side panel; a web link opens in a new tab; `#anchor` stays text-only in a new tab. */
+function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const doc = useContext(DocLinkContext);
+  const local = href && !/^[a-z][\w+.-]*:/i.test(href) && !href.startsWith('#') && !href.startsWith('//');
+  const path = local ? filePathIn(docRelative(doc, decodeSafe(href.replace(/#.*$/, '')))) : null;
+  return <FileLink path={path} fallback={<a href={href} title={href} rel="noreferrer noopener" target="_blank">{children}</a>}>{children}</FileLink>;
 }
 
 /** `a/b/c` → a/<wbr>b/<wbr>c. */
@@ -129,7 +144,7 @@ function breakAfterSlash(text: string): ReactNode[] {
 
 const MD_COMPONENTS: Components = {
   img: ({ src, alt }) => <MdImage src={src} alt={alt} />,
-  a: ({ href, children }) => <FileLink path={href && !/^[a-z][\w+.-]*:/i.test(href) && !href.startsWith('#') ? filePathIn(decodeSafe(href)) : null} fallback={<a href={href} title={href} rel="noreferrer noopener" target="_blank">{children}</a>}>{children}</FileLink>,
+  a: ({ href, children }) => <MdLink href={href}>{children}</MdLink>,
   // Inline code naming a file opens it in the pane's side panel (fenced code ends with a newline, so it never matches).
   code: ({ className, children }) => {
     const text = typeof children === 'string' ? children : null;

@@ -26,6 +26,12 @@ export function inSessionFolder(path: string, cwd: string): boolean {
   return !path.startsWith('~');
 }
 
+/**
+ * The path of the document whose markdown is being shown (the side panel's 보기 tab); null in replies. Its relative
+ * links and images resolve next to it (`[plan](./plan.md)` in docs/spec.md → docs/plan.md); inline code paths do not.
+ */
+export const DocLinkContext = createContext<string | null>(null);
+
 const KNOWN_EXT = new Set('ts tsx js jsx mjs cjs json jsonl md mdx txt py rb go rs java kt swift c h cc cpp hpp cs php sh zsh bash fish yml yaml toml ini cfg conf env css scss less html htm svg xml sql graphql proto lock png jpg jpeg gif webp vue svelte astro dockerfile makefile gradle tf lua dart ex exs erl hs ml r scala'.split(' '));
 
 /**

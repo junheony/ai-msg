@@ -1713,18 +1713,47 @@ button.hl-row-main:hover { background: var(--hover); }
 .side-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .side-msg { padding: 16px; font-size: calc(13px * var(--font-scale, 1)); }
 .side-msg.error { color: var(--danger); }
+/* A file that did not open: what happened (title), the server's words (detail), what to do (hint, buttons). Quiet, left-aligned text, like an editor's empty state. */
+.side-state { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 420px; padding: 28px 20px; font-size: calc(13px * var(--font-scale, 1)); line-height: 1.5; }
+.side-state-title { font-size: calc(14.5px * var(--font-scale, 1)); font-weight: 600; color: var(--fg-strong); }
+.side-state-detail { color: var(--muted); overflow-wrap: anywhere; }
+.side-state-hint { color: var(--muted); }
+.side-state-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.side-state[data-kind="denied"] .side-state-title, .side-state[data-kind="other"] .side-state-title { color: var(--danger); }
+/* Loading lines, faded in after a beat so a quick answer never flashes them. */
+.side-loading { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; animation: side-fade-in .2s ease-out; }
+.side-loading .skeleton-line { display: block; height: 11px; border-radius: var(--r-xs); background: color-mix(in srgb, currentColor 9%, transparent); animation: skeleton-pulse 1.4s ease-in-out infinite; }
+@keyframes side-fade-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .side-loading, .side-loading .skeleton-line { animation: none; } }
+/* Footer: the open file's facts in the faint mono of a status bar. */
+.side-foot { flex-shrink: 0; display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 12px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: calc(11.5px * var(--font-scale, 1)); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
 .side-code { display: flex; align-items: flex-start; min-width: max-content; font-family: var(--mono); font-size: calc(12.5px * var(--font-scale, 1)); line-height: 1.6; }
 .side-code pre { margin: 0; padding: 10px 0; white-space: pre; font: inherit; }
 .side-gutter { position: sticky; left: 0; padding: 10px 10px 10px 12px !important; text-align: right; color: var(--faint); background: var(--bg-raised); user-select: none; border-right: 1px solid var(--line); }
 .side-lines { padding: 10px 14px !important; color: var(--fg); }
 .side-md { padding: 12px 18px; }
-.side-image { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; }
-.side-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.side-image { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
+  /* A checkerboard behind the picture shows where a transparent PNG is see-through. */
+  background-image: conic-gradient(var(--hover) 25%, transparent 0 50%, var(--hover) 0 75%, transparent 0); background-size: 16px 16px; }
+.side-image-btn { display: flex; max-width: 100%; max-height: 100%; padding: 0; border-radius: var(--r-xs); cursor: zoom-in; }
+.side-image-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.side-image img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: var(--shadow-sm); }
 .side-frame { flex: 1; width: 100%; min-height: 300px; border: 0; background: #fff; }
 .side-body .diff-list { padding: 10px; }
-.side-pick { display: flex; flex-direction: column; gap: 8px; padding: 16px; font-size: calc(13px * var(--font-scale, 1)); }
-.side-pick input { height: 34px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: calc(13px * var(--font-scale, 1)); }
-.side-pick .btn { align-self: flex-start; }
+/* 파일 열기: a quick-open box over the folder's files — name first, its folder faint after it, the highlighted row tinted. */
+.side-pick { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; padding: 14px 12px 0; font-size: calc(13px * var(--font-scale, 1)); }
+.side-pick-label { padding: 0 2px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
+.side-pick-row { display: flex; gap: 6px; }
+.side-pick input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: calc(13px * var(--font-scale, 1)); }
+.side-pick input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.side-pick .btn { height: 34px; flex-shrink: 0; }
+.side-pick-status { padding: 2px 2px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
+.side-pick-status.warn { color: var(--warn); }
+.side-pick-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -12px; padding: 2px 6px 12px; list-style: none; }
+.side-pick-list li { display: flex; align-items: baseline; gap: 8px; min-height: 30px; padding: 5px 8px; border-radius: var(--r-xs); cursor: pointer; font-family: var(--mono); font-size: calc(12.5px * var(--font-scale, 1)); white-space: nowrap; overflow: hidden; }
+.side-pick-list li.on { background: var(--selected); }
+.side-pick-name { flex-shrink: 0; color: var(--fg-strong); }
+.side-pick-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); }
 /* Open documents: file-like tabs on the sidebar tint (the document's own 보기 / 원문 tabs below stay underlined). */
 .side-doc-tabs { display: flex; gap: 2px; padding: 5px 6px 0; overflow-x: auto; scrollbar-width: thin; flex-shrink: 0; background: var(--sidebar); border-bottom: 1px solid var(--line); }
 .side-doc-tab { display: flex; align-items: center; flex: 0 0 auto; max-width: 200px; height: 30px; margin-bottom: -1px; border: 1px solid transparent; border-bottom: 0; border-radius: var(--r-xs) var(--r-xs) 0 0; color: var(--muted); }
@@ -1760,8 +1789,17 @@ button.hl-row-main:hover { background: var(--hover); }
   .side-splitter { display: none; }
   .side-wrap { position: fixed; inset: 0; z-index: 60; width: auto !important; padding-top: env(safe-area-inset-top); background: var(--bg-raised); }
   .side-head .icon-btn, .side-head .code-copy { min-width: var(--phone-tap); min-height: var(--phone-tap); }
-  .side-doc-tab { height: 38px; }
-  .side-doc-close { width: 32px; height: 32px; }
+  .side-doc-tab { height: var(--phone-tap); }
+  .side-doc-close { width: 40px; height: 40px; }
+  /* Thumb-sized: the 보기 / 원문 tabs, 파일 열기's box, rows and buttons, the error card's buttons. */
+  .side-tabs button { height: var(--phone-tap); padding: 0 14px; }
+  .side-pick input, .side-pick .btn, .side-state-actions .btn { height: var(--phone-tap); }
+  .side-pick-list li { min-height: var(--phone-tap); align-items: center; }
+  /* The home indicator sits over the sheet's last line: the footer (or the body) keeps clear of it. */
+  .side-foot { min-height: calc(26px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); }
+  .side-body { padding-bottom: env(safe-area-inset-bottom); }
+  .side-body:has(+ .side-foot) { padding-bottom: 0; }
+  .lightbox-close { width: var(--phone-tap); height: var(--phone-tap); }
 }
 
 /* === fold layout: Galaxy Z Fold cover (phone) and unfolded inner screen (tablet, 721–1100px) === */

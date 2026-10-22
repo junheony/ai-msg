@@ -1,0 +1,60 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- 사이드 패널 states fixture for scripts/render-check.sh (keep in step with SidePanel.tsx): 파일 열기 (quick open,
+     a query typed, second row highlighted), a text file with its footer, the error card (too big: 다운로드 + 다시 시도),
+     loading lines, an image on the checkerboard. RENDER_HEIGHT=900. -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  body { margin: 0; background: var(--bg); }
+  .fx { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px; }
+  .fx > .side-panel { flex: 1 1 300px; height: 420px; border: 1px solid var(--line); }
+</style>
+</head><body>
+<div class="fx">
+<aside class="side-panel" aria-label="사이드 패널">
+  <div class="side-doc-tabs" role="tablist"><div class="side-doc-tab on"><button type="button" role="tab" aria-selected="true" class="side-doc-name">파일 열기</button><button type="button" class="side-doc-close" aria-label="닫기">✕</button></div></div>
+  <div class="side-head"><span class="side-path">파일 열기</span><span class="spacer"></span><button type="button" class="icon-btn side-close" aria-label="닫기">✕</button></div>
+  <div class="side-body">
+    <form class="side-pick" role="search">
+      <label class="side-pick-label" for="i">세션 폴더의 파일 경로</label>
+      <div class="side-pick-row"><input id="i" value="panel"><button type="submit" class="btn ghost">열기</button></div>
+      <ul class="side-pick-list" role="listbox">
+        <li role="option"><span class="side-pick-name">SidePanel.tsx</span><span class="side-pick-dir">src/ui/components</span></li>
+        <li role="option" class="on"><span class="side-pick-name">SidePanel.test.tsx</span><span class="side-pick-dir">src/ui/components</span></li>
+        <li role="option"><span class="side-pick-name">sidePanel.ts</span><span class="side-pick-dir">src/ui</span></li>
+        <li role="option"><span class="side-pick-name">side-panel.html</span><span class="side-pick-dir">scripts/render</span></li>
+        <li role="option"><span class="side-pick-name">PanelLayout.md</span><span class="side-pick-dir">docs/design/very/long/folder/name/that/truncates</span></li>
+      </ul>
+    </form>
+  </div>
+</aside>
+<aside class="side-panel" aria-label="사이드 패널">
+  <div class="side-head"><span class="side-path">src/ui/sideView.ts</span><span class="spacer"></span><button type="button" class="icon-btn side-close" aria-label="닫기">✕</button></div>
+  <div class="side-tabs" role="tablist"><button type="button" role="tab" class="on">원문</button><button type="button" role="tab">변경 사항</button></div>
+  <div class="side-body"><div class="side-code"><pre class="side-gutter">1
+2
+3
+4</pre><pre class="side-lines">export function formatSize(n: number): string {
+  if (n &lt; 1024) return `${n} B`;
+  return `${(n / 1024).toFixed(1)} KB`;
+}</pre></div></div>
+  <div class="side-foot">4줄 · 2.1 KB</div>
+</aside>
+<aside class="side-panel" aria-label="사이드 패널">
+  <div class="side-head"><span class="side-path">assets/demo.mp4</span><span class="spacer"></span><button type="button" class="icon-btn side-close" aria-label="닫기">✕</button></div>
+  <div class="side-body">
+    <div class="side-state" role="alert" data-kind="tooBig">
+      <div class="side-state-title">너무 커서 미리 볼 수 없어요</div>
+      <div class="side-state-detail">파일이 너무 커서 미리 볼 수 없습니다 (2MB 초과)</div>
+      <div class="side-state-hint">다운로드해서 이 기기에서 열어 보세요</div>
+      <div class="side-state-actions"><button type="button" class="btn primary">다운로드</button><button type="button" class="btn ghost">다시 시도</button></div>
+    </div>
+    <div class="side-loading" role="status"><span class="skeleton-line" style="width:62%"></span><span class="skeleton-line" style="width:88%"></span><span class="skeleton-line" style="width:74%"></span><span class="skeleton-line" style="width:40%"></span></div>
+  </div>
+</aside>
+<aside class="side-panel" aria-label="사이드 패널">
+  <div class="side-head"><span class="side-path">docs/shot.png</span><span class="spacer"></span><button type="button" class="icon-btn side-close" aria-label="닫기">✕</button></div>
+  <div class="side-body"><div class="side-image"><button type="button" class="side-image-btn"><img alt="" width="180" height="120" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='120'%3E%3Crect x='20' y='20' width='140' height='80' rx='10' fill='%23888' fill-opacity='.6'/%3E%3C/svg%3E"></button></div></div>
+  <div class="side-foot">180 × 120 · 812 B</div>
+</aside>
+</div>
+</body></html>

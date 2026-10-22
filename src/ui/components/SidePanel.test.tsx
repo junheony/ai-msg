@@ -30,10 +30,104 @@ describe('SidePanel', () => {
     expect(screen.getByText('경로 복사')).toBeTruthy();
   });
 
-  it('shows the server error (e.g. outside the folder)', async () => {
+  it('shows the server error (e.g. outside the folder) under a plain title, with 다시 시도', async () => {
     mockFetch({ error: '세션 폴더 안의 파일만 열 수 있습니다' }, 403);
     render(<SidePanel doc={{ kind: 'file', path: '/etc/hosts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
-    expect((await screen.findByRole('alert')).textContent).toBe('세션 폴더 안의 파일만 열 수 있습니다');
+    const alert = await screen.findByRole('alert');
+    expect(alert.getAttribute('data-kind')).toBe('denied');
+    expect(within(alert).getByText('이 파일은 열 수 없어요')).toBeTruthy();
+    expect(within(alert).getByText('세션 폴더 안의 파일만 열 수 있습니다')).toBeTruthy();
+    expect(within(alert).queryByRole('button', { name: '다운로드' })).toBeNull();
+  });
+
+  it('a missing file says so; 다시 시도 asks again and shows the file once it is there', async () => {
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => (n++ === 0
+      ? new Response(JSON.stringify({ error: '파일을 찾을 수 없습니다' }), { status: 404 })
+      : new Response(JSON.stringify({ path: '/w/a.ts', size: 2, kind: 'text', text: 'ok' }), { status: 200 }))));
+    render(<SidePanel doc={{ kind: 'file', path: 'a.ts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('파일을 찾을 수 없어요')).toBeTruthy();
+    expect(within(alert).getByText('옮겨졌거나 지워졌을 수 있어요')).toBeTruthy();
+    fireEvent.click(within(alert).getByRole('button', { name: '다시 시도' }));
+    expect((await screen.findByTestId('side-text')).textContent).toContain('ok');
+  });
+
+  it('too big / binary: offers 다운로드 (this device) when the server has raw files', async () => {
+    const features = await import('../features');
+    vi.spyOn(features, 'has').mockImplementation((f) => f === 'fileRaw');
+    mockFetch({ error: '바이너리 파일은 미리 볼 수 없습니다' }, 415);
+    render(<SidePanel doc={{ kind: 'file', path: 'a.bin' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    const alert = await screen.findByRole('alert');
+    expect(alert.getAttribute('data-kind')).toBe('binary');
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    fireEvent.click(within(alert).getByRole('button', { name: '다운로드' }));
+    expect(click).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it('no answer from the server reads as a connection problem', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    render(<SidePanel doc={{ kind: 'file', path: 'a.ts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    expect((await screen.findByRole('alert')).getAttribute('data-kind')).toBe('offline');
+    expect(screen.getByText('서버에 연결하지 못했어요')).toBeTruthy();
+  });
+
+  it('loading: nothing for a quick answer, quiet lines only once it takes a moment', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+      render(<SidePanel doc={{ kind: 'file', path: 'a.ts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+      expect(screen.queryByTestId('side-loading')).toBeNull();
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(screen.getByTestId('side-loading').getAttribute('aria-busy')).toBe('true');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('the footer gives a text file\'s lines and size', async () => {
+    mockFetch({ path: '/w/a.ts', size: 2048, kind: 'text', text: 'a\nb\nc\n' });
+    render(<SidePanel doc={{ kind: 'file', path: 'a.ts' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    expect((await screen.findByTestId('side-foot')).textContent).toBe('3줄 · 2.0 KB');
+  });
+
+  it('an image opens full screen on click; Esc closes the zoom, not the panel under it', async () => {
+    mockFetch({ path: '/w/p.png', size: 10, kind: 'image', mediaType: 'image/png', base64: 'AAAA' });
+    const onClose = vi.fn();
+    render(<SidePanel doc={{ kind: 'file', path: 'p.png' }} cwd="/w" sessionId={null} onClose={onClose} onOpen={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'p.png 크게 보기' }));
+    expect(screen.getByTestId('lightbox')).toBeTruthy();
+    const late = vi.fn((e: KeyboardEvent) => e.defaultPrevented);
+    window.addEventListener('keydown', late);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    window.removeEventListener('keydown', late);
+    expect(screen.queryByTestId('lightbox')).toBeNull();
+    // Pane's Esc-closes-the-panel listener (window, bubble) never sees it, or sees it already handled.
+    expect(late.mock.results.every((r) => r.value === true)).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('←/→ move between 보기 and 원문', async () => {
+    mockFetch({ path: '/w/a.md', size: 3, kind: 'text', text: '# T' });
+    render(<SidePanel doc={{ kind: 'file', path: 'a.md' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />);
+    await screen.findByRole('heading', { name: 'T' });
+    const view = screen.getByRole('tab', { name: '보기' });
+    fireEvent.keyDown(view, { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: '원문' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('side-text')).toBeTruthy();
+  });
+
+  it('a markdown document\'s relative links open next to it; inline code paths stay folder-relative', async () => {
+    mockFetch({ path: '/w/docs/spec.md', size: 1, kind: 'text', text: 'See [plan](./plan.md), [up](../README.md#top) and `src/a.ts`.' });
+    const open = vi.fn();
+    render(
+      <SidePanelContext.Provider value={open}>
+        <SidePanel doc={{ kind: 'file', path: 'docs/spec.md' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={() => {}} />
+      </SidePanelContext.Provider>,
+    );
+    fireEvent.click(await screen.findByText('plan'));
+    fireEvent.click(screen.getByText('up'));
+    fireEvent.click(screen.getByText('src/a.ts'));
+    expect(open.mock.calls.map((c) => (c[0] as { path: string }).path)).toEqual(['docs/plan.md', 'README.md', 'src/a.ts']);
   });
 
   it('HTML preview: sandboxed iframe (scripts only, never same-origin) on the shell URL; 원문 tab shows the source', () => {
@@ -55,6 +149,63 @@ describe('SidePanel', () => {
   });
 });
 
+describe('파일 열기 (quick open)', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const files = ['src/ui/App.tsx', 'src/ui/components/SidePanel.tsx', 'docs/HANDOFF.md', 'README.md'];
+  const renderPick = (onOpen = vi.fn()) => {
+    mockFetch({ files, truncated: false });
+    render(<SidePanel doc={{ kind: 'pick' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={onOpen} />);
+    return onOpen;
+  };
+
+  it('lists the folder\'s files (name, then folder); typing narrows them fuzzily, best first', async () => {
+    renderPick();
+    const list = await screen.findByRole('listbox', { name: '세션 폴더의 파일' });
+    expect(within(list).getAllByRole('option')).toHaveLength(4);
+    fireEvent.change(screen.getByLabelText('세션 폴더의 파일 경로'), { target: { value: 'sidepan' } });
+    const opts = within(list).getAllByRole('option');
+    expect(opts[0]!.getAttribute('title')).toBe('src/ui/components/SidePanel.tsx');
+    expect(opts[0]!.getAttribute('aria-selected')).toBe('true');
+    expect(opts[0]!.textContent).toBe('SidePanel.tsxsrc/ui/components');
+  });
+
+  it('↓ / Enter opens the highlighted file; a tap opens one too', async () => {
+    const onOpen = renderPick();
+    await screen.findByRole('listbox');
+    const box = screen.getByLabelText('세션 폴더의 파일 경로');
+    fireEvent.change(box, { target: { value: 'md' } });
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    const second = screen.getAllByRole('option')[1]!;
+    expect(box.getAttribute('aria-activedescendant')).toBe(second.id);
+    fireEvent.submit(box.closest('form')!);
+    expect(onOpen).toHaveBeenLastCalledWith({ kind: 'file', path: second.getAttribute('title') });
+    fireEvent.click(screen.getAllByRole('option')[0]!);
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it('Enter on an empty box opens nothing; a path the list lacks opens as typed', async () => {
+    const onOpen = renderPick();
+    await screen.findByRole('listbox');
+    const box = screen.getByLabelText('세션 폴더의 파일 경로');
+    fireEvent.submit(box.closest('form')!);
+    expect(onOpen).not.toHaveBeenCalled();
+    fireEvent.change(box, { target: { value: 'zzz/new.txt' } });
+    expect(screen.getByRole('status').textContent).toContain('맞는 파일이 없어요');
+    fireEvent.submit(box.closest('form')!);
+    expect(onOpen).toHaveBeenCalledWith({ kind: 'file', path: 'zzz/new.txt' });
+  });
+
+  it('a list that fails to load still lets a path be typed', async () => {
+    mockFetch({ error: 'nope' }, 500);
+    const onOpen = vi.fn();
+    render(<SidePanel doc={{ kind: 'pick' }} cwd="/w" sessionId={null} onClose={() => {}} onOpen={onOpen} />);
+    expect((await screen.findByRole('status')).textContent).toContain('파일 목록을 불러오지 못했어요');
+    fireEvent.change(screen.getByLabelText('세션 폴더의 파일 경로'), { target: { value: 'a.ts' } });
+    fireEvent.click(screen.getByRole('button', { name: '열기' }));
+    expect(onOpen).toHaveBeenCalledWith({ kind: 'file', path: 'a.ts' });
+  });
+});
+
 describe('Pane side panel', () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
   const pane: PaneState = {
@@ -70,6 +221,18 @@ describe('Pane side panel', () => {
     expect(screen.queryByTestId('side-panel')).toBeNull();
     fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
     expect(await screen.findByTestId('side-text')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByTestId('side-panel')).toBeNull();
+  });
+
+  it('Esc on a zoomed image closes the zoom only; the next Esc closes the panel', async () => {
+    mockFetch({ path: '/w/p.png', size: 10, kind: 'image', mediaType: 'image/png', base64: 'AAAA' });
+    render(<Pane pane={{ ...pane, items: [{ ...(pane.items[0] as Extract<PaneState['items'][number], { kind: 'assistant' }>), text: 'See `pics/p.png`' }] }} app={{ pending: [], questions: [], codexAvailable: false }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} />);
+    fireEvent.click(screen.getByTitle('pics/p.png — 사이드 패널에서 열기'));
+    fireEvent.click(await screen.findByRole('button', { name: 'p.png 크게 보기' }));
+    fireEvent.keyDown(screen.getByTestId('lightbox'), { key: 'Escape' });
+    expect(screen.queryByTestId('lightbox')).toBeNull();
+    expect(screen.getByTestId('side-panel')).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByTestId('side-panel')).toBeNull();
   });

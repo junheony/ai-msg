@@ -1,13 +1,49 @@
-import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { memo, useContext, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { relPath } from '../diff';
 import { has } from '../features';
+import { fuzzyFilter } from '../fuzzy';
 import { listFiles, readFile, type FilePreview } from '../sessionApi';
-import { viewFor, type SideDoc } from '../sidePanel';
+import { DocLinkContext, FileRootContext, SidePanelContext, viewFor, type SideDoc } from '../sidePanel';
 import { activeTab, canHighlight, langFor, type SideTab, type SideTabs } from '../sideTabs';
+import { errorStatus, fileErrorKind, formatSize, lineCount, pickTarget, type FileErrorKind } from '../sideView';
 import { CopyButton } from './CopyButton';
 import { DiffList } from './DiffView';
-import { useFileActions } from './FileMenu';
+import { baseName, useFileActions } from './FileMenu';
+import { Lightbox } from './Lightbox';
 import { Markdown } from './MessageView';
+
+/** The panel's words (kept here until the i18n dictionaries take them). */
+const T = {
+  loading: '불러오는 중…',
+  pickLabel: '세션 폴더의 파일 경로',
+  pickPlaceholder: '파일 이름이나 경로 (예: App.tsx)',
+  pickList: '세션 폴더의 파일',
+  pickLoading: '파일 목록을 불러오는 중…',
+  pickNone: '맞는 파일이 없어요 — Enter 로 입력한 경로를 열어요',
+  pickFailed: '파일 목록을 불러오지 못했어요 — 경로를 직접 입력해 열 수 있어요',
+  pickEmptyFolder: '이 폴더에는 보여 줄 파일이 없어요',
+  pickMore: (shown: number, total: number) => `${total.toLocaleString()}개 중 ${shown}개 — 더 입력해 좁혀 보세요`,
+  pickTruncated: '파일이 많아 일부만 찾아요',
+  open: '열기',
+  retry: '다시 시도',
+  download: '다운로드',
+  zoom: '크게 보기',
+  lines: (n: number) => `${n.toLocaleString()}줄`,
+  errors: {
+    missing: { title: '파일을 찾을 수 없어요', hint: '옮겨졌거나 지워졌을 수 있어요' },
+    denied: { title: '이 파일은 열 수 없어요', hint: '' },
+    tooBig: { title: '너무 커서 미리 볼 수 없어요', hint: '다운로드해서 이 기기에서 열어 보세요' },
+    binary: { title: '미리 볼 수 없는 형식이에요', hint: '다운로드해서 이 기기에서 열어 보세요' },
+    offline: { title: '서버에 연결하지 못했어요', hint: '연결되면 다시 시도해 주세요' },
+    other: { title: '파일을 열지 못했어요', hint: '' },
+  } satisfies Record<FileErrorKind, { title: string; hint: string }>,
+} as const;
+
+/** How long a file may take before the loading lines show. */
+const LOADING_DELAY_MS = 180;
+/** 파일 열기 shows at most this many matches (typing narrows them). */
+const PICK_LIMIT = 60;
 
 const DownloadIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" /></svg>
@@ -69,7 +105,7 @@ function hastNodes(nodes: HastNode[]): ReactNode[] {
  * knows it and the text is small enough (sideTabs.canHighlight); plain until the grammars have loaded.
  */
 const NumberedText = memo(function NumberedText({ text, lang = null }: { text: string; lang?: string | null }) {
-  const count = useMemo(() => text.split('\n').length - (text.endsWith('\n') ? 1 : 0), [text]);
+  const count = useMemo(() => lineCount(text), [text]);
   const gutter = useMemo(() => Array.from({ length: Math.max(1, count) }, (_, i) => i + 1).join('\n'), [count]);
   const want = lang && canHighlight(text) ? lang : null;
   const [ll, setLl] = useState(lowlight);
@@ -91,26 +127,135 @@ const NumberedText = memo(function NumberedText({ text, lang = null }: { text: s
   );
 });
 
-/** 파일 button: type (or pick from the @ list) a path of the session folder. */
+/**
+ * 파일 열기 (quick open): type part of a name or path, pick from the session folder's files (fuzzy, best first) with
+ * ↑/↓ + Enter or a tap; a path the list does not have still opens as typed. A combobox over a listbox, so a screen
+ * reader hears the highlighted file.
+ */
 function FilePick({ cwd, onOpen }: { cwd: string; onOpen: (doc: SideDoc) => void }) {
   const [value, setValue] = useState('');
-  const [files, setFiles] = useState<string[]>([]);
+  const [list, setList] = useState<{ files: string[]; truncated: boolean } | 'loading' | 'failed'>('loading');
+  const [active, setActive] = useState(-1);
+  const listId = useId();
+  const listRef = useRef<HTMLUListElement>(null);
   useEffect(() => {
     let live = true;
-    listFiles(cwd).then((r) => { if (live) setFiles(r.files); }, () => {});
+    listFiles(cwd).then((r) => { if (live) setList(r); }, () => { if (live) setList('failed'); });
     return () => { live = false; };
   }, [cwd]);
+  const files = typeof list === 'object' ? list.files : [];
+  const query = value.trim();
+  const matches = useMemo(() => (query ? fuzzyFilter(files, query, (f) => f, PICK_LIMIT) : files.slice(0, PICK_LIMIT)), [files, query]);
+  // Typing highlights the best match; an empty box highlights nothing (Enter must not open a file nobody chose).
+  useEffect(() => { setActive(query ? 0 : -1); }, [query, files]);
+  useEffect(() => {
+    if (active >= 0) listRef.current?.children[active]?.scrollIntoView?.({ block: 'nearest' });
+  }, [active]);
+  const open = (path: string | null) => { if (path) onOpen({ kind: 'file', path }); };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (value.trim()) onOpen({ kind: 'file', path: value.trim() });
+    open(pickTarget(value, matches, files, active));
   };
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || !matches.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      setActive((i) => (i < 0 ? (step > 0 ? 0 : matches.length - 1) : (i + step + matches.length) % matches.length));
+    }
+  };
+  const optionId = (i: number) => `${listId}-${i}`;
+  const status = list === 'loading' ? T.pickLoading
+    : list === 'failed' ? T.pickFailed
+    : !files.length ? T.pickEmptyFolder
+    : !matches.length ? T.pickNone
+    : !query && files.length > matches.length ? T.pickMore(matches.length, files.length)
+    : null;
   return (
-    <form className="side-pick" onSubmit={submit}>
-      <label className="muted" htmlFor="side-pick-input">세션 폴더의 파일 경로</label>
-      <input id="side-pick-input" list="side-pick-files" autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder="src/App.tsx" />
-      <datalist id="side-pick-files">{files.slice(0, 2000).map((f) => <option key={f} value={f} />)}</datalist>
-      <button type="submit" className="btn ghost">열기</button>
+    <form className="side-pick" onSubmit={submit} role="search">
+      <label className="side-pick-label" htmlFor="side-pick-input">{T.pickLabel}</label>
+      <div className="side-pick-row">
+        <input id="side-pick-input" autoFocus value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={onKeyDown}
+          placeholder={T.pickPlaceholder} autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} enterKeyHint="go"
+          role="combobox" aria-expanded={matches.length > 0} aria-controls={listId} aria-autocomplete="list"
+          aria-activedescendant={active >= 0 && active < matches.length ? optionId(active) : undefined} />
+        <button type="submit" className="btn ghost">{T.open}</button>
+      </div>
+      {status && <div className={`side-pick-status${list === 'failed' ? ' warn' : ''}`} role="status">{status}</div>}
+      {matches.length > 0 && (
+        <ul className="side-pick-list" id={listId} role="listbox" aria-label={T.pickList} ref={listRef}>
+          {matches.map((f, i) => {
+            const slash = f.lastIndexOf('/');
+            return (
+              // A pointer press keeps focus in the box (no blur flicker); the click opens it.
+              <li key={f} id={optionId(i)} role="option" aria-selected={i === active} className={i === active ? 'on' : undefined} title={f}
+                onMouseDown={(e) => e.preventDefault()} onMouseMove={() => { if (i !== active) setActive(i); }} onClick={() => open(f)}>
+                <span className="side-pick-name">{slash >= 0 ? f.slice(slash + 1) : f}</span>
+                {slash > 0 && <span className="side-pick-dir">{f.slice(0, slash)}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {typeof list === 'object' && list.truncated && <div className="side-pick-status">{T.pickTruncated}</div>}
     </form>
+  );
+}
+
+/** Why the file did not open, in words, and what can be done: try again, or download what the panel cannot show. */
+function FileError({ message, status, onRetry, onDownload }: { message: string; status: number | undefined; onRetry: () => void; onDownload: (() => void) | null }) {
+  const kind = fileErrorKind(status);
+  const { title, hint } = T.errors[kind];
+  const canDownload = onDownload && (kind === 'tooBig' || kind === 'binary');
+  return (
+    <div className="side-state" role="alert" data-kind={kind}>
+      <div className="side-state-title">{title}</div>
+      {message && message !== title && <div className="side-state-detail">{message}</div>}
+      {hint && <div className="side-state-hint">{hint}</div>}
+      <div className="side-state-actions">
+        {canDownload && <button type="button" className="btn primary" onClick={onDownload}>{T.download}</button>}
+        <button type="button" className="btn ghost" onClick={onRetry}>{T.retry}</button>
+      </div>
+    </div>
+  );
+}
+
+/** Before the file arrives: a few quiet lines, shown only if it takes a moment (a fast answer never flashes them). */
+function Loading() {
+  return (
+    <div className="side-loading" role="status" aria-busy="true" data-testid="side-loading">
+      <span className="sr-only">{T.loading}</span>
+      {[62, 88, 74, 40, 81, 55].map((w, i) => <span key={i} className="skeleton-line" style={{ width: `${w}%` }} aria-hidden="true" />)}
+    </div>
+  );
+}
+
+/** An image of the session folder: fitted; a click (or Enter) opens it full screen. Reports its pixel size. */
+function SideImage({ src, alt, onSize }: { src: string; alt: string; onSize: (w: number, h: number) => void }) {
+  const [zoom, setZoom] = useState(false);
+  return (
+    <div className="side-image">
+      <button type="button" className="side-image-btn" title={T.zoom} aria-label={`${alt} ${T.zoom}`} onClick={() => setZoom(true)}>
+        <img src={src} alt={alt} onLoad={(e) => onSize(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)} />
+      </button>
+      {/* On body: the panel is a size container, which would trap a fixed overlay inside it. */}
+      {zoom && createPortal(<Lightbox src={src} alt={alt} onClose={() => setZoom(false)} />, document.body)}
+    </div>
+  );
+}
+
+/**
+ * A markdown document's 보기: its relative links and images resolve next to it (DocLinkContext), its images of the
+ * session folder show inline (FileRootContext), and a link it opens goes to the pane's panel like any other.
+ */
+function SideMarkdown({ text, path, cwd }: { text: string; path: string; cwd: string }) {
+  const open = useContext(SidePanelContext);
+  const md = <div className="side-md"><Markdown text={text} /></div>;
+  if (!open) return md;
+  return (
+    <DocLinkContext.Provider value={path}>
+      <FileRootContext.Provider value={cwd}>{md}</FileRootContext.Provider>
+    </DocLinkContext.Provider>
   );
 }
 
@@ -182,7 +327,10 @@ function DocView({ doc, cwd, sessionId, onClose, onOpen }: {
 }) {
   const act = useFileActions();
   const [reload, setReload] = useState(0);
-  const [data, setData] = useState<{ key: string; file?: FilePreview; error?: string } | null>(null);
+  const [data, setData] = useState<{ key: string; file?: FilePreview; error?: string; status?: number } | null>(null);
+  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
+  // A quick answer shows nothing in between; only a slow one gets the loading lines.
+  const [slow, setSlow] = useState(false);
   const filePath = doc.kind === 'file' ? doc.path : null;
   const key = `${cwd}\n${filePath}\n${reload}`;
   useEffect(() => {
@@ -190,9 +338,12 @@ function DocView({ doc, cwd, sessionId, onClose, onOpen }: {
     let live = true;
     readFile(cwd, sessionId, filePath).then(
       (file) => { if (live) setData({ key, file }); },
-      (err: unknown) => { if (live) setData({ key, error: err instanceof Error ? err.message : String(err) }); },
+      (err: unknown) => { if (live) setData({ key, error: err instanceof Error ? err.message : String(err), status: errorStatus(err) }); },
     );
-    return () => { live = false; };
+    setSlow(false);
+    setImgSize(null);
+    const t = setTimeout(() => { if (live) setSlow(true); }, LOADING_DELAY_MS);
+    return () => { live = false; clearTimeout(t); };
   }, [cwd, sessionId, filePath, key]);
   const current = data?.key === key ? data : null;
 
@@ -214,14 +365,23 @@ function DocView({ doc, cwd, sessionId, onClose, onOpen }: {
   if (doc.kind === 'pick') body = <FilePick cwd={cwd} onOpen={onOpen} />;
   else if (active === '변경 사항' && diffs) body = <DiffList diffs={diffs} cwd={cwd} />;
   else if (doc.kind === 'html') body = active === '원문' ? <NumberedText text={doc.html} lang="xml" /> : <HtmlPreview key={reload} html={doc.html} title={doc.title} />;
-  else if (!current) body = <div className="side-msg muted">불러오는 중…</div>;
-  else if (current.error) body = <div className="side-msg error" role="alert">{current.error}</div>;
-  else if (current.file?.kind === 'image') body = <div className="side-image"><img src={`data:${current.file.mediaType};base64,${current.file.base64}`} alt={shownPath} /></div>;
-  else if (text !== null) {
-    if (active === '보기' && view === 'markdown') body = <div className="side-md"><Markdown text={text} /></div>;
+  else if (!current) body = slow ? <Loading /> : null;
+  else if (current.error !== undefined) {
+    body = <FileError message={current.error} status={current.status} onRetry={() => setReload((n) => n + 1)}
+      onDownload={filePath !== null && has('fileRaw') ? () => act.download(cwd, filePath) : null} />;
+  } else if (current.file?.kind === 'image') {
+    body = <SideImage src={`data:${current.file.mediaType};base64,${current.file.base64}`} alt={baseName(shownPath)} onSize={(w, h) => setImgSize({ w, h })} />;
+  } else if (text !== null) {
+    if (active === '보기' && view === 'markdown' && filePath !== null) body = <SideMarkdown text={text} path={filePath} cwd={cwd} />;
     else if (active === '미리보기') body = <HtmlPreview key={reload} html={text} title={shownPath} />;
     else body = <NumberedText text={text} lang={filePath && langFor(filePath)} />;
   }
+
+  // The footer's facts (VS Code's status bar, quietly): lines and size of a text file, pixels and size of an image.
+  const file = current?.file;
+  const facts = !file || active === '변경 사항' ? []
+    : file.kind === 'text' ? [T.lines(lineCount(file.text)), formatSize(file.size)]
+    : [...(imgSize ? [`${imgSize.w} × ${imgSize.h}`] : []), formatSize(file.size)];
 
   return (
     <>
@@ -240,11 +400,20 @@ function DocView({ doc, cwd, sessionId, onClose, onOpen }: {
         <button type="button" className="icon-btn side-close" aria-label="사이드 패널 닫기" title="닫기 (Esc)" onClick={onClose}>✕</button>
       </div>
       {tabs.length > 1 && (
-        <div className="side-tabs" role="tablist">
-          {tabs.map((t) => <button key={t} type="button" role="tab" aria-selected={t === active} className={t === active ? 'on' : ''} onClick={() => setTab(t)}>{t}</button>)}
+        <div className="side-tabs" role="tablist" aria-label="보기 방식" onKeyDown={(e) => {
+          // ←/→ (Home/End) move between 보기 / 원문 / 변경 사항, as a tab strip does.
+          const i = tabs.indexOf(active!);
+          const next = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+          if (next < 0) return;
+          e.preventDefault();
+          setTab(tabs[next]!);
+          e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+        }}>
+          {tabs.map((t) => <button key={t} type="button" role="tab" aria-selected={t === active} tabIndex={t === active ? 0 : -1} className={t === active ? 'on' : ''} onClick={() => setTab(t)}>{t}</button>)}
         </div>
       )}
       <div className="side-body">{body}</div>
+      {facts.length > 0 && <div className="side-foot" data-testid="side-foot">{facts.join(' · ')}</div>}
       {act.node}
     </>
   );

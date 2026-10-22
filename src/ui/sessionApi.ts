@@ -26,11 +26,12 @@ async function getJson<T>(url: string, fetchFn: typeof fetch, what: string): Pro
   try {
     res = await fetchFn(url, { credentials: 'same-origin' });
   } catch {
-    throw new Error(`${what} 실패: 네트워크 오류`);
+    throw Object.assign(new Error(`${what} 실패: 네트워크 오류`), { status: 0 });
   }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `${what} 실패 (${res.status})`);
+    // `status` lets a caller tell "not found" from "too big" without parsing the server's words (0 = no answer).
+    throw Object.assign(new Error(body.error ?? `${what} 실패 (${res.status})`), { status: res.status });
   }
   return (await res.json()) as T;
 }
