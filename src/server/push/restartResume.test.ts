@@ -7,7 +7,7 @@ import { SessionStateStore, type ClaudeSessionState, type SessionState } from '.
 import { en } from '../i18n/en';
 import { ko } from '../i18n/ko';
 import { isAutoRetryNotice, AUTO_RETRY_NOTICE } from '../turn/TurnRunner';
-import { bookRestartResumes, cutSessions, readActivitySnapshot, RESTART_RESUME_DELAY_MS } from './restartResume';
+import { bookRestartResumes, cutSessions, readActivitySnapshot, readResumed, writeResumed, RESTART_RESUME_DELAY_MS, RESTART_RESUME_GAP_MS, RESTART_RESUME_REPEAT_MS } from './restartResume';
 
 const MIN = 60_000;
 const NOW = Date.parse('2026-10-23T03:00:00Z');
@@ -45,6 +45,17 @@ describe('cutSessions — what the last server left cut', () => {
     expect(cutSessions({ activity: null, events: [ev({ sessionId: null }), ev({ kind: 'turn', sessionId: 's3' })], states, pid: 222, now: NOW })).toEqual([]);
   });
 
+  it('a broken trace never throws: interrupted with tasks not a list, odd values, a non-object', () => {
+    const states = [
+      claude({ sessionId: 's1', interrupted: { atMs: NOW - MIN, tasks: 'sleep' as unknown as string[] } }),
+      claude({ sessionId: 's2', interrupted: { atMs: NOW - MIN, tasks: [1, 'ok', null] as unknown as string[] } }),
+      claude({ sessionId: 's3', interrupted: 'x' as unknown as ClaudeSessionState['interrupted'] }),
+      claude({ sessionId: 's4', interrupted: { atMs: 'soon', tasks: [] } as unknown as ClaudeSessionState['interrupted'] }),
+    ];
+    expect(cutSessions({ activity: { pid: 1, updatedAt: new Date(NOW).toISOString(), sessions: [null, 5, { sessionId: 's5', bg: '2', running: true, tasks: 'x' }] }, events: [], states, pid: 222, now: NOW }))
+      .toEqual([{ sessionId: 's5', tasks: [] }, { sessionId: 's1', tasks: [] }, { sessionId: 's2', tasks: ['ok'] }]);
+  });
+
   it('one entry per session, task names merged without repeats', () => {
     const states: SessionState[] = [claude({ sessionId: 's1', interrupted: { atMs: NOW - MIN, tasks: ['sleep 600', 'Agent: x'] } })];
     expect(cutSessions({ activity: snap(), events: [ev({ sessionId: 's1' })], states, pid: 222, now: NOW })).toEqual([{ sessionId: 's1', tasks: ['monitor build', 'sleep 600', 'Agent: x'] }]);
@@ -71,19 +82,41 @@ describe('bookRestartResumes — a 자동으로 이어가기 booking per cut ses
     for (const s of states) await store.set(s);
     return store;
   }
-  const base = { enabled: true, exists: () => true, isDir: async () => true, text: (tasks: string[]) => `go ${tasks.join(',')}`, now: NOW };
+  const base = { enabled: true, exists: () => true, isDir: async () => true, text: (tasks: string[]) => `go ${tasks.join(',')}`, now: NOW, resumed: new Map<string, number>() };
 
-  it('books the continue message a few seconds from now, hop 1, in the same session (engine and permissions are the session\'s own)', async () => {
-    const store = await storeWith([claude({ sessionId: 's1' }), claude({ sessionId: 's2', cwd: '/w/b' })]);
-    const n = await bookRestartResumes({ ...base, store, cut: [{ sessionId: 's1', tasks: ['sleep 600'] }, { sessionId: 's2', tasks: [] }] });
-    expect(n).toBe(2);
+  it('books the continue message in the same session (engine and permissions its own), hop 1: the first in 5 s, each next 15 s later', async () => {
+    const store = await storeWith([claude({ sessionId: 's1' }), claude({ sessionId: 's2', cwd: '/w/b' }), claude({ sessionId: 's3' })]);
+    const resumed = new Map<string, number>();
+    const r = await bookRestartResumes({ ...base, resumed, store, cut: [{ sessionId: 's1', tasks: ['sleep 600'] }, { sessionId: 's2', tasks: [] }, { sessionId: 's3', tasks: [] }] });
+    expect(r).toEqual({ booked: 3, skipped: [] });
     expect(store.get('s1')?.pendingRetry).toEqual({ text: 'go sleep 600', atMs: NOW + RESTART_RESUME_DELAY_MS, hops: 1 });
-    expect(store.get('s2')?.pendingRetry).toEqual({ text: 'go ', atMs: NOW + RESTART_RESUME_DELAY_MS, hops: 1 });
+    expect(store.get('s2')?.pendingRetry).toEqual({ text: 'go ', atMs: NOW + RESTART_RESUME_DELAY_MS + RESTART_RESUME_GAP_MS, hops: 1 });
+    expect(store.get('s3')?.pendingRetry?.atMs).toBe(NOW + RESTART_RESUME_DELAY_MS + 2 * RESTART_RESUME_GAP_MS);
+    expect([...resumed]).toEqual([['s1', NOW], ['s2', NOW], ['s3', NOW]]);
+  });
+
+  it('repeat guard: a session sent on after the last restart and cut again is skipped once (logged), then sent on again', async () => {
+    const store = await storeWith([claude({ sessionId: 's1' })]);
+    const resumed = new Map([['s1', NOW - 20 * MIN]]);
+    expect(await bookRestartResumes({ ...base, resumed, store, cut: [{ sessionId: 's1', tasks: [] }] })).toEqual({ booked: 0, skipped: ['s1'] });
+    expect(store.get('s1')?.pendingRetry).toBeUndefined();
+    expect(resumed.has('s1')).toBe(false);
+    expect(await bookRestartResumes({ ...base, resumed, store, cut: [{ sessionId: 's1', tasks: [] }] })).toEqual({ booked: 1, skipped: [] });
+  });
+
+  it('the guard file: read back, old entries and broken content dropped', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-rr-'));
+    const f = path.join(dir, 'restart-resumed.json');
+    expect(await readResumed(f, NOW)).toEqual(new Map());
+    await writeResumed(f, new Map([['a', NOW - MIN], ['old', NOW - RESTART_RESUME_REPEAT_MS - 1]]));
+    expect([...(await readResumed(f, NOW))]).toEqual([['a', NOW - MIN]]);
+    await fs.writeFile(f, '[1,2');
+    expect(await readResumed(f, NOW)).toEqual(new Map());
   });
 
   it('nothing with 자동으로 이어가기 off', async () => {
     const store = await storeWith([claude()]);
-    expect(await bookRestartResumes({ ...base, enabled: false, store, cut: [{ sessionId: 's1', tasks: [] }] })).toBe(0);
+    expect(await bookRestartResumes({ ...base, enabled: false, store, cut: [{ sessionId: 's1', tasks: [] }] })).toEqual({ booked: 0, skipped: [] });
     expect(store.get('s1')?.pendingRetry).toBeUndefined();
   });
 
@@ -91,19 +124,19 @@ describe('bookRestartResumes — a 자동으로 이어가기 booking per cut ses
     const store = await storeWith([claude({ sessionId: 'gone' }), claude({ sessionId: 'nodir', cwd: '/nope' }), claude({ sessionId: 'cmd' })]);
     await store.setCommander('cmd', { status: 'running' } as unknown as NonNullable<ClaudeSessionState['commander']>);
     expect(store.get('cmd')?.commander?.status).toBe('running');
-    const n = await bookRestartResumes({ ...base, store, exists: (st) => st.sessionId !== 'gone', isDir: async (d) => d !== '/nope', cut: ['unknown', 'gone', 'nodir', 'cmd'].map((sessionId) => ({ sessionId, tasks: [] })) });
-    expect(n).toBe(0);
+    const r = await bookRestartResumes({ ...base, store, exists: (st) => st.sessionId !== 'gone', isDir: async (d) => d !== '/nope', cut: ['unknown', 'gone', 'nodir', 'cmd'].map((sessionId) => ({ sessionId, tasks: [] })) });
+    expect(r.booked).toBe(0);
     for (const id of ['gone', 'nodir', 'cmd']) expect(store.get(id)?.pendingRetry).toBeUndefined();
   });
 
-  it('a booking already there: the earlier one is kept, never two', async () => {
+  it('a booking already there stays the one booking: a sooner one untouched, a later one only brought forward (its message and hops kept)', async () => {
     const early = { text: 'mine', atMs: NOW + 1000, hops: 1 };
-    const late = { text: 'later', atMs: NOW + 60 * MIN, hops: 1 };
+    const late = { text: 'the user prompt', atMs: NOW + 60 * MIN, hops: 2, commanderHop: 3 };
     const store = await storeWith([claude({ sessionId: 's1', pendingRetry: early }), claude({ sessionId: 's2', pendingRetry: late })]);
-    const n = await bookRestartResumes({ ...base, store, cut: [{ sessionId: 's1', tasks: [] }, { sessionId: 's2', tasks: [] }] });
-    expect(n).toBe(1);
+    const r = await bookRestartResumes({ ...base, resumed: new Map(), store, cut: [{ sessionId: 's1', tasks: [] }, { sessionId: 's2', tasks: [] }] });
+    expect(r.booked).toBe(1);
     expect(store.get('s1')?.pendingRetry).toEqual(early);
-    expect(store.get('s2')?.pendingRetry?.atMs).toBe(NOW + RESTART_RESUME_DELAY_MS);
+    expect(store.get('s2')?.pendingRetry).toEqual({ ...late, atMs: NOW + RESTART_RESUME_DELAY_MS });
   });
 });
 

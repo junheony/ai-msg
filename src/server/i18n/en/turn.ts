@@ -20,5 +20,7 @@ export const turn = {
     notice: 'Continuing automatically after a server restart cut the work',
     /** deck.log: how many sessions were booked. */
     log: (n: number) => `deck: booked ${n} session(s) cut by the restart to continue automatically`,
+    /** deck.log: sessions sent on after the last restart and cut again, skipped this once (ids, space-separated). */
+    repeatSkipped: (ids: string) => `deck: not continuing again after the restart (already continued after the last one): ${ids}`,
   },
 };
