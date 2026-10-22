@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useSyncExternalStore, type ReactNode } from 'react';
 
 /**
  * Session glyphs for the sidebar avatar: single-weight line icons on a 24px grid (currentColor stroke), chosen per
@@ -95,5 +95,28 @@ export function SessionGlyph({ index }: { index: number }) {
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {icon.body}
     </svg>
+  );
+}
+
+/** A session's avatar as the sidebar draws it: project colour (1 … AVATAR_COLORS) and glyph (index into SESSION_ICONS). */
+export type SessionAvatar = { color: number; icon: number };
+
+// The sidebar's last assignment, shared so the session head shows the very avatar its row shows (a clash in the list
+// can step a glyph off its id hash — the head cannot recompute that on its own).
+let avatars = new Map<string, SessionAvatar>();
+const avatarSubs = new Set<() => void>();
+
+/** Called by the sidebar after it assigns its glyphs; a no-op when nothing changed (no re-render of the heads). */
+export function publishSessionAvatars(next: Map<string, SessionAvatar>): void {
+  if (next.size === avatars.size && [...next].every(([id, a]) => { const b = avatars.get(id); return !!b && b.color === a.color && b.icon === a.icon; })) return;
+  avatars = next;
+  for (const f of avatarSubs) f();
+}
+
+/** The avatar the sidebar gave `sessionId`, or null when the sidebar has not listed it (the caller falls back). */
+export function useSessionAvatar(sessionId: string | null | undefined): SessionAvatar | null {
+  return useSyncExternalStore(
+    (f) => { avatarSubs.add(f); return () => { avatarSubs.delete(f); }; },
+    () => (sessionId ? avatars.get(sessionId) ?? null : null),
   );
 }

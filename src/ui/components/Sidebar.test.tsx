@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AVATAR_COLORS, DECK_VERSION_LINE, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex } from './Sidebar';
+import { SessionChipHead } from './SessionChipHead';
 import { SESSION_ICONS, assignSessionIcons, sessionIconBase } from './SessionIcon';
 
 const noop = () => {};
@@ -685,6 +686,23 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     for (let i = 0; out.length < n; i++) if (sessionIconBase(`${prefix}${i}`) === want) out.push(`${prefix}${i}`);
     return out;
   };
+
+  it('the session head shows the row\'s own avatar (the sidebar shares colour + glyph, clash steps included)', () => {
+    const ids = clashing('hd', 2);
+    const one = [{ cwd: '/w/deck', name: 'deck', pinned: false, sessions: [s(ids[0]!, '/w/deck', 'alpha'), s(ids[1]!, '/w/deck', 'beta')] }];
+    const groups = () => [[<button key="x" type="button">x</button>]];
+    render(<><Sidebar projects={one} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />
+      {ids.map((id) => <div key={id} data-head={id}><SessionChipHead title={id} sessionKey={id} cwd="/w/deck" groups={groups} /></div>)}</>);
+    const icon = (el: Element) => el.querySelector('svg')!.getAttribute('data-icon');
+    const rowOf = (t: string) => screen.getByText(t, { selector: '.session-title' }).closest('li')!.querySelector<HTMLElement>('.row-avatar')!;
+    const heads = ids.map((id) => document.querySelector<HTMLElement>(`[data-head="${id}"] .head-avatar`)!);
+    ['alpha', 'beta'].forEach((t, k) => {
+      expect(heads[k]!.dataset.avatar).toBe(rowOf(t).dataset.avatar);
+      expect(icon(heads[k]!)).toBe(icon(rowOf(t)));
+    });
+    expect(icon(heads[0]!)).not.toBe(icon(heads[1]!)); // the clash was stepped, and the head followed
+  });
+
 
   it('session glyph: from the id hash, stable; clashing pins of one project all differ; a clashing row steps past its neighbour and the pins', () => {
     const ids = Array.from({ length: 40 }, (_, i) => `id-${i}`);

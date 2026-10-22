@@ -14,7 +14,7 @@ import { isMacPlatform, isPinMod, isSafariBrowser, pinKeyLabel } from '../shortc
 import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
 import { DeckMark } from './DeckMark';
-import { SessionGlyph, assignSessionIcons, sessionIconBase, type IconRow } from './SessionIcon';
+import { SessionGlyph, assignSessionIcons, publishSessionAvatars, sessionIconBase, type IconRow } from './SessionIcon';
 
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
 export const SEARCH_MIN_CHARS = 2;
@@ -463,15 +463,18 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // Session glyphs: the pins as a whole, then the rows below in the order shown — both before the search filter.
   const iconRow = (id: string, cwd: string): IconRow => ({ id, project: projectName.get(id) ?? baseName(cwd) });
   const listRow = (t: RecentItem): IconRow => (t.kind === 'session' ? iconRow(t.g.entry.sessionId, t.g.entry.cwd) : { id: t.d.sessionId, project: t.d.project });
-  const icons = assignSessionIcons(
-    pins.flatMap((id): IconRow[] => {
-      const s = byId.get(id);
-      if (s) return inView(s) ? [iconRow(id, s.cwd)] : [];
-      const d = desktopById.get(id);
-      return d && inView(d) ? [{ id, project: d.project }] : [];
-    }),
-    [...recentAll.slice(0, MAX_RECENT), ...archived.all].map(listRow),
-  );
+  const pinRows = pins.flatMap((id): IconRow[] => {
+    const s = byId.get(id);
+    if (s) return inView(s) ? [iconRow(id, s.cwd)] : [];
+    const d = desktopById.get(id);
+    return d && inView(d) ? [{ id, project: d.project }] : [];
+  });
+  const restRows = [...recentAll.slice(0, MAX_RECENT), ...archived.all].map(listRow);
+  const icons = assignSessionIcons(pinRows, restRows);
+  // The session head (top bar / pane) shows the same avatar as the row: colour by the row's project, the glyph assigned.
+  useEffect(() => {
+    publishSessionAvatars(new Map([...pinRows, ...restRows].map((r) => [r.id, { color: avatarIndex(r.project), icon: icons.get(r.id) ?? sessionIconBase(r.id) }])));
+  });
   // A full-text hit in an archived session shows once 보관됨 is open (as its row does).
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || !s.archived || archivedOpen; });
   const searching = fullOn && found?.q !== fullQ;

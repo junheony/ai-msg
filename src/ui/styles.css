@@ -2398,22 +2398,51 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
   .pane-head.idle { opacity: 0; transition: opacity var(--t-fast) var(--ease); }
   .pane:hover > .pane-head.idle, .pane-head.idle:focus-within { opacity: 1; }
 }
-.pane-head-main { display: flex; flex-direction: column; align-items: flex-start; flex: 0 1 auto; min-width: 0; }
-.pane-head.in-topbar .pane-head-main { align-items: center; }
+/* The identity block (Grok / Codex parity): avatar · title · caret, nothing around it at rest — the hover / open state is a
+   soft fill. --head-av is the avatar's size, --head-pad the chip's left inset; the folder line lines up under the title
+   with both. Split panes: 24px avatar, 14px title. Desktop top bar: 32px avatar, 15px title, folder under it. */
+.pane-head-main { --head-av: 24px; --head-pad: 4px; position: relative; display: flex; flex-direction: column; align-items: flex-start; flex: 0 1 auto; min-width: 0; }
+.pane-head.in-topbar .pane-head-main { --head-av: 28px; }
+.pane-head.in-topbar .pane-head-main.with-folder { --head-av: 32px; }
 .head-chip-wrap { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
-.head-chip { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; max-width: 100%; height: 32px; padding: 0 var(--s2) 0 var(--s3); border-radius: var(--r-full); font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line); transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+.head-chip { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; max-width: 100%; height: 32px; padding: 0 var(--s2) 0 var(--s3); border-radius: var(--r-full); font-size: calc(14px * var(--font-scale, 1)); line-height: 20px; font-weight: 600; letter-spacing: -.005em; color: var(--muted); background: transparent; transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+.with-avatar .head-chip { padding-left: var(--head-pad); }
 .head-chip.static { padding-right: var(--s3); }
 .pane.active .head-chip, .pane-head.in-topbar .head-chip { color: var(--fg-strong); }
-button.head-chip:hover, button.head-chip[aria-expanded="true"] { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+button.head-chip:hover, button.head-chip[aria-expanded="true"] { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); }
 button.head-chip:focus-visible { outline: none; box-shadow: var(--focus); }
 .head-chip[data-grip] { touch-action: none; }
 body.pane-dragging .head-chip { cursor: grabbing; }
-.head-chip-title { display: block; min-width: 2.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.head-chip .caret { flex-shrink: 0; color: var(--faint); font-size: var(--fs-meta); }
-.head-chip-input { min-width: 12em; max-width: 100%; height: 32px; padding: 0 var(--s3); border: 0; border-radius: var(--r-full); outline: none; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg-strong); font: inherit; font-size: var(--fs-label); font-weight: 600; }
-.pane-head.in-topbar .head-chip-input { text-align: center; }
+.head-avatar { flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); transition: opacity var(--t-fast) var(--ease); }
+.head-avatar .row-avatar-icon { width: 64%; height: 64%; }
+/* A split pane that is not the active one: its avatar steps back with its title. */
+.pane:not(.active) > .pane-head:not(.in-topbar) .head-avatar, .pane:not(.active) .chat > .pane-head:not(.in-topbar) .head-avatar { opacity: .7; }
+.head-chip-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.head-chip-title { display: flex; align-items: center; gap: 6px; min-width: 2.5em; max-width: 100%; }
+.head-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The engine: a small muted mark after the name, not a second identity. */
+.head-chip-title .engine-mark { flex: none; width: 13px; height: 13px; opacity: .6; }
+.head-chip-spacer { display: block; height: var(--lh-meta); }
+.head-chip .caret { flex: none; color: var(--faint); opacity: .55; transition: opacity var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
+button.head-chip:hover .caret, button.head-chip:focus-visible .caret, button.head-chip[aria-expanded="true"] .caret { opacity: 1; color: var(--muted); }
+button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
+.head-chip-input { min-width: 12em; max-width: 100%; height: 32px; padding: 0 var(--s3); border: 0; border-radius: var(--r-full); outline: none; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg-strong); font: inherit; font-size: calc(14px * var(--font-scale, 1)); font-weight: 600; }
+/* Desktop top bar: the block is the bar's first read — 15px title, the folder a quiet line under it. */
+.pane-head.in-topbar .head-chip { height: 36px; font-size: calc(15px * var(--font-scale, 1)); }
+.pane-head.in-topbar .with-folder .head-chip { height: 44px; padding-top: 4px; padding-bottom: 4px; padding-right: var(--s3); border-radius: var(--r-md); }
+.pane-head.in-topbar .head-chip-input { height: 36px; font-size: calc(15px * var(--font-scale, 1)); text-align: center; }
 .folder-chip.head-folder { max-width: 100%; height: auto; padding: 0 var(--s2); margin-top: 1px; background: none; box-shadow: none; border-radius: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--muted); }
+/* Over the chip's lower half, under the title (the chip's spacer holds the room): left = inset + avatar + gap. */
+.with-folder > .folder-chip.head-folder { position: absolute; left: calc(var(--head-pad) + var(--head-av) + var(--s2)); bottom: 4px; max-width: calc(100% - var(--head-pad) - var(--head-av) - var(--s2) - var(--s3)); margin: 0; padding: 0; border-radius: var(--r-xs); font-size: calc(12px * var(--font-scale, 1)); }
+.with-folder > .folder-chip.head-folder:hover, .with-folder > .folder-chip.head-folder[aria-expanded="true"] { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--line-strong); }
+.with-folder > .folder-chip.head-folder:focus-visible { outline: none; box-shadow: var(--focus); }
+.with-folder:has(.head-chip-input) > .folder-chip.head-folder { display: none; }
 .pane-head-chips { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+/* 모두 자동 승인 on the head: a 22px warning dot (icon only; the words stay for tooltips and screen readers). The labelled
+   control is the composer's session chip — one loud place, one quiet reminder. */
+.pane-head-chips > .chip.perm-badge.perm-bypassPermissions { justify-content: center; width: 22px; padding: 0; border: 0; border-radius: var(--r-full); background: var(--danger-soft); color: var(--danger); }
+.pane-head-chips > .chip.perm-badge .perm-badge-full { display: inline-block; position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.pane-head-chips > .chip.perm-badge svg { width: 13px; height: 13px; }
 .pane-head-end { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; }
 /* 갈라짐: a warning chip next to the session chip; its choices open under it, leftwards-anchored. */
 .pane-head-chips .fork-btn { height: 22px; padding: 0 var(--s2); border-radius: var(--r-full); color: var(--warn); font-size: var(--fs-meta); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
@@ -2438,7 +2467,9 @@ body.pane-dragging .head-chip { cursor: grabbing; }
   .topbar-head { justify-content: flex-start; }
   .pane-head.in-topbar { justify-content: flex-start; }
   /* Seen at 40px; the touch target is 44 (--phone-tap) through the ::after band. */
-  .head-chip { position: relative; height: 40px; }
+  .head-chip, .pane-head.in-topbar .head-chip { position: relative; height: 40px; }
+  .pane-head.in-topbar .pane-head-main { --head-av: 30px; }
+  .pane-head.in-topbar .head-chip { font-size: calc(16px * var(--font-scale, 1)); }
   button.head-chip::after { content: ''; position: absolute; left: 0; right: 0; top: calc((var(--phone-tap) - 40px) / -2); bottom: calc((var(--phone-tap) - 40px) / -2); }
 }
 

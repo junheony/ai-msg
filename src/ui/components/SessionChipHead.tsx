@@ -4,6 +4,40 @@ import type { EngineKind } from '../../shared/models';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
 import { MenuList } from './SessionMenu';
+import { SessionGlyph, sessionIconBase, useSessionAvatar } from './SessionIcon';
+import { avatarIndex } from './Sidebar';
+
+/** The head's words, in one place. */
+const T = {
+  rename: '채팅 이름',
+  menu: '채팅 메뉴',
+  sheet: '세션 메뉴',
+} as const;
+
+/** The caret: a thin chevron, faint at rest and clear on hover / focus / open (CSS). */
+function Caret() {
+  return (
+    <svg className="caret" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 4.75l3 3 3-3" />
+    </svg>
+  );
+}
+
+/**
+ * The session's avatar, the one its sidebar row shows (project colour + glyph). Before the sidebar has listed the session
+ * (a fresh page, a row past the list's end) it falls back to the folder's colour and the id's own glyph — what the row
+ * itself starts from. Decorative: the title next to it names the session.
+ */
+function HeadAvatar({ sessionKey, cwd }: { sessionKey: string; cwd?: string }) {
+  const shared = useSessionAvatar(sessionKey);
+  const color = shared?.color ?? avatarIndex(cwd ? (cwd.split('/').filter(Boolean).pop() ?? cwd) : '');
+  const icon = shared?.icon ?? sessionIconBase(sessionKey);
+  return (
+    <span className="head-avatar" data-avatar={color} style={{ '--av': `var(--avatar-${color})` } as CSSProperties} aria-hidden="true">
+      <SessionGlyph index={icon} />
+    </span>
+  );
+}
 
 /** Where a pane's ⋯ item sits in the session chip's menu (세션 → 보기 → 공유 → 창 → 총사령탑 → 위험); `viewEnd` = 보기's last rows. */
 export type HeadGroup = 'session' | 'view' | 'viewEnd' | 'window' | 'commander';
@@ -132,7 +166,19 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   }
   const hasMenu = built.length > 0;
   const items = built.map((g, i) => <Fragment key={i}>{i > 0 && <div className="menu-sep" role="separator" />}{g}</Fragment>);
-  const label = <><span className="head-chip-title">{engine && <EngineMark engine={engine} />}{title}</span>{hasMenu && <span className="caret" aria-hidden="true">▾</span>}</>;
+  // Identity first: avatar · title (the engine a small mark after it) · caret. On the desktop top bar the folder line sits
+  // under the title, over the chip's lower half (a sibling button, so it keeps its own menu); `.head-chip-spacer` holds
+  // that room inside the chip.
+  const label = (
+    <>
+      {sessionKey && <HeadAvatar sessionKey={sessionKey} cwd={cwd} />}
+      <span className="head-chip-text">
+        <span className="head-chip-title"><span className="head-chip-name">{title}</span>{engine && <EngineMark engine={engine} />}</span>
+        {folderLine && folder && <span className="head-chip-spacer" aria-hidden="true" />}
+      </span>
+      {hasMenu && <Caret />}
+    </>
+  );
 
   useLayoutEffect(() => {
     if (!open || phone) { setPlace(null); return; }
@@ -154,10 +200,10 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
 
   const head = (
     <div className={`pane-head${topbar ? ' in-topbar' : ''}${idle ? ' idle' : ''}`} data-pane-head={paneId}>
-      <div className="pane-head-main">
+      <div className={`pane-head-main${folderLine && folder ? ' with-folder' : ''}${sessionKey ? ' with-avatar' : ''}`}>
         <span ref={wrapRef} className="head-chip-wrap" data-menu-up={place?.up ? '' : undefined} style={place ? { '--head-menu-max': `${place.max}px` } as CSSProperties : undefined}>
           {renaming !== null ? (
-            <input className="head-chip-input" aria-label="채팅 이름" value={renaming} autoFocus maxLength={200}
+            <input className="head-chip-input" aria-label={T.rename} value={renaming} autoFocus maxLength={200}
               onChange={(e) => setRenaming(e.target.value)} onBlur={blurRename}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing) return;
@@ -180,12 +226,12 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
             <span className="head-chip static" data-testid="session-chip-head" title={title}>{label}</span>
           )}
           {toast && <span className="share-toast" role="status">{toast}</span>}
-          {open && hasMenu && !phone && <MenuList className="session-menu head-menu" label="채팅 메뉴" onClose={() => setOpen(false)}>{items}</MenuList>}
+          {open && hasMenu && !phone && <MenuList className="session-menu head-menu" label={T.menu} onClose={() => setOpen(false)}>{items}</MenuList>}
           {open && hasMenu && phone && createPortal(
             <>
               <div className="head-menu-scrim" aria-hidden="true" />
-              <div className="session-menu head-menu as-sheet" role="dialog" aria-modal="true" aria-label="세션 메뉴">
-                <MenuList className="head-menu-list" label="채팅 메뉴" opener={() => chipRef.current} modal onClose={() => setOpen(false)}>{items}</MenuList>
+              <div className="session-menu head-menu as-sheet" role="dialog" aria-modal="true" aria-label={T.sheet}>
+                <MenuList className="head-menu-list" label={T.menu} opener={() => chipRef.current} modal onClose={() => setOpen(false)}>{items}</MenuList>
               </div>
             </>,
             document.body,
