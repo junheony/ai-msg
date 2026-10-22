@@ -7,7 +7,8 @@ import { CLAUDE_USAGE_ARGS, ClaudeUsagePoller, parseClaudeReset, parseClaudeUsag
 import { UsageService, type FetchLike } from './UsageService';
 import type { ChildLike, SpawnFn } from '../engine/CodexEngine';
 import { testRegistry } from '../../shared/accounts.testkit';
-import { usageOf, type UsageSnapshot } from '../../shared/usage-types';
+import { usageOf } from '../../shared/usage-types';
+import { STALE_MAX_MS } from '../routing/AccountRouter';
 
 /** 2026-10-22 12:00 in Seoul. */
 const NOW = Date.parse('2026-10-22T03:00:00.000Z');
@@ -43,6 +44,15 @@ describe('parseClaudeReset', () => {
     expect(parseClaudeReset('Dec 31 at 9am (Asia/Seoul)', dec30)).toBe('2026-12-31T00:00:00.000Z');
     const dec31late = Date.parse('2026-12-31T14:30:00.000Z'); // Seoul Dec 31 23:30
     expect(parseClaudeReset('1am (Asia/Seoul)', dec31late)).toBe('2026-12-31T16:00:00.000Z');
+  });
+
+  it('a reset a moment ago (the text has no seconds) stays itself; a date rolls to next year only when over 7 days past', () => {
+    const justAfter = Date.parse('2026-10-22T08:59:40.000Z'); // Seoul 17:59:40
+    expect(parseClaudeReset('5:59pm (Asia/Seoul)', justAfter)).toBe('2026-10-22T08:59:00.000Z');
+    expect(parseClaudeReset('Oct 22 at 5:59pm (Asia/Seoul)', justAfter)).toBe('2026-10-22T08:59:00.000Z');
+    expect(parseClaudeReset('5:56pm (Asia/Seoul)', justAfter)).toBe('2026-10-23T08:56:00.000Z');
+    expect(parseClaudeReset('Oct 20 at 5:59pm (Asia/Seoul)', justAfter)).toBe('2026-10-20T08:59:00.000Z');
+    expect(parseClaudeReset('Oct 10 at 5:59pm (Asia/Seoul)', justAfter)).toBe('2027-10-10T08:59:00.000Z');
   });
 
   it('unreadable → null', () => {
@@ -96,7 +106,9 @@ function fakeChild(): Fake {
   return { child: em, stdout, stderr, kill };
 }
 
-const answer = (text: string) => (f: Fake) => { f.stdout.end(JSON.stringify({ type: 'result', is_error: false, num_turns: 0, result: text })); f.child.emit('exit', 0); };
+/** exit, then the pipes close (as node does). */
+const end = (f: Fake, code: number | null) => { f.child.emit('exit', code); f.child.emit('close', code); };
+const answer = (text: string) => (f: Fake) => { f.stdout.end(JSON.stringify({ type: 'result', is_error: false, num_turns: 0, result: text })); end(f, 0); };
 
 function setup(o: { script: (f: Fake, n: number) => void; fetchedAt?: Record<string, string | null>; bin?: string | null; timeoutMs?: number; now?: () => number }) {
   const spawned: { bin: string; args: string[]; cwd: string; env: Record<string, string | undefined> }[] = [];
@@ -110,8 +122,7 @@ function setup(o: { script: (f: Fake, n: number) => void; fetchedAt?: Record<str
     return f.child;
   };
   const fetchedAt = o.fetchedAt ?? {};
-  const snap = () => ({ accounts: Object.fromEntries(['a', 'b', 'c'].map((a) => [a, { fetchedAt: fetchedAt[a] ?? null }])) }) as unknown as UsageSnapshot;
-  const usage = { applyCliPoll: vi.fn(), routingSnapshot: vi.fn(snap) };
+  const usage = { applyCliPoll: vi.fn(), cliObservedAt: vi.fn((a: string) => { const t = fetchedAt[a]; return t ? Date.parse(t) : null; }) };
   const logs: string[] = [];
   const p = new ClaudeUsagePoller({
     bin: o.bin === undefined ? '/x/claude' : o.bin, accounts: testRegistry(), usage, spawnFn, now: o.now ?? (() => NOW),
@@ -175,19 +186,83 @@ describe('ClaudeUsagePoller', () => {
     expect(spawned).toHaveLength(3);
   });
 
-  it('a failure is one log line and changes nothing; the next round tries again', async () => {
+  it('a failure is logged once per change and backs off per account; recovery is said once', async () => {
     let fail = true;
-    const { p, usage, logs, spawned } = setup({ fetchedAt: { a: null, b: new Date(NOW).toISOString(), c: new Date(NOW).toISOString() }, script: (f) => {
-      if (fail) { f.stderr.end('Error: boom\n'); f.stdout.end(); f.child.emit('exit', 1); } else answer(SAMPLE)(f);
+    let clock = NOW;
+    const { p, usage, logs, spawned } = setup({ now: () => clock, fetchedAt: { a: null, b: new Date(NOW).toISOString(), c: new Date(NOW).toISOString() }, script: (f) => {
+      if (fail) { f.stderr.end('Error: boom\n'); f.stdout.end(); end(f, 1); } else answer(SAMPLE)(f);
     } });
     await p.sweep();
     expect(usage.applyCliPoll).not.toHaveBeenCalled();
+    expect(logs).toEqual([expect.stringMatching(/claude \/usage \(a\) 실패 — exit 1 — Error: boom/)]);
+    await p.sweep(); // within the back-off (1 interval): not tried
+    expect(spawned).toHaveLength(1);
+    clock = NOW + 60_001;
+    await p.sweep(); // the same failure again: no new line, back-off doubles
+    expect(spawned).toHaveLength(2);
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatch(/claude \/usage \(a\) 실패 — exit 1 — Error: boom/);
-    fail = false;
+    clock = NOW + 60_001 + 100_000;
     await p.sweep();
     expect(spawned).toHaveLength(2);
+    clock = NOW + 60_001 + 120_001;
+    fail = false;
+    await p.sweep();
+    expect(spawned).toHaveLength(3);
     expect(usage.applyCliPoll).toHaveBeenCalledTimes(1);
+    expect(logs).toHaveLength(2);
+    expect(logs[1]).toContain('다시 읽힘');
+  });
+
+  it('back-off is capped at 2 hours', async () => {
+    let clock = NOW;
+    const { p, spawned } = setup({ now: () => clock, fetchedAt: { b: new Date(NOW + 1e12).toISOString(), c: new Date(NOW + 1e12).toISOString() }, script: (f) => { f.stdout.end(); end(f, 1); } });
+    for (let i = 0; i < 12; i++) { await p.sweep(); clock += 2 * 3_600_000 + 1; }
+    expect(spawned).toHaveLength(12);
+  });
+
+  it('due: older than STALE_MAX_MS − 2 min by default, so a card is read again before it turns 오래됨', async () => {
+    const maxAge = STALE_MAX_MS - 2 * 60_000;
+    const spawnFn: SpawnFn = () => { const f = fakeChild(); setTimeout(() => answer(SAMPLE)(f), 0); return f.child; };
+    const at: Record<string, number | null> = { a: NOW - maxAge - 1, b: NOW - maxAge + 60_000, c: NOW };
+    const usage = { applyCliPoll: vi.fn(), cliObservedAt: (a: string) => at[a] ?? null };
+    const p = new ClaudeUsagePoller({ bin: '/x/claude', accounts: testRegistry(), usage, spawnFn, now: () => NOW, log: () => {} });
+    await p.sweep();
+    expect(usage.applyCliPoll.mock.calls.map((c) => c[0])).toEqual(['a']);
+  });
+
+  it('stdout that arrives after exit is still read (judged at close)', async () => {
+    const { p, usage } = setup({ script: (f) => {
+      f.child.emit('exit', 0);
+      setTimeout(() => { f.stdout.end(JSON.stringify({ type: 'result', is_error: false, result: SAMPLE })); setTimeout(() => f.child.emit('close', 0), 5); }, 5);
+    } });
+    await p.pollAccount('a');
+    expect(usage.applyCliPoll).toHaveBeenCalledWith('a', parseClaudeUsageText(SAMPLE, NOW), NOW);
+  });
+
+  it('exit without close (something holds the pipes): after a grace the group is killed and what came is used', async () => {
+    vi.useFakeTimers();
+    const { p, usage, children, logs } = setup({ timeoutMs: 30_000, script: (f) => { f.stdout.write(JSON.stringify({ type: 'result', is_error: false, result: SAMPLE })); f.child.emit('exit', 0); } });
+    const run = p.pollAccount('a');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(usage.applyCliPoll).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await run;
+    expect(logs).toEqual([]);
+    expect(children[0]!.kill).toHaveBeenCalledWith('SIGKILL');
+    expect(usage.applyCliPoll).toHaveBeenCalledTimes(1);
+  });
+
+  it('a child that ignores SIGKILL is given up 5 s later, so the round goes on', async () => {
+    vi.useFakeTimers();
+    const { p, logs, spawned, children } = setup({ timeoutMs: 100, script: (f, n) => { if (n > 1) answer(SAMPLE)(f); } });
+    const round = p.sweep();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(children[0]!.kill).toHaveBeenCalledWith('SIGKILL');
+    expect(spawned).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await round;
+    expect(spawned).toHaveLength(3);
+    expect(logs[0]).toContain('종료 신호 뒤에도 끝나지 않음');
   });
 
   it('a text without limit lines (not a subscription) is logged and applies nothing', async () => {
@@ -198,7 +273,7 @@ describe('ClaudeUsagePoller', () => {
   });
 
   it('a hang is killed at the timeout', async () => {
-    const { p, usage, logs, children } = setup({ timeoutMs: 30, script: (f) => { f.kill.mockImplementation(() => { f.child.emit('exit', null); }); } });
+    const { p, usage, logs, children } = setup({ timeoutMs: 30, script: (f) => { f.kill.mockImplementation(() => { end(f, null); }); } });
     await p.pollAccount('a');
     expect(children[0]!.kill).toHaveBeenCalledWith('SIGKILL');
     expect(usage.applyCliPoll).not.toHaveBeenCalled();
@@ -214,7 +289,7 @@ describe('ClaudeUsagePoller', () => {
 
   it('stop() kills the running child and ends the round', async () => {
     vi.useFakeTimers();
-    const { p, spawned, children, logs } = setup({ script: (f) => { f.kill.mockImplementation(() => { f.child.emit('exit', null); }); } });
+    const { p, spawned, children, logs } = setup({ script: (f) => { f.kill.mockImplementation(() => { end(f, null); }); } });
     const round = p.sweep();
     await vi.advanceTimersByTimeAsync(10);
     p.stop();

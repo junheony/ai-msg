@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { Account, AccountRegistry } from '../../shared/accounts';
 import type { UsageWindow } from '../../shared/usage-types';
 import type { SpawnFn } from '../engine/CodexEngine';
+import { STALE_MAX_MS } from '../routing/AccountRouter';
 import type { TurnWindows, UsageService } from './UsageService';
 
 /**
@@ -15,6 +16,10 @@ export const CLAUDE_USAGE_ARGS = ['-p', '/usage', '--setting-sources=', '--no-se
 
 const STDOUT_MAX = 1_048_576;
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/** A reset "at 5:59pm" read at 5:59:40 is that one, not tomorrow's: the text carries no seconds. */
+const RESET_GRACE_MS = 2 * 60_000;
+/** A date without a year rolls to next year only once it is this far past (a weekly reset never is). */
+const RESET_YEAR_SLACK_MS = 7 * 86_400_000;
 const clampPct = (n: number) => Math.max(0, Math.min(100, Math.round(n * 10) / 10));
 
 /** `tz`'s offset from UTC at `utcMs` (ms, east positive); throws RangeError for an unknown zone. */
@@ -39,7 +44,8 @@ function zonedToday(nowMs: number, tz: string): { y: number; mo: number; d: numb
 
 /**
  * "Oct 23 at 5:59pm (Asia/Seoul)", "5:59pm (Asia/Seoul)", "3pm (Asia/Seoul)" → ISO UTC, read in the zone in brackets.
- * The nearest future: a date already past is next year's, a time already past is tomorrow's. null when unreadable.
+ * The nearest future: a date more than RESET_YEAR_SLACK_MS past is next year's, a time more than RESET_GRACE_MS past is
+ * tomorrow's (the text is cut to the minute, so a reset a moment ago stays today's). null when unreadable.
  */
 export function parseClaudeReset(s: string, nowMs: number): string | null {
   const m = s.trim().match(/^(?:([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?(?:,?\s+at)?\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?\s*\(([^)]+)\)$/i);
@@ -62,11 +68,11 @@ export function parseClaudeReset(s: string, nowMs: number): string | null {
       if (year) t = zonedMs(Number(year), mo, d, h, mi, tz);
       else {
         t = zonedMs(today.y, mo, d, h, mi, tz);
-        if (t <= nowMs) t = zonedMs(today.y + 1, mo, d, h, mi, tz);
+        if (t < nowMs - RESET_YEAR_SLACK_MS) t = zonedMs(today.y + 1, mo, d, h, mi, tz);
       }
     } else {
       t = zonedMs(today.y, today.mo, today.d, h, mi, tz);
-      if (t <= nowMs) t = zonedMs(today.y, today.mo, today.d + 1, h, mi, tz);
+      if (t < nowMs - RESET_GRACE_MS) t = zonedMs(today.y, today.mo, today.d + 1, h, mi, tz);
     }
     return Number.isNaN(t) ? null : new Date(t).toISOString();
   } catch {
@@ -108,19 +114,32 @@ export function parseClaudeUsage(stdout: string, nowMs: number): TurnWindows | n
 }
 
 type RunResult = { ok: true; stdout: string } | { ok: false; error: string };
+/** A spawned child that also says when its output pipes closed (node's ChildProcess does). */
+type UsageChild = ReturnType<SpawnFn> & { once(event: 'close', cb: (code: number | null) => void): unknown };
+
+/** After `exit`, how long the output pipes may stay open (something the CLI left holds them) before the group is killed. */
+const CLOSE_GRACE_MS = 2_000;
+/** After a SIGKILL, how long to wait for `exit`/`close` before giving up on the child. */
+const KILL_WAIT_MS = 5_000;
+/** Consecutive failures on one account back off to at most this. */
+const BACKOFF_MAX_MS = 2 * 3_600_000;
 
 /**
- * Claude usage without a turn (`cli` usage mode): shortly after start, then every `intervalMs` (15 min), each active
- * account whose last observation (a turn's rate_limit_event or an earlier poll) is older than `maxAgeMs` (10 min) gets
- * one `claude -p /usage` in its own profile (the registry's CLAUDE_CONFIG_DIR), one at a time. A failure is one log line;
- * the next round tries again. Reads the CLI's text only — never credentials.
+ * Claude usage without a turn (`cli` usage mode): shortly after start, then every `intervalMs` (5 min), each active
+ * account whose last observation (a turn's rate_limit_event or an earlier poll; a polled Fable value too) is older than
+ * `maxAgeMs` (STALE_MAX_MS − 2 min, so the card never turns 오래됨 between checks) gets one `claude -p /usage` in its own
+ * profile (the registry's CLAUDE_CONFIG_DIR), one at a time. A failure is logged when it changes (a new error, or the
+ * account recovering) and the account backs off exponentially, up to BACKOFF_MAX_MS. Reads the CLI's text only — never
+ * credentials.
  */
 export class ClaudeUsagePoller {
   private startTimer: ReturnType<typeof setTimeout> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private running: Promise<void> | null = null;
-  private child: ReturnType<SpawnFn> | null = null;
+  private child: { child: UsageChild; give: () => void } | null = null;
   private stopped = false;
+  /** Per account: the last failure (logged once) and when it may be tried again. */
+  private failures = new Map<Account, { error: string; count: number; retryAt: number }>();
   private readonly intervalMs: number;
   private readonly maxAgeMs: number;
   private readonly startDelayMs: number;
@@ -134,7 +153,7 @@ export class ClaudeUsagePoller {
     /** The resolved claude binary; null = none usable (nothing runs). */
     bin: string | null;
     accounts: Pick<AccountRegistry, 'list' | 'env'>;
-    usage: Pick<UsageService, 'applyCliPoll' | 'routingSnapshot'>;
+    usage: Pick<UsageService, 'applyCliPoll' | 'cliObservedAt'>;
     intervalMs?: number;
     maxAgeMs?: number;
     startDelayMs?: number;
@@ -144,8 +163,8 @@ export class ClaudeUsagePoller {
     baseEnv?: NodeJS.ProcessEnv;
     log?: (line: string) => void;
   }) {
-    this.intervalMs = opts.intervalMs ?? 15 * 60_000;
-    this.maxAgeMs = opts.maxAgeMs ?? 10 * 60_000;
+    this.intervalMs = opts.intervalMs ?? 5 * 60_000;
+    this.maxAgeMs = opts.maxAgeMs ?? STALE_MAX_MS - 2 * 60_000;
     this.startDelayMs = opts.startDelayMs ?? 20_000;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
     this.spawnFn = opts.spawnFn ?? ((b, args, o) => nodeSpawn(b, args, { cwd: o.cwd, env: o.env, stdio: ['ignore', 'pipe', 'pipe'], detached: true }));
@@ -161,9 +180,10 @@ export class ClaudeUsagePoller {
   }
 
   private due(a: Account): boolean {
-    const at = this.opts.usage.routingSnapshot().accounts[a]?.fetchedAt;
-    const t = at ? Date.parse(at) : Number.NaN;
-    return Number.isNaN(t) || this.now() - t > this.maxAgeMs;
+    const f = this.failures.get(a);
+    if (f && this.now() < f.retryAt) return false;
+    const at = this.opts.usage.cliObservedAt(a);
+    return at === null || this.now() - at > this.maxAgeMs;
   }
 
   private async round(): Promise<void> {
@@ -175,6 +195,19 @@ export class ClaudeUsagePoller {
     }
   }
 
+  private failed(a: Account, error: string): void {
+    const prev = this.failures.get(a);
+    const count = (prev?.count ?? 0) + 1;
+    this.failures.set(a, { error, count, retryAt: this.now() + Math.min(this.intervalMs * 2 ** (count - 1), BACKOFF_MAX_MS) });
+    if (prev?.error !== error) this.log(`deck: claude /usage (${a}) ${error}`);
+  }
+
+  private succeeded(a: Account): void {
+    if (!this.failures.has(a)) return;
+    this.failures.delete(a);
+    this.log(`deck: claude /usage (${a}) 다시 읽힘`);
+  }
+
   /** One `/usage` read for `a`; applied with the time it started (a turn that ends meanwhile is newer and wins). */
   async pollAccount(a: Account): Promise<void> {
     const bin = this.opts.bin;
@@ -184,13 +217,15 @@ export class ClaudeUsagePoller {
     try {
       env = this.opts.accounts.env(a, this.baseEnv);
     } catch (err) {
-      this.log(`deck: claude /usage (${a}) 건너뜀 — ${err instanceof Error ? err.message : String(err)}`);
+      this.failed(a, `건너뜀 — ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
     const run = await this.runUsage(bin, env);
-    if (!run.ok) { if (!this.stopped) this.log(`deck: claude /usage (${a}) 실패 — ${run.error}`); return; }
+    if (this.stopped) return;
+    if (!run.ok) { this.failed(a, `실패 — ${run.error}`); return; }
     const w = parseClaudeUsage(run.stdout, startedAt);
-    if (!w) { this.log(`deck: claude /usage (${a}) 응답에 한도 줄이 없어 그대로 둡니다 — 앞부분: ${run.stdout.replace(/\s+/g, ' ').slice(0, 200)}`); return; }
+    if (!w) { this.failed(a, `응답에 한도 줄이 없어 그대로 둡니다 — 앞부분: ${run.stdout.replace(/\s+/g, ' ').slice(0, 200)}`); return; }
+    this.succeeded(a);
     this.opts.usage.applyCliPoll(a, w, startedAt);
   }
 
@@ -210,36 +245,49 @@ export class ClaudeUsagePoller {
         return;
       }
       const cleanup = () => { try { fs.rmSync(cwd, { recursive: true, force: true }); } catch { /* best effort */ } };
-      let child: ReturnType<SpawnFn>;
+      let child: UsageChild;
       try {
-        child = this.spawnFn(bin, [...CLAUDE_USAGE_ARGS], { cwd, env });
+        child = this.spawnFn(bin, [...CLAUDE_USAGE_ARGS], { cwd, env }) as UsageChild;
       } catch (err) {
         cleanup();
         resolve({ ok: false, error: `claude 실행 실패 — ${err instanceof Error ? err.message : String(err)}` });
         return;
       }
-      this.child = child;
       let out = '', errTail = '', settled = false, timedOut = false;
+      let exitCode: number | null | undefined; // undefined = no `exit` yet
+      const timers: ReturnType<typeof setTimeout>[] = [];
+      const later = (ms: number, fn: () => void) => { const t = setTimeout(fn, ms); t.unref?.(); timers.push(t); };
       const done = (r: RunResult) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        for (const t of timers) clearTimeout(t);
         this.child = null;
-        this.killTree(child, 'SIGKILL'); // anything the CLI left in its group
         cleanup();
         resolve(r);
       };
-      const timer = setTimeout(() => { timedOut = true; this.killTree(child, 'SIGKILL'); }, this.timeoutMs);
-      timer.unref?.();
+      // SIGKILL the group; if neither `exit` nor `close` follows, give up on the child so the round goes on.
+      const kill = (why: string) => {
+        this.killTree(child, 'SIGKILL');
+        later(KILL_WAIT_MS, () => done({ ok: false, error: `${why} — 종료 신호 뒤에도 끝나지 않음` }));
+      };
+      // The answer is judged once the output pipes have closed: `exit` can come before the last stdout data.
+      const finish = () => {
+        if (timedOut) { done({ ok: false, error: `응답 없음 (${Math.round(this.timeoutMs / 1000)}초 시간 초과)` }); return; }
+        if (this.stopped) { done({ ok: false, error: '서버 종료' }); return; }
+        if (exitCode === 0 || out.trim()) { done({ ok: true, stdout: out }); return; }
+        const line = errTail.trim().split('\n').filter(Boolean).pop() ?? '';
+        done({ ok: false, error: `exit ${exitCode ?? '?'}${line ? ` — ${line.slice(0, 200)}` : ''}` });
+      };
+      this.child = { child, give: () => kill('서버 종료') };
+      later(this.timeoutMs, () => { timedOut = true; kill('응답 없음'); });
       child.stdout?.on('data', (d: Buffer | string) => { if (out.length < STDOUT_MAX) out += d.toString(); });
       child.stderr?.on('data', (d: Buffer | string) => { errTail = (errTail + d.toString()).slice(-2000); });
       child.once('exit', (code: number | null) => {
-        if (timedOut) { done({ ok: false, error: `응답 없음 (${Math.round(this.timeoutMs / 1000)}초 시간 초과)` }); return; }
-        if (this.stopped) { done({ ok: false, error: '서버 종료' }); return; }
-        if (code === 0 || out.trim()) { done({ ok: true, stdout: out }); return; }
-        const line = errTail.trim().split('\n').filter(Boolean).pop() ?? '';
-        done({ ok: false, error: `exit ${code ?? '?'}${line ? ` — ${line.slice(0, 200)}` : ''}` });
+        exitCode = code;
+        // Something the CLI left behind may hold the pipes open: then its group goes, and the answer is what came.
+        later(CLOSE_GRACE_MS, () => { this.killTree(child, 'SIGKILL'); finish(); });
       });
+      child.once('close', (code: number | null) => { if (exitCode === undefined) exitCode = code; finish(); });
       child.once('error', (err: Error) => done({ ok: false, error: `claude 실행 실패 — ${err.message}` }));
     });
   }
@@ -259,6 +307,6 @@ export class ClaudeUsagePoller {
     if (this.timer) clearInterval(this.timer);
     this.startTimer = null;
     this.timer = null;
-    if (this.child) this.killTree(this.child, 'SIGKILL');
+    this.child?.give();
   }
 }

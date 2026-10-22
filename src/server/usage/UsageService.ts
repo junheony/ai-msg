@@ -213,7 +213,9 @@ export class UsageService {
    */
   private cliAccount(a: Account, nowMs: number): AccountUsage {
     const o = this.cliObs.get(a);
-    const fable = o?.fable && (o.fable.w.resetsAt !== null || nowMs - o.fable.at <= STALE_MAX_MS) ? estimateWindow(o.fable.w, nowMs) : null;
+    // A polled Fable value (with its reset, usually days away) still goes once CLI_TRUST_MAX_MS old, as any observation would.
+    const fableAge = o?.fable ? nowMs - o.fable.at : Infinity;
+    const fable = o?.fable && (o.fable.w.resetsAt !== null || fableAge <= STALE_MAX_MS) && (o.fable.by !== 'poll' || fableAge <= CLI_TRUST_MAX_MS) ? estimateWindow(o.fable.w, nowMs) : null;
     if (!o || (!o.fiveHour && !o.weekly)) return { ...emptyAccountUsage(), fable };
     const shown = [o.fiveHour, o.weekly].filter((x): x is CliWindowObs => x !== undefined);
     const oldest = Math.min(...shown.map((x) => x.at));
@@ -512,6 +514,17 @@ export class UsageService {
   applyCliPoll(account: Account, w: TurnWindows, observedAtMs: number): void {
     if (this.mode !== 'cli' || !this.reg.has(account)) return;
     this.applyCliTurn(account, w, observedAtMs, 'poll');
+  }
+
+  /**
+   * ClaudeUsagePoller's "is it time": when the account was last observed — the oldest of its 5h/weekly windows and of a
+   * polled Fable value (turns keep 5h/weekly fresh but never tell Fable, so only a poll does). null = never.
+   */
+  cliObservedAt(account: Account): number | null {
+    const o = this.cliObs.get(account);
+    if (!o || (!o.fiveHour && !o.weekly)) return null;
+    const ats = [o.fiveHour, o.weekly, o.fable?.by === 'poll' ? o.fable : undefined].filter((x): x is CliWindowObs => x !== undefined).map((x) => x.at);
+    return Math.min(...ats);
   }
 
   /** deck just completed a turn on `account` (result ok): affects `routingSnapshot` only (see `lift`); nothing is published. */

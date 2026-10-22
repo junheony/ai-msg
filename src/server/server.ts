@@ -187,7 +187,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
     codexUsage.start();
     cleanup.push(() => codexUsage.stop());
-    // `cli` usage mode: an account no deck turn observed for 10 min gets its real limits from `claude -p /usage` (no tokens), one at a time.
+    // `cli` usage mode: an account not observed for ~8 min (before it would turn stale) gets its real limits from `claude -p /usage` (no tokens), one at a time, checked every 5 min.
     const claudeUsage = cfg.usageMode === 'cli' && cfg.claudeUsagePoll && cfg.claudeBin.ok ? new ClaudeUsagePoller({ bin: cfg.claudeBin.bin, accounts, usage }) : null;
     claudeUsage?.start();
     cleanup.push(() => claudeUsage?.stop());

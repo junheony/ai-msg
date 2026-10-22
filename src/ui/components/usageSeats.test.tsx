@@ -275,7 +275,7 @@ describe('usage seats · cli usage mode (observed times)', () => {
     expect(observedText(kept, NOW)).toBe('추정 · 12분 전 확인');
     sheet({ ...cliUsage, accounts: { ...cliUsage.accounts, a: { ...cliUsage.accounts.a!, observedBy: 'poll' } } }, null);
     expect(screen.getByTestId('a-observed').textContent).toContain('12분 전 확인');
-    expect(screen.getByTestId('a-refresh').textContent).toBe('12분 전 확인한 값 · 지금은 이보다 적게 남았을 수 있어요 · 이 계정으로 한 턴 돌리면 갱신돼요');
+    expect(screen.getByTestId('a-refresh').textContent).toBe('12분 전 확인한 값 · 지금은 이보다 적게 남았을 수 있어요 · deck 이 자동으로 다시 확인해요');
     expect(screen.getByTestId('a-weekly').title).toContain('예전에 확인한 값');
   });
 
