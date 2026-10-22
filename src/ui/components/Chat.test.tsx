@@ -44,6 +44,8 @@ describe('Chat', () => {
     openSheet();
     expect(screen.getByTestId('perm-select').getAttribute('title')).toContain(GROK_BYPASS_HINT);
     expect(screen.getByTestId('perm-badge').getAttribute('title')).toContain(GROK_BYPASS_HINT);
+    // The head's warning dot keeps its words for screen readers (visually clipped, not removed).
+    expect(screen.getByTestId('perm-badge').textContent).toContain('모두 자동 승인');
     cleanup();
     renderChat([], false, vi.fn(), { sessionEngine: 'claude', onPermMode, permMode: 'bypassPermissions' });
     openSheet();

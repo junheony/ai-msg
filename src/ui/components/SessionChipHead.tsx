@@ -4,8 +4,7 @@ import type { EngineKind } from '../../shared/models';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
 import { MenuList } from './SessionMenu';
-import { SessionGlyph, sessionIconBase, useSessionAvatar } from './SessionIcon';
-import { avatarIndex } from './Sidebar';
+import { SessionGlyph, avatarIndex, sessionIconBase, useSessionAvatar } from './SessionIcon';
 
 /** The head's words, in one place. */
 const T = {

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { HeadItem, SessionChipHead, type HeadMenuCtl } from './SessionChipHead';
 import { SESSION_ICONS, publishSessionAvatars, sessionIconBase } from './SessionIcon';
-import { avatarIndex } from './Sidebar';
+import { avatarIndex } from './SessionIcon';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 

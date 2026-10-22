@@ -98,6 +98,16 @@ export function SessionGlyph({ index }: { index: number }) {
   );
 }
 
+/** Project avatar palette size (`--avatar-1` … `--avatar-8` in styles.css). */
+export const AVATAR_COLORS = 8;
+
+/** A project's avatar colour, 1 … AVATAR_COLORS: an FNV-1a hash of its slug, so a project keeps its colour everywhere. */
+export function avatarIndex(slug: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < slug.length; i++) { h ^= slug.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return ((h >>> 0) % AVATAR_COLORS) + 1;
+}
+
 /** A session's avatar as the sidebar draws it: project colour (1 … AVATAR_COLORS) and glyph (index into SESSION_ICONS). */
 export type SessionAvatar = { color: number; icon: number };
 
@@ -105,6 +115,8 @@ export type SessionAvatar = { color: number; icon: number };
 // can step a glyph off its id hash — the head cannot recompute that on its own).
 let avatars = new Map<string, SessionAvatar>();
 const avatarSubs = new Set<() => void>();
+// One stable subscribe for every head: a fresh closure per render would make React re-subscribe on each render.
+const subscribeAvatars = (f: () => void) => { avatarSubs.add(f); return () => { avatarSubs.delete(f); }; };
 
 /** Called by the sidebar after it assigns its glyphs; a no-op when nothing changed (no re-render of the heads). */
 export function publishSessionAvatars(next: Map<string, SessionAvatar>): void {
@@ -116,7 +128,7 @@ export function publishSessionAvatars(next: Map<string, SessionAvatar>): void {
 /** The avatar the sidebar gave `sessionId`, or null when the sidebar has not listed it (the caller falls back). */
 export function useSessionAvatar(sessionId: string | null | undefined): SessionAvatar | null {
   return useSyncExternalStore(
-    (f) => { avatarSubs.add(f); return () => { avatarSubs.delete(f); }; },
+    subscribeAvatars,
     () => (sessionId ? avatars.get(sessionId) ?? null : null),
   );
 }

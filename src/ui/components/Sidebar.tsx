@@ -14,7 +14,8 @@ import { isMacPlatform, isPinMod, isSafariBrowser, pinKeyLabel } from '../shortc
 import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
 import { BrandMark, BrandWordmark } from './BrandMark';
-import { SessionGlyph, assignSessionIcons, publishSessionAvatars, sessionIconBase, type IconRow } from './SessionIcon';
+export { AVATAR_COLORS, avatarIndex } from './SessionIcon';
+import { SessionGlyph, assignSessionIcons, avatarIndex, publishSessionAvatars, sessionIconBase, type IconRow } from './SessionIcon';
 import { usePrefs } from '../usePrefs';
 
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
@@ -27,8 +28,6 @@ export const META_TICK_MS = 60_000;
 
 /** Touch: holding a row this long shows its ⋯ button (design §7.2: 350ms). */
 export const ROW_PRESS_MS = 350;
-/** Project avatar palette size (`--avatar-1` … `--avatar-8` in styles.css). */
-export const AVATAR_COLORS = 8;
 /** The head's + menu: 지금 프로젝트 plus this many other recently used folders. */
 export const RECENT_FOLDERS = 3;
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
@@ -44,13 +43,6 @@ function ago(ms: number, now = Date.now()): string {
   if (d < 3_600_000) return `${Math.floor(d / 60_000)}분 전`;
   if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}시간 전`;
   return `${Math.floor(d / 86_400_000)}일 전`;
-}
-
-/** A project's avatar colour, 1 … AVATAR_COLORS: an FNV-1a hash of its slug, so a project keeps its colour everywhere. */
-export function avatarIndex(slug: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < slug.length; i++) { h ^= slug.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-  return ((h >>> 0) % AVATAR_COLORS) + 1;
 }
 
 /** A stable default: a fresh [] per render would read as a new list (and hide a revealed row) every time. */
