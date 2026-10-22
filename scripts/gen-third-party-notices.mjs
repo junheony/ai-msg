@@ -43,7 +43,7 @@ function walk(roots) {
     const m = readJson(p);
     const key = `${m.name}@${m.version}`;
     if (seen.has(key)) continue;
-    seen.set(key, { name: m.name, version: m.version, license: licenseOf(m), repo: repoOf(m) });
+    seen.set(key, { name: m.name, version: m.version, license: licenseOf(m), repo: repoOf(m), dir: dirname(p) });
     for (const dep of Object.keys({ ...m.dependencies, ...m.optionalDependencies })) {
       if (m.optionalDependencies?.[dep] && !locate(dep, dirname(p))) continue; // optional and not installed
       queue.push([dep, dirname(p)]);
@@ -60,7 +60,7 @@ function uiRoots() {
       const f = join(dir, e.name);
       if (e.isDirectory()) { if (e.name !== 'public') visit(f); continue; }
       if (!/\.(ts|tsx)$/.test(e.name) || /\.test\./.test(e.name)) continue;
-      for (const [, spec] of readFileSync(f, 'utf8').matchAll(/(?:from|import)\s*\(?\s*'([^'.\/][^']*)'/g)) {
+      for (const [, spec] of readFileSync(f, 'utf8').matchAll(/(?:from|import)\s*\(?\s*['"]([^'".\/][^'"]*)['"]/g)) {
         names.add(spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0]);
       }
     }
@@ -72,6 +72,12 @@ function uiRoots() {
 const rows = walk(Object.keys(pkg.dependencies ?? {}));
 const serverKeys = new Set(rows.map((r) => `${r.name}@${r.version}`));
 const uiRows = walk(uiRoots()).filter((r) => !serverKeys.has(`${r.name}@${r.version}`));
+/** The LICENSE file text shipped inside a package ('' when it has none). */
+const licenseText = (r) => {
+  const f = readdirSync(r.dir).find((n) => /^(licen[sc]e|copying)(\.(md|txt))?$/i.test(n));
+  // Contact addresses in copyright lines are left out (the notice itself is unchanged).
+  return f ? readFileSync(join(r.dir, f), 'utf8').replace(/[ \t]*[<(]?[\w.+-]+@[\w-]+(?:\.[\w-]+)+[>)]?/g, '').trim() : '';
+};
 const table = (list) => list.map((r) => `| ${r.name} | ${r.version} | ${r.license} | ${r.repo} |`).join('\n');
 const nonPermissive = [...rows, ...uiRows].filter((r) => !/^\(?(MIT|ISC|BSD-[23]-Clause|Apache-2\.0|0BSD)\)?$/.test(r.license));
 
@@ -96,7 +102,17 @@ Packages the UI imports (and their dependencies) that Vite compiles into \`dist/
 | Package | Version | License | Source |
 | --- | --- | --- | --- |
 ${table(uiRows)}
-${nonPermissive.length ? `
+
+### License texts of the packages bundled into the web UI
+
+Their code is compiled into the shipped bundle, so each package's license text is reproduced here.
+${uiRows.filter((r) => /^\(?MIT\)?$/.test(r.license)).map((r) => `
+#### ${r.name} ${r.version} (${r.license})
+
+\`\`\`text
+${licenseText(r) || `(no LICENSE file shipped; declared license: ${r.license})`}
+\`\`\`
+`).join('')}${nonPermissive.length ? `
 ## Notes
 
 ${nonPermissive.map((r) => r.name === 'web-push'

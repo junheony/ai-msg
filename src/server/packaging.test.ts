@@ -29,6 +29,10 @@ describe('package metadata', () => {
     expect(pkg.scripts.prepack).toBe('npm run build && npm run build:server');
   });
 
+  it('THIRD_PARTY_NOTICES.md is up to date with the installed dependency tree', () => {
+    expect(() => execFileSync('node', ['scripts/gen-third-party-notices.mjs', '--check'], { cwd: root, encoding: 'utf8', stdio: 'pipe' })).not.toThrow();
+  });
+
   it('import.meta / __dirname users are the reviewed set (Task 3 table; update both when adding one)', () => {
     expect(filesUsingImportMetaOrDirname()).toEqual([
       'src/server/cli/app.ts',
