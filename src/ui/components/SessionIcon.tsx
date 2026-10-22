@@ -84,38 +84,19 @@ export function monogram(title: string, project = '', len: 1 | 2 = 1): string {
 export type MonoRow = { id: string; project: string; title: string };
 
 /**
- * The avatar letters of every listed session. One letter unless that would repeat within a project where it matters, then
- * two (the title's first two usable characters):
- * - `pinned` (a stable set): settled in id order, so only a pin change can move one — a later pin of the same project
- *   whose letter an earlier one already shows gets two;
- * - `rest`, in the order shown: two when its letter is one its project's pinned rows show, or the row right above is the
- *   same project showing that letter. Nothing else in the list matters, so a new session or a re-sort only changes a row
- *   whose neighbour clashes.
+ * The avatar letters of every listed session: one letter, or two (the title's first two usable characters) when any other listed row of the same project — pinned or not — would
+ * show the same letter. Only the set of rows matters, never their order: a re-sort or a new session changes only the
+ * rows whose letter it shares.
  * Different projects may share a letter: the colour tells them apart.
  */
 export function assignMonograms(pinned: MonoRow[], rest: MonoRow[]): Map<string, string> {
+  const rows = new Map<string, MonoRow>();
+  for (const r of [...pinned, ...rest]) if (!rows.has(r.id)) rows.set(r.id, r);
+  const keyOf = (r: MonoRow) => `${r.project}\u0000${monogram(r.title, r.project)}`;
+  const count = new Map<string, number>();
+  for (const r of rows.values()) count.set(keyOf(r), (count.get(keyOf(r)) ?? 0) + 1);
   const out = new Map<string, string>();
-  const held = new Map<string, Set<string>>();
-  for (const r of [...pinned].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
-    if (out.has(r.id)) continue;
-    let used = held.get(r.project);
-    if (!used) held.set(r.project, (used = new Set()));
-    const one = monogram(r.title, r.project);
-    const m = used.has(one) ? monogram(r.title, r.project, 2) : one;
-    used.add(m);
-    out.set(r.id, m);
-  }
-  let prev = null as { project: string; mono: string } | null;
-  for (const r of rest) {
-    let m = out.get(r.id);
-    if (m === undefined) {
-      const one = monogram(r.title, r.project);
-      const clash = !!held.get(r.project)?.has(one) || (prev?.project === r.project && prev.mono === one);
-      m = clash ? monogram(r.title, r.project, 2) : one;
-      out.set(r.id, m);
-    }
-    prev = { project: r.project, mono: m };
-  }
+  for (const r of rows.values()) out.set(r.id, monogram(r.title, r.project, (count.get(keyOf(r)) ?? 0) > 1 ? 2 : 1));
   return out;
 }
 

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AVATAR_COLORS, DECK_VERSION_LINE, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex } from './Sidebar';
 import { SessionChipHead } from './SessionChipHead';
+import { useSessionAvatar, useSessionIconStore } from './SessionIcon';
 import type { SessionActivity } from '../../shared/protocol';
 
 const noop = () => {};
@@ -693,29 +694,28 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
       expect(heads[k]!.dataset.avatar).toBe(rowOf(t).dataset.avatar);
       expect(mono(heads[k]!)).toBe(mono(rowOf(t)));
     });
-    expect([mono(heads[0]!), mono(heads[1]!)].sort()).toEqual(['백', '백업'].sort()); // the clash took two letters, and the head followed
+    expect([mono(heads[0]!), mono(heads[1]!)]).toEqual(['백테', '백업']); // the clash took two letters on both, and the head followed
   });
 
-  it('avatar letters on the row: clashing pins of one project render apart, as do clashing rows below; a search moves none', () => {
+  it('avatar letters on the row: every clashing row of a project (pinned or below) takes two; a reorder or a search moves none', () => {
     const pinIds = ['p0', 'p1', 'p2'];
     const sessions = [
-      s('p0', '/w/dev', 'pin alpha'), s('p1', '/w/dev', 'pin beta'), s('p2', '/w/dev', 'zeta'),
-      s('r0', '/w/dev', 'keep a'), s('o1', '/w/dev', 'drop b'), s('r1', '/w/dev', 'keep c'), s('r2', '/w/dev', 'kilo d'),
+      s('p0', '/w/dev', 'paper a'), s('p1', '/w/dev', 'pine b'), s('p2', '/w/dev', 'zeta'),
+      s('r0', '/w/dev', 'keep a'), s('o1', '/w/dev', 'drop b'), s('r1', '/w/dev', 'kale c'), s('r2', '/w/dev', 'kilo d'), s('r3', '/w/dev', 'zoo e'),
     ];
     const p = [{ cwd: '/w/dev', name: 'dev', pinned: false, sessions }];
-    const view = () => <Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={pinIds} onTogglePin={noop} />;
+    const view = (pins = pinIds) => <Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={pins} onTogglePin={noop} />;
     const { rerender } = render(view());
     const mono = (t: string) => screen.getByText(t).closest('li')!.querySelector('.avatar-mono')!.textContent;
-    expect(['pin alpha', 'pin beta', 'zeta'].map(mono)).toEqual(['P', 'Pi', 'Z']);
-    const rows = ['keep a', 'drop b', 'keep c', 'kilo d'];
+    // A pinned Z and a Z below clash too; D has no twin.
+    const rows = ['paper a', 'pine b', 'zeta', 'keep a', 'drop b', 'kale c', 'kilo d', 'zoo e'];
     const before = rows.map(mono);
-    // c sits under b (another letter): one letter; d sits under c, same letter: two.
-    expect(before).toEqual(['K', 'D', 'K', 'Ki']);
-    rerender(view());
+    expect(before).toEqual(['Pa', 'Pi', 'Ze', 'Ke', 'D', 'Ka', 'Ki', 'Zo']);
+    rerender(view([...pinIds].reverse()));
     expect(rows.map(mono)).toEqual(before);
     openSearch();
-    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'k' } }); // a and c now sit together
-    expect(['keep a', 'keep c', 'kilo d'].map(mono)).toEqual([before[0], before[2], before[3]]);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'k' } });
+    expect(['keep a', 'kale c', 'kilo d'].map(mono)).toEqual([before[3], before[5], before[6]]);
   });
 
   it('직접 고르기: tapping the avatar opens the picker without opening the session; a choice calls back, renders, and resets', () => {
@@ -758,6 +758,44 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(onOpen).not.toHaveBeenCalled();
     expect(onSetSessionIcon).toHaveBeenCalledTimes(3);
+  });
+
+  it('a 갈래 tree keeps one icon, under its entry: the pinned version and the tree row both read and set the root\'s', () => {
+    const onSetSessionIcon = vi.fn();
+    const now = Date.now();
+    const sessions = [s('b0', '/w/dev', 'tree', { lastModified: now - 60_000 }), s('b1', '/w/dev', 'tree', { lastModified: now, branch: { parent: 'b0', n: 1 } })];
+    const p = [{ cwd: '/w/dev', name: 'dev', pinned: false, sessions }];
+    const ids = ['b0', 'b1'];
+    render(<><Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['b1']} onTogglePin={noop} sessionIcons={{ b0: '🚀' }} onSetSessionIcon={onSetSessionIcon} />
+      {ids.map((id) => <div key={id} data-head={id}><SessionChipHead title="tree" sessionKey={id} cwd="/w/dev" groups={() => [[<button key="x" type="button">x</button>]]} /></div>)}</>);
+    const rows = screen.getAllByText('tree', { selector: '.session-title' }).map((t) => t.closest('li')!);
+    expect(rows).toHaveLength(2); // 고정됨 (b1) and the tree row (b0, opening b1)
+    for (const li of rows) {
+      expect(li.querySelector('[data-testid="avatar-emoji"]')!.textContent).toBe('🚀');
+      fireEvent.click(within(li).getByRole('button', { name: '아이콘 바꾸기' }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: '세션 아이콘' })).getByRole('button', { name: '🧪' }));
+      expect(onSetSessionIcon).toHaveBeenLastCalledWith('b0', '🧪');
+    }
+    for (const id of ids) {
+      expect(document.querySelector(`[data-head="${id}"] [data-testid="avatar-emoji"]`)!.textContent).toBe('🚀');
+      fireEvent.click(within(document.querySelector<HTMLElement>(`[data-head="${id}"]`)!).getByRole('button', { name: '아이콘 바꾸기' }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: '세션 아이콘' })).getByRole('button', { name: '☕' }));
+      expect(onSetSessionIcon).toHaveBeenLastCalledWith('b0', '☕');
+    }
+  });
+
+  it('a re-render with the same data notifies no avatar subscriber', () => {
+    const p = [{ cwd: '/w/dev', name: 'dev', pinned: false, sessions: [s('s1', '/w/dev', 'alpha'), s('s2', '/w/dev', 'apple')] }];
+    const setIcon = vi.fn();
+    const icons = { s1: '🚀' };
+    let renders = 0;
+    function Probe() { useSessionAvatar('s1'); useSessionIconStore(); renders++; return null; }
+    const view = () => <><Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} sessionIcons={icons} onSetSessionIcon={setIcon} /><Probe /></>;
+    const { rerender } = render(view());
+    const after = renders;
+    rerender(view());
+    rerender(view());
+    expect(renders).toBe(after + 2); // its own two renders from the parent, nothing from the store
   });
 
   it('no picker without onSetSessionIcon', () => {

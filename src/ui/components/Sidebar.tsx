@@ -297,12 +297,12 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
    */
   const avatarOf = (slug: string, sessionId: string, title: string) => (
     <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties}>
-      <AvatarFace mono={monos.get(sessionId) ?? monogram(title, slug)} icon={sessionIcons[sessionId] ?? null} />
+      <AvatarFace mono={monos.get(sessionId) ?? monogram(title, slug)} icon={sessionIcons[iconKey(sessionId)] ?? null} />
     </span>
   );
   /** 직접 고르기: a button over the avatar (beside the row's open button, so a tap there never opens the session). */
   const avatarPick = (sessionId: string) => onSetSessionIcon && (
-    <SessionIconButton className="row-avatar-pick" current={sessionIcons[sessionId] ?? null} onPick={(icon) => onSetSessionIcon(sessionId, icon)} />
+    <SessionIconButton className="row-avatar-pick" current={sessionIcons[iconKey(sessionId)] ?? null} onPick={(icon) => onSetSessionIcon(iconKey(sessionId), icon)} />
   );
   /**
    * Line 2: the last reply's preview when there is one, else the project folder. Only a non-Claude engine gets a mark (a
@@ -459,6 +459,11 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // 메시지 편집 갈래: one row per branch tree (its root, opening the newest version); the tree's other sessions are not listed.
   // A deleted root (휴지통) just drops out: its children keep their link and group under the oldest one left.
   const links = linksOf(byId.values());
+  // A 갈래 tree's chosen icon is stored under its entry (the root, or the oldest version left): every row and head of the
+  // tree — a pinned version included — reads and sets that one.
+  const treeOf = new Map<string, BranchGroup<SessionEntry>>();
+  for (const g of groupBranches([...byId.values()], links)) for (const m of g.members) treeOf.set(m, g);
+  const iconKey = (id: string) => treeOf.get(id)?.entry.sessionId ?? id;
   // deck sessions and Desktop-only sessions in one date-split list, minus what 고정됨 already shows.
   type RecentItem = { kind: 'session'; g: BranchGroup<SessionEntry>; lastModified: number } | { kind: 'desktop'; d: DesktopSession; lastModified: number };
   const itemMatch = (t: RecentItem) => (t.kind === 'session' ? match(t.g.entry) : dMatch(t.d));
@@ -485,7 +490,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     return { count: groups.length + ds.length, list: listAll.filter(itemMatch), all: listAll };
     // match / dMatch read only `q`.
   }, [projects, desktop, q, archivedOpen, !!onArchive]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Avatar letters: the pins as a whole, then the rows below in the order shown — both before the search filter. A 갈래
+  // Avatar letters: over the pins and the rows below together (their order never matters), before the search filter. A 갈래
   // row carries its other members, so the head of any version shows (and changes) the row's avatar.
   type AvatarRow = MonoRow & { members?: string[] };
   const monoRow = (id: string, s: SessionEntry): AvatarRow => ({ id, project: projectName.get(id) ?? baseName(s.cwd), title: s.title });
@@ -505,9 +510,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   useEffect(() => {
     const next = new Map<string, SessionAvatar>();
     for (const r of [...pinRows, ...restRows]) {
-      const a: SessionAvatar = { color: avatarIndex(r.project), mono: monos.get(r.id) ?? monogram(r.title, r.project), icon: sessionIcons[r.id] ?? null, iconId: r.id };
+      const key = iconKey(r.id);
+      const a: SessionAvatar = { color: avatarIndex(r.project), mono: monos.get(r.id) ?? monogram(r.title, r.project), icon: sessionIcons[key] ?? null, iconId: key };
       if (!next.has(r.id)) next.set(r.id, a);
-      for (const m of r.members ?? []) if (!next.has(m)) next.set(m, a);
+      for (const m of r.members ?? treeOf.get(r.id)?.members ?? []) if (!next.has(m)) next.set(m, a);
     }
     publishSessionAvatars(next, sessionIcons, onSetSessionIcon ?? null);
   });

@@ -7,7 +7,8 @@ import { SESSION_ICONS, SessionGlyph } from './SessionIcon';
 /**
  * 직접 고르기: a transparent button over a session's avatar (a sibling of the row / chip button, never inside it, so a tap
  * here never opens the session) and the popover it opens — emoji, the line glyphs, and 기본으로 (첫 글자). The popover
- * renders into <body> (out of the sidebar's scroll box and the top bar), under the avatar or above it when it does not fit.
+ * renders into <body> (out of the sidebar's scroll box and the top bar), under the avatar or above it when it does not fit,
+ * always inside the viewport, and follows the avatar on scroll and resize.
  */
 export function SessionIconButton({ current, onPick, className }: { current: string | null; onPick: (icon: string | null) => void; className: string }) {
   const t = ui().sessionIcon;
@@ -28,12 +29,16 @@ export function SessionIconButton({ current, onPick, className }: { current: str
       const m = 8;
       const left = Math.max(m, Math.min(b.left, window.innerWidth - w - m));
       const below = b.bottom + 4;
-      const top = below + h > window.innerHeight - m && b.top - 4 - h >= m ? b.top - 4 - h : below;
+      const want = below + h > window.innerHeight - m && b.top - 4 - h >= m ? b.top - 4 - h : below;
+      // Fits neither way (a short window): kept on screen, over the avatar if need be.
+      const top = Math.max(m, Math.min(want, window.innerHeight - h - m));
       setPos({ left, top });
     };
     place();
+    // A scroll anywhere (the sidebar's list included, hence capture) moves the avatar: the popover follows.
     window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
   }, [open]);
 
   useEffect(() => {
