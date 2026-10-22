@@ -7,7 +7,7 @@ import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
 import { usePrefs } from '../usePrefs';
-import { conciseLeadLine } from '../../shared/concise';
+import { conciseLiveSplit } from '../../shared/concise';
 import { codeFileName, useCodeWrap } from '../codeWrap';
 import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
 import { has } from '../features';
@@ -623,6 +623,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   const pick = !pickable || item.streaming ? undefined : turn && branchFrom ? (m: ModelChoice) => branchFrom(turn, m) : retry ? regen.retryWith : undefined;
   // deck-choices (GPT, Gemini, Grok): the block becomes option cards; only the last reply's cards can be clicked.
   const { text: shownText, choices } = splitDeckChoices(item.text, item.streaming);
+  const split = concise && item.streaming ? conciseLiveSplit(shownText, item.toolCalls.map((t) => t.textAt)) : null;
   const reply = last && !item.streaming ? actions.onReply : undefined;
   const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
   const regenPick: RegenPick | null = pick && regen ? { models: regen.models, current: regen.current, sticky: !!(turn && branchFrom), onPick: pick } : null;
@@ -636,13 +637,10 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
         <Thinking t={item.thinking} streaming={item.streaming} concise={concise} />
       )}
       <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} concise={concise} />
-      {/* Concise results-only: hide streamed answer text until the turn finishes. */}
-      {shownText && !(concise && item.streaming) && <Markdown text={shownText} />}
-      {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
-      {item.streaming && !(concise && item.toolCalls.length === 0 && !item.thinking) && !concise && <span className="cursor">▍</span>}
-      {concise && item.streaming && (
+      {/* Concise, mid-turn: text before the last tool call folds into a gray lead line; the text since streams live below it. */}
+      {split && (!split.live || item.toolCalls.length > 0) && (
         <div className="concise-progress" data-testid="concise-progress" aria-live="polite">
-          {conciseLeadLine(shownText) && <div className="concise-lead" data-testid="concise-lead">{conciseLeadLine(shownText)}</div>}
+          {split.lead && <div className="concise-lead" data-testid="concise-lead">{split.lead}</div>}
           {item.toolCalls.length > 0
             ? `계속 작업 중 · 단계 ${item.toolCalls.length}`
             : item.thinking
@@ -650,6 +648,9 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
               : '처리 중…'}
         </div>
       )}
+      {split ? split.live && <Markdown text={split.live} /> : shownText && <Markdown text={shownText} />}
+      {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
+      {item.streaming && (!split || !!split.live) && <span className="cursor">▍</span>}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
       {(item.badge || item.model || item.toolCalls.length > 0 || hasActions) && (
         <div className="turn-foot">

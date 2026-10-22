@@ -57,7 +57,7 @@ export function conciseFirstStep(prompt: string | null | undefined): string | nu
 }
 
 /**
- * The model's own opening line while it works (concise mode hides the streaming answer): the first sentence of the text
+ * The model's own opening line while it works (concise mode folds the text written before a tool call): the first sentence of the text
  * so far, when it reads like a plan ("먼저 … 볼게요") rather than half an answer. null = nothing worth showing yet.
  */
 export function conciseLeadLine(text: string | null | undefined, max = 120): string | null {
@@ -70,6 +70,25 @@ export function conciseLeadLine(text: string | null | undefined, max = 120): str
   if (!sentence) return null;
   if (/^[#>|`-]/.test(sentence)) return null;
   return sentence.length > max ? `${sentence.slice(0, max - 1)}…` : sentence;
+}
+
+/**
+ * 간결 모드 while a turn streams: the reply text since the last tool call is shown live (`live`); the text written before
+ * it (a "먼저 … 볼게요." between steps) folds into one gray `lead` line — the latest non-empty earlier stretch.
+ * `cuts`: the text length when each tool call began (ToolCallItem.textAt). No cut = the whole text is live.
+ */
+export function conciseLiveSplit(text: string, cuts: readonly (number | undefined)[]): { lead: string | null; live: string } {
+  const at = [...new Set(cuts.filter((c): c is number => typeof c === 'number' && c > 0).map((c) => Math.min(c, text.length)))].sort((a, b) => a - b);
+  const cut = at[at.length - 1] ?? 0;
+  let lead: string | null = null;
+  for (let i = at.length - 1; i >= 0 && lead === null; i--) {
+    const seg = text.slice(at[i - 1] ?? 0, at[i]).trim();
+    if (!seg) continue;
+    // A finished stretch: its first sentence, or (no end mark) its first line.
+    const line = seg.split('\n')[0]!.trim();
+    lead = conciseLeadLine(seg) ?? (!line || /^[#>|`-]/.test(line) ? null : line.length > 120 ? `${line.slice(0, 119)}…` : line);
+  }
+  return { lead, live: text.slice(cut) };
 }
 
 /**
@@ -106,7 +125,7 @@ export function withConcise<M extends { type: string }>(msg: M, on: boolean): M 
 export type ConciseEventRole =
   | 'surface'      // show as-is (started, result, permission, question)
   | 'milestone'    // collapse into a progress milestone
-  | 'defer'        // hold until the turn ends (streamed answer text)
+  | 'stream'       // show live as it arrives (streamed answer text; text before a tool call folds into a lead line)
   | 'suppress';     // hide body mid-turn (thinking chunks, tool result bodies)
 
 const ROLES: Record<string, ConciseEventRole> = {
@@ -127,7 +146,7 @@ const ROLES: Record<string, ConciseEventRole> = {
   thinking: 'suppress',
   tool_result: 'suppress',
   sub_tool_result: 'suppress',
-  delta: 'defer',
+  delta: 'stream',
 };
 
 export function conciseEventRole(type: string): ConciseEventRole {
@@ -137,7 +156,7 @@ export function conciseEventRole(type: string): ConciseEventRole {
 /** Whether this event type is forwarded into the concise chat pane mid-turn. */
 export function conciseForwardsEvent(type: string): boolean {
   const role = conciseEventRole(type);
-  return role === 'surface' || role === 'milestone';
+  return role === 'surface' || role === 'milestone' || role === 'stream';
 }
 
 /**

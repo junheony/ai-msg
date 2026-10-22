@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { MessageView } from './MessageView';
 import { codeFileName } from '../codeWrap';
+import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 
 describe('MessageView', () => {
   afterEach(cleanup);
@@ -210,5 +211,60 @@ describe('code block 저장 · 줄바꿈', () => {
     unmount();
     const again = render(<MessageView item={reply('```\nx\n```')} />);
     expect(again.container.querySelector('pre.code-wrap')).not.toBeNull();
+  });
+});
+
+describe('MessageView · 간결 모드 live text', () => {
+  beforeEach(() => { localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: true })); });
+  afterEach(() => { cleanup(); localStorage.removeItem(PREFS_KEY); });
+  const call = (id: string, textAt: number) => ({ toolUseId: id, name: 'Bash', input: { command: 'npm test' }, result: 'SECRET-OUTPUT', isError: false, textAt });
+  const turn = (text: string, toolCalls: ReturnType<typeof call>[] = [], streaming = true, extra: object = {}) =>
+    ({ kind: 'assistant' as const, turnId: 't', text, toolCalls, badge: null, streaming, error: null, notes: [], attempts: [], ...extra });
+
+  it('streams the answer as it arrives, before the turn ends (no 처리 중 line once text shows)', () => {
+    const { container, queryByTestId } = render(<MessageView item={turn('결론부터: 고쳤어요')} />);
+    expect(container.querySelector('.markdown')?.textContent).toBe('결론부터: 고쳤어요');
+    expect(container.querySelector('.cursor')).not.toBeNull();
+    expect(queryByTestId('concise-progress')).toBeNull();
+  });
+
+  it('a tool call folds the text before it into a gray lead line; the next stretch streams; tool output and thinking stay hidden', () => {
+    const before = '먼저 테스트부터 볼게요.';
+    const { container, getByTestId, rerender } = render(<MessageView item={turn(before, [call('1', before.length)], true, { thinking: { text: 'SECRET-THOUGHT', redacted: false, startedAt: 0, ms: 1000 } })} />);
+    expect(getByTestId('concise-lead').textContent).toBe(before);
+    expect(getByTestId('concise-progress').textContent).toContain('단계 1');
+    expect(container.querySelector('.markdown:not(.thinking-body)')).toBeNull();
+    // Tool bodies stay folded inside the collapsed step group (as before).
+    expect((getByTestId('tool-group') as HTMLDetailsElement).open).toBe(false);
+    expect(container.textContent).not.toContain('SECRET-THOUGHT');
+    rerender(<MessageView item={turn(`${before}\n\n원인은 오타였어요`, [call('1', before.length)])} />);
+    expect(getByTestId('concise-lead').textContent).toBe(before);
+    const md = container.querySelectorAll('.markdown');
+    expect(md).toHaveLength(1);
+    expect(md[0]!.textContent).toBe('원인은 오타였어요');
+    expect(container.querySelector('.cursor')).not.toBeNull();
+  });
+
+  it('when the turn ends: one reply with the whole text, like before (no lead line, no progress, no cursor)', () => {
+    const before = '먼저 테스트부터 볼게요.';
+    const text = `${before}\n\n원인은 오타였어요`;
+    const { container, queryByTestId } = render(<MessageView item={turn(text, [call('1', before.length)], false)} />);
+    expect(queryByTestId('concise-progress')).toBeNull();
+    expect(queryByTestId('concise-lead')).toBeNull();
+    expect(container.querySelector('.cursor')).toBeNull();
+    const md = container.querySelectorAll('.markdown');
+    expect(md).toHaveLength(1);
+    expect(md[0]!.textContent).toContain(before);
+    expect(md[0]!.textContent).toContain('원인은 오타였어요');
+  });
+
+  it('full mode is unchanged: the whole text streams with the tool calls, no lead line', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: false }));
+    const before = '먼저 테스트부터 볼게요.';
+    const { container, queryByTestId } = render(<MessageView item={turn(`${before}\n\n원인은`, [call('1', before.length)])} />);
+    expect(queryByTestId('concise-progress')).toBeNull();
+    expect(container.querySelector('.markdown')?.textContent).toContain(before);
+    expect(container.querySelector('.markdown')?.textContent).toContain('원인은');
+    expect(container.querySelector('.cursor')).not.toBeNull();
   });
 });
