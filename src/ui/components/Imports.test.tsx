@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useReducer } from 'react';
 import { Pane } from './Pane';
-import { Sidebar } from './Sidebar';
+import { Sidebar, importTitle, rowTag } from './Sidebar';
 import { GEMINI_IMPORT_NOTE } from '../../shared/handoff';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { initialState, newPane, reducer, type PaneState } from '../state';
@@ -53,6 +53,34 @@ describe('Grok Bot conversation pane', () => {
     expect(screen.getByTestId('composer-note').textContent).toBe(GEMINI_IMPORT_NOTE);
     expect((screen.getByLabelText('메시지') as HTMLTextAreaElement).disabled).toBe(false);
     expect(screen.queryByTestId('grokbot-handoff')).toBeNull();
+  });
+});
+
+describe('Grok conversation open in a terminal grok (heldBy)', () => {
+  afterEach(cleanup);
+  const held = e({ sessionId: 'g-1', title: '터미널 대화', heldBy: 'other' });
+
+  it('the composer is read-only with a short placeholder and a note saying what frees it', () => {
+    render(<Pane pane={paneOn(held)} app={{ pending: [], questions: [], codexAvailable: false, projects: projects([held]) }} active closable={false} dispatch={noop} send={noop} onClose={noop} />);
+    const ta = screen.getByLabelText('메시지') as HTMLTextAreaElement;
+    expect(ta.disabled).toBe(true);
+    expect(ta.placeholder).toBe('터미널 grok 이 쓰는 중 · 읽기만 가능');
+    expect(screen.getByTestId('composer-note').textContent).toBe('터미널에서 grok 이 이 대화를 열고 있어요 — 그쪽 grok 을 끝내면 여기서 바로 이어 쓸 수 있어요');
+  });
+
+  it('once the terminal grok lets go, the composer opens again', () => {
+    const { rerender } = render(<Pane pane={paneOn(held)} app={{ pending: [], questions: [], codexAvailable: false, projects: projects([held]) }} active closable={false} dispatch={noop} send={noop} onClose={noop} />);
+    const free = { ...held, heldBy: undefined };
+    rerender(<Pane pane={paneOn(free)} app={{ pending: [], questions: [], codexAvailable: false, projects: projects([free]) }} active closable={false} dispatch={noop} send={noop} onClose={noop} />);
+    expect((screen.getByLabelText('메시지') as HTMLTextAreaElement).disabled).toBe(false);
+    expect(screen.queryByTestId('composer-note')).toBeNull();
+  });
+
+  it('the sidebar row carries 터미널에서 열림 and the tooltip says why', () => {
+    expect(rowTag(held)).toBe('터미널에서 열림');
+    expect(importTitle(held)).toContain('그쪽 grok 을 끝내면 deck 에서 이어 쓸 수 있어요');
+    expect(rowTag({ ...held, engine: 'claude' })).toBeNull(); // Claude sessions open elsewhere sync silently
+    expect(rowTag({ ...held, heldBy: undefined })).toBeNull();
   });
 });
 

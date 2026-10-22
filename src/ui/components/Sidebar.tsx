@@ -641,6 +641,7 @@ export function importTitle(s: SessionEntry): string {
   const preview = s.preview ? `\n\n${s.preview}` : '';
   if (s.source === 'grokbot') return `Grok Bot 앱 대화 — 읽기만 할 수 있어요 (새 Grok 세션으로 이어갈 수 있어요)${preview}`;
   if (s.cwdMissing) return `폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다${preview}`;
+  if (s.engine === 'grok' && s.heldBy) return `${SIDEBAR_HELD.title}${preview}`;
   if (s.engine === 'grok') return `${s.autoRun ? 'grok 헤드리스로 자동 실행된' : '터미널 Grok CLI 에서 만든'} 대화 — 메시지를 보내면 deck 에서 이어갑니다${preview}`;
   if (s.engine === 'gemini') return `agy 에서 만든 대화 — 메시지를 보내면 deck 에서 이어갑니다 (이전 메시지는 deck 에 보이지 않음)${preview}`;
   if (s.codexArchived) return 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다';
@@ -657,8 +658,15 @@ const ENGINE_NAME: Partial<Record<EngineKind, string>> = { codex: 'Codex (GPT)',
 export function rowTag(s: SessionEntry): string | null {
   if (s.source === 'grokbot' || s.codexArchived) return '읽기 전용';
   if (s.cwdMissing) return '폴더 없음';
+  if (s.engine === 'grok' && s.heldBy) return SIDEBAR_HELD.tag;
   return null;
 }
+
+/** A Grok conversation a terminal grok has open (heldBy): its row tag and the tooltip's line. */
+const SIDEBAR_HELD = {
+  tag: '터미널에서 열림',
+  title: '터미널에서 grok 이 열고 있어 지금은 읽기만 할 수 있어요 — 그쪽 grok 을 끝내면 deck 에서 이어 쓸 수 있어요',
+} as const;
 
 /** A preview as one line (the row truncates it with an ellipsis). */
 const oneLine = (t: string | undefined) => (t ? t.replace(/\s+/g, ' ').trim() : '');

@@ -208,6 +208,12 @@ export type SessionActions = {
 /** ⌘⇧E: `detail` is the pane id whose side panel opens (the file picker) or closes, as its ⋯ 파일 열기 / 파일 패널 닫기. */
 export const TOGGLE_SIDE_EVENT = 'deck:toggle-side';
 
+/** A conversation held by a terminal grok: the composer's note (what to do) and its short placeholder. */
+const GROK_HELD = {
+  note: '터미널에서 grok 이 이 대화를 열고 있어요 — 그쪽 grok 을 끝내면 여기서 바로 이어 쓸 수 있어요',
+  readOnly: '터미널 grok 이 쓰는 중 · 읽기만 가능',
+} as const;
+
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts, onAddPane, onMaxPane, paneMaxed, headSlot, onPalette }: {
   pane: PaneState;
   app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap' | 'suggestions'>>;
@@ -515,6 +521,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const grokBot = entry?.source === 'grokbot' || !!s?.sessionId?.startsWith('grokbot-');
   // The Grok Bot handoff's new session: its folder (never the home folder) is shown and can be changed before the first send.
   const grokBotNew = isNew && !!pane.handoffFrom?.sessionId.startsWith('grokbot-');
+  // A terminal `grok` has this conversation open: deck only reads it (sending too would fork it). The server rescans
+  // the holders while a browser is connected, so the composer opens again by itself once that grok exits.
+  const grokHeld = entry?.engine === 'grok' && !!entry.heldBy;
   const blocked = grokBot || !!entry?.codexArchived || !!(entry?.imported && entry.cwdMissing) || gone === 'retired' || gone === 'unknown';
   const latest = useRef({ pane, send, accounts: names.all, defaultMode: app.defaultPermMode ?? null });
   latest.current = { pane, send, accounts: names.all, defaultMode: app.defaultPermMode ?? null };
@@ -634,10 +643,10 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             dispatch({ type: 'route_fit_resolve', how, paneId: pane.id });
             if (how === 'send') sendFromPane(pane, f.text, f.attachments.map((a) => ({ ...a, size: 0 })), dispatch, send, app.defaultPermMode ?? null, false, undefined, { ignoreFit: true });
           }}
-          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : grokBot ? 'Grok Bot 앱 대화예요 — 여기서 이어 쓰려면 새 Grok 세션으로 옮겨요' : grokBotNew ? (s.cwd ? `작업 폴더: ${s.cwd} — 보내기 전에 바꿀 수 있어요` : '작업 폴더를 골라 주세요 — 홈 폴더에서는 시작하지 않아요') : entry?.imported && entry.engine === 'gemini' && !entry.cwdMissing ? GEMINI_IMPORT_NOTE : null}
+          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : grokBot ? 'Grok Bot 앱 대화예요 — 여기서 이어 쓰려면 새 Grok 세션으로 옮겨요' : grokBotNew ? (s.cwd ? `작업 폴더: ${s.cwd} — 보내기 전에 바꿀 수 있어요` : '작업 폴더를 골라 주세요 — 홈 폴더에서는 시작하지 않아요') : grokHeld ? GROK_HELD.note : entry?.imported && entry.engine === 'gemini' && !entry.cwdMissing ? GEMINI_IMPORT_NOTE : null}
           onGrokBotHandoff={grokBot ? () => dispatch({ type: 'grokbot_handoff', paneId: pane.id }) : undefined}
           onPickCwd={grokBotNew ? () => setCwdPick(true) : undefined}
-          readOnly={grokBot ? 'Grok Bot 앱 대화라 읽기만 할 수 있어요' : grokBotNew && !s.cwd ? '작업 폴더를 고른 뒤 보낼 수 있어요' : entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : entry?.engine === 'grok' && entry.heldBy ? '터미널 grok 이 이 대화를 열고 있어 읽기만 할 수 있어요' : null}
+          readOnly={grokBot ? 'Grok Bot 앱 대화라 읽기만 할 수 있어요' : grokBotNew && !s.cwd ? '작업 폴더를 고른 뒤 보낼 수 있어요' : entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : grokHeld ? GROK_HELD.readOnly : null}
           onInterrupt={interrupt}
           onCancelStart={() => {
             // Waiting in the server's queue (turn_queued): take it back out there too, or it would run after the 취소.
