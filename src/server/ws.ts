@@ -777,6 +777,15 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         return;
       }
     }
+    // A Claude process that already answered and holds no background work may only be waiting for its prompt suggestion:
+    // it is ended and the handoff runs once the session is released.
+    const idle = msg.handoff && msg.sessionId && busy.has(msg.sessionId) ? turns.get(busy.get(msg.sessionId)!) : undefined;
+    if (idle && idle.engine === 'claude' && idle.current === null && !idle.bg && !idle.recycling && idle.afterRelease.length === 0) {
+      idle.recycling = true;
+      idle.afterRelease.push({ ws, msg, ...hop });
+      idle.ac.abort();
+      return;
+    }
     if (msg.handoff && (!msg.sessionId || busy.has(msg.sessionId))) {
       send(ws, { type: 'error', turnId: null, message: msg.sessionId ? '세션이 실행 중이라 지금은 넘길 수 없습니다 — 끝난 뒤 다시 시도하세요' : '새 세션은 넘길 대화가 없습니다', ...ref });
       return;

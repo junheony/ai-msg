@@ -122,10 +122,12 @@ export class ClaudeEngine implements Engine {
     let aborted = false;
     /** The turn is over and stdin is held open only for the CLI's prompt_suggestion (SUGGEST_WAIT_MS). */
     let suggestWait = false;
-    // Nothing runs while waiting for a suggestion: the input is just closed (no SIGINT for an idle process).
-    /** The turn is over (waiting only for its suggestion, or closing): an abort just closes stdin, no SIGINT. */
+    /**
+     * The turn is over (waiting only for its suggestion, or closing): its transcript is written, so an abort ends the
+     * process at once (SIGTERM, no SIGINT) — a send waiting for the session does not sit through SUGGEST_WAIT_MS.
+     */
     let over = false;
-    const onAbort = () => { aborted = true; reg.abortAll(); if (over) proc?.stop(); else proc?.interrupt(); };
+    const onAbort = () => { aborted = true; reg.abortAll(); if (over) proc?.terminate(); else proc?.interrupt(); };
     req.signal.addEventListener('abort', onAbort, { once: true });
     let capTimer: NodeJS.Timeout | null = null;
     let graceTimer: NodeJS.Timeout | null = null;
@@ -189,7 +191,9 @@ export class ClaudeEngine implements Engine {
       const toolInputs = new Map<string, unknown>();
       const writeMsg = (m: CliUserMessage): boolean => { if (typeof m.uuid === 'string') this.owned.add(m.uuid); return p.write(m); }; // changed
       const write = async (f: { text: string; attachments: Attachment[] }, steerId: string | null): Promise<boolean> => {
-        if (!p.inputOpen || aborted || suggestWait) return false; // changed
+        if (!p.inputOpen || aborted) return false; // changed
+        // A follow-up while only the suggestion was awaited: the wait is called off and the message goes in as usual.
+        if (suggestWait) { suggestWait = false; over = false; if (suggestTimer) clearTimeout(suggestTimer); suggestTimer = null; }
         const uuid = randomUUID();
         unanswered.push(uuid);
         if (steerId !== null) steers.set(uuid, steerId);
@@ -228,7 +232,8 @@ export class ClaudeEngine implements Engine {
       }
       p.start(); // changed
       // Before any user message: the CLI reads initialize first (its control_response is ignored like any unknown frame).
-      if (this.o.promptSuggestions) p.write({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'initialize', promptSuggestions: true } });
+      const suggest = !!this.o.promptSuggestions && req.suggest === true;
+      if (suggest) p.write({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'initialize', promptSuggestions: true } });
       writeMsg(firstMsg); // changed
       if (req.signal.aborted) onAbort();
       if (this.o.steer === false || req.noTools) delete live.steer;
@@ -237,7 +242,8 @@ export class ClaudeEngine implements Engine {
         if (ended) break; // changed: what arrives after cap/grace is the dying child's
         if (m.type === 'prompt_suggestion') {
           const text = typeof m.suggestion === 'string' ? m.suggestion.trim() : '';
-          if (text && !aborted) yield { kind: 'suggestion', text };
+          // Only while it is awaited: one racing a follow-up (or after an abort) is stale.
+          if (text && !aborted && suggestWait) yield { kind: 'suggestion', text };
           if (suggestWait) break;
           continue;
         }
@@ -305,7 +311,7 @@ export class ClaudeEngine implements Engine {
         if (aborted) break; // changed
         if (unanswered.length === 0 && bg.tasks().length === 0) {
           // The turn is done; only a successful one gets a suggestion, so only then is stdin held open a moment for it.
-          if (!this.o.promptSuggestions || !lastOk || suggestWait) break;
+          if (!suggest || !lastOk || suggestWait) break;
           suggestWait = true;
           over = true;
           clearGrace();

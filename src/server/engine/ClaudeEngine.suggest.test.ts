@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
 import { ClaudeEngine, type ClaudeEngineOptions } from './ClaudeEngine';
-import type { EngineEvent, TurnRequest } from './Engine';
+import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { fakeClaudeCli, cli } from './claudeCli/fakeClaudeCli';
 import { PermissionBridge } from './claudeCli/bridge';
 import { testRegistry } from '../../shared/accounts.testkit';
@@ -12,7 +12,8 @@ let bridge: PermissionBridge | null = null;
 let tmp = '';
 afterEach(async () => { await bridge?.close(); bridge = null; if (tmp) fs.rmSync(tmp, { recursive: true, force: true }); tmp = ''; });
 
-const req = (over: Partial<TurnRequest> = {}): TurnRequest => ({ account: 'c', cwd: '/w', resumeSessionId: null, model: 'opus', prompt: 'hi', signal: new AbortController().signal, onPermission: async () => 'once', ...over });
+/** A person's turn (TurnRunner sets `suggest` on those only). */
+const req = (over: Partial<TurnRequest> = {}): TurnRequest => ({ account: 'c', cwd: '/w', resumeSessionId: null, model: 'opus', prompt: 'hi', signal: new AbortController().signal, onPermission: async () => 'once', suggest: true, ...over });
 async function setup(over: Partial<ClaudeEngineOptions> = {}, fakeOpts: Parameters<typeof fakeClaudeCli>[0] = {}) {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qd-sug-'));
   bridge = await PermissionBridge.open();
@@ -73,7 +74,33 @@ describe('ClaudeEngine prompt suggestions', () => {
     expect(Date.now() - t0).toBeLessThan(2_000);
   });
 
-  it('abort during the wait closes stdin (no SIGINT) and drops a late suggestion', async () => {
+  it('an automatic turn (no req.suggest) asks for none and does not wait', async () => {
+    const { f, engine } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000 });
+    f.push(cli.init('s1'), cli.result('a', 's1'));
+    const t0 = Date.now();
+    await drain(engine.runTurn(req({ suggest: false })));
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(inputs(f).map((m) => m.type)).toEqual(['user']);
+  });
+
+  it('a follow-up during the wait calls it off and goes in as a normal message; the follow-up\'s own result waits again', async () => {
+    const { f, engine } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000 });
+    let live: LiveInput | null = null;
+    f.push(cli.init('s1'), cli.result('a', 's1'));
+    const evs: EngineEvent[] = [];
+    const done = (async () => { for await (const e of engine.runTurn(req({ onLive: (l) => { live = l; } }))) evs.push(e); })();
+    for (let i = 0; i < 200 && evs.filter((e) => e.kind === 'result').length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(await live!.send({ text: '이어서', attachments: [] })).toBe(true);
+    expect(f.state.inputClosed).toBe(false);
+    // A suggestion racing the follow-up is stale; the follow-up's result waits for its own.
+    f.push(suggestion('낡은 추천'), cli.result('b', 's1'), suggestion('새 추천'));
+    await done;
+    expect(inputs(f).filter((m) => m.type === 'user')).toHaveLength(2);
+    expect(evs.filter((e) => e.kind === 'result')).toHaveLength(2);
+    expect(evs.filter((e) => e.kind === 'suggestion')).toEqual([{ kind: 'suggestion', text: '새 추천' }]);
+  });
+
+  it('abort during the wait ends the process at once (SIGTERM, no SIGINT) and drops a late suggestion', async () => {
     const { f, engine } = await setup({ promptSuggestions: true, suggestWaitMs: 60_000 }, { exitOnStdinClose: false });
     const ac = new AbortController();
     const evs: EngineEvent[] = [];
@@ -83,6 +110,7 @@ describe('ClaudeEngine prompt suggestions', () => {
     expect(f.state.inputClosed).toBe(true);
     f.push(suggestion('늦은 추천'));
     await done;
+    expect(f.state.signals).toContain('SIGTERM');
     expect(f.state.signals).not.toContain('SIGINT');
     expect(evs.some((e) => e.kind === 'suggestion')).toBe(false);
   });

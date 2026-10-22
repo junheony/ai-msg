@@ -16,7 +16,7 @@ const type = (t: string) => fireEvent.change(box(), { target: { value: t } });
 const chip = () => screen.queryByTestId('prompt-suggest-take');
 
 describe('Composer: next prompt suggestion', () => {
-  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  afterEach(cleanup);
 
   it('empty input: the suggestion is the placeholder, with a Tab chip', () => {
     renderChat({ suggestion: '테스트도 돌려줘' });
@@ -74,12 +74,7 @@ describe('Composer: next prompt suggestion', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it('an open @ popup owns Tab', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ files: ['src/main.ts'], truncated: false }), { status: 200, headers: { 'content-type': 'application/json' } })));
-    renderChat({ suggestion: '커밋해줘', cwd: '/w', sessionId: 's1' });
-    type('@');
-    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1));
-    fireEvent.keyDown(box(), { key: 'Tab' });
-    expect(box().value).toBe('@src/main.ts ');
-  });
+  // No test of the @/slash popup taking Tab first: that popup opens only on a token (`@…`, `/…`), so the input is never
+  // empty while it is open, and the suggestion shows only on an empty input — the two never meet. (Chat's onKeyDown still
+  // hands keys to the popup before the suggestion.)
 });

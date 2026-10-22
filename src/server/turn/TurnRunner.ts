@@ -1146,6 +1146,8 @@ export class TurnRunner {
       onLive: (l) => { out.live = l; this.inputs.set(p.turnId, l); },
       ...(p.handoff ? { noTools: true } : {}),
       ...(fastTurn(p) ? { fast: true } : {}),
+      // Only a person's turn waits for a suggestion (an automatic turn, cap continuation or retry never holds the process for one).
+      ...(!p.handoff && p.commanderHop === undefined && !p.bgTask && !p.bgCapHop && !p.retryHop && !p.failoverHop ? { suggest: true } : {}),
       ...(addendum ? { appendSystemPrompt: addendum } : {}),
       ...(systemNote ? { systemNote } : {}),
       ...(commanderHop ? {

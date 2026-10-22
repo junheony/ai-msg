@@ -233,6 +233,8 @@ export type TurnRequest = {
   systemNote?: string;
   /** ⚡ 빠르게: `fastMode: true` in this process's `--settings` and the model forced to Opus (fast mode is Opus-only). */
   fast?: boolean;
+  /** A person's turn: the CLI may be asked for its next-prompt suggestion (ClaudeEngine promptSuggestions). Never on automatic turns. */
+  suggest?: boolean;
   /** 간결 모드: appended to the engine's system prompt for this process (Claude `--append-system-prompt`); not stored in the transcript. */
   appendSystemPrompt?: string;
   /**
