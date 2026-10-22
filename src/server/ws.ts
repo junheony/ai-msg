@@ -331,6 +331,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    * refusal before that start, or a restart's refusal, goes back to it.
    */
   const followFrom = new Map<string, { ws: WebSocket; started: boolean }>();
+  /** Refs of held sends being handed on again by drainWaiting (startTurn runs synchronously): told once, not per pass. */
+  const rehold = new Set<string>();
   /** The user message of each deck turn started by a send (its own turn or a follow-up), until the turn's process ends. */
   const prompts = new Map<string, TurnPrompt>();
   const promptOf = (msg: { text: string; attachments?: string[] }): TurnPrompt => ({
@@ -809,7 +811,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       const holdBehindBg = (b: Turn, behind = FAST_WAIT_BEHIND) => {
         if (!msg.clientRef) return;
         b.pendingRefs.add(msg.clientRef);
-        if (queuedAware.has(ws)) send(ws, { type: 'turn_queued', turnId: b.turnId, sessionId: sid, cwd: b.cwd, clientRef: msg.clientRef, behind });
+        // Back here from drainWaiting (still waiting): the device was told already.
+        if (queuedAware.has(ws) && !rehold.has(msg.clientRef)) send(ws, { type: 'turn_queued', turnId: b.turnId, sessionId: sid, cwd: b.cwd, clientRef: msg.clientRef, behind });
       };
       if (base?.recycling) {
         if (!base.ac.signal.aborted) holdBehindBg(base);
@@ -924,8 +927,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       for (const d of turn.afterRelease.splice(0)) {
         if (!turn.recycling && !d.held && d.ws !== NO_DEVICE && !clients.has(d.ws)) continue;
         const next = d.msg.sessionId ? turns.get(busy.get(d.msg.sessionId) ?? '') : undefined;
-        if (next) next.afterRelease.push(d);
-        else startTurn(d.ws, d.msg, false, d.retryHop);
+        if (next) {
+          next.afterRelease.push(d);
+          // Still held as going in, now by the turn it waits on: a reconnect's copy is not queued twice.
+          if (d.held && d.msg.clientRef) next.pendingRefs.add(d.msg.clientRef);
+        } else startTurn(d.ws, d.msg, false, d.retryHop);
       }
       const sid = turn.sessionId;
       if (sid && !busy.has(sid)) sessionIdle(sid);
@@ -935,8 +941,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (turns.get(turnId) !== turn || turn.current !== null || turn.recycling) return;
       for (const d of turn.afterRelease.splice(0)) {
         // Held as going in (pendingRefs) by this very turn: let go first, or the send would be refused as its own duplicate.
-        if (d.held && d.msg.clientRef) turn.pendingRefs.delete(d.msg.clientRef);
+        const ref = d.held ? d.msg.clientRef : undefined;
+        if (ref) { turn.pendingRefs.delete(ref); rehold.add(ref); }
         startTurn(d.ws, d.msg, false, d.retryHop);
+        if (ref) rehold.delete(ref);
       }
     });
     let started = false;

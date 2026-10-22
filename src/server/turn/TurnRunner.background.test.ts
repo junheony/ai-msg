@@ -764,7 +764,7 @@ describe('TurnRunner: background work after the turn result', () => {
       expect(f.state.calls).toBe(1);
     });
 
-    it('with no account left (one hop per other account) the segment ends as failed; a queued follow-up is not refused but goes on first, a later send after it', async () => {
+    it('with no account left (one hop per other account) the segment ends as failed; the follow-ups waiting are refused together, in order, no process started for them', async () => {
       const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
       const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
       f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
@@ -772,22 +772,19 @@ describe('TurnRunner: background work after the turn result', () => {
       f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'));
       await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
       expect(runner.followUp(SID, { turnId: 'f2', text: 'next', clientRef: 'r2' })).toEqual({ queuedBehind: '백그라운드 계속' });
-      f.push(limited);
-      await waitFor(() => f.state.calls === 2, 'the queued follow-up sent on');
-      // Booked to go on by itself once the limit lifts (BottleneckWatch fires it), the hop count carried over.
-      expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '이어서 진행해 주세요.', hops: 1 });
-      // A send arriving now waits behind it (it never goes in ahead of the message sent first).
-      expect(runner.followUp(SID, { turnId: 'f3', text: 'later', clientRef: 'r3' })).toEqual({ queuedBehind: RESEND_NOTICE });
-      f.push(cli.init(SID), cli.result('two', SID));
-      await waitFor(() => f.state.calls === 3, 'the later send after it');
-      f.push(cli.init(SID), cli.result('three', SID));
+      expect(runner.followUp(SID, { turnId: 'f3', text: 'after', clientRef: 'r3' })).toEqual({ queuedBehind: '백그라운드 계속' });
+      // Were they sent on, each would hit the limit again: the fake fails every further run the same way.
+      f.push(limited, limited, limited);
       await done;
       expect(readCooldownUntilMs(deps.cooldownDir, 'b', NOW)).toBe(NOW + 3_600_000);
       expect(of(msgs, 'turn_retry')).toEqual([]);
-      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, 'B 계정 사용 한도 도달 · 03:50 리셋 · 대안 계정 없음'], ['f2', true, null], ['f3', true, null]]);
-      expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.clientRef])).toEqual([['t1', undefined], ['t1:bg1', undefined], ['f2', 'r2'], ['f3', 'r3']]);
-      expect(of(msgs, 'error')).toEqual([]);
-      expect(f.inputs.slice(-2).map((m) => JSON.stringify(m))).toEqual([expect.stringContaining('next'), expect.stringContaining('later')]);
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, 'B 계정 사용 한도 도달 · 03:50 리셋 · 대안 계정 없음']]);
+      expect(of(msgs, 'error').map((m) => [m.turnId, m.clientRef, m.sessionId])).toEqual([['f2', 'r2', SID], ['f3', 'r3', SID]]);
+      expect(of(msgs, 'turn_started').map((m) => m.turnId)).toEqual(['t1', 't1:bg1']);
+      expect(f.state.calls).toBe(1);
+      expect(runner.resendingFor(SID)).toBe(false);
+      // The segment's own retry stays booked (nothing overwrote it): it goes on by itself once the limit lifts.
+      expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '이어서 진행해 주세요.', hops: 1 });
     });
 
     it('the other account refusing the continuation before it starts: the queued follow-up still goes on, before a later send', async () => {

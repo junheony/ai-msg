@@ -466,6 +466,8 @@ describe('ws: sessions held open for background work', () => {
     expect(await b.next('turn_result', (m) => m.turnId === k2.turnId)).toMatchObject({ ok: true, text: 'two' });
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     expect(fake.state.calls).toBe(3);
+    // Told once that it waits, however often it was handed on meanwhile.
+    expect(b.got.filter((m) => m.type === 'turn_queued' && m.clientRef === 'k2')).toHaveLength(1);
     a.close();
     b.close();
   });

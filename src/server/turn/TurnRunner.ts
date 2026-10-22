@@ -2406,16 +2406,19 @@ export class TurnRunner {
     // a later send never goes in ahead of them.
     let lined = false;
     const lineUp = () => { if (!lined) { lined = true; line.unshift(...need.queued); } };
-    const fail = (errorText: string) => {
-      sink.emit({ type: 'turn_result', turnId: need.seg.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: need.seg.reason, usage: ZERO_USAGE, modelNote: null }, errorText });
-      lineUp();
-    };
+    const close = (errorText: string) => sink.emit({ type: 'turn_result', turnId: need.seg.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: need.seg.reason, usage: ZERO_USAGE, modelNote: null }, errorText });
+    const fail = (errorText: string) => { close(errorText); lineUp(); };
     const noneLeft = `${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`;
     // A background continuation is booked as '이어서 진행해 주세요.', a failed follow-up as its own text (not with files).
     const retryText = need.followUp ? (need.followUp.f.attachments?.length ? null : need.followUp.f.text) : '이어서 진행해 주세요.';
     const none = async () => {
       if (need.failure === 'limit' && retryText) await this.bookRetry(sessionId, retryText, need.followUp ? need.followUp.f.retryHop : p.retryHop, need.errorText, p.commanderHop).catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
-      fail(noneLeft);
+      close(noneLeft);
+      // No account can take anything now: sent on, each would only hit the limit again (a process each, its booked retry
+      // overwriting this one's, its ref recorded as taken). So the follow-ups that waited and the rest of the line are
+      // refused together, in order — each device keeps its messages, paused at the head of its queue.
+      lined = true;
+      for (const q of [...need.queued, ...line.splice(0)]) this.refuseFollowUp(q, sink, sessionId, cwd);
     };
     try {
       const hop = p.failoverHop ?? 0;
