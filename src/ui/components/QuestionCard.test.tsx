@@ -100,4 +100,60 @@ describe('QuestionCard (D8)', () => {
     expect((screen.getByPlaceholderText('기타 (직접 입력)') as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByRole('status').textContent).toBe('보내는 중…');
   });
+
+  it('strips a "(Recommended)" tail into a 추천 badge but submits the original label', () => {
+    const onAnswer = vi.fn();
+    const rec: PendingQuestion = {
+      turnId: 't', sessionId: 's1', cwd: '/w', requestId: 'q3',
+      questions: [{ question: 'Which DB?', header: 'DB', options: [{ label: 'Postgres (Recommended)', description: '' }, { label: 'SQLite', description: '' }], multiSelect: false }],
+    };
+    render(<QuestionCard req={rec} onAnswer={onAnswer} />);
+    expect(screen.queryByText('Postgres (Recommended)')).toBeNull();
+    const label = screen.getByText('Postgres');
+    expect(label.closest('button')!.textContent).toContain('추천');
+    expect(screen.getByText('추천')).toBeTruthy();
+    fireEvent.click(label);
+    fireEvent.click(screen.getByText('답변 보내기'));
+    expect(onAnswer).toHaveBeenCalledWith('q3', { 'Which DB?': 'Postgres (Recommended)' });
+  });
+
+  it('shows progress (n/total) and how many questions are left, ready when all are answered', () => {
+    render(<QuestionCard req={req} onAnswer={vi.fn()} />);
+    expect(screen.getByTestId('question-progress').textContent).toBe('0/2 답변');
+    expect(screen.getByTestId('question-left').textContent).toBe('2개 남음');
+    fireEvent.click(screen.getByText('red'));
+    expect(screen.getByTestId('question-progress').textContent).toBe('1/2 답변');
+    expect(screen.getByTestId('question-left').textContent).toBe('1개 남음');
+    fireEvent.change(screen.getByLabelText('Features 직접 입력'), { target: { value: 'all' } });
+    expect(screen.getByTestId('question-progress').textContent).toBe('2/2 답변');
+    expect(screen.getByTestId('question-left').textContent).toBe('모두 골랐어요');
+    // Whitespace-only free text does not count as an answer.
+    fireEvent.change(screen.getByLabelText('Features 직접 입력'), { target: { value: '   ' } });
+    expect(screen.getByTestId('question-left').textContent).toBe('1개 남음');
+  });
+
+  it('a single question shows no progress counter', () => {
+    render(<QuestionCard req={{ ...req, questions: [req.questions[0]!] }} onAnswer={vi.fn()} />);
+    expect(screen.queryByTestId('question-progress')).toBeNull();
+    expect(screen.getByText('Claude 가 선택을 기다려요')).toBeTruthy();
+  });
+
+  it('the 기타 row and multi-select picks are mutually exclusive: typing clears every pick, picking clears the text', () => {
+    const onAnswer = vi.fn();
+    render(<QuestionCard req={{ ...req, questions: [req.questions[1]!] }} onAnswer={onAnswer} />);
+    const a = screen.getByText('a').closest('button')!;
+    const b = screen.getByText('b').closest('button')!;
+    fireEvent.click(a);
+    fireEvent.click(b);
+    const free = screen.getByPlaceholderText('기타 (직접 입력)') as HTMLInputElement;
+    fireEvent.change(free, { target: { value: 'none' } });
+    expect(a.getAttribute('aria-pressed')).toBe('false');
+    expect(b.getAttribute('aria-pressed')).toBe('false');
+    expect(free.closest('label')!.className).toContain('picked');
+    fireEvent.click(b);
+    expect(free.value).toBe('');
+    expect(free.closest('label')!.className).not.toContain('picked');
+    fireEvent.click(screen.getByText('답변 보내기'));
+    expect(onAnswer).toHaveBeenCalledWith('q1', { 'Which features?': 'b' });
+  });
 });
