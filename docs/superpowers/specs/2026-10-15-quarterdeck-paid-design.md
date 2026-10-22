@@ -3,7 +3,7 @@
 작성 2026-10-15. 결정 주체: 사용자(제품 소유자). 작성: 이 세션. 근거 조사: 코드 감사 2건(읽기 전용), 외부 리서치(GPT-6 Astra 1건 — Claude 측 교차검증은 웹 접근 거부로 실패), 핵심 주장 4건 직접 확인(Happy 저장소·happy.engineering, Anthropic legal-and-compliance, The Register 2026-02-20, Conductor pricing, Vibe Kanban shutdown).
 
 ## 0. 결정 요약
-2026-10-22: 제품명 AI msg 로 변경(npm `ai-msg`, CLI `ai-msg`). 아래 Quarterdeck 은 옛 이름
+2026-10-22: 제품명 AI-MSG 로 변경(npm `ai-msg`, CLI `ai-msg`). 아래 Quarterdeck 은 옛 이름이다.
 
 
 | 항목 | 결정 | 비고 |

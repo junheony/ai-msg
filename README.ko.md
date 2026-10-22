@@ -1,4 +1,4 @@
-# AI msg
+# AI-MSG
 
 [![CI](https://github.com/junheony/ai-msg/actions/workflows/ci.yml/badge.svg)](https://github.com/junheony/ai-msg/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -7,7 +7,7 @@
 
 이미 로그인해 둔 코딩 CLI 를 Claude Desktop 과 비슷한 화면으로 쓰는, 내 컴퓨터에서 돌리는 웹 셸.
 
-AI msg 는 자기 컴퓨터에서 실행한다. 공식 Claude Code 엔진(Claude Agent SDK)과 Codex CLI, Gemini CLI 를 **본인 로그인 그대로** 구동한다. Claude 계정(좌석)이 여러 개면 계정별 사용량을 보여 주고, 턴마다 알맞은 계정을 자동으로 고른다. 같은 화면을 폰·태블릿에서도 열 수 있어서, 돌고 있는 세션을 다른 기기에서 이어 볼 수 있다.
+AI-MSG 는 자기 컴퓨터에서 실행한다. 공식 Claude Code CLI(헤드리스)과 Codex CLI, Gemini CLI 를 **본인 로그인 그대로** 구동한다. Claude 계정(좌석)이 여러 개면 계정별 사용량을 보여 주고, 턴마다 알맞은 계정을 자동으로 고른다. 같은 화면을 폰·태블릿에서도 열 수 있어서, 돌고 있는 세션을 다른 기기에서 이어 볼 수 있다.
 
 이름은 한국어 "머시기"와 message/MSG 를 겹친 말장난이다. 내부 식별자는 짧은 이름 `deck` 을 그대로 쓴다(`DECK_*` 환경변수, `~/.config/deck`).
 
@@ -161,7 +161,7 @@ CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c  (계정
 | Codex | `codex exec --json` 을 자식 프로세스로 | codex-cli 0.159 이상 필요. 승인 카드가 없다. `approval_policy=never` 와 샌드박스로 돈다. 샌드박스 기본값은 Claude 기본 권한과 상관없이 네트워크를 허용한 작업 폴더 쓰기이고, 읽기 전용을 고를 수 있다. 이미 있는 세션도 샌드박스 칩에서 바꿀 수 있고 다음 턴부터 적용된다. `danger-full-access` 는 쓰지 않는다. |
 | Gemini | `gemini -o stream-json` 을 자식 프로세스로 | 직접 골랐을 때만 쓰이고 자동으로는 선택되지 않는다. 계정 두 개까지(`g1`, `g2`), 계정마다 `GEMINI_CLI_HOME` 을 `<configDir>/gemini/<id>` 로 따로 둔다. 다시 연 세션에는 이전 메시지가 보이지 않는다. |
 
-바이너리가 없으면 그 엔진은 화면에서 숨겨진다. AI msg 는 대신 로그인하지 않는다. Codex 는 `codex login` 으로, Gemini 의 로그인 절차와 한계는 [docs/gemini-spike.md](docs/gemini-spike.md) 를 본다.
+바이너리가 없으면 그 엔진은 화면에서 숨겨진다. AI-MSG 는 대신 로그인하지 않는다. Codex 는 `codex login` 으로, Gemini 의 로그인 절차와 한계는 [docs/gemini-spike.md](docs/gemini-spike.md) 를 본다.
 
 ## 설정
 
@@ -197,10 +197,10 @@ CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c  (계정
 
 Claude 사용량 카드의 출처는 둘이고 `DECK_USAGE_SOURCE` 로 고른다.
 
-- **`cli` (기본).** 사용량 엔드포인트를 전혀 호출하지 않는다. 계정별 5시간·주간 값은 AI msg 가 그 계정으로 돌린 턴에서 공식 `claude` CLI 가 내는 `rate_limit_event` 에서만 얻는다. 마지막 값과 관측 시각은 계정별로 `<설정 디렉터리>/claude-usage-observed.json`(권한 0600)에 저장되어 재시작 뒤에도 남는다. 카드에는 언제 관측했는지("마지막 턴 기준 · 12분 전")가, 관측이 없는 계정에는 "아직 관측 없음"이 보인다. 리셋 시각이 지난 창은 0% 로 보되 "추정"으로 표시한다. 한 창 안의 사용량은 줄지 않으므로, 관측 뒤 10분이 지나도 그 값은 창들 중 가장 이른 리셋 시각까지(관측 뒤 최대 24시간, 리셋 시각이 없는 창은 10분) 라우팅에서 하한값으로 쓴다. 그동안 카드는 "추정 · 마지막 턴 12분 전"으로 보이고, 더 최근에 관측한 계정이 먼저 뽑힌다. 그 뒤에는 카드가 흐려지고 라우팅은 그 계정을 모름으로 본다. CLI 는 Fable 한도를 알려 주지 않으므로 Fable 잔여량은 모르는 채로 두고(Fable 행은 "CLI 미제공"), 대시보드 없는 설치와 마찬가지로 그것만으로 Fable 요청을 Opus 로 바꾸지 않는다(바꾸려면 `DECK_USAGE_STRICT=1`). CLI 가 그 계정이 초과 사용(overage) 중이라거나 Opus 계열 한도가 요청을 거절했다고 알리면, 그 한도가 리셋될 때까지 Fable 은 소진으로 보고 Fable 요청을 Opus 로 보낸다.
+- **`cli` (기본).** 사용량 엔드포인트를 전혀 호출하지 않는다. 계정별 5시간·주간 값은 AI-MSG 가 그 계정으로 돌린 턴에서 공식 `claude` CLI 가 내는 `rate_limit_event` 에서만 얻는다. 마지막 값과 관측 시각은 계정별로 `<설정 디렉터리>/claude-usage-observed.json`(권한 0600)에 저장되어 재시작 뒤에도 남는다. 카드에는 언제 관측했는지("마지막 턴 기준 · 12분 전")가, 관측이 없는 계정에는 "아직 관측 없음"이 보인다. 리셋 시각이 지난 창은 0% 로 보되 "추정"으로 표시한다. 한 창 안의 사용량은 줄지 않으므로, 관측 뒤 10분이 지나도 그 값은 창들 중 가장 이른 리셋 시각까지(관측 뒤 최대 24시간, 리셋 시각이 없는 창은 10분) 라우팅에서 하한값으로 쓴다. 그동안 카드는 "추정 · 마지막 턴 12분 전"으로 보이고, 더 최근에 관측한 계정이 먼저 뽑힌다. 그 뒤에는 카드가 흐려지고 라우팅은 그 계정을 모름으로 본다. CLI 는 Fable 한도를 알려 주지 않으므로 Fable 잔여량은 모르는 채로 두고(Fable 행은 "CLI 미제공"), 대시보드 없는 설치와 마찬가지로 그것만으로 Fable 요청을 Opus 로 바꾸지 않는다(바꾸려면 `DECK_USAGE_STRICT=1`). CLI 가 그 계정이 초과 사용(overage) 중이라거나 Opus 계열 한도가 요청을 거절했다고 알리면, 그 한도가 리셋될 때까지 Fable 은 소진으로 보고 Fable 요청을 Opus 로 보낸다.
 - **`usage-deck`.** 대시보드 주소를 설정했거나(`DECK_URL` 또는 `deck_url` 파일) 기본 주소의 대시보드가 이 설치에 응답한 적이 있으면(`<설정 디렉터리>/usage-source.json` 에 기록) 자동으로, 또는 `DECK_USAGE_SOURCE=usage-deck` 으로 고른다. 아래 설명.
 
-`usage-deck` 모드에서 AI msg 는 `DECK_URL` 의 외부 사용량 대시보드를 60초마다 조회해(`GET /api/state`) 계정별 사용량 창을 받는다. 대시보드는 별도 프로그램이고 이 저장소에 들어 있지 않다. 기대하는 응답은 다음과 같다.
+`usage-deck` 모드에서 AI-MSG 는 `DECK_URL` 의 외부 사용량 대시보드를 60초마다 조회해(`GET /api/state`) 계정별 사용량 창을 받는다. 대시보드는 별도 프로그램이고 이 저장소에 들어 있지 않다. 기대하는 응답은 다음과 같다.
 
 ```json
 { "cards": [ { "id": "claude:main", "status": "ok", "fetchedAt": "2026-01-01T00:00:00Z",
@@ -212,7 +212,7 @@ Claude 사용량 카드의 출처는 둘이고 `DECK_USAGE_SOURCE` 로 고른다
 
 대시보드가 응답하지 않아도 전부 동작한다. 이때 사용량 창은 각 CLI 가 턴 도중 알려 주는 값에서 온다. 그래서 계정은 턴을 한 번 돌린 뒤에야 숫자가 보이고, 사용량을 모르는 계정은 값이 알려진 후보보다 뒤, 한도에 닿은 것으로 알려진 계정보다 앞 순위 후보가 된다. 토큰 사용 이력 화면은 로컬 기록을 읽으므로 대시보드와 무관하다.
 
-**사용량 대시보드가 없으면 잔여량을 알 수 없고, AI msg 는 그 이유만으로 요청을 바꾸지 않는다.** "모름"만으로는 모델이나 엔진을 바꾸지 않는다. Fable 을 요청하면 Fable 로 실행한다. 플랜 한도를 넘는 Fable 초과 과금은 사용자가 직접 관리해야 한다. 대시보드 응답을 한 번이라도 본 설치는 엄격 모드로 `<설정 디렉터리>/usage-source.json` 에 기록되고, 대시보드 주소를 직접 설정한 설치(`DECK_URL` 또는 `deck_url` 파일)는 처음부터 엄격 모드다. 이때는 잔여량 모름이 Fable 대신 Opus, 엔진 전환으로 이어진다. `DECK_USAGE_STRICT=1` 로 엄격 모드를, `DECK_USAGE_STRICT=0` 으로 느슨한 모드를 강제한다. 첫 대시보드 조회가 끝나기 전에는 엄격한 쪽으로 동작한다.
+**사용량 대시보드가 없으면 잔여량을 알 수 없고, AI-MSG 는 그 이유만으로 요청을 바꾸지 않는다.** "모름"만으로는 모델이나 엔진을 바꾸지 않는다. Fable 을 요청하면 Fable 로 실행한다. 플랜 한도를 넘는 Fable 초과 과금은 사용자가 직접 관리해야 한다. 대시보드 응답을 한 번이라도 본 설치는 엄격 모드로 `<설정 디렉터리>/usage-source.json` 에 기록되고, 대시보드 주소를 직접 설정한 설치(`DECK_URL` 또는 `deck_url` 파일)는 처음부터 엄격 모드다. 이때는 잔여량 모름이 Fable 대신 Opus, 엔진 전환으로 이어진다. `DECK_USAGE_STRICT=1` 로 엄격 모드를, `DECK_USAGE_STRICT=0` 으로 느슨한 모드를 강제한다. 첫 대시보드 조회가 끝나기 전에는 엄격한 쪽으로 동작한다.
 
 ## 원격 접속
 
@@ -230,7 +230,7 @@ Claude 사용량 카드의 출처는 둘이고 `DECK_USAGE_SOURCE` 로 고른다
 
 ## 보안 모델
 
-AI msg 는 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 접속할 수 있다는 것은 셸에 접속할 수 있다는 것과 같다고 본다.
+AI-MSG 는 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 접속할 수 있다는 것은 셸에 접속할 수 있다는 것과 같다고 본다.
 
 - **누가 접속할 수 있나.** 이 컴퓨터의 프로세스와 내 tailnet 의 기기. 로그인을 뺀 모든 `/api` 요청과 WebSocket 은 세션 쿠키가 있어야 한다.
 - **토큰.** `~/.config/deck/token`(`0600`)의 16진수 64자. 브라우저는 SHA-256 으로 파생한 쿠키만 갖는다(`HttpOnly`, `SameSite=Strict`, HTTPS 에서는 `Secure`).
@@ -239,7 +239,7 @@ AI msg 는 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 접속�
 - **"모두 자동 승인"은 직접 켜는 선택 사항이다.** 한 세션에서만 켜거나 설정에서 기본값으로 만들 수 있다. 켜면 모델이 부르는 모든 도구 호출(셸 명령, 파일 편집, 네트워크 접근 포함)이 카드 없이, 어느 기기에서 보냈든, 아무도 보고 있지 않아도 실행된다. 호출은 여전히 감사 로그에 남고 거부 규칙과 훅도 적용된다. (Codex 세션과는 상관없다. Codex 의 기본 샌드박스는 언제나 작업 폴더 쓰기다.) 답하지 않은 요청은 30분이 지나거나 턴이 끝나면 거부로 닫힌다.
 - **Claude 설정이 그대로 적용된다.** 턴은 사용자·프로젝트·로컬 Claude Code 설정(허용 규칙과 훅 포함)을 CLI 와 똑같이 읽는다.
 - **감사 로그.** 모든 권한 결정이 `~/.config/deck/audit.log` 에 JSON 한 줄씩 쌓인다: 시각, 세션, 도구 이름, 결정, 누가 결정했는지, 도구 입력의 SHA-256(입력 자체는 남기지 않는다). 5 MiB 가 되면 `audit.log.1` 로 넘어간다.
-- **자격 증명.** AI msg 는 CLI 의 자격 증명을 읽거나 저장하거나 전달하지 않는다. 프로필 디렉터리를 골라 공식 CLI 를 띄울 뿐이고, Gemini 는 자격 파일이 있는지만 확인한다. Claude 턴을 띄우기 전에 자식 환경에서 `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` 과 베이스 URL 변수를 지워서, 턴이 조용히 다른 계정으로 과금되지 않게 한다.
+- **자격 증명.** AI-MSG 는 CLI 의 자격 증명을 읽거나 저장하거나 전달하지 않는다. 프로필 디렉터리를 골라 공식 CLI 를 띄울 뿐이고, Gemini 는 자격 파일이 있는지만 확인한다. Claude 턴을 띄우기 전에 자식 환경에서 `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` 과 베이스 URL 변수를 지워서, 턴이 조용히 다른 계정으로 과금되지 않게 한다.
 - **파일 접근.** 새 세션은 홈 디렉터리 안(또는 루프백 전용 서버에서 `DECK_EXTRA_CWD_ROOTS` 로 지정한 경로)에서만 시작할 수 있다. 파일 미리보기 API 는 설정 디렉터리, 홈 바로 아래의 점(.) 디렉터리, 흔한 비밀 파일(`.env`, 개인 키, 자격 파일)을 거부한다.
 
 취약점은 [SECURITY.md](SECURITY.md) 대로 제보한다.
@@ -285,7 +285,7 @@ npm run build
 
 ```
 src/server/          HTTP + WebSocket 서버 (Node, TypeScript)
-  engine/            ClaudeEngine (Agent SDK), CodexEngine, GeminiEngine
+  engine/            ClaudeEngine (claude CLI), CodexEngine, GeminiEngine
   routing/           계정·엔진·모델 선택, 쿨다운
   turn/              TurnRunner: 라우팅부터 결과까지 한 턴, 재시도
   sessions/          세션 목록, 프로필 간 이동, 분기, 휴지통, 검색
@@ -304,7 +304,7 @@ docs/                구조와 프로토콜 문서
 
 ## 면책
 
-AI msg 는 비공식 개인 프로젝트다. Anthropic, OpenAI, Google 과 관계가 없고, 이들의 승인이나 지원을 받지 않는다. "Claude", "Codex", "Gemini" 는 각 소유자의 상표다.
+AI-MSG 는 비공식 개인 프로젝트다. Anthropic, OpenAI, Google 과 관계가 없고, 이들의 승인이나 지원을 받지 않는다. "Claude", "Codex", "Gemini" 는 각 소유자의 상표다.
 
 이 도구는 사용자가 직접 설치하고 직접 로그인한 CLI 를 본인 기기에서 쓰기 위한 로컬 프런트엔드다. API 키를 쓰지 않고, 사람들 사이에 계정을 공유하지 않는다. 여러 계정을 쓰는 것을 포함해, 자신의 사용이 각 서비스의 약관에 맞는지는 사용자 책임이다.
 
