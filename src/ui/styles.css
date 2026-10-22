@@ -491,10 +491,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .send.stop { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }
 .send.stop i { width: 10px; height: 10px; border-radius: 2px; background: currentColor; display: block; }
 /* Mid-turn with a draft the main button is 보내기; 중단 stays reachable as this smaller square beside it (no Esc on phones). */
-.send.stop.stop-mini { width: 28px; height: 28px; margin-left: 0; }
+.send.stop.stop-mini { width: 28px; height: 28px; margin-left: 0; margin-right: 6px; }
 .send.stop.stop-mini i { width: 8px; height: 8px; }
-@media (pointer: coarse) { .send.stop.stop-mini { width: 34px; height: 34px; } }
-@media (max-width: 720px) { .send.stop.stop-mini { width: 34px; height: 34px; } }
+@media (pointer: coarse) { .send.stop.stop-mini { width: 40px; height: 40px; margin-right: 8px; } }
+@media (max-width: 720px) { .send.stop.stop-mini { width: var(--phone-tap); height: var(--phone-tap); margin-right: 8px; } }
 
 /* Login */
 .login { max-width: 340px; margin: 18vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; }

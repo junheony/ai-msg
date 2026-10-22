@@ -373,6 +373,14 @@ describe('Chat · composer buttons while a turn runs', () => {
     expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
 
+  it('running + draft + readOnly: main stays stop, no mini', () => {
+    renderChat([{ kind: 'user', text: 'p' }], true, vi.fn(), { activeTurnId: 't1', onQueue: vi.fn(), readOnly: '읽기 전용' });
+    fireEvent.change(box(), { target: { value: 'next' } });
+    const main = document.querySelector('.send') as HTMLButtonElement;
+    expect(main.classList.contains('stop')).toBe(true);
+    expect(document.querySelector('.stop-mini')).toBeNull();
+  });
+
   it('idle: plain send button, no stop', () => {
     renderChat([], false);
     expect(document.querySelector('.send.stop')).toBeNull();

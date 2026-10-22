@@ -387,6 +387,8 @@ export function Chat(p: ChatProps) {
   /** A running Claude / Grok turn takes a message mid-turn (Codex / Gemini: after the turn). */
   const steering = queueing && !!p.activeTurnId && (p.sessionEngine === 'claude' || p.sessionEngine === 'grok');
   const canSend = hasDraft && !p.readOnly && (!p.busy || queueing);
+  // Mid-turn the main button becomes 보내기 only when the send can really happen; otherwise it stays 중단.
+  const runSend = !!p.activeTurnId && queueing && canSend;
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
   const agents = p.agents ?? NO_AGENTS;
   const bgLive = !!p.bg;
@@ -730,19 +732,19 @@ export function Chat(p: ChatProps) {
           text={text}
           onText={setText}
           extra={<>
-            {p.activeTurnId && queueing && hasDraft && (
-              <button type="button" className="send stop stop-mini" onClick={p.onInterrupt} title={ui().chat.composer.stopEsc}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
-            )}
             {p.onStartTask && hasDraft && p.attachments.length === 0 && parseBgCommand(text) === null && (
               <button type="button" className="task-add" data-testid="task-add" onClick={() => startTask(text)} aria-label="작업으로" title="작업으로 — 새 세션에서 따로 돌리고, 이 대화는 계속 씁니다. 끝나면 알림과 결과 카드가 옵니다 (/bg 로도 시작)">
                 <span className="task-add-text">작업으로</span><TaskIcon />
               </button>
             )}
           </>}
-          action={p.activeTurnId && !(queueing && hasDraft)
+          action={p.activeTurnId && !runSend
             ? <button type="button" className="send stop" onClick={p.onInterrupt} title={ui().chat.composer.stop}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
             : p.activeTurnId
-            ? <button type="button" className="send" onClick={submit} title={steering ? ui().chat.composer.queueSteerTitle : ui().chat.composer.queueWaitTitle}><span aria-hidden="true">↑</span><span className="sr-only">{ui().chat.composer.queueAdd}</span></button>
+            ? <>
+                <button type="button" className="send stop stop-mini" onClick={p.onInterrupt} title={ui().chat.composer.stopEsc}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
+                <button type="button" className="send" onClick={submit} title={steering ? ui().chat.composer.queueSteerTitle : ui().chat.composer.queueWaitTitle} aria-keyshortcuts={coarse ? undefined : sendKey === 'mod-enter' ? 'Meta+Enter Control+Enter' : 'Enter'}><span aria-hidden="true">↑</span><span className="sr-only">{ui().chat.composer.queueAdd}</span></button>
+              </>
             : <button type="button" className="send" onClick={submit} disabled={!canSend} title={coarse ? '보내기' : sendKey === 'mod-enter' ? SEND_TITLE_MOD : SEND_TITLE} aria-keyshortcuts={coarse ? undefined : sendKey === 'mod-enter' ? 'Meta+Enter Control+Enter' : 'Enter'}><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
         >
           <textarea
