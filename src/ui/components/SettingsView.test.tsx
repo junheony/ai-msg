@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { AUTO_CONSENT_TEXT, EXPERIMENTAL_NOTICE, EXPERIMENTAL_ROWS, ROTATION_CONSENT, ROTATION_NOTICE, SEG_MAX, SETTINGS_GROUPS, SettingsView } from './SettingsView';
+import { ABOUT_NOTICE, AUTO_CONSENT_TEXT, EXPERIMENTAL_NOTICE, EXPERIMENTAL_ROWS, ROTATION_CONSENT, ROTATION_NOTICE, SEG_MAX, SETTINGS_GROUPS, SettingsView } from './SettingsView';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 
 const noop = () => {};
@@ -284,6 +284,11 @@ describe('SettingsView 4그룹', () => {
     // The version is the avatar menu's (deck v…); the last line is the build and the screen only.
     expect(screen.getByTestId('settings-foot').textContent).toMatch(/^빌드 b42 · /);
     expect(screen.getByTestId('settings-foot').textContent).not.toMatch(/deck/);
+    // 정보: a small brand footer with the non-affiliation line — not another group (no heading, no region).
+    const about = screen.getByTestId('settings-about');
+    expect(about.textContent).toContain('AI-MSG');
+    expect(about.textContent).toContain(ABOUT_NOTICE);
+    expect(ABOUT_NOTICE).toMatch(/Anthropic · OpenAI · Google · xAI/);
     // The left list names the same four groups.
     expect(within(screen.getByRole('navigation', { name: '설정 그룹' })).getAllByRole('button').map((b) => b.textContent)).toEqual(['화면', '입력', '권한·알림', '계정', '실험적 기능']);
   });

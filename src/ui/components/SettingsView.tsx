@@ -13,11 +13,14 @@ import { MemoryEditor } from './MemoryEditor';
 import { SETUP_TEXTS } from '../setupTexts';
 import { getLocale, localeFromLanguages, type LangPref, type Locale } from '../../shared/locale';
 import { ui } from '../i18n';
+import { BrandMark, BrandWordmark } from './BrandMark';
 
 /** What turning 같은 벤더 계정 자동 순환 on asks the user to agree to (spec: paid design §3 rule 3). */
 export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁니다. 계정 공유·재판매·한도 회피 목적의 계정 생성은 각 제공자 약관 위반입니다.';
 /** What letting 자동 분배 pick Gemini / Grok asks the user to agree to (auto-route design §10-3). */
 export const AUTO_CONSENT_TEXT = '자동 세션의 코드·대화가 Google(Gemini)/xAI(Grok)로 갈 수 있습니다';
+/** 정보: the non-affiliation line (README carries the English original). */
+export const ABOUT_NOTICE = 'AI-MSG 는 독립 프로젝트로, Anthropic · OpenAI · Google · xAI 와 제휴하거나 보증받지 않았습니다. 제품명은 각 소유자의 상표입니다.';
 export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean };
 const AUTO_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
 const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
@@ -321,6 +324,10 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
           </section>
         </div>
       </div>
+      <footer className="settings-about" data-testid="settings-about">
+        <p className="settings-about-brand"><BrandMark className="settings-about-mark" /><BrandWordmark /><span className="settings-about-tag">Your AI coding sessions, everywhere</span></p>
+        <p className="settings-about-note">{ABOUT_NOTICE}</p>
+      </footer>
       {/* What 정보 used to list, as one line (the screen metrics are for bug reports: the whole line is its title). */}
       <p className="settings-foot" data-testid="settings-foot" title={foot}>{foot}</p>
     </Sheet>
