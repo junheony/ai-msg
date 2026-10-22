@@ -91,7 +91,7 @@ export function assignSessionIcons(pinned: IconRow[], rest: IconRow[]): Map<stri
 export function SessionGlyph({ index }: { index: number }) {
   const icon = SESSION_ICONS[index % SESSION_ICONS.length]!;
   return (
-    <svg className="row-avatar-icon" data-icon={icon.name} viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+    <svg className="row-avatar-icon" data-icon={icon.name} viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {icon.body}
     </svg>
