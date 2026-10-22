@@ -368,8 +368,8 @@ describe('ClaudeEngine with attachments', () => {
 const QUESTIONS = [{ question: 'Which color?', header: 'Color', options: [{ label: 'red', description: 'warm' }, { label: 'blue', description: 'cool', preview: 'x' }], multiSelect: false }];
 
 describe('AskUserQuestion (D8)', () => {
-  it('parseQuestions validates the tool input shape and drops previews; garbage → null', () => {
-    expect(parseQuestions({ questions: QUESTIONS })).toEqual([{ question: 'Which color?', header: 'Color', options: [{ label: 'red', description: 'warm' }, { label: 'blue', description: 'cool' }], multiSelect: false }]);
+  it('parseQuestions validates the tool input shape and keeps string previews; garbage → null', () => {
+    expect(parseQuestions({ questions: QUESTIONS })).toEqual([{ question: 'Which color?', header: 'Color', options: [{ label: 'red', description: 'warm' }, { label: 'blue', description: 'cool', preview: 'x' }], multiSelect: false }]);
     expect(parseQuestions({ questions: [] })).toBeNull();
     expect(parseQuestions({ questions: [{ question: 'q', options: [{ label: 'a' }] }] })).toBeNull();
     expect(parseQuestions('nope')).toBeNull();

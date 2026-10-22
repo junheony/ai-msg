@@ -27,11 +27,8 @@ export function splitRecommended(label: string): { text: string; recommended: bo
   return text !== label && text ? { text, recommended: true } : { text: label, recommended: false };
 }
 
-/** The SDK may carry a `preview` per option; the shared type drops it, so read it defensively. */
-const previewOf = (o: Question['options'][number]): string | null => {
-  const p = (o as { preview?: unknown }).preview;
-  return typeof p === 'string' && p.trim() ? p : null;
-};
+/** Optional per-option preview (code/mockup) forwarded by the server, shown under the picked option. */
+const previewOf = (o: Question['options'][number]): string | null => (o.preview?.trim() ? o.preview : null);
 
 export function QuestionCard({ req, onAnswer }: { req: PendingQuestion; onAnswer: (requestId: string, answers: QuestionAnswers) => void }) {
   const [picked, setPicked] = useState<Record<string, string[]>>({});

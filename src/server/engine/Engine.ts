@@ -159,6 +159,7 @@ export type QuestionRequest = { toolUseId: string; questions: Question[]; signal
 
 /** Answers are keyed by question text, so texts must be unique and bounded. */
 const MAX_QUESTION_CHARS = 2000;
+const MAX_PREVIEW_CHARS = 4000;
 
 /** AskUserQuestionInput.questions (1–4, each 2–4 options, unique texts ≤ 2000 chars) → Question[]; previews and extras dropped. Null when malformed. */
 export function parseQuestions(input: unknown): Question[] | null {
@@ -174,7 +175,8 @@ export function parseQuestions(input: unknown): Question[] | null {
     for (const o of r.options) {
       if (!o || typeof o !== 'object' || typeof (o as Record<string, unknown>).label !== 'string') return null;
       const d = (o as Record<string, unknown>).description;
-      options.push({ label: (o as { label: string }).label, description: typeof d === 'string' ? d : '' });
+      const p = (o as Record<string, unknown>).preview;
+      options.push({ label: (o as { label: string }).label, description: typeof d === 'string' ? d : '', ...(typeof p === 'string' && p ? { preview: p.slice(0, MAX_PREVIEW_CHARS) } : {}) });
     }
     out.push({ question: r.question, header: typeof r.header === 'string' ? r.header : '', options, multiSelect: r.multiSelect === true });
   }
