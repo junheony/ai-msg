@@ -940,6 +940,20 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       if (msg.turnId === null && msg.clientRef === undefined && msg.code !== 'draining' && msg.sessionId !== undefined && msg.sessionId === pane.session?.sessionId && pane.queue.some((q) => q.restart === 'hello')) {
         pane = { ...pane, queue: pane.queue.map(({ restart, maybeSent, ...q }) => (restart === 'hello' ? q : { ...q, ...(restart ? { restart } : {}), ...(maybeSent !== undefined ? { maybeSent } : {}) })), queuePaused: true };
       }
+      // A message of this pane's that had started (it joined a held process) and was refused for a restart: its turn and
+      // bubble go, and it waits in the queue held like any draining refusal (sent again after the restart, in order).
+      if (msg.code === 'draining' && msg.clientRef !== undefined && msg.clientRef !== pane.awaitingRef && msg.turnId !== null && pane.myTurns.includes(msg.turnId) && !pane.queue.some((q) => q.ref === msg.clientRef)) {
+        const ai = pane.items.findLastIndex((it) => it.kind === 'assistant' && it.turnId === msg.turnId);
+        const ui = ai >= 0 ? pane.items.findLastIndex((it, i) => i < ai && it.kind === 'user') : -1;
+        const user = ui >= 0 ? (pane.items[ui] as Extract<ChatItem, { kind: 'user' }>) : null;
+        if (user) {
+          const item: QueueItem = { id: nextQueueId(), text: user.text.replace(/(^|\n\n)첨부 파일: [\s\S]*$/, ''), attachments: (user.attachments ?? []).map((f) => ({ ...f, size: 0 })), restart: 'hold', ref: msg.clientRef, ...(user.at !== undefined ? { at: user.at } : {}) };
+          const at = pane.queue.filter((q) => q.restart).length;
+          const activeTurnId = msg.turnId === pane.activeTurnId ? null : pane.activeTurnId;
+          const stopped = activeTurnId === null && pane.activeTurnId !== null ? { runStartedAt: null, progress: null } : {};
+          return { ...pane, items: pane.items.filter((_, i) => i !== ai && i !== ui), activeTurnId, ...stopped, queue: [...pane.queue.slice(0, at), item, ...pane.queue.slice(at)] };
+        }
+      }
       const withItem = msg.turnId ? updateTurn(pane, msg.turnId, (it) => ({ ...it, streaming: false, error: it.error ?? msg.message })) : pane;
       // Review I6: an error that names the running turn ends it, or the composer stays locked on 중단.
       const activeTurnId = msg.turnId !== null && msg.turnId === pane.activeTurnId ? null : withItem.activeTurnId;

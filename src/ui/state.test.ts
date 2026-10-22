@@ -1039,6 +1039,28 @@ describe('message queue (ux-state)', () => {
       expect(nextQueued(pane(s))?.text).toBe('mine');
     });
 
+    it('draining after its turn started (a follow-up the ended process never took): its turn and bubble go, it is held in the queue after the held ones and sent after the restart', () => {
+      let s = play([history(['old'])], openedOn('s1'));
+      s = reducer(s, { type: 'queue_add', text: 'later' });
+      s = reducer(s, { type: 'sent', text: 'mine', attachments: [file], clientRef: 'r1' });
+      s = play([{ type: 'turn_started', turnId: 'f1', sessionId: 's1', cwd: '/w', account: 'b', model: 'opus', reason: 'r', attempt: 0, clientRef: 'r1' }], s);
+      // Another device's refusal of the same kind changes nothing here (its ref, its turn).
+      const other = play([{ type: 'error', turnId: 'zz', message: 'x', clientRef: 'zz', code: 'draining' }], s);
+      expect(pane(other).queue.map((q) => q.text)).toEqual(['later']);
+      // The runner tells the refusal before it closes the turn (refuseFollowUp).
+      s = play([{ type: 'error', turnId: 'f1', message: 'x', clientRef: 'r1', code: 'draining' }], s);
+      s = play([{ type: 'turn_result', turnId: 'f1', sessionId: 's1', cwd: '/w', ok: false, text: '', badge: null, errorText: 'x' }], s);
+      expect(pane(s).items.map((it) => it.kind)).toEqual(['user']);
+      expect(pane(s).queue.map((q) => [q.text, q.restart, q.ref])).toEqual([['mine', 'hold', 'r1'], ['later', undefined, undefined]]);
+      expect(pane(s).queue[0]!.attachments).toMatchObject([{ id: file.id, name: 'x.png', isImage: true }]);
+      expect(pane(s).activeTurnId).toBeNull();
+      // Delivered twice (a reconnect replay): still one copy.
+      expect(pane(play([{ type: 'error', turnId: 'f1', message: 'x', clientRef: 'r1', code: 'draining' }], s)).queue).toHaveLength(2);
+      expect(nextQueued(pane(s))).toBeNull();
+      s = play([hello, history(['old'])], s);
+      expect(nextQueued(pane(s))?.text).toBe('mine');
+    });
+
     it('draining: never deduped against the history (it definitely did not go in) — the same text sent twice goes out twice', () => {
       let s = refusedSend('draining');
       s = play([hello, history(['old', 'mine'])], s);

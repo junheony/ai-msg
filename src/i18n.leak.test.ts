@@ -85,7 +85,7 @@ const BASELINE: Record<string, number> = {
   'src/server/tasks/TaskRegistry.ts': 3,
   'src/server/tccDenial.ts': 2,
   'src/server/turn/SessionState.ts': 5,
-  'src/server/turn/TurnRunner.ts': 174,
+  'src/server/turn/TurnRunner.ts': 173,
   'src/server/usage/ClaudeUsagePoller.ts': 13,
   'src/server/usage/GeminiUsagePoller.ts': 11,
   'src/server/usage/GrokBillingPoller.ts': 2,

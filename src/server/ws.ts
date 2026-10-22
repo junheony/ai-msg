@@ -326,6 +326,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** Turn ids a running turn's process produced after its own (background continuations, follow-ups) → that turn's id. */
   const aliases = new Map<string, string>();
   const baseOf = (turnId: string) => aliases.get(turnId) ?? turnId;
+  /** The socket that sent each follow-up (by its turn id), while it is aliased: a restart's refusal goes back to it. */
+  const followFrom = new Map<string, WebSocket>();
   /** The user message of each deck turn started by a send (its own turn or a follow-up), until the turn's process ends. */
   const prompts = new Map<string, TurnPrompt>();
   const promptOf = (msg: { text: string; attachments?: string[] }): TurnPrompt => ({
@@ -783,7 +785,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     // A Claude process that already answered and holds no background work may only be waiting for its prompt suggestion:
     // it is ended and the handoff runs once the session is released.
     const idle = msg.handoff && msg.sessionId && busy.has(msg.sessionId) ? turns.get(busy.get(msg.sessionId)!) : undefined;
-    if (idle && idle.engine === 'claude' && idle.current === null && !idle.bg && !idle.recycling && idle.afterRelease.length === 0) {
+    if (idle && idle.engine === 'claude' && idle.current === null && !idle.bg && !idle.recycling && idle.afterRelease.length === 0 && !deps.runner.resendingFor(msg.sessionId!)) {
       idle.recycling = true;
       idle.afterRelease.push({ ws, msg, ...hop });
       idle.ac.abort();
@@ -815,7 +817,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // person chose. Mid-turn it waits for the result; between turns the held process is ended and a new one answers —
       // but background work it still runs is left to finish first (the process then ends by itself, release starts the send).
       if (base && (base.engine === undefined || base.engine === 'claude') && base.fast !== fastSend(msg)) {
-        if (base.current !== null) { base.afterRelease.push({ ws, msg, ...hop }); return; }
+        // Follow-ups of an ended process still being sent on (TurnRunner.resending) count as a turn running: never cut.
+        if (base.current !== null || deps.runner.resendingFor(sid)) { base.afterRelease.push({ ws, msg, ...hop }); return; }
         if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
         base.recycling = true;
         base.afterRelease.push({ ws, msg, ...hop });
@@ -854,7 +857,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
       const followId = randomUUID();
       markConcise(followId, msg);
-      if (base) aliases.set(followId, base.turnId);
+      if (base) { aliases.set(followId, base.turnId); followFrom.set(followId, ws); }
       prompts.set(followId, promptOf(msg));
       const joined = base !== undefined && deps.runner.followUp(msg.sessionId, {
         turnId: followId, text: msg.text,
@@ -862,6 +865,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         ...(msg.model ? { model: msg.model } : {}),
         ...(msg.clientRef ? { clientRef: msg.clientRef } : {}),
         ...(msg.lang ? { lang: msg.lang } : {}),
+        // How it asked to be answered, for when it is sent on as a turn of its own (as the run below would take it).
+        ...(msg.effort ? { effort: msg.effort } : {}),
+        concise: !!msg.concise && !msg.handoff,
+        fast: fastSend(msg) && !taskSockets.has(ws),
         ...hop,
       });
       // Accepted once its turn_started comes (the sink's alias branch): that is when the process takes it in.
@@ -873,6 +880,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         return;
       }
       aliases.delete(followId);
+      followFrom.delete(followId);
       prompts.delete(followId);
       // The turn already sent its result and the process is only closing (no background work to join):
       // the UI's queue fires on that result, so run the send as soon as the lock is released instead of refusing it.
@@ -902,7 +910,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       for (const [k, v] of [...busy]) if (v === turnId) busy.delete(k);
       broker.cancelTurn(turnId);
       questions.cancelTurn(turnId);
-      for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); prompts.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
+      for (const [a, b] of [...aliases]) if (b === turnId) { aliases.delete(a); followFrom.delete(a); prompts.delete(a); broker.cancelTurn(a); questions.cancelTurn(a); }
       broadcastActivity();
       // Sends that arrived while the process was closing after its result (a closed socket's send is dropped — but not one
       // that waited because deck itself ended the process). Each goes where a send would go now: the first starts the
@@ -974,8 +982,14 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const sid = m.sessionId ?? turn.sessionId;
           if (sid) deps.acceptedRefs?.remove(sid, m.clientRef);
           // A follow-up whose turn_started went out: its failed turn_result already shows the error in the chat, so this
-          // one only takes the ref back (a second, app-wide banner with the same text would just repeat it).
-          if (m.turnId !== null && aliases.has(m.turnId)) return;
+          // one only takes the ref back (a second, app-wide banner with the same text would just repeat it). Except a
+          // restart's refusal (code draining): the sending device holds that message and sends it again after the restart
+          // (its turn may have left the device's queue already), so it goes back to that device.
+          if (m.turnId !== null && aliases.has(m.turnId)) {
+            const from = followFrom.get(m.turnId);
+            if (m.code === 'draining' && from && clients.has(from)) send(from, m);
+            return;
+          }
         }
         // A new session's ref, once it has an id (normally sessionKnown recorded it already).
         if (m.type === 'turn_result' && started) accepted(m.sessionId);
@@ -1471,7 +1485,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           // Only a socket showing the session (pendingRefs are in its history, so any viewer could name the ref).
           const base = viewing.get(ws)?.has(msg.sessionId) ? turns.get(busy.get(msg.sessionId) ?? '') : undefined;
           const withdrawn = base ? deps.runner.cancelQueued(msg.sessionId, msg.clientRef) : null;
-          if (base && withdrawn) { base.pendingRefs.delete(msg.clientRef); aliases.delete(withdrawn); prompts.delete(withdrawn); endHeld(base); }
+          if (base && withdrawn) { base.pendingRefs.delete(msg.clientRef); aliases.delete(withdrawn); followFrom.delete(withdrawn); prompts.delete(withdrawn); endHeld(base); }
           // ⚡ Or waiting in deck for a ↯ switch's background work (holdBehindBg): out of that wait.
           const held = base && !withdrawn ? base.afterRelease.findIndex((d) => d.msg.clientRef === msg.clientRef) : -1;
           if (base && held >= 0) { base.afterRelease.splice(held, 1); base.pendingRefs.delete(msg.clientRef); }

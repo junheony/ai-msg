@@ -16,7 +16,7 @@ import { PinStore } from './sessions/PinStore';
 import { SessionIndex } from './sessions/SessionIndex';
 import { SettingsStore } from './settings';
 import { SessionStateStore } from './turn/SessionState';
-import { TurnRunner } from './turn/TurnRunner';
+import { RESEND_NOTICE, TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
 import { DRAINING_MESSAGE, attachWebSocket } from './ws';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
@@ -363,6 +363,80 @@ describe('ws: sessions held open for background work', () => {
     a.send({ type: 'interrupt', turnId: t.turnId });
     await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
     a.close();
+  });
+
+  it('a send from another device while follow-ups of an ended process are sent on waits behind them; nothing is cut or refused', async () => {
+    const S = '79797979-7979-4797-8797-797979797979';
+    const cwd = await seed(S, 'resendgap');
+    fake = fakeClaudeCli();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'g0' });
+    const t = await a.next('turn_started');
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    fake.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('working'));
+    await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'first', clientRef: 'g1' });
+    await new Promise((r) => setTimeout(r, 20));
+    // The process ends with the message still queued: it is sent on as a turn of its own.
+    fake.end();
+    await vi.waitFor(() => expect(fake.state.calls).toBe(2));
+    const b = await client();
+    await b.next('hello');
+    b.send({ type: 'open_session', sessionId: S, accepts: ['turn_queued'] });
+    await b.next('history');
+    b.send({ type: 'send', sessionId: S, cwd, text: 'second', clientRef: 'g2' });
+    expect(await b.next('turn_queued')).toMatchObject({ clientRef: 'g2', behind: RESEND_NOTICE });
+    fake.push(cli.init(S), cli.result('one', S));
+    const f1 = await a.next('turn_result', (m) => m.text === 'one');
+    expect(f1).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(fake.state.calls).toBe(3));
+    fake.push(cli.init(S), cli.result('two', S));
+    const g2 = await b.next('turn_started', (m) => m.clientRef === 'g2');
+    expect(await b.next('turn_result', (m) => m.turnId === g2.turnId)).toMatchObject({ ok: true, text: 'two' });
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    expect([...a.got, ...b.got].filter((m) => m.type === 'error')).toEqual([]);
+    expect(a.got.some((m) => m.type === 'turn_result' && m.errorText === '중단됨')).toBe(false);
+    a.close();
+    b.close();
+  });
+
+  it('a started follow-up refused for a restart (code draining): its ref is taken back and the error goes to the device that sent it, so it holds the message', async () => {
+    const S = '78787878-7878-4787-8787-787878787878';
+    const cwd = await seed(S, 'drainfu');
+    fake = fakeClaudeCli();
+    let sink: Parameters<TurnRunner['run']>[1] | null = null;
+    const run = runner.run.bind(runner);
+    const spy = vi.spyOn(runner, 'run').mockImplementation((p, s) => { sink = s; return run(p, s); });
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'e1' });
+    const t = await a.next('turn_started');
+    spy.mockRestore();
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    const b = await client();
+    await b.next('hello');
+    b.send({ type: 'open_session', sessionId: S });
+    await b.next('history');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'more', clientRef: 'e2' });
+    const fu = await a.next('turn_started', (m) => m.clientRef === 'e2');
+    a.send({ type: 'open_session', sessionId: S });
+    expect((await a.next('history')).acceptedRefs).toEqual(['e1', 'e2']);
+    // What the runner sends for a follow-up it could not send on while the server drains (refuseFollowUp).
+    sink!.emit({ type: 'error', turnId: fu.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', code: 'draining', clientRef: 'e2' });
+    sink!.emit({ type: 'turn_result', turnId: fu.turnId, sessionId: S, cwd, ok: false, text: '', badge: null, errorText: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요' });
+    expect(await a.next('error', (m) => m.clientRef === 'e2')).toMatchObject({ turnId: fu.turnId, code: 'draining' });
+    a.send({ type: 'open_session', sessionId: S });
+    expect((await a.next('history')).acceptedRefs).toEqual(['e1']);
+    // Another viewer only sees the turn closed (its turn_result), not the sender's refusal.
+    await b.next('turn_result', (m) => m.turnId === fu.turnId);
+    expect(b.got.some((m) => m.type === 'error' && m.clientRef === 'e2')).toBe(false);
+    a.send({ type: 'interrupt', turnId: t.turnId });
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    a.close();
+    b.close();
   });
   it('drain waits on running turns and live background work, ends only processes waiting with nothing left, and still takes messages into live processes', async () => {
     const S = '44444444-4444-4444-8444-444444444444';

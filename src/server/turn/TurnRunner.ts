@@ -250,7 +250,15 @@ export type RoutePreview = { account: Account; asOpus?: boolean; reason: string 
  * No `commanderHop` on purpose: a follow-up goes into a process that already runs with its own turn's gate (or none) —
  * the hook settings, fail-closed registration and autoApprove of that process apply to it as they are.
  */
-export type FollowUpParams = { turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string; retryHop?: number; /** The sending device's reply language (send.lang); the failover resend keeps it. */ lang?: Locale };
+export type FollowUpParams = {
+  turnId: string; text: string; attachments?: string[]; model?: ModelChoice; clientRef?: string; retryHop?: number;
+  /** The sending device's reply language (send.lang); the failover resend keeps it. */ lang?: Locale;
+  /**
+   * How the send asked to be answered (send.effort, concise, ⚡ fast). A process the message joins keeps its own launch
+   * settings; these apply when it is sent on as a turn of its own (resend, failover) — each over the held turn's own.
+   */
+  effort?: Effort; concise?: boolean; fast?: boolean;
+};
 
 /**
  * A background / follow-up segment of a held-open process ended on a limit or auth failure (followThrough): the process
@@ -275,9 +283,18 @@ type Capped = { cap: true; tasks: string[]; minutes: number };
 
 /** A follow-up waiting for the process; `started`: its turn_started went out already (its write failed after it). */
 type Queued = { f: FollowUpParams; attachments: Attachment[]; started?: true };
+/** The session's follow-ups to send on (TurnRunner.resending); `own`: this turn registered it (and removes it when done). */
+type Line = { items: Queued[]; own: boolean };
 
 /** A follow-up sent on as a turn of its own (`base`: the session, hops), under its own turn id, text and send ref. */
-const turnOfFollowUp = (base: Omit<TurnParams, 'turnId' | 'text'>, f: FollowUpParams): TurnParams => ({ ...base, turnId: f.turnId, text: f.text, ...(f.model ? { model: f.model } : {}), ...(f.attachments ? { attachments: f.attachments } : {}), ...(f.clientRef ? { clientRef: f.clientRef } : {}), ...(f.retryHop ? { retryHop: f.retryHop } : {}), ...(f.lang ? { lang: f.lang } : {}) });
+const turnOfFollowUp = (base: Omit<TurnParams, 'turnId' | 'text'>, f: FollowUpParams): TurnParams => ({ ...base, turnId: f.turnId, text: f.text, ...(f.model ? { model: f.model } : {}), ...(f.attachments ? { attachments: f.attachments } : {}), ...(f.clientRef ? { clientRef: f.clientRef } : {}), ...(f.retryHop ? { retryHop: f.retryHop } : {}), ...(f.lang ? { lang: f.lang } : {}), ...(f.effort ? { effort: f.effort } : {}), ...(f.concise !== undefined ? { concise: f.concise } : {}), ...(f.fast !== undefined ? { fast: f.fast } : {}) });
+
+/**
+ * What a turn sent on after a held turn (resend, failover) keeps of that turn: its hops, reply language and how it was
+ * asked (effort, concise, ⚡ fast) — a follow-up's own values win (turnOfFollowUp), a continuation of the turn's own
+ * work keeps the turn's.
+ */
+const keptOf = (p: TurnParams) => ({ ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}), ...(p.lang ? { lang: p.lang } : {}), ...(p.effort ? { effort: p.effort } : {}), ...(p.concise ? { concise: true } : {}), ...(p.fast ? { fast: true } : {}) });
 
 /** Said on a follow-up the held-open process ended before taking: it goes in as the session's next turn instead. */
 export const RESEND_NOTICE = '세션 프로세스가 끝나 새로 이어 보냅니다';
@@ -355,6 +372,12 @@ export class TurnRunner {
   private gptCooldownUntil: number | null = null;
   /** Claude sessions whose process stays open for background work, by session id. */
   private readonly live = new Map<string, LiveSession>();
+  /**
+   * Per session: follow-ups waiting to be sent on after its held-open process ended (resendFollowUps), in order. Registered
+   * from the moment the process is let go until the last of them ran, so a send arriving between those turns queues
+   * behind them (followUp) and can be withdrawn (cancelQueued) instead of ending the session's turn.
+   */
+  private readonly resending = new Map<string, Queued[]>();
   /** The engine input handle of each running Claude turn, by its first turn id (per-task stop). */
   private readonly inputs = new Map<string, LiveInput>();
   /**
@@ -424,14 +447,23 @@ export class TurnRunner {
    */
   followUp(sessionId: string, f: FollowUpParams): false | FollowUpTaken {
     const entry = this.live.get(sessionId);
-    if (!entry) return false;
+    const line = entry ? undefined : this.resending.get(sessionId);
+    if (!entry && !line) return false;
     let attachments: Attachment[] = [];
     if (f.attachments?.length) {
       const r = this.deps.attachments?.resolve([...new Set(f.attachments)]) ?? { found: [], missing: f.attachments };
       if (r.missing.length) return false;
       attachments = r.found;
     }
-    return entry.submit(f, attachments);
+    if (entry) return entry.submit(f, attachments);
+    // Follow-ups of the ended process are still being sent on: this one goes after them, as a turn of its own.
+    line!.push({ f, attachments });
+    return { queuedBehind: RESEND_NOTICE };
+  }
+
+  /** Whether follow-ups of the session's ended process are still being sent on (see resending): its turn is not over. */
+  resendingFor(sessionId: string): boolean {
+    return this.resending.has(sessionId);
   }
 
   /**
@@ -440,7 +472,12 @@ export class TurnRunner {
    * way or already out) or when the session holds no process.
    */
   cancelQueued(sessionId: string, clientRef: string): string | null {
-    return this.live.get(sessionId)?.cancelQueued(clientRef) ?? null;
+    const entry = this.live.get(sessionId);
+    if (entry) return entry.cancelQueued(clientRef);
+    // Or waiting to be sent on after the ended process (not one whose turn_started went out already).
+    const line = this.resending.get(sessionId) ?? [];
+    const i = line.findIndex((q) => !q.started && q.f.clientRef === clientRef);
+    return i < 0 ? null : line.splice(i, 1)[0]!.f.turnId;
   }
 
   /**
@@ -1255,7 +1292,7 @@ export class TurnRunner {
    * sent meanwhile (its own turn id). Ends when the engine stream ends (no live task left, cap,
    * grace, abort).
    */
-  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants; startedAt: number }): Promise<{ need: Failover | Capped | null; leftover: Queued[] }> {
+  private async followThrough(c: { p: TurnParams; a: Attempt; cur: Cursor; sink: TurnSink; account: Account; model: ClaudeModel; cwd: string; sessionId: string; grants: SessionGrants; startedAt: number }): Promise<{ need: Failover | Capped | null; line: Line | null }> {
     const { p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt } = c;
     const scope = () => ({ turnId: cur.turnId, sessionId, cwd });
     // ⚡ Everything this process answers is billed as it was started (ws never joins a send asking otherwise).
@@ -1289,8 +1326,8 @@ export class TurnRunner {
     let gone = false;
     /** The follow-up write in flight (one at a time: a segment is open while it runs), waited for before the process is let go. */
     let writing: Promise<void> | null = null;
-    /** What is sent on after the process (resend, then queue), unless the user stopped it or the server drains. */
-    let leftover: Queued[] = [];
+    /** What is sent on after the process (resend, then queue; see resending), claimed the moment the process is let go. */
+    let line: Line | null = null;
     const open = (turnId: string, reason: string, modelNote: string | null, clientRef?: string, followUp?: Seg['followUp']) => {
       seg = { turnId, reason, modelNote, ...(followUp ? { followUp } : {}) };
       cur.turnId = turnId;
@@ -1313,8 +1350,9 @@ export class TurnRunner {
       };
       writing = (a.live?.send({ text: f.text, attachments }) ?? Promise.resolve(false)).then((ok) => {
         if (ok || seg?.turnId !== turnId) return;
-        // Stopped (the user, the restart deadline): it did not go in, and nothing is started for it.
-        if (sink.signal.aborted) { failed('세션 프로세스가 방금 끝나 보내지 못했습니다 — 다시 보내 주세요'); return; }
+        // Stopped (the user, the restart deadline): it did not go in, and nothing is started for it (refused — with code
+        // draining for the restart, so the device holds it).
+        if (sink.signal.aborted) { seg = null; this.refuseFollowUp({ f, attachments, started: true }, sink, sessionId, cwd); return; }
         // The process ended between taking it and writing it: not lost — it goes in as the session's next turn once the
         // process is gone (under the same turn id: the pane keeps the turn it shows).
         seg = null;
@@ -1337,7 +1375,7 @@ export class TurnRunner {
     };
     // Follow-ups are taken only while background work holds the process open (else it closes right after this result).
     if (a.live && a.bgTasks.length) {
-      this.live.set(sessionId, {
+      const entry: LiveSession = {
         since: startedAt,
         clean: new Map(),
         submit: (f, attachments) => {
@@ -1351,7 +1389,10 @@ export class TurnRunner {
           if (i < 0) return null;
           return queue.splice(i, 1)[0]!.f.turnId;
         },
-      });
+      };
+      this.live.set(sessionId, entry);
+      // Sent on after an ended process and this turn is held open again: what still waits for it goes in here, in order.
+      for (const q of this.resending.get(sessionId)?.splice(0) ?? []) entry.submit(q.f, q.attachments);
     }
     const { emitThinking, flushThinking } = this.thinkingStream(sink, scope);
     try {
@@ -1422,15 +1463,19 @@ export class TurnRunner {
     } finally {
       flushThinking();
       this.live.delete(sessionId);
+      // Claimed before any await, when something may be left to send on: from here a send queues behind it (followUp).
+      // A turn that itself is being sent on after an ended process (resendFollowUps) joins the line already there.
+      const waiting = this.resending.get(sessionId);
+      if (waiting) line = { items: waiting, own: false };
+      else if (resend.length || queue.length || writing || failover || capped) { line = { items: [], own: true }; this.resending.set(sessionId, line.items); }
       // A write still on its way when the stream ended: its answer decides whether that follow-up is sent on.
       if (writing) await writing;
       const s = seg as Seg | null;
       if (s) sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: s.reason, usage: ZERO_USAGE, modelNote: s.modelNote }, errorText: sink.signal.aborted ? abortedText(sink.signal) : '결과 없이 끝났습니다' });
-      // Follow-ups the process never took are sent on after it (resendFollowUps) — unless the user stopped it or the
-      // server is restarting: then they are refused (code draining: the device holds them and sends them after the restart).
-      const pending = [...resend, ...queue.splice(0)];
-      if (sink.signal.aborted || sink.draining?.()) for (const q of pending) this.refuseFollowUp(q, sink, sessionId, cwd);
-      else leftover = pending;
+      // Follow-ups the process never took are sent on after it (resendFollowUps), ahead of any send that came since. Those
+      // that waited behind another account's continuation go after it (failoverAfterBackground).
+      if (failover) failover.queued.push(...queue.splice(0));
+      line?.items.unshift(...resend, ...queue.splice(0));
       sayCut();
       if (tasks.length) sink.emit({ type: 'turn_background', ...scope(), tasks: [], detail: [] });
       if (shutdown()) {
@@ -1440,39 +1485,41 @@ export class TurnRunner {
         }
       }
     }
-    return { need: failover ?? (sink.signal.aborted ? null : capped), leftover };
+    return { need: failover ?? (sink.signal.aborted ? null : capped), line };
   }
 
   /**
-   * A follow-up that will not go in (stopped, draining, refused when sent on): its turn closed if it had started, and an
-   * error with its send ref so ws takes the ref back. Code draining when the server is restarting: the device holds it.
+   * A follow-up that will not go in (stopped, draining, refused when sent on): an error with its send ref so ws takes the
+   * ref back, and its turn closed if it had started. Code draining when the server is restarting: the device holds it —
+   * told before the turn closes, while the turn is still the sending pane's (UI myTurns).
    */
   private refuseFollowUp(q: Queued, sink: TurnSink, sessionId: string, cwd: string): void {
     const message = '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요';
     const draining = sink.signal.reason === SHUTDOWN_ABORT || sink.draining?.() ? { code: 'draining' as const } : {};
-    if (q.started) sink.emit({ type: 'turn_result', turnId: q.f.turnId, sessionId, cwd, ok: false, text: '', badge: null, errorText: message });
     sink.emit({ type: 'error', turnId: q.f.turnId, message, ...draining, ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
+    if (q.started) sink.emit({ type: 'turn_result', turnId: q.f.turnId, sessionId, cwd, ok: false, text: '', badge: null, errorText: message });
   }
 
   /**
-   * Follow-ups a held-open process ended before taking (followThrough): not dropped and not left for the user to send
-   * again — each goes in, in order, as a turn of the session of its own (routed as any turn, under its own turn id and
-   * send ref, so ws records it as taken once), or as a follow-up when the turn before is held open for background work
-   * again. The first says why (RESEND_NOTICE). A server draining for a restart starts no process: the rest is refused
-   * with code draining (the device sends it again after the restart).
+   * Follow-ups a held-open process ended before taking (followThrough), and sends that came while they were sent on: not
+   * dropped and not left for the user to send again — each goes in, in order, as a turn of the session of its own (routed
+   * as any turn, under its own turn id and send ref, so ws records it as taken once). A turn held open for background
+   * work again takes the rest as follow-ups (followThrough empties the line into it). `notice`: the first that starts
+   * says why (RESEND_NOTICE). Stopped by the user, or a server draining for a restart (which starts no process): the rest
+   * is refused (with code draining when restarting — the device sends it again after the restart). Whether any ran.
    */
-  private async resendFollowUps(queued: Queued[], c: { p: TurnParams; sink: TurnSink; cwd: string; sessionId: string }): Promise<void> {
-    const { p, sink, cwd, sessionId } = c;
-    const base = { cwd, sessionId, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}), ...(p.lang ? { lang: p.lang } : {}) };
-    let said = false;
-    for (const [i, q] of queued.entries()) {
-      const live = this.live.get(sessionId);
-      if (live) { live.submit(q.f, q.attachments); continue; }
-      if (sink.signal.aborted || sink.draining?.()) { for (const r of queued.slice(i)) this.refuseFollowUp(r, sink, sessionId, cwd); return; }
+  private async resendFollowUps(line: Queued[], c: { base: Omit<TurnParams, 'turnId' | 'text'>; sink: TurnSink; cwd: string; sessionId: string; notice: boolean }): Promise<boolean> {
+    const { base, sink, cwd, sessionId } = c;
+    let said = !c.notice;
+    let ran = false;
+    for (let q = line.shift(); q; q = line.shift()) {
+      ran = true;
+      if (sink.signal.aborted || sink.draining?.()) { this.refuseFollowUp(q, sink, sessionId, cwd); continue; }
+      const id = q.f.turnId;
       let started = false;
       const watched: TurnSink = { ...sink, emit: (m) => {
         sink.emit(m);
-        if (m.type !== 'turn_started' || m.turnId !== q.f.turnId || started) return;
+        if (m.type !== 'turn_started' || m.turnId !== id || started) return;
         started = true;
         if (!said) { said = true; sink.emit({ type: 'turn_notice', turnId: m.turnId, sessionId: m.sessionId ?? sessionId, cwd, message: RESEND_NOTICE }); }
       } };
@@ -1484,6 +1531,7 @@ export class TurnRunner {
       // Refused before its turn_started (attachment gone, session gone): the pane must not wait on it.
       if (!started) this.refuseFollowUp(q, sink, sessionId, cwd);
     }
+    return ran;
   }
 
   /**
@@ -2240,11 +2288,30 @@ export class TurnRunner {
         // Held open for background work: write back now too, not only once at the end.
         if (sessionId && a.bgTasks.length) this.mirrorSoon(sessionId, sink, p.turnId);
         if (!sessionId) { await a.rest.return?.(); return done(); }
-        const { need, leftover } = await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt });
-        if (!need && !leftover.length) return done();
-        if (need && 'cap' in need) await this.continueAfterCap(need, { p, sink, cwd, sessionId });
-        else if (need) await this.failoverAfterBackground(need, { p, sink, cwd, sessionId, account, model, routerBase });
-        if (leftover.length) await this.resendFollowUps(leftover, { p, sink, cwd, sessionId });
+        const { need, line } = await this.followThrough({ p, a, cur, sink, account, model, cwd, sessionId, grants, startedAt });
+        // Whatever needs sending on comes with a line (followThrough): none means the process simply ended.
+        if (!line) return done();
+        let ran = false;
+        try {
+          // What the user sent first goes first: the follow-ups the process never took, then the continuation of its
+          // work (cap / another account), then what came meanwhile.
+          const again = { base: { cwd, sessionId, ...keptOf(p) }, sink, cwd, sessionId };
+          // A turn itself sent on after an ended process (line not its own) leaves the line to that loop (which already
+          // said why) — but what waits in it still goes before this turn's own continuation.
+          if (line.own || need) ran = await this.resendFollowUps(line.items, { ...again, notice: line.own });
+          if (need && 'cap' in need) await this.continueAfterCap(need, { p, sink, cwd, sessionId });
+          else if (need) await this.failoverAfterBackground(need, { p, sink, cwd, sessionId, account, model, routerBase, line: line.items });
+          // Sends that came meanwhile were told why they wait (turn_queued): no second notice.
+          if (line.own) ran = (await this.resendFollowUps(line.items, { ...again, notice: false })) || ran;
+        } finally {
+          // Removed once empty (no await since the last look), so a later send finds the session free. Left over only
+          // when something threw: refused (its ref taken back), never silently dropped.
+          if (line.own && this.resending.get(sessionId) === line.items) {
+            this.resending.delete(sessionId);
+            for (const q of line.items.splice(0)) this.refuseFollowUp(q, sink, sessionId, cwd);
+          }
+        }
+        if (!need && !ran) return done();
         // The continuation may have moved the session: the caller's write-back and bookkeeping read where it is now.
         const now = deps.store.get(sessionId);
         return now && !isOtherEngineState(now) ? now : done();
@@ -2327,14 +2394,16 @@ export class TurnRunner {
    * segment follow. The session is moved by those turns' own routing (runClaudeTurn's relocate). At most one hop per
    * other account (TurnParams.failoverHop); with nowhere to go the segment ends as failed.
    */
-  private async failoverAfterBackground(need: Failover, c: { p: TurnParams; sink: TurnSink; cwd: string; sessionId: string; account: Account; model: ClaudeModel; routerBase: Omit<RouterInput, 'current' | 'lastTurnAtMs' | 'justCompacted' | 'cooldownUntilMs'> }): Promise<void> {
+  private async failoverAfterBackground(need: Failover, c: { p: TurnParams; sink: TurnSink; cwd: string; sessionId: string; account: Account; model: ClaudeModel; routerBase: Omit<RouterInput, 'current' | 'lastTurnAtMs' | 'justCompacted' | 'cooldownUntilMs'>; line: Queued[] }): Promise<void> {
     const { deps } = this;
-    const { p, sink, cwd, sessionId, account, model, routerBase } = c;
+    const { p, sink, cwd, sessionId, account, model, routerBase, line } = c;
     const why = failureLabel(need.failure);
     const hint = limitResetHint(need.errorText);
+    // The continuation's turn_started went out: the queued follow-ups are in the session's line by then (see below).
+    let started = false;
     const fail = (errorText: string) => {
       sink.emit({ type: 'turn_result', turnId: need.seg.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: need.seg.reason, usage: ZERO_USAGE, modelNote: null }, errorText });
-      for (const q of need.queued) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
+      for (const q of started ? [] : need.queued) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
     };
     const noneLeft = `${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`;
     // A background continuation is booked as '이어서 진행해 주세요.', a failed follow-up as its own text (not with files).
@@ -2367,21 +2436,21 @@ export class TurnRunner {
         // is the continuation turn's whole point), for a resent follow-up only when background work was cut with it.
         if (!need.followUp || need.tasks.length) await deps.store.set({ ...st, interrupted: { atMs: this.now(), tasks: need.tasks, cause: `${this.label(account)} 계정 ${why}` } });
       }
-      const next = { cwd, sessionId, failoverHop: hop + 1, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}), ...(p.lang ? { lang: p.lang } : {}) };
+      // The turn's hops, language and how it was asked go on with it (keptOf): the same work, on another account.
+      const next = { cwd, sessionId, failoverHop: hop + 1, ...keptOf(p) };
       const ofFollowUp = (f: FollowUpParams): TurnParams => turnOfFollowUp(next, f);
       // The continuation refused before its turn_started (attachment purged, session gone): the segment that got the
       // turn_retry still needs an end, else the pane waits on it.
-      let started = false;
-      const watched: TurnSink = { ...sink, emit: (m) => { if (m.type === 'turn_started' && m.turnId === need.seg.turnId) started = true; sink.emit(m); } };
+      // Once it starts, the follow-ups that waited behind it go first in the session's line: a continuation held open for
+      // background work takes them as follow-ups (followThrough empties the line into it), else each is a turn of its own.
+      const watched: TurnSink = { ...sink, emit: (m) => {
+        if (m.type === 'turn_started' && m.turnId === need.seg.turnId && !started) { started = true; line.unshift(...need.queued); }
+        sink.emit(m);
+      } };
       if (need.followUp) await this.run(ofFollowUp(need.followUp.f), watched);
       else await this.run({ ...next, turnId: need.seg.turnId, text: '이어서 진행해 주세요.' }, watched);
       if (!started) { fail(`${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 다른 계정에서 이어가지 못했습니다`); return; }
-      for (const q of need.queued) {
-        // A continuation still held open for background work takes them as follow-ups; else each is a turn of its own.
-        const live = this.live.get(sessionId);
-        if (live) { live.submit(q.f, q.attachments); continue; }
-        await this.run(ofFollowUp(q.f), sink);
-      }
+      await this.resendFollowUps(line, { base: next, sink, cwd, sessionId, notice: false });
     } catch (err) {
       console.error('deck: 한도 이어가기 실패', err instanceof Error ? err.message : err);
       fail(`${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 다른 계정으로 이어가지 못했습니다`);
