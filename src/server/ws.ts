@@ -1061,9 +1061,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         }
       },
       crossEngine: async (c) => {
-        if (turns.get(turnId) !== turn || ac.signal.aborted) return null;
+        // draining re-read here too: a shutdown that began while the route / excerpt was awaited starts no new process.
+        if (turns.get(turnId) !== turn || ac.signal.aborted || draining) return null;
         const excerpt = await crossExcerpt(c.from, c.fromEngine, c.text);
-        if (turns.get(turnId) !== turn || ac.signal.aborted) return null;
+        if (turns.get(turnId) !== turn || ac.signal.aborted || draining) return null;
         const prompt = promptOf({ text: c.text, ...(c.attachments ? { attachments: c.attachments } : {}) });
         // The notice says what the new session got of the old conversation.
         const notice = `${c.notice} · ${excerpt.trim() ? sm().turn.crossCarried : sm().turn.crossNotCarried}`;
