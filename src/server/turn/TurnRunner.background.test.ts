@@ -14,7 +14,7 @@ import { readCooldownUntilMs } from '../routing/cooldown';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { SessionStateStore } from './SessionState';
-import { AUTO_RETRY_NOTICE, MAX_BG_CAP_HOPS, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
+import { AUTO_RETRY_NOTICE, MAX_BG_CAP_HOPS, RESEND_NOTICE, SHUTDOWN_ABORT, SHUTDOWN_ABORTED, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -256,6 +256,70 @@ describe('TurnRunner: background work after the turn result', () => {
     f.push(cli.bgLevel([]));
     f.end();
     await done;
+  });
+
+  it('a follow-up the waiting process ended before taking goes in as the next turn of the session (same turn id and ref, no error)', async () => {
+    const img: Attachment = { id: 'i1', name: 'a.png', mediaType: 'image/png', size: 1, path: '/w/a.png', isImage: true, createdAtMs: 0 };
+    const attachments = { resolve: () => ({ found: [img], missing: [] }) } as unknown as AttachmentStore;
+    // The follow-up's write waits on its file until the process is gone: the write then finds the input closed.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let reads = 0;
+    const { f, msgs, sink, runner } = await setup({ attachments, readFile: async () => { if (++reads === 1) await gate; return Buffer.from('x'); } });
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    expect(runner.followUp(SID, { turnId: 'f1', text: 'look', attachments: ['i1'], clientRef: 'r1' })).toEqual({ queuedBehind: null });
+    expect(of(msgs, 'turn_started').at(-1)).toMatchObject({ turnId: 'f1', clientRef: 'r1' });
+    f.end();
+    await waitFor(() => runner.backgroundSessions().length === 0, 'process gone');
+    release();
+    await waitFor(() => f.state.calls === 2, 'the follow-up resumed in a new process');
+    f.push(cli.init(SID), cli.delta('seen'), cli.result('seen', SID));
+    await done;
+    expect(of(msgs, 'error')).toEqual([]);
+    expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.clientRef])).toEqual([['t1', undefined], ['f1', 'r1'], ['f1', 'r1']]);
+    expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.text])).toEqual([['t1', true, 'launched'], ['f1', true, 'seen']]);
+    expect(of(msgs, 'turn_notice').filter((m) => m.message === RESEND_NOTICE).map((m) => m.turnId)).toEqual(['f1']);
+    expect(JSON.stringify(f.inputs.at(-1))).toContain('look');
+  });
+
+  it('follow-ups still queued when the process ends go in after it as turns of their own, in order', async () => {
+    const { f, msgs, sink, runner } = await setup();
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+    f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('working'));
+    await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+    expect(runner.followUp(SID, { turnId: 'f1', text: 'first', clientRef: 'r1' })).toEqual({ queuedBehind: '백그라운드 계속' });
+    expect(runner.followUp(SID, { turnId: 'f2', text: 'second', clientRef: 'r2' })).toEqual({ queuedBehind: '백그라운드 계속' });
+    f.end();
+    await waitFor(() => f.state.calls === 2, 'first follow-up resumed');
+    f.push(cli.init(SID), cli.result('one', SID));
+    await waitFor(() => f.state.calls === 3, 'second follow-up resumed');
+    f.push(cli.init(SID), cli.result('two', SID));
+    await done;
+    expect(of(msgs, 'error')).toEqual([]);
+    expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.clientRef])).toEqual([['t1', undefined], ['t1:bg1', undefined], ['f1', 'r1'], ['f2', 'r2']]);
+    expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok])).toEqual([['t1', true], ['t1:bg1', false], ['f1', true], ['f2', true]]);
+    expect(of(msgs, 'turn_notice').filter((m) => m.message === RESEND_NOTICE).map((m) => m.turnId)).toEqual(['f1']);
+    expect(f.inputs.slice(-2).map((m) => JSON.stringify(m))).toEqual([expect.stringContaining('first'), expect.stringContaining('second')]);
+  });
+
+  it('while the server drains, follow-ups the ended process did not take are refused with code draining, no new process', async () => {
+    const { f, msgs, sink, runner } = await setup();
+    const drainSink: TurnSink = { ...sink, draining: () => true };
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, drainSink);
+    f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+    await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+    f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('working'));
+    await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+    runner.followUp(SID, { turnId: 'f1', text: 'first', clientRef: 'r1' });
+    runner.followUp(SID, { turnId: 'f2', text: 'second', clientRef: 'r2' });
+    f.end();
+    await done;
+    expect(of(msgs, 'error').map((m) => [m.turnId, m.clientRef, m.code])).toEqual([['f1', 'r1', 'draining'], ['f2', 'r2', 'draining']]);
+    expect(f.state.calls).toBe(1);
   });
 
   it('the restart deadline cutting background work says so in the pane, and the next turn tells the user and the model once', async () => {

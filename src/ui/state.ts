@@ -65,8 +65,8 @@ export type SentFile = { id: string; name: string; isImage: boolean };
  *     sent too long ago for the server's list (ACCEPTED_REFS_TTL_MS less an hour, or no `at`); else 'go'
  *   restart 'go'    → sent alone even if the queue is paused (keepPaused: the rest stays paused)
  *   open_session error (that session's) / 이어서 보내기 → restart cleared, an ordinary (paused) item
- * Leaving the session (open another, clear, close, 메시지 편집 갈래, 새 세션으로 이어가기) parks held items (restart,
- * maybeSent, lostSteer, kept) under its id (or `__new__:<cwd>` for a new session); they come back `kept`, paused, when it
+ * Leaving the session (open another, clear, close) parks every queued item, in order; 메시지 편집 갈래 / 새 세션으로
+ * 이어가기 park only held items (restart, maybeSent, lostSteer, kept — plain ones follow the pane). Parked under its id (or `__new__:<cwd>` for a new session); they come back `kept`, paused, when it
  * is opened again. Opening the session the pane already shows keeps its queue as it is.
  */
 
@@ -1293,29 +1293,21 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
 }
 
 /**
- * The pane is about to leave its session: messages held for a restart (or maybe lost with a socket) are kept with that
- * session, plain and paused, until it is opened again. A new session has no id: they wait for the next new session in
- * that folder (`parkKey`), and the error bar says so.
+ * The pane is about to leave its session: every queued message — held for a restart, maybe lost with a socket, or only
+ * typed and never sent — is kept with that session, plain and paused, in queue order, until it is opened again. Nothing
+ * is let go. A new session has no id: they wait for the next new session in that folder (`parkKey`), and the error bar
+ * says so.
  */
 function park(state: AppState, paneId: string | undefined): AppState {
   const p = state.panes.find((x) => x.id === (paneId ?? state.activePaneId));
   const s = p?.session;
   if (!p || !s || !p.queue.length) return state;
-  const held = p.queue.filter(isHeld);
-  // The rest of the queue (typed for this session, never sent) is let go with the session — never silently.
-  const dropped = p.queue.filter((q) => !isHeld(q));
-  const unsent = held.filter((q) => !q.steer);
+  // A steer still on its way is not unsent: it is not announced (its answer settles the parked copy).
+  const unsent = p.queue.filter((q) => !q.steer);
   const texts = (qs: QueueItem[]) => qs.map((q) => q.text || '첨부만').join(' / ');
-  if (dropped.length) console.warn('deck: queued messages dropped with their session:', dropped.map((q) => q.text));
-  const notes = [
-    // A steer still on its way is not unsent: it is not announced (its answer settles the parked copy).
-    ...(unsent.length && !s.sessionId ? [`보내지 못한 메시지 ${unsent.length}개는 이 폴더에서 새 세션을 열면 큐로 돌아옵니다: ${texts(unsent)}`] : []),
-    ...(dropped.length ? [`큐에서 빠진 메시지 ${dropped.length}개: ${texts(dropped)}`] : []),
-  ];
-  const error = notes.length ? { error: notes.join(' · ') } : {};
-  if (!held.length) return { ...state, ...error };
+  const error = unsent.length && !s.sessionId ? { error: `보내지 못한 메시지 ${unsent.length}개는 이 폴더에서 새 세션을 열면 큐로 돌아옵니다: ${texts(unsent)}` } : {};
   const key = parkKey(s.sessionId, s.cwd);
-  const parked = { ...state.parked, [key]: { cwd: s.cwd, queue: [...(state.parked[key]?.queue ?? []), ...held.map(toParked)] } };
+  const parked = { ...state.parked, [key]: { cwd: s.cwd, queue: [...(state.parked[key]?.queue ?? []), ...p.queue.map(toParked)] } };
   return { ...state, parked, ...error };
 }
 

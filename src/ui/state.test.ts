@@ -1126,14 +1126,31 @@ describe('message queue (ux-state)', () => {
       expect(nextQueued(pane(s))).toBeNull();
     });
 
-    it('a steer still in flight is parked as a lost steer, not reported dropped, when the pane leaves; a typed-only item still is', () => {
+    it('a steer still in flight is parked as a lost steer, not reported dropped, when the pane leaves; a typed-only item is parked too', () => {
       let s = reducer(running(), { type: 'queue_add', text: 'mid-turn', steerId: 'k1' });
       s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'other' });
       expect(s.error ?? null).toBeNull();
       expect(s.parked.s1!.queue.map((q) => [q.text, q.lostSteer, q.steer])).toEqual([['mid-turn', 'k1', undefined]]);
       let t = reducer(running(), { type: 'queue_add', text: 'typed only' });
       t = reducer(t, { type: 'open', sessionId: 's2', cwd: '/w', title: 'other' });
-      expect(t.error).toContain('큐에서 빠진 메시지 1개: typed only');
+      expect(t.error ?? null).toBeNull();
+      expect(t.parked.s1!.queue.map((q) => q.text)).toEqual(['typed only']);
+    });
+
+    it('leaving the session parks every queued item (held or only typed) in queue order; reopening brings them back, paused', () => {
+      let s = reducer(running(), { type: 'queue_add', text: 'one' });
+      s = reducer(s, { type: 'queue_add', text: 'two', steerId: 'k1' });
+      s = reducer(s, { type: 'queue_add', text: 'three' });
+      s = { ...s, panes: [{ ...pane(s), queue: [...pane(s).queue, { id: 'x1', text: 'four', attachments: [], restart: 'hold' }, { id: 'x2', text: 'five', attachments: [] }] }] };
+      s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'other' });
+      expect(s.error ?? null).toBeNull();
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['one', 'two', 'three', 'four', 'five']);
+      expect(pane(s).queue).toEqual([]);
+      s = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 'back' });
+      expect(s.parked.s1).toBeUndefined();
+      expect(pane(s).queue.map((q) => [q.text, q.kept])).toEqual([['one', true], ['two', true], ['three', true], ['four', true], ['five', true]]);
+      expect(pane(s).queuePaused).toBe(true);
+      expect(nextQueued(pane(s))).toBeNull();
     });
 
     it('the answer to a steer whose pane left settles the parked copy: delivered / already in drops it, refused keeps it plain and names it', () => {
@@ -1169,10 +1186,10 @@ describe('message queue (ux-state)', () => {
       let s = refusedSend('draining');
       s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
       expect(pane(s).queue).toEqual([]);
-      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine']);
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine', 'later']);
       s = reducer(s, { type: 'clear_pane' });
       s = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
-      expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['mine', undefined]]);
+      expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['mine', undefined], ['later', undefined]]);
       expect(pane(s).queuePaused).toBe(true);
       expect(s.parked).toEqual({});
     });
@@ -1195,7 +1212,7 @@ describe('message queue (ux-state)', () => {
     it('closing a pane parks its held items too', () => {
       let s = reducer(refusedSend('draining'), { type: 'add_pane' });
       s = reducer(s, { type: 'close_pane', paneId: 'p0' });
-      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine']);
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine', 'later']);
     });
 
     // LOW: a refused fork keeps its text; a hold is released by the next history even without a reconnect.
@@ -1493,9 +1510,9 @@ describe('message queue (ux-state)', () => {
       let s = refusedSend('draining');
       s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
       s = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
-      expect(pane(s).queue.map((q) => [q.text, q.kept])).toEqual([['mine', true]]);
+      expect(pane(s).queue.map((q) => [q.text, q.kept])).toEqual([['mine', true], ['later', true]]);
       s = reducer(reducer(s, { type: 'dismiss_error' }), { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
-      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine']);
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['mine', 'later']);
       expect(s.error).toBeNull();
     });
 
@@ -1522,10 +1539,11 @@ describe('message queue (ux-state)', () => {
       expect(pane(s).queue.map((q) => [q.text, q.restart])).toEqual([['mine', 'hold'], ['second', 'hold'], ['later', undefined]]);
     });
 
-    it('opening another session lets ordinary queued items go — never silently (the error bar names them)', () => {
+    it('opening another session parks ordinary queued items with it too — never let go', () => {
       let s = reducer(openedOn('s1'), { type: 'queue_add', text: 'typed' });
       s = reducer(s, { type: 'open', sessionId: 's2', cwd: '/w', title: 'two' });
-      expect(s.error).toContain('typed');
+      expect(s.error ?? null).toBeNull();
+      expect(s.parked.s1!.queue.map((q) => q.text)).toEqual(['typed']);
     });
   });
 
@@ -1891,7 +1909,7 @@ describe('자동 분배: review counterexamples', () => {
     s = play([{ type: 'route_fit', turnId: 't1', sessionId: 'G1', engine: 'gemini', need: '셸 실행', clientRef: 'r1' }], s);
     s = reducer(s, { type: 'open', sessionId: 'S2', cwd: '/w', title: 'other' });
     expect(pane(s).routeFit ?? null).toBeNull();
-    expect(s.error).toContain('테스트 돌려줘');
+    expect(s.parked.G1!.queue.map((q) => q.text)).toEqual(['테스트 돌려줘']);
   });
 
   it('existing Grok session + an image: route_fit shows the card and the message waits for it', () => {

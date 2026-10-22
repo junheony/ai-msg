@@ -933,6 +933,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       unrecorded = null;
     };
     const sink: TurnSink = {
+      // Follow-ups a held process ended before taking are not sent on as new turns while draining (they go back to the device).
+      draining: () => draining,
       // The CLI named the session: known now, not only with the first event that carries the id. The send's ref is
       // recorded under it at once (a device reloaded mid first turn drops its maybe-sent copy instead of sending it again).
       sessionKnown: (sid) => { adopt(turn, sid); if (started) accepted(sid); taskSockets.get(ws)?.(sid); if (msg.lang && deps.store.get(sid)?.lang !== msg.lang) void deps.store.setLang(sid, msg.lang).catch((err: unknown) => console.error('deck: session language write failed', errMsg(err))); },
